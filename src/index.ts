@@ -1152,8 +1152,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           '',
         ].join('\n');
         console.error(BANNER);
-        // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
-        if (!args.noOpen && !args['no-open'] && process.env.VOKO_SMOKE_TEST !== '1') {
+        // 浏览器仅在用户明确传入 --open 时启动，避免测试临时端口打扰桌面。
+        if (args.open === true && process.env.VOKO_SMOKE_TEST !== '1') {
           try {
             const url = `http://localhost:${port}/`;
             const plat = process.platform;
