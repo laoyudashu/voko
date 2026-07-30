@@ -24,8 +24,7 @@ const CLI_COMMANDS = {
   'claude-code': 'claude',
   codex: 'codex',
   gemini: 'gemini',
-  cursor: 'cursor',
-  grok: 'grok',
+  cursor: 'cursor-agent',
   opencode: 'opencode',
   pi: 'pi',
   'qwen-code': 'qwen',
@@ -33,6 +32,7 @@ const CLI_COMMANDS = {
   aider: 'aider',
 };
 const PULL_ONLY_CLI_COMMANDS = {
+  grok: 'grok',
   'github-copilot': 'copilot',
   openhands: 'openhands',
   'amazon-q': 'q',

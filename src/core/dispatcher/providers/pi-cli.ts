@@ -27,12 +27,17 @@ import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 class PiCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
+    const deepseekKey = process.env.DEEPSEEK_API_KEY?.trim();
+    const deepseekModel = process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-chat';
+    const modelArgs = deepseekKey
+      ? ['--provider', 'deepseek', '--model', deepseekModel]
+      : [];
     super({
       name: 'PI CLI',
       cmd: 'pi',
       // --tools read,grep,find,ls：仅只读工具，无 bash/edit/write（禁止命令执行和文件修改）
       // 不含 {prompt} 占位 → CliAdapter 自动走 stdin 传 prompt，与 claude-cli 对齐
-      args: ['-p', '--mode', 'json', '--tools', 'read,grep,find,ls'],
+      args: [...modelArgs, '-p', '--mode', 'json', '--tools', 'read,grep,find,ls'],
       parser: 'pi-jsonl',       // Pi JSONL 格式：message_update / turn_end / agent_end
       matchType: 'pi',
       priority: 1,

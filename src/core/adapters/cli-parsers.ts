@@ -37,6 +37,10 @@ interface ParserContext {
   onDone: () => void;
   _streamed?: boolean;
   _lastTurnText?: string;
+  _aiderPreamble?: boolean;
+  _aiderSawRepoMap?: boolean;
+  _aiderReplyStarted?: boolean;
+  _aiderThinking?: boolean;
 }
 
 interface ParserOptions {
@@ -344,6 +348,36 @@ function rawParser(line: string, ctx: ParserContext) {
   if (line) ctx.onText(line + '\n');
 }
 
+// ── Aider 单次消息输出解析器 ──────────────────────────────────────────
+//
+// aider --message --no-stream 会在正文前后打印版本、模型和 token/cost 信息。
+// 这些运行日志不能作为 Agent 回复发送给访客。
+function aiderOutputParser(line: string, ctx: ParserContext) {
+  if (ctx._aiderPreamble === undefined) ctx._aiderPreamble = true;
+  const trimmed = line.trim();
+
+  if (ctx._aiderPreamble) {
+    if (/^Repo-map:/i.test(trimmed)) ctx._aiderSawRepoMap = true;
+    if (ctx._aiderSawRepoMap && !trimmed) ctx._aiderPreamble = false;
+    return;
+  }
+
+  if (/^►\s+\*\*THINKING\*\*$/i.test(trimmed)) {
+    ctx._aiderThinking = true;
+    return;
+  }
+  if (/^►\s+\*\*ANSWER\*\*$/i.test(trimmed)) {
+    ctx._aiderThinking = false;
+    ctx._aiderReplyStarted = false;
+    return;
+  }
+  if (ctx._aiderThinking || /^-+$/.test(trimmed)) return;
+  if (/^(Tokens:|Cost:)/i.test(trimmed) || /^\$[\d.]+\s+session\.$/i.test(trimmed)) return;
+  if (!trimmed && !ctx._aiderReplyStarted) return;
+  ctx._aiderReplyStarted = true;
+  ctx.onText(line + '\n');
+}
+
 // ── silent 解析器（fire-and-forget 通知模式） ─────────────────────────
 
 /**
@@ -382,6 +416,7 @@ function createParser({
     'opencode-json': opencodeJsonParser,
     jsonl: jsonlParser,
     raw: rawParser,
+    'aider-output': aiderOutputParser,
     silent: silentParser,
   };
   const parser = parsers[format] || rawParser;
@@ -421,6 +456,7 @@ module.exports = {
   opencodeJsonParser,
   jsonlParser,
   rawParser,
+  aiderOutputParser,
   silentParser,
   createParser,
 };

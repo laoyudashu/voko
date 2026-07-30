@@ -24,7 +24,7 @@ class CodexCliProvider extends CliAdapter {
       name: 'CODEX CLI',
       cmd: 'codex',
       // --sandbox read-only：禁止写操作和命令执行（含 curl），仅允许读文件
-      args: ['exec', '--json', '--sandbox', 'read-only', '-'],
+      args: ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-'],
       parser: 'codex-jsonl',
       matchType: 'codex',
       priority: 1,
