@@ -1,0 +1,497 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+
+require('./lite-opencode-provider.test');
+const express = require('express');
+const { spawnSync } = require('node:child_process');
+
+const { pluralRule } = require('../build/core/i18n/plurals');
+const frame = require('../build/core/ipc/frame');
+const { ErrorCode, VokoError, vokoError } = require('../build/core/ipc/error-codes');
+const transcript = require('../build/core/transcript-types');
+const backendTypes = require('../build/core/agent-backend-types');
+const skills = require('../build/core/skills/skill-def');
+const { SkillRegistry } = require('../build/core/skills/registry');
+const skillSystem = require('../build/core/skills');
+const auditLog = require('../build/core/audit-log');
+const { RuntimeState } = require('../build/core/runtime-state');
+const liteEvents = require('../build/core/lite-events');
+const smoke = require('../build/testing/smoke-all');
+const { createWebRouter } = require('../build/web');
+
+test('pluralRule keeps the existing locale behavior', () => {
+  assert.equal(pluralRule('en', 1), 'one');
+  assert.equal(pluralRule('en', 0), 'other');
+  assert.equal(pluralRule('en', '1'), 'one');
+  assert.equal(pluralRule('zh', 1), 'other');
+  assert.equal(pluralRule('ja', 1), 'other');
+});
+
+test('IPC frame keeps new and legacy wire formats compatible', () => {
+  const request = frame.req('worker.send', { channelId: 'visitor-1' }, 'req-1');
+  assert.equal(request.type, 'req');
+  assert.equal(request.id, 'req-1');
+  assert.deepEqual(request.params, { channelId: 'visitor-1' });
+
+  const response = frame.res(request, true, { sent: true });
+  assert.deepEqual(
+    { type: response.type, id: response.id, ok: response.ok, payload: response.payload },
+    { type: 'res', id: 'req-1', ok: true, payload: { sent: true } },
+  );
+
+  const legacy = frame.normalize({
+    type: 'status',
+    agentId: 'agent-1',
+    status: 'connected',
+    statusCode: 1,
+  });
+  assert.equal(legacy.type, 'event');
+  assert.equal(legacy.event, 'worker.status');
+  assert.deepEqual(legacy.payload, {
+    agentId: 'agent-1',
+    status: 'connected',
+    statusCode: 1,
+  });
+});
+
+test('VokoError keeps explicit, localized and passthrough behavior', () => {
+  assert.deepEqual(VokoError.spawnFailed('missing cli', { provider: 'codex' }), {
+    code: ErrorCode.SPAWN_FAILED,
+    message: 'missing cli',
+    meta: { provider: 'codex' },
+  });
+  assert.equal(vokoError(ErrorCode.TIMEOUT, null, undefined, 'en').code, 'timeout');
+  assert.match(vokoError(ErrorCode.TIMEOUT, null, undefined, 'en').message, /timed out/i);
+
+  const existing = { code: ErrorCode.CANCELLED, message: 'cancelled by caller' };
+  assert.equal(VokoError.from(existing), existing);
+  assert.deepEqual(VokoError.from(new Error('boom')), {
+    code: ErrorCode.UNKNOWN,
+    message: 'boom',
+  });
+});
+
+test('transcript factories keep streaming entry shapes stable', () => {
+  const text = transcript.VokoTranscriptEntry.text('hello', {
+    agentId: 'agent-1',
+    visitorId: 'visitor-1',
+    seq: 2,
+    timestamp: 123,
+  });
+  assert.deepEqual(text, {
+    type: transcript.EntryType.TEXT,
+    agentId: 'agent-1',
+    visitorId: 'visitor-1',
+    sessionKey: '',
+    seq: 2,
+    timestamp: 123,
+    done: false,
+    text: 'hello',
+  });
+  assert.equal(transcript.isTerminal(text), false);
+
+  const complete = transcript.fromAgentReply({
+    done: true,
+    content: 'done',
+    agentId: 'agent-1',
+    visitorId: 'visitor-1',
+  });
+  assert.equal(complete.type, transcript.EntryType.COMPLETE);
+  assert.equal(complete.done, true);
+  assert.equal(transcript.isTerminal(complete), true);
+  assert.deepEqual(complete.usage, { inputTokens: 0, outputTokens: 0 });
+});
+
+test('backend type helpers preserve DB fallback and seed behavior', () => {
+  const writes = [];
+  const db = {
+    prepare(sql) {
+      return {
+        get() {
+          if (sql.startsWith('SELECT data')) {
+            return { data: JSON.stringify([{ value: 'custom', label: 'Custom' }]) };
+          }
+          return undefined;
+        },
+        run(...args) { writes.push({ sql, args }); },
+      };
+    },
+  };
+
+  assert.deepEqual(backendTypes.getBackendTypes(db), [{ value: 'custom', label: 'Custom' }]);
+  assert.deepEqual(backendTypes.getBackendTypeValues(db), ['custom']);
+  assert.equal(backendTypes.isKnownBackendType(db, 'custom'), true);
+  assert.equal(backendTypes.isKnownBackendType(db, ''), false);
+  assert.equal(backendTypes.normalizeBackendType(' Claude_Code '), 'claude-code');
+  assert.equal(backendTypes.normalizeBackendType('OPEN-CLAW'), 'openclaw');
+  assert.equal(backendTypes.normalizeBackendType('goose_acp'), 'acp-goose');
+  assert.equal(backendTypes.normalizeBackendType('Codex CLI'), 'codex');
+  assert.equal(backendTypes.normalizeBackendType('Work Buddy'), 'work-buddy');
+  assert.equal(backendTypes.normalizeBackendType(null), 'others');
+  backendTypes.seedBackendTypes(db);
+  assert.equal(writes.length, 1);
+});
+
+test('skill definition keeps defaults, validation and aliases stable', () => {
+  const skill = skills.defineSkill({
+    name: 'lookup',
+    description: 'Lookup',
+    prompt: 'Use the lookup tool.',
+  });
+  assert.deepEqual(skill, {
+    name: 'lookup',
+    version: '1.0.0',
+    description: 'Lookup',
+    category: skills.SkillCategory.TOOL,
+    command: '/lookup',
+    prompt: 'Use the lookup tool.',
+    mcpTools: [],
+    examples: [],
+  });
+  assert.equal(skills.isValidSkill(skill), true);
+  assert.equal(skills.isValidSkill(null), null);
+  assert.deepEqual(skills.getSkillCommands(skill), ['/lookup']);
+});
+
+test('TypeScript skill registry keeps builtins and command matching stable', () => {
+  const registry = new SkillRegistry();
+  registry.init();
+  assert.equal(registry.size, 5);
+  assert.equal(registry.matchCommand('/query-order').name, 'query-order');
+  assert.equal(registry.matchCommand(' /CHAT ').name, 'chat');
+  assert.equal(registry.matchCommand('/missing'), null);
+});
+
+test('skill assignment and prompt building keep DB behavior stable', () => {
+  const writes = [];
+  const rows = [
+    { skill_name: 'chat', config: '{"tone":"brief"}' },
+    { skill_name: 'missing', config: null },
+  ];
+  const db = {
+    prepare(sql) {
+      return {
+        all() { return sql.startsWith('SELECT') ? rows : []; },
+        run(...args) { writes.push({ sql, args }); },
+      };
+    },
+  };
+  const registry = new SkillRegistry();
+  const built = skillSystem.buildAgentPrompt(db, 'agent-1', registry);
+  assert.equal(built.skills.length, 1);
+  assert.deepEqual(built.skills[0].config, { tone: 'brief' });
+  assert.match(built.prompt, /智能客服助手/);
+
+  skillSystem.assignSkills(db, 'agent-1', ['chat', 'refund'], { chat: { tone: 'brief' } });
+  assert.equal(writes.length, 3);
+  assert.match(writes[0].sql, /^DELETE FROM agent_skills/);
+  assert.equal(writes[1].args[3], '{"tone":"brief"}');
+  assert.equal(writes[2].args[3], null);
+  assert.deepEqual(skillSystem.getAgentSkills(db, 'agent-1'), rows);
+});
+
+test('audit log keeps filtering, pagination and defaults stable', () => {
+  auditLog.clear();
+  const first = auditLog.audit('agent.started', { agentId: 'agent-1' });
+  auditLog.audit('agent.stopped', { actor: auditLog.ActorType.OWNER, agentId: 'agent-1' });
+  auditLog.audit('agent.started', { actor: auditLog.ActorType.AGENT, agentId: 'agent-2' });
+
+  assert.equal(first.actor, auditLog.ActorType.SYSTEM);
+  assert.equal(auditLog.query().total, 3);
+  assert.deepEqual(
+    auditLog.query({ action: 'agent.started' }).entries.map((entry) => entry.agentId),
+    ['agent-2', 'agent-1'],
+  );
+  assert.equal(auditLog.query({ agentId: 'agent-1', limit: 1, offset: 1 }).entries[0].action, 'agent.started');
+  auditLog.clear();
+});
+
+test('RuntimeState keeps snapshots, summaries and subscriptions stable', () => {
+  const state = new RuntimeState();
+  const snapshots = [];
+  const unsubscribe = state.subscribe((snapshot) => snapshots.push(snapshot));
+
+  state.updateAgent('agent-1', { status: 'connected', connected: true });
+  state.updateAgent('agent-2', { status: 'kicked', connected: false });
+
+  assert.equal(snapshots.length, 2);
+  assert.equal(state.getAll().length, 2);
+  assert.equal(state.get('agent-1').status, 'connected');
+  assert.deepEqual(
+    (({ total, connected, disconnected, online }) => ({ total, connected, disconnected, online }))(state.summary()),
+    { total: 2, connected: 1, disconnected: 1, online: 1 },
+  );
+
+  assert.equal(unsubscribe(), true);
+  state.removeAgent('agent-2');
+  assert.equal(snapshots.length, 2);
+  assert.equal(state.get('agent-2'), null);
+});
+
+test('lite events keep envelopes, history filters and legacy bus delivery stable', () => {
+  liteEvents.clearHistory();
+  const received = [];
+  const listener = (event) => received.push(event);
+  liteEvents.bus.on('agent.message:agent-1', listener);
+
+  const emitted = liteEvents.Events.agentMessage('agent-1', { text: 'hello' });
+  liteEvents.Events.agentStatus('agent-2', 'connected');
+
+  liteEvents.bus.off('agent.message:agent-1', listener);
+  assert.match(emitted.eventId, /^evt_/);
+  assert.equal(emitted.entityType, 'agent');
+  assert.deepEqual(emitted.payload, { text: 'hello' });
+  assert.equal(received.length, 1);
+  assert.equal(liteEvents.getHistory().length, 2);
+  assert.deepEqual(liteEvents.getHistory('agent.message', 'agent-1'), [emitted]);
+  liteEvents.clearHistory();
+});
+
+test('smoke registry and page are part of the Lite build artifact', () => {
+  assert.ok(smoke.REGISTRY.length > 50);
+  assert.equal(typeof smoke.runRegistry, 'function');
+  assert.equal(typeof smoke.main, 'function');
+  const messageLoop = smoke.REGISTRY.find((item) => item.id === 'A1');
+  assert.equal(messageLoop.mode, 'core');
+  assert.equal(typeof messageLoop.verify, 'function');
+  assert.equal(smoke.requiresRunning(['--require-running']), true);
+  assert.equal(smoke.requiresRunning(['--full']), false);
+  assert.equal(
+    fs.existsSync(path.join(__dirname, '..', 'build', 'testing', 'smoke-test.html')),
+    true,
+  );
+});
+
+test('Web smoke page and registry work from the packaged Lite layout', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(createWebRouter({}, { prepare() { throw new Error('DB should not be used'); } }));
+
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+
+  try {
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const page = await fetch(`${baseUrl}/smoke-test`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /VOKO.*冒烟测试/i);
+
+    const registry = await fetch(`${baseUrl}/api/smoke/registry`);
+    assert.equal(registry.status, 200);
+    const items = await registry.json();
+    assert.ok(Array.isArray(items));
+    assert.ok(items.length > 50);
+    assert.deepEqual(
+      items.filter((item) => !item.id || !item.name || !item.mode),
+      [],
+    );
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
+
+test('short-link creation uses the owner token and never accepts a client target URL', async (t) => {
+  const originalFetch = global.fetch;
+  const upstreamRequests = [];
+  const db = {
+    prepare(sql) {
+      return {
+        get() {
+          if (sql.includes('SELECT imUid, owner_email FROM agents')) {
+            return { imUid: 'agent_uid_1', owner_email: 'owner@example.com' };
+          }
+          if (sql.includes('FROM config WHERE type = ?')) {
+            return {
+              data: JSON.stringify({
+                'owner@example.com': { user_access_token: 'ut_owner_token' },
+              }),
+            };
+          }
+          return null;
+        },
+        run() {},
+        all() { return []; },
+      };
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(createWebRouter({}, db));
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  t.after(async () => {
+    global.fetch = originalFetch;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  });
+
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+    upstreamRequests.push({ url: String(url), options });
+    return {
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { shortUrl: 'https://www.vokovoko.com/s/agent-1' },
+      }),
+    };
+  };
+
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/short-link/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agentId: 'agent-1',
+      targetUrl: 'https://attacker.example/redirect',
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).success, true);
+  assert.equal(upstreamRequests.length, 1);
+  assert.match(upstreamRequests[0].url, /\/api\/external\/v1\/short-link\/create$/);
+  assert.equal(upstreamRequests[0].options.headers.Authorization, 'Bearer ut_owner_token');
+  assert.equal(upstreamRequests[0].options.headers['X-API-Key'], undefined);
+  assert.deepEqual(JSON.parse(upstreamRequests[0].options.body), {
+    agentId: 'agent-1',
+    imUid: 'agent_uid_1',
+    title: 'agent-1',
+  });
+});
+
+test('agent actions return to the same agent subpage and conversation controls use native POST forms', async (t) => {
+  const app = express();
+  app.use(express.urlencoded({ extended: true }));
+  app.use((req, _res, next) => {
+    req.locale = 'zh';
+    req.t = (key) => key;
+    next();
+  });
+  const handlers = {
+    manage_whitelist: async () => ({ success: true }),
+    manage_blacklist: async () => ({ success: true }),
+  };
+  app.use(createWebRouter(handlers, { prepare() { throw new Error('unexpected database access'); } }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const faviconResponse = await fetch(`${base}/favicon.png`);
+  assert.equal(faviconResponse.status, 200);
+  assert.equal(faviconResponse.headers.get('content-type'), 'image/png');
+  assert.ok((await faviconResponse.arrayBuffer()).byteLength > 0);
+
+  for (const item of [
+    {
+      referer: `${base}/agents/agent-1/whitelist?page=2&keyword=friend`,
+      expected: '/agents/agent-1/whitelist?page=2&keyword=friend&ok=',
+      action: 'add_whitelist',
+    },
+    {
+      referer: '',
+      returnTo: '/agents/agent-1/c/visitor-1',
+      expected: '/agents/agent-1/c/visitor-1?ok=',
+      action: 'remove_blacklist',
+    },
+  ]) {
+    const response = await fetch(`${base}/agents/agent-1`, {
+      method: 'POST',
+      headers: item.referer ? { Referer: item.referer } : {},
+      body: new URLSearchParams({ _action: item.action, visitorId: 'visitor-1', returnTo: item.returnTo || '' }),
+      redirect: 'manual',
+    });
+    assert.equal(response.status, 302);
+    assert.ok((response.headers.get('location') || '').startsWith(item.expected));
+  }
+
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(source, /actionBtn\(isWl\?'remove_whitelist':'add_whitelist'/);
+  assert.match(source, /actionBtn\(isBl\?'remove_blacklist':'add_blacklist'/);
+  assert.match(source, /<form method="POST" action="\/agents\//);
+  assert.match(source, /name="returnTo" value="/);
+  assert.match(source, /isMe=m\.isMe===true\|\|m\.isMe===1/);
+  assert.doesNotMatch(source, /isMe=m\.isMe===1,/);
+  assert.doesNotMatch(source, /confirm\(I\.gen_security_tip\)/);
+  assert.match(source, /id="dlg-short-link-security"/);
+  assert.match(source, /data-role="confirm-gen-link"/);
+  assert.doesNotMatch(source, /web\.agent\.edit\.section_runtime/);
+  assert.doesNotMatch(source, /web\.agent\.edit\.section_access/);
+  assert.doesNotMatch(source, /data-value="__custom__"/);
+  assert.doesNotMatch(source, /'\\\\u2715'/);
+  assert.match(source, /web\.conversation\.pay\.card_required_title/);
+  assert.match(source, /JOIN payment_auth p ON p\.id=a\.payment_auth_id/);
+  assert.doesNotMatch(source, /role="note"[^>]*short_link\.security_tip/);
+});
+
+test('compiled Lite entry handles the CLI version command', () => {
+  const entry = path.join(__dirname, '..', 'build', 'index.js');
+  const result = spawnSync(process.execPath, [entry, '--version'], {
+    cwd: path.join(__dirname, '..'),
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /voko 0\.4\.0/);
+  assert.doesNotMatch(result.stderr, /Cannot find module/);
+});
+
+test('Lite runtime tests do not bypass the compiled entrypoint', () => {
+  const sourceEntrypointPattern =
+    /require\(\s*['"]\.\.\/src\/(?:index|context)(?:\.js)?['"]\s*\)/;
+  const violations = fs.readdirSync(__dirname, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+    .filter((entry) => sourceEntrypointPattern.test(
+      fs.readFileSync(path.join(__dirname, entry.name), 'utf8'),
+    ))
+    .map((entry) => entry.name);
+
+  assert.deepEqual(
+    violations,
+    [],
+    `Lite runtime tests must load build instead of src: ${violations.join(', ')}`,
+  );
+});
+
+test('i18n checker scans both JavaScript and TypeScript sources', () => {
+  const liteDir = path.join(__dirname, '..');
+  const result = spawnSync(process.execPath, [path.join(liteDir, 'scripts', 'i18n-check.js')], {
+    cwd: liteDir,
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const scanned = Number(result.stdout.match(/scanned files:\s*(\d+)/)?.[1]);
+  let expected = 0;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'i18n') continue;
+      const target = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(target);
+      else if (entry.name.endsWith('.js') || entry.name.endsWith('.ts')) expected++;
+    }
+  };
+  walk(path.join(liteDir, 'src'));
+  assert.equal(scanned, expected);
+  assert.ok(scanned > 90);
+});
+
+test('smoke-test Lite instances never open a browser window', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  assert.match(entrySource, /process\.env\.VOKO_SMOKE_TEST\s*!==\s*'1'/);
+});

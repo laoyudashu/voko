@@ -1,0 +1,247 @@
+const { spawn } = require('child_process');
+const net = require('net');
+const os = require('os');
+const { PushProvider } = require('../base-provider');
+const { runCli, killTree, checkCliAvailable } = require('../../adapters/cli-spawner');
+const { createParser } = require('../../adapters/cli-parsers');
+const {
+  isolatedOpenCodeEnv,
+  buildOpenCodeVisitorContent,
+  newServerPassword,
+  resolveOpenCodeCommand,
+} = require('./opencode-runtime');
+import type { ChildProcessWithoutNullStreams } from 'child_process';
+import type { DatabaseLike } from '../../../types/database';
+import type { AgentMeta, PushPayload } from '../types';
+
+interface Options {
+  db?: Pick<DatabaseLike, 'prepare'> | null;
+  contextWindow?: number;
+  cwd?: string;
+}
+
+interface SessionRow { session_handle?: string }
+interface ContextRow { content: string; is_me: number }
+interface OpenCodeMessage {
+  info?: { role?: string };
+  parts?: Array<{ type?: string; text?: string }>;
+}
+
+const ADAPTER_TYPE = 'opencode-attach';
+const MAX_REPLY_CHARS = 2 * 1024 * 1024;
+
+function findPort(preferred = 4096): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', () => {
+      const fallback = net.createServer();
+      fallback.unref();
+      fallback.once('error', reject);
+      fallback.listen(0, '127.0.0.1', () => {
+        const address = fallback.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
+        fallback.close(() => resolve(port));
+      });
+    });
+    server.listen(preferred, '127.0.0.1', () => server.close(() => resolve(preferred)));
+  });
+}
+
+class OpenCodeAttachProvider extends PushProvider {
+  _db: Options['db'];
+  _contextWindow: number;
+  _cwd: string;
+  _cmd: string;
+  _server: ChildProcessWithoutNullStreams | null = null;
+  _serverPromise: Promise<void> | null = null;
+  _port = 0;
+  _password = '';
+
+  constructor(options: Options = {}) {
+    super();
+    this._db = options.db || null;
+    this._contextWindow = options.contextWindow ?? 20;
+    this._cwd = options.cwd || os.tmpdir();
+    this._cmd = resolveOpenCodeCommand();
+  }
+
+  get priority() { return 5; }
+  get capabilities() { return ['http', 'streaming', 'session_resume']; }
+  match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'opencode'; }
+  isAvailable() { return checkCliAvailable(this._cmd); }
+
+  async _ensureServer(): Promise<void> {
+    if (this._server && this._server.exitCode === null && this._port) return;
+    if (this._serverPromise) return this._serverPromise;
+    this._serverPromise = (async () => {
+      this._port = await findPort(4096);
+      this._password = newServerPassword();
+      const env = {
+        ...process.env,
+        ...isolatedOpenCodeEnv(),
+        OPENCODE_SERVER_PASSWORD: this._password,
+      };
+      const child = spawn(this._cmd, [
+        'serve', '--hostname', '127.0.0.1', '--port', String(this._port),
+      ], {
+        cwd: this._cwd,
+        env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }) as ChildProcessWithoutNullStreams;
+      this._server = child;
+      child.on('exit', () => {
+        if (this._server === child) {
+          this._server = null;
+          this._port = 0;
+          this._password = '';
+        }
+      });
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        if (child.exitCode !== null) throw new Error(`OpenCode serve exited with code ${child.exitCode}`);
+        try {
+          const auth = Buffer.from(`opencode:${this._password}`).toString('base64');
+          const response = await fetch(`http://127.0.0.1:${this._port}/global/health`, {
+            headers: { Authorization: `Basic ${auth}` },
+          });
+          if (response.ok) return;
+        } catch {}
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      throw new Error('OpenCode serve health check timed out');
+    })().finally(() => { this._serverPromise = null; });
+    return this._serverPromise;
+  }
+
+  _loadSession(agentId: string, visitorId: string): string | null {
+    try {
+      const row = this._db?.prepare(
+        'SELECT session_handle FROM agent_session_handles WHERE agent_id=? AND visitor_id=? AND adapter_type=?',
+      ).get(agentId, visitorId, ADAPTER_TYPE) as SessionRow | undefined;
+      return row?.session_handle || null;
+    } catch { return null; }
+  }
+
+  _saveSession(agentId: string, visitorId: string, sessionId: string): void {
+    if (!this._db || !sessionId) return;
+    this._db.prepare(`
+      INSERT OR REPLACE INTO agent_session_handles
+        (agent_id, visitor_id, adapter_type, session_handle, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(agentId, visitorId, ADAPTER_TYPE, sessionId, Date.now());
+  }
+
+  _prompt(agentId: string, visitorId: string, content: string): string {
+    let history: ContextRow[] = [];
+    try {
+      history = (this._db?.prepare(`
+        SELECT content, is_me FROM messages
+        WHERE channel_id=? AND agent_id=? AND content_type!=11
+        ORDER BY timestamp DESC LIMIT ?
+      `).all(visitorId, agentId, this._contextWindow) as ContextRow[] || []).reverse();
+    } catch {}
+    const previous = history.map(row => `${row.is_me >= 1 ? 'Agent' : 'Visitor'}: ${row.content}`).join('\n');
+    return [
+      buildOpenCodeVisitorContent(agentId, visitorId, content),
+      previous ? `Recent conversation:\n${previous}` : '',
+    ].filter(Boolean).join('\n\n');
+  }
+
+  async _loadLatestReply(sessionId: string): Promise<string> {
+    if (!sessionId || !this._port || !this._password) return '';
+    const auth = Buffer.from(`opencode:${this._password}`).toString('base64');
+    const response = await fetch(
+      `http://127.0.0.1:${this._port}/session/${encodeURIComponent(sessionId)}/message`,
+      { headers: { Authorization: `Basic ${auth}` } },
+    );
+    if (!response.ok) throw new Error(`OpenCode session reply lookup failed with HTTP ${response.status}`);
+    const messages = await response.json() as OpenCodeMessage[];
+    const assistant = [...messages].reverse().find(message => message.info?.role === 'assistant');
+    return (assistant?.parts || [])
+      .filter(part => part.type === 'text' && typeof part.text === 'string')
+      .map(part => part.text)
+      .join('')
+      .slice(0, MAX_REPLY_CHARS);
+  }
+
+  async push(payload: PushPayload): Promise<void> {
+    await this._ensureServer();
+    const { agentId, fromUid, content, messageId } = payload;
+    const turnId = String(payload.turnId || messageId || `opencode-${Date.now()}`);
+    const sessionKey = `opencode:${agentId}:${fromUid}`;
+    const savedSession = this._loadSession(agentId, fromUid);
+    const prompt = this._prompt(agentId, fromUid, content);
+    const args = [
+      'run', '--attach', `http://127.0.0.1:${this._port}`, '--format', 'json',
+      ...(savedSession ? ['--session', savedSession] : []),
+      prompt,
+    ];
+    let fullContent = '';
+    let observedSession = savedSession || '';
+    let eventError = '';
+    const parser = createParser({
+      format: 'opencode-json',
+      onText: (chunk: string) => {
+        fullContent = (fullContent + chunk).slice(0, MAX_REPLY_CHARS);
+        this.emit('agent.reply', {
+          agentId, visitorId: fromUid, content: fullContent, done: false,
+          sessionKey, turnId, replyId: turnId,
+        });
+      },
+    });
+    const result = await runCli({
+      cmd: this._cmd,
+      args,
+      cwd: this._cwd,
+      timeout: 300000,
+      tag: 'OPENCODE ATTACH',
+      env: {
+        ...isolatedOpenCodeEnv(),
+        OPENCODE_SERVER_PASSWORD: this._password,
+      },
+      onStdoutLine: (line: string) => {
+        try {
+          const event = JSON.parse(line);
+          observedSession = String(event.sessionID || event.sessionId || event.part?.sessionID || observedSession);
+          if (event.type === 'error') {
+            eventError = String(event.error?.message || event.error || 'OpenCode returned an error event');
+          }
+        } catch {}
+        parser.handleLine(line);
+      },
+      onStderrLine: (line: string) => console.error(`[OPENCODE ATTACH] ${line}`),
+    });
+    parser.finish();
+    if (result.code !== 0) throw new Error(`OpenCode attach exited with code ${result.code}`);
+    if (observedSession) this._saveSession(agentId, fromUid, observedSession);
+    if (eventError) throw new Error(eventError);
+    if (!fullContent && observedSession) fullContent = await this._loadLatestReply(observedSession);
+    if (!fullContent) throw new Error('OpenCode attach returned no reply');
+    this.emit('agent.reply', {
+      agentId, visitorId: fromUid, content: fullContent, done: true,
+      sessionKey, turnId, replyId: turnId,
+    });
+  }
+
+  async steer(agentId: string, visitorId: string, content: string): Promise<void> {
+    return this.push({
+      agentId, fromUid: visitorId, content,
+      messageId: `steer-${Date.now()}`, timestamp: Date.now(),
+    });
+  }
+
+  async stop(): Promise<void> {
+    if (this._server?.pid) killTree(this._server.pid);
+    this._server = null;
+    this._port = 0;
+    this._password = '';
+  }
+
+  async healthCheck() {
+    return { ok: Boolean(this._server && this._server.exitCode === null), status: this._server ? 'running' : 'idle' };
+  }
+}
+
+module.exports = { OpenCodeAttachProvider };

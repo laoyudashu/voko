@@ -1,0 +1,13 @@
+title = "VOKO secret scanning configuration"
+
+# These paths are ignored by Git and contain local credentials or generated output.
+# Tracked source, tests, documents, and configuration remain in scope.
+[[allowlists]]
+description = "Ignored local configuration and generated artifacts"
+paths = [
+  '''(^|/)\.claude/''',
+  '''(^|/)\.npmrc$''',
+  '''^config/channel_config - .*\.json$''',
+  '''(^|/)dist/''',
+  '''(^|/)packages/lite/dist/''',
+]

@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOKO 冒烟测试</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #c9d1d9; --text2: #8b949e; --text3: #6e7681;
+  --pass: #2ea043; --fail: #f85149; --skip: #d29922; --run: #58a6ff;
+  --pass-bg: #0d3321; --fail-bg: #3d1522; --skip-bg: #2d2200;
+  --mono: 'SF Mono','Cascadia Code','Consolas','Liberation Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:18px;font-weight:600}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar label{font-size:13px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer}
+.toolbar input[type=radio]{accent-color:var(--run)}
+.btn{padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);font-weight:500}
+.btn:hover{background:#21262d}
+.btn-run{padding:8px 24px;font-size:15px;font-weight:700;background:var(--pass);border-color:var(--pass);color:#fff}
+.btn-run:hover{background:#2ea043dd}
+.btn-run:disabled{opacity:.5;cursor:not-allowed}
+.btn-xs{padding:2px 8px;font-size:12px}
+.progress{display:none;align-items:center;gap:8px;margin-left:auto}
+.progress.visible{display:flex}
+.progress-bar{width:180px;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.progress-bar div{height:100%;background:var(--run);border-radius:3px;transition:width .3s}
+.progress-text{font:12px var(--mono);color:var(--text2);white-space:nowrap}
+
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:300px;border-right:1px solid var(--border);overflow-y:auto;background:var(--surface);flex-shrink:0}
+.main{flex:1;overflow-y:auto;padding:0}
+
+.sec-header{padding:7px 12px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;border-bottom:1px solid transparent;background:#1a1f29}
+.sec-header:hover{background:#21262d}
+.sec-header .arrow{transition:.15s;font-size:10px;color:var(--text3);cursor:pointer}
+.sec-header.open .arrow{transform:rotate(90deg)}
+.sec-header .badge{font-size:11px;color:var(--text2);margin-left:auto}
+.sec-check{accent-color:var(--run);cursor:pointer;margin:0 4px 0 0;width:13px;height:13px}
+.test-item{display:flex;align-items:center;padding:5px 12px 5px 28px;font-size:12px;color:var(--text2);cursor:pointer;gap:6px;border-left:3px solid transparent}
+.test-item:hover{background:#1c2129}
+.test-item input[type=checkbox]{accent-color:var(--run);cursor:pointer}
+.test-item.pass{border-left-color:var(--pass);color:var(--text)}
+.test-item.fail{border-left-color:var(--fail);color:var(--fail)}
+.test-item.skip{border-left-color:var(--skip);color:var(--skip)}
+.test-item.running{border-left-color:var(--run);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.5}}
+.test-item .id{font:11px var(--mono);color:var(--text3);width:30px}
+.test-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.result-table{width:100%;border-collapse:collapse;font-size:13px}
+.result-table th{position:sticky;top:0;background:#1a1f29;padding:8px 10px;text-align:left;font-size:12px;color:var(--text2);border-bottom:2px solid var(--border);z-index:1}
+.result-table td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.result-table tr.pass td{background:var(--pass-bg)}
+.result-table tr.fail td{background:var(--fail-bg)}
+.result-table tr.skip td{background:var(--skip-bg)}
+.result-table .time{font:11px var(--mono);color:var(--text3);white-space:nowrap;width:60px}
+.result-table .status{width:36px;font-weight:700;text-align:center}
+.result-table .input{font:12px var(--mono);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-table .expected{max-width:160px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-table .result{font:12px var(--mono);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.result-table .pass .status{color:var(--pass)}
+.result-table .fail .status{color:var(--fail)}
+.result-table .skip .status{color:var(--skip)}
+
+.placeholder{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text3);font-size:14px}
+.summary{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border);font:12px var(--mono);flex-shrink:0}
+.summary .s{display:flex;align-items:center;gap:4px}
+.summary .s-pass{color:var(--pass)} .summary .s-fail{color:var(--fail)} .summary .s-skip{color:var(--skip)}
+
+.empty-state{text-align:center;padding:60px 20px;color:var(--text2)}
+.empty-state h2{font-size:18px;color:var(--text);margin-bottom:8px}
+.empty-state p{font-size:13px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔍 VOKO 冒烟测试</h1>
+  <div class="toolbar">
+    <label><input type="radio" name="mode" value="core" checked onchange="onModeChange()"> Core</label>
+    <label><input type="radio" name="mode" value="full" onchange="onModeChange()"> Full</label>
+    <button class="btn btn-xs" onclick="selectAll()">全选</button>
+    <button class="btn btn-xs" onclick="selectNone()">全不选</button>
+    <span id="selected-count" style="font:12px var(--mono);color:var(--text2)">已选 0 项</span>
+    <button class="btn-run" id="btn-run" onclick="startTests()">▶ 运行测试</button>
+    <button class="btn btn-xs" id="btn-stop" onclick="stopTests()" style="display:none">■ 停止</button>
+  </div>
+  <div class="progress" id="progress">
+    <div class="progress-bar"><div id="progress-fill"></div></div>
+    <span class="progress-text" id="progress-text">0/0</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main" id="main">
+    <table class="result-table" id="results" style="display:none"><thead>
+      <tr><th class="time">时间</th><th class="status"></th><th>ID</th><th>输入</th><th>预期</th><th>结果</th></tr>
+    </thead><tbody id="result-body"></tbody></table>
+    <div class="placeholder" id="placeholder">
+      <div class="empty-state">
+        <h2>选择测试项，点击「运行测试」</h2>
+        <p>左侧选择测试项目 → 点击运行 → 实时查看结果<br>绿 = 通过 · 红 = 失败 · 黄 = 跳过<br>选择状态会自动保存</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="summary" id="summary">
+  <div class="s s-pass" id="sum-pass">✅ 0 PASS</div>
+  <div class="s s-fail" id="sum-fail">❌ 0 FAIL</div>
+  <div class="s s-skip" id="sum-skip">⚠️ 0 SKIP</div>
+  <div class="s" id="sum-total" style="color:var(--text3)">—</div>
+</footer>
+
+<script>
+let registry = [];
+let abortCtrl = null;
+let selectedIds = new Set();
+let testResults = {}; // id → {status, detail}
+
+// ── 加载注册表 ──
+async function loadRegistry() {
+  try {
+    const r = await fetch('/api/smoke/registry');
+    registry = await r.json();
+  } catch(e) {
+    registry = []; console.error('加载注册表失败:', e);
+  }
+}
+
+// ── 渲染 ──
+function render() {
+  const mode = getMode();
+  const items = registry.filter(r => mode === 'full' || r.mode === 'core');
+
+  // 按 section 分组
+  const groups = {};
+  for (const item of items) {
+    const sec = item.section || item.id[0];
+    if (!groups[sec]) groups[sec] = { items: [], name: SEC_NAMES[sec] || sec };
+    groups[sec].items.push(item);
+  }
+
+  // 恢复保存的勾选
+  const saved = loadState();
+  if (saved && saved.mode === mode && saved.checkedIds) {
+    selectedIds = new Set(saved.checkedIds);
+  }
+
+  let html = '';
+  for (const [sec, grp] of Object.entries(groups)) {
+    const checked = grp.items.filter(i => selectedIds.has(i.id)).length;
+    const allChecked = checked === grp.items.length;
+    html += `<div class="sec-header" data-sec="${sec}">
+      <span class="arrow" onclick="toggleSection(this.parentElement)">▶</span>
+      <input type="checkbox" class="sec-check" ${allChecked ? 'checked' : ''}
+        onclick="event.stopPropagation();toggleSectionItems('${sec}', this.checked)"
+        title="全选/全不选 ${grp.name}">
+      ${esc(grp.name)}
+      <span class="badge">${checked}/${grp.items.length}</span>
+    </div>`;
+    for (const item of grp.items) {
+      const chk = selectedIds.has(item.id) ? ' checked' : '';
+      const cls = testResults[item.id] ? testResults[item.id].status : '';
+      html += `<div class="test-item ${cls}" data-id="${item.id}">
+        <input type="checkbox" ${chk} onchange="onCheck(this)" data-id="${item.id}">
+        <span class="id">${item.id}</span>
+        <span class="name" title="${esc(item.name)}">${esc(item.name)}</span>
+      </div>`;
+    }
+  }
+  document.getElementById('sidebar').innerHTML = html;
+  document.getElementById('selected-count').textContent =
+    `已选 ${selectedIds.size} 项`;
+}
+
+const SEC_NAMES = {
+  A: 'A. 消息收发', B: 'B. MCP 工具 HTTP', C: 'C. CLI 命令',
+  D: 'D. Web 端点', E: 'E. DB Schema', F: 'F. CLI 工具逐项',
+  G0: 'G0. Agent 发现', G1: 'G1. 页面导航', G2: 'G2. 表单操作',
+  G3: 'G3. JSON Console', G4: 'G4. MCP↔Web 交叉验证',
+  G5: 'G5. 消息收发→Web', G6: 'G6. 文件上传',
+  G7: 'G7. Agent 友好特性', G8: 'G8. 安全校验',
+  G9: 'G9. 数据一致性', G10: 'G10. 多Agent回路',
+};
+
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── 交互 ──
+function toggleSection(el) {
+  const sec = el.dataset.sec;
+  const items = el.parentElement.querySelectorAll(`.test-item`);
+  const visible = items[0]?.style.display !== 'none';
+  for (const it of items) it.style.display = visible ? 'none' : '';
+  el.classList.toggle('open', !visible);
+}
+function toggleSectionItems(sec, checked) {
+  const mode = getMode();
+  const secItems = registry.filter(r => (mode === 'full' || r.mode === 'core') && (r.section || r.id[0]) === sec);
+  for (const item of secItems) {
+    if (checked) selectedIds.add(item.id); else selectedIds.delete(item.id);
+  }
+  saveState();
+  // 直接更新 DOM 中的 checkbox + 计数，不重建整棵树
+  const items = document.querySelectorAll(`.test-item`);
+  for (const el of items) {
+    const id = el.dataset.id;
+    if (secItems.some(r => r.id === id)) {
+      el.querySelector('input[type=checkbox]').checked = checked;
+    }
+  }
+  updateCounts();
+}
+
+function onCheck(cb) {
+  const id = cb.dataset.id;
+  if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  saveState();
+  updateCounts();
+}
+function updateCounts() {
+  // 顶部总计
+  document.getElementById('selected-count').textContent = `已选 ${selectedIds.size} 项`;
+  // 各 section badge
+  const mode = getMode();
+  const items = registry.filter(r => mode === 'full' || r.mode === 'core');
+  const bySec = {};
+  for (const item of items) {
+    const sec = item.section || item.id[0];
+    if (!bySec[sec]) bySec[sec] = { total: 0, checked: 0 };
+    bySec[sec].total++;
+    if (selectedIds.has(item.id)) bySec[sec].checked++;
+  }
+  for (const [sec, counts] of Object.entries(bySec)) {
+    const badge = document.querySelector(`.sec-header[data-sec="${sec}"] .badge`);
+    if (badge) badge.textContent = `${counts.checked}/${counts.total}`;
+    const cb = document.querySelector(`.sec-header[data-sec="${sec}"] .sec-check`);
+    if (cb) cb.checked = counts.checked === counts.total && counts.total > 0;
+  }
+}
+
+function getMode() { return document.querySelector('input[name=mode]:checked')?.value || 'core'; }
+function onModeChange() { testResults = {}; document.getElementById('result-body').innerHTML = ''; render(); saveState(); }
+function selectAll() {
+  const mode = getMode();
+  for (const r of registry) if (mode === 'full' || r.mode === 'core') selectedIds.add(r.id);
+  saveState();
+  // 更新所有 checkbox + 计数
+  document.querySelectorAll('.test-item input[type=checkbox]').forEach(cb => cb.checked = true);
+  updateCounts();
+}
+function selectNone() {
+  selectedIds.clear();
+  saveState();
+  document.querySelectorAll('.test-item input[type=checkbox]').forEach(cb => cb.checked = false);
+  updateCounts();
+}
+
+// ── localStorage ──
+function saveState() {
+  localStorage.setItem('voko_smoke_state', JSON.stringify({
+    mode: getMode(), checkedIds: [...selectedIds]
+  }));
+}
+function loadState() {
+  try { return JSON.parse(localStorage.getItem('voko_smoke_state')); } catch { return null; }
+}
+
+// ── 测试执行 ──
+async function startTests() {
+  if (abortCtrl) return;
+  const items = [...selectedIds];
+  if (items.length === 0) return;
+
+  abortCtrl = new AbortController();
+  testResults = {};
+  document.getElementById('result-body').innerHTML = '';
+  document.getElementById('results').style.display = '';
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('btn-stop').style.display = '';
+  document.getElementById('progress').classList.add('visible');
+  let p = 0, f = 0, s = 0;
+
+  try {
+    const resp = await fetch('/api/smoke/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: getMode(), items }),
+      signal: abortCtrl.signal,
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.done) {
+            p = data.passed; f = data.failed; s = data.skipped;
+          } else {
+            testResults[data.id] = { status: data.status, detail: data.detail || '' };
+            if (data.status === 'pass') p++; else if (data.status === 'skip') s++; else f++;
+            addResultRow(data);
+            updateSidebarItem(data.id, data.status);
+          }
+        } catch(e) { console.error('SSE parse:', e); }
+      }
+      updateSummary(p, f, s);
+      updateProgress(p + f + s, items.length);
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') console.error('测试异常:', e);
+  } finally {
+    abortCtrl = null;
+    document.getElementById('btn-run').disabled = false;
+    document.getElementById('btn-stop').style.display = 'none';
+  }
+}
+
+function stopTests() {
+  if (abortCtrl) abortCtrl.abort();
+}
+
+function addResultRow(data) {
+  const tbody = document.getElementById('result-body');
+  const now = new Date();
+  const time = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  const statusIcon = data.status === 'pass' ? '✅' : data.status === 'skip' ? '⚠️' : '❌';
+  const row = document.createElement('tr');
+  row.className = data.status;
+  row.innerHTML = `<td class="time">${time}</td><td class="status">${statusIcon}</td>
+    <td style="font:11px var(--mono);color:var(--text3)">${esc(data.id)}</td>
+    <td class="input" title="${esc(data.input||'')}">${esc(data.input||'')}</td>
+    <td class="expected" title="${esc(data.expected||'')}">${esc(data.expected||'')}</td>
+    <td class="result" title="${esc(data.detail||'')}">${esc(data.detail||'')} ${data.elapsed ? '('+data.elapsed+'s)' : ''}</td>`;
+  tbody.appendChild(row);
+  document.getElementById('main').scrollTop = document.getElementById('main').scrollHeight;
+}
+
+function updateSidebarItem(id, status) {
+  const el = document.querySelector(`.test-item[data-id="${id}"]`);
+  if (el) { el.className = `test-item ${status}`; }
+}
+
+function updateProgress(done, total) {
+  const pct = total ? Math.round(done / total * 100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-text').textContent = done + '/' + total;
+}
+
+function updateSummary(p, f, s) {
+  document.getElementById('sum-pass').textContent = '✅ ' + p + ' PASS';
+  document.getElementById('sum-fail').textContent = '❌ ' + f + ' FAIL';
+  document.getElementById('sum-skip').textContent = '⚠️ ' + s + ' SKIP';
+  document.getElementById('sum-total').textContent = '共 ' + (p+f+s) + ' 项';
+}
+
+// ── 启动 ──
+(async () => {
+  await loadRegistry();
+  const saved = loadState();
+  if (saved) {
+    document.querySelector(`input[name=mode][value="${saved.mode}"]`).checked = true;
+  }
+  render();
+})();
+</script>
+</body>
+</html>

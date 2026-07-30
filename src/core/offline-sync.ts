@@ -1,0 +1,201 @@
+/**
+ * offline-sync.js — 离线消息同步
+ *
+ * 从 WuKongIM 服务端拉取遗漏的离线消息，逐条入库后按组分批转发给 agent。
+ * 纯 Node.js，无 Electron 依赖。
+ *
+ * @module
+ */
+
+const {
+  enqueueDbWrite,
+  getPrimaryOwnerEmail,
+  getUserAccessToken,
+  waitForDbQueue,
+} = require('./database');
+const { t, getLocale } = require('./i18n');
+const ENDPOINTS = require('../endpoints.json');
+import type { DatabaseLike } from '../types/database';
+import type { ForwardPayload, InboundMessage } from './messenger-types';
+
+interface AgentRow {
+  agent_id: string;
+  imUid: string;
+  imToken: string;
+  im_server_url: string;
+  owner_email?: string | null;
+}
+
+interface ConversationRow { channel_id: string }
+interface MaxSeqRow { m?: number | null }
+
+interface SyncMessage {
+  message_id?: string;
+  messageID?: string;
+  content?: string;
+  content_type?: number;
+  payload?: string;
+  from_uid?: string;
+  timestamp?: number;
+  message_seq?: number;
+  client_msg_no?: string;
+  header?: { no_persist?: boolean; red_dot?: boolean; sync_once?: boolean };
+}
+
+interface MessageHandlerLike {
+  handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
+  forwardToAgent(...args: unknown[]): unknown;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 拉取离线消息并转发
+ *
+ * @param {object} db - better-sqlite3 实例
+ * @param {object} messageHandler - MessageHandler 实例（需有 handleAgentMessage / forwardToAgent）
+ * @param {string} [agentIdFilter] - 可选，仅同步指定 agent
+ * @returns {Promise<number>} 同步的消息总数
+ */
+async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHandlerLike, agentIdFilter?: string): Promise<number> {
+  if (!messageHandler) {
+    console.log('[离线同步] 跳过：messageHandler 未初始化（Lite 独立模式下无需同步）');
+    return 0;
+  }
+  console.log(`[离线同步] 开始拉取离线消息...` + (agentIdFilter ? ` (仅 agent=${agentIdFilter})` : ''));
+  try {
+    const agents = db.prepare(`SELECT agent_id, imUid, imToken, im_server_url, owner_email FROM agents WHERE publish_status = 'published'`).all<AgentRow>();
+    const primaryOwnerEmail = getPrimaryOwnerEmail(db);
+    const pendingMessages: Array<{ agentId: string; data: InboundMessage }> = [];
+
+    for (const agent of agents) {
+      if (agentIdFilter && agent.agent_id !== agentIdFilter) {
+        console.log(`[离线同步] 跳过 agent=${agent.agent_id}`);
+        continue;
+      }
+      const ownerEmail = String(agent.owner_email || primaryOwnerEmail || '').trim();
+      const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      const httpBase = String(ENDPOINTS.im.apiBaseUrl || '').replace(/\/$/, '');
+      const convs = db.prepare(`SELECT DISTINCT channel_id FROM conversations WHERE agent_id = ?`).all<ConversationRow>(agent.agent_id);
+
+      for (const conv of convs) {
+        const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
+        const startSeq = (maxRow?.m || 0) + 1;
+
+        try {
+          const resp = await fetch(`${httpBase}/channel/messagesync`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(userAccessToken ? {
+                Authorization: `Bearer ${userAccessToken}`,
+                'X-Voko-Agent-Uid': agent.imUid,
+              } : {}),
+            },
+            body: JSON.stringify({
+              login_uid: agent.imUid,
+              channel_id: conv.channel_id,
+              channel_type: 1,
+              start_message_seq: startSeq,
+              end_message_seq: 0,
+              limit: 100,
+              pull_mode: 1
+            })
+          });
+          if (!resp.ok) {
+            console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} HTTP ${resp.status}`);
+            continue;
+          }
+          const data = await resp.json() as { messages?: SyncMessage[] };
+          const msgs = data.messages || [];
+          if (msgs.length > 0) console.log(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 拉取到 ${msgs.length} 条`);
+
+          for (const msg of msgs) {
+            const msgId = msg.message_id || msg.messageID;
+            if (!msgId) continue;
+            let content = msg.content || '';
+            let contentType = msg.content_type || 1;
+            if (msg.payload && !content) {
+              try {
+                const decoded = JSON.parse(Buffer.from(msg.payload, 'base64').toString());
+                content = decoded.content || '';
+                contentType = decoded.type || 1;
+              } catch (_) {}
+            }
+            const toUid = msg.from_uid === agent.imUid ? conv.channel_id : agent.imUid;
+            pendingMessages.push({
+              agentId: agent.agent_id,
+              data: {
+                fromUid: msg.from_uid || '',
+                toUid,
+                channelId: conv.channel_id,
+                channelType: 1,
+                content,
+                contentType,
+                messageId: msgId,
+                timestamp: msg.timestamp || 0,
+                messageSeq: msg.message_seq,
+                clientMsgNo: msg.client_msg_no,
+                noPersist: msg.header?.no_persist ? 1 : 0,
+                redDot: msg.header?.red_dot ? 1 : 0,
+                syncOnce: msg.header?.sync_once ? 1 : 0
+              }
+            });
+          }
+        } catch (e: unknown) {
+          console.error(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 请求失败:`, errorMessage(e));
+        }
+      }
+    }
+
+    console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息，开始处理...`);
+
+    // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
+    // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集
+    // （enqueueDbWrite 的 .then(fn,fn) 会吞掉返回值，必须用闭包外数组，不能从其取回）。
+    // UNIQUE constraint 时返回 undefined 跳过已存在的消息，所以无论 WebSocket 是否已处理过，
+    // 都不会重复通知 UI。
+    const collected: ForwardPayload[] = [];
+    await new Promise<void>(resolve => {
+      enqueueDbWrite(() => {
+        for (const p of pendingMessages) {
+          const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
+          if (payload) collected.push(payload);
+        }
+      });
+      waitForDbQueue().then(() => setImmediate(resolve));
+    });
+
+    // 按 (agentId, channelId) 分组，同一会话的连续离线消息合并为一条 prompt 转发，
+    // 避免 forwardToAgent 的 fire-and-forget 逐条投递导致 agent thinking 中被打断。
+    // 单条消息不包装，直接转发原文。
+    const groups = new Map<string, ForwardPayload[]>();
+    for (const p of collected) {
+      const key = `${p.agentId}|${p.channelId}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    }
+
+    let forwarded = 0;
+    for (const [, msgs] of groups) {
+      const last = msgs[msgs.length - 1];
+      const merged = msgs.length === 1
+        ? last.content
+        : t('errors.offline.merged', { count: msgs.length }, getLocale()) + '\n'
+          + msgs.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
+      messageHandler.forwardToAgent(last.agentId, last.fromUid, merged, last.channelId,
+        last.channelType, last.contentType, last.messageId, last.timestamp, last.mention || null);
+      forwarded++;
+    }
+
+    // console.log(`[离线同步] 完成，${pendingMessages.length} 条入库，通过审核 ${collected.length} 条，合并为 ${forwarded} 次转发`);
+    return pendingMessages.length;
+  } catch (e: unknown) {
+    console.error('[离线同步] 失败:', errorMessage(e));
+    return 0;
+  }
+}
+
+module.exports = { syncOfflineMessages };

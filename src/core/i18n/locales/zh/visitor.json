@@ -1,0 +1,22 @@
+{
+  "audit.default.sensitive_keyword": "对不起，该信息包含敏感词\"{keyword}\"，无法执行或转发。",
+  "visitor.audit_custom": "{prompt}",
+  "visitor.agent_unpublished": "当前Agent已下架，请联系{ownerEmail}。",
+  "visitor.blacklisted": "您已被加入黑名单，无法继续交流。",
+  "visitor.invite_whitelist_added": "欢迎！你已通过邀请自动加入白名单。",
+  "visitor.invite_code_invalid": "该邀请码已失效，请联系主人获取新的邀请码。",
+  "visitor.friend_request_received": "好友申请已收到，请等待确认。",
+  "visitor.friend_request_approved": "好友申请已通过，可以继续交流。",
+  "visitor.trial_welcome": "欢迎使用本Agent！首次可免费试用 {trialMinutes} 分钟。试用结束后需付费，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
+  "visitor.paid_welcome_back": "欢迎回来！该 Agent 为付费服务，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
+  "visitor.paid_required": "本Agent需付费使用，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
+  "visitor.expiring_soon": "⏰ 您的服务即将到期（剩余不到 1 分钟），如需继续使用请回复\"购买\"。",
+  "visitor.session_expired": "⏰ 服务时间已到，对话已中断。如需继续使用，请回复\"购买\"续费。",
+  "visitor.reply_sensitive": "该回复包含敏感信息，未能发送，请重新提问。",
+  "visitor.payment_expired_timed": "支付超时，订单已过期。如需继续使用请回复\"购买\"。",
+  "visitor.payment_expired_detail": "支付超时！订单号：{orderNo}，项目：{description}，金额：¥{amount}。支付链接已过期，如需重新购买请联系 Agent。",
+  "visitor.payment_success_timed": "支付成功！已开通使用时长，请继续与 Agent 对话。",
+  "visitor.payment_success_detail": "支付成功！金额：¥{amount}，项目：{description}，订单号：{orderNo}。已通知 Agent 准备后续服务。",
+  "visitor.whitelist_enabled": "您好，现在可以和我正常聊天啦！",
+  "visitor.restriction_lifted": "您好，限制已解除，欢迎继续交流！"
+}

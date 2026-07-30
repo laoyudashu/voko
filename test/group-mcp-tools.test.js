@@ -1,0 +1,420 @@
+/**
+ * 群聊 MCP 工具单元测试
+ *
+ * 测试 tools.js 群聊相关 handler 的本地逻辑（不依赖 WuKongIM 实例）：
+ *   - get_chat_history 群聊按 channel_id 查全量 / 单聊按 agent_id
+ *   - list_conversations 返回 channelType + 群聊 needsReply=false
+ *   - get_group_context 消息部分（成员查询 mock fetch）
+ *   - create_group / accept_invitation（mock fetch subscriber_add）
+ *
+ * 运行: node test/group-mcp-tools.test.js
+ */
+
+const assert = require('assert');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const { initDatabase } = require('../build/core/database');
+const { createToolHandlers } = require('../build/mcp/tools');
+const { createDispatcher } = require('../build/core/dispatcher');
+
+// ========================================
+// 夹具：建库 + 插数据 + mock fetch + mock sendMessage
+// ========================================
+function setup(options = {}) {
+  const groupStatus = options.groupStatus || 'active';
+  const tmpDir = path.join(os.tmpdir(), 'voko-group-mcp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6));
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const db = initDatabase(path.join(tmpDir, 'test.db'), { silent: true });
+
+  const now = Date.now();
+  // 两个 agent
+  db.prepare(`INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, publish_status, access_mode, owner_email, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run('1', 'agentA', 'imuidA', 'tok', 'ws://fake', 'published', 'public', 'a@a.com', now, now);
+  db.prepare(`INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, publish_status, access_mode, owner_email, agent_name, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('2', 'agentB', 'imuidB', 'tok', 'ws://fake', 'published', 'public', 'b@b.com', 'AgentB', now, now);
+  db.prepare('INSERT INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+    .run('user_access_token', JSON.stringify({
+      'a@a.com': { user_access_token: 'test-token-a' },
+      'b@b.com': { user_access_token: 'test-token-b' },
+    }), now);
+
+  // 访客 + 群聊消息
+  db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('m1', 'visitor1', 'imuidA', '单聊消息', 'visitor1', 1, 'agentA', now, 0, 'received', 1, null);
+  db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('m2', 'visitor1', 'room1', '群聊@消息', 'room1', 2, 'agentA', now + 1, 0, 'received', 1, JSON.stringify({ uids: ['imuidA'] }));
+
+  // 群聊会话（agentA 参与）
+  db.prepare(`INSERT INTO conversations (user_uid, channel_id, channel_type, name, last_message, last_timestamp, unread_count, agent_id) VALUES (?,?,?,?,?,?,?,?)`)
+    .run('imuidA', 'room1', 2, 'room1', '群聊@消息', now + 1, 1, 'agentA');
+
+  // 记录 fetch 调用
+  const fetchCalls = [];
+  const fakeFetch = async (url, opts = {}) => {
+    fetchCalls.push({ url, opts });
+    let data = {};
+    if (url.includes('/api/group/v1/create')) {
+      data = { channel_id: 'room-created', name: '测试群', owner_uid: 'imuidA', members: [] };
+    } else if (url.includes('/api/group/v1/search')) {
+      data = { groups: options.searchGroups || [], total: (options.searchGroups || []).length };
+    } else if (url.includes('/api/group/v1/info')) {
+      data = { channel_id: 'room1', name: '测试群', status: groupStatus, dissolved_at: groupStatus === 'dissolved' ? '2026-07-26T12:00:00.000Z' : null, members: [
+        { uid: 'imuidA', role: 'owner' },
+        { uid: 'imuidB', role: 'member' },
+        { uid: 'visitor1', role: 'member' },
+      ] };
+    } else if (url.includes('/api/group/v1/dissolve')) {
+      data = { dissolved: true, channel_id: 'room1' };
+    } else if (url.includes('/api/group/v1/quit')) {
+      data = { quit: true, channel_id: 'room1' };
+    }
+    return { ok: true, json: async () => ({ success: true, data }) };
+  };
+  global.fetch = fakeFetch;
+
+  const interventions = [];
+  const sentMessages = [];
+  const cx = {
+    db,
+    query: (sql, params = []) => { try { return db.prepare(sql).all(...params); } catch (_) { return []; } },
+    exec: (sql, params = []) => { try { db.prepare(sql).run(...params); } catch (_) {} },
+    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions) => {
+      sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions });
+      return { success: true };
+    },
+    enqueueOwnerIntervention: record => interventions.push(record),
+    wukongim: {
+      getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
+    },
+  };
+  const handlers = createToolHandlers(cx);
+
+  return {
+    db, handlers, fetchCalls, sentMessages, interventions,
+    cleanup: () => { try { db.close(); } catch (_) {} try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} delete global.fetch; }
+  };
+}
+
+let pass = 0, fail = 0;
+function test(name, fn) {
+  return Promise.resolve().then(fn).then(() => { pass++; console.log(`  ✓ ${name}`); })
+    .catch((e) => { fail++; console.log(`  ✗ ${name}`); console.log(`    ${e.message}`); });
+}
+
+// ========================================
+async function main() {
+console.log('\n=== 群聊 MCP 工具（tools.js handler）===\n');
+
+await test('send_message 透传群聊 @全体和成员 UID', async () => {
+  const { handlers, sentMessages, cleanup } = setup();
+  try {
+    const mentions = { all: true, uids: [] };
+    const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '@全体成员 hello', channelType: 2, mentions });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.deepStrictEqual(sentMessages[0].mentions, mentions);
+    const memberMentions = { all: false, uids: ['imuidB'] };
+    await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '@AgentB hello', channelType: 2, mentions: memberMentions });
+    assert.deepStrictEqual(sentMessages[1].mentions, memberMentions);
+  } finally { cleanup(); }
+});
+await test('send_message 拒绝普通成员 @全体', async () => {
+  const { handlers, sentMessages, cleanup } = setup();
+  try {
+    const r = await handlers.send_message({
+      agentId: 'agentB',
+      toUid: 'room1',
+      content: '@全体成员 hello',
+      channelType: 2,
+      mentions: { all: true, uids: [] },
+    });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'MENTION_ALL_FORBIDDEN');
+    assert.strictEqual(sentMessages.length, 0);
+  } finally { cleanup(); }
+});
+await test('dissolved 群在发送函数内部拒绝所有消息类型', async () => {
+  const { handlers, sentMessages, cleanup } = setup({ groupStatus: 'dissolved' });
+  try {
+    for (const contentType of [1, 2, 3, 'voice']) {
+      const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: 'blocked', channelType: 2, contentType });
+      assert.strictEqual(r.success, false);
+      assert.strictEqual(r.code, 'GROUP_DISSOLVED');
+    }
+    assert.strictEqual(sentMessages.length, 0);
+  } finally { cleanup(); }
+});
+
+await test('get_chat_history 群聊（channelType=2）按 channel_id 查全量，含其他 agent 的消息', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const r = await handlers.get_chat_history({ channelId: 'room1', channelType: 2, agentId: 'agentA' });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.messages.length, 1, '应查到群聊消息');
+    assert.strictEqual(r.messages[0].channelType, 2, 'fmtMsg 应带 channelType=2');
+    assert.deepStrictEqual(r.messages[0].mention, { uids: ['imuidA'] }, 'fmtMsg 应解析 mention');
+  } finally { cleanup(); }
+});
+
+await test('get_chat_history 单聊（channelType=1）排除群聊消息，按 agent_id 过滤', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const r = await handlers.get_chat_history({ channelId: 'visitor1', channelType: 1, agentId: 'agentA' });
+    assert.strictEqual(r.messages.length, 1, '只查单聊消息');
+    assert.strictEqual(r.messages[0].channelType, 1);
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    global.__dispatcher = createDispatcher({ db, providers: {} });
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(4, 'm1');
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-fetch-room1', 'imuidB', 'room1', '同群另一 Agent 消息', 'room1', 2, 'agentB', Date.now() + 2, 0, 'received', 1, 2, JSON.stringify({ uids: ['imuidA'] }));
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-fetch-room2', 'imuidB', 'room2', '其他群消息', 'room2', 2, 'agentB', Date.now() + 3, 0, 'received', 1, 3);
+
+    const params = {
+      agentId: 'agentA',
+      channelId: 'room1',
+      channelType: 2,
+      messageSeq: 0,
+      onlyReplies: false,
+      limit: 50,
+    };
+    const r = await handlers.fetch_new_messages(params);
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.messages.length, 2, '只应返回指定群的两条消息');
+    assert.ok(r.messages.every(m => m.channelId === 'room1' && m.channelType === 2), '不能混入其他群或单聊');
+    assert.deepStrictEqual(new Set(r.messages.map(m => m.agentId)), new Set(['agentA', 'agentB']), '同群消息可包含多个 agent');
+    assert.strictEqual(r.securityContext.policyId, 'voko-external-message-v1');
+    assert.strictEqual(r.securityContext.defaultTrustLevel, 'untrusted');
+    assert.strictEqual(r.securityContext.ownerCommandsOnlyVia, 'verified_owner_intervention');
+    assert.ok(Array.isArray(r.securityContext.instructions) && r.securityContext.instructions.length > 0);
+    const visitorMessage = r.messages.find(m => m.id === 'm2');
+    assert.strictEqual(visitorMessage.content, '群聊@消息', 'Pull 安全上下文不能污染原始 content');
+    assert.strictEqual(visitorMessage.sourceType, 'visitor');
+    assert.strictEqual(visitorMessage.trustLevel, 'untrusted');
+    const peerMessage = r.messages.find(m => m.id === 'm-fetch-room1');
+    assert.strictEqual(peerMessage.sourceType, 'agent_peer');
+    assert.strictEqual(peerMessage.trustLevel, 'untrusted_peer');
+    assert.match(peerMessage.content, /\[VOKO A2A CONTROL\]/);
+
+    const blocked = await handlers.fetch_new_messages({ ...params, blockTimeout: 1 });
+    assert.strictEqual(blocked.messages.length, 2, '阻塞轮询也应按指定群过滤');
+    assert.ok(blocked.messages.every(m => m.channelId === 'room1' && m.channelType === 2), '阻塞轮询不能混入其他频道');
+    assert.strictEqual(blocked.securityContext.policyId, 'voko-external-message-v1');
+  } finally { delete global.__dispatcher; cleanup(); }
+});
+
+await test('同一频道的新阻塞轮询会安全取消旧轮询', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const params = {
+      agentId: 'agentA',
+      channelId: 'empty-room',
+      channelType: 2,
+      messageSeq: 0,
+      onlyReplies: false,
+      limit: 10,
+    };
+    const first = handlers.fetch_new_messages({ ...params, blockTimeout: 3 });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const second = handlers.fetch_new_messages({ ...params, blockTimeout: 1 });
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.strictEqual(firstResult.success, true);
+    assert.strictEqual(secondResult.success, true);
+    assert.deepStrictEqual(firstResult.messages, []);
+    assert.deepStrictEqual(secondResult.messages, []);
+  } finally { cleanup(); }
+});
+
+await test('list_conversations 返回 channelType，群聊 needsReply=false', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const r = await handlers.list_conversations({ agentId: 'agentA', filter: 'all' });
+    const group = r.conversations.find(c => c.channelType === 2);
+    assert.ok(group, '应有群聊会话');
+    assert.strictEqual(group.needsReply, false, '群聊 needsReply 应为 false');
+  } finally { cleanup(); }
+});
+
+await test('list_conversations channelType=group 过滤只返回群聊', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const r = await handlers.list_conversations({ agentId: 'agentA', channelType: 'group', filter: 'all' });
+    assert.ok(r.conversations.every(c => c.channelType === 2), '应全部是群聊');
+  } finally { cleanup(); }
+});
+
+await test('create_group 调用群服务并返回 channelId', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.create_group({ agentId: 'agentA', name: '测试群' });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.channelId, 'room-created');
+    const call = fetchCalls.find(c => c.url.includes('/api/group/v1/create'));
+    assert.ok(call, '应调用群创建接口');
+    const body = JSON.parse(call.opts.body);
+    assert.strictEqual(body.owner_uid, 'imuidA');
+    assert.strictEqual(body.acting_agent_uid, 'imuidA');
+    assert.strictEqual(body.name, '测试群');
+  } finally { cleanup(); }
+});
+
+await test('accept_invitation 通过群信息接口校验成员身份', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.accept_invitation({ agentId: 'agentB', channelId: 'room1' });
+    assert.strictEqual(r.success, true);
+    const call = fetchCalls.find(c => c.url.includes('/api/group/v1/info'));
+    assert.ok(call, '应调用群信息接口');
+    const body = JSON.parse(call.opts.body);
+    assert.strictEqual(body.channel_id, 'room1');
+    assert.strictEqual(body.uid, 'imuidB');
+  } finally { cleanup(); }
+});
+
+await test('invite_to_group 通过群服务邀请成员', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.invite_to_group({ agentId: 'agentB', channelId: 'room1', members: ['visitor1'] });
+    assert.strictEqual(r.success, true);
+    const call = fetchCalls.find(c => c.url.includes('/api/group/v1/invite'));
+    assert.ok(call, '应调用群邀请接口');
+    const body = JSON.parse(call.opts.body);
+    assert.strictEqual(body.channel_id, 'room1');
+    assert.strictEqual(body.operator_uid, 'imuidB');
+    assert.deepStrictEqual(body.members, ['visitor1']);
+  } finally { cleanup(); }
+});
+
+await test('get_group_context 返回成员 + 最近群聊消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m3', 'imuidB', 'room1', '第二条无序列号消息', 'room1', 2, 'agentB', Date.now() + 2, 0, 'received', 1);
+    const r = await handlers.get_group_context({ agentId: 'agentA', channelId: 'room1', limit: 20 });
+    assert.strictEqual(r.success, true);
+    assert.ok(r.members.length >= 1, '应有成员');
+    assert.strictEqual(r.messages.length, 2, '没有 client_msg_no/message_seq 的消息也不能被合并');
+    const mentionedMessage = r.messages.find(m => m.fromUid === 'visitor1');
+    assert.deepStrictEqual(mentionedMessage.mention, { uids: ['imuidA'] }, 'group context should expose mention metadata');
+    // 成员 isAgent 标记
+    const agentMember = r.members.find(m => m.uid === 'imuidB');
+    assert.strictEqual(agentMember.isAgent, true, 'imuidB 应标记为 agent');
+  } finally { cleanup(); }
+});
+
+await test('get_group_context 对历史消息去重后分页', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-page', 'imuidB', 'room1', '较新的历史', 'room1', 2, 'agentB', Date.now() + 100, 0, 'received', 1);
+    const first = await handlers.get_group_context({ agentId: 'agentA', channelId: 'room1', limit: 1, offset: 0 });
+    const second = await handlers.get_group_context({ agentId: 'agentA', channelId: 'room1', limit: 1, offset: 1 });
+    assert.strictEqual(first.messages.length, 1);
+    assert.strictEqual(first.hasMore, true);
+    assert.strictEqual(first.offset, 0);
+    assert.strictEqual(second.messages.length, 1);
+    assert.notStrictEqual(first.messages[0].content, second.messages[0].content);
+  } finally { cleanup(); }
+});
+
+await test('get_group_context 透传 dissolved 状态和时间', async () => {
+  const { handlers, cleanup } = setup({ groupStatus: 'dissolved' });
+  try {
+    const r = await handlers.get_group_context({ agentId: 'agentA', channelId: 'room1', limit: 20 });
+    assert.strictEqual(r.status, 'dissolved');
+    assert.strictEqual(r.dissolvedAt, '2026-07-26T12:00:00.000Z');
+  } finally { cleanup(); }
+});
+
+await test('dissolve_group sends the authenticated user owned Agent identity', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.dissolve_group({ agentId: 'agentA', channelId: 'room1' });
+    assert.strictEqual(r.success, true);
+    const call = fetchCalls.find(c => c.url.includes('/api/group/v1/dissolve'));
+    const body = JSON.parse(call.opts.body);
+    assert.deepStrictEqual(body, { channel_id: 'room1', acting_agent_uid: 'imuidA' });
+  } finally { cleanup(); }
+});
+
+await test('quit_group sends the authenticated user owned Agent identity and clears local conversation', async () => {
+  const { db, handlers, fetchCalls, cleanup } = setup({ groupStatus: 'dissolved' });
+  try {
+    const r = await handlers.quit_group({ agentId: 'agentA', channelId: 'room1' });
+    assert.strictEqual(r.success, true);
+    const call = fetchCalls.find(c => c.url.includes('/api/group/v1/quit'));
+    assert.deepStrictEqual(JSON.parse(call.opts.body), { channel_id: 'room1', acting_agent_uid: 'imuidA' });
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM conversations WHERE user_uid=? AND channel_id=? AND channel_type=2').get('imuidA', 'room1').n, 0);
+  } finally { cleanup(); }
+});
+
+await test('search_groups 防御性过滤 dissolved 群', async () => {
+  const { handlers, cleanup } = setup({ searchGroups: [
+    { channel_id: 'room-active', status: 'active' },
+    { channel_id: 'room-dissolved', status: 'dissolved' },
+  ] });
+  try {
+    const r = await handlers.search_groups({ agentId: 'agentA', keyword: 'room' });
+    assert.deepStrictEqual(r.groups.map(g => g.channel_id), ['room-active']);
+  } finally { cleanup(); }
+});
+
+await test('search_groups 拒绝服务端返回的非数组群列表', async () => {
+  const { handlers, cleanup } = setup({ searchGroups: { malformed: true } });
+  try {
+    const r = await handlers.search_groups({ agentId: 'agentA', keyword: 'room' });
+    assert.strictEqual(r.success, false);
+    assert.match(r.error, /群搜索服务返回的数据结构无效|invalid response/i);
+  } finally { cleanup(); }
+});
+
+await test('decline_invitation 不调 subscriber_add，仅记录', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.decline_invitation({ agentId: 'agentA', channelId: 'room1' });
+    assert.strictEqual(r.success, true);
+    assert.ok(!fetchCalls.some(c => c.url.includes('/channel/subscriber_add')), '拒绝不应调 subscriber_add');
+  } finally { cleanup(); }
+});
+
+await test('ask_human_for_help persists and emits the original group context', async () => {
+  const { db, handlers, interventions, cleanup } = setup();
+  try {
+    const result = await handlers.ask_human_for_help({
+      agentId: 'agentA', visitorId: 'visitor1', channelId: 'room1', channelType: 2,
+      messageId: 'm2', problem: 'need owner decision', suggestion: 'approve'
+    });
+    assert.strictEqual(result.success, true);
+    const row = db.prepare('SELECT * FROM owner_interventions WHERE id=?').get(result.interventionId);
+    assert.strictEqual(row.visitor_id, 'visitor1');
+    assert.strictEqual(row.source_sender_uid, 'visitor1');
+    assert.strictEqual(row.target_channel_id, 'room1');
+    assert.strictEqual(row.target_channel_type, 2);
+    assert.strictEqual(row.source_message_id, 'm2');
+    assert.strictEqual(row.session_key, 'agent:agentA:group:room1');
+    assert.strictEqual(interventions[0].targetChannelType, 2);
+    assert.strictEqual(interventions[0].targetChannelId, 'room1');
+
+    const checked = await handlers.check_human_replies({ agentId: 'agentA', id: result.interventionId });
+    assert.strictEqual(checked.interventions[0].channelType, 2);
+    assert.strictEqual(checked.interventions[0].channelId, 'room1');
+    assert.strictEqual(checked.interventions[0].sourceSenderUid, 'visitor1');
+  } finally { cleanup(); }
+});
+
+// ========================================
+console.log('\n========================================');
+console.log(`群聊 MCP 工具测试: ${pass} 通过, ${fail} 失败`);
+console.log('========================================\n');
+process.exit(fail > 0 ? 1 : 0);
+}
+
+main();

@@ -1,0 +1,2563 @@
+export {};
+
+/**
+ * VOKO MCP — 37 个工具处理器
+ *
+ * 零 Electron 依赖，所有外部依赖通过 context (cx) 注入。
+ * 全部通过 createToolHandlers(cx) 工厂函数创建。
+ */
+
+const ENDPOINTS = require('../endpoints.json');
+const { buildInvitationPrompt, buildEmailSubject, buildEmailContent } = require('../core/invitation');
+const groupClient = require('../core/group-client');
+const { t } = require('../core/i18n');
+const { normalizeBackendType } = require('../core/agent-backend-types');
+const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
+import type { LiteContext } from '../context';
+import type { DatabaseLike } from '../types/database';
+
+// tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
+// 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
+type DynamicRow = Record<string, any>;
+
+interface MessageDbRow {
+  id: string;
+  channel_id: string;
+  from_uid: string;
+  to_uid: string;
+  content: string;
+  timestamp: number;
+  message_seq: number | null;
+  is_me: number;
+  content_type: number | null;
+  agent_id: string | null;
+  channel_type: number | null;
+  mention?: string | null;
+  client_msg_no?: string | null;
+  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'system';
+  trustLevel?: 'untrusted' | 'untrusted_peer' | 'trusted_owner' | 'trusted_system';
+}
+
+interface AgentDbRow extends DynamicRow {
+  agent_id: string;
+  agent_name?: string | null;
+  imUid?: string | null;
+  owner_email?: string | null;
+}
+
+interface ConversationDbRow extends DynamicRow {
+  channel_id: string;
+  channel_type: number;
+  name?: string | null;
+  avatar?: string | null;
+  last_message?: string | null;
+  last_timestamp?: number | null;
+  unread_count?: number | null;
+  agent_id?: string | null;
+}
+
+interface InterventionDbRow extends DynamicRow {
+  id: string;
+  ask_time: number;
+  created_at: number;
+}
+
+interface PaymentOrderDbRow extends DynamicRow {
+  id: string;
+  amount: number;
+  status: string;
+  created_at: number;
+}
+
+interface PaymentAuthDbRow extends DynamicRow {
+  id: string;
+  name?: string | null;
+  bank_card?: string | null;
+  id_card?: string | null;
+  phone?: string | null;
+  request_no?: string | null;
+  receiver_apply_status?: string | null;
+}
+
+interface PaymentAuthDetailRow extends PaymentAuthDbRow {
+  receiver_type?: number | null;
+  company_name?: string | null;
+  unified_social_credit_code?: string | null;
+  legal_name?: string | null;
+  legal_licence_no?: string | null;
+  bank_code?: string | null;
+  status?: string | null;
+  payment_user_uid?: string | null;
+  request_no?: string | null;
+  receiver_apply_status?: string | null;
+  receiver_no?: string | null;
+}
+
+interface PaymentAgentRow {
+  owner_email?: string | null;
+  did?: string | null;
+  private_key?: string | null;
+}
+
+interface PaymentFeeRow {
+  payment_fee_rate?: number | null;
+  agent_usage_fee_rate?: number | null;
+}
+
+interface PaymentApiResult {
+  code: number;
+  msg?: string;
+  message?: string;
+  data: Record<string, unknown>;
+}
+
+interface BankDbRow {
+  code: string;
+  name: string;
+  short_name: string | null;
+}
+
+interface GroupMember {
+  uid: string;
+  role?: string | null;
+  mute_until?: string | null;
+}
+
+interface AgentUidRow {
+  imUid: string;
+}
+
+interface UserCacheRow {
+  nickname: string | null;
+}
+
+interface GroupHistoryRow {
+  id: string;
+  from_uid: string;
+  content: string;
+  timestamp: number;
+  content_type: number;
+  message_seq: number | null;
+  client_msg_no: string | null;
+  mention: string | null;
+}
+
+interface ChannelRow {
+  channel_id: string;
+  channel_type: number;
+}
+
+interface MaxSequenceRow {
+  max_seq: number | null;
+}
+
+interface PollController {
+  aborted: boolean;
+  abort?: () => void;
+}
+
+interface PullDispatcher {
+  prepareForPull?(agentId: string | undefined, row: MessageDbRow): MessageDbRow | null | undefined;
+}
+
+interface GroupSummary {
+  status?: string | null;
+  dissolved_at?: number | string | null;
+  [key: string]: unknown;
+}
+
+interface ConfigDataRow {
+  data: string;
+}
+
+interface AgentRegistrationLike {
+  sendCode(...args: unknown[]): Promise<RegistrationOperationResult>;
+  loginByCode(...args: unknown[]): Promise<RegistrationOperationResult>;
+  verifyCodePreview(...args: unknown[]): Promise<RegistrationOperationResult>;
+  verifyCode(...args: unknown[]): Promise<RegistrationOperationResult>;
+  registerAgentInDb(...args: unknown[]): Promise<RegistrationOperationResult>;
+  updateAgentBinding(...args: unknown[]): Promise<RegistrationOperationResult>;
+  createAgentByToken(...args: unknown[]): Promise<RegistrationOperationResult>;
+}
+
+interface RegistrationOperationResult {
+  success?: boolean;
+  error?: string;
+  noToken?: boolean;
+  userExists?: boolean;
+  agents?: unknown;
+  data?: unknown;
+}
+
+interface RegistrationAgentSummary extends Record<string, unknown> {
+  agentId: string;
+}
+
+interface VerifiedRegistrationData extends Record<string, unknown> {
+  agentId?: string;
+  agents: RegistrationAgentSummary[];
+  imUid: string;
+  imToken: string;
+  did: string;
+  publicKey: string;
+  privateKey: string;
+  agentName?: string;
+  imServerUrl?: string;
+  loginToken?: string;
+}
+
+interface CreatedRegistrationData extends Record<string, unknown> {
+  agentId: string;
+  imUid: string;
+  imToken: string;
+  did: string;
+  publicKey: string;
+  privateKey: string;
+  name?: string;
+  agentName?: string;
+}
+
+type McpContext = Omit<LiteContext,
+  | 'db' | 'query' | 'exec' | 'agentRegistration'
+  | 'getAgentStatus' | 'startAgentWorker' | 'stopAgentWorker'
+  | 'registerCapabilities' | 'sendMessage' | 'checkReceiveChannel'
+  | 'uploadFileToOSS' | 'getPaymentAuth' | 'getAgentImUid'
+  | 'savePaymentOrder' | 'toggleWhitelistMode' | 'wukongim'
+> & {
+  db: DatabaseLike;
+  query<T = DynamicRow>(sql: string, params?: unknown[]): T[];
+  exec(sql: string, params?: unknown[]): { changes?: number | bigint };
+  agentRegistration: AgentRegistrationLike;
+  getAgentStatus?(agentId?: string): DynamicRow | null;
+  startAgentWorker?(agentId?: string, config?: unknown, appPaths?: unknown): unknown;
+  stopAgentWorker?(agentId?: string): Promise<unknown> | unknown;
+  registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
+  sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown): Promise<DynamicRow>;
+  checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
+  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string): Promise<unknown>;
+  getPaymentAuth?(agentId?: string): unknown;
+  getAgentImUid?(agentId?: string): string;
+  savePaymentOrder(order: DynamicRow): unknown;
+  toggleWhitelistMode?(params: { agentId?: string; enabled?: boolean }): Promise<unknown>;
+  getEnabledChannel?(): DynamicRow | null;
+  enqueueOwnerIntervention?(record: DynamicRow): unknown;
+  processPaymentOrder?(order: DynamicRow): Promise<unknown>;
+  wukongim?: {
+    getCurrentUid?(agentId?: string): string;
+  };
+};
+
+interface MentionParams {
+  all?: boolean;
+  uids?: string[];
+}
+
+function toolErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toolErrorHasNoToken(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { noToken?: unknown }).noToken === true;
+}
+
+function isGroupSummary(value: unknown): value is GroupSummary {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function readPaymentApiResult(response: {
+  ok?: boolean;
+  status?: number;
+  json(): Promise<unknown>;
+}): Promise<PaymentApiResult> {
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch (error) {
+    if (response.ok === false) throw new Error(`HTTP ${response.status || 500}`);
+    throw error;
+  }
+  if (!isRecord(value) || typeof value.code !== 'number') {
+    if (response.ok === false) throw new Error(`HTTP ${response.status || 500}`);
+    throw new Error(t('mcp.payment.invalid_response'));
+  }
+  if (value.data !== undefined && !isRecord(value.data)) {
+    throw new Error(t('mcp.payment.invalid_response'));
+  }
+  return {
+    code: value.code,
+    msg: typeof value.msg === 'string' ? value.msg : undefined,
+    message: typeof value.message === 'string' ? value.message : undefined,
+    data: isRecord(value.data) ? value.data : {},
+  };
+}
+
+function optionalString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function optionalFeeRate(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+    ? value
+    : NaN;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function registrationAgentSummaries(value: unknown): RegistrationAgentSummary[] | null {
+  if (!Array.isArray(value)) return null;
+  const agents: RegistrationAgentSummary[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || !nonEmptyString(item.agentId)) return null;
+    agents.push(item as RegistrationAgentSummary);
+  }
+  return agents;
+}
+
+function verifiedRegistrationData(value: unknown): VerifiedRegistrationData | null {
+  if (!isRecord(value)) return null;
+  const agents = registrationAgentSummaries(value.agents);
+  if (!agents || agents.length === 0
+    || !nonEmptyString(value.imUid)
+    || !nonEmptyString(value.imToken)
+    || !nonEmptyString(value.did)
+    || !nonEmptyString(value.publicKey)
+    || !nonEmptyString(value.privateKey)) {
+    return null;
+  }
+  if (value.imServerUrl !== undefined && !nonEmptyString(value.imServerUrl)) return null;
+  return { ...value, agents } as VerifiedRegistrationData;
+}
+
+function selectedRegistrationAgentId(
+  data: VerifiedRegistrationData,
+  requestedAgentId: unknown,
+  requestedAgentName: unknown,
+): string | null {
+  if (nonEmptyString(data.agentId)) return data.agentId;
+  if (nonEmptyString(requestedAgentId)
+    && data.agents.some(agent => agent.agentId === requestedAgentId)) {
+    return requestedAgentId;
+  }
+  if (nonEmptyString(requestedAgentName)) {
+    const match = data.agents.find(agent => agent.name === requestedAgentName);
+    if (match) return match.agentId;
+  }
+  return data.agents.length === 1 ? data.agents[0].agentId : null;
+}
+
+function createdRegistrationData(value: unknown, fallbackAgentId: unknown): CreatedRegistrationData | null {
+  if (!isRecord(value)) return null;
+  const agentId = nonEmptyString(value.agentId)
+    ? value.agentId
+    : nonEmptyString(fallbackAgentId) ? fallbackAgentId : null;
+  if (!agentId
+    || !nonEmptyString(value.imUid)
+    || !nonEmptyString(value.imToken)
+    || !nonEmptyString(value.did)
+    || !nonEmptyString(value.publicKey)
+    || !nonEmptyString(value.privateKey)) {
+    return null;
+  }
+  return { ...value, agentId } as CreatedRegistrationData;
+}
+
+interface McpToolParams {
+  ability?: unknown;
+  action?: string;
+  actionType?: string;
+  address?: string;
+  agentId?: string;
+  agentName?: string;
+  amount?: number;
+  applyId?: string;
+  approve_mode?: string;
+  approved?: boolean;
+  accessMode?: string;
+  avatar?: string;
+  bankCard?: string;
+  bankCode?: string;
+  bankName?: string;
+  backendType?: string;
+  blockTimeout?: number;
+  category?: string;
+  channelId?: string;
+  channelType?: number | 'all' | 'direct' | 'group';
+  code?: string;
+  contact_phone?: string;
+  content?: string;
+  contentType?: number | string;
+  description?: string;
+  direction?: string;
+  durationMinutes?: number;
+  durationSeconds?: number;
+  email?: string;
+  enabled?: boolean;
+  expiresInSeconds?: number;
+  fileName?: string;
+  filePath?: string;
+  filter?: string;
+  friendEmail?: string;
+  friendName?: string;
+  iconUrl?: string;
+  id?: string;
+  idCard?: string;
+  keyword?: string;
+  limit?: number;
+  listType?: string;
+  maxUses?: number;
+  members?: string[];
+  mentions?: MentionParams;
+  message?: string;
+  messageId?: string;
+  messageSeq?: number;
+  mode?: string;
+  muted?: boolean;
+  name?: string;
+  notice?: string;
+  offset?: number;
+  onlyReplies?: boolean;
+  orderId?: string;
+  ownerEmail?: string;
+  page?: number;
+  page_size?: number;
+  paymentAuthId?: string;
+  phone?: string;
+  price?: number;
+  pricingModel?: string;
+  problem?: string;
+  providerType?: string;
+  prompt?: string;
+  reason?: string;
+  registrationId?: string;
+  registrationMode?: 'human' | 'agent';
+  ruleId?: string;
+  searchable?: number;
+  short_description?: string;
+  since?: number;
+  status?: number | string;
+  suggestion?: string;
+  tags?: string;
+  targetUid?: string;
+  taskId?: string;
+  toUid?: string;
+  trialMinutes?: number;
+  instanceId?: string;
+  deliveryModes?: string[];
+  visibility?: number;
+  visitorId?: string;
+}
+
+/**
+ * 归一化文件消息 content。
+ * 支持：JSON 字符串 / 普通对象 / 纯 URL 字符串。
+ * 纯 URL 会自动提取文件名并补全 {url, name, size, type}。
+ */
+function normalizeFileContent(content?: unknown) {
+  // 1. 如果是对象，先序列化
+  if (content && typeof content === 'object') {
+    return JSON.stringify(content);
+  }
+  if (typeof content !== 'string') {
+    return JSON.stringify({ url: String(content || ''), name: '', size: 0, type: '' });
+  }
+
+  const trimmed = content.trim();
+
+  // 2. 尝试解析 JSON
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      const url = obj.url || obj.fileUrl || '';
+      const name = obj.name || obj.fileName || extractFileNameFromUrl(url) || '';
+      const size = typeof obj.size === 'number' ? obj.size : (typeof obj.fileSize === 'number' ? obj.fileSize : 0);
+      const type = obj.type || obj.mimeType || '';
+      return JSON.stringify({ url, name, size, type });
+    } catch (_: any) {
+      // 解析失败则按普通字符串/URL 处理
+    }
+  }
+
+  // 3. 纯 URL 或普通文本：包装成文件 JSON
+  const isUrl = /^https?:\/\//i.test(trimmed);
+  const url = isUrl ? trimmed : '';
+  const name = isUrl ? (extractFileNameFromUrl(trimmed) || '') : trimmed;
+  return JSON.stringify({ url, name, size: 0, type: '' });
+}
+
+function extractFileNameFromUrl(url?: string) {
+  if (!url) return '';
+  try {
+    const pathname = new URL(url).pathname;
+    const parts = pathname.split('/');
+    const last = parts[parts.length - 1];
+    return decodeURIComponent(last) || '';
+  } catch (_: any) {
+    return '';
+  }
+}
+
+/**
+ * 通过 HEAD 请求探测远程文件的 size 和 MIME type。
+ * 失败时返回 { size: 0, type: '' }，不影响发送。
+ */
+async function probeFileMetadata(url?: string) {
+  if (!url) return { size: 0, type: '' };
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timeout);
+    if (!res.ok) return { size: 0, type: '' };
+    const length = res.headers.get('content-length');
+    const contentType = res.headers.get('content-type') || '';
+    const size = length ? parseInt(length, 10) : 0;
+    return { size: Number.isFinite(size) ? size : 0, type: contentType.split(';')[0].trim() };
+  } catch (_: any) {
+    return { size: 0, type: '' };
+  }
+}
+
+function createToolHandlers(cx: McpContext) {
+  // cx: { db, query, exec, sendMessage, sendSystemMessage, startAgentWorker, stopAgentWorker,
+  //        getAgentStatus, registerCapabilities, searchCapabilities, updateAgentProfile, setAgentStatus,
+  //        publishAgent, unpublishAgent,
+  //        generateOSSSignature, agentRegistration,
+  //        getPaymentAuth, savePaymentOrder, getAgentImUid,
+  //        getOpenclawHandler, processPaymentOrder,
+  //        enqueueOwnerIntervention }
+
+  /** 格式化消息行 */
+  // 游标持久化到 DB（config 表），跨重启保留。注意：多客户端共享同一游标，需精确控制请显式传 since/messageSeq
+  function _getCursorDb(db: DatabaseLike, key: string) {
+    try {
+      const row = db.prepare("SELECT data FROM config WHERE type=?").get<ConfigDataRow>('cursor:' + key);
+      return row ? (Number(JSON.parse(row.data)) || 0) : 0;
+    } catch (_: any) { return 0; }
+  }
+  function _setCursorDb(db: DatabaseLike, key: string, val: number) {
+    try {
+      db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)").run('cursor:' + key, JSON.stringify(val), Date.now());
+    } catch (_: any) {}
+  }
+  function fmtMsg(r: MessageDbRow) {
+    let mention = null;
+    if (r.mention) {
+      try { mention = typeof r.mention === 'string' ? JSON.parse(r.mention) : r.mention; } catch (_: any) { mention = null; }
+    }
+    return {
+      id: r.id,
+      channelId: r.channel_id,
+      fromUid: r.from_uid,
+      toUid: r.to_uid,
+      content: r.content,
+      timestamp: r.timestamp,
+      messageSeq: r.message_seq,
+      isMe: r.is_me >= 1,
+      contentType: r.content_type || 1,
+      agentId: r.agent_id || null,
+      channelType: r.channel_type || 1,
+      mention,
+    };
+  }
+  function fmtPullMsg(r: MessageDbRow) {
+    return {
+      ...fmtMsg(r),
+      sourceType: r.sourceType || (r.from_uid === 'system' ? 'system' : 'visitor'),
+      trustLevel: r.trustLevel || (r.from_uid === 'system' ? 'trusted_system' : 'untrusted'),
+    };
+  }
+  function fmtPullResult(rows: MessageDbRow[], hasMore: boolean) {
+    return {
+      success: true,
+      securityContext: createPullSecurityContext(),
+      messages: rows.map(fmtPullMsg),
+      hasMore,
+      count: rows.length,
+    };
+  }
+
+  const handlers: any = {
+
+    // ─── 1 & 2. 注册 ───
+
+    async register_agent(p: McpToolParams = {}) {
+      // Step 1：调后端发送邮箱验证码
+      const r = await cx.agentRegistration.sendCode({ email: p.email });
+      if (!r.success) {
+        const responseData = isRecord(r.data) ? r.data : null;
+        return { success: false, error: r.error || optionalString(responseData?.message) || '发送验证码失败' };
+      }
+      return { success: true, message: '验证码已发送到邮箱' };
+    },
+
+    async login_by_code(p: McpToolParams = {}) {
+      const r = await cx.agentRegistration.loginByCode({ email: p.email, code: p.code });
+      return r;
+    },
+
+    async verify_agent_email(p: McpToolParams = {}) {
+      // 预览模式：不传 agentId 也不传 agentName，只验码展示 Agent 列表
+      if (!p.agentId && !p.agentName) {
+        const r = await cx.agentRegistration.verifyCodePreview({ email: p.email, code: p.code });
+        if (!r.success) {
+          return { success: false, error: r.error || '验证码错误或已过期' };
+        }
+        const agents = registrationAgentSummaries(r.agents);
+        if (!agents) return { success: false, error: t('mcp.registration.invalid_response') };
+        const needChoice = r.userExists && agents.length > 0;
+        const result: any = { success: true, needChoice, userExists: r.userExists };
+        if (needChoice) {
+          result.agents = agents;
+          result.message = '该邮箱有如下Agent，请选择某个Agent或提供新的AgentName注册新Agent';
+        } else {
+          result.message = '该邮箱尚未注册VOKO，请为该Agent命名';
+        }
+        return result;
+      }
+
+      // 完整注册：backendType 必填；category 可选，默认 general（通用助手）
+      if (!p.backendType) {
+        return {
+          success: false,
+          error: '注册时 backendType 为必填字段（可选预定义类型或自定义任意字符串如 workbuddy）',
+        };
+      }
+
+      // 完整注册：调后端验证验证码
+      const v = await cx.agentRegistration.verifyCode({
+        email: p.email, code: p.code,
+        agentName: p.agentName,
+        agentId: p.agentId,
+      });
+      if (!v.success) {
+        const failureData = isRecord(v.data) ? v.data : null;
+        return { success: false, error: v.error || optionalString(failureData?.message) || '验证码无效或已过期' };
+      }
+
+      const data = verifiedRegistrationData(v.data);
+      if (!data) return { success: false, error: t('mcp.registration.invalid_response') };
+      console.error('[verify_agent_email] 服务端返回有效注册信息:', {
+        agentId: data.agentId || null,
+        agentCount: data.agents.length,
+      });
+      const agentId = selectedRegistrationAgentId(data, p.agentId, p.agentName);
+      if (!agentId) return { success: false, error: t('mcp.registration.ambiguous_agent') };
+
+      const serverUrl = data.imServerUrl || ENDPOINTS.im.wsUrl;
+      const backendType = normalizeBackendType(p.backendType);
+      const accessMode = p.accessMode === 'public' ? 'public' : 'private';
+      const category = p.category || 'general';
+
+      const firstAgent = data.agents[0];
+      const paymentFeeRate = optionalFeeRate(firstAgent.payment_fee_rate);
+      const agentUsageFeeRate = optionalFeeRate(firstAgent.agent_usage_fee_rate);
+      if (Number.isNaN(paymentFeeRate) || Number.isNaN(agentUsageFeeRate)) {
+        return { success: false, error: t('mcp.registration.invalid_response') };
+      }
+
+      // Step 2：写入 agents 表（注册，published，不启动 worker）
+      const regRes = await cx.agentRegistration.registerAgentInDb({
+        agentId,
+        uid: data.imUid,
+        token: data.imToken,
+        serverUrl,
+        ownerEmail: p.email,
+        backendType,
+        agentName: data.agentName,
+        category,
+        description: p.description,
+        did: data.did,
+        publicKey: data.publicKey,
+        privateKey: data.privateKey,
+        loginToken: data.loginToken,
+        paymentFeeRate,
+        agentUsageFeeRate,
+        accessMode,
+      });
+      if (!regRes.success) {
+        return { success: false, error: regRes.error || '写入 agents 表失败' };
+      }
+
+      // Step 3：更新绑定字段
+      const upRes = await cx.agentRegistration.updateAgentBinding({
+        agentId,
+        updates: {
+          did: data.did,
+          imUid: data.imUid,
+          imToken: data.imToken,
+          public_key: data.publicKey,
+          private_key: data.privateKey,
+          login_token: data.loginToken,
+          im_server_url: serverUrl,
+        },
+      });
+      if (upRes && !upRes.success) {
+        return { success: false, error: upRes.error || '更新绑定失败' };
+      }
+
+      if (cx.setAgentStatus) {
+        await cx.setAgentStatus({
+          agentId,
+          status: 1,
+          visibility: accessMode === 'public' ? 1 : 0,
+        });
+      }
+
+      // Step 4：启动 IM Worker
+      if (cx.startAgentWorker) {
+        cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType });
+      }
+
+      return { success: true, message: '注册成功', agentId, agentName: data.agentName };
+    },
+
+    // ─── 2b. 用 access-token 创建 Agent（已登录用户，无需验证码）───
+    // 与 verify_agent_email 同结构，仅把 step1 的 verifyCode 换成 createAgentByToken。
+    async create_agent_by_token(p: McpToolParams = {}) {
+      const email = p.email;
+      if (!email) return { success: false, error: '未登录（缺少 user_access_token）', noToken: true };
+      // backendType 必填；category 可选，默认 general（与 verify_agent_email 保持一致）
+      if (!p.backendType) {
+        return { success: false, error: 'backendType 为必填字段' };
+      }
+
+      const backendType = normalizeBackendType(p.backendType);
+      const accessMode = p.accessMode === 'public' ? 'public' : 'private';
+      const serverUrl = ENDPOINTS.im.wsUrl;
+
+      // Step 1：用本地 token 调后端 /agent/create（无需验证码）
+      const tokenResult = await cx.agentRegistration.createAgentByToken({ agentId: p.agentName });
+      if (!tokenResult.success) return { success: false, error: tokenResult.error || '云端创建失败', noToken: !!tokenResult.noToken };
+      const data = createdRegistrationData(tokenResult.data, p.agentName);
+      if (!data) return { success: false, error: t('mcp.registration.invalid_response') };
+      const agentId = data.agentId;
+
+      // Step 2：写入 agents 表（loginToken/费率用默认）
+      const regRes = await cx.agentRegistration.registerAgentInDb({
+        agentId,
+        uid: data.imUid,
+        token: data.imToken,
+        serverUrl,
+        ownerEmail: email,
+        backendType,
+        agentName: data.name || data.agentName || p.agentName,
+        did: data.did,
+        publicKey: data.publicKey,
+        privateKey: data.privateKey,
+        category: p.category || 'general',
+        description: p.description,
+        accessMode,
+      });
+      if (!regRes.success) return { success: false, error: regRes.error || '写入 agents 表失败' };
+
+      // Step 3：更新绑定字段
+      const binding = await cx.agentRegistration.updateAgentBinding({
+        agentId,
+        updates: {
+          did: data.did, imUid: data.imUid, imToken: data.imToken,
+          public_key: data.publicKey, private_key: data.privateKey,
+          im_server_url: serverUrl,
+        },
+      });
+      if (binding?.success === false) {
+        return { success: false, error: binding.error || '更新绑定失败' };
+      }
+
+      let accessModeSynced = false;
+      if (cx.setAgentStatus) {
+        const statusResult = await cx.setAgentStatus({
+          agentId,
+          status: 1,
+          visibility: accessMode === 'public' ? 1 : 0,
+        });
+        accessModeSynced = statusResult?.success !== false;
+      }
+
+      // Step 4：启动 IM Worker
+      if (cx.startAgentWorker) {
+        cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType });
+      }
+
+      return {
+        success: true,
+        message: '创建成功',
+        agentId,
+        agentName: data.name || p.agentName,
+        accessMode,
+        accessModeSynced,
+      };
+    },
+
+    // ─── 3. 编辑 Agent 基础信息 ───
+
+    async update_agent_profile(p: McpToolParams = {}) {
+      if (!cx.updateAgentProfile) {
+        return { success: false, error: '当前环境不支持更新 Agent 资料' };
+      }
+      // backendType 仅本地更新，不同步服务端
+      if (p.backendType) {
+        cx.exec(`UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?`, [normalizeBackendType(p.backendType), Date.now(), p.agentId]);
+        try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_: any) {} // 失效 dispatcher 的 backend_type 缓存
+      }
+
+      // 检查是否有需要同步服务端的字段
+      const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone];
+      if (serverFields.some((v?: any) => v !== undefined)) {
+        const result = await cx.updateAgentProfile({
+          db: cx.db,
+          agentId: p.agentId,
+          name: p.name,
+          description: p.description,
+          short_description: p.short_description,
+          category: p.category,
+          tags: p.tags,
+          icon_url: p.iconUrl,
+          address: p.address,
+          contact_phone: p.contact_phone,
+        });
+        return result;
+      }
+
+      return { success: true, message: '本地更新成功' };
+    },
+
+    // ─── 4. 设置 Agent 上下架 / 公开私有状态 ───
+
+    async set_agent_status(p: McpToolParams = {}) {
+      const hasVisibility = p.visibility === 0 || p.visibility === 1;
+      const hasStatus = p.status === 0 || p.status === 1;
+
+      // 仅切换公有 / 私有（不改变上下架）
+      if (hasVisibility && !hasStatus) {
+        if (!cx.setAgentStatus) {
+          return { success: false, error: '当前环境不支持同步 Agent 状态' };
+        }
+        const row = cx.query(`SELECT publish_status FROM agents WHERE agent_id = ?`, [p.agentId])[0];
+        if (!row) return { success: false, error: 'Agent 不存在' };
+        const published = row.publish_status === 'published';
+        return cx.setAgentStatus({
+          agentId: p.agentId,
+          status: published ? 1 : 0,
+          visibility: p.visibility,
+        });
+      }
+
+      if (p.status === 1) {
+        if (hasVisibility) {
+          const accessMode = p.visibility === 1 ? 'public' : 'private';
+          cx.exec(`UPDATE agents SET access_mode = ?, updated_at = ? WHERE agent_id = ?`, [accessMode, Date.now(), p.agentId]);
+        }
+        if (!cx.publishAgent) {
+          return { success: false, error: '当前环境不支持发布 Agent' };
+        }
+        return cx.publishAgent({ agentId: p.agentId });
+      }
+      if (p.status === 0) {
+        if (!cx.unpublishAgent) {
+          return { success: false, error: '当前环境不支持下架 Agent' };
+        }
+        return cx.unpublishAgent({ agentId: p.agentId });
+      }
+      return { success: false, error: 'status 必须为 0（下架）或 1（上架），或使用 visibility 单独切换公有/私有' };
+    },
+
+    // ─── 5. 状态 ───
+
+    async get_status(p: McpToolParams = {}) {
+      const agentStatus = cx.getAgentStatus ? cx.getAgentStatus(p.agentId) : null;
+      const warnings = (global as any).__latestWarnings || [];
+      const uptime = process.uptime();
+      const version = cx.version || 'unknown';
+      return { success: true, agent: agentStatus, warnings, uptime, version };
+    },
+
+    // ─── 5b. 启动/停止 Worker ───
+
+    async start_worker(p: McpToolParams = {}) {
+      if (!cx.startAgentWorker) return { success: false, error: '当前环境不支持启动 Worker' };
+      const agent = cx.query(`SELECT imUid, imToken, im_server_url, backend_type FROM agents WHERE agent_id=?`, [p.agentId])[0];
+      if (!agent || !agent.imUid || !agent.imToken) {
+        return { success: false, error: 'Agent IM 身份或凭证缺失' };
+      }
+      cx.startAgentWorker(p.agentId, {
+        uid: agent.imUid,
+        token: agent.imToken,
+        serverUrl: agent.im_server_url || ENDPOINTS.im.wsUrl,
+        backendType: agent.backend_type || 'openclaw',
+      });
+      return { success: true };
+    },
+
+    async stop_worker(p: McpToolParams = {}) {
+      if (!cx.stopAgentWorker) return { success: false, error: '当前环境不支持停止 Worker' };
+      await cx.stopAgentWorker(p.agentId);
+      return { success: true };
+    },
+
+    // ─── 5c. 查询 Agent 资料 ───
+
+    async get_agent_profile(p: McpToolParams = {}) {
+      const row = cx.query(`SELECT * FROM agents WHERE agent_id=?`, [p.agentId]);
+      if (!row || row.length === 0) {
+        return { success: false, error: 'Agent 不存在' };
+      }
+      const a = row[0];
+      let tags = null;
+      try { if (a.tags) tags = JSON.parse(a.tags); } catch { tags = a.tags; }
+      let ability = null;
+      try { if (a.ability) ability = JSON.parse(a.ability); } catch { ability = a.ability; }
+
+      // 计费模式
+      let pricing = { pricingModel: 'free', price: null, durationMinutes: null, enabled: true };
+      try {
+        const pricingRow = cx.query(`SELECT pricing_model, price, duration_minutes, enabled FROM agent_pricing WHERE agent_id=?`, [p.agentId])[0];
+        if (pricingRow) pricing = { pricingModel: pricingRow.pricing_model, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes, enabled: pricingRow.enabled === 1 };
+      } catch (_: any) {}
+
+      // 支付认证（是否已配置）
+      let paymentAuthId = null;
+      let paymentConfigured = false;
+      try {
+        const auth = cx.query(`SELECT id FROM payment_auth WHERE id=?`, [a.payment_auth_id])[0];
+        paymentAuthId = a.payment_auth_id || null;
+        paymentConfigured = !!auth;
+      } catch (_: any) {}
+
+      return {
+        success: true,
+        data: {
+          agentId: a.agent_id,
+          agentName: a.agent_name,
+          description: a.description,
+          shortDescription: a.short_description,
+          category: a.category,
+          categoryLabel: a.category_label || (() => { if (!a.category) return null; try { const k = 'db.agent.category.' + a.category; const v = require('../core/i18n').t(k); return v !== k ? v : null; } catch (_: any) { return null; } })(),
+          tags,
+          iconUrl: a.icon_url,
+          address: a.address,
+          contactPhone: a.contact_phone,
+          backendType: a.backend_type,
+          publishStatus: a.publish_status,
+          accessMode: a.access_mode,
+          did: a.did,
+          imUid: a.imUid,
+          ownerEmail: a.owner_email,
+          createdAt: a.created_at,
+          updatedAt: a.updated_at,
+          ability,
+          paymentFeeRate: a.payment_fee_rate,
+          agentUsageFeeRate: a.agent_usage_fee_rate,
+          paymentConfigured,
+          pricing,
+        },
+        fieldDescriptions: {
+          agentId: 'Agent 唯一标识',
+          agentName: 'Agent 显示名称（可修改）',
+          description: 'Agent详细描述',
+          shortDescription: 'Agent一句话简短介绍',
+          category: '分类标识（默认 general，如 education/finance/travel/entertainment/medical/other 等）',
+          categoryLabel: '分类中文名称',
+          tags: '标签列表',
+          iconUrl: '头像图片链接',
+          backendType: 'Agent 类型（预定义：openclaw/hermes/goose 等，也可为自定义类型）',
+          publishStatus: '发布状态（published=已上架, unpublished=未上架）',
+          paymentFeeRate: '支付手续费率（如 0.006 = 0.6%）',
+          agentUsageFeeRate: '按时计费模式下，平台抽取的佣金比例',
+          paymentConfigured: '是否已配置支付认证',
+          pricing: '订阅方式：pricingModel=free免费/timed按时订阅，price=价格，durationMinutes=时长（分钟），enabled=是否启用',
+          accessMode: '访问模式（public=公开, private=私密/白名单）',
+          address: '地址',
+          contactPhone: '联系电话',
+          did: 'DID标识',
+          imUid: 'IM 系统用户 ID',
+          ownerEmail: '主人邮箱',
+          createdAt: '注册时间（毫秒时间戳）',
+          updatedAt: '最后更新时间（毫秒时间戳）',
+          ability: '普通模式能力列表（JSON 数组）',
+        },
+      };
+    },
+
+    // ─── 6. 能力发现 ───
+
+    async search_capabilities(p: McpToolParams = {}) {
+      return cx.searchCapabilities ? await cx.searchCapabilities(p) : { success: false, error: '未实现' };
+    },
+
+    async declare_capabilities(p: McpToolParams = {}) {
+      const abilities = p.ability;
+
+      if (!Array.isArray(abilities)) {
+        return { success: false, error: 'ability 必须为数组格式，如 [{"name":"...","fields":[...]}]' };
+      }
+
+      // 读取旧值，用于服务端同步失败时回滚
+      const oldRow = cx.query(`SELECT ability FROM agents WHERE agent_id=?`, [p.agentId]);
+      const oldValue = oldRow?.[0]?.ability || null;
+
+      const jsonStr = JSON.stringify(abilities);
+      cx.exec(`UPDATE agents SET ability=?, updated_at=? WHERE agent_id=?`, [jsonStr, Date.now(), p.agentId]);
+
+      if (cx.registerCapabilities) {
+        const result = await cx.registerCapabilities(p.agentId);
+        if (!result.success) {
+          // 服务端同步失败，回滚本地 DB
+          cx.exec(`UPDATE agents SET ability=?, updated_at=? WHERE agent_id=?`, [oldValue, Date.now(), p.agentId]);
+        }
+        return result;
+      }
+      return { success: true };
+    },
+
+    // ─── 8. 消息 ───
+
+    async send_message(p: McpToolParams = {}) {
+      const fromUid = cx.wukongim?.getCurrentUid?.(p.agentId);
+      if (!fromUid) return { success: false, error: 'Agent IM 身份缺失' };
+      const channelType = typeof p.channelType === 'number' ? p.channelType : 1;
+      if (channelType === 2) {
+        try {
+          const group = await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.toUid });
+          if ((group.status || 'active') === 'dissolved') {
+            return { success: false, error: t('web.group.dissolved.send_disabled'), code: 'GROUP_DISSOLVED' };
+          }
+          // @所有人 仅群主(owner)/管理员(admin)可用；复用已查到的 group.members，零额外开销。
+          if (p.mentions && p.mentions.all === true) {
+            const members = (group.members || []) as GroupMember[];
+            const me = members.find((member) => String(member.uid) === String(fromUid));
+            if (!me || (me.role !== 'owner' && me.role !== 'admin')) {
+              return { success: false, error: t('web.group.mention.all_forbidden'), code: 'MENTION_ALL_FORBIDDEN' };
+            }
+          }
+        } catch (e: any) {
+          return { success: false, error: e.message };
+        }
+      }
+      // 将数字 contentType 映射为字符串 messageType：1=text 2=image 3=file（内部统一按桌面端 4=file 处理）
+      let messageType = 'text';
+      if (p.contentType === 2 || p.contentType === '2' || p.contentType === 'image') messageType = 'image';
+      else if (p.contentType === 3 || p.contentType === '3' || p.contentType === 'file') messageType = 'file';
+      else if (typeof p.contentType === 'string') messageType = p.contentType;
+
+      // 文件消息 content 归一化：支持 JSON 字符串 / 对象 / 纯 URL
+      let content = p.content;
+      if (messageType === 'file') {
+        content = normalizeFileContent(content);
+        // 如果 size 为 0，尝试 HEAD 探测远程文件大小和 MIME type
+        try {
+          const payload = JSON.parse(content);
+          if (!payload.size && payload.url) {
+            const meta = await probeFileMetadata(payload.url);
+            if (meta.size) {
+              payload.size = meta.size;
+              if (meta.type) payload.type = meta.type;
+              content = JSON.stringify(payload);
+            }
+          }
+        } catch (_: any) {
+          // 非 JSON 时不处理，直接发送
+        }
+      }
+
+      const mentions = channelType === 2 ? (p.mentions || null) : null;
+      const result = await cx.sendMessage(p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions);
+      // 检测收消息通道是否畅通
+      if (cx.checkReceiveChannel) {
+        const ch = cx.checkReceiveChannel(p.agentId);
+        if (ch && !ch.ok) {
+          result.receiveChannel = { ok: false, channel: ch.channel, suggest: 'voko_fetch_new_messages' };
+        }
+      }
+      return result;
+    },
+
+    // ─── 9. 聊天历史 ───
+
+    async get_chat_history(p: McpToolParams = {}) {
+      const limit = Math.min(p.limit || 20, 200);
+      const offset = p.offset || 0;
+      const channelType = p.channelType || 1;
+
+      if (channelType === 2) {
+        // 群聊：共享消息表按 message id 只存一份；兼容历史重复数据，仍先去重再分页
+        let gsql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2`;
+        const gparams = [p.channelId];
+        if (p.keyword) { gsql += ` AND content LIKE ?`; gparams.push(`%${p.keyword}%`); }
+        gsql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC`;
+        const all = cx.query<MessageDbRow>(gsql, gparams);
+        const seen = new Set();
+        const dedup = [];
+        for (const r of all) {
+          const key = r.client_msg_no || (r.message_seq != null ? 'seq:' + r.message_seq : '') || r.id;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dedup.push(r);
+        }
+        const rows = dedup.slice(offset, offset + limit + 1);
+        const hasMore = rows.length > limit;
+        if (hasMore) rows.pop();
+        return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset };
+      }
+
+      // 单聊：保留 agent_id 过滤，排除群聊消息防 channel_id 碰撞串数据
+      let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2`;
+      const params: unknown[] = [p.channelId, p.agentId];
+      if (p.keyword) { sql += ` AND content LIKE ?`; params.push(`%${p.keyword}%`); }
+      sql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC LIMIT ? OFFSET ?`;
+      params.push(limit + 1, offset);
+      const rows = cx.query<MessageDbRow>(sql, params);
+      const hasMore = rows.length > limit;
+      if (hasMore) rows.pop();
+      return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset };
+    },
+
+    // ─── 10. 访客信息 ───
+
+    async get_visitor_profile(p: McpToolParams = {}) {
+      const { visitorId, agentId } = p;
+      const msgLimit = p.limit || 10;
+      const msgOffset = p.offset || 0;
+      const cache = cx.query(`SELECT uid, nickname, avatar_url FROM user_cache WHERE uid=? LIMIT 1`, [visitorId]);
+      const profile = cache && cache[0] ? cache[0] : { uid: visitorId };
+
+      // 消息统计
+      const statsSql = agentId
+        ? `SELECT COUNT(*) as total, MIN(timestamp) as firstAt, MAX(timestamp) as lastAt FROM messages WHERE from_uid=? AND agent_id=?`
+        : `SELECT COUNT(*) as total, MIN(timestamp) as firstAt, MAX(timestamp) as lastAt FROM messages WHERE from_uid=?`;
+      const msgStats = cx.query(statsSql, agentId ? [visitorId, agentId] : [visitorId]);
+      const totalMessages = msgStats[0]?.total || 0;
+      const firstMessageAt = msgStats[0]?.firstAt || null;
+      const lastMessageAt = msgStats[0]?.lastAt || null;
+
+      // 黑白名单状态（需要 agentId）
+      let isWhitelisted = false, isBlacklisted = false;
+      if (agentId) {
+        isWhitelisted = !!cx.query(`SELECT 1 FROM agent_access_lists WHERE agent_id=? AND list_type='whitelist' AND visitor_id=?`, [agentId, visitorId]).length;
+        isBlacklisted = !!cx.query(`SELECT 1 FROM agent_access_lists WHERE agent_id=? AND list_type='blacklist' AND visitor_id=?`, [agentId, visitorId]).length;
+      }
+
+      // 最近对话（可配置条数、可翻页）
+      const recentSql = agentId
+        ? `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+        : `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+      const recentMulti = msgLimit + 1; // 多取 1 条用来算 hasMore
+      const recentParams = agentId ? [visitorId, agentId, recentMulti, msgOffset] : [visitorId, recentMulti, msgOffset];
+      const recentRows = cx.query<MessageDbRow>(recentSql, recentParams);
+      const hasMore = recentRows.length > msgLimit;
+      if (hasMore) recentRows.pop();
+      const recentMessages = recentRows.reverse().map((row) => ({
+        content: row.content,
+        timestamp: row.timestamp,
+        isMe: row.is_me >= 1,
+      }));
+
+      // 入站审核统计（只算访客触发的拦截，按 agent 隔离）
+      const auditSql = agentId
+        ? `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND agent_id=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`
+        : `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`;
+      const auditParams = agentId ? [visitorId, agentId] : [visitorId];
+      const auditRows = cx.query(auditSql, auditParams);
+      let audit = { totalHits: 0, hardDenyCount: 0, softDenyCount: 0, lastHitAt: null, lastKeyword: null };
+      for (const r of auditRows) {
+        if (r.is_me !== 0) continue; // 只计入站
+        audit.totalHits++;
+        try {
+          const parsed = JSON.parse(r.content);
+          if (parsed.action === 'hard_deny') audit.hardDenyCount++;
+          else if (parsed.action === 'soft_deny') audit.softDenyCount++;
+          if (!audit.lastHitAt || r.timestamp > audit.lastHitAt) {
+            audit.lastHitAt = r.timestamp;
+            audit.lastKeyword = parsed.keyword || null;
+          }
+        } catch (_: any) {}
+      }
+
+      // 支付记录
+      const paidSql = agentId
+        ? `SELECT 1 FROM payment_orders WHERE visitor_id=? AND agent_id=? AND status='paid' LIMIT 1`
+        : `SELECT 1 FROM payment_orders WHERE visitor_id=? AND status='paid' LIMIT 1`;
+      const paidRows = cx.query(paidSql, agentId ? [visitorId, agentId] : [visitorId]);
+      const hasPaid = paidRows.length > 0;
+
+      return {
+        success: true,
+        visitorId,
+        nickname: profile.nickname || null,
+        avatarUrl: profile.avatar_url || null,
+        totalMessages,
+        firstMessageAt,
+        lastMessageAt,
+        isWhitelisted,
+        isBlacklisted,
+        recentMessages,
+        hasMore,
+        audit,
+        hasPaid,
+      };
+    },
+
+    // ─── 11. 会话列表 ───
+
+    async list_conversations(p: McpToolParams = {}) {
+      const limit = Math.min(p.limit || 20, 100);
+      const offset = p.offset || 0;
+      const filter = p.filter || 'unreplied';
+      const chatType = p.channelType || 'all'; // direct | group | all
+      const keyword = p.keyword || '';
+      let whereClause = `WHERE agent_id=?`;
+      const whereParams: unknown[] = [p.agentId];
+      if (chatType === 'direct') { whereClause += ` AND channel_type=1`; }
+      else if (chatType === 'group') { whereClause += ` AND channel_type=2`; }
+      if (keyword) { const kw='%'+keyword+'%'; whereClause += ` AND (name LIKE ? OR user_uid LIKE ?)`; whereParams.push(kw, kw); }
+      // 总数
+      const countRow = cx.query(`SELECT COUNT(*) as cnt FROM conversations ${whereClause}`, whereParams);
+      const total = countRow[0]?.cnt || 0;
+      // 数据
+      const dataParams = [...whereParams, limit, offset];
+      const rows = cx.query<ConversationDbRow>(`SELECT * FROM conversations ${whereClause} ORDER BY last_timestamp DESC LIMIT ? OFFSET ?`, dataParams);
+      return {
+        success: true,
+        total,
+        conversations: rows.map((r) => {
+          const isGroup = r.channel_type === 2;
+          // 群聊按 @触发，不显示"待回复"红点
+          if (isGroup) {
+            return {
+              channelId: r.channel_id,
+              name: r.name,
+              lastMessage: r.last_message,
+              lastTimestamp: r.last_timestamp,
+              unreadCount: r.unread_count || 0,
+              needsReply: false,
+              channelType: 2,
+            };
+          }
+          // 单聊：查最后一条消息是谁发的
+          const lastMsg = cx.query(`SELECT is_me, content_type FROM messages WHERE channel_id=? AND agent_id=? ORDER BY timestamp DESC LIMIT 1`, [r.channel_id, p.agentId]);
+          const lastIsMeRow = lastMsg?.[0]?.is_me;
+          const lastCtRow = lastMsg?.[0]?.content_type || 1;
+          // needsReply：最后一条是真实访客消息（is_me=0 且非拦截/系统）
+          const needsReply = lastIsMeRow === 0 && lastCtRow !== 11;
+          // 计算未回复的访客消息数：最后一条 agent 回复之后，还有多少条访客消息
+          let unreadCount = 0;
+          if (needsReply) {
+            const lastAgentReply = cx.query(`SELECT timestamp FROM messages WHERE channel_id=? AND agent_id=? AND is_me=1 AND (content_type IS NULL OR content_type<10) ORDER BY timestamp DESC LIMIT 1`, [r.channel_id, p.agentId]);
+            const since = lastAgentReply?.[0]?.timestamp || 0;
+            unreadCount = cx.query(`SELECT COUNT(*) as cnt FROM messages WHERE channel_id=? AND agent_id=? AND is_me=0 AND timestamp > ?`, [r.channel_id, p.agentId, since])[0]?.cnt || 0;
+          }
+          return {
+            channelId: r.channel_id,
+            name: r.name,
+            lastMessage: r.last_message,
+            lastTimestamp: r.last_timestamp,
+            unreadCount,
+            needsReply,
+            lastContentType: lastMsg?.[0]?.content_type || 1,
+            lastIsMe: lastMsg?.[0]?.is_me,
+            channelType: 1,
+          };
+        })
+        .filter((c?: any) => filter === 'all' || c.needsReply),
+      };
+    },
+
+    // ─── 12. 标记会话已读 ───
+
+    async mark_conversation_read(p: McpToolParams = {}) {
+      const { agentId, channelId } = p;
+      if (!agentId || !channelId) return { success: false, error: '缺少 agentId 或 channelId' };
+      try {
+        cx.db.prepare(`UPDATE conversations SET unread_count = 0 WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    },
+
+    // ─── 13. 文件上传 ───
+
+    async get_upload_url(p: McpToolParams = {}) {
+      if (!cx.uploadFileToOSS) {
+        return { success: false, error: 'OSS 未配置' };
+      }
+      try {
+        const fs = require('fs');
+        if (!p.filePath) return { success: false, error: '缺少 filePath' };
+        if (!fs.existsSync(p.filePath)) return { success: false, error: '文件不存在: ' + p.filePath };
+        const stat = fs.statSync(p.filePath);
+        const fileName = p.fileName || require('path').basename(p.filePath);
+        const ext = require('path').extname(fileName).toLowerCase();
+        const mimeMap: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.mp4': 'video/mp4', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.zip': 'application/zip', '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.json': 'application/json' };
+        const mimeType = typeof p.contentType === 'string'
+          ? p.contentType
+          : (mimeMap[ext] || 'application/octet-stream');
+        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        // 图片上传到 chat/images/，其他文件上传到 chat/files/，与桌面端保持一致
+        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+        const dir = imageExts.includes(ext) ? 'chat/images' : 'chat/files';
+        const objectName = `${dir}/${safeName}`;
+        const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType);
+        return {
+          success: true,
+          url,
+          fileName,
+          fileSize: stat.size,
+          mimeType,
+        };
+      } catch (e: any) {
+        return { success: false, error: '上传失败: ' + e.message };
+      }
+    },
+
+    // ─── 13. whoami ───
+
+    async whoami(p: McpToolParams = {}) {
+      let sql = `SELECT agent_id AS agent_id, agent_name, description, short_description, category, backend_type, publish_status, access_mode, owner_email, created_at FROM agents`;
+      const params: unknown[] = [];
+      if (p.ownerEmail) {
+        sql += ` WHERE owner_email=?`;
+        params.push(p.ownerEmail);
+      }
+      sql += ` ORDER BY created_at ASC`;
+      const rows = cx.query<AgentDbRow>(sql, params);
+      return {
+        success: true,
+        agents: rows.map((r) => ({
+          agentId: r.agent_id,
+          agentName: r.agent_name,
+          description: r.description,
+          shortDescription: r.short_description,
+          category: r.category,
+          backendType: r.backend_type,
+          publishStatus: r.publish_status,
+          accessMode: r.access_mode,
+          ownerEmail: r.owner_email,
+          createdAt: r.created_at,
+        })),
+      };
+    },
+
+    // ─── 14-16. 人工介入 ───
+
+    async ask_human_for_help(p: McpToolParams = {}) {
+      const now = Date.now();
+      const id = `mcp_${now}_${Math.random().toString(36).substr(2, 6)}`;
+      const ownerChannelType = cx.getEnabledChannel?.()?.name || null;
+      const targetChannelType = Number(p.channelType) === 2 ? 2 : 1;
+      if (targetChannelType === 2 && !p.channelId) {
+        return { success: false, error: t('mcp.tool.ask_human_for_help.error.channelIdRequired') };
+      }
+      const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
+      const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
+
+      // 根据 backend 类型决定 session_key 前缀
+      const backendRow = cx.query ? cx.query(`SELECT backend_type FROM agents WHERE agent_id=?`, [p.agentId]) : [];
+      const backendType = backendRow?.[0]?.backend_type || 'openclaw';
+      const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
+      cx.exec(`
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?)
+      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, p.messageId || null]);
+      // 事件驱动：立即通知主人，不等轮询
+      if (cx.enqueueOwnerIntervention) {
+        cx.enqueueOwnerIntervention({
+          id, visitorId: p.visitorId, agentId: p.agentId,
+          sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
+          problem: p.problem, agentSuggestion: p.suggestion || '',
+          askTime: now, skipReply: 0, sourceSenderUid: p.visitorId,
+          targetChannelId, targetChannelType, sourceMessageId: p.messageId || null,
+        });
+      }
+      return { success: true, interventionId: id };
+    },
+
+    async check_human_replies(p: McpToolParams = {}) {
+      // 按 id 查单条
+      if (p.id) {
+        const r = cx.query(`SELECT * FROM owner_interventions WHERE id=? AND agent_id=?`, [p.id, p.agentId])[0];
+        return {
+          success: true,
+          interventions: r ? [{
+            id: r.id,
+            visitorId: r.visitor_id,
+            problem: r.problem,
+            suggestion: r.agent_suggestion,
+            askTime: r.ask_time,
+            ownerReply: r.owner_reply,
+            replyTime: r.reply_time,
+            status: r.status,
+            sourceSenderUid: r.source_sender_uid || r.visitor_id,
+            channelId: r.target_channel_id || r.visitor_id,
+            channelType: r.target_channel_type || 1,
+            messageId: r.source_message_id || null,
+          }] : [],
+          hasMore: false,
+        };
+      }
+
+      const limit = Math.min(p.limit || 20, 50);
+      const offset = p.offset || 0;
+      const multi = limit + 1;
+
+      // 自动游标：不传 since 时自动记录上次查询的最大 askTime
+      const cursorKey = `check_human_replies:${p.agentId}`;
+      let since = p.since;
+      if (since === undefined) {
+        since = _getCursorDb(cx.db, cursorKey);
+      }
+
+      // 构造 SQL
+      const conditions = [`agent_id=?`, `status!='resolved'`];
+      const params: unknown[] = [p.agentId];
+      if (p.visitorId) {
+        conditions.push(`visitor_id=?`);
+        params.push(p.visitorId);
+      }
+      if (since) {
+        conditions.push(`ask_time>?`);
+        params.push(since);
+      }
+      params.push(multi, offset);
+
+      const rows = cx.query<InterventionDbRow>(
+        `SELECT * FROM owner_interventions WHERE ${conditions.join(' AND ')} ORDER BY ask_time DESC LIMIT ? OFFSET ?`,
+        params
+      );
+
+      // 更新游标到 DB
+      if (p.since === undefined && rows.length > 0) {
+        const maxTime = Math.max(...rows.map((row) => row.ask_time));
+        _setCursorDb(cx.db, cursorKey, maxTime);
+      }
+      const hasMore = rows.length > limit;
+      if (hasMore) rows.pop();
+      return {
+        success: true,
+        interventions: rows.map((r) => ({
+          id: r.id,
+          visitorId: r.visitor_id,
+          problem: r.problem,
+          suggestion: r.agent_suggestion,
+          askTime: r.ask_time,
+          ownerReply: r.owner_reply,
+          replyTime: r.reply_time,
+          status: r.status,
+          sourceSenderUid: r.source_sender_uid || r.visitor_id,
+          channelId: r.target_channel_id || r.visitor_id,
+          channelType: r.target_channel_type || 1,
+          messageId: r.source_message_id || null,
+        })),
+        hasMore,
+      };
+    },
+
+    async close_human_request(p: McpToolParams = {}) {
+      const now = Date.now();
+      const result = cx.exec(`UPDATE owner_interventions SET status='resolved', resolved_at=?, updated_at=? WHERE id=? AND agent_id=?`, [now, now, p.id, p.agentId]);
+      return { success: true, closed: (result?.changes || 0) > 0 };
+    },
+
+    // ─── 16. 收款 ───
+
+    async create_payment(p: McpToolParams = {}) {
+      const hasAuth = cx.getPaymentAuth ? cx.getPaymentAuth(p.agentId) as PaymentAuthDetailRow | null : null;
+      if (!hasAuth) return { success: false, error: '该 Agent 未配置支付认证，请通知主人配置' };
+      const amount = Number(p.amount);
+      const cents = Math.round(amount * 100);
+      if (!Number.isFinite(amount) || cents < 1 || cents > 99999999999999 || Math.abs(amount * 100 - cents) > 1e-8) {
+        return { success: false, error: t('mcp.payment.invalid_amount') };
+      }
+      const completedAuth = cx.query<PaymentAuthDetailRow>(
+        `SELECT receiver_apply_status FROM payment_auth WHERE id = ?`,
+        [hasAuth.id]
+      )[0];
+      if (String(completedAuth?.receiver_apply_status || '').trim().toUpperCase() !== 'COMPLETED') {
+        return { success: false, error: t('mcp.payment.auth_incomplete') };
+      }
+      // 前置检查：Agent 必须已注册 DID 和私钥，否则后续无法完成 DID 签名
+      const agentKey = cx.query ? cx.query(`SELECT did, private_key FROM agents WHERE agent_id=? AND did IS NOT NULL AND private_key IS NOT NULL`, [p.agentId]) : [];
+      if (!agentKey || agentKey.length === 0) {
+        return { success: false, error: '该 Agent 未注册 DID 或未配置私钥，无法创建支付订单，请通知主人配置' };
+      }
+      const now = Date.now();
+      const orderId = `po_${now}_${Math.random().toString(36).substr(2, 8)}`;
+      const fromUid = cx.getAgentImUid ? cx.getAgentImUid(p.agentId) : '';
+      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now });
+      // 同步处理 pending 订单（DID 签名 → 调支付 API → 生成二维码 → 通知访客）
+      // 注意：必须等待处理完成，否则 MCP 返回成功但访客收不到支付链接
+      if (cx.processPaymentOrder) {
+        try {
+          await cx.processPaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '' });
+        } catch (err: any) {
+          console.error('[MCP] 处理支付订单失败:', err.message);
+          return { success: false, error: '支付订单处理失败: ' + err.message, orderId };
+        }
+      }
+      // 确认订单是否真的处理成功（不再为 pending）
+      const processedOrder = cx.query ? cx.query(`SELECT status, order_no, pay_url, result FROM payment_orders WHERE id=?`, [orderId]) : [];
+      const finalStatus = processedOrder?.[0]?.status || 'unknown';
+      if (!['created', 'paid'].includes(finalStatus)) {
+        console.error('[MCP] 支付订单处理异常，状态未变更:', orderId);
+        return { success: false, error: processedOrder?.[0]?.result || '支付订单处理失败', orderId, status: finalStatus };
+      }
+      if (finalStatus === 'created' && processedOrder?.[0]?.result) {
+        return {
+          success: false,
+          error: t('mcp.payment.delivery_failed', { error: processedOrder[0].result }),
+          orderId,
+          orderNo: processedOrder[0].order_no,
+          payUrl: processedOrder[0].pay_url,
+          status: finalStatus
+        };
+      }
+      return { success: true, orderId, orderNo: processedOrder?.[0]?.order_no, payUrl: processedOrder?.[0]?.pay_url, status: finalStatus };
+    },
+
+    // ─── 18. 查询支付 ───
+
+    async check_payments(p: McpToolParams = {}) {
+      // 按 orderId 查单条
+      if (p.orderId) {
+        const orderScope = p.agentId && p.agentId !== 'all' ? ` AND agent_id=?` : '';
+        const orderParams = p.agentId && p.agentId !== 'all' ? [p.orderId, p.orderId, p.agentId] : [p.orderId, p.orderId];
+        const r = cx.query(`SELECT id, agent_id, visitor_id, amount, description, order_no, status, created_at, updated_at FROM payment_orders WHERE (id=? OR order_no=?)${orderScope}`, orderParams)[0];
+        return {
+          success: true,
+          orders: r ? [{
+            orderId: r.id,
+            visitorId: r.visitor_id,
+            amount: r.amount,
+            description: r.description,
+            orderNo: r.order_no,
+            status: r.status,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+          }] : [],
+          hasMore: false,
+        };
+      }
+
+      const limit = Math.min(p.limit || 20, 50);
+      const offset = p.offset || 0;
+      const multi = limit + 1;
+
+      // 自动游标
+      const cursorKey = `check_payments:${p.agentId || 'all'}`;
+      let since = p.since;
+      if (since === undefined) {
+        since = _getCursorDb(cx.db, cursorKey);
+      }
+
+      const conditions = [];
+      const params: unknown[] = [];
+      if (p.agentId && p.agentId !== 'all') { conditions.push(`agent_id=?`); params.push(p.agentId); }
+      if (p.visitorId) { conditions.push(`visitor_id=?`); params.push(p.visitorId); }
+      if (p.status) { conditions.push(`status=?`); params.push(p.status); }
+      if (since) { conditions.push(`created_at>?`); params.push(since); }
+      params.push(multi, offset);
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const rows = cx.query<PaymentOrderDbRow>(
+        `SELECT id, agent_id, visitor_id, amount, description, order_no, status, created_at, updated_at FROM payment_orders ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        params
+      );
+
+      // 更新游标到 DB
+      if (p.since === undefined && rows.length > 0) {
+        const maxTime = Math.max(...rows.map((row) => row.created_at));
+        _setCursorDb(cx.db, cursorKey, maxTime);
+      }
+
+      const hasMore = rows.length > limit;
+      if (hasMore) rows.pop();
+      return {
+        success: true,
+        orders: rows.map((r) => ({
+          orderId: r.id,
+          visitorId: r.visitor_id,
+          amount: r.amount,
+          description: r.description,
+          orderNo: r.order_no,
+          status: r.status,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        })),
+        hasMore,
+      };
+    },
+
+    // ─── 18b. 支付认证（入账银行卡）───
+
+    async add_payment_auth(p: McpToolParams = {}) {
+      const { name, idCard, bankCard, phone, bankCode, bankName } = p;
+      const now = Date.now();
+
+      if (!bankCode) return { success: false, error: 'bankCode 不能为空，请先通过 voko_search_banks 选择银行' };
+      if (!bankCard) return { success: false, error: 'bankCard 不能为空' };
+      const cleanBankCard = String(bankCard).replace(/\s/g, '');
+      if (!/^\d{13,19}$/.test(cleanBankCard)) return { success: false, error: '银行卡号格式不正确，应为13-19位数字' };
+      if (!phone || !/^1\d{10}$/.test(String(phone).trim())) return { success: false, error: '手机号格式不正确' };
+      if (!name) return { success: false, error: '姓名不能为空' };
+      if (!idCard) return { success: false, error: '身份证号不能为空' };
+      if (!/^\d{17}[\dXx]$/.test(String(idCard).trim())) return { success: false, error: '身份证号格式不正确，应为18位' };
+
+      const newId = 'pid_' + now + '_' + Math.random().toString(36).substr(2, 6);
+      cx.exec(`INSERT INTO payment_auth (id, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name, company_name, unified_social_credit_code, legal_name, legal_licence_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newId, name, idCard || '', cleanBankCard || '', phone || '', 1, bankCode || '', bankName || '', '', '', '', '', 'unverified', now, now]);
+      return { success: true, id: newId };
+    },
+
+    // ─── 18c. 查看入账银行卡列表 ───
+
+    async list_payment_auth(p: McpToolParams = {}) {
+      const keyword = (p.keyword || '').trim();
+      let sql = `SELECT * FROM payment_auth ORDER BY updated_at DESC`;
+      let params: unknown[] = [];
+      if (keyword) {
+        const kw = `%${keyword}%`;
+        sql = `SELECT * FROM payment_auth WHERE name LIKE ? OR bank_card LIKE ? OR phone LIKE ? ORDER BY updated_at DESC`;
+        params = [kw, kw, kw];
+      }
+      const rows = cx.query<PaymentAuthDbRow>(sql, params);
+      const receiverStatusLabel: Record<string, string> = {
+        'none': '未申请', PROCESSING: '申请中', AGREEMENT_SIGNING: '待签署',
+        COMPLETED: '已完成', APPLY_REJECTED: '已拒绝'
+      };
+      const masked = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        nameMask: r.name ? r.name[0] + '*'.repeat(r.name.length - 1) : '',
+        idCardMask: r.id_card ? r.id_card.substring(0, 4) + '**********' : '',
+        bankCardMask: r.bank_card ? r.bank_card.substring(0, 4) + '****' + r.bank_card.slice(-4) : '',
+        phoneMask: r.phone ? r.phone.substring(0, 3) + '****' + r.phone.slice(-4) : '',
+        receiverType: r.receiver_type,
+        receiverTypeLabel: r.receiver_type === 2 ? '对公' : '对私',
+        receiverApplyStatus: r.receiver_apply_status,
+        requestNo: r.request_no,
+        receiverApplyStatusLabel: receiverStatusLabel[String(r.receiver_apply_status || '')] || r.status || '未知',
+        bankCode: r.bank_code,
+        bankName: r.bank_name,
+        companyName: r.company_name,
+        status: r.status,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      }));
+      return { success: true, data: masked };
+    },
+
+    // ─── 18d. 删除入账银行卡 ───
+
+    async delete_payment_auth(p: McpToolParams = {}) {
+      if (!p.id) return { success: false, error: '缺少 id' };
+      // 若该银行卡已被 Agent 绑定，先解除绑定
+      cx.exec(`UPDATE agents SET payment_auth_id = NULL, updated_at = ? WHERE payment_auth_id = ?`, [Date.now(), p.id]);
+      cx.exec(`DELETE FROM payment_auth WHERE id = ?`, [p.id]);
+      return { success: true };
+    },
+
+    // ─── 18e. 申请认证 ───
+
+    async apply_payment_auth(p: McpToolParams = {}) {
+      const { paymentAuthId, email: explicitEmail } = p;
+      if (!paymentAuthId) return { success: false, error: '缺少 paymentAuthId' };
+
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      if (!auth) return { success: false, error: '未找到支付认证信息' };
+
+      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : '';
+      if (!email) {
+        const boundAgent = cx.query<PaymentAgentRow>(`SELECT owner_email FROM agents WHERE payment_auth_id = ? AND owner_email IS NOT NULL LIMIT 1`, [paymentAuthId])[0];
+        email = boundAgent?.owner_email || '';
+      }
+      if (!email) {
+        const owners = cx.query<PaymentAgentRow>(`SELECT DISTINCT owner_email FROM agents WHERE owner_email IS NOT NULL LIMIT 2`);
+        if (owners.length === 1) email = owners[0].owner_email || '';
+      }
+      if (!email) return { success: false, error: '无法获取用户邮箱，请先通过邮箱验证码登录/注册，或显式传入 email' };
+
+      if (!cx.getUserAccessToken || !cx.VOKO_API_URL) {
+        return { success: false, error: 'MCP 上下文未提供 getUserAccessToken 或 VOKO_API_URL' };
+      }
+      const userToken = cx.getUserAccessToken(email);
+      if (!userToken) return { success: false, error: '缺少 User Access Token，请先通过邮箱验证码登录/注册以获取' };
+
+      const type = auth.receiver_type || 1;
+      const body: Record<string, string | number> = {
+        email,
+        type,
+        receiverName: type === 2 ? optionalString(auth.company_name || auth.name) : optionalString(auth.name),
+        licenceNo: type === 2 ? optionalString(auth.unified_social_credit_code || auth.id_card) : optionalString(auth.id_card),
+        bankCardNo: optionalString(auth.bank_card),
+        bankCode: auth.bank_code || '',
+        mobile: optionalString(auth.phone),
+      };
+      if (type === 2) {
+        if (auth.legal_name) body.legalName = auth.legal_name;
+        if (auth.legal_licence_no) body.legalLicenceNo = auth.legal_licence_no;
+      }
+
+      let result: PaymentApiResult;
+      try {
+        const resp = await fetch(`${cx.VOKO_API_URL}/api/external/v1/payment/receiver/apply`, {
+          method: 'POST',
+          redirect: 'error',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${userToken}` },
+          body: JSON.stringify(body)
+        });
+        result = await readPaymentApiResult(resp);
+      } catch (error: unknown) {
+        return { success: false, error: toolErrorMessage(error) };
+      }
+      const data = result.data;
+      const failMsg = result.msg || result.message || '';
+
+      if (result.code !== 200) return { success: false, error: failMsg || '申请认证失败', code: result.code, data };
+      const requestNo = optionalString(data.requestNo);
+      const receiverNo = optionalString(data.receiverNo);
+      const paymentUserUid = optionalString(data.paymentUserUid);
+      if (!requestNo && !receiverNo && !paymentUserUid) {
+        return { success: false, error: t('mcp.payment.invalid_response') };
+      }
+
+      const now = Date.now();
+      let applyStatus = optionalString(data.receiverApplyStatus) || 'PROCESSING';
+      if (data.alreadyRegistered === true) applyStatus = 'COMPLETED';
+      let statusUpdate = auth.status || 'unverified';
+      const upstreamMsg = optionalString(data.upstreamMsg) || optionalString(data.hint) || failMsg;
+      if (applyStatus === 'APPLY_REJECTED' && upstreamMsg) statusUpdate = '拒绝: ' + upstreamMsg.substring(0, 100);
+
+      cx.exec(`UPDATE payment_auth SET request_no = ?, receiver_no = ?, receiver_apply_status = ?, receiver_sign_status = ?, receiver_sign_url = ?, merchant_sign_url = ?, payment_user_uid = ?, status = ?, updated_at = ? WHERE id = ?`,
+        [requestNo, receiverNo, applyStatus, optionalString(data.receiverSignStatus), optionalString(data.receiverSignUrl), optionalString(data.merchantSignUrl), paymentUserUid, statusUpdate, now, paymentAuthId]);
+      return { success: true, data };
+    },
+
+    async refresh_payment_auth(p: McpToolParams = {}) {
+      const { paymentAuthId, email: explicitEmail } = p;
+      if (!paymentAuthId) return { success: false, error: t('mcp.payment.missing_auth_id') };
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      if (!auth) return { success: false, error: t('mcp.payment.auth_not_found') };
+      if (!auth.request_no) return { success: false, error: t('mcp.payment.auth_not_applied') };
+
+      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : '';
+      if (!email) {
+        const boundAgent = cx.query<PaymentAgentRow>(`SELECT owner_email FROM agents WHERE payment_auth_id = ? AND owner_email IS NOT NULL LIMIT 1`, [paymentAuthId])[0];
+        email = boundAgent?.owner_email || '';
+      }
+      if (!email) {
+        const owners = cx.query<PaymentAgentRow>(`SELECT DISTINCT owner_email FROM agents WHERE owner_email IS NOT NULL LIMIT 2`);
+        if (owners.length === 1) email = owners[0].owner_email || '';
+      }
+      if (!email || !cx.getUserAccessToken || !cx.VOKO_API_URL) {
+        return { success: false, error: t('mcp.payment.refresh_identity_missing') };
+      }
+      const userToken = cx.getUserAccessToken(email);
+      if (!userToken) return { success: false, error: t('mcp.payment.refresh_token_missing') };
+
+      let result: PaymentApiResult;
+      try {
+        const response = await fetch(`${cx.VOKO_API_URL}/api/external/v1/payment/receiver/query`, {
+          method: 'POST',
+          redirect: 'error',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${userToken}` },
+          body: JSON.stringify({ requestNo: auth.request_no })
+        });
+        result = await readPaymentApiResult(response);
+      } catch (error: unknown) {
+        return { success: false, error: toolErrorMessage(error) };
+      }
+      if (result.code !== 200) {
+        return { success: false, error: result.msg || result.message || t('mcp.payment.refresh_failed'), code: result.code };
+      }
+      const data = result.data;
+      const status = optionalString(data.status) || optionalString(data.receiverApplyStatus);
+      if (!status) return { success: false, error: t('mcp.payment.invalid_response') };
+      cx.exec(
+        `UPDATE payment_auth SET receiver_no = ?, receiver_apply_status = ?, receiver_sign_status = ?, receiver_sign_url = ?, merchant_sign_url = ?, status = ?, updated_at = ? WHERE id = ?`,
+        [
+          optionalString(data.receiverNo) || auth.receiver_no || '',
+          status,
+          optionalString(data.receiverSignStatus),
+          optionalString(data.receiverSignUrl),
+          optionalString(data.merchantSignUrl),
+          status === 'COMPLETED' ? 'verified' : (auth.status || 'unverified'),
+          Date.now(),
+          paymentAuthId
+        ]
+      );
+      return { success: true, data: { ...data, receiverApplyStatus: status } };
+    },
+
+    // ─── 18f. 搜索银行总行 ───
+
+    async search_banks(p: McpToolParams = {}) {
+      const keyword = (p.keyword || '').trim();
+      let rows: BankDbRow[];
+      if (!keyword) {
+        rows = cx.query<BankDbRow>(`SELECT * FROM bank_head_offices ORDER BY id LIMIT 50`);
+      } else {
+        const kw = `%${keyword}%`;
+        rows = cx.query<BankDbRow>(`SELECT * FROM bank_head_offices WHERE code LIKE ? OR name LIKE ? OR short_name LIKE ? ORDER BY id LIMIT 50`, [kw, kw, kw]);
+      }
+      return { success: true, data: rows.map((r) => ({ code: r.code, name: r.name, shortName: r.short_name })) };
+    },
+
+    // ─── 18f. Agent 绑定入账银行卡 ───
+
+    async bind_agent_payment_auth(p: McpToolParams = {}) {
+      const { agentId, paymentAuthId } = p;
+      if (!agentId || !paymentAuthId) return { success: false, error: '缺少 agentId 或 paymentAuthId' };
+
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT payment_user_uid, request_no, id_card, unified_social_credit_code, receiver_type, receiver_apply_status FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      if (!auth) return { success: false, error: '未找到支付认证信息' };
+      if (String(auth.receiver_apply_status || '').trim().toUpperCase() !== 'COMPLETED') {
+        return { success: false, error: '该银行卡尚未申请认证，请先调用 voko_apply_payment_auth 完成认证（receiverApplyStatus=COMPLETED 后再绑定）' };
+      }
+
+      const agent = cx.query<PaymentAgentRow>(`SELECT owner_email, did, private_key FROM agents WHERE agent_id = ?`, [agentId])[0];
+      if (!agent) return { success: false, error: '未找到 Agent' };
+      if (!agent.did) return { success: false, error: 'Agent 未注册 DID' };
+      if (!agent.private_key) return { success: false, error: 'Agent 未配置私钥' };
+
+      if (!cx.signDidRequest) {
+        return { success: false, error: 'MCP 上下文未提供 signDidRequest，未执行绑定' };
+      }
+
+      try {
+        const bizFields: Record<string, string | number> = { email: agent.owner_email || '', agentDid: agent.did || '' };
+        if (auth.payment_user_uid) {
+          bizFields.paymentUserUid = auth.payment_user_uid;
+        } else if (auth.request_no) {
+          bizFields.requestNo = auth.request_no;
+        } else {
+          bizFields.licenceNo = auth.receiver_type === 2
+            ? optionalString(auth.unified_social_credit_code || auth.id_card)
+            : optionalString(auth.id_card);
+          if (auth.receiver_type) bizFields.type = auth.receiver_type;
+        }
+
+        const authFields = await cx.signDidRequest(agent.did, agent.private_key, bizFields);
+        const body = { ...authFields, ...bizFields };
+
+        const resp = await fetch(ENDPOINTS.payment.baseUrl + '/payment/receiver/link-agent', {
+          method: 'POST',
+          redirect: 'error',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const result = await readPaymentApiResult(resp);
+        if (result.code === 200) {
+          const data = result.data;
+          const feeRate = optionalFeeRate(data.paymentFeeRate);
+          const usageRate = optionalFeeRate(data.agentUsageFeeRate);
+          if (Number.isNaN(feeRate) || Number.isNaN(usageRate)) {
+            return { success: false, error: t('mcp.payment.invalid_response') };
+          }
+          cx.exec(`UPDATE agents SET payment_auth_id = ? WHERE agent_id = ?`, [paymentAuthId, agentId]);
+          const bound = cx.query<PaymentFeeRow>(`SELECT payment_fee_rate, agent_usage_fee_rate FROM agents WHERE payment_auth_id = ? AND agent_id != ? LIMIT 1`, [paymentAuthId, agentId])[0];
+          if (bound) {
+            cx.exec(`UPDATE agents SET payment_fee_rate = ?, agent_usage_fee_rate = ? WHERE agent_id = ?`, [bound.payment_fee_rate, bound.agent_usage_fee_rate, agentId]);
+          }
+          if (feeRate != null || usageRate != null) {
+            const s: string[] = []; const v: unknown[] = [];
+            if (feeRate != null) { s.push('payment_fee_rate = ?'); v.push(feeRate); }
+            if (usageRate != null) { s.push('agent_usage_fee_rate = ?'); v.push(usageRate); }
+            v.push(agentId);
+            cx.exec(`UPDATE agents SET ${s.join(', ')} WHERE agent_id = ?`, v);
+          }
+          return { success: true, data };
+        }
+        return { success: false, error: result.msg || '绑定失败', code: result.code };
+      } catch (e: any) {
+        console.error('[MCP] bind_agent_payment_auth link-agent 失败:', e.message);
+        return { success: false, error: e.message };
+      }
+    },
+
+    // ─── 19. 计费模式 ───
+
+    async agent_pricing(p: McpToolParams = {}) {
+      // 设置了 pricingModel 则为写操作
+      if (p.pricingModel) {
+        const now = Date.now();
+        const isFree = p.pricingModel === 'free';
+        const finalTrial = isFree ? null : (p.trialMinutes ?? 3);
+        const existing = cx.query(`SELECT id FROM agent_pricing WHERE agent_id=?`, [p.agentId]);
+        if (existing && existing.length > 0) {
+          cx.exec(`UPDATE agent_pricing SET pricing_model=?, price=?, duration_minutes=?, trial_minutes=?, enabled=1, updated_at=? WHERE agent_id=?`,
+            [p.pricingModel, isFree ? null : (p.price || null), isFree ? null : (p.durationMinutes || null), finalTrial, now, p.agentId]);
+        } else {
+          const id = 'ap_' + now + '_' + Math.random().toString(36).substr(2, 6);
+          cx.exec(`INSERT INTO agent_pricing (id, agent_id, pricing_model, price, duration_minutes, trial_minutes, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)`,
+            [id, p.agentId, p.pricingModel, isFree ? null : (p.price || null), isFree ? null : (p.durationMinutes || null), finalTrial, now, now]);
+        }
+        return { success: true };
+      }
+
+      // 不传 pricingModel 则为查询
+      const row = cx.query(`SELECT * FROM agent_pricing WHERE agent_id=?`, [p.agentId])[0] || null;
+      return {
+        success: true,
+        agentId: p.agentId,
+        pricingModel: row?.pricing_model || 'free',
+        price: row?.price || null,
+        durationMinutes: row?.duration_minutes || null,
+        trialMinutes: row?.trial_minutes ?? 3,
+        enabled: row?.enabled !== 0,
+      };
+    },
+
+    // ─── 20. 轮询新消息 ───
+
+    _fetchCursors: new Map<string, number>(),
+    _fetchBlocks: new Map<string, PollController>(),
+
+    _channelCursorKey(agentId?: string, channelId?: string) {
+      return `${agentId}:${channelId}`;
+    },
+
+    _getChannelCursor(agentId?: string, channelId?: string) {
+      return _getCursorDb(cx.db, this._channelCursorKey(agentId, channelId));
+    },
+
+    _setChannelCursor(agentId: string | undefined, channelId: string, seq: number) {
+      const key = this._channelCursorKey(agentId, channelId);
+      if (seq > this._getChannelCursor(agentId, channelId)) _setCursorDb(cx.db, key, seq);
+    },
+
+    async fetch_new_messages(p: McpToolParams = {}) {
+      const blockTimeout = p.blockTimeout || 0;
+      const limit = Math.min(p.limit || 50, 200);
+      const onlyReplies = p.onlyReplies !== false;
+
+      // 指定频道模式：channelId 优先；visitorId 保持原有单聊兼容。
+      // 只有两者都未传时才进入下面的全量模式。
+      const targetChannelId = p.channelId || p.visitorId;
+      if (targetChannelId) {
+        const targetChannelType = p.channelId && Number(p.channelType) === 2 ? 2 : 1;
+        const key = this._channelCursorKey(p.agentId, targetChannelId);
+        const seq = p.messageSeq ?? _getCursorDb(cx.db, key) ?? 0;
+
+        if (blockTimeout > 0) {
+          const prev = this._fetchBlocks.get(key);
+          if (prev) prev.aborted = true;
+          const ctrl = { aborted: false };
+          this._fetchBlocks.set(key, ctrl);
+          try {
+            const rows = await this._pollSingleChannel(
+              p.agentId, targetChannelId, seq, limit, onlyReplies, blockTimeout, ctrl, targetChannelType
+            );
+            if (rows.length > 0) {
+              const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
+              this._setChannelCursor(p.agentId, targetChannelId, maxSeq);
+            }
+            const hasMore = rows.length > limit;
+            if (hasMore) rows.pop();
+            const filtered = this._a2aPreparePull(p.agentId, rows);
+            return fmtPullResult(filtered, hasMore);
+          } finally {
+            if (this._fetchBlocks.get(key) === ctrl) this._fetchBlocks.delete(key);
+          }
+        }
+
+        const rows = this._queryMessages(
+          p.agentId, targetChannelId, seq, onlyReplies, limit, targetChannelType
+        );
+        const hasMore = rows.length > limit;
+        if (hasMore) rows.pop();
+        if (rows.length > 0) {
+          const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
+          this._setChannelCursor(p.agentId, targetChannelId, maxSeq);
+        }
+        const filtered = this._a2aPreparePull(p.agentId, rows);
+        return fmtPullResult(filtered, hasMore);
+      }
+
+      // ─── 全量模式（不指定 visitorId）：按 channel 分别维护游标 ───
+      // 因为 WuKongIM 的 message_seq 是按 channel 独立的，用单一全局游标
+      // 会导致低 seq channel 的新消息被漏掉。
+      // channels 包含：单聊（messages 中 agent_id=self）+ 群聊（conversations 中本 agent 参与的 channel_type=2 会话）
+      let selfImUid = '';
+      try { selfImUid = cx.query<AgentUidRow>('SELECT imUid FROM agents WHERE agent_id=?', [p.agentId])[0]?.imUid || ''; } catch (_: unknown) {}
+      const channels = cx.query<ChannelRow>(
+        `SELECT channel_id, 1 AS channel_type FROM messages WHERE agent_id=? AND channel_type!=2 GROUP BY channel_id
+         UNION
+         SELECT channel_id, 2 AS channel_type FROM conversations WHERE user_uid=? AND channel_type=2`,
+        [p.agentId, selfImUid]
+      );
+
+      const allRows: MessageDbRow[] = [];
+      for (const ch of channels) {
+        const channelId = ch.channel_id;
+        const isGroup = ch.channel_type === 2;
+        const autoCursor = this._getChannelCursor(p.agentId, channelId);
+        let seq = autoCursor;
+        // 该 channel 首次拉取且用户传了全局 messageSeq 时：
+        // 仅当该 channel 的最大 seq 大于全局阈值，才把 messageSeq 作为起始点；
+        // 否则从 0 开始，避免低 seq channel 的新消息被全局高 seq 漏掉。
+        if (seq === 0 && p.messageSeq != null) {
+          const maxRow = cx.query<MaxSequenceRow>(
+            isGroup
+              ? `SELECT MAX(message_seq) as max_seq FROM messages WHERE channel_id=? AND channel_type=2`
+              : `SELECT MAX(message_seq) as max_seq FROM messages WHERE agent_id=? AND channel_id=?`,
+            isGroup ? [channelId] : [p.agentId, channelId]
+          );
+          const channelMaxSeq = maxRow[0]?.max_seq || 0;
+          if (channelMaxSeq >= p.messageSeq) {
+            seq = p.messageSeq;
+          }
+        }
+        const rows = this._queryMessages(p.agentId, channelId, seq, onlyReplies, limit, isGroup ? 2 : 1);
+        allRows.push(...rows);
+      }
+
+      // 合并后按 message_seq 升序，保证分页稳定
+      allRows.sort((a, b) => (a.message_seq || 0) - (b.message_seq || 0));
+
+      const hasMore = allRows.length > limit;
+      if (hasMore) allRows.length = limit;
+
+      // 更新各 channel 自动游标
+      for (const row of allRows) {
+        this._setChannelCursor(p.agentId, row.channel_id, row.message_seq || 0);
+      }
+
+      const filtered = this._a2aPreparePull(p.agentId, allRows);
+      return fmtPullResult(filtered, hasMore);
+    },
+
+    _queryMessages(
+      agentId: string | undefined,
+      channelId: string,
+      seq: number,
+      onlyReplies: boolean,
+      limit: number,
+      channelType: number = 1,
+    ): MessageDbRow[] {
+      // 群聊（channel_type=2）一条消息多 agent 共享，不按 agent_id 过滤
+      let sql, params;
+      if (channelType === 2) {
+        sql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2 AND message_seq > ?`;
+        params = [channelId, seq];
+      } else {
+        sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND message_seq > ?`;
+        params = [agentId, channelId, seq];
+      }
+      if (onlyReplies) sql += ` AND is_me!=1`;
+      sql += ` ORDER BY message_seq ASC LIMIT ?`;
+      params.push(limit + 1);
+      return cx.query<MessageDbRow>(sql, params);
+    },
+
+    /** push 不可用时，pull 复用 dispatcher 的 A2A 身份识别、STATE、收敛和熔断治理。 */
+    _a2aPreparePull(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
+      const dispatcher = (global as typeof globalThis & { __dispatcher?: PullDispatcher }).__dispatcher;
+      if (!dispatcher?.prepareForPull || !rows.length) return rows;
+      return rows
+        .map((row) => dispatcher.prepareForPull?.(agentId, row))
+        .filter((row): row is MessageDbRow => !!row);
+    },
+    // 阻塞轮询单 channel：被取消时返回空数组
+    async _pollSingleChannel(
+      agentId: string | undefined,
+      channelId: string,
+      seq: number,
+      limit: number,
+      onlyReplies: boolean,
+      timeoutSec: number,
+      ctrl: PollController,
+      channelType: number = 1,
+    ): Promise<MessageDbRow[]> {
+      const start = Date.now();
+      while (!ctrl.aborted) {
+        const rows = this._queryMessages(agentId, channelId, seq, onlyReplies, limit, channelType);
+        if (rows.length > 0) return rows;
+        if (Date.now() - start >= timeoutSec * 1000) return [];
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+      }
+      return [];
+    },
+
+    // ─── 18. 白名单管理 ───
+
+    async manage_whitelist(p: McpToolParams = {}) {
+      const ac = require('../core/access-control-api');
+      if (p.action === 'remove') {
+        if (p.id) return ac.removeEntry(cx.db, p.id);
+        if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
+        return ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'whitelist');
+      }
+      if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
+      return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason }, {
+        onWhitelistAdded: (aid?: string, vid?: string) => {
+          if (cx.sendSystemMessage) {
+            cx.sendSystemMessage(aid, vid, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000));
+          }
+        }
+      });
+    },
+
+    // ─── 19. 黑名单管理 ───
+
+    async manage_blacklist(p: McpToolParams = {}) {
+      const ac = require('../core/access-control-api');
+      if (p.action === 'remove') {
+        if (p.id) return ac.removeEntry(cx.db, p.id);
+        if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
+        const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
+        const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');
+        if (r.success && __wasBlk && cx.sendSystemMessage) {
+          cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000));
+        }
+        return r;
+      }
+      if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
+      return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'blacklist', visitorId: p.visitorId, reason: p.reason });
+    },
+
+    // ─── 20. 查看黑白名单 ───
+
+    async list_access_lists(p: McpToolParams = {}) {
+      const ac = require('../core/access-control-api');
+      const limit = p.limit ? Math.min(p.limit, 100) : undefined;
+      const offset = p.offset || 0;
+      const keyword = p.keyword || '';
+      return ac.getList(cx.db, { agentId: p.agentId, listType: p.listType, limit, offset, keyword });
+    },
+
+    // ─── 21. 白名单模式 ───
+
+    async set_private_mode(p: McpToolParams = {}) {
+      if (cx.toggleWhitelistMode) {
+        return cx.toggleWhitelistMode({ agentId: p.agentId, enabled: p.enabled });
+      }
+      const newMode = p.enabled ? 'private' : 'public';
+      cx.exec(`UPDATE agents SET access_mode=?, updated_at=? WHERE agent_id=?`, [newMode, Date.now(), p.agentId]);
+      return { success: true, accessMode: newMode };
+    },
+
+    // ═══════════════════════════════════════════
+    //  群聊（group chat）—— 全部走服务端 /api/group/v1/*（服务端为权威 + 单一写者）
+    //  lite 不再直连 WuKongIM 做群管理；消息收发仍走 WKSDK（wukongim-sender / messenger）
+    // ═══════════════════════════════════════════
+
+    // 本地补全成员昵称 + isAgent + mute_until（服务端成员回 uid/role/joined_at/mute_until）
+    _enrichMembers(srvMembers: GroupMember[] = []) {
+      const uids = srvMembers.map((member) => member.uid);
+      if (!uids.length) return [];
+      const placeholders = uids.map(() => '?').join(',');
+      const agentRows = cx.query<AgentUidRow>(`SELECT imUid FROM agents WHERE imUid IN (${placeholders})`, uids);
+      const agentUidSet = new Set(agentRows.map((row) => row.imUid));
+      const byUid = new Map<string, GroupMember>(srvMembers.map((member) => [member.uid, member]));
+      return uids.map((uid) => {
+        const cache = cx.query<UserCacheRow>(`SELECT nickname FROM user_cache WHERE uid=? LIMIT 1`, [uid])[0];
+        return { uid, nickname: cache?.nickname || null, isAgent: agentUidSet.has(uid), role: byUid.get(uid)?.role || null, mute_until: byUid.get(uid)?.mute_until || null };
+      });
+    },
+
+    async create_group(p: McpToolParams = {}) {
+      // actor = 创建 agent 的 imUid（owner_uid）；返回 channel_id 作为 lite 侧 channelId
+      // 群列表由 list_groups 从服务端获取，本地不持久化群
+      try {
+        const data = await groupClient.createGroup(cx, { agentId: p.agentId, name: p.name, members: [] });
+        return { success: true, channelId: data.channel_id };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async invite_to_group(p: McpToolParams = {}) {
+      // actor = operator_uid；服务端按 invite_confirm 决定直加/审批，并发系统消息
+      try {
+        await groupClient.invite(cx, { agentId: p.agentId, channelId: p.channelId, members: p.members || [] });
+        return { success: true, failed: [] };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), failed: p.members || [] };
+      }
+    },
+
+    async create_invite_link(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.createInviteLink(cx, {
+          agentId: p.agentId, channelId: p.channelId,
+          expiresInSeconds: p.expiresInSeconds || null,
+          maxUses: p.maxUses || null
+        });
+        return { success: true, code: data.code, channel_id: data.channel_id, expires_at: data.expires_at };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async join_by_invite_code(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.joinByInviteCode(cx, { code: p.code, agentId: p.agentId });
+        return { success: true, ...data };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async mute_member(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.muteMember(cx, {
+          agentId: p.agentId, channelId: p.channelId,
+          targetUid: p.targetUid, muted: !!p.muted,
+          durationSeconds: p.durationSeconds || null
+        });
+        return { success: true, ...data };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async accept_invitation(p: McpToolParams = {}) {
+      // 第一期 direct-add：invite 时成员已由服务端加入，此处仅校验是否已是成员
+      try {
+        await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.channelId });
+        return { success: true, channelId: p.channelId };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async decline_invitation(p: McpToolParams = {}) {
+      // 第一期 direct-add 下无可撤销语义（成员在 invite 时即加入）；保留为 no-op，想退出用 quit
+      return { success: true, channelId: p.channelId };
+    },
+
+    async get_group_members(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.channelId });
+        return { success: true, members: this._enrichMembers(data.members) };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async get_group_context(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.channelId });
+        const members = this._enrichMembers(data.members);
+        // 最近消息：本地 messages 表（channel_id 匹配即可，WKSDK 的 channel_type 不可靠）
+        const limit = Math.min(p.limit || 20, 100);
+        const offset = Math.max(0, Number(p.offset) || 0);
+        // 先按 client_msg_no / message_seq 去重，再分页；多取一条用于判断是否还有更早历史。
+        const raw = cx.query<GroupHistoryRow>(
+          `WITH ranked AS (
+             SELECT id, from_uid, content, timestamp, content_type, message_seq, client_msg_no, mention,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY COALESCE(client_msg_no, CASE WHEN message_seq IS NOT NULL THEN 'seq:' || message_seq ELSE id END)
+                      ORDER BY timestamp DESC, rowid DESC
+                    ) AS rn
+             FROM messages WHERE channel_id=? AND channel_type=2
+           )
+           SELECT id, from_uid, content, timestamp, content_type, message_seq, client_msg_no, mention
+           FROM ranked WHERE rn=1 ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+          [p.channelId, limit + 1, offset]
+        );
+        const hasMore = raw.length > limit;
+        const rows = raw.slice(0, limit);
+        const nameMap = new Map(members.map((member: { uid: string; nickname?: string | null }) => [
+          member.uid,
+          member.nickname || member.uid,
+        ]));
+        const messages = rows.reverse().map((r) => ({
+          fromUid: r.from_uid,
+          senderName: nameMap.get(r.from_uid) || r.from_uid,
+          content: r.content,
+          timestamp: r.timestamp,
+          contentType: r.content_type || 1,
+          mention: (() => { try { return r.mention ? JSON.parse(r.mention) : null; } catch (_: unknown) { return null; } })(),
+        }));
+        return { success: true, channelId: p.channelId, groupId: data.id || data.group_id || null, groupName: data.name || p.channelId, notice: data.notice || '', avatar: data.avatar || '', approve_mode: data.approve_mode || 'manual', searchable: data.searchable != null ? data.searchable : 1, status: data.status || 'active', dissolvedAt: data.dissolved_at || null, members, messages, hasMore, offset };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e) };
+      }
+    },
+
+    async kick_from_group(p: McpToolParams = {}) {
+      // actor = operator_uid（须群 owner/admin；群主不可被踢，服务端兜底）
+      try {
+        await groupClient.kick(cx, { agentId: p.agentId, channelId: p.channelId, targetUid: p.targetUid });
+        return { success: true };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async get_group_status(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.channelId });
+        return { success: true, status: data.status || 'active', dissolvedAt: data.dissolved_at || null };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async dissolve_group(p: McpToolParams = {}) {
+      try {
+        const data = await groupClient.dissolve(cx, { agentId: p.agentId, channelId: p.channelId });
+        return { success: true, dissolved: data.dissolved !== false, alreadyDissolved: !!data.already_dissolved, channelId: data.channel_id || p.channelId };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async quit_group(p: McpToolParams = {}) {
+      try {
+        await groupClient.quit(cx, { agentId: p.agentId, channelId: p.channelId });
+        const imUid = groupClient.getAgentImUid(cx, p.agentId);
+        if (imUid) cx.exec('DELETE FROM conversations WHERE user_uid=? AND channel_id=? AND channel_type=2', [imUid, p.channelId]);
+        return { success: true };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async update_group(p: McpToolParams = {}) {
+      // actor = operator_uid（须群 owner/admin）；只传需改的字段
+      try {
+        await groupClient.updateGroup(cx, { agentId: p.agentId, channelId: p.channelId, name: p.name, notice: p.notice, avatar: p.avatar, approve_mode: p.approve_mode, searchable: p.searchable });
+        return { success: true };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async list_groups(p: McpToolParams = {}) {
+      // 群列表来自服务端（按成员 uid 查，分页），不在本地持久化
+      try {
+        const response: unknown = await groupClient.listMyGroups(cx, { agentId: p.agentId, limit: p.limit, offset: p.offset });
+        if (!response || typeof response !== 'object') throw new Error(t('mcp.error.invalid_group_list_response'));
+        const { groups, total } = response as { groups?: unknown; total?: unknown };
+        if (!Array.isArray(groups)) throw new Error(t('mcp.error.invalid_group_list_response'));
+        return {
+          success: true,
+          groups: groups.filter(isGroupSummary).map((group) => ({
+            ...group,
+            status: group.status || 'active',
+            dissolved_at: group.dissolved_at || null,
+          })),
+          total: typeof total === 'number' ? total : groups.length,
+        };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async search_groups(p: McpToolParams = {}) {
+      // 搜索可加入的公开群（按群名/channel_id 模糊），非成员可用
+      try {
+        const response: unknown = await groupClient.searchGroups(cx, { agentId: p.agentId, keyword: p.keyword, page: p.page, page_size: p.page_size });
+        if (!response || typeof response !== 'object') throw new Error(t('mcp.error.invalid_group_search_response'));
+        const { groups, total } = response as { groups?: unknown; total?: unknown };
+        if (!Array.isArray(groups)) throw new Error(t('mcp.error.invalid_group_search_response'));
+        const activeGroups = groups
+          .filter(isGroupSummary)
+          .filter((group) => (group.status || 'active') !== 'dissolved');
+        return { success: true, groups: activeGroups, total: typeof total === 'number' ? total : activeGroups.length };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async apply_group(p: McpToolParams = {}) {
+      // 提交入群申请：status = pending / joined / already_member / duplicate
+      try {
+        const r = await groupClient.applyGroup(cx, { agentId: p.agentId, channelId: p.channelId, message: p.message });
+        return { success: true, ...r };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async list_group_applies(p: McpToolParams = {}) {
+      // 取群的入群申请列表（owner/admin 用）
+      try {
+        const applies = await groupClient.getApplyList(cx, { agentId: p.agentId, channelId: p.channelId });
+        return { success: true, applies };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    async approve_group_apply(p: McpToolParams = {}) {
+      // 审批入群申请（action = 'approve' | 'reject'）
+      try {
+        await groupClient.approveApply(cx, { agentId: p.agentId, channelId: p.channelId, applyId: p.applyId, action: p.action });
+        return { success: true };
+      } catch (e: unknown) {
+        return { success: false, error: toolErrorMessage(e), noToken: toolErrorHasNoToken(e) };
+      }
+    },
+
+    // ─── 31. 邀请好友 ───
+
+    // ═══════════════════════════════════════════
+    //  审核规则管理
+    // ═══════════════════════════════════════════
+
+    async list_audit_rules(p: McpToolParams = {}) {
+      const sql = p.direction
+        ? 'SELECT * FROM audit_rules WHERE direction = ? ORDER BY is_default DESC, created_at ASC'
+        : 'SELECT * FROM audit_rules ORDER BY is_default DESC, created_at ASC';
+      const rows = p.direction ? cx.query(sql, [p.direction]) : cx.query(sql);
+      return { success: true, data: rows };
+    },
+
+    async manage_audit_rules(p: McpToolParams = {}) {
+      if (p.action === 'add') {
+        if (!p.direction || !p.keyword || !p.actionType) {
+          return { success: false, error: 'add 需要 direction, keyword, actionType' };
+        }
+        const id = `audit_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        cx.exec(
+          `INSERT INTO audit_rules (id, direction, keyword, action, prompt, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          [id, p.direction, p.keyword, p.actionType, p.prompt || null, Date.now(), Date.now()]
+        );
+        return { success: true, id, message: `审核规则已添加 (${id})` };
+      }
+
+      if (p.action === 'update') {
+        if (!p.ruleId) return { success: false, error: 'update 需要 ruleId' };
+        const sets = []; const vals = [];
+        if (p.direction !== undefined) { sets.push('direction = ?'); vals.push(p.direction); }
+        if (p.keyword !== undefined) { sets.push('keyword = ?'); vals.push(p.keyword); }
+        if (p.actionType !== undefined) { sets.push('action = ?'); vals.push(p.actionType); }
+        if (p.prompt !== undefined) { sets.push('prompt = ?'); vals.push(p.prompt); }
+        if (sets.length === 0) return { success: false, error: '无可更新的字段' };
+        sets.push('updated_at = ?'); vals.push(Date.now());
+        vals.push(p.ruleId);
+        cx.exec(`UPDATE audit_rules SET ${sets.join(', ')} WHERE id = ?`, vals);
+        return { success: true, message: `审核规则已更新 (${p.ruleId})` };
+      }
+
+      if (p.action === 'delete') {
+        if (!p.ruleId) return { success: false, error: 'delete 需要 ruleId' };
+        cx.exec('DELETE FROM audit_rules WHERE id = ?', [p.ruleId]);
+        return { success: true, message: `审核规则已删除 (${p.ruleId})` };
+      }
+
+      return { success: false, error: `未知 action: ${p.action}` };
+    },
+
+    async invite_friend(p: McpToolParams = {}) {
+      const { agentId, friendEmail: rawEmails, friendName } = p;
+      const row = cx.query(`SELECT agent_name, owner_email, did FROM agents WHERE agent_id=?`, [agentId]);
+      if (!row?.[0]) return { success: false, error: 'Agent 不存在' };
+      const myName = row[0].agent_name || agentId;
+      const ownerDid = row[0].did;
+      console.error('[Invite] agentId=' + agentId + ' myName=' + myName + ' rawEmails=' + rawEmails);
+
+      // 解析多个邮箱：逗号/分号/换行分隔，去重，过滤掉主人自己
+      const ownerEmail = (row[0].owner_email || '').trim().toLowerCase();
+      const emailList = [...new Set(
+        (rawEmails || '').split(/[,;\n\r，]+/).map((e?: any) => e.trim().toLowerCase()).filter(Boolean)
+      )].filter((e?: any) => e !== ownerEmail);
+      if (emailList.length === 0) return { success: false, error: '没有有效的受邀邮箱' };
+      console.error('[Invite] 有效受邀邮箱数=' + emailList.length + ' list=' + emailList.join(','));
+
+      const guideUrl = ENDPOINTS.oss.publicUrl + '/chat/files/VOKO_MCP_GUIDE.md';
+      const currentVer = (() => { try { return require('../../package.json').version; } catch (_: any) { return '0.0.0'; } })();
+
+      const downloadUrl = 'https://www.npmjs.com/package/@voko/lite';
+
+      // 每个邮箱生成独立的邀请码，入库（已有未使用的不重复生成）
+      const invites = emailList.map((email?: any) => {
+        const existing = cx.query(`SELECT code FROM friend_invitations WHERE agent_id=? AND friend_email=?`, [agentId, email]);
+        if (existing?.[0]?.code) {
+          console.error('[Invite] 复用邀请码 agent=' + agentId + ' email=' + email + ' code=' + existing[0].code);
+          return { email, code: existing[0].code };
+        }
+        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        cx.exec(`INSERT OR REPLACE INTO friend_invitations (code, agent_id, friend_email, whitelisted, created_at) VALUES (?, ?, ?, 0, ?)`,
+          [code, agentId, email, Date.now()]);
+        console.error('[Invite] 生成邀请码 agent=' + agentId + ' email=' + email + ' code=' + code);
+        return { email, code };
+      });
+
+      // 每个邀请者生成独立的提示词
+      const invitationPrompts = invites.map((inv?: any) => ({
+        email: inv.email,
+        code: inv.code,
+        prompt: buildInvitationPrompt({
+          myName, ownerEmail: row[0].owner_email, version: currentVer, guideUrl, downloadUrl,
+          friendEmail: inv.email, inviteCode: inv.code
+        })
+      }));
+
+      // 通过 VOKO 系统邮件发送邀请（每封邮件独立生成提示词，含各自邮箱和邀请码）
+      const emailResults = [];
+      console.error('[Invite] 准备发送邮件 agentEmailApi=' + !!cx.agentEmailApi + ' ownerDid=' + (ownerDid || '无'));
+      if (!cx.agentEmailApi) console.error('[Invite] cx.agentEmailApi 不存在');
+      if (!ownerDid) console.error('[Invite] Agent 无 DID');
+      if (cx.agentEmailApi && ownerDid) {
+        for (const inv of invites) {
+          try {
+            const prompt = buildInvitationPrompt({
+              myName, ownerEmail: row[0].owner_email, version: currentVer, guideUrl, downloadUrl,
+              friendEmail: inv.email, inviteCode: inv.code
+            });
+            const sendRes = await cx.agentEmailApi.send(ownerDid, prompt, {
+              to: inv.email,
+              subject: buildEmailSubject(myName),
+              external_id: `invite-${inv.code}`,
+              reply_enabled: false,
+            });
+            const sent = !!sendRes?.message_id;
+            emailResults.push({ email: inv.email, code: inv.code, sent, message_id: sendRes?.message_id || null });
+            console.error('[Invite] 邮件发送 ' + (sent ? '成功' : '失败') + ' email=' + inv.email + ' code=' + inv.code + ' msgId=' + (sendRes?.message_id || '-'));
+          } catch (e: any) {
+            emailResults.push({ email: inv.email, code: inv.code, sent: false, note: e.message });
+            console.error('[Invite] 邮件发送异常 email=' + inv.email + ' code=' + inv.code + ' err=' + e.message);
+          }
+        }
+      } else {
+        // 无法发送邮件时，为每个邀请记录失败原因
+        for (const inv of invites) {
+          emailResults.push({ email: inv.email, code: inv.code, sent: false, note: !cx.agentEmailApi ? '邮件服务未就绪' : 'Agent 未注册 DID' });
+        }
+      }
+
+      return {
+        success: true,
+        agentId,
+        myName,
+        guideUrl,
+        downloadUrl,
+        currentVersion: currentVer,
+        invites,
+        invitationPrompts,
+        emailSent: emailResults.length > 0 ? emailResults : null,
+        instructions: `已将 ${invites.length} 位好友的邀请码入库，并通过邮件发送邀请提示词。好友发来的消息包含对应邀请码时自动通过并加入白名单。`,
+      };
+    },
+  };
+  const registrationOrchestrator = createRegistrationOrchestrator({
+    db: cx.db,
+    sendCode: (params: unknown) => cx.agentRegistration.sendCode(params),
+    loginByCode: (params: unknown) => cx.agentRegistration.loginByCode(params),
+    completeAgent: (params: unknown) => handlers.create_agent_by_token(params),
+    getLoggedEmail: () => {
+      try {
+        const rows = cx.query<ConfigDataRow>("SELECT data FROM config WHERE type='user_access_token'");
+        const data = rows[0]?.data ? JSON.parse(rows[0].data) : {};
+        return Object.keys(data)[0] || '';
+      } catch (_: any) { return ''; }
+    },
+  });
+  handlers.manage_agent_registration = async (params: McpToolParams = {}) =>
+    registrationOrchestrator.manage(params);
+
+  return handlers;
+}
+
+module.exports = { createToolHandlers };
