@@ -31,3 +31,25 @@ test('Agent detail actions link to the Agent-specific invitation page', () => {
   const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
   assert.match(web, /href="\/agents\/'\+aId\+'\/invite"[^>]*>\s*'\+L\('web\.agent\.invite\.title'\)/);
 });
+
+test('registered invitees are opened as an email search with conversation actions', () => {
+  const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
+  assert.match(web, /r\.result==='already_registered'/);
+  assert.match(web, /\/capabilities\?agentId='\+encodeURIComponent\([^)]+\)\+'\&q='\+encodeURIComponent\(email\)/);
+  assert.match(web, /const sendHref='\/send-message\?agentId='/);
+  assert.doesNotMatch(web, /conversationCount>0\?'\s*<span class="meta">\('/);
+});
+
+test('invitation forms require a custom dialog confirmation before submission', () => {
+  const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
+  assert.match(web, /function inviteConfirmUi\(/);
+  assert.match(web, /id="dlg-invite-confirm"/);
+  assert.match(web, /e\.stopImmediatePropagation\(\)/);
+  assert.match(web, /f\.requestSubmit\(\)/);
+});
+
+test('favicon is returned directly without sendFile path resolution', () => {
+  const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
+  assert.match(web, /res\.type\('image\/png'\)\.send\(require\('fs'\)\.readFileSync\(ico\)\)/);
+  assert.doesNotMatch(web, /res\.type\('image\/png'\)\.sendFile\(ico\)/);
+});

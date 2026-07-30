@@ -117,6 +117,16 @@ function actionForm(aid,action,fields,btn,cls,agentAction,submitLabel){
 }
 
 /** 原生 POST 表单的同步提交锁；fetch 型入口仍在各自函数内用 try/finally 解锁。 */
+function inviteConfirmUi(tFn,formSelector){
+  const selector=JSON.stringify(formSelector);
+  return '<dialog id="dlg-invite-confirm" style="border:none;border-radius:12px;padding:0;max-width:380px;width:calc(100% - 40px);box-shadow:0 12px 36px rgba(15,23,42,.18)">'
+    +'<div style="padding:20px 22px 18px"><h3 style="margin:0 0 8px;font-size:18px">'+esc(tFn('web.invite.confirm_title'))+'</h3>'
+    +'<p style="color:#667085;font-size:14px;line-height:1.65;margin:0 0 18px">'+esc(tFn('web.invite.confirm_message'))+'</p>'
+    +'<form method="dialog" style="display:flex;gap:8px;justify-content:flex-end"><button class="btn-sm btn-outline" value="cancel" style="margin:0;padding:6px 16px;min-height:auto">'+esc(tFn('common.btn.cancel'))+'</button>'
+    +'<button type="button" class="btn-sm" id="invite-confirm-submit" style="margin:0;padding:6px 16px;min-height:auto">'+esc(tFn('web.invite.confirm_btn'))+'</button></form></div></dialog>'
+    +'<script>(function(){var f=document.querySelector('+selector+'),d=document.getElementById("dlg-invite-confirm"),ok=document.getElementById("invite-confirm-submit"),confirmed=false;if(!f||!d||!ok)return;f.addEventListener("submit",function(e){if(confirmed)return;e.preventDefault();e.stopImmediatePropagation();d.showModal()});ok.addEventListener("click",function(){confirmed=true;d.close();f.requestSubmit()})})();</script>';
+}
+
 function submitLockScript(){
   return '<script>(function(){'
     +'function reset(f){f.dataset.submitLocked="";f.removeAttribute("aria-busy");var bs=f.querySelectorAll(\'button[type="submit"],input[type="submit"]\');bs.forEach(function(b){if(b._vokoWasDisabled===false)b.disabled=false;b.removeAttribute("aria-busy");if(b.tagName==="INPUT"){if(b._vokoIdleValue!=null)b.value=b._vokoIdleValue}else if(b._vokoIdleHtml!=null)b.innerHTML=b._vokoIdleHtml})}'
@@ -419,7 +429,7 @@ function createWebRouter(handlers, db, opts={}){
 
   R.get('/favicon.png', (req, res) => {
     const ico = require('path').join(__dirname, '..', '..', 'assets', 'voko-icon.png');
-    if (require('fs').existsSync(ico)) res.type('image/png').sendFile(ico);
+    if (require('fs').existsSync(ico)) res.type('image/png').send(require('fs').readFileSync(ico));
     else res.status(404).end();
   });
   R.get('/favicon.ico', (req, res) => res.redirect('/favicon.png'));
@@ -905,7 +915,8 @@ function createWebRouter(handlers, db, opts={}){
       res.send(renderFormPage(T('web.agent.invite.title'),agentId,agent.agentName||agentId,
         actionForm(agentId,'invite',[
           {id:'fe',name:'friendEmail',label:T('web.agent.invite.email'),type:'email',attr:'required placeholder="friend@example.com"'},
-        ],T('web.agent.invite.send_btn'),null,'agent.invite.send'),req.t,req.locale))
+        ],T('web.agent.invite.send_btn'),null,'agent.invite.send')
+        +inviteConfirmUi(T,'form[data-agent-action="agent.invite.send"]'),req.t,req.locale))
     }catch(e){next(e)}
   });
 
@@ -1087,6 +1098,10 @@ function createWebRouter(handlers, db, opts={}){
             const r=await handlers.invite_friend({agentId,friendEmail:req.body.friendEmail});
             const back=actionReturnPath(req);
             if(r.success===false)return res.redirect(actionResultLocation(back,'err',r.error||req.t('common.action.failed')));
+            if(r.result==='already_registered'){
+              const email=r.email||req.body.friendEmail||'';
+              return res.redirect('/capabilities?agentId='+encodeURIComponent(agentId)+'&q='+encodeURIComponent(email)+'&inviteResult=already_registered');
+            }
             const key='web.invite.result.'+r.result;
             const level=r.result==='email_failed'?'warn':'ok';
             return res.redirect(actionResultLocation(back,level,req.t(key,{email:r.email||req.body.friendEmail})));
@@ -1301,7 +1316,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       let agents=[];
       if(db) agents=db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' ORDER BY agent_name").all();
       const opts=agents.map(a=>'<option value="'+esc(a.agent_id)+'">'+esc(a.agent_name||a.agent_id)+'</option>').join('\n');
-      res.send(renderPage(req,T('web.invite.title'),'<div class="card"><form method="POST" action="/invite" data-agent-action="invite.send"><label for="ia">'+L('web.invite.select_agent')+'</label><select id="ia" name="agentId" required autofocus><option value="">'+L('web.invite.select_ph')+'</option>'+opts+'</select><label for="ie">'+L('web.invite.email')+'</label><input type="email" id="ie" name="friendEmail" required placeholder="friend@example.com" autocomplete="email"><br><br><button type="submit">'+L('web.invite.send_btn')+'</button></form></div><a href="/">← '+L('common.btn.home')+'</a>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.invite.breadcrumb')}))
+      res.send(renderPage(req,T('web.invite.title'),'<div class="card"><form method="POST" action="/invite" data-agent-action="invite.send"><label for="ia">'+L('web.invite.select_agent')+'</label><select id="ia" name="agentId" required autofocus><option value="">'+L('web.invite.select_ph')+'</option>'+opts+'</select><label for="ie">'+L('web.invite.email')+'</label><input type="email" id="ie" name="friendEmail" required placeholder="friend@example.com" autocomplete="email"><br><br><button type="submit">'+L('web.invite.send_btn')+'</button></form></div>'+inviteConfirmUi(T,'form[data-agent-action="invite.send"]')+'<a href="/">← '+L('common.btn.home')+'</a>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.invite.breadcrumb')}))
     }catch(e){next(e)}
   });
   R.post('/invite',async(req,res,next)=>{
@@ -1309,6 +1324,10 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const T=req.t,L=k=>esc(T(k));
       const r=await handlers.invite_friend({agentId:req.body.agentId,friendEmail:req.body.friendEmail});
       if(r.success!==false){
+        if(r.result==='already_registered'){
+          const email=r.email||req.body.friendEmail||'';
+          return res.redirect('/capabilities?agentId='+encodeURIComponent(req.body.agentId)+'&q='+encodeURIComponent(email)+'&inviteResult=already_registered');
+        }
         const isWarning=r.result==='email_failed';
         const key='web.invite.result.'+r.result;
         res.send(renderPage(req,T(isWarning?'web.invite.warning_title':'web.invite.sent_title'),'<p class="'+(isWarning?'pending':'success')+'">'+esc(T(key,{email:r.email||req.body.friendEmail}))+'</p><a href="'+(isWarning?'/invite':'/')+'">← '+L(isWarning?'web.invite.retry':'common.btn.home')+'</a>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.invite.breadcrumb')}));
@@ -1617,6 +1636,9 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const limit=20;
       let results={items:[],total:0};
       let errMsg='';
+      const inviteNotice=req.query.inviteResult==='already_registered'
+        ?'<p class="pending">'+L('web.invite.result.already_registered')+'</p>'
+        :'';
 
       // 加载 Agent 下拉
       let agents=[],_ownerEmail='';
@@ -1654,15 +1676,14 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         const desc=esc((a.description||a.short_description||'').substring(0,60));
         const tag=esc(a.categoryLabel||a.category||''); // API 返回 categoryLabel
         const st=a.isOnline===true?'<span class="online">● '+L('common.status.online')+'</span>':(a.isOnline===false?'<span class="offline">○ '+L('common.status.offline')+'</span>':'<span class="unknown">○ '+L('common.status.unknown')+'</span>');
-        const conv=a.conversationCount>0?' <span class="meta">('+a.conversationCount+')</span>':'';
         // 发消息：跳到 /send-message，用当前选中的本地 Agent(defAgent) 作发送方、远程 Agent 的 imUid 作接收方。
         // 远程 Agent 不在本地 DB，链接到 /agents/:id 会 404「Agent 不存在」。
         const toUid=a.imUid||a.im_uid||'';
         const sendHref='/send-message?agentId='+encodeURIComponent(defAgent)+(toUid?'&toUid='+encodeURIComponent(toUid):'');
-        return '<tr><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nm+'</td><td style="max-width:150px;white-space:normal;word-break:break-word;font-size:14px">'+desc+'</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">'+tag+'</td><td style="white-space:nowrap;font-size:14px;text-align:center">'+st+conv+'</td><td style="text-align:center"><a href="'+sendHref+'" class="btn btn-xs" style="text-decoration:none" data-agent="msg_btn">'+L('web.capabilities.send_msg_btn')+'</a></td></tr>'
+        return '<tr><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+nm+'</td><td style="max-width:150px;white-space:normal;word-break:break-word;font-size:14px">'+desc+'</td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">'+tag+'</td><td style="white-space:nowrap;font-size:14px;text-align:center">'+st+'</td><td style="text-align:center"><a href="'+sendHref+'" class="btn btn-xs" style="text-decoration:none" data-agent="msg_btn">'+L('web.capabilities.send_msg_btn')+'</a></td></tr>'
       }).join('\n');
 
-      const body='<div class="card"><h3>'+L('web.capabilities.title')+'</h3><p style="font-size:14px;color:#555;line-height:1.8">'+T('web.capabilities.intro')+'</p>'
+      const body=inviteNotice+'<div class="card"><h3>'+L('web.capabilities.title')+'</h3><p style="font-size:14px;color:#555;line-height:1.8">'+T('web.capabilities.intro')+'</p>'
         +'<form method="GET" action="/capabilities" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">'
         +'<div><label for="ca" style="font-size:14px;margin:0">'+L('web.capabilities.select_agent')+'</label>'
         +'<select id="ca" name="agentId" style="width:200px;padding:8px 10px;font-size:15px" data-agent="capa_agent_select"><option value="">-- '+L('web.capabilities.select_ph')+' --</option>'+agentOpts+'</select></div>'
