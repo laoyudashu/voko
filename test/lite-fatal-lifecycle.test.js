@@ -52,6 +52,7 @@ async function runFatal(mode) {
     `--db=${dbPath}`,
     `--port=${port}`,
     '--no-auto-update',
+    '--no-open',
   ], {
     cwd: path.join(__dirname, '..'),
     env: {

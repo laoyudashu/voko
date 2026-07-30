@@ -174,6 +174,10 @@ interface ConfigDataRow {
 interface AgentRegistrationLike {
   sendCode(...args: unknown[]): Promise<RegistrationOperationResult>;
   loginByCode(...args: unknown[]): Promise<RegistrationOperationResult>;
+  getOAuthProviders(...args: unknown[]): Promise<RegistrationOperationResult>;
+  startOAuthSession(...args: unknown[]): Promise<RegistrationOperationResult>;
+  getOAuthSession(...args: unknown[]): Promise<RegistrationOperationResult>;
+  exchangeOAuthSession(...args: unknown[]): Promise<RegistrationOperationResult>;
   verifyCodePreview(...args: unknown[]): Promise<RegistrationOperationResult>;
   verifyCode(...args: unknown[]): Promise<RegistrationOperationResult>;
   registerAgentInDb(...args: unknown[]): Promise<RegistrationOperationResult>;
@@ -426,6 +430,9 @@ interface McpToolParams {
   onlyReplies?: boolean;
   orderId?: string;
   ownerEmail?: string;
+  provider?: string;
+  sessionId?: string;
+  exchangeCode?: string;
   page?: number;
   page_size?: number;
   paymentAuthId?: string;
@@ -601,6 +608,25 @@ function createToolHandlers(cx: McpContext) {
     async login_by_code(p: McpToolParams = {}) {
       const r = await cx.agentRegistration.loginByCode({ email: p.email, code: p.code });
       return r;
+    },
+
+    async oauth_providers() {
+      return cx.agentRegistration.getOAuthProviders();
+    },
+
+    async oauth_start(p: McpToolParams = {}) {
+      return cx.agentRegistration.startOAuthSession({ provider: p.provider });
+    },
+
+    async oauth_status(p: McpToolParams = {}) {
+      return cx.agentRegistration.getOAuthSession({ sessionId: p.sessionId });
+    },
+
+    async oauth_exchange(p: McpToolParams = {}) {
+      return cx.agentRegistration.exchangeOAuthSession({
+        sessionId: p.sessionId,
+        exchangeCode: p.exchangeCode,
+      });
     },
 
     async verify_agent_email(p: McpToolParams = {}) {

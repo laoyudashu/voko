@@ -233,6 +233,30 @@ function parseArgs(argv?: any) {
   return args;
 }
 
+function openLocalWebPage(port: number) {
+  const url = `http://localhost:${port}/`;
+  try {
+    const childProcess = require('child_process');
+    let child;
+    if (process.platform === 'win32') {
+      child = childProcess.spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } else {
+      const command = process.platform === 'darwin' ? 'open' : 'xdg-open';
+      child = childProcess.spawn(command, [url], { detached: true, stdio: 'ignore' });
+    }
+    child.once('error', (error: Error) => {
+      console.error(`[Lite] 无法自动打开 ${url}: ${error.message}`);
+    });
+    child.unref();
+  } catch (error: any) {
+    console.error(`[Lite] 无法自动打开 ${url}: ${error.message}`);
+  }
+}
+
 function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
   if (typeof value !== 'string') return {};
   try {
@@ -1152,16 +1176,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           '',
         ].join('\n');
         console.error(BANNER);
-        // 浏览器仅在用户明确传入 --open 时启动，避免测试临时端口打扰桌面。
-        if (args.open === true && process.env.VOKO_SMOKE_TEST !== '1') {
-          try {
-            const url = `http://localhost:${port}/`;
-            const plat = process.platform;
-            if (plat === 'win32') require('child_process').exec(`start "" "${url}"`, { windowsHide: true });
-            else if (plat === 'darwin') require('child_process').exec(`open "${url}"`);
-            else require('child_process').exec(`xdg-open "${url}"`);
-          } catch (_: any) {}
-        }
+        // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
+        if (!args.noOpen && !args['no-open']) openLocalWebPage(port);
       })
       .on('error', (err?: any) => {
         console.error(t('cli.index.port_start_failed', { port, msg: err.message }));
@@ -2441,6 +2457,7 @@ async function main() {
         port,
         url: `http://localhost:${port}`,
       }));
+      if (!args.noOpen && !args['no-open']) openLocalWebPage(port);
       return;
     }
     __instanceLock = lockResult.lock;

@@ -86,6 +86,40 @@ async function setupServer(t, handlers, db) {
 }
 
 describe('Web POST /agent/add 注册流程', () => {
+  it('OAuth login routes proxy the session contract without exposing the token in HTML', async (t) => {
+    const db = createDb(null);
+    const handlers = {
+      oauth_providers: async () => ({ success: true, data: { providers: [{ id: 'google', enabled: true }] } }),
+      oauth_start: async () => ({ success: true, data: {
+        sessionId: 'los_web', authorizeUrl: 'https://example.test/google', expiresAt: new Date(Date.now() + 60000).toISOString(),
+        pollIntervalSeconds: 2,
+      } }),
+      oauth_status: async () => ({ success: true, data: { status: 'authorized', exchangeCode: 'loe_web' } }),
+      oauth_exchange: async () => ({ success: true, email: 'owner@example.com' }),
+    };
+    const server = await setupServer(t, handlers, db);
+    const login = await fetch(server.baseUrl + '/login');
+    const html = await login.text();
+    assert.match(html, /data-oauth-provider="google"/);
+    assert.match(html, /api\/login\/oauth\/providers/);
+    assert.doesNotMatch(html, /ut_/);
+
+    const providers = await (await fetch(server.baseUrl + '/api/login/oauth/providers')).json();
+    assert.deepStrictEqual(providers.providers, [{ id: 'google', enabled: true }]);
+    const started = await (await fetch(server.baseUrl + '/api/login/oauth/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"provider":"google"}',
+    })).json();
+    assert.strictEqual(started.sessionId, 'los_web');
+    const status = await (await fetch(server.baseUrl + '/api/login/oauth/status/los_web')).json();
+    assert.strictEqual(status.exchangeCode, 'loe_web');
+    const exchanged = await (await fetch(server.baseUrl + '/api/login/oauth/exchange', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: '{"sessionId":"los_web","exchangeCode":"loe_web"}',
+    })).json();
+    assert.strictEqual(exchanged.success, true);
+    assert.doesNotMatch(JSON.stringify(exchanged), /ut_/);
+  });
+
   it('GET /agent/add renders the four-step shared-orchestrator wizard', async (t) => {
     const db = createDb('web@test.com');
     const handlers = {

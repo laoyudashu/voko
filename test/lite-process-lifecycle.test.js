@@ -36,6 +36,7 @@ function spawnLite(dbPath, port) {
     `--db=${dbPath}`,
     `--port=${port}`,
     '--no-auto-update',
+    '--no-open',
   ], {
     cwd: path.join(__dirname, '..'),
     env: {
@@ -100,7 +101,10 @@ async function waitHealth(port, timeoutMs = 20000) {
 }
 
 function runCli(args, timeoutMs = 20000) {
-  const child = spawn(process.execPath, [LITE_ENTRY, ...args], {
+  const safeArgs = args[0] === 'start' && !args.includes('--no-open')
+    ? [...args, '--no-open']
+    : args;
+  const child = spawn(process.execPath, [LITE_ENTRY, ...safeArgs], {
     cwd: path.join(__dirname, '..'),
     env: { ...process.env, VOKO_LITE_SPAWNED_BY: 'lifecycle-test' },
     stdio: ['ignore', 'pipe', 'pipe'],

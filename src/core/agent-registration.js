@@ -267,6 +267,67 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     }
   }
 
+  async function oauthRequest(path, options = {}) {
+    try {
+      const res = await fetch(`${VOKO_API_URL}/api/auth/lite/oauth${path}`, {
+        redirect: 'error',
+        ...options,
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+      const parsed = await readJsonObject(res);
+      if (parsed.error) return { success: false, status: res.status, error: parsed.error };
+      const json = parsed.value;
+      if (!res.ok || !json.success) {
+        return {
+          success: false,
+          status: res.status,
+          code: json?.error?.code,
+          error: json?.error?.message || responseMessage(json, `OAuth HTTP ${res.status}`),
+        };
+      }
+      return { success: true, status: res.status, data: json.data };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  function getOAuthProviders() {
+    return oauthRequest('/providers');
+  }
+
+  function startOAuthSession({ provider }) {
+    return oauthRequest('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ provider }),
+    });
+  }
+
+  function getOAuthSession({ sessionId }) {
+    return oauthRequest(`/sessions/${encodeURIComponent(sessionId || '')}`);
+  }
+
+  async function exchangeOAuthSession({ sessionId, exchangeCode }) {
+    const result = await oauthRequest('/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, exchangeCode }),
+    });
+    const data = result.data;
+    if (!result.success || !isRecord(data)
+      || typeof data.userAccessToken !== 'string'
+      || typeof data.email !== 'string') return result.success
+        ? { success: false, error: t('errors.external_api.invalid_response') }
+        : result;
+    await saveUserAccessToken(data.email, data.userAccessToken);
+    return {
+      success: true,
+      email: normalizeUserEmail(data.email),
+      scopes: Array.isArray(data.scopes) ? data.scopes : [],
+    };
+  }
+
   // ─── 后端 API：验证验证码 ───
   async function verifyCode({ email, code, agentName, agentCategory, agentId }) {
     try {
@@ -388,6 +449,10 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     verifyCode,
     verifyCodePreview,
     loginByCode,
+    getOAuthProviders,
+    startOAuthSession,
+    getOAuthSession,
+    exchangeOAuthSession,
     createAgentByToken,
     getUserAccessToken,
     saveUserAccessToken,

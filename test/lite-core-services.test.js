@@ -641,6 +641,46 @@ test('Lite send-code and login bootstrap requests do not expose HMAC credentials
   }
 });
 
+test('Lite OAuth login follows the server session contract and persists only the VOKO token', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const requests = [];
+  const writes = [];
+  const responses = [
+    [200, { success: true, data: { providers: [{ id: 'google', enabled: true }] } }],
+    [201, { success: true, data: { sessionId: 'los_test', authorizeUrl: 'https://example.test/auth' } }],
+    [200, { success: true, data: { status: 'authorized', exchangeCode: 'loe_test' } }],
+    [200, { success: true, data: { userAccessToken: 'ut_oauth_test', email: 'Owner@Example.com', scopes: ['agent:manage'] } }],
+  ];
+  global.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), options });
+    const [status, body] = responses.shift();
+    return { ok: status < 400, status, text: async () => JSON.stringify(body) };
+  };
+  const db = {
+    prepare(sql) {
+      return {
+        get() { return undefined; },
+        run(...args) { writes.push({ sql, args }); },
+      };
+    },
+  };
+  const registration = createAgentRegistration({ db });
+  assert.equal((await registration.getOAuthProviders()).success, true);
+  assert.equal((await registration.startOAuthSession({ provider: 'google' })).success, true);
+  assert.equal((await registration.getOAuthSession({ sessionId: 'los_test' })).success, true);
+  assert.deepEqual(
+    await registration.exchangeOAuthSession({ sessionId: 'los_test', exchangeCode: 'loe_test' }),
+    { success: true, email: 'owner@example.com', scopes: ['agent:manage'] },
+  );
+  assert.match(requests[0].url, /\/api\/auth\/lite\/oauth\/providers$/);
+  assert.equal(JSON.parse(requests[1].options.body).provider, 'google');
+  assert.equal(JSON.parse(requests[3].options.body).exchangeCode, 'loe_test');
+  assert.equal(writes.length, 1);
+  assert.match(String(writes[0].args[1]), /ut_oauth_test/);
+  assert.doesNotMatch(JSON.stringify(requests), /ut_oauth_test/);
+});
+
 test('Lite registration rejects incomplete credential responses before persistence', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });

@@ -22,6 +22,7 @@ const os = require('os');
 
 const CSS = `@charset "UTF-8";
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC','Hiragino Sans GB',sans-serif;background:linear-gradient(135deg,#f0f4ff 0%,#f5f7fa 100%);color:#1a1a2e;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
 a{color:#1a73e8;font-weight:600;text-decoration:none}
 .card{background:#fff;border:none;border-radius:16px;padding:28px 32px;box-shadow:0 4px 24px rgba(0,0,0,0.06);width:100%;max-width:420px;margin:0 auto}
@@ -46,6 +47,8 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .alert-error{background:#fce8e6;color:#d93025}
 .alert-warning{background:#fff4ce;color:#8a5a00;border:1px solid #f2d675}
 .alert-success{background:#e6f4ea;color:#0f9d58}
+.oauth-divider{display:flex;align-items:center;gap:12px;color:#98a2b3;font-size:13px;margin:18px 0}.oauth-divider:before,.oauth-divider:after{content:"";height:1px;background:#e4e7ec;flex:1}
+.oauth-buttons{display:grid;gap:9px}.oauth-btn{width:100%;margin:0;background:#fff;color:#344054;border:1px solid #d0d5dd;box-shadow:0 1px 2px rgba(16,24,40,.05)}.oauth-btn:hover{background:#f9fafb;color:#1a73e8}.oauth-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}.oauth-status{display:none;margin-top:12px;padding:10px 12px;border-radius:9px;background:#f1f6ff;color:#344054;font-size:13px;text-align:center}.oauth-status.error{display:block;background:#fce8e6;color:#b42318}.oauth-status.active{display:block}
 .name-status{font-size:13px;margin-top:4px;min-height:20px}
 .name-status.checking{color:#e37400}
 .name-status.available{color:#0f9d58}
@@ -117,7 +120,9 @@ function loginJs(t) {
   const sent = JSON.stringify(t('register.login.sent'));
   const resend = JSON.stringify(t('register.login.resend'));
   const sendFailed = JSON.stringify(t('register.login.send_failed'));
-  return '<script>var I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ';setTimeout(function(){if(document.querySelector(".alert-error")){var m=document.getElementById("sent-msg");if(m)m.remove()}},0);async function sendCode(){var e=document.getElementById("email").value.trim();if(!e)return;var b=document.getElementById("send-btn");var s=document.getElementById("sent-msg");var se=document.getElementById("sent-email");if(b)b.disabled=true;try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.style.display="block";se.textContent=e;var c=60;var timer=setInterval(function(){b.textContent=I18N_RESEND+"("+c+"s)";c--;if(c<0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);var cd=document.getElementById("code");if(cd)cd.focus()}catch(err){if(b)b.disabled=false;window.alert(err.message||I18N_SEND_FAILED)}}</'+'script>';
+  const oauthWaiting = JSON.stringify(t('register.login.oauth_waiting'));
+  const oauthFailed = JSON.stringify(t('register.login.oauth_failed'));
+  return '<script>var I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ',I18N_OAUTH_WAITING=' + oauthWaiting + ',I18N_OAUTH_FAILED=' + oauthFailed + ';setTimeout(function(){if(document.querySelector(".alert-error")){var m=document.getElementById("sent-msg");if(m)m.remove()}},0);async function sendCode(){var e=document.getElementById("email").value.trim();if(!e)return;var b=document.getElementById("send-btn");var s=document.getElementById("sent-msg");var se=document.getElementById("sent-email");if(b)b.disabled=true;try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.style.display="block";se.textContent=e;var c=60;var timer=setInterval(function(){b.textContent=I18N_RESEND+"("+c+"s)";c--;if(c<0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);var cd=document.getElementById("code");if(cd)cd.focus()}catch(err){if(b)b.disabled=false;window.alert(err.message||I18N_SEND_FAILED)}}async function oauthLogin(provider){var buttons=document.querySelectorAll(".oauth-btn"),status=document.getElementById("oauth-status");buttons.forEach(function(b){b.disabled=true});status.className="oauth-status active";status.textContent=I18N_OAUTH_WAITING;try{var r=await fetch("/api/login/oauth/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:provider})}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_OAUTH_FAILED);var popup=window.open(d.authorizeUrl,"_blank");if(!popup)throw new Error(I18N_OAUTH_FAILED);try{popup.opener=null}catch(e){}var delay=Math.max(2,d.pollIntervalSeconds||2)*1000,deadline=Date.parse(d.expiresAt)||Date.now()+600000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,delay)});var sr=await fetch("/api/login/oauth/status/"+encodeURIComponent(d.sessionId)),sd=await sr.json();if(sr.status===410)throw new Error(sd.error||I18N_OAUTH_FAILED);if(!sr.ok||!sd.success)throw new Error(sd.error||I18N_OAUTH_FAILED);if(sd.status==="failed")throw new Error((sd.error&&sd.error.message)||I18N_OAUTH_FAILED);if(sd.status==="authorized"){var er=await fetch("/api/login/oauth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:d.sessionId,exchangeCode:sd.exchangeCode})}),ed=await er.json();if(!er.ok||!ed.success)throw new Error(ed.error||I18N_OAUTH_FAILED);location.href="/login/oauth/complete";return}}throw new Error(I18N_OAUTH_FAILED)}catch(err){status.className="oauth-status error";status.textContent=err.message||I18N_OAUTH_FAILED;buttons.forEach(function(b){b.disabled=false})}}fetch("/api/login/oauth/providers").then(function(r){return r.json()}).then(function(d){if(!d.success)return;(d.providers||[]).forEach(function(p){var b=document.querySelector("[data-oauth-provider="+p.id+"]");if(b)b.hidden=false})}).catch(function(){})</'+'script>';
 }
 
 function loginBody(email, err, tFn) {
@@ -129,6 +134,11 @@ function loginBody(email, err, tFn) {
     + '<h2>' + esc(t('register.login.title')) + '</h2>'
     + '<p class="desc">' + esc(t('register.login.desc')) + '</p>'
     + alertHtml
+    + '<div class="oauth-buttons">'
+    + '<button type="button" class="oauth-btn" data-oauth-provider="google" hidden onclick="oauthLogin(\'google\')">' + esc(t('register.login.google')) + '</button>'
+    + '<button type="button" class="oauth-btn" data-oauth-provider="github" hidden onclick="oauthLogin(\'github\')">' + esc(t('register.login.github')) + '</button>'
+    + '</div><div id="oauth-status" class="oauth-status"></div>'
+    + '<div class="oauth-divider">' + esc(t('register.login.or_email')) + '</div>'
     + '<form method="POST" action="/login" id="login-form">'
     + '<label for="email">' + esc(t('register.login.email')) + '</label>'
     + '<input type="email" id="email" name="email" value="' + esc(email) + '" required autocomplete="email" autofocus placeholder="you@example.com">'
@@ -842,6 +852,51 @@ function createRegisterRouter(handlers, db) {
     const err = req.query.err || '';
     let body = loginBody(email, err, req.t);
     res.send(page(req.t('register.login.page_title'), body, req.t, req.locale) + loginJs(req.t));
+  });
+
+  R.get('/api/login/oauth/providers', async (_req, res) => {
+    const r = await handlers.oauth_providers();
+    res.status(r.success ? 200 : (r.status || 503)).json({
+      success: !!r.success,
+      providers: r.data?.providers || [],
+      error: r.error,
+    });
+  });
+
+  R.post('/api/login/oauth/start', async (req, res) => {
+    const r = await handlers.oauth_start({ provider: req.body?.provider });
+    res.status(r.success ? 201 : (r.status || 400)).json({
+      success: !!r.success,
+      ...(r.data || {}),
+      error: r.error,
+    });
+  });
+
+  R.get('/api/login/oauth/status/:sessionId', async (req, res) => {
+    const r = await handlers.oauth_status({ sessionId: req.params.sessionId });
+    res.status(r.success ? 200 : (r.status || 400)).json({
+      success: !!r.success,
+      ...(r.data || {}),
+      error: r.error,
+    });
+  });
+
+  R.post('/api/login/oauth/exchange', async (req, res) => {
+    const r = await handlers.oauth_exchange(req.body || {});
+    res.status(r.success ? 200 : (r.status || 400)).json({
+      success: !!r.success,
+      error: r.error,
+    });
+  });
+
+  R.get('/login/oauth/complete', (req, res) => {
+    let agentCount = 0;
+    try {
+      const row = db?.prepare('SELECT COUNT(*) as c FROM agents').get();
+      agentCount = row ? row.c : 0;
+    } catch (_) {}
+    const dest = agentCount === 0 ? '/agent/add' : '/';
+    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><script>(async function(){try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=' + JSON.stringify(dest) + '})()</'+'script>');
   });
 
   R.post('/login', async (req, res, next) => {

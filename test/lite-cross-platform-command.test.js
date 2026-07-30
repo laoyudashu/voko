@@ -54,3 +54,15 @@ test('ACP JavaScript launch uses the current Node executable on every platform',
   assert.match(source, /const cmd = isNodeScript \? process\.execPath : this\._cliPath/);
   assert.doesNotMatch(source, /process\.platform === 'win32' \? process\.execPath : 'node'/);
 });
+
+test('automation that starts the Lite HTTP server always disables browser opening', () => {
+  const files = [
+    path.join(ROOT, 'scripts', 'smoke-standalone.js'),
+    path.join(ROOT, 'test', 'lite-fatal-lifecycle.test.js'),
+    path.join(ROOT, 'test', 'lite-process-lifecycle.test.js'),
+  ];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.match(source, /--no-open/, file);
+  }
+});
