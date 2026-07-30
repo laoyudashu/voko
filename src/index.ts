@@ -1177,7 +1177,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         ].join('\n');
         console.error(BANNER);
         // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
-        if (!args.noOpen && !args['no-open']) openLocalWebPage(port);
+        if (!args.noOpen && !args['no-open'] && process.env.VOKO_SMOKE_TEST !== '1') {
+          openLocalWebPage(port);
+        }
       })
       .on('error', (err?: any) => {
         console.error(t('cli.index.port_start_failed', { port, msg: err.message }));
@@ -2457,7 +2459,9 @@ async function main() {
         port,
         url: `http://localhost:${port}`,
       }));
-      if (!args.noOpen && !args['no-open']) openLocalWebPage(port);
+      if (!args.noOpen && !args['no-open'] && process.env.VOKO_SMOKE_TEST !== '1') {
+        openLocalWebPage(port);
+      }
       return;
     }
     __instanceLock = lockResult.lock;
