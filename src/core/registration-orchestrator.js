@@ -28,7 +28,16 @@ const CLI_COMMANDS = {
   grok: 'grok',
   opencode: 'opencode',
   pi: 'pi',
+  'qwen-code': 'qwen',
+  kiro: 'kiro-cli',
+  aider: 'aider',
 };
+const PULL_ONLY_CLI_COMMANDS = {
+  'github-copilot': 'copilot',
+  openhands: 'openhands',
+  'amazon-q': 'q',
+};
+const DETECTABLE_CLI_COMMANDS = { ...CLI_COMMANDS, ...PULL_ONLY_CLI_COMMANDS };
 const CLI_SESSION_ROOTS = {
   goose: () => process.platform === 'win32'
     ? [path.join(process.env.APPDATA || '', 'Block', 'goose', 'data', 'sessions')]
@@ -38,6 +47,26 @@ const CLI_SESSION_ROOTS = {
   gemini: () => [path.join(os.homedir(), '.gemini', 'tmp')],
   opencode: () => [path.join(os.homedir(), '.local', 'share', 'opencode')],
   pi: () => [path.join(os.homedir(), '.pi', 'agent', 'sessions')],
+  'qwen-code': () => [path.join(os.homedir(), '.qwen', 'projects')],
+  kiro: () => [path.join(os.homedir(), '.kiro')],
+  'github-copilot': () => [path.join(os.homedir(), '.copilot')],
+  openhands: () => [path.join(os.homedir(), '.openhands', 'conversations')],
+  aider: () => [path.join(os.homedir(), '.aider')],
+  'amazon-q': () => [path.join(os.homedir(), '.aws', 'amazonq')],
+};
+const CLI_DELIVERY_METADATA = {
+  'qwen-code': {
+    label: 'Qwen Code 安全 CLI',
+    description: 'VOKO 以 safe-mode、plan 模式和零工具预算调用 Qwen Code，仅允许文字回复。',
+  },
+  kiro: {
+    label: 'Kiro 受限 CLI',
+    description: 'VOKO 不为外部访客消息预授权任何 Kiro 工具，仅允许无工具的文字回复。',
+  },
+  aider: {
+    label: 'Aider 只读问答',
+    description: 'VOKO 以 ask、dry-run、no-git 模式调用 Aider，不允许编辑或提交文件。',
+  },
 };
 const DESKTOP_APPLICATIONS = [
   { type: 'zcode', label: 'ZCode', pattern: /\bzcode\b/i },
@@ -60,6 +89,12 @@ function currentAgentTypeFromText(value) {
     ['openclaw', /(?:^|[\\/\s])openclaw(?:\.exe)?(?:\s|$)/],
     ['hermes', /(?:^|[\\/\s])hermes(?:\.exe)?(?:\s|$)/],
     ['gemini', /(?:^|[\\/\s])gemini(?:\.exe)?(?:\s|$)/],
+    ['qwen-code', /(?:^|[\\/\s])qwen(?:\.exe)?(?:\s|$)|qwen-code/],
+    ['kiro', /(?:^|[\\/\s])kiro-cli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])kiro(?:\.exe)?(?:\s|$)/],
+    ['github-copilot', /(?:^|[\\/\s])copilot(?:\.exe)?(?:\s|$)|github-copilot/],
+    ['openhands', /(?:^|[\\/\s])openhands(?:\.exe)?(?:\s|$)/],
+    ['aider', /(?:^|[\\/\s])aider(?:\.exe)?(?:\s|$)/],
+    ['amazon-q', /(?:^|[\\/\s])q(?:\.exe)?\s+(?:chat|agent)|amazon-q/],
     ['opencode', /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/],
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
     ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:\s|$)/],
@@ -124,10 +159,20 @@ function commandAvailable(command) {
   const cached = commandCache.get(command);
   if (cached && now() - cached.at < 60_000) return cached.available;
   try {
-    const probe = process.platform === 'win32'
-      ? spawnSync('where.exe', [command], { encoding: 'utf8', timeout: 1200, windowsHide: true })
-      : spawnSync('which', [command], { encoding: 'utf8', timeout: 1200 });
-    const available = probe.status === 0;
+    const pathEntries = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    const hasExtension = !!path.extname(command);
+    const extensions = process.platform === 'win32' && !hasExtension
+      ? String(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+        .split(';').filter(Boolean).map((extension) => extension.toLowerCase())
+      : [''];
+    const available = pathEntries.some((directory) => extensions.some((extension) => {
+      const candidate = path.join(directory, command + extension);
+      try {
+        return fs.statSync(candidate).isFile();
+      } catch (_) {
+        return false;
+      }
+    }));
     commandCache.set(command, { available, at: now() });
     return available;
   } catch (_) {
@@ -386,8 +431,10 @@ class RegistrationOrchestrator {
   inspectEnvironment() {
     const gatewaySetup = this.options.gatewaySetup || require('./gateway-setup');
     const dbApi = this.db ? dbConfigAdapter(this.db) : null;
+    const hasCommand = this.options.commandAvailable || commandAvailable;
     const openclaw = openclawInstances();
-    const hermes = hermesInstances();
+    const hermesInstalled = hasCommand('hermes');
+    const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
     const hermesGateway = gatewaySetup.checkGateway('hermes', dbApi);
     const detected = [];
@@ -401,7 +448,7 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
       });
     }
-    if (hermes.length || commandAvailable('hermes')) {
+    if (hermes.length || hermesInstalled) {
       detected.push({
         type: 'hermes',
         label: 'Hermes',
@@ -413,8 +460,7 @@ class RegistrationOrchestrator {
 
     const known = this.db ? getBackendTypes(this.db) : [];
     const knownLabels = new Map(known.map((item) => [item.value, item.label]));
-    const hasCommand = this.options.commandAvailable || commandAvailable;
-    for (const [type, command] of Object.entries(CLI_COMMANDS)) {
+    for (const [type, command] of Object.entries(DETECTABLE_CLI_COMMANDS)) {
       if (type === 'openclaw' || type === 'hermes' || !hasCommand(command)) continue;
       detected.push({
         type,
@@ -495,6 +541,7 @@ class RegistrationOrchestrator {
 
   deliveryCapabilities(providerType, gatewayStatus) {
     const type = normalizeBackendType(providerType);
+    const hasCommand = this.options.commandAvailable || commandAvailable;
     const pull = {
       mode: 'pull',
       label: '主动获取',
@@ -570,15 +617,16 @@ class RegistrationOrchestrator {
     }
     const cliCommand = CLI_COMMANDS[type];
     if (cliCommand) {
-      const available = commandAvailable(cliCommand);
+      const available = hasCommand(cliCommand);
+      const metadata = CLI_DELIVERY_METADATA[type] || {};
       return [
         {
-          mode: 'cli', label: 'CLI 自动交付', role: 'primary',
+          mode: 'cli', label: metadata.label || 'CLI 自动交付', role: 'primary',
           status: available ? 'ready' : 'unavailable',
           selected: available,
           action: available ? 'test' : null,
           description: available
-            ? `VOKO 收到新消息后自动调用本机 ${cliCommand} 命令。`
+            ? (metadata.description || `VOKO 收到新消息后自动调用本机 ${cliCommand} 命令。`)
             : `本机未检测到 ${cliCommand} 命令；暂时不能自动交付。`,
         },
         pull,

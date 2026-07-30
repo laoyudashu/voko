@@ -1584,6 +1584,9 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
     { key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
     { key: 'pi-cli',       mod: './core/dispatcher/providers/pi-cli',       named: 'PiCliProvider',       args: { db, contextWindow: 20 } },
+    { key: 'qwen-cli',     mod: './core/dispatcher/providers/qwen-cli',     named: 'QwenCliProvider',     args: { db, contextWindow: 20 } },
+    { key: 'kiro-cli',     mod: './core/dispatcher/providers/kiro-cli',     named: 'KiroCliProvider',     args: { db, contextWindow: 20 } },
+    { key: 'aider-cli',    mod: './core/dispatcher/providers/aider-cli',    named: 'AiderCliProvider',    args: { db, contextWindow: 20 } },
   ];
   for (const { key, mod, named, args } of PROVIDER_REGISTRY) {
     try {

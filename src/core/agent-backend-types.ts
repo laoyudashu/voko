@@ -42,14 +42,23 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'grok', label: 'Grok (xAI)' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'pi', label: 'Pi Coding Agent' },
+  { value: 'qwen-code', label: 'Qwen Code' },
+  { value: 'kiro', label: 'Kiro CLI' },
+  { value: 'github-copilot', label: 'GitHub Copilot CLI' },
+  { value: 'openhands', label: 'OpenHands' },
+  { value: 'aider', label: 'Aider' },
+  { value: 'amazon-q', label: 'Amazon Q Developer CLI' },
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
   { value: 'doubao', label: '豆包' },
   { value: 'others', label: '其他' },
 ];
 
-const DISCOVERABLE_DESKTOP_TYPES = DEFAULT_BACKEND_TYPES.filter(
-  (type) => ['zcode', 'workbuddy', 'doubao'].includes(type.value),
+const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
+  (type) => [
+    'qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
+    'zcode', 'workbuddy', 'doubao',
+  ].includes(type.value),
 );
 
 const BACKEND_TYPE_ALIASES: Record<string, string> = {
@@ -68,6 +77,16 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'grok-cli': 'grok',
   'opencode-cli': 'opencode',
   'pi-cli': 'pi',
+  qwen: 'qwen-code',
+  'qwen-cli': 'qwen-code',
+  'qwen-code-cli': 'qwen-code',
+  'kiro-cli': 'kiro',
+  copilot: 'github-copilot',
+  'copilot-cli': 'github-copilot',
+  'github-copilot-cli': 'github-copilot',
+  'openhands-cli': 'openhands',
+  'aider-cli': 'aider',
+  'amazon-q-cli': 'amazon-q',
 };
 
 /**
@@ -107,7 +126,7 @@ function seedBackendTypes(db: DatabaseLike): void {
   try {
     const row = db.prepare("SELECT data FROM config WHERE type = ?").get(CONFIG_TYPE) as { data?: string } | undefined;
     const existing = row?.data ? JSON.parse(row.data) as BackendType[] : [];
-    const additions = DISCOVERABLE_DESKTOP_TYPES.filter(
+    const additions = DISCOVERABLE_ADDITIONS.filter(
       (candidate) => !existing.some((type) => type.value === candidate.value),
     );
     if (row && additions.length === 0) return;

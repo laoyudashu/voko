@@ -116,7 +116,10 @@ class CliAdapter extends PushProvider {
       } catch (_) {}
     }
 
-    const prompt = _buildContextPrompt(agentId, fromUid, content, contextMsgs);
+    const contextPrompt = _buildContextPrompt(agentId, fromUid, content, contextMsgs);
+    const prompt = this._promptTemplate
+      ? this._promptTemplate.replace('{prompt}', () => contextPrompt)
+      : contextPrompt;
 
     // 构造参数：args 含 {prompt} 占位则替换；否则 prompt 经 stdin 传入
     // （避开 Windows cmd.exe 对含换行多行命令行参数的破坏）
