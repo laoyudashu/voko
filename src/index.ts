@@ -1581,6 +1581,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { key: 'gemini-cli',   mod: './core/dispatcher/providers/gemini-cli',   named: 'GeminiCliProvider',   args: { db, contextWindow: 20 } },
     { key: 'cursor-cli',   mod: './core/dispatcher/providers/cursor-cli',   named: 'CursorCliProvider',   args: { db, contextWindow: 20 } },
     { key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
+    { key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
     { key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
     { key: 'pi-cli',       mod: './core/dispatcher/providers/pi-cli',       named: 'PiCliProvider',       args: { db, contextWindow: 20 } },
     { key: 'qwen-cli',     mod: './core/dispatcher/providers/qwen-cli',     named: 'QwenCliProvider',     args: { db, contextWindow: 20 } },

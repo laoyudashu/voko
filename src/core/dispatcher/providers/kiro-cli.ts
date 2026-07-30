@@ -13,8 +13,8 @@ class KiroCliProvider extends CliAdapter {
     super({
       name: 'KIRO CLI',
       cmd: 'kiro-cli',
-      args: ['chat', '--no-interactive', '--trust-tools=', '--wrap', 'never', '{prompt}'],
-      parser: 'raw',
+      args: ['chat', '--no-interactive', '--wrap', 'never', '{prompt}'],
+      parser: 'kiro-output',
       matchType: 'kiro',
       priority: 1,
       timeout: 180000,

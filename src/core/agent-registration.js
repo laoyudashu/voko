@@ -405,6 +405,7 @@ function registerAgentInDbOnDb(db, {
   serverUrl,
   ownerEmail,
   backendType,
+  instanceId,
   agentName,
   category,
   categoryLabel,
@@ -437,8 +438,8 @@ function registerAgentInDbOnDb(db, {
       INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, owner_email,
         agent_name, category, category_label, description, did, public_key, private_key, login_token,
         payment_fee_rate, agent_usage_fee_rate,
-        publish_status, access_mode, backend_type, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?)
+        publish_status, access_mode, backend_type, backend_instance_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
       ON CONFLICT(agent_id) DO UPDATE SET
         imUid = excluded.imUid, imToken = excluded.imToken,
         im_server_url = excluded.im_server_url, owner_email = excluded.owner_email,
@@ -449,13 +450,14 @@ function registerAgentInDbOnDb(db, {
         login_token = excluded.login_token,
         payment_fee_rate = excluded.payment_fee_rate,
         agent_usage_fee_rate = excluded.agent_usage_fee_rate,
-        access_mode = excluded.access_mode, backend_type = excluded.backend_type, updated_at = excluded.updated_at
+        access_mode = excluded.access_mode, backend_type = excluded.backend_type,
+        backend_instance_id = excluded.backend_instance_id, updated_at = excluded.updated_at
     `).run(
       `agent-${agentId}`, agentId, uid, token, imServerUrl, ownerEmail || null,
       agentName || null, category || null, resolvedCategoryLabel || null, description || null,
       did || null, publicKey || null, privateKey || null, loginToken || null,
       payRate, usageRate,
-      resolvedAccessMode, backend, now, now
+      resolvedAccessMode, backend, instanceId || null, now, now
     );
 
     console.log('[AgentRegistration] registerAgentInDb success:', agentId);

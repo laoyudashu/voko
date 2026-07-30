@@ -42,6 +42,7 @@ export interface AcpAdapterOptions {
   matchType?: string;
   adapterType?: string;
   cwd?: string;
+  sessionRequest?: (agentId: string) => Record<string, unknown>;
 }
 
 interface AcpSession {
@@ -576,6 +577,7 @@ class AcpAdapter extends PushProvider {
     const session = await agentCtx.buildSession({
       cwd: this._cwd,
       mcpServers: [],
+      ...(this.options.sessionRequest?.(agentId) || {}),
     }).start();
 
     // 4. 持久化 session 句柄

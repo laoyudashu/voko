@@ -41,6 +41,7 @@ function createDb() {
       publish_status TEXT NOT NULL DEFAULT 'unpublished',
       access_mode TEXT NOT NULL DEFAULT 'private',
       backend_type TEXT,
+      backend_instance_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )

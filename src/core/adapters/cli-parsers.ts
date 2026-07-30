@@ -378,6 +378,16 @@ function aiderOutputParser(line: string, ctx: ParserContext) {
   ctx.onText(line + '\n');
 }
 
+function kiroOutputParser(line: string, ctx: ParserContext) {
+  const plain = line
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/^\s*>\s*/, '')
+    .trimEnd();
+  if (!plain.trim() || /^\s*▸\s*Credits:/i.test(plain)) return;
+  ctx.onText(plain + '\n');
+}
+
 // ── silent 解析器（fire-and-forget 通知模式） ─────────────────────────
 
 /**
@@ -417,6 +427,7 @@ function createParser({
     jsonl: jsonlParser,
     raw: rawParser,
     'aider-output': aiderOutputParser,
+    'kiro-output': kiroOutputParser,
     silent: silentParser,
   };
   const parser = parsers[format] || rawParser;
@@ -457,6 +468,7 @@ module.exports = {
   jsonlParser,
   rawParser,
   aiderOutputParser,
+  kiroOutputParser,
   silentParser,
   createParser,
 };

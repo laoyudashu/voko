@@ -33,6 +33,7 @@ interface DatabaseLike {
 /** 默认兜底列表（DB 无此配置时使用） */
 const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'openclaw', label: 'OpenClaw' },
+  { value: 'zeroclaw', label: 'ZeroClaw' },
   { value: 'hermes', label: 'Hermes' },
   { value: 'goose', label: 'Goose' },
   { value: 'claude-code', label: 'Claude Code' },
@@ -56,6 +57,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
 
 const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
+    'zeroclaw',
     'qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
     'zcode', 'workbuddy', 'doubao',
   ].includes(type.value),
@@ -64,6 +66,8 @@ const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
 const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'open-claw': 'openclaw',
   'openclaw-cli': 'openclaw',
+  'zero-claw': 'zeroclaw',
+  'zeroclaw-cli': 'zeroclaw',
   'hermes-cli': 'hermes',
   'goose-ai': 'goose',
   'goose-cli': 'goose',

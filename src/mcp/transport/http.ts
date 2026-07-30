@@ -96,7 +96,7 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
           const rawProvider = String(req.headers['x-voko-caller-provider'] || '');
           const providerType = normalizeBackendType(rawProvider);
           const allowedProviders = new Set([
-            'openclaw', 'hermes', 'goose', 'claude-code', 'codex',
+            'openclaw', 'zeroclaw', 'hermes', 'goose', 'claude-code', 'codex',
             'gemini', 'opencode', 'zcode', 'workbuddy', 'doubao',
             'cursor', 'grok', 'pi',
           ]);

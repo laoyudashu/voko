@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { discoverHermes } = require('../server/hermes-discovery');
 const { getRegistrationCaller } = require('./registration-caller-context');
 const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types');
+const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -52,6 +53,7 @@ const CLI_SESSION_ROOTS = {
   'github-copilot': () => [path.join(os.homedir(), '.copilot')],
   openhands: () => [path.join(os.homedir(), '.openhands', 'conversations')],
   aider: () => [path.join(os.homedir(), '.aider')],
+  zeroclaw: () => [path.join(os.homedir(), '.zeroclaw', 'data')],
   'amazon-q': () => [path.join(os.homedir(), '.aws', 'amazonq')],
 };
 const CLI_DELIVERY_METADATA = {
@@ -87,6 +89,7 @@ function currentAgentTypeFromText(value) {
     ['claude-code', /(?:^|[\\/\s])claude(?:\.exe)?(?:\s|$)|claude-code/],
     ['goose', /(?:^|[\\/\s])goose(?:\.exe)?(?:\s|$)/],
     ['openclaw', /(?:^|[\\/\s])openclaw(?:\.exe)?(?:\s|$)/],
+    ['zeroclaw', /(?:^|[\\/\s])zeroclaw(?:\.exe)?(?:\s|$)/],
     ['hermes', /(?:^|[\\/\s])hermes(?:\.exe)?(?:\s|$)/],
     ['gemini', /(?:^|[\\/\s])gemini(?:\.exe)?(?:\s|$)/],
     ['qwen-code', /(?:^|[\\/\s])qwen(?:\.exe)?(?:\s|$)|qwen-code/],
@@ -282,6 +285,22 @@ function hermesInstances() {
     return [];
   }
 }
+function zeroclawInstances() {
+  try {
+    const command = resolveZeroClawCommand();
+    const probe = spawnSync(command, ['agents', 'list'], {
+      encoding: 'utf8', timeout: 5000, windowsHide: true,
+    });
+    if (probe.status !== 0) return [];
+    return String(probe.stdout || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(line))
+      .map((alias) => ({ id: alias, name: alias, isDefault: false }));
+  } catch (_) {
+    return [];
+  }
+}
 function dbConfigAdapter(db) {
   return {
     getConfigFromDb(type) {
@@ -433,6 +452,7 @@ class RegistrationOrchestrator {
     const dbApi = this.db ? dbConfigAdapter(this.db) : null;
     const hasCommand = this.options.commandAvailable || commandAvailable;
     const openclaw = openclawInstances();
+    const zeroclaw = zeroclawInstances();
     const hermesInstalled = hasCommand('hermes');
     const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
@@ -446,6 +466,19 @@ class RegistrationOrchestrator {
         instances: openclaw,
         supportsMultipleInstances: true,
         deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
+      });
+    }
+    const zeroclawCommand = resolveZeroClawCommand();
+    const zeroclawInstalled = hasCommand('zeroclaw')
+      || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
+    if (zeroclaw.length || zeroclawInstalled) {
+      detected.push({
+        type: 'zeroclaw',
+        label: 'ZeroClaw',
+        instances: zeroclaw,
+        supportsMultipleInstances: true,
+        activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('zeroclaw'),
       });
     }
     if (hermes.length || hermesInstalled) {
@@ -509,14 +542,20 @@ class RegistrationOrchestrator {
     const type = normalizeBackendType(providerType);
     const known = this.db ? getBackendTypes(this.db) : [];
     const label = known.find((item) => item.value === type)?.label || type;
-    const allInstances = type === 'openclaw' ? openclawInstances() : type === 'hermes' ? hermesInstances() : [];
+    const allInstances = type === 'openclaw'
+      ? openclawInstances()
+      : type === 'hermes'
+        ? hermesInstances()
+        : type === 'zeroclaw'
+          ? zeroclawInstances()
+          : [];
     const matchedInstance = instanceId ? allInstances.find((instance) => instance.id === instanceId) : null;
     const instances = matchedInstance ? [matchedInstance] : allInstances;
     const provider = {
       type,
       label,
       instances,
-      supportsMultipleInstances: type === 'openclaw' || type === 'hermes',
+      supportsMultipleInstances: type === 'openclaw' || type === 'hermes' || type === 'zeroclaw',
       deliveryModes: this.deliveryCapabilities(type),
       detectedAsCurrent: true,
     };
@@ -588,6 +627,21 @@ class RegistrationOrchestrator {
           selected: commandAvailable('hermes'),
           action: commandAvailable('hermes') ? 'test' : null,
           description: 'VOKO 为每条消息调用一次 Hermes CLI。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'zeroclaw') {
+      const command = resolveZeroClawCommand();
+      const available = hasCommand('zeroclaw')
+        || (path.isAbsolute(command) && fs.existsSync(command));
+      return [
+        {
+          mode: 'acp', label: 'ACP 安全会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable',
+          selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: 'VOKO 通过 ACP 将消息交给指定 ZeroClaw 实例；工具操作仍需经过协议审批。',
         },
         pull,
       ];
@@ -838,9 +892,17 @@ class RegistrationOrchestrator {
     if (mode === 'pull') {
       ready = true;
       detail = '主动获取始终可用';
-    } else if (mode === 'cli' || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))) {
-      const command = provider === 'openclaw' ? 'openclaw' : provider === 'hermes' ? 'hermes' : (CLI_COMMANDS[provider] || provider);
-      ready = commandAvailable(command);
+    } else if (mode === 'cli'
+      || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
+      || (provider === 'zeroclaw' && mode === 'acp')) {
+      const command = provider === 'openclaw'
+        ? 'openclaw'
+        : provider === 'hermes'
+          ? 'hermes'
+          : provider === 'zeroclaw'
+            ? resolveZeroClawCommand()
+            : (CLI_COMMANDS[provider] || provider);
+      ready = path.isAbsolute(command) ? fs.existsSync(command) : commandAvailable(command);
       detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))

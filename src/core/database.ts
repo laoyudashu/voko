@@ -563,6 +563,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const agentsCols = db.prepare(`PRAGMA table_info(agents)`).all();
     const agentFields = [
       ['backend_type', "TEXT NOT NULL DEFAULT 'openclaw'"],
+      ['backend_instance_id', 'TEXT'],
       ['agent_name', 'TEXT'],
       ['category', "TEXT DEFAULT 'other'"],
       ['category_label', 'TEXT'],

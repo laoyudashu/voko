@@ -5,6 +5,7 @@ const os = require('node:os');
 const { QwenCliProvider } = require('../build/core/dispatcher/providers/qwen-cli');
 const { KiroCliProvider } = require('../build/core/dispatcher/providers/kiro-cli');
 const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-cli');
+const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
@@ -33,9 +34,23 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.equal(provider._cmd, 'kiro-cli');
   assert.equal(provider._cwd, os.tmpdir());
   assert.ok(provider._args.includes('--no-interactive'));
-  assert.ok(provider._args.includes('--trust-tools='));
+  assert.equal(provider._parserName, 'kiro-output');
   assert.match(provider._args.join(' '), /--wrap never/);
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
+});
+
+test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /backend_instance_id/);
+      return { get: () => ({ backend_instance_id: 'voko_test' }) };
+    },
+  };
+  const provider = new ZeroClawAcpProvider({ db });
+  assert.equal(provider._adapterType, 'zeroclaw-acp');
+  assert.deepEqual(provider._cliArgs, ['acp']);
+  assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
+  assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
 });
 
 test('Aider unattended delivery cannot edit, commit, browse or suggest commands', () => {
@@ -149,14 +164,29 @@ test('Aider parser excludes DeepSeek reasoning blocks', () => {
   assert.equal(output.trim(), 'VOKO_PROVIDER_OK');
 });
 
+test('Kiro parser removes terminal formatting and usage lines', () => {
+  let output = '';
+  const parser = createParser({
+    format: 'kiro-output',
+    onText: (chunk) => { output += chunk; },
+  });
+  [
+    '\u001b[38;5;141m> \u001b[0mVOKO_KIRO_OK',
+    '\u001b[38;5;8m',
+    ' ▸ Credits: 0.07 • Time: 4s',
+    '\u001b[0m',
+  ].forEach((line) => parser.handleLine(line));
+  assert.equal(output.trim(), 'VOKO_KIRO_OK');
+});
+
 test('registration detects all added CLIs but only exposes safe automatic delivery', () => {
-  const commands = new Set(['qwen', 'kiro-cli', 'copilot', 'openhands', 'aider', 'q', 'cursor-agent', 'grok']);
+  const commands = new Set(['qwen', 'kiro-cli', 'copilot', 'openhands', 'aider', 'q', 'cursor-agent', 'grok', 'zeroclaw']);
   const service = new RegistrationOrchestrator({
     commandAvailable: (command) => commands.has(command),
   });
   const environment = service.inspectEnvironment();
 
-  for (const type of ['qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q', 'cursor', 'grok']) {
+  for (const type of ['qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q', 'cursor', 'grok', 'zeroclaw']) {
     assert.ok(environment.detected.some((provider) => provider.type === type), type);
   }
   for (const type of ['qwen-code', 'kiro', 'aider']) {
@@ -165,6 +195,7 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   for (const type of ['github-copilot', 'openhands', 'amazon-q', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
+  assert.deepEqual(service.deliveryCapabilities('zeroclaw').map((mode) => mode.mode), ['acp', 'pull']);
 });
 
 test('current Agent process ancestry recognizes the added CLI families', () => {
@@ -174,4 +205,5 @@ test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['openhands --headless']), 'openhands');
   assert.equal(currentAgentTypeFromProcessRows(['aider --message hello']), 'aider');
   assert.equal(currentAgentTypeFromProcessRows(['q.exe chat']), 'amazon-q');
+  assert.equal(currentAgentTypeFromProcessRows(['zeroclaw.exe agent --agent voko_test']), 'zeroclaw');
 });
