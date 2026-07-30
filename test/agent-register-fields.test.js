@@ -68,6 +68,7 @@ describe('registerAgentInDb description 写入', () => {
         uid: 'uid-1', token: 'tok-1', serverUrl: 'wss://im',
         ownerEmail: 'owner@test.com',
         backendType: 'codex',
+        instanceId: 'codex_profile_test',
         agentName: '我的Codex助手',
         category: 'technology',
         description: '一个只读的代码分析助手',
@@ -76,10 +77,11 @@ describe('registerAgentInDb description 写入', () => {
       });
       assert.strictEqual(r.success, true);
 
-      const row = db.prepare('SELECT description, category, backend_type, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
+      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
       assert.strictEqual(row.description, '一个只读的代码分析助手');
       assert.strictEqual(row.category, 'technology');
       assert.strictEqual(row.backend_type, 'codex');
+      assert.strictEqual(row.backend_instance_id, 'codex_profile_test');
       assert.strictEqual(row.agent_name, '我的Codex助手');
       assert.strictEqual(row.access_mode, 'public');
     } finally { cleanupDb(db); }

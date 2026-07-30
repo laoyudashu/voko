@@ -13,6 +13,7 @@ const REQUIRED_OUTPUTS = [
   'core/dispatcher/index.js',
   'core/dispatcher/providers/openclaw-ws.js',
   'core/dispatcher/providers/hermes-http.js',
+  'core/dispatcher/providers/zeroclaw-acp.js',
   'channels/registry.js',
   'channels/voko-email.js',
   'server/voko-email-handler.js',

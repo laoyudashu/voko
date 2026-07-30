@@ -195,7 +195,10 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   for (const type of ['github-copilot', 'openhands', 'amazon-q', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
-  assert.deepEqual(service.deliveryCapabilities('zeroclaw').map((mode) => mode.mode), ['acp', 'pull']);
+  const zeroModes = service.deliveryCapabilities('zeroclaw');
+  assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp', 'pull']);
+  assert.equal(zeroModes[0].status, 'configuration_required');
+  assert.equal(zeroModes[0].selected, false);
 });
 
 test('current Agent process ancestry recognizes the added CLI families', () => {

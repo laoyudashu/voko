@@ -301,6 +301,23 @@ function zeroclawInstances() {
     return [];
   }
 }
+function zeroclawReadiness(instanceId) {
+  const alias = cleanText(instanceId, 160);
+  if (!alias) return { ready: false, detail: '需要先选择 ZeroClaw Agent 实例' };
+  try {
+    const probe = spawnSync(resolveZeroClawCommand(), ['security', 'status', '--agent', alias, '--json'], {
+      encoding: 'utf8', timeout: 5000, windowsHide: true,
+    });
+    return {
+      ready: probe.status === 0,
+      detail: probe.status === 0
+        ? 'ZeroClaw Agent 与风险配置有效'
+        : 'ZeroClaw Agent 尚未完成模型或风险配置',
+    };
+  } catch (_) {
+    return { ready: false, detail: '无法检查 ZeroClaw Agent 配置' };
+  }
+}
 function dbConfigAdapter(db) {
   return {
     getConfigFromDb(type) {
@@ -478,7 +495,7 @@ class RegistrationOrchestrator {
         instances: zeroclaw,
         supportsMultipleInstances: true,
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('zeroclaw'),
+        deliveryModes: this.deliveryCapabilities('zeroclaw', { ready: false }),
       });
     }
     if (hermes.length || hermesInstalled) {
@@ -556,7 +573,10 @@ class RegistrationOrchestrator {
       label,
       instances,
       supportsMultipleInstances: type === 'openclaw' || type === 'hermes' || type === 'zeroclaw',
-      deliveryModes: this.deliveryCapabilities(type),
+      deliveryModes: this.deliveryCapabilities(
+        type,
+        type === 'zeroclaw' ? zeroclawReadiness(matchedInstance?.id) : undefined,
+      ),
       detectedAsCurrent: true,
     };
     return {
@@ -635,12 +655,13 @@ class RegistrationOrchestrator {
       const command = resolveZeroClawCommand();
       const available = hasCommand('zeroclaw')
         || (path.isAbsolute(command) && fs.existsSync(command));
+      const configured = !!gatewayStatus?.ready;
       return [
         {
           mode: 'acp', label: 'ACP 安全会话', role: 'primary',
-          status: available ? 'ready' : 'unavailable',
-          selected: available, recommended: true,
-          action: available ? 'test' : null,
+          status: !available ? 'unavailable' : configured ? 'ready' : 'configuration_required',
+          selected: available && configured, recommended: true,
+          action: !available ? null : configured ? 'test' : null,
           description: 'VOKO 通过 ACP 将消息交给指定 ZeroClaw 实例；工具操作仍需经过协议审批。',
         },
         pull,
@@ -822,7 +843,10 @@ class RegistrationOrchestrator {
       instanceName: instances.find((item) => item.id === instanceId)?.name || null,
       detected: !!detected,
     };
-    session.deliveryModes = this.deliveryCapabilities(providerType);
+    session.deliveryModes = this.deliveryCapabilities(
+      providerType,
+      providerType === 'zeroclaw' ? zeroclawReadiness(instanceId) : undefined,
+    );
     session.status = 'delivery_selection_required';
     return this._save(session);
   }
@@ -902,8 +926,14 @@ class RegistrationOrchestrator {
           : provider === 'zeroclaw'
             ? resolveZeroClawCommand()
             : (CLI_COMMANDS[provider] || provider);
-      ready = path.isAbsolute(command) ? fs.existsSync(command) : commandAvailable(command);
-      detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
+      if (provider === 'zeroclaw') {
+        const status = zeroclawReadiness(session.provider?.instanceId);
+        ready = status.ready;
+        detail = status.detail;
+      } else {
+        ready = path.isAbsolute(command) ? fs.existsSync(command) : commandAvailable(command);
+        detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
+      }
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
         .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);
