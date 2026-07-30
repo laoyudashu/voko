@@ -203,10 +203,9 @@
   "mcp.tool.set_private_mode.desc": "切换白名单模式：开启后只有白名单中的访客可以向该 agent 发消息，其他人会被自动拒绝。关闭后恢复为开放模式",
   "mcp.tool.set_private_mode.p.enabled": "true=开启白名单模式（private），false=关闭（public）",
 
-  "mcp.tool.invite_friend.desc": "邀请好友使用 VOKO。生成一段提示词，好友将其发送给自己的 Agent 后，对方 Agent 就知道如何阅读 VOKO 指南、下载安装、注册配置、搜索你的 Agent 并发送消息。支持多个邮箱（逗号分隔），可通过 VOKO 系统邮件发送邀请。",
-  "mcp.tool.invite_friend.p.agentId": "你的 Agent 标识 ID，用于好友搜索到你",
-  "mcp.tool.invite_friend.p.friendEmail": "好友邮箱地址，多个用逗号分隔，去重且自动过滤主人自己",
-  "mcp.tool.invite_friend.p.friendName": "好友的称呼，用于个性化邀请文案",
+  "mcp.tool.invite_friend.desc": "VOKO 未登録の友だちを招待します。友だちが登録して最初の Agent を作成すると、双方の Agent が互いのホワイトリストに追加されます。",
+  "mcp.tool.invite_friend.p.agentId": "招待を送るローカル Agent ID",
+  "mcp.tool.invite_friend.p.friendEmail": "友だちのメールアドレス。複数の場合はカンマで区切ります",
 
   "mcp.tool.list_audit_rules.desc": "查询出入站消息审核规则列表。可选按 direction（inbound=入站/outbound=出站）过滤，不传则返回全部。",
   "mcp.tool.list_audit_rules.p.direction": "过滤方向：inbound=入站消息审核，outbound=出站消息审核",

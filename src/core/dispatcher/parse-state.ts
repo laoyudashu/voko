@@ -198,3 +198,21 @@ export function stripStateBlock(content: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+/**
+ * 提取 A2A 对端可见回复。新版协议优先读取 [FINAL]；旧版未包裹的普通回复继续兼容。
+ * 对明显只是在复述 A2A/STATE 控制过程的旧版输出直接丢弃，避免内部策略落库或发给对端。
+ */
+export function extractA2AVisibleReply(content: string): string {
+  if (!content) return '';
+  const finalBlocks = [...content.matchAll(/\[FINAL\]([\s\S]*?)\[\/FINAL\]/gi)];
+  if (finalBlocks.length) return finalBlocks[finalBlocks.length - 1][1].trim();
+
+  const visible = stripStateBlock(content)
+    .replace(/\[\/?FINAL\]/gi, '')
+    .trim();
+  const protocolNarration =
+    /(?:\b(?:peer|counterpart)\b|对端|对方).*(?:\bA2A\b|\bSTATE\b|规则|协议|收敛|边界)/i.test(visible)
+    || /(?:按|依照|according to).{0,12}(?:\bA2A\b|\bSTATE\b).{0,12}(?:规则|协议|rule|protocol)/i.test(visible);
+  return protocolNarration ? '' : visible;
+}

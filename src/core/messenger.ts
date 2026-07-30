@@ -10,7 +10,7 @@ const { notifyNewMessage } = require('./notifier');
 const { persistAgentMessage } = require('./send-message');
 const { logEvent } = require('./event-log');
 const { isSystemMessageContent } = require('./i18n');
-const { parseA2AState, stripStateBlock } = require('./dispatcher/parse-state');
+const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
 import type { DatabaseLike } from '../types/database';
 import type {
   AgentReplyMessage,
@@ -53,7 +53,6 @@ interface ConversationSessionRow {
   session_expire_at: number | null;
 }
 interface ConversationModeRow { mode: string | null }
-interface InvitationRow { whitelisted: number | boolean | null }
 interface PricingRow {
   pricing_model: string;
   trial_minutes: number;
@@ -369,23 +368,7 @@ class MessageHandler extends EventEmitter {
       if (agentStatusRow.access_mode === 'private') {
         const whitelisted = this.ac.isWhitelisted(this.db, agentId, fromUid);
         if (!whitelisted) {
-          // 检测消息中是否含邀请码，有则自动通过
-          const match = typeof content === 'string' ? content.match(/邀请码[：:]\s*([A-Za-z0-9]{6})|invite[：:]\s*([A-Za-z0-9]{6})/i) : null;
-          const code = match?.[1] || match?.[2];
-          if (code) {
-            const inviteRow = this.db.prepare(`SELECT * FROM friend_invitations WHERE code=? AND agent_id=?`).get<InvitationRow>(code, agentId);
-            if (inviteRow && !inviteRow.whitelisted) {
-              this.ac.addEntry(this.db, { agentId, listType: 'whitelist', visitorId: fromUid, reason: '邀请码自动通过' });
-              this.db.prepare(`DELETE FROM friend_invitations WHERE code=? AND agent_id=?`).run(code);
-              this._sendSystemMessage(agentId, fromUid, 'invite_whitelist_added', {}, timestamp);
-              console.log(`[邀请] 邀请码 ${code} 已验证，访客 ${fromUid} 已加入白名单`);
-              // 继续处理消息，不拦截
-            } else {
-              // 邀请码不存在或已被使用
-              this._sendSystemMessage(agentId, fromUid, 'invite_code_invalid', {}, timestamp);
-              return;
-            }
-          } else if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
+          if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
             this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp);
             this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp);
             return;
@@ -889,7 +872,9 @@ class MessageHandler extends EventEmitter {
     // 剥离 agent 误带回的元数据块 [Conversation info ...] + A2A 收敛协议的 [STATE]...[/STATE] 块
     //（STATE 块由 dispatcher 注入的 prompt 产生，含协商状态 JSON，不得落库/发给访客）。
     // stripStateBlock 容忍 markdown 围栏、缺结束标签、多块复读，保证访客侧零协议噪音。
-    const cleanContent = stripStateBlock(content);
+    const cleanContent = data.a2aManaged
+      ? extractA2AVisibleReply(content)
+      : stripStateBlock(content);
 
     let trimmedContent = cleanContent.replace(/^[\n\r\s]+/, '').trim();
     if (data.interventionResume) {

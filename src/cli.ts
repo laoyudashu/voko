@@ -116,7 +116,7 @@ const TOOL_PARAM_SCHEMAS = {
   manage_blacklist:        { agentId: 'string', action: 'string', visitorId: 'string', id: 'string', reason: 'string' },
   list_access_lists:       { agentId: 'string', listType: 'string' },
   set_private_mode:        { agentId: 'string', enabled: 'boolean' },
-  invite_friend:           { agentId: 'string', friendEmail: 'string', friendName: 'string' },
+  invite_friend:           { agentId: 'string', friendEmail: 'string' },
   list_audit_rules:        { direction: 'string' },
   manage_audit_rules:      { action: 'string', ruleId: 'string', direction: 'string', keyword: 'string', actionType: 'string', prompt: 'string' },
   // 群聊

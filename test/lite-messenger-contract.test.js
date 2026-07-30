@@ -365,4 +365,48 @@ describe('Lite Messenger contract smoke', () => {
       fixture.db.close();
     }
   });
+
+  it('delivers only the FINAL block from an A2A reply', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentReply({
+        agentId: 'agent-1',
+        visitorId: 'peer-agent-uid',
+        content: '[STATE]{"agenda":[],"expects_reply":false,"converged":true}[/STATE]\nInternal protocol note.\n[FINAL]协商已完成。[/FINAL]',
+        a2aManaged: true,
+        a2aPeerUid: 'peer-agent-uid',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered[0][2], '协商已完成。');
+      const stored = fixture.db.prepare(
+        'SELECT content FROM messages WHERE agent_id=? AND is_me=1 ORDER BY rowid DESC LIMIT 1',
+      ).get('agent-1');
+      assert.equal(stored.content, '协商已完成。');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('drops legacy A2A protocol narration instead of exposing it', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentReply({
+        agentId: 'agent-1',
+        visitorId: 'peer-agent-uid',
+        content: 'Peer 已划清文字闲聊边界并询问问题；按 A2A 规则回复 STATE，不推动支付。',
+        a2aManaged: true,
+        a2aPeerUid: 'peer-agent-uid',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(fixture.delivered.length, 0);
+      assert.equal(fixture.db.prepare(
+        'SELECT COUNT(*) AS count FROM messages WHERE agent_id=? AND is_me=1',
+      ).get('agent-1').count, 0);
+    } finally {
+      fixture.db.close();
+    }
+  });
 });

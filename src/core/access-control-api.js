@@ -39,7 +39,13 @@ function addEntry(db, { agentId, listType, visitorId, reason }, { onWhitelistAdd
     const id = `acl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const now = Date.now();
     db.prepare(
-      `INSERT INTO agent_access_lists (id, agent_id, list_type, visitor_id, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO agent_access_lists
+         (id, agent_id, list_type, visitor_id, reason, manual_managed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+       ON CONFLICT(agent_id, list_type, visitor_id) DO UPDATE SET
+         manual_managed = 1,
+         reason = COALESCE(excluded.reason, agent_access_lists.reason),
+         updated_at = excluded.updated_at`
     ).run(id, agentId, listType, visitorId, reason || null, now, now);
     // 白名单添加成功后自动通知访客
     if (listType === 'whitelist' && onWhitelistAdded) {
@@ -59,7 +65,20 @@ function addEntry(db, { agentId, listType, visitorId, reason }, { onWhitelistAdd
  */
 function removeEntryByVisitor(db, agentId, visitorId, listType) {
   try {
-    db.prepare(`DELETE FROM agent_access_lists WHERE agent_id=? AND visitor_id=? AND list_type=?`).run(agentId, visitorId, listType);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`UPDATE agent_access_lists
+        SET manual_managed=0, updated_at=?
+        WHERE agent_id=? AND visitor_id=? AND list_type=? AND server_managed=1`)
+        .run(Date.now(), agentId, visitorId, listType);
+      db.prepare(`DELETE FROM agent_access_lists
+        WHERE agent_id=? AND visitor_id=? AND list_type=? AND server_managed=0`)
+        .run(agentId, visitorId, listType);
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -71,7 +90,16 @@ function removeEntryByVisitor(db, agentId, visitorId, listType) {
  */
 function removeEntry(db, id) {
   try {
-    db.prepare(`DELETE FROM agent_access_lists WHERE id = ?`).run(id);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`UPDATE agent_access_lists SET manual_managed=0, updated_at=?
+        WHERE id=? AND server_managed=1`).run(Date.now(), id);
+      db.prepare(`DELETE FROM agent_access_lists WHERE id=? AND server_managed=0`).run(id);
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };

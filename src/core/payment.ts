@@ -8,6 +8,7 @@
  */
 
 const { signDidRequest } = require('./did-auth');
+const { t, getLocale } = require('./i18n');
 import type { DatabaseLike } from '../types/database';
 
 interface PaymentOrder {
@@ -299,6 +300,8 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
 
           if (queryResult.success && queryResult.data?.status === 1) {
             const paidData = queryResult.data;
+            const locale = getLocale();
+            const paymentText = (key: string, params: Record<string, unknown> = {}) => t(key, params, locale);
             paidData.transaction_no = paidData.transactionNo || paidData.tradeNo || paidData.thirdTradeNo || '';
             databaseAPI.updatePaymentOrder(order.id, { status: 'paid', result: JSON.stringify(paidData) });
 
@@ -336,7 +339,13 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
             try {
               const payAgent = db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<{ backend_type?: string }>(order.agent_id);
               const payBackend = payAgent?.backend_type || 'openclaw';
-              const payMsg2 = `[Payment Notification]\n访客: ${order.visitor_id}\n金额: ¥${order.amount.toFixed(2)}\n描述: ${order.description || '无'}\n订单号: ${order.order_no || '-'}\n交易流水号: ${paidData.transactionNo || ''}`;
+              const payMsg2 = paymentText('errors.payment.agent_notification', {
+                visitorId: order.visitor_id,
+                amount: order.amount.toFixed(2),
+                description: order.description || paymentText('errors.payment.none'),
+                orderNo: order.order_no || '-',
+                transactionNo: paidData.transactionNo || '-',
+              });
               if (payBackend === 'hermes' && hermesHandler?.connected) {
                 hermesHandler.steer(`hermes:${order.agent_id}:${order.visitor_id}`, payMsg2);
               } else if (openclawHandler?.connected) {
@@ -348,15 +357,19 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
             try {
               const now2 = Date.now();
               const oiId = 'pay_' + now2 + '_' + Math.random().toString(36).substr(2, 6);
-              const ownerMsg = '💰 支付成功通知\nAgent: ' + order.agent_id + '\n访客: ' + order.visitor_id + '\n金额: ¥' + order.amount.toFixed(2);
+              const ownerMsg = paymentText('errors.payment.owner_notification', {
+                agentId: order.agent_id,
+                amount: order.amount.toFixed(2),
+              });
+              const ownerSuggestion = paymentText('errors.payment.owner_suggestion');
               const payPrefix = (db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<{ backend_type?: string }>(order.agent_id)?.backend_type) === 'hermes' ? 'hermes' : 'agent';
               databaseAPI.saveOwnerIntervention({
                 id: oiId, visitorId: order.visitor_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id,
-                problem: ownerMsg, agentSuggestion: '支付成功通知，无需回复', askTime: now2,
+                problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2,
                 status: 'pending', channelType: 'voko', createdAt: now2, updatedAt: now2, agentId: order.agent_id,
                 skipReply: 1,
               });
-              if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue({ id: oiId, visitorId: order.visitor_id, agentId: order.agent_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id, problem: ownerMsg, agentSuggestion: '支付成功通知，无需回复', askTime: now2, skipReply: 1 });
+              if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue({ id: oiId, visitorId: order.visitor_id, agentId: order.agent_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id, problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2, skipReply: 1 });
             } catch (e: unknown) { console.error('[Payment] 通知主人失败:', errorMessage(e)); }
           } else if (queryResult.success && queryResult.data?.status === 2) {
             const wasExpired = order.status === 'expired';

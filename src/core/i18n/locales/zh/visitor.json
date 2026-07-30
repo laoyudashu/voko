@@ -3,8 +3,6 @@
   "visitor.audit_custom": "{prompt}",
   "visitor.agent_unpublished": "当前Agent已下架，请联系{ownerEmail}。",
   "visitor.blacklisted": "您已被加入黑名单，无法继续交流。",
-  "visitor.invite_whitelist_added": "欢迎！你已通过邀请自动加入白名单。",
-  "visitor.invite_code_invalid": "该邀请码已失效，请联系主人获取新的邀请码。",
   "visitor.friend_request_received": "好友申请已收到，请等待确认。",
   "visitor.friend_request_approved": "好友申请已通过，可以继续交流。",
   "visitor.trial_welcome": "欢迎使用本Agent！首次可免费试用 {trialMinutes} 分钟。试用结束后需付费，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",

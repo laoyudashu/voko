@@ -297,7 +297,7 @@ function createContext({
       return await uploadToOSS(objectName, buffer, mimeType);
     },
 
-    // ── 邮件（invite_friend 用；未注入时惰性创建，从 DB 读 owner token）──
+    // ── 邮件（未注入时惰性创建，从 DB 读 owner token）──
     agentEmailApi: agentEmailApi || new AgentEmailApi({
       apiBaseUrl: (ENDPOINTS && ENDPOINTS.api && ENDPOINTS.api.baseUrl) || '',
       getUserAccessToken: () => {

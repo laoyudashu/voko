@@ -673,7 +673,6 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     {
       agentId: z.string().describe(T('mcp.tool.invite_friend.p.agentId')),
       friendEmail: z.string().describe(T('mcp.tool.invite_friend.p.friendEmail')),
-      friendName: z.string().optional().describe(T('mcp.tool.invite_friend.p.friendName')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.invite_friend(params);

@@ -209,10 +209,9 @@
   "mcp.tool.set_private_mode.desc": "Toggle whitelist mode: when enabled, only visitors on the whitelist can send messages to this agent; others are automatically rejected. When disabled, reverts to open mode.",
   "mcp.tool.set_private_mode.p.enabled": "true=enable whitelist mode (private), false=disable (public)",
 
-  "mcp.tool.invite_friend.desc": "Invite friends to use VOKO. Generates a prompt that, when the friend sends it to their own Agent, teaches that Agent how to read the VOKO guide, download and install, register and configure, search for your Agent, and send messages. Supports multiple email addresses (comma-separated), which can be sent via VOKO system email.",
-  "mcp.tool.invite_friend.p.agentId": "Your Agent ID, used for friends to search and find you",
-  "mcp.tool.invite_friend.p.friendEmail": "Friend's email address; multiple addresses separated by commas, deduplicated with the owner's own email automatically filtered out",
-  "mcp.tool.invite_friend.p.friendName": "Friend's name, used for personalized invitation text",
+  "mcp.tool.invite_friend.desc": "Invite a friend who has not registered for VOKO. The server checks registration status; after the friend registers and creates their first Agent, both Agents are added to each other's whitelist.",
+  "mcp.tool.invite_friend.p.agentId": "Local Agent ID sending the invitation",
+  "mcp.tool.invite_friend.p.friendEmail": "Friend's email address; separate multiple addresses with commas",
 
   "mcp.tool.list_audit_rules.desc": "Query the list of inbound/outbound message audit rules. Optionally filter by direction (inbound/outbound). Returns all when omitted.",
   "mcp.tool.list_audit_rules.p.direction": "Filter direction: inbound=inbound message audit, outbound=outbound message audit",

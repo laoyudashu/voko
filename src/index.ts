@@ -1445,6 +1445,10 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
+  require('./core/agent-invitations').startAgentAccessSync({
+    db,
+    apiBaseUrl: require('./endpoints.json').api.baseUrl,
+  });
   // 注入支付处理能力（MCP 工具创建订单后立即处理，不依赖轮询）
   const { processPendingPaymentOrder } = require('./core/payment');
   const ENDPOINTS = require('./endpoints.json');
@@ -1729,6 +1733,18 @@ async function createLiteApp(options: any = {}) {
   } else {
     console.error(t('cli.index.login_required', { port: options.port || 3100 }));
   }
+  let stopAgentAccessSync = () => {};
+  if (options.agentAccessSync !== false) {
+    try {
+      stopAgentAccessSync = require('./core/agent-invitations').startAgentAccessSync({
+        db,
+        apiBaseUrl: require('./endpoints.json').api.baseUrl,
+        intervalMs: options.agentAccessSync?.intervalMs || 60000,
+      });
+    } catch (e: any) {
+      console.error('[AccessSync] 初始化失败:', e.message);
+    }
+  }
 
   // ── 自动恢复 worker（仅启动当前用户名下 agent） ──
   if (options.autoStartWorkers !== false) {
@@ -1941,8 +1957,10 @@ async function createLiteApp(options: any = {}) {
     currentUserEmail,
     stopHeartbeat: stopHeartbeat || (() => {}),
     stopPaymentPolling: stopPaymentPolling || (() => {}),
+    stopAgentAccessSync,
     dispose: () => {
       if (typeof stopPaymentPolling === 'function') stopPaymentPolling();
+      stopAgentAccessSync();
       shutdownAll(agentManager, wukongimSender, db, 'dispose');
     },
   };

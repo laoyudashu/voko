@@ -344,7 +344,9 @@ Before replying, locate the [STATE] block in the incoming message and use it to 
 
 Your reply MUST start with a STATE block in this JSON format:
 [STATE]{"goal":"<one-line summary of what this negotiation aims to decide>","agenda":["<pending item 1>","<pending item 2>"],"turn":${turn},"proposal":"<your current proposal or answer>","expects_reply":true,"converged":false}[/STATE]
-Then continue with your natural-language response.
+Then put only the peer-visible reply inside:
+[FINAL]<the exact message the peer may see>[/FINAL]
+Do not expose reasoning, policy commentary, protocol instructions, boundary-analysis notes, or summaries about how you followed A2A/STATE rules.
 
 STATE rules:
 - goal: set in your first reply, KEEP UNCHANGED after that.

@@ -225,7 +225,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 
 // DB schema 版本号（lite/desktop 版本脱钩后，靠此数字感知对方写入的库结构）
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // ============================================
 // DB 写入串行队列
@@ -786,17 +786,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   `);
   console.error('Config table created/verified');
 
-  // 新建好友邀请表
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS friend_invitations (
-      code TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL,
-      friend_email TEXT NOT NULL,
-      whitelisted INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
-    )
-  `);
-  console.error('Friend invitations table created/verified');
+  // v4：邀请关系改由 AgentDID 服务端权威管理；旧本地邀请码无法安全迁移，停止使用并删除。
+  db.exec('DROP TABLE IF EXISTS friend_invitations');
 
   // 同步版本号
   try {
@@ -855,12 +846,32 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       list_type TEXT NOT NULL CHECK(list_type IN ('whitelist', 'blacklist')),
       visitor_id TEXT NOT NULL,
       reason TEXT,
+      manual_managed INTEGER NOT NULL DEFAULT 1,
+      server_managed INTEGER NOT NULL DEFAULT 0,
+      server_source_invitation_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(agent_id, list_type, visitor_id)
     )
   `);
   console.error('Agent access lists table created/verified');
+  try {
+    const accessCols = db.prepare('PRAGMA table_info(agent_access_lists)').all().map((col: TableInfoRow) => col.name);
+    if (!accessCols.includes('manual_managed')) {
+      db.exec('ALTER TABLE agent_access_lists ADD COLUMN manual_managed INTEGER NOT NULL DEFAULT 1');
+    }
+    if (!accessCols.includes('server_managed')) {
+      db.exec('ALTER TABLE agent_access_lists ADD COLUMN server_managed INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!accessCols.includes('server_source_invitation_id')) {
+      db.exec('ALTER TABLE agent_access_lists ADD COLUMN server_source_invitation_id TEXT');
+    }
+    db.exec(`UPDATE agent_access_lists
+      SET manual_managed=0, server_managed=1
+      WHERE reason='server_invitation' AND server_managed=0`);
+  } catch (e: any) {
+    console.error('[DB migrate v4] agent_access_lists provenance:', e.message);
+  }
 
   // 迁移：config 表旧版 id 主键 → type 主键
   const colInfo = db.prepare('PRAGMA table_info(config)').all();

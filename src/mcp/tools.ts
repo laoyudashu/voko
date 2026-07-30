@@ -8,7 +8,7 @@ export {};
  */
 
 const ENDPOINTS = require('../endpoints.json');
-const { buildInvitationPrompt, buildEmailSubject, buildEmailContent } = require('../core/invitation');
+const { createAgentInvitation } = require('../core/agent-invitations');
 const groupClient = require('../core/group-client');
 const { t } = require('../core/i18n');
 const { normalizeBackendType } = require('../core/agent-backend-types');
@@ -409,7 +409,6 @@ interface McpToolParams {
   filePath?: string;
   filter?: string;
   friendEmail?: string;
-  friendName?: string;
   iconUrl?: string;
   id?: string;
   idCard?: string;
@@ -2478,94 +2477,25 @@ function createToolHandlers(cx: McpContext) {
     },
 
     async invite_friend(p: McpToolParams = {}) {
-      const { agentId, friendEmail: rawEmails, friendName } = p;
-      const row = cx.query(`SELECT agent_name, owner_email, did FROM agents WHERE agent_id=?`, [agentId]);
-      if (!row?.[0]) return { success: false, error: 'Agent 不存在' };
-      const myName = row[0].agent_name || agentId;
-      const ownerDid = row[0].did;
-      console.error('[Invite] agentId=' + agentId + ' myName=' + myName + ' rawEmails=' + rawEmails);
-
-      // 解析多个邮箱：逗号/分号/换行分隔，去重，过滤掉主人自己
-      const ownerEmail = (row[0].owner_email || '').trim().toLowerCase();
+      const { agentId, friendEmail: rawEmails } = p;
       const emailList = [...new Set(
-        (rawEmails || '').split(/[,;\n\r，]+/).map((e?: any) => e.trim().toLowerCase()).filter(Boolean)
-      )].filter((e?: any) => e !== ownerEmail);
+        String(rawEmails || '').split(/[,;\n\r，]+/).map((email) => email.trim().toLowerCase()).filter(Boolean)
+      )];
       if (emailList.length === 0) return { success: false, error: '没有有效的受邀邮箱' };
-      console.error('[Invite] 有效受邀邮箱数=' + emailList.length + ' list=' + emailList.join(','));
-
-      const guideUrl = ENDPOINTS.oss.publicUrl + '/chat/files/VOKO_MCP_GUIDE.md';
-      const currentVer = (() => { try { return require('../../package.json').version; } catch (_: any) { return '0.0.0'; } })();
-
-      const downloadUrl = 'https://www.npmjs.com/package/@voko/lite';
-
-      // 每个邮箱生成独立的邀请码，入库（已有未使用的不重复生成）
-      const invites = emailList.map((email?: any) => {
-        const existing = cx.query(`SELECT code FROM friend_invitations WHERE agent_id=? AND friend_email=?`, [agentId, email]);
-        if (existing?.[0]?.code) {
-          console.error('[Invite] 复用邀请码 agent=' + agentId + ' email=' + email + ' code=' + existing[0].code);
-          return { email, code: existing[0].code };
-        }
-        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-        cx.exec(`INSERT OR REPLACE INTO friend_invitations (code, agent_id, friend_email, whitelisted, created_at) VALUES (?, ?, ?, 0, ?)`,
-          [code, agentId, email, Date.now()]);
-        console.error('[Invite] 生成邀请码 agent=' + agentId + ' email=' + email + ' code=' + code);
-        return { email, code };
-      });
-
-      // 每个邀请者生成独立的提示词
-      const invitationPrompts = invites.map((inv?: any) => ({
-        email: inv.email,
-        code: inv.code,
-        prompt: buildInvitationPrompt({
-          myName, ownerEmail: row[0].owner_email, version: currentVer, guideUrl, downloadUrl,
-          friendEmail: inv.email, inviteCode: inv.code
-        })
-      }));
-
-      // 通过 VOKO 系统邮件发送邀请（每封邮件独立生成提示词，含各自邮箱和邀请码）
-      const emailResults = [];
-      console.error('[Invite] 准备发送邮件 agentEmailApi=' + !!cx.agentEmailApi + ' ownerDid=' + (ownerDid || '无'));
-      if (!cx.agentEmailApi) console.error('[Invite] cx.agentEmailApi 不存在');
-      if (!ownerDid) console.error('[Invite] Agent 无 DID');
-      if (cx.agentEmailApi && ownerDid) {
-        for (const inv of invites) {
-          try {
-            const prompt = buildInvitationPrompt({
-              myName, ownerEmail: row[0].owner_email, version: currentVer, guideUrl, downloadUrl,
-              friendEmail: inv.email, inviteCode: inv.code
-            });
-            const sendRes = await cx.agentEmailApi.send(ownerDid, prompt, {
-              to: inv.email,
-              subject: buildEmailSubject(myName),
-              external_id: `invite-${inv.code}`,
-              reply_enabled: false,
-            });
-            const sent = !!sendRes?.message_id;
-            emailResults.push({ email: inv.email, code: inv.code, sent, message_id: sendRes?.message_id || null });
-            console.error('[Invite] 邮件发送 ' + (sent ? '成功' : '失败') + ' email=' + inv.email + ' code=' + inv.code + ' msgId=' + (sendRes?.message_id || '-'));
-          } catch (e: any) {
-            emailResults.push({ email: inv.email, code: inv.code, sent: false, note: e.message });
-            console.error('[Invite] 邮件发送异常 email=' + inv.email + ' code=' + inv.code + ' err=' + e.message);
-          }
-        }
-      } else {
-        // 无法发送邮件时，为每个邀请记录失败原因
-        for (const inv of invites) {
-          emailResults.push({ email: inv.email, code: inv.code, sent: false, note: !cx.agentEmailApi ? '邮件服务未就绪' : 'Agent 未注册 DID' });
-        }
+      const results = [];
+      for (const email of emailList) {
+        results.push(await createAgentInvitation({
+          db: cx.db,
+          apiBaseUrl: cx.VOKO_API_URL,
+          agentId: String(agentId || ''),
+          email,
+        }));
       }
-
+      if (results.length === 1) return { agentId, ...results[0] };
       return {
-        success: true,
+        success: results.every((result) => result.success !== false),
         agentId,
-        myName,
-        guideUrl,
-        downloadUrl,
-        currentVersion: currentVer,
-        invites,
-        invitationPrompts,
-        emailSent: emailResults.length > 0 ? emailResults : null,
-        instructions: `已将 ${invites.length} 位好友的邀请码入库，并通过邮件发送邀请提示词。好友发来的消息包含对应邀请码时自动通过并加入白名单。`,
+        results,
       };
     },
   };

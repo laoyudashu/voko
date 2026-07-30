@@ -3,8 +3,6 @@
   "visitor.audit_custom": "{prompt}",
   "visitor.agent_unpublished": "This Agent is offline. Please contact {ownerEmail}.",
   "visitor.blacklisted": "You have been blacklisted and cannot continue this conversation.",
-  "visitor.invite_whitelist_added": "Welcome! You have been automatically added to the whitelist via invitation.",
-  "visitor.invite_code_invalid": "This invitation code is invalid. Please ask the owner for a new one.",
   "visitor.friend_request_received": "Your friend request has been received. Please wait for approval.",
   "visitor.friend_request_approved": "Your friend request has been approved. You can continue chatting now.",
   "visitor.trial_welcome": "Welcome! Your first {trialMinutes} minutes are free. After the trial, paid usage is required: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",
