@@ -396,6 +396,7 @@ class AcpAdapter extends PushProvider {
         tag: `acp-fallback-${agentId}`,
         timeout: fb.timeout || 120000,
         env: this.options.env,
+        cwd: this._cwd,
         onStdoutLine: (line: string) => parser.handleLine(line),
       });
 

@@ -31,10 +31,10 @@ const CLI_COMMANDS = {
   'qwen-code': 'qwen',
   kiro: 'kiro-cli',
   aider: 'aider',
+  'github-copilot': 'copilot',
 };
 const PULL_ONLY_CLI_COMMANDS = {
   grok: 'grok',
-  'github-copilot': 'copilot',
   openhands: 'openhands',
   'amazon-q': 'q',
 };
@@ -720,6 +720,24 @@ class RegistrationOrchestrator {
         pull,
       ];
     }
+    if (type === 'github-copilot') {
+      const available = hasCommand('copilot');
+      const status = available ? 'ready' : 'unavailable';
+      const action = available ? 'test' : null;
+      return [
+        {
+          mode: 'acp', label: 'ACP 实时会话', role: 'primary',
+          status, selected: available, recommended: true, action,
+          description: 'VOKO 通过标准 ACP 协议保持隔离会话，并拒绝外部访客触发工具授权。',
+        },
+        {
+          mode: 'cli', label: 'CLI 单次唤起', role: 'fallback',
+          status, selected: available, action,
+          description: 'ACP 不可用时，以无工具、无 MCP、无远程操作模式调用 GitHub Copilot CLI。',
+        },
+        pull,
+      ];
+    }
     const cliCommand = CLI_COMMANDS[type];
     if (cliCommand) {
       const available = hasCommand(cliCommand);
@@ -950,6 +968,7 @@ class RegistrationOrchestrator {
       detail = '主动获取始终可用';
     } else if (mode === 'cli'
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
+      || (provider === 'github-copilot' && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'

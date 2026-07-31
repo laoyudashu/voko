@@ -141,6 +141,17 @@ describe('shared registration orchestrator', () => {
     assert.strictEqual(modes[3].required, true);
   });
 
+  it('exposes GitHub Copilot delivery in ACP, CLI, pull order', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: (command) => command === 'copilot',
+    });
+    const modes = service.deliveryCapabilities('github-copilot');
+    assert.deepStrictEqual(modes.map((mode) => mode.mode), ['acp', 'cli', 'pull']);
+    assert.deepStrictEqual(modes.map((mode) => mode.role), ['primary', 'fallback', 'final_fallback']);
+    assert.ok(modes.slice(0, 2).every((mode) => mode.status === 'ready' && mode.selected));
+    assert.strictEqual(modes[2].required, true);
+  });
+
   it('logged-in Web/API flow and repeated completion are idempotent', async () => {
     const { db, service, getCreateCount } = createService();
     try {

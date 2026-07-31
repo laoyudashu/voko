@@ -6,6 +6,7 @@ const { QwenCliProvider } = require('../build/core/dispatcher/providers/qwen-cli
 const { KiroCliProvider } = require('../build/core/dispatcher/providers/kiro-cli');
 const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-cli');
 const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
+const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
@@ -51,6 +52,29 @@ test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
   assert.deepEqual(provider._cliArgs, ['acp']);
   assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
+});
+
+test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
+  const provider = new GitHubCopilotAcpProvider();
+  assert.equal(provider._adapterType, 'github-copilot-acp');
+  assert.equal(provider._matchType, 'github-copilot');
+  if (!provider._runtime) return;
+  const acpArgs = provider._cliArgs.join(' ');
+  const fallbackArgs = provider._cliFallback.args.join(' ');
+  assert.match(acpArgs, /--acp/);
+  assert.match(fallbackArgs, /-p \{prompt\}/);
+  for (const flag of [
+    '--no-custom-instructions',
+    '--disable-builtin-mcps',
+    '--no-remote',
+    '--no-remote-export',
+    '--available-tools=',
+    '--no-ask-user',
+    '--no-auto-update',
+  ]) {
+    assert.match(acpArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(fallbackArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
 });
 
 test('Aider unattended delivery cannot edit, commit, browse or suggest commands', () => {
@@ -192,7 +216,8 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   for (const type of ['qwen-code', 'kiro', 'aider']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['cli', 'pull']);
   }
-  for (const type of ['github-copilot', 'openhands', 'amazon-q', 'grok']) {
+  assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
+  for (const type of ['openhands', 'amazon-q', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
   const zeroModes = service.deliveryCapabilities('zeroclaw');
