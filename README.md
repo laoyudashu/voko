@@ -32,6 +32,20 @@ standard `ps` and `xdg-open` commands, but Ubuntu is the release-tested Linux ta
 Before a release targets both Intel and Apple Silicon explicitly, run the smoke flow
 on each architecture in addition to the standard macOS CI runner.
 
+On a headless Linux server, VOKO skips browser opening automatically when neither
+`DISPLAY` nor `WAYLAND_DISPLAY` is available. Use `--no-open` when browser opening
+must be disabled explicitly.
+
+When the host uses an HTTP proxy, keep loopback traffic local:
+
+```bash
+export NO_PROXY=127.0.0.1,localhost,::1
+export no_proxy="$NO_PROXY"
+```
+
+VOKO preserves existing `NO_PROXY` entries and adds these loopback addresses for
+its runtime and child processes.
+
 External Agent Providers are separate programs. Install the Provider you intend to
 use and ensure its executable is available on `PATH` (for example OpenClaw, Hermes,
 Goose, OpenCode, GitHub Copilot, or ZeroClaw). Provider availability and operating

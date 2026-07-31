@@ -402,9 +402,10 @@ function createWebRouter(handlers, db, opts={}){
   function renderFooter(tFn, locale){
     const t=tFn||(k=>k);
     const langSwitcher=renderLanguageSwitcher(locale);
-    try{if(!db)return renderLanguageFooter(locale);
+    const bugLink='<a href="/bug-report" style="font-size:13px">'+esc(t('web.bug_report.link'))+'</a>';
+    try{if(!db)return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>';
       const rt=db.prepare("SELECT data FROM config WHERE type='runtime'").get();
-      if(!rt)return renderLanguageFooter(locale);
+      if(!rt)return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>';
       const d=JSON.parse(rt.data);
       // 运行状态
       let statusKey='common.footer.status_init',statusColor='#888';
@@ -420,9 +421,9 @@ function createWebRouter(handlers, db, opts={}){
         +' <span>PID: '+esc(d.pid||'')+'</span>'
         +' <span>'+esc(t('common.footer.status'))+': <span id="footer-status-text" style="color:'+statusColor+';font-weight:700">'+esc(t(statusKey))+'</span></span>'
         +'</span>'
-        +langSwitcher
+        +'<span style="display:flex;gap:14px;align-items:center">'+bugLink+langSwitcher+'</span>'
         +'</div>';
-    }catch{return renderLanguageFooter(locale)}
+    }catch{return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>'}
   }
 
   // ────────── favicon ──────────
@@ -433,6 +434,81 @@ function createWebRouter(handlers, db, opts={}){
     else res.status(404).end();
   });
   R.get('/favicon.ico', (req, res) => res.redirect('/favicon.png'));
+
+  function bugReportForm(T, values={}){
+    const L=k=>esc(T(k));
+    const severity=values.severity||'medium';
+    const typeOptions=['<option value="">'+L('web.bug_report.agent_type_unknown')+'</option>'];
+    try{for(const item of getBackendTypes(db)){typeOptions.push('<option value="'+esc(item.value)+'"'+(values.agentType===item.value?' selected':'')+'>'+esc(item.label||item.value)+'</option>')}}catch{}
+    return '<p class="meta" style="margin:0 0 14px;max-width:720px">'+L('web.bug_report.intro')+'</p>'
+      +'<form method="POST" action="/bug-report" class="card" style="padding:18px 20px;max-width:760px" data-submit-lock="1" data-submit-label="'+L('common.home.submitting')+'"><input type="hidden" name="action" value="submit">'
+      +'<div class="form-grid"><div class="full"><label for="br-title">'+L('web.bug_report.field.title')+' *</label><input id="br-title" name="title" maxlength="160" required value="'+esc(values.title||'')+'" style="max-width:none"></div>'
+      +'<div class="full"><label for="br-description">'+L('web.bug_report.field.description')+' *</label><textarea id="br-description" name="description" maxlength="8000" rows="4" required style="max-width:none">'+esc(values.description||'')+'</textarea></div>'
+      +'<div><label for="br-severity">'+L('web.bug_report.field.severity')+' *</label><select id="br-severity" name="severity">'
+      +['low','medium','high','critical'].map(v=>'<option value="'+v+'"'+(severity===v?' selected':'')+'>'+L('web.bug_report.severity.'+v)+'</option>').join('')+'</select></div>'
+      +'<div><label for="br-agent-type">'+L('web.bug_report.field.agent_type')+'</label><select id="br-agent-type" name="agentType">'+typeOptions.join('')+'</select></div></div>'
+      +'<details style="margin-top:14px;border-top:1px solid #e4e7ec;padding-top:12px"><summary style="cursor:pointer;color:#1a73e8;font-weight:700;font-size:14px">'+L('web.bug_report.optional_details')+'</summary>'
+      +'<div class="form-grid" style="margin-top:8px"><div class="full"><label for="br-steps">'+L('web.bug_report.field.steps')+'</label><textarea id="br-steps" name="steps" maxlength="4000" rows="3" style="max-width:none">'+esc(values.steps||'')+'</textarea></div>'
+      +'<div><label for="br-expected">'+L('web.bug_report.field.expected')+'</label><textarea id="br-expected" name="expected" maxlength="2000" rows="2">'+esc(values.expected||'')+'</textarea></div>'
+      +'<div><label for="br-actual">'+L('web.bug_report.field.actual')+'</label><textarea id="br-actual" name="actual" maxlength="2000" rows="2">'+esc(values.actual||'')+'</textarea></div></div></details>'
+      +'<button type="submit" style="margin-top:16px">'+L('web.bug_report.submit')+'</button></form>';
+  }
+
+  function bugQueryForm(T, values={}){
+    const L=k=>esc(T(k));
+    return '<form method="POST" action="/bug-report" class="card" style="padding:18px 20px;max-width:620px" data-submit-lock="1" data-submit-label="'+L('common.home.processing')+'"><input type="hidden" name="action" value="query">'
+      +'<label for="br-id">'+L('web.bug_report.report_id')+'</label><input id="br-id" name="reportId" maxlength="64" required value="'+esc(values.reportId||'')+'" style="max-width:none">'
+      +'<label for="br-token">'+L('web.bug_report.query_token')+'</label><input id="br-token" name="queryToken" maxlength="160" required value="'+esc(values.queryToken||'')+'" autocomplete="off" style="max-width:none"><br>'
+      +'<button type="submit">'+L('web.bug_report.query')+'</button></form>';
+  }
+
+  function bugReportPage(T,{active='submit',submitValues={},queryValues={},submitResult='',queryResult=''}={}){
+    const L=k=>esc(T(k));
+    const tabScript='<script>(function(){var buttons=document.querySelectorAll("[data-bug-tab]"),panels=document.querySelectorAll("[data-bug-panel]");buttons.forEach(function(b){b.addEventListener("click",function(){var target=b.dataset.bugTab;buttons.forEach(function(x){var on=x.dataset.bugTab===target;x.setAttribute("aria-selected",on?"true":"false");x.style.color=on?"#1a73e8":"#667085";x.style.borderBottomColor=on?"#1a73e8":"transparent"});panels.forEach(function(p){p.hidden=p.dataset.bugPanel!==target})})})})();</script>';
+    return '<div role="tablist" aria-label="'+L('web.bug_report.title')+'" style="display:flex;border-bottom:1px solid #d0d5dd;margin-bottom:18px;max-width:760px">'
+      +'<button type="button" role="tab" data-bug-tab="submit" aria-selected="'+(active==='submit'?'true':'false')+'" style="min-width:0;margin:0;padding:9px 18px;background:transparent;border:0;border-bottom:3px solid '+(active==='submit'?'#1a73e8':'transparent')+';border-radius:0;color:'+(active==='submit'?'#1a73e8':'#667085')+'">'+L('web.bug_report.submit_tab')+'</button>'
+      +'<button type="button" role="tab" data-bug-tab="query" aria-selected="'+(active==='query'?'true':'false')+'" style="min-width:0;margin:0;padding:9px 18px;background:transparent;border:0;border-bottom:3px solid '+(active==='query'?'#1a73e8':'transparent')+';border-radius:0;color:'+(active==='query'?'#1a73e8':'#667085')+'">'+L('web.bug_report.query_tab')+'</button></div>'
+      +'<section role="tabpanel" data-bug-panel="submit"'+(active==='submit'?'':' hidden')+'>'+submitResult+bugReportForm(T,submitValues)+'</section>'
+      +'<section role="tabpanel" data-bug-panel="query"'+(active==='query'?'':' hidden')+'>'+queryResult+bugQueryForm(T,queryValues)+'</section>'+tabScript;
+  }
+
+  R.get('/bug-report',(req,res)=>{
+    const T=req.t;
+    const body=bugReportPage(T,{active:req.query.view==='query'?'query':'submit'});
+    res.send(renderPage(req,T('web.bug_report.title'),body,{footer:renderFooter(T,req.locale)}));
+  });
+
+  R.post('/bug-report',async(req,res,next)=>{
+    try{
+      const T=req.t,L=k=>esc(T(k));
+      const action=req.body?.action==='query'?'query':'submit';
+      const result=await handlers.bug_report({...req.body,action,source:'web'});
+      if(!result?.success){
+        const body=bugReportPage(T,{active:action,submitValues:action==='submit'?req.body:{},queryValues:action==='query'?req.body:{}});
+        return res.send(renderPage(req,T('web.bug_report.title'),body,{msg:{text:result?.error||T('common.action.failed')},footer:renderFooter(T,req.locale)}));
+      }
+      const data=result.data||result;
+      let body,resultHtml;
+      if(action==='submit'){
+        const reportId=data.reportId||data.report_id||'';
+        const queryToken=data.queryToken||data.query_token||'';
+        resultHtml='<div class="card" style="max-width:760px"><p class="success">'+L('common.home.success')+'</p>'
+          +'<p><strong>'+L('web.bug_report.report_id')+':</strong> <code>'+esc(reportId)+'</code></p>'
+          +'<p><strong>'+L('web.bug_report.query_token')+':</strong> <code style="word-break:break-all">'+esc(queryToken)+'</code></p>'
+          +'<p class="meta">'+L('web.bug_report.save_token')+'</p></div>';
+        body=bugReportPage(T,{active:'submit',submitResult:resultHtml,queryValues:{reportId,queryToken}});
+      }else{
+        const report=data.report||data;
+        const replies=Array.isArray(report.replies)?report.replies:(report.developerReply||report.developer_reply?[{content:report.developerReply||report.developer_reply}]:[]);
+        resultHtml='<div class="card" style="max-width:620px"><p><strong>'+L('web.bug_report.report_id')+':</strong> '+esc(report.reportId||report.report_id||req.body.reportId)+'</p>'
+          +'<p><strong>'+L('web.bug_report.status')+':</strong> '+esc(report.status||'pending')+'</p><h3>'+L('web.bug_report.developer_reply')+'</h3>'
+          +(replies.length?replies.map(r=>'<div style="white-space:pre-wrap;border-top:1px solid #eee;padding:8px 0">'+esc(r.content||r.reply||r.message||'')+'</div>').join(''):'<p class="meta">'+L('web.bug_report.no_reply')+'</p>')
+          +'</div>';
+        body=bugReportPage(T,{active:'query',queryResult:resultHtml,queryValues:req.body});
+      }
+      res.send(renderPage(req,T('web.bug_report.title'),body,{footer:renderFooter(T,req.locale)}));
+    }catch(e){next(e)}
+  });
 
   // ────────── 首页 — Agent 列表 ──────────
 

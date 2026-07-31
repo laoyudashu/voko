@@ -109,6 +109,21 @@ test('Unix CLI cleanup uses an isolated process group without pgrep', () => {
   assert.doesNotMatch(source, /execFileSync\('pgrep'/);
 });
 
+test('loopback proxy bypass preserves existing hosts and adds every local address', () => {
+  const { ensureLoopbackNoProxy } = require('../build/core/loopback-env');
+  const env = { NO_PROXY: 'internal.example,localhost' };
+  assert.equal(ensureLoopbackNoProxy(env), env);
+  assert.equal(env.NO_PROXY, 'internal.example,localhost,127.0.0.1,::1');
+  assert.equal(env.no_proxy, env.NO_PROXY);
+});
+
+test('Linux browser opening requires a graphical session', () => {
+  const source = fs.readFileSync(path.join(LITE_SRC, 'index.ts'), 'utf8');
+  assert.match(source, /platform !== 'linux'/);
+  assert.match(source, /env\.DISPLAY \|\| env\.WAYLAND_DISPLAY/);
+  assert.match(source, /if \(!hasGraphicalSession\(\)\) return false/);
+});
+
 test('Unix process-group cleanup terminates descendants', {
   skip: process.platform === 'win32',
   timeout: 10000,

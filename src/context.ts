@@ -20,6 +20,7 @@ const ENDPOINTS = require('./endpoints.json');
 const { createSendMessage, createDeliver } = require('./core/send-message');
 const { createWukongimSender } = require('./core/wukongim-sender');
 const { signDidRequest } = require('./core/did-auth');
+const { createBugReportClient } = require('./core/bug-report');
 import type { DatabaseLike } from './types/database';
 
 const pkg = require('../package.json');
@@ -126,6 +127,10 @@ function createContext({
     deliver,
     agentWorkers: agentManager?.workers || new Map(),
     mainWindow: null,
+  });
+  const bugReport = createBugReportClient({
+    apiBaseUrl: (ENDPOINTS.api && ENDPOINTS.api.baseUrl) || '',
+    db,
   });
 
   return {
@@ -311,6 +316,7 @@ function createContext({
 
     // ── 注册 ──
     agentRegistration,
+    bugReport,
 
     // ── 支付 ──
     getPaymentAuth: (agentId: string) => {

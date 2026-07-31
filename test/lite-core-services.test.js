@@ -351,20 +351,32 @@ test('Lite set-agent-status classifies invalid external API responses without lo
 
 test('Lite event log writes one structured JSONL record in the configured data directory', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-event-log-'));
+  const env = { ...process.env };
+  let dataDir;
+  if (process.platform === 'win32') {
+    env.APPDATA = tempDir;
+    dataDir = path.join(tempDir, 'voko');
+  } else if (process.platform === 'darwin') {
+    env.HOME = tempDir;
+    dataDir = path.join(tempDir, 'Library', 'Application Support', 'voko');
+  } else {
+    env.XDG_CONFIG_HOME = tempDir;
+    dataDir = path.join(tempDir, 'voko');
+  }
   const script = [
     "const { logEvent } = require('./build/core/event-log');",
     "logEvent('message.received', { level: 'debug', agentId: 'agent-1', data: { count: 2 } });",
   ].join('');
   const result = spawnSync(process.execPath, ['-e', script], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, APPDATA: tempDir },
+    env,
     encoding: 'utf8',
     windowsHide: true,
   });
 
   try {
     assert.equal(result.status, 0, result.stderr);
-    const content = fs.readFileSync(path.join(tempDir, 'voko', 'events.jsonl'), 'utf8').trim();
+    const content = fs.readFileSync(path.join(dataDir, 'events.jsonl'), 'utf8').trim();
     const entry = JSON.parse(content);
     assert.equal(entry.event, 'message.received');
     assert.equal(entry.level, 'debug');

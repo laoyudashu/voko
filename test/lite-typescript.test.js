@@ -500,6 +500,13 @@ test('smoke-test Lite instances never open a browser window', () => {
   assert.match(entrySource, /process\.env\.VOKO_SMOKE_TEST\s*!==\s*'1'/);
 });
 
+test('kebab and camel auto-update flags both disable startup and pending upgrades', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  assert.match(entrySource, /args\.noAutoUpdate \|\| args\['no-auto-update'\]/);
+  assert.equal((entrySource.match(/!autoUpdateDisabled\(args\)/g) || []).length, 2);
+  assert.match(entrySource, /options\.autoUpdate !== false/);
+});
+
 test('account switching waits for old workers to stop before starting new workers', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const restartRoute = entrySource.slice(

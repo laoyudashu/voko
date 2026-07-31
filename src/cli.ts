@@ -85,6 +85,7 @@ const TOOL_PARAM_SCHEMAS = {
   register_agent:          { email: 'string' },
   verify_agent_email:      { email: 'string', code: 'string', agentId: 'string', agentName: 'string', backendType: 'string', category: 'string', description: 'string' },
   manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', registrationMode: 'string' },
+  bug_report: { action: 'string', reportId: 'string', queryToken: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
   get_status:              { agentId: 'string' },
@@ -226,8 +227,9 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
   // verify_agent_email 的 agentId 是“绑定已有 Agent”可选项；新注册时本来就没有身份，
   // 不能因为 Schema 中存在该可选字段而提前拦截。
-  const needsAgentId = toolName !== 'verify_agent_email'
-    && Object.prototype.hasOwnProperty.call(schema, 'agentId');
+  const hasAgentIdParam = Object.prototype.hasOwnProperty.call(schema, 'agentId');
+  const optionalAgentId = toolName === 'verify_agent_email' || toolName === 'bug_report';
+  const needsAgentId = hasAgentIdParam && !optionalAgentId;
   try {
     const params: Record<string, any> = {};
 
@@ -255,10 +257,11 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
 
     // 身份注入 / 缺身份业务错误：需要 agentId 的工具，优先用显式参数，否则用 --agent / VOKO_AGENT_ID。
     // 杜绝缺身份时的静默失败（cx.query 吞错返回空 / send_message 用 'voko' 兜底）。
+    if (hasAgentIdParam && !params.agentId && cliCtx.agentId) {
+      params.agentId = cliCtx.agentId;
+    }
     if (needsAgentId && !params.agentId) {
-      if (cliCtx.agentId) {
-        params.agentId = cliCtx.agentId;
-      } else {
+      if (!cliCtx.agentId) {
         console.log(JSON.stringify({
           success: false,
           error: t('cli.tool.no_agent'),

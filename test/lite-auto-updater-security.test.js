@@ -7,7 +7,11 @@ const path = require('node:path');
 
 const autoUpdater = require('../build/core/auto-updater');
 const pkg = require('../package.json');
-const originalAppData = process.env.APPDATA;
+const originalDataEnv = {
+  APPDATA: process.env.APPDATA,
+  HOME: process.env.HOME,
+  XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+};
 const tempDirs = [];
 
 function tempDir() {
@@ -21,8 +25,10 @@ function integrity(buffer) {
 }
 
 function createPending(root, overrides = {}) {
-  process.env.APPDATA = root;
-  const stagedDir = path.join(root, 'voko', 'staged-update');
+  if (process.platform === 'win32') process.env.APPDATA = root;
+  else if (process.platform === 'darwin') process.env.HOME = root;
+  else process.env.XDG_CONFIG_HOME = root;
+  const stagedDir = autoUpdater.getStagedDir();
   fs.mkdirSync(stagedDir, { recursive: true });
   const payload = Buffer.from('verified-voko-lite-package');
   const tarballPath = path.join(stagedDir, 'voko-lite-99.0.0.tgz');
@@ -41,8 +47,10 @@ function createPending(root, overrides = {}) {
 }
 
 afterEach(() => {
-  if (originalAppData === undefined) delete process.env.APPDATA;
-  else process.env.APPDATA = originalAppData;
+  for (const [key, value] of Object.entries(originalDataEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }

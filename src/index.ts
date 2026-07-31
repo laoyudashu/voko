@@ -54,6 +54,9 @@ const _emit = process.emit.bind(process);
 const path = require('path');
 const os = require('os');
 const express = require('express');
+const { ensureLoopbackNoProxy } = require('./core/loopback-env');
+
+ensureLoopbackNoProxy(process.env);
 
 // ── core 模块 ──
 const {
@@ -234,7 +237,16 @@ function parseArgs(argv?: any) {
   return args;
 }
 
+function hasGraphicalSession(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (platform !== 'linux') return true;
+  return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+}
+
 function openLocalWebPage(port: number) {
+  if (!hasGraphicalSession()) return false;
   const url = `http://localhost:${port}/`;
   try {
     const childProcess = require('child_process');
@@ -253,9 +265,15 @@ function openLocalWebPage(port: number) {
       console.error(`[Lite] 无法自动打开 ${url}: ${error.message}`);
     });
     child.unref();
+    return true;
   } catch (error: any) {
     console.error(`[Lite] 无法自动打开 ${url}: ${error.message}`);
+    return false;
   }
+}
+
+function autoUpdateDisabled(args: Record<string, any> = {}): boolean {
+  return Boolean(args.noAutoUpdate || args['no-auto-update']);
 }
 
 function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
@@ -1243,7 +1261,7 @@ async function startMcpServer(args?: any, core?: any) {
 
   // ── 版本检查（异步，不阻塞） ──
   cli.checkVersion();
-  startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
+  if (!autoUpdateDisabled(args)) startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
 
   // ── 创建后端处理器（OpenClaw + Hermes） ──
   let openclawHandler = null;
@@ -1955,7 +1973,7 @@ async function createLiteApp(options: any = {}) {
 
   // ── 版本检查（异步，不阻塞） ──
   cli.checkVersion();
-  startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
+  if (options.autoUpdate !== false) startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
 
   return {
     db, databaseAPI, agentManager, agentRegistration,
@@ -2309,7 +2327,8 @@ function printUsage() {
     '  add_payment_auth  list_payment_auth  delete_payment_auth\n' +
     '  apply_payment_auth  search_banks  bind_agent_payment_auth\n' +
     '  manage_whitelist  manage_blacklist  list_access_lists  set_private_mode\n' +
-    '  invite_friend  list_audit_rules  manage_audit_rules\n'
+    '  invite_friend  list_audit_rules  manage_audit_rules\n' +
+    '  bug_report\n'
   );
 }
 
@@ -2398,7 +2417,7 @@ async function main() {
 
   // 自动升级：启动服务前应用已暂存的升级（替换全局包文件后退出）。
   const _willServe = !subcommand || subcommand === 'start' || subcommand === 'mcp';
-  if (_willServe && !args.noAutoUpdate) {
+  if (_willServe && !autoUpdateDisabled(args)) {
     if (applyPendingUpgrade()) {
       console.error(t('cli.index.autoupdate_restart'));
       process.exit(0);

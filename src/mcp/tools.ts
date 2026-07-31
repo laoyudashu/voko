@@ -2515,6 +2515,11 @@ function createToolHandlers(cx: McpContext) {
   handlers.manage_agent_registration = async (params: McpToolParams = {}) =>
     registrationOrchestrator.manage(params);
 
+  handlers.bug_report = async (params: McpToolParams = {}) => {
+    if (typeof cx.bugReport !== 'function') return { success: false, error: 'Bug report service is unavailable' };
+    return cx.bugReport({ ...params, source: (params as any).source || 'agent' });
+  };
+
   return handlers;
 }
 

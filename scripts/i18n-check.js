@@ -15,7 +15,7 @@ const path = require('path');
 
 const LITE = path.join(__dirname, '..');
 const localesDir = path.join(LITE, 'src', 'core', 'i18n', 'locales');
-const namespaces = ['common', 'web', 'register', 'console', 'release', 'cli', 'mcp', 'visitor', 'db', 'errors'];
+const namespaces = ['common', 'web', 'register', 'console', 'release', 'cli', 'mcp', 'visitor', 'db', 'errors', 'bug-report'];
 
 function loadKeys(locale) {
   const keys = new Set();

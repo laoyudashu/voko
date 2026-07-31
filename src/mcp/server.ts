@@ -959,6 +959,29 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { destructiveHint: false }
   );
 
+  server.tool(
+    'voko_bug_report',
+    T('mcp.tool.bug_report.desc'),
+    {
+      action: z.enum(['submit', 'query']).describe(T('mcp.tool.bug_report.p.action')),
+      reportId: z.string().optional().describe(T('mcp.tool.bug_report.p.reportId')),
+      queryToken: z.string().optional().describe(T('mcp.tool.bug_report.p.queryToken')),
+      title: z.string().max(160).optional().describe(T('mcp.tool.bug_report.p.title')),
+      description: z.string().max(8000).optional().describe(T('mcp.tool.bug_report.p.description')),
+      steps: z.string().max(4000).optional().describe(T('mcp.tool.bug_report.p.steps')),
+      expected: z.string().max(2000).optional().describe(T('mcp.tool.bug_report.p.expected')),
+      actual: z.string().max(2000).optional().describe(T('mcp.tool.bug_report.p.actual')),
+      severity: z.enum(['low', 'medium', 'high', 'critical']).optional().describe(T('mcp.tool.bug_report.p.severity')),
+      category: z.enum(['bug', 'crash', 'ui', 'performance', 'compatibility', 'other']).optional().describe(T('mcp.tool.bug_report.p.category')),
+      agentId: z.string().optional().describe(T('mcp.param.agentId')),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.bug_report(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { destructiveHint: false }
+  );
+
   return server;
 }
 

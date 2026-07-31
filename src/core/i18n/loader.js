@@ -18,7 +18,7 @@ const path = require('path');
 const LOCALES_DIR = path.join(__dirname, 'locales');
 
 // 所有 namespace。加载时按此顺序合并（后者覆盖前者，但 key 不跨 namespace 重复，故顺序无关）。
-const NAMESPACES = ['common', 'web', 'register', 'console', 'cli', 'mcp', 'visitor', 'db', 'errors'];
+const NAMESPACES = ['common', 'web', 'register', 'console', 'cli', 'mcp', 'visitor', 'db', 'errors', 'bug-report'];
 
 // 浏览器端子集（避免把 web.json ~450 key 全塞给页面）
 const CLIENT_NAMESPACES = ['common'];
