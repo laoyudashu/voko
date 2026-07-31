@@ -103,6 +103,7 @@ const { setLocale, detectCliLocale, t } = require('./core/i18n');
 
 let __instanceLock: any = null;
 let __httpServer: any = null;
+let __webSocketServer: any = null;
 let __shuttingDown = false;
 let __serviceHealth: 'ok' | 'draining' | 'unhealthy' = 'ok';
 let __fatalHandling = false;
@@ -1120,6 +1121,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         }
         // 在 HTTP server 上附加 WebSocket
         _wss = new WebSocket.Server({ server });
+        __webSocketServer = _wss;
         _wss.on('connection', (ws?: any, req?: any) => {
           const requestPath = String(req.url || '').split('?', 1)[0];
           if (requestPath === '/ws') {
@@ -2222,6 +2224,22 @@ async function shutdownAll(
   try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] worker 清理失败:', e.message); }
   if (agentManager?._allWorkers?.size > 0) agentManager.killAll();
   try { await wukongimSender?.disconnectAll?.(); } catch (e: any) { console.error('[VOKO Lite] sender 清理失败:', e.message); }
+  if (__webSocketServer) {
+    try {
+      for (const client of __webSocketServer.clients || []) {
+        try { client.terminate?.(); } catch {}
+      }
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 1000);
+        __webSocketServer.close(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    } catch {}
+    __webSocketServer = null;
+    try { delete (global as any).__liteBroadcast; } catch {}
+  }
   if (__httpServer) {
     try {
       await new Promise<void>(resolve => {
@@ -2453,7 +2471,10 @@ async function main() {
     let stopped = gracefulRequested
       ? await waitForProcessExit(instance.pid, 7000)
       : false;
-    if (!stopped) stopped = await terminateInstance(instance);
+    if (!stopped) {
+      stopped = await terminateInstance(instance);
+      if (!stopped) stopped = await waitForProcessExit(instance.pid, 2000);
+    }
     const orphanResult = cleanupOrphanedWorkers(dbPath);
     if (stopped) removeInstanceLock(dbPath, instance.instanceId);
     const remaining = orphanResult.skipped.filter((pid: number) => pid > 0);

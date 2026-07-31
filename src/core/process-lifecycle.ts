@@ -381,7 +381,10 @@ export async function terminateInstance(
   metadata: InstanceMetadata,
   inspector: (pid: number) => ProcessIdentity | null = inspectProcess,
 ): Promise<boolean> {
-  if (!matchesInstanceProcess(metadata, inspector(metadata.pid))) return false;
+  // The process may finish naturally between the graceful wait and this
+  // fallback. In that case the target instance is already stopped; reporting
+  // failure creates a contradictory "exited / still alive" result.
+  if (!matchesInstanceProcess(metadata, inspector(metadata.pid))) return true;
   if (process.platform === 'win32') {
     const result = spawnSync('taskkill.exe', ['/PID', String(metadata.pid), '/T', '/F'], {
       stdio: 'ignore',

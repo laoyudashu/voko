@@ -41,6 +41,7 @@
     "THIRD-PARTY-NOTICE.md"
   ],
   "scripts": {
+    "dev": "node scripts/dev.js",
     "start": "npm run build:ts && node build/index.js",
     "start:build": "node build/index.js",
     "typecheck": "tsc --noEmit",

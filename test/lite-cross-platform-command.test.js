@@ -66,3 +66,13 @@ test('automation that starts the Lite HTTP server always disables browser openin
     assert.match(source, /--no-open/, file);
   }
 });
+
+test('dev opens the canonical Lite page once and suppresses restart/provider popups', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'scripts', 'dev.js'), 'utf8');
+  assert.match(source, /startRuntime\(true\)/);
+  assert.match(source, /startRuntime\(false\)/);
+  assert.match(source, /if \(!openMainPage\) args\.push\('--no-open'\)/);
+  assert.match(source, /BROWSER:\s*'none'/);
+  assert.match(source, /waitForRuntimeExit\(child,\s*5000\)/);
+  assert.match(source, /taskkill\.exe/);
+});

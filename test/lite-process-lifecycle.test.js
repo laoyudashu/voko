@@ -134,6 +134,24 @@ afterEach(async () => {
 });
 
 describe('Lite process lifecycle identity', () => {
+  it('treats an instance that exits during graceful shutdown as stopped', async () => {
+    const metadata = {
+      pid: 12345,
+      parentPid: 1,
+      creationId: 'already-exited',
+      executablePath: process.execPath,
+      commandLine: '',
+      version: 1,
+      instanceId: 'already-exited',
+      dbPath: path.join(tempDir(), 'already-exited.db'),
+      entryPath: LITE_ENTRY,
+      port: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    assert.equal(await lifecycle.terminateInstance(metadata, () => null), true);
+  });
+
   it('校验 PID 创建时间、入口路径和 worker token', () => {
     const identity = lifecycle.inspectProcess(process.pid);
     assert.ok(identity);
