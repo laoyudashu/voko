@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
+const { buildConversationRecoveryPrompt } = require('../conversation-context');
 import type { AgentMeta, PushPayload } from '../types';
 
 type ProtocolMessage = Record<string, any>; // OpenClaw gateway 的动态 JSON 协议边界
@@ -112,6 +113,7 @@ class OpenClawWsProvider {
     this._chatFinalSessions = new Map();  // 新版 chat final 到达时间，抑制同轮旧版事件
     this._legacyReplyTimers = new Map();  // 旧版 final 短暂延迟，优先采用新版完整回复
     this._sessionTurns = new Map();  // sessionKey → 当前入站 turn 身份
+    this._recoveryWarmedSessions = new Set();
 
     // 初始化
     this.loadConfig();
@@ -674,6 +676,7 @@ class OpenClawWsProvider {
         // 断线后订阅状态失效；不清除会导致新消息永远卡在「订阅中」
         this.subscribedSessions.clear();
         this.pendingSubscriptions.clear();
+        this._recoveryWarmedSessions.clear();
 
         // 如果启用了自动回复，尝试重连
         if (this.enabled) {
@@ -980,6 +983,7 @@ class OpenClawWsProvider {
     this._legacyReplyTimers.clear();
     this._chatFinalSessions.clear();
     this._sessionTurns.clear();
+    this._recoveryWarmedSessions.clear();
     this._replyProtocol = null;
 
     // 清理 pending replies
@@ -1441,7 +1445,12 @@ class OpenClawWsProvider {
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
     const sessionKey = `agent:${agentId}:${fromUid}`;
-    return this.sendToSession(sessionKey, content, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    const recoveryKey = sessionKey.toLowerCase();
+    const prompt = this._recoveryWarmedSessions.has(recoveryKey)
+      ? content
+      : buildConversationRecoveryPrompt(this.db, payload);
+    this._recoveryWarmedSessions.add(recoveryKey);
+    return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
   }
 
   /** 注入系统消息（openclaw 无独立 steer，走 sendToSession）。 */

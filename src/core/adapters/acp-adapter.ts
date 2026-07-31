@@ -20,6 +20,7 @@ const { Readable, Writable } = require('stream');
 const { PushProvider } = require('../dispatcher/base-provider');
 const { runCli, sanitizeCmdArg, checkCliAvailable } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
+const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
@@ -44,6 +45,7 @@ export interface AcpAdapterOptions {
   cwd?: string;
   sessionRequest?: (agentId: string) => Record<string, unknown>;
   connectionKey?: (agentId: string) => string;
+  contextWindow?: number;
   streamFactory?: (
     agentId: string,
   ) => Promise<{ stream: unknown; close?: () => void | Promise<void> }>;
@@ -123,6 +125,7 @@ const MAX_REPLY_CHARS = 2 * 1024 * 1024; // 2MB
 class AcpAdapter extends PushProvider {
   _acpSdk: AcpSdk | null;
   _adapterType: string;
+  _recoveryNeededSessions: Set<string>;
 
   /**
    * @param {object} [options]
@@ -156,6 +159,7 @@ class AcpAdapter extends PushProvider {
 
     // ACP SDK（ESM — lazy dynamic import）
     this._acpSdk = null;
+    this._recoveryNeededSessions = new Set();
 
     // ACP 可执行文件必须由具体 provider 显式提供，不再自动探测 Claude Agent ACP。
     this._cliPath = options.cliPath || null;
@@ -287,11 +291,16 @@ class AcpAdapter extends PushProvider {
     }
 
     const sessionKey = `acp:${agentId}:${fromUid}`;
+    const needsRecovery = this._recoveryNeededSessions.delete(sessionKey);
     let fullContent = '';
 
     try {
       console.error(`[${this._logPrefix}:${agentId}] 发送 session/prompt...`);
-      const promptPromise = session.prompt(this._wrapVisitorPrompt(content));
+      const promptPromise = session.prompt(
+        needsRecovery
+          ? this._wrapVisitorPrompt(content, payload)
+          : this._wrapVisitorPrompt(content),
+      );
       promptPromise.catch((err: unknown) =>
         console.error(`[${this._logPrefix}:${agentId}] session/prompt 失败: ${errorMessage(err)}`)
       );
@@ -347,6 +356,7 @@ class AcpAdapter extends PushProvider {
       if (stopReceived) await promptPromise;
     } catch (err) {
       state.sessions.delete(sessionKey);
+      this._deleteSessionHandle(agentId, fromUid);
       throw err;
     }
 
@@ -370,7 +380,7 @@ class AcpAdapter extends PushProvider {
 
     // Windows 下 {prompt} 经 cmd.exe 传多行/含元字符会被截断或注入（同 cli-adapter/hermes-cli），净化为单行；
     // 函数式 replacement 避免 String.replace 的 $ 模式展开（CODE-5）
-    const rawContent = this._wrapVisitorPrompt(content);
+    const rawContent = this._wrapVisitorPrompt(content, payload);
     const safeContent = process.platform === 'win32' ? sanitizeCmdArg(rawContent) : rawContent;
     const args = (fb.args || []).map((arg: string) =>
       arg.replace(/\{prompt\}/g, () => safeContent)
@@ -433,8 +443,14 @@ class AcpAdapter extends PushProvider {
   }
 
   /** Dispatcher 已统一附加安全上下文；这里只保留 ACP 消息标签。 */
-  _wrapVisitorPrompt(content: string): string {
-    return `【外部消息】\n${content}`;
+  _wrapVisitorPrompt(content: string, payload?: PushPayload): string {
+    if (!payload) return `【外部消息】\n${content}`;
+    const prompt = buildConversationRecoveryPrompt(
+      this._db,
+      payload,
+      this.options.contextWindow ?? 30,
+    );
+    return prompt === content ? `【外部消息】\n${content}` : prompt;
   }
 
   // ── Internal ──────────────────────────────────────────────────────
@@ -620,6 +636,7 @@ class AcpAdapter extends PushProvider {
     this._saveSessionHandle(agentId, visitorId, session.sessionId);
 
     state.sessions.set(sessionKey, session);
+    this._recoveryNeededSessions.add(sessionKey);
     return session;
   }
 

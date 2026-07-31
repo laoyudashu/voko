@@ -29,6 +29,8 @@ class GooseAcpProvider extends AcpAdapter {
       matchType: 'acp-goose',
       cliPath: options.binPath || resolveGooseCommand(),
       args: ['acp'],
+      db: options.db,
+      contextWindow: options.contextWindow,
     });
     // ACP 失败降级：复用 goose-cli 的完整调用（session/resume）+ JSON 回复解析。
     // 把 goose-cli 的 agent.reply 事件转发到本 provider，让 dispatcher（监听 goose-acp）能收到。

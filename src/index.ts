@@ -1563,7 +1563,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     const OpenClawHandler = openclawMode === 'ws'
       ? require('./core/dispatcher/providers/openclaw-ws')
       : require('./server/openclaw-handler-cli');
-    openclawHandler = new OpenClawHandler(databaseAPI, null); // mainWindow=null（未使用）
+    openclawHandler = new OpenClawHandler(db, null); // Provider 历史恢复需要原生数据库连接
     if (openclawMode === 'ws') {
       providers['openclaw-ws'] = openclawHandler;
       const status = openclawHandler.getStatus();
@@ -1577,7 +1577,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
   // ── Hermes provider（连接/spawn 收敛在 provider 内） ──
   try {
     const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-    hermesHandler = new HermesHandler(databaseAPI, null, { // mainWindow=null（未使用）
+    hermesHandler = new HermesHandler(db, null, { // Provider 历史恢复需要原生数据库连接
       host: hermesConfig.apiHost || '127.0.0.1',
       port: hermesConfig.apiPort || 8642,
       apiKey: hermesConfig.apiKey || '',

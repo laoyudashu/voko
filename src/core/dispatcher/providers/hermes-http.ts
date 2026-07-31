@@ -1,6 +1,7 @@
 const { spawn, execFileSync } = require('child_process');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { PushProvider } = require('../base-provider');
+const { buildConversationRecoveryPrompt } = require('../conversation-context');
 import type { ChildProcess } from 'child_process';
 import type {
   HermesApiClientOptions,
@@ -57,6 +58,7 @@ class HermesHttpProvider extends PushProvider {
     this._restartedFor401 = new Set();
     this.connectedAgents = null;
     this._gatewayChildren = null;
+    this._recoveryWarmedSessions = new Set();
   }
 
   addLog(msg: string): void {
@@ -136,6 +138,7 @@ class HermesHttpProvider extends PushProvider {
     }
     if (anyOk !== this.connected) {
       this.connected = anyOk;
+      if (!anyOk) this._recoveryWarmedSessions.clear();
       const agentCount = this.connectedAgents ? this.connectedAgents.size : (anyOk ? 1 : 0);
       this.addLog(anyOk ? `🟢 健康检查通过 (${agentCount} 个 Agent 在线)` : '🔴 健康检查失败（所有 Gateway 离线）');
     }
@@ -452,7 +455,11 @@ class HermesHttpProvider extends PushProvider {
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
     const sessionKey = `hermes:${agentId}:${fromUid}`;
-    return this.sendToSession(sessionKey, content, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    const prompt = this._recoveryWarmedSessions.has(sessionKey)
+      ? content
+      : buildConversationRecoveryPrompt(this.db, payload);
+    this._recoveryWarmedSessions.add(sessionKey);
+    return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
   }
 }
 
