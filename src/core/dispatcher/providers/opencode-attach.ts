@@ -87,6 +87,7 @@ class OpenCodeAttachProvider extends PushProvider {
       ], {
         cwd: this._cwd,
         env,
+        detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       }) as ChildProcessWithoutNullStreams;

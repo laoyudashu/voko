@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 
 const ROOT = path.join(__dirname, '..');
 const LITE_SRC = path.join(ROOT, 'src');
@@ -75,4 +76,71 @@ test('dev opens the canonical Lite page once and suppresses restart/provider pop
   assert.match(source, /BROWSER:\s*'none'/);
   assert.match(source, /waitForRuntimeExit\(child,\s*5000\)/);
   assert.match(source, /taskkill\.exe/);
+});
+
+test('macOS ps output parsing is locale-stable and accepts single-digit dates', () => {
+  const lifecycle = require('../build/core/process-lifecycle');
+  assert.deepEqual(
+    lifecycle._test.parsePsProcessOutput(
+      321,
+      '  1 Mon Jul  7 09:08:06 2026 /usr/local/bin/node /opt/voko/build/index.js start\n',
+    ),
+    {
+      pid: 321,
+      parentPid: 1,
+      creationId: 'Mon Jul 7 09:08:06 2026',
+      executablePath: '',
+      commandLine: '/usr/local/bin/node /opt/voko/build/index.js start',
+    },
+  );
+  assert.equal(
+    lifecycle._test.parsePsProcessOutput(321, 'localized or malformed output'),
+    null,
+  );
+});
+
+test('Unix CLI cleanup uses an isolated process group without pgrep', () => {
+  const source = fs.readFileSync(
+    path.join(LITE_SRC, 'core', 'adapters', 'cli-spawner.ts'),
+    'utf8',
+  );
+  assert.match(source, /detached:\s*!isWin/);
+  assert.match(source, /process\.kill\(-pid,\s*'SIGTERM'\)/);
+  assert.doesNotMatch(source, /execFileSync\('pgrep'/);
+});
+
+test('Unix process-group cleanup terminates descendants', {
+  skip: process.platform === 'win32',
+  timeout: 10000,
+}, async () => {
+  const { killTree } = require('../build/core/adapters/cli-spawner');
+  const child = spawn(process.execPath, [
+    '-e',
+    "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});process.stdout.write(String(c.pid)+'\\n');setInterval(()=>{},1000)",
+  ], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  assert.ok(child.pid);
+  const descendantPid = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('descendant pid timeout')), 3000);
+    child.stdout.once('data', data => {
+      clearTimeout(timer);
+      resolve(Number(String(data).trim()));
+    });
+  });
+  assert.ok(descendantPid);
+  killTree(child.pid);
+  await new Promise(resolve => child.once('exit', resolve));
+  assert.notEqual(child.exitCode, 0);
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(descendantPid, 0);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } catch {
+      return;
+    }
+  }
+  assert.fail(`descendant process ${descendantPid} is still alive`);
 });

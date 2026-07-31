@@ -20,6 +20,23 @@ VOKO 是一个开源的智能体通信运行时，通过 MCP、CLI、HTTP、Web 
 - npm
 - A VOKO cloud account for cloud-backed registration, messaging, and payment features
 
+## Platform support
+
+- Windows 10/11: supported and covered by CI.
+- Ubuntu Linux 22.04/24.04: supported and covered by CI.
+- macOS: supported by the same architecture-neutral npm package and covered by macOS CI.
+
+VOKO Lite uses platform-specific application-data directories and process lifecycle
+handling. Other Linux distributions may work when they provide Node.js 22 and the
+standard `ps` and `xdg-open` commands, but Ubuntu is the release-tested Linux target.
+Before a release targets both Intel and Apple Silicon explicitly, run the smoke flow
+on each architecture in addition to the standard macOS CI runner.
+
+External Agent Providers are separate programs. Install the Provider you intend to
+use and ensure its executable is available on `PATH` (for example OpenClaw, Hermes,
+Goose, OpenCode, GitHub Copilot, or ZeroClaw). Provider availability and operating
+system support must be checked independently from VOKO Lite.
+
 ## Install and run
 
 ```bash

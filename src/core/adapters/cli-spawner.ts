@@ -46,20 +46,14 @@ function _makeLogger(tag: string): (message: string) => void {
 
 // ── 工具 ─────────────────────────────────────────────────────────────
 
-/** 跨平台进程树 kill（Windows taskkill / Unix pgrep+pkill） */
+/** 跨平台进程树 kill（Windows taskkill / Unix 独立进程组） */
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
       execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
     } else {
-      // Unix: 用 pgrep 递归查找所有子孙进程，统一 kill
-      try {
-        const { execFileSync } = require('child_process');
-        const out = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: 3000 });
-        const children = out.trim().split('\n').filter(Boolean);
-        for (const cpid of children) killTree(Number(cpid));
-      } catch {}
-      try { process.kill(pid, 'SIGTERM'); } catch {}
+      // runCli/OpenCode 在 Unix 下以 detached 创建独立进程组；负 PID 可一次终止整个树。
+      try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
     }
   } catch (_) {}
 }
@@ -119,6 +113,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     const spawnOpts: SpawnOptions = {
       stdio,
       windowsHide,
+      detached: !isWin,
       cwd: cwd || undefined,
       env: env ? { ...process.env, ...env } : process.env,
     };

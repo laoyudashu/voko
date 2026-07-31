@@ -188,14 +188,12 @@ function inspectLinuxProcess(pid: number): ProcessIdentity | null {
   }
 }
 
-function inspectPsProcess(pid: number): ProcessIdentity | null {
-  const result = spawnSync('ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'lstart=', '-o', 'command='], {
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  const output = String(result.stdout || '').trim();
-  if (result.status !== 0 || !output) return null;
-  const match = output.match(/^(\d+)\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+([\s\S]+)$/);
+function parsePsProcessOutput(pid: number, rawOutput: string): ProcessIdentity | null {
+  const output = rawOutput.trim();
+  if (!output) return null;
+  const match = output.match(
+    /^(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+([\s\S]+)$/,
+  );
   if (!match) return null;
   return {
     pid,
@@ -204,6 +202,16 @@ function inspectPsProcess(pid: number): ProcessIdentity | null {
     executablePath: '',
     commandLine: match[3],
   };
+}
+
+function inspectPsProcess(pid: number): ProcessIdentity | null {
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'lstart=', '-o', 'command='], {
+    encoding: 'utf8',
+    timeout: 5000,
+    env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+  });
+  if (result.status !== 0) return null;
+  return parsePsProcessOutput(pid, String(result.stdout || ''));
 }
 
 export function inspectProcess(pid: number): ProcessIdentity | null {
@@ -527,5 +535,6 @@ export function cleanupOrphanedWorkers(
 export const _test = {
   canonicalDbPath,
   getRuntimePaths,
+  parsePsProcessOutput,
   readJson,
 };
