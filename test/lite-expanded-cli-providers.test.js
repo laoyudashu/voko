@@ -196,9 +196,10 @@ test('registration detects all added CLIs but only exposes safe automatic delive
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
   const zeroModes = service.deliveryCapabilities('zeroclaw');
-  assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp', 'pull']);
+  assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp_ws', 'acp', 'pull']);
   assert.equal(zeroModes[0].status, 'configuration_required');
   assert.equal(zeroModes[0].selected, false);
+  assert.equal(zeroModes[1].status, 'configuration_required');
 });
 
 test('current Agent process ancestry recognizes the added CLI families', () => {

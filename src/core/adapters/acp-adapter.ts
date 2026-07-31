@@ -43,6 +43,10 @@ export interface AcpAdapterOptions {
   adapterType?: string;
   cwd?: string;
   sessionRequest?: (agentId: string) => Record<string, unknown>;
+  connectionKey?: (agentId: string) => string;
+  streamFactory?: (
+    agentId: string,
+  ) => Promise<{ stream: unknown; close?: () => void | Promise<void> }>;
 }
 
 interface AcpSession {
@@ -74,6 +78,8 @@ interface AcpAgentContext {
 
 interface AcpAgentState {
   child: ChildProcessWithoutNullStreams | null;
+  transportAlive: boolean;
+  transportClose: (() => void | Promise<void>) | null;
   agentCtx: AcpAgentContext | null;
   sessions: Map<string, AcpSession>;
   ready: Promise<void>;
@@ -83,13 +89,22 @@ interface AcpAgentState {
 
 interface AcpSdk {
   ndJsonStream(output: unknown, input: unknown): unknown;
-  client(): {
+  client(options?: { name?: string }): {
+    onRequest(method: unknown, handler: (context: { params: unknown }) => unknown): {
+      connectWith(
+        stream: unknown,
+        callback: (agentContext: AcpAgentContext) => Promise<void>,
+      ): Promise<void>;
+    };
     connectWith(
       stream: unknown,
       callback: (agentContext: AcpAgentContext) => Promise<void>,
     ): Promise<void>;
   };
-  methods: { agent: { session: { resume: unknown } } };
+  methods: {
+    agent: { session: { resume: unknown } };
+    client: { session: { requestPermission: unknown } };
+  };
 }
 
 interface SessionHandleRow {
@@ -173,6 +188,7 @@ class AcpAdapter extends PushProvider {
   }
 
   isAvailable(_agentId: string): boolean {
+    if (this.options.streamFactory) return true;
     if (!this._cliPath) return false;
     return path.isAbsolute(this._cliPath) || this._cliPath.includes(path.sep)
       ? fs.existsSync(this._cliPath)
@@ -203,7 +219,7 @@ class AcpAdapter extends PushProvider {
     }
 
     // ── 尝试 ACP 路径 ──
-    if (this._cliPath) {
+    if (this._cliPath || this.options.streamFactory) {
       try {
         await this._pushViaAcp(payload);
         return;
@@ -240,7 +256,8 @@ class AcpAdapter extends PushProvider {
       agents: Record<string, { ok: boolean; status: string }>;
     } = { ok: true, agents: {} };
     for (const [agentId, state] of this._agents) {
-      const alive = state.child && !state.child.killed && state.child.exitCode === null;
+      const alive = state.transportAlive
+        && (!state.child || (!state.child.killed && state.child.exitCode === null));
       if (!alive) {
         this._disconnectAgent(agentId, state);
         result.agents[agentId] = { ok: false, status: 'process_dead' };
@@ -430,14 +447,16 @@ class AcpAdapter extends PushProvider {
 
   /** 确保 agent 子进程运行 + ACP 连接就绪。返回状态对象。 */
   async _ensureAgent(agentId: string): Promise<AcpAgentState> {
-    const existing = this._agents.get(agentId);
-    if (existing && existing.agentCtx && !existing.child.killed && existing.child.exitCode === null) {
+    const stateKey = this.options.connectionKey?.(agentId) || agentId;
+    const existing = this._agents.get(stateKey);
+    const childAlive = !!existing?.child && !existing.child.killed && existing.child.exitCode === null;
+    if (existing && existing.agentCtx && (childAlive || existing.transportAlive)) {
       return existing;
     }
     // 清理僵死状态
     if (existing) this._disconnectAgent(agentId, existing);
 
-    if (!this._cliPath) {
+    if (!this._cliPath && !this.options.streamFactory) {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
     }
 
@@ -450,6 +469,8 @@ class AcpAdapter extends PushProvider {
 
     const state: AcpAgentState = {
       child: null,
+      transportAlive: true,
+      transportClose: null,
       agentCtx: null,
       sessions: new Map(),       // sessionKey → ActiveSession
       ready: new Promise<void>(resolve => { readyResolve = resolve; }),
@@ -459,47 +480,56 @@ class AcpAdapter extends PushProvider {
 
     // ── Spawn ACP agent ──
     // .exe/.js 等有扩展名的直接 spawn；无扩展名但非 node_modules 路径也直接 spawn（如 goose）
-    const isNodeScript = this._cliPath.endsWith('.js');
-    const cmd = isNodeScript ? process.execPath : this._cliPath;
-    const cmdArgs = isNodeScript ? [this._cliPath, ...this._cliArgs] : [...this._cliArgs];
-    console.error(`[${this._logPrefix}:${agentId}] Spawning: ${cmd} ${cmdArgs.join(' ')}`);
-    const child = spawn(cmd, cmdArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-      cwd: this._cwd,
-      env: {
-        ...process.env,
-        ...this.options.env,
-        // A3: 注入 agent 回调环境变量（agent 可通过 HTTP 回调 voko）
-        VOKO_API_URL: this.options.env?.VOKO_API_URL || process.env.VOKO_API_URL || '',
-      },
-    });
-    state.child = child;
-    console.error(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
+    let stream: unknown;
+    if (this.options.streamFactory) {
+      const transport = await this.options.streamFactory(agentId);
+      stream = transport.stream;
+      state.transportClose = transport.close || null;
+    } else {
+      const cliPath = this._cliPath as string;
+      const isNodeScript = cliPath.endsWith('.js');
+      const cmd = isNodeScript ? process.execPath : cliPath;
+      const cmdArgs = isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs];
+      console.error(`[${this._logPrefix}:${agentId}] Spawning: ${cmd} ${cmdArgs.join(' ')}`);
+      const child = spawn(cmd, cmdArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        cwd: this._cwd,
+        env: {
+          ...process.env,
+          ...this.options.env,
+          // A3: 注入 agent 回调环境变量（agent 可通过 HTTP 回调 voko）
+          VOKO_API_URL: this.options.env?.VOKO_API_URL || process.env.VOKO_API_URL || '',
+        },
+      });
+      state.child = child;
+      console.error(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
 
-    // stderr → console（agent 诊断日志走 stderr，不影响 ACP stdout 流）
-    child.stderr.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (msg) console.error(`[${this._logPrefix}:${agentId}] ${msg}`);
-    });
+      // stderr → console（agent 诊断日志走 stderr，不影响 ACP stdout 流）
+      child.stderr.on('data', (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) console.error(`[${this._logPrefix}:${agentId}] ${msg}`);
+      });
 
-    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
-      console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
-      state.sessions.clear();
-      if (this._agents.get(agentId) === state) {
-        this._agents.delete(agentId);
-      }
-    });
+      child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+        state.transportAlive = false;
+        console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
+        state.sessions.clear();
+        if (this._agents.get(stateKey) === state) {
+          this._agents.delete(stateKey);
+        }
+      });
 
-    child.on('error', (err: Error) => {
-      console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
-    });
+      child.on('error', (err: Error) => {
+        console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
+      });
 
-    // ── 创建 ACP NDJSON 流（Node stream → Web stream） ──
-    const stream = sdk.ndJsonStream(
-      Writable.toWeb(child.stdin),
-      Readable.toWeb(child.stdout),
-    );
+      // ── 创建 ACP NDJSON 流（Node stream → Web stream） ──
+      stream = sdk.ndJsonStream(
+        Writable.toWeb(child.stdin),
+        Readable.toWeb(child.stdout),
+      );
+    }
 
     // ── 客户端连接（用 connectWith 确保 initialize 握手完成） ──
     console.error(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
@@ -508,7 +538,11 @@ class AcpAdapter extends PushProvider {
     });
 
     // 后台启动连接（不 await；用 state.ready 等首次就绪）
-    sdk.client().connectWith(stream, async (agentCtx: AcpAgentContext) => {
+    const client = sdk.client({ name: 'voko-lite' });
+    client.onRequest(sdk.methods.client.session.requestPermission, () => {
+      console.warn(`[${this._logPrefix}:${agentId}] ACP tool permission denied by default`);
+      return { outcome: { outcome: 'cancelled' } };
+    }).connectWith(stream, async (agentCtx: AcpAgentContext) => {
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
       if (state._readyResolve) {
@@ -517,12 +551,13 @@ class AcpAdapter extends PushProvider {
       }
       await keepAlivePromise;
     }).catch((err: unknown) => {
+      state.transportAlive = false;
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
       if (state._readyResolve) {
         state._readyResolve();
         state._readyResolve = null;
       }
-      this._agents.delete(agentId);
+      if (this._agents.get(stateKey) === state) this._agents.delete(stateKey);
     });
 
     // ── 等待连接就绪（超时保护） ──
@@ -539,7 +574,7 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ${agentId} 连接初始化失败（agentCtx 未就绪）`);
     }
 
-    this._agents.set(agentId, state);
+    this._agents.set(stateKey, state);
     console.error(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
     return state;
   }
@@ -655,6 +690,11 @@ class AcpAdapter extends PushProvider {
       // 3. kill 子进程
       if (state.child && !state.child.killed) {
         state.child.kill();
+      }
+      state.transportAlive = false;
+      if (state.transportClose) {
+        void Promise.resolve(state.transportClose()).catch(() => {});
+        state.transportClose = null;
       }
     } catch (err) {
       console.error(`[${this._logPrefix}] 清理 agent=${agentId} 失败: ${errorMessage(err)}`);

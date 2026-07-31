@@ -51,7 +51,7 @@ test('ACP JavaScript launch uses the current Node executable on every platform',
     'utf8',
   );
 
-  assert.match(source, /const cmd = isNodeScript \? process\.execPath : this\._cliPath/);
+  assert.match(source, /const cmd = isNodeScript \? process\.execPath : cliPath/);
   assert.doesNotMatch(source, /process\.platform === 'win32' \? process\.execPath : 'node'/);
 });
 

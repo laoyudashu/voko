@@ -318,6 +318,25 @@ function zeroclawReadiness(instanceId) {
     return { ready: false, detail: '无法检查 ZeroClaw Agent 配置' };
   }
 }
+function zeroclawWsReadiness(instanceId) {
+  const base = zeroclawReadiness(instanceId);
+  if (!base.ready) return base;
+  const rawUrl = cleanText(process.env.ZEROCLAW_ACP_URL, 500) || 'ws://127.0.0.1:42617/acp';
+  const token = cleanText(process.env.ZEROCLAW_ACP_TOKEN, 2000);
+  try {
+    const url = new URL(rawUrl);
+    const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
+    if (!loopback || !['ws:', 'wss:'].includes(url.protocol) || url.search || url.hash) {
+      return { ready: false, detail: 'ZeroClaw ACP WebSocket 仅允许无查询参数的本机回环地址' };
+    }
+  } catch (_) {
+    return { ready: false, detail: 'ZeroClaw ACP WebSocket 地址无效' };
+  }
+  return token
+    ? { ready: true, detail: 'ZeroClaw ACP WebSocket 已配置，可执行连接检测' }
+    : { ready: false, detail: '需要配置 ZeroClaw ACP pairing token' };
+}
+
 function dbConfigAdapter(db) {
   return {
     getConfigFromDb(type) {
@@ -575,7 +594,9 @@ class RegistrationOrchestrator {
       supportsMultipleInstances: type === 'openclaw' || type === 'hermes' || type === 'zeroclaw',
       deliveryModes: this.deliveryCapabilities(
         type,
-        type === 'zeroclaw' ? zeroclawReadiness(matchedInstance?.id) : undefined,
+        type === 'zeroclaw'
+          ? { ...zeroclawReadiness(matchedInstance?.id), instanceId: matchedInstance?.id }
+          : undefined,
       ),
       detectedAsCurrent: true,
     };
@@ -655,14 +676,23 @@ class RegistrationOrchestrator {
       const command = resolveZeroClawCommand();
       const available = hasCommand('zeroclaw')
         || (path.isAbsolute(command) && fs.existsSync(command));
-      const configured = !!gatewayStatus?.ready;
+      const instanceId = gatewayStatus?.instanceId;
+      const stdio = zeroclawReadiness(instanceId);
+      const ws = zeroclawWsReadiness(instanceId);
       return [
         {
-          mode: 'acp', label: 'ACP 安全会话', role: 'primary',
-          status: !available ? 'unavailable' : configured ? 'ready' : 'configuration_required',
-          selected: available && configured, recommended: true,
-          action: !available ? null : configured ? 'test' : null,
-          description: 'VOKO 通过 ACP 将消息交给指定 ZeroClaw 实例；工具操作仍需经过协议审批。',
+          mode: 'acp_ws', label: 'ACP WebSocket 实时连接', role: 'primary',
+          status: !available ? 'unavailable' : ws.ready ? 'ready' : 'configuration_required',
+          selected: available && ws.ready, recommended: true,
+          action: !available ? null : ws.ready ? 'test' : null,
+          description: '多个 ZeroClaw Agent 共享本机实时连接；工具权限默认拒绝，避免访客触发敏感操作。',
+        },
+        {
+          mode: 'acp', label: 'ACP 独立进程', role: 'fallback',
+          status: !available ? 'unavailable' : stdio.ready ? 'ready' : 'configuration_required',
+          selected: available && stdio.ready,
+          action: !available ? null : stdio.ready ? 'test' : null,
+          description: 'WebSocket 不可用时，为该 Agent 启动独立 ACP 进程。',
         },
         pull,
       ];
@@ -845,7 +875,9 @@ class RegistrationOrchestrator {
     };
     session.deliveryModes = this.deliveryCapabilities(
       providerType,
-      providerType === 'zeroclaw' ? zeroclawReadiness(instanceId) : undefined,
+      providerType === 'zeroclaw'
+        ? { ...zeroclawReadiness(instanceId), instanceId }
+        : undefined,
     );
     session.status = 'delivery_selection_required';
     return this._save(session);
@@ -918,7 +950,7 @@ class RegistrationOrchestrator {
       detail = '主动获取始终可用';
     } else if (mode === 'cli'
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
-      || (provider === 'zeroclaw' && mode === 'acp')) {
+      || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
         : provider === 'hermes'
@@ -927,7 +959,9 @@ class RegistrationOrchestrator {
             ? resolveZeroClawCommand()
             : (CLI_COMMANDS[provider] || provider);
       if (provider === 'zeroclaw') {
-        const status = zeroclawReadiness(session.provider?.instanceId);
+        const status = mode === 'acp_ws'
+          ? zeroclawWsReadiness(session.provider?.instanceId)
+          : zeroclawReadiness(session.provider?.instanceId);
         ready = status.ready;
         detail = status.detail;
       } else {
