@@ -329,7 +329,7 @@ function wizardJs(t) {
 (function(){
   var I=${JSON.stringify(I)}, root=document.getElementById('registration-wizard');
   if(!root)return;
-  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='';
+  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false;
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
   var panels=Array.from(document.querySelectorAll('.wizard-panel')), steps=Array.from(document.querySelectorAll('.wizard-step'));
   var next=document.getElementById('wf-next'), prev=document.getElementById('wf-prev');
@@ -343,7 +343,7 @@ function wizardJs(t) {
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
   function readDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||'null');return d&&d.email===root.dataset.email?d:null}catch(_){return null}}
-  function saveDraft(){try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
+  function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
   function applyDraftFields(d){if(!d)return;nameInput.value=d.name||nameInput.value;document.getElementById('wf-desc').value=d.description||'';if(d.category)document.getElementById('wf-category').value=d.category;selectedProvider=d.provider||'';selectedInstance=d.instance||'';selectedAccessMode=d.accessMode==='public'?'public':'private';moreProvidersExpanded=!!d.moreExpanded}
   function restore(d){
     state=d;
@@ -356,7 +356,7 @@ function wizardJs(t) {
     else show(1);
     next.disabled=false;
   }
-  function start(){restoredDraft=readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)}
+  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)}
   function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
   function checkName(){
     var name=nameInput.value.trim();
@@ -410,6 +410,7 @@ function wizardJs(t) {
     if(step===2){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){renderDeliveries(d);show(3);next.disabled=false}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
     if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
+    discardDraft=true;
     try{sessionStorage.removeItem(draftKey)}catch(_){}
     location.href='/';
   };

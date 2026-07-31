@@ -187,7 +187,13 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /voko\.agentRegistrationDraft/);
     assert.match(html, /voko\.agentRegistrationMode/);
     assert.match(html, /api\('status'\)/);
+    assert.match(html, /if\(discardDraft\)return/);
+    assert.match(html, /discardDraft=true;\s*try\{sessionStorage\.removeItem\(draftKey\)\}/);
+    assert.match(html, /new URLSearchParams\(location\.search\)\.get\('new'\)==='1'/);
+    assert.match(html, /history\.replaceState\(null,'',location\.pathname\)/);
     assert.doesNotMatch(html, /data-value="__custom__"/);
+    const homeSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+    assert.match(homeSource, /href="\/agent\/add\?new=1"/);
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
     assert.ok(scripts.length >= 2);
     scripts.forEach((source) => assert.doesNotThrow(() => new Function(source)));

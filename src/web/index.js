@@ -488,11 +488,11 @@ function createWebRouter(handlers, db, opts={}){
         +'<strong>👤 '+esc(ownerEmail)+'</strong>'
         +'<a href="javascript:void(0)" data-role="logout-btn" class="btn btn-sm btn-outline" style="margin:0;min-width:auto;min-height:auto;padding:2px 8px;font-size:12px;line-height:1.4">'+L('common.btn.switch')+'</a>'
         +'</span>'
-        +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
+        +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add?new=1" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
         +'</div>'
         +(filtered.length>0
           ?'<div class="table-wrap"><table><thead><tr><th>'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th>'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
-          :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
+          :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
           +'<a href="/audit-rules" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.audit')+'</a>'
