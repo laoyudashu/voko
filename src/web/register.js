@@ -47,8 +47,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .alert-error{background:#fce8e6;color:#d93025}
 .alert-warning{background:#fff4ce;color:#8a5a00;border:1px solid #f2d675}
 .alert-success{background:#e6f4ea;color:#0f9d58}
-.oauth-divider{display:flex;align-items:center;gap:12px;color:#98a2b3;font-size:13px;margin:18px 0}.oauth-divider:before,.oauth-divider:after{content:"";height:1px;background:#e4e7ec;flex:1}
-.oauth-buttons{display:grid;gap:9px}.oauth-btn{width:100%;margin:0;background:#fff;color:#344054;border:1px solid #d0d5dd;box-shadow:0 1px 2px rgba(16,24,40,.05)}.oauth-btn:hover{background:#f9fafb;color:#1a73e8}.oauth-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}.oauth-status{display:none;margin-top:12px;padding:10px 12px;border-radius:9px;background:#f1f6ff;color:#344054;font-size:13px;text-align:center}.oauth-status.error{display:block;background:#fce8e6;color:#b42318}.oauth-status.active{display:block}
+.oauth-buttons{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:18px}.oauth-buttons[hidden]{display:none}.oauth-btn{display:flex;align-items:center;justify-content:center;gap:8px;min-width:0;width:100%;margin:0;padding-left:10px;padding-right:10px;background:#fff;color:#344054;border:1px solid #d0d5dd;box-shadow:0 1px 2px rgba(16,24,40,.05);font-size:13px;white-space:nowrap}.oauth-btn:hover{background:#f9fafb;color:#1a73e8}.oauth-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}.oauth-icon{width:18px;height:18px;flex:none}.oauth-status{display:none;margin-top:12px;padding:10px 12px;border-radius:9px;background:#f1f6ff;color:#344054;font-size:13px;text-align:center}.oauth-status.error{display:block;background:#fce8e6;color:#b42318}.oauth-status.active{display:block}
 .name-status{font-size:13px;margin-top:4px;min-height:20px}
 .name-status.checking{color:#e37400}
 .name-status.available{color:#0f9d58}
@@ -129,16 +128,13 @@ function loginBody(email, err, tFn) {
   const t = tFn || (k => k);
   var alertHtml = err ? '<div class="alert alert-error">' + esc(err) + '</div>' : '';
   alertHtml += '<div class="alert alert-success" id="sent-msg" style="display:none">' + esc(t('register.login.sent')) + ' <span id="sent-email"></span></div>';
+  const googleIcon = '<svg class="oauth-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.6h3.3c1.9-1.8 2.9-4.4 2.9-7.5Z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.7-2.3l-3.3-2.6c-.9.6-2.1 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-3.9V7.4H3.1a10 10 0 0 0 0 9.2L6.5 14Z"/><path fill="#EA4335" d="M12 6c1.5 0 2.8.5 3.9 1.5l2.9-2.9A9.8 9.8 0 0 0 3.1 7.4l3.4 2.7A5.9 5.9 0 0 1 12 6Z"/></svg>';
+  const githubIcon = '<svg class="oauth-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.2.8-.5v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C14.5 4.8 15.5 5 15.5 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 12 .7Z"/></svg>';
   return '<div class="voko-logo">VOKO</div>'
     + '<div class="card">'
     + '<h2>' + esc(t('register.login.title')) + '</h2>'
     + '<p class="desc">' + esc(t('register.login.desc')) + '</p>'
     + alertHtml
-    + '<div class="oauth-buttons">'
-    + '<button type="button" class="oauth-btn" data-oauth-provider="google" hidden onclick="oauthLogin(\'google\')">' + esc(t('register.login.google')) + '</button>'
-    + '<button type="button" class="oauth-btn" data-oauth-provider="github" hidden onclick="oauthLogin(\'github\')">' + esc(t('register.login.github')) + '</button>'
-    + '</div><div id="oauth-status" class="oauth-status"></div>'
-    + '<div class="oauth-divider">' + esc(t('register.login.or_email')) + '</div>'
     + '<form method="POST" action="/login" id="login-form">'
     + '<label for="email">' + esc(t('register.login.email')) + '</label>'
     + '<input type="email" id="email" name="email" value="' + esc(email) + '" required autocomplete="email" autofocus placeholder="you@example.com">'
@@ -151,6 +147,10 @@ function loginBody(email, err, tFn) {
     + '<button type="submit" name="action" value="verify" class="btn-success" style="margin:0">' + esc(t('register.login.login_btn')) + '</button>'
     + '</div>'
     + '</form>'
+    + '<div class="oauth-buttons" hidden>'
+    + '<button type="button" class="oauth-btn" data-oauth-provider="google" onclick="oauthLogin(\'google\')">' + googleIcon + '<span>' + esc(t('register.login.google')) + '</span></button>'
+    + '<button type="button" class="oauth-btn" data-oauth-provider="github" onclick="oauthLogin(\'github\')">' + githubIcon + '<span>' + esc(t('register.login.github')) + '</span></button>'
+    + '</div><div id="oauth-status" class="oauth-status"></div>'
     + '</div>';
 }
 
@@ -896,7 +896,7 @@ function createRegisterRouter(handlers, db) {
       agentCount = row ? row.c : 0;
     } catch (_) {}
     const dest = agentCount === 0 ? '/agent/add' : '/';
-    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><script>(async function(){try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=' + JSON.stringify(dest) + '})()</'+'script>');
+    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><body><p id="switch-error" style="color:#d93025"></p><script>(async function(){var s=document.getElementById("switch-error");try{var r=await fetch("/api/agents/restart",{method:"POST"}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Worker restart failed");location.href=' + JSON.stringify(dest) + '}catch(e){s.textContent=e.message||"Worker restart failed"}})()</'+'script></body>');
   });
 
   R.post('/login', async (req, res, next) => {
@@ -926,7 +926,13 @@ function createRegisterRouter(handlers, db) {
           // 返回过渡页：自动重启运行环境后跳转
           const _lang = req.locale === 'en' ? 'en' : 'zh-CN';
           const transitionPage = '<!DOCTYPE html>\n<html lang="' + _lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>VOKO — ' + esc(req.t('register.login.switching_title')) + '</title>\n<style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(135deg,#f0f4ff,#f5f7fa);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#1a1a2e}div{text-align:center}p{font-size:16px;margin:8px 0}.spinner{width:32px;height:32px;border:3px solid #e0e4ea;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}@keyframes spin{to{transform:rotate(360deg)}}</style>\n</head>\n<body>\n<div><div class="spinner"></div><p>' + esc(req.t('register.login.switching')) + '</p><p style="font-size:13px;color:#888">' + esc(req.t('register.login.switching_hint')) + '</p></div>\n<script>\n(async function(){var d="' + dest + '";try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=d})();\n</script>\n</body>\n</html>';
-          return res.send(transitionPage);
+          const checkedTransitionPage = transitionPage
+            .replace('</div>\n<script>', '<p id="switch-error" style="display:none;font-size:13px;color:#d93025"></p></div>\n<script>')
+            .replace(
+              'try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=d',
+              'var s=document.getElementById("switch-error");try{var r=await fetch("/api/agents/restart",{method:"POST"}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||"Worker restart failed");location.href=d}catch(e){s.textContent=e.message||"Worker restart failed";s.style.display="block"}',
+            );
+          return res.send(checkedTransitionPage);
         }
         return res.redirect('/login?email=' + encodeURIComponent(email) + '&err=' + encodeURIComponent(r.error || req.t('register.login.code_invalid')));
       }

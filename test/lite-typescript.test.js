@@ -289,6 +289,10 @@ test('Web smoke page and registry work from the packaged Lite layout', async () 
       items.filter((item) => !item.id || !item.name || !item.mode),
       [],
     );
+
+    const switchAccount = await fetch(`${baseUrl}/api/logout`, { redirect: 'manual' });
+    assert.equal(switchAccount.status, 302);
+    assert.equal(switchAccount.headers.get('location'), '/login?mode=switch');
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
@@ -494,4 +498,43 @@ test('i18n checker scans both JavaScript and TypeScript sources', () => {
 test('smoke-test Lite instances never open a browser window', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   assert.match(entrySource, /process\.env\.VOKO_SMOKE_TEST\s*!==\s*'1'/);
+});
+
+test('account switching waits for old workers to stop before starting new workers', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const restartRoute = entrySource.slice(
+    entrySource.indexOf("app.post('/api/agents/restart'"),
+    entrySource.indexOf("app.post('/api/payment/write-auth'"),
+  );
+  assert.match(restartRoute, /await agentManager\.stopAll\(\)/);
+  assert.ok(
+    restartRoute.indexOf('await agentManager.stopAll()')
+      < restartRoute.indexOf('agentManager.start('),
+  );
+});
+
+test('default lifecycle logs stay concise and stop hides the database path', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const notifierSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'notifier.js'), 'utf8');
+  const databaseSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'database.ts'), 'utf8');
+  assert.match(entrySource, /subcommand === 'stop'[\s\S]*?resolveDbPath\(args, \{ silent: true \}\)/);
+  assert.doesNotMatch(notifierSource, /模块初始化, mainWindow=/);
+  assert.doesNotMatch(databaseSource, /created\/verified|opened successfully/);
+  assert.doesNotMatch(databaseSource, /数据库初始化完成/);
+  assert.match(entrySource, /if \(ownerEmail\) details\.push\('  Owner:/);
+  const startupSource = entrySource.slice(entrySource.indexOf('async function startMcpServer'));
+  assert.ok(
+    startupSource.indexOf('printStartupBanner(db, litePort, userEmail)')
+      < startupSource.indexOf('agentManager.start(agent.agent_id'),
+  );
+});
+
+test('development mode skips fresh builds and compiles changes incrementally', () => {
+  const devSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'dev.js'), 'utf8');
+  assert.match(devSource, /buildIsCurrent\(\)/);
+  assert.match(devSource, /skipping initial build/);
+  assert.match(devSource, /'--incremental'/);
+  assert.match(devSource, /'\.dev\.tsbuildinfo'/);
+  assert.match(devSource, /syncAsset\(relative\)/);
+  assert.doesNotMatch(devSource, /await fullBuild\(\);[\s\S]*?rebuildAndRestart/);
 });

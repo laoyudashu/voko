@@ -268,7 +268,6 @@ class AgentWorkerManager extends EventEmitter {
 
     worker.on('exit', (code: number | null) => {
       this._pendingRegistry.delete(workerToken);
-      console.log(`[Agent Worker] ${agentId} 退出，code=${code}`);
       const entry = this.workers.get(agentId);
       if (entry && entry.worker === worker) {
         this.workers.delete(agentId);
@@ -285,7 +284,6 @@ class AgentWorkerManager extends EventEmitter {
       console.error(`[Agent Worker] ${agentId} 错误:`, err.message);
     });
 
-    console.log(`[Agent Worker] 已启动 ${agentId}，UID=${config.uid}`);
   }
 
   flushWorkerRegistry(): void {
@@ -343,7 +341,6 @@ class AgentWorkerManager extends EventEmitter {
   ): void {
     const normalizedStatus = status || 'unknown';
     this.connectionStatus.set(agentId, normalizedStatus);
-    console.log(`[Agent Worker] ${agentId} 状态: ${normalizedStatus}`);
 
     if (normalizedStatus === 'kicked' || statusCode === 4) {
       const currentEntry = this.workers.get(agentId);
@@ -379,7 +376,6 @@ class AgentWorkerManager extends EventEmitter {
     return new Promise<void>(resolve => {
       const entry = this.workers.get(agentId);
       if (!entry) {
-        console.log(`[Agent Worker] ${agentId} 未运行`);
         return resolve();
       }
       this.workers.delete(agentId);
@@ -388,7 +384,6 @@ class AgentWorkerManager extends EventEmitter {
       const t = this._restartTimers.get(agentId);
       if (t) { clearTimeout(t); this._restartTimers.delete(agentId); }
       if (userInitiated) this._stoppedAgents.set(agentId, Date.now());
-      console.log(`[Agent Worker] 正在停止 ${agentId}...`);
 
       let resolved = false;
       const timer = setTimeout(() => {
@@ -401,7 +396,6 @@ class AgentWorkerManager extends EventEmitter {
       entry.worker.once('exit', () => {
         if (!resolved) {
           clearTimeout(timer);
-          console.log(`[Agent Worker] ${agentId} 已退出`);
           resolve();
         }
       });

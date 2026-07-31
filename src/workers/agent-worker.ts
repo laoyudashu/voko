@@ -9,12 +9,7 @@ export {};
 
 // 日志统一到 voko-im.log：worker 不再自写文件，console 经 fork stdio 继承到 Lite 主进程统一写
 // 过滤 WKSDK 内部 RecvPacket dump，避免与 Lite 的 [通知] 日志重复
-const _origLog = console.log;
-console.log = (...args) => {
-  const first = typeof args[0] === 'string' ? args[0] : '';
-  if (first.includes('RecvPacket') || first.includes('消息内容-->')) return;
-  _origLog(...args);
-};
+console.log = () => {};
 type DynamicSdkValue = any;
 interface WorkerConfig { uid?: string; token?: string; serverUrl?: string }
 interface Mention { all?: boolean; uids?: string[] }

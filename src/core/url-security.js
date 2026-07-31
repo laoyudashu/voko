@@ -66,8 +66,8 @@ function normalizeOfficialPublicUrl(value, { canonicalMain = false } = {}) {
   if (OFFICIAL_HOSTS.has(normalizeHostname(parsed.hostname))) {
     parsed.protocol = parsed.protocol === 'ws:' ? 'wss:' : 'https:';
     parsed.port = '';
-    if (canonicalMain && parsed.hostname === 'www.vokovoko.com') {
-      parsed.hostname = 'vokovoko.com';
+    if (canonicalMain && parsed.hostname === 'vokovoko.com') {
+      parsed.hostname = 'www.vokovoko.com';
     }
   }
   return parsed.toString();

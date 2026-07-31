@@ -256,7 +256,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   try { db.exec('PRAGMA journal_mode = WAL'); } catch (_: any) {}
   try { db.exec('PRAGMA synchronous = NORMAL'); } catch (_: any) {}
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch (_: any) {}
-  console.error('Database opened successfully');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -272,7 +271,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       agent_id TEXT
     )
   `);
-  console.error('Messages table created/verified');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
@@ -293,7 +291,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_agent_channel ON conversations(agent_id, channel_id)`);
   } catch (_: any) {}
-  console.error('Conversations table created/verified');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS owner_interventions (
@@ -319,7 +316,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Owner interventions table created/verified');
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_owner_interventions_visitor ON owner_interventions(visitor_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_owner_interventions_status ON owner_interventions(status)`);
@@ -427,7 +423,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Agents table created/verified');
 
   // agent_skills 表：技能分配
   db.exec(`
@@ -442,7 +437,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       UNIQUE(agent_id, skill_name)
     )
   `);
-  console.error('Agent_skills table created/verified');
 
   // agent_session_handles 表：agent 发放的 session 句柄（仅 ACP 等 agent-issued-id 模式）
   db.exec(`
@@ -483,7 +477,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.error('Agent_session_handles isolation migration error:', error instanceof Error ? error.message : String(error));
     throw error;
   }
-  console.error('Agent_session_handles table created/verified');
 
   // agent_wakeup_requests 表：调度层统一 wakeup 队列
   db.exec(`
@@ -500,7 +493,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Agent_wakeup_requests table created/verified');
 
   // 迁移：messages 表添加 agent_id
   try {
@@ -668,7 +660,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Audit rules table created/verified');
 
   // 新建 payment_auth 表
   db.exec(`
@@ -697,7 +688,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Payment auth table created/verified');
 
   // 迁移：payment_auth 兼容 payment_user_uid
   try {
@@ -727,7 +717,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Payment orders table created/verified');
 
   // 迁移：payment_orders 兼容
   try {
@@ -762,7 +751,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Agent pricing table created/verified');
 
   // 新建 user_cache 表
   db.exec(`
@@ -774,7 +762,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER
     )
   `);
-  console.error('User cache table created/verified');
 
   // 新建 config 表
   db.exec(`
@@ -784,7 +771,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
-  console.error('Config table created/verified');
 
   // v4：邀请关系改由 AgentDID 服务端权威管理；旧本地邀请码无法安全迁移，停止使用并删除。
   db.exec('DROP TABLE IF EXISTS friend_invitations');
@@ -854,7 +840,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       UNIQUE(agent_id, list_type, visitor_id)
     )
   `);
-  console.error('Agent access lists table created/verified');
   try {
     const accessCols = db.prepare('PRAGMA table_info(agent_access_lists)').all().map((col: TableInfoRow) => col.name);
     if (!accessCols.includes('manual_managed')) {
@@ -1084,7 +1069,6 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.error('[DB] agent_backend_types seed 失败:', e.message);
   }
 
-  console.error('Database initialized successfully');
   return db;
   } finally {
     if (options.silent) console.error = _origErr;

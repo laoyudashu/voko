@@ -1,6 +1,6 @@
 {
   "api": {
-    "baseUrl": "https://vokovoko.com"
+    "baseUrl": "https://www.vokovoko.com"
   },
   "oss": {
     "region": "oss-cn-beijing",

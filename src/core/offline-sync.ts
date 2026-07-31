@@ -64,7 +64,6 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     console.log('[离线同步] 跳过：messageHandler 未初始化（Lite 独立模式下无需同步）');
     return 0;
   }
-  console.log(`[离线同步] 开始拉取离线消息...` + (agentIdFilter ? ` (仅 agent=${agentIdFilter})` : ''));
   try {
     const agents = db.prepare(`SELECT agent_id, imUid, imToken, im_server_url, owner_email FROM agents WHERE publish_status = 'published'`).all<AgentRow>();
     const primaryOwnerEmail = getPrimaryOwnerEmail(db);
@@ -72,7 +71,6 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
 
     for (const agent of agents) {
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
-        console.log(`[离线同步] 跳过 agent=${agent.agent_id}`);
         continue;
       }
       const ownerEmail = String(agent.owner_email || primaryOwnerEmail || '').trim();
@@ -110,7 +108,6 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
           }
           const data = await resp.json() as { messages?: SyncMessage[] };
           const msgs = data.messages || [];
-          if (msgs.length > 0) console.log(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 拉取到 ${msgs.length} 条`);
 
           for (const msg of msgs) {
             const msgId = msg.message_id || msg.messageID;

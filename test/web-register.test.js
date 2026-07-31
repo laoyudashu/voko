@@ -88,12 +88,19 @@ async function setupServer(t, handlers, db) {
 describe('Web POST /agent/add 注册流程', () => {
   it('OAuth login routes proxy the session contract without exposing the token in HTML', async (t) => {
     const db = createDb(null);
+    const startedProviders = [];
     const handlers = {
-      oauth_providers: async () => ({ success: true, data: { providers: [{ id: 'google', enabled: true }] } }),
-      oauth_start: async () => ({ success: true, data: {
-        sessionId: 'los_web', authorizeUrl: 'https://example.test/google', expiresAt: new Date(Date.now() + 60000).toISOString(),
+      oauth_providers: async () => ({ success: true, data: { providers: [
+        { id: 'google', enabled: true },
+        { id: 'github', enabled: true },
+      ] } }),
+      oauth_start: async ({ provider }) => {
+        startedProviders.push(provider);
+        return { success: true, data: {
+        sessionId: 'los_web', authorizeUrl: `https://example.test/${provider}`, expiresAt: new Date(Date.now() + 60000).toISOString(),
         pollIntervalSeconds: 2,
-      } }),
+      } };
+      },
       oauth_status: async () => ({ success: true, data: { status: 'authorized', exchangeCode: 'loe_web' } }),
       oauth_exchange: async () => ({ success: true, email: 'owner@example.com' }),
     };
@@ -101,15 +108,47 @@ describe('Web POST /agent/add 注册流程', () => {
     const login = await fetch(server.baseUrl + '/login');
     const html = await login.text();
     assert.match(html, /data-oauth-provider="google"/);
+    assert.match(html, /data-oauth-provider="github"/);
+    assert.match(html, /class="oauth-icon"/);
+    assert.match(html, /fill="#4285F4"/);
+    assert.match(html, /fill="currentColor"/);
+    assert.match(html, /class="oauth-buttons" hidden/);
+    assert.doesNotMatch(html, /class="oauth-divider"/);
+    assert.ok(html.indexOf('</form>') < html.indexOf('class="oauth-buttons"'));
+    assert.match(html, /grid-template-columns:1fr 1fr/);
+    assert.match(html, /\.oauth-btn\{[^}]*font-size:13px;white-space:nowrap/);
     assert.match(html, /api\/login\/oauth\/providers/);
     assert.doesNotMatch(html, /ut_/);
 
+    const switchLogin = await fetch(server.baseUrl + '/login?mode=switch');
+    const switchHtml = await switchLogin.text();
+    assert.match(switchHtml, /data-oauth-provider="google"/);
+    assert.match(switchHtml, /data-oauth-provider="github"/);
+    assert.match(switchHtml, /class="oauth-icon"/);
+    assert.match(switchHtml, /class="oauth-buttons" hidden/);
+    assert.doesNotMatch(switchHtml, /class="oauth-divider"/);
+    assert.ok(switchHtml.indexOf('</form>') < switchHtml.indexOf('class="oauth-buttons"'));
+    assert.match(switchHtml, /grid-template-columns:1fr 1fr/);
+    assert.match(switchHtml, /api\/login\/oauth\/providers/);
+
+    const oauthCompleteHtml = await (await fetch(server.baseUrl + '/login/oauth/complete')).text();
+    assert.match(oauthCompleteHtml, /if\(!r\.ok\|\|!d\.success\)/);
+    assert.match(oauthCompleteHtml, /switch-error/);
+
     const providers = await (await fetch(server.baseUrl + '/api/login/oauth/providers')).json();
-    assert.deepStrictEqual(providers.providers, [{ id: 'google', enabled: true }]);
+    assert.deepStrictEqual(providers.providers, [
+      { id: 'google', enabled: true },
+      { id: 'github', enabled: true },
+    ]);
     const started = await (await fetch(server.baseUrl + '/api/login/oauth/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"provider":"google"}',
     })).json();
     assert.strictEqual(started.sessionId, 'los_web');
+    const githubStarted = await (await fetch(server.baseUrl + '/api/login/oauth/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"provider":"github"}',
+    })).json();
+    assert.strictEqual(githubStarted.authorizeUrl, 'https://example.test/github');
+    assert.deepStrictEqual(startedProviders, ['google', 'github']);
     const status = await (await fetch(server.baseUrl + '/api/login/oauth/status/los_web')).json();
     assert.strictEqual(status.exchangeCode, 'loe_web');
     const exchanged = await (await fetch(server.baseUrl + '/api/login/oauth/exchange', {

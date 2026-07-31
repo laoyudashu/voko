@@ -309,12 +309,10 @@ function resolveDbPath(args?: any, options: any = {}) {
   if (args.db) return args.db;
   // 环境变量优先，便于隔离测试或指定数据目录。
   if (process.env.VOKO_DB_PATH) {
-    if (!options.silent) console.error('[VOKO Lite] 使用环境变量指定的数据库:', process.env.VOKO_DB_PATH);
     return process.env.VOKO_DB_PATH;
   }
   const defaultDb = getDefaultDbPath();
   try { require('fs').mkdirSync(path.dirname(defaultDb), { recursive: true }); } catch (_: any) {}
-  if (!options.silent) console.error('[VOKO Lite] 使用默认数据库:', defaultDb);
   return defaultDb;
 }
 
@@ -337,6 +335,35 @@ function initCore(args?: any, options: any = {}) {
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;  // 供 /api/message/send 等 HTTP 端点统一发送（自带兜底）
   return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, deliver, sendMessage };
+}
+
+function printStartupBanner(db: any, port: number, ownerEmail?: string | null) {
+  const ORANGE = '\x1b[38;5;202m';
+  const RESET = '\x1b[0m';
+  const details = [
+    '  Version:    ' + pkg.version,
+    '  PID:        ' + process.pid,
+    '  Time:       ' + new Date().toLocaleString('zh-CN', { hour12: false }),
+    '  Port:       ' + port,
+  ];
+  if (ownerEmail) details.push('  Owner:      ' + ownerEmail);
+  details.push(
+    '  DB:         ' + (db._dbPath || ''),
+    '  Web:        http://localhost:' + port,
+    '  MCP:        http://localhost:' + port + '/mcp',
+  );
+  console.error([
+    '',
+    ORANGE + '██╗   ██╗ ██████╗ ██╗  ██╗ ██████╗ ' + RESET,
+    ORANGE + '██║   ██║██╔═══██╗██║ ██╔╝██╔═══██╗' + RESET,
+    ORANGE + '██║   ██║██║   ██║█████╔╝ ██║   ██║' + RESET,
+    ORANGE + '╚██╗ ██╔╝██║   ██║██╔═██╗ ██║   ██║' + RESET,
+    ORANGE + ' ╚████╔╝ ╚██████╔╝██║  ██╗╚██████╔╝' + RESET,
+    ORANGE + '  ╚═══╝   ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ' + RESET,
+    '',
+    ...details,
+    '',
+  ].join('\n'));
 }
 
 // ═══════════════════════════════════════════════
@@ -847,7 +874,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const email = getCurrentUserEmail(db);
       if (!email) return res.json({ success: false, error: '未登录' });
       // 1. 停止所有 worker
-      agentManager.stopAll();
+      await agentManager.stopAll();
       // 2. 查当前用户已发布 agent
       const agents = db.prepare(
         "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
@@ -1157,27 +1184,6 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
             }
           });
         }
-        const ORANGE = '\x1b[38;5;202m';
-        const RESET = '\x1b[0m';
-        const BANNER = [
-          '',
-          ORANGE + '██╗   ██╗ ██████╗ ██╗  ██╗ ██████╗ ' + RESET,
-          ORANGE + '██║   ██║██╔═══██╗██║ ██╔╝██╔═══██╗' + RESET,
-          ORANGE + '██║   ██║██║   ██║█████╔╝ ██║   ██║' + RESET,
-          ORANGE + '╚██╗ ██╔╝██║   ██║██╔═██╗ ██║   ██║' + RESET,
-          ORANGE + ' ╚████╔╝ ╚██████╔╝██║  ██╗╚██████╔╝' + RESET,
-          ORANGE + '  ╚═══╝   ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ' + RESET,
-          '',
-          '  Version:    ' + pkg.version,
-          '  PID:        ' + process.pid,
-          '  Time:       ' + new Date().toLocaleString('zh-CN', { hour12: false }),
-          '  Port:       ' + port,
-          '  DB:         ' + (db._dbPath || ''),
-          '  Web:        http://localhost:' + port,
-          '  MCP:        http://localhost:' + port + '/mcp',
-          '',
-        ].join('\n');
-        console.error(BANNER);
         // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
         if (!args.noOpen && !args['no-open'] && process.env.VOKO_SMOKE_TEST !== '1') {
           openLocalWebPage(port);
@@ -1194,6 +1200,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
 async function startMcpServer(args?: any, core?: any) {
   const { db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage } = core;
   __shutdownContext = { agentManager, wukongimSender, db };
+  const userEmail = getCurrentUserEmail(db);
+  const litePort = parseInt(args.port, 10) || 3100;
+  printStartupBanner(db, litePort, userEmail);
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
   if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
@@ -1218,10 +1227,7 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   // ── 自动恢复已发布的 agent（仅当前用户名下） ──
-  const userEmail = getCurrentUserEmail(db);
-  if (userEmail) {
-    console.error(`[Auth] 当前登录用户: ${userEmail}`);
-  } else {
+  if (!userEmail) {
     console.error(t('cli.index.login_required', { port: parseInt(args.port, 10) || 3100 }));
   }
   const published = userEmail
@@ -1231,9 +1237,9 @@ async function startMcpServer(args?: any, core?: any) {
   for (const agent of published) {
     const config = { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url };
     agentManager.start(agent.agent_id, config, undefined, true);
-    console.error(`[VOKO Lite] 已恢复 agent: ${agent.agent_name || agent.agent_id}`);
   }
   agentManager.flushWorkerRegistry();
+  if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${publishedAgentCount} 个 Agent Worker`);
 
   // ── 版本检查（异步，不阻塞） ──
   cli.checkVersion();
@@ -1428,7 +1434,6 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   // ── 启动心跳（带处理器引用，支持健康检查 + 网关恢复） ──
-  const litePort = parseInt(args.port, 10) || 3100;
   startHeartbeat(db, agentManager, openclawHandler, hermesHandler, { port: litePort, agentCount: publishedAgentCount });
 
   // ── 启动休眠唤醒检测（定时器偏差检测，不依赖 Electron powerMonitor） ──
@@ -1579,8 +1584,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
       profiles: hermesConfig.profiles || {},
     });
     providers['hermes-http'] = hermesHandler;
-    const keyHint = hermesConfig.apiKey ? `${hermesConfig.apiKey.substring(0, 8)}...` : '(空)';
-    console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642} apiKey=${keyHint}`);
+    console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
@@ -1759,9 +1763,9 @@ async function createLiteApp(options: any = {}) {
     for (const agent of published) {
       const config = { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url };
       agentManager.start(agent.agent_id, config, options.appPaths, true);
-      console.error(`[VOKO Lite] 已恢复 agent: ${agent.agent_name || agent.agent_id}`);
     }
     agentManager.flushWorkerRegistry();
+    if (published.length > 0) console.error(`[VOKO Lite] 已启动 ${published.length} 个 Agent Worker`);
 
     // 消息处理 handler 在 MessageHandler 创建后统一注册（见下方）
   }
@@ -2014,7 +2018,6 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         userEmail: email || '',
         agents: [],
       }), Date.now());
-    console.error('[Runtime] 初始 runtime 已写入, PID=' + process.pid + (port ? ' PORT=' + port : ''));
   } catch (_: any) {}
 
   let isBeating = false;
@@ -2122,7 +2125,6 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── 上报 ──
       const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       console.log(`[${ts}][心跳] IM=${imOnline}/${rows.length} 后端=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
-
       if (warnings.length > 0) {
         console.error(`[${ts}][心跳] 发现 ${warnings.length} 个异常:\n${warnings.map((w: any) => `  ${w.message}`).join('\n')}`);
       }
@@ -2186,7 +2188,6 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
     setTimeout(() => _tryFirstBeat(), 5000);
   }
 
-  console.error('[Lite] 心跳检测已启动（60 秒间隔）');
   return () => { clearInterval(timer); };
 }
 
@@ -2218,7 +2219,7 @@ async function shutdownAll(
   if (__shuttingDown) return;
   __shuttingDown = true;
   __serviceHealth = signal?.startsWith?.('fatal:') ? 'unhealthy' : 'draining';
-  console.error(t('cli.index.signal_cleanup', { signal }));
+  if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
   // 停各 provider（含 gateway 进程清理，避免 detached gateway 在退出后泄漏）
   try { await (global as any).__dispatcher?.stop?.(); } catch (e: any) { console.error('[VOKO Lite] dispatcher.stop 失败:', e.message); }
   try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] worker 清理失败:', e.message); }
@@ -2258,7 +2259,6 @@ async function shutdownAll(
   if (db && db.open) {
     clearCurrentRuntimeSnapshot(db);
     try { db.close(); } catch (_: any) {}
-    console.error('[VOKO Lite] 数据库已关闭');
   }
   try { __instanceLock?.release(); } catch {}
   __instanceLock = null;
@@ -2415,7 +2415,7 @@ async function main() {
   // stop — 先 HTTP 优雅关闭，再强杀兜底
   if (subcommand === 'stop') {
     const http = require('http');
-    const dbPath = resolveDbPath(args);
+    const dbPath = resolveDbPath(args, { silent: true });
     const instance = readInstanceMetadata(dbPath);
     if (!instance || !isInstanceAlive(instance)) {
       cleanupOrphanedWorkers(dbPath);

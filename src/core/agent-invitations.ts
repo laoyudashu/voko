@@ -356,6 +356,7 @@ function startAgentAccessSync({
 }): () => void {
   let stopped = false;
   let running = false;
+  const lastErrors = new Map<string, string>();
   const run = async () => {
     if (stopped || running) return;
     running = true;
@@ -365,7 +366,14 @@ function startAgentAccessSync({
       for (const agent of agents) {
         if (!getUserAccessToken(db, agent.owner_email)) continue;
         const result = await syncAgentAccess({ db, apiBaseUrl, agentId: agent.agent_id });
-        if (!result.success) console.warn(`[AccessSync] agent=${agent.agent_id} ${result.error}`);
+        if (result.success) {
+          lastErrors.delete(agent.agent_id);
+        } else {
+          const error = result.error || '同步失败';
+          if (lastErrors.get(agent.agent_id) === error) continue;
+          lastErrors.set(agent.agent_id, error);
+          console.warn(`[AccessSync] agent=${agent.agent_id} ${error}`);
+        }
       }
     } finally {
       running = false;

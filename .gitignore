@@ -37,6 +37,11 @@ staged-update/
 Thumbs.db
 .idea/
 .vscode/
+.claude/
+.firecrawl/
+
+# Local channel credentials.
+config/channel_config - *.json
 
 .ort/
 scancode-results/

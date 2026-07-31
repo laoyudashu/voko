@@ -515,7 +515,7 @@ function createWebRouter(handlers, db, opts={}){
 
   // ────────── 切换账号（不清 token，新登录时覆盖） ──────────
   R.get('/api/logout', (req, res) => {
-    res.redirect('/login');
+    res.redirect('/login?mode=switch');
   });
 
   // ────────── Agent 看板页（短页面） ──────────

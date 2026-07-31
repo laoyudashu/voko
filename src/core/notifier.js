@@ -38,7 +38,6 @@ function _getVisitorName(visitorId) {
 function init(mainWindow, db) {
   _mainWindow = mainWindow;
   _db = db;
-  console.log('[通知] 模块初始化, mainWindow=' + (mainWindow ? '✅ 已创建' : '❌ null'));
 }
 
 /**
