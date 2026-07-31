@@ -10,6 +10,8 @@ const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
+const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor-acp');
+const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
 const {
   RegistrationOrchestrator,
@@ -52,6 +54,17 @@ test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
   assert.deepEqual(provider._cliArgs, ['acp']);
   assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
+});
+
+test('Cursor prefers ACP with a restricted CLI fallback', () => {
+  const acp = new CursorAcpProvider();
+  const cli = new CursorCliProvider();
+  assert.equal(acp._adapterType, 'cursor-acp');
+  assert.deepEqual(acp._cliArgs, ['acp']);
+  assert.equal(acp._matchType, 'cursor');
+  assert.equal(acp._cliFallback.cmd, cli._cmd);
+  assert.match(acp._cliFallback.args.join(' '), /--mode plan/);
+  assert.equal(acp._cliFallback.parser, 'cursor-stream-json');
 });
 
 test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
@@ -217,6 +230,7 @@ test('registration detects all added CLIs but only exposes safe automatic delive
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['cli', 'pull']);
   }
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
+  assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   for (const type of ['openhands', 'amazon-q', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }

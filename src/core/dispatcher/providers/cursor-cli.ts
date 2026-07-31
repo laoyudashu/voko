@@ -19,13 +19,14 @@
 
 const os = require('os');
 const { CliAdapter } = require('../../adapters/cli-adapter');
+const { resolveCursorCommand } = require('../cursor-command');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 class CursorCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
     super({
       name: 'CURSOR CLI',
-      cmd: 'cursor-agent',
+      cmd: resolveCursorCommand(),
       // --mode plan：只读；--trust：Lite 无 TTY，跳过 Workspace Trust 交互提示
       args: ['-p', '--output-format', 'stream-json', '--mode', 'plan', '--trust', '--workspace', '.'],
       parser: 'cursor-stream-json',   // stream-json + stdout: 前缀剥离

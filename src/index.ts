@@ -1625,6 +1625,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { key: 'claude-cli',   mod: './core/dispatcher/providers/claude-cli',   named: 'ClaudeCliProvider',   args: { db, contextWindow: 20 } },
     { key: 'codex-cli',    mod: './core/dispatcher/providers/codex-cli',    named: 'CodexCliProvider',    args: { db, contextWindow: 20 } },
     { key: 'gemini-cli',   mod: './core/dispatcher/providers/gemini-cli',   named: 'GeminiCliProvider',   args: { db, contextWindow: 20 } },
+    { key: 'cursor-acp',   mod: './core/dispatcher/providers/cursor-acp',   named: 'CursorAcpProvider',   args: { db, contextWindow: 20 } },
     { key: 'cursor-cli',   mod: './core/dispatcher/providers/cursor-cli',   named: 'CursorCliProvider',   args: { db, contextWindow: 20 } },
     { key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
     { key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },

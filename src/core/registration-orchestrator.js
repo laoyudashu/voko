@@ -14,6 +14,7 @@ const { discoverHermes } = require('../server/hermes-discovery');
 const { getRegistrationCaller } = require('./registration-caller-context');
 const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types');
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
+const { resolveCursorCommand } = require('./dispatcher/cursor-command');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -46,6 +47,7 @@ const CLI_SESSION_ROOTS = {
   'claude-code': () => [path.join(os.homedir(), '.claude', 'projects')],
   codex: () => [path.join(os.homedir(), '.codex', 'sessions')],
   gemini: () => [path.join(os.homedir(), '.gemini', 'tmp')],
+  cursor: () => [path.join(os.homedir(), '.cursor')],
   opencode: () => [path.join(os.homedir(), '.local', 'share', 'opencode')],
   pi: () => [path.join(os.homedir(), '.pi', 'agent', 'sessions')],
   'qwen-code': () => [path.join(os.homedir(), '.qwen', 'projects')],
@@ -508,13 +510,14 @@ class RegistrationOrchestrator {
     const zeroclawInstalled = hasCommand('zeroclaw')
       || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
     if (zeroclaw.length || zeroclawInstalled) {
+      const instanceId = zeroclaw.length === 1 ? zeroclaw[0].id : null;
       detected.push({
         type: 'zeroclaw',
         label: 'ZeroClaw',
         instances: zeroclaw,
         supportsMultipleInstances: true,
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('zeroclaw', { ready: false }),
+        deliveryModes: this.deliveryCapabilities('zeroclaw', { ready: false, instanceId }),
       });
     }
     if (hermes.length || hermesInstalled) {
@@ -530,7 +533,10 @@ class RegistrationOrchestrator {
     const known = this.db ? getBackendTypes(this.db) : [];
     const knownLabels = new Map(known.map((item) => [item.value, item.label]));
     for (const [type, command] of Object.entries(DETECTABLE_CLI_COMMANDS)) {
-      if (type === 'openclaw' || type === 'hermes' || !hasCommand(command)) continue;
+      const available = type === 'cursor'
+        ? hasCommand('cursor-agent') || hasCommand('agent')
+        : hasCommand(command);
+      if (type === 'openclaw' || type === 'hermes' || !available) continue;
       detected.push({
         type,
         label: knownLabels.get(type) || type,
@@ -698,7 +704,7 @@ class RegistrationOrchestrator {
       ];
     }
     if (type === 'opencode') {
-      const available = commandAvailable('opencode');
+      const available = hasCommand('opencode');
       const status = available ? 'ready' : 'unavailable';
       const action = available ? 'test' : null;
       return [
@@ -734,6 +740,24 @@ class RegistrationOrchestrator {
           mode: 'cli', label: 'CLI 单次唤起', role: 'fallback',
           status, selected: available, action,
           description: 'ACP 不可用时，以无工具、无 MCP、无远程操作模式调用 GitHub Copilot CLI。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'cursor') {
+      const available = hasCommand('cursor-agent') || hasCommand('agent');
+      const status = available ? 'ready' : 'unavailable';
+      const action = available ? 'test' : null;
+      return [
+        {
+          mode: 'acp', label: 'ACP 实时会话', role: 'primary',
+          status, selected: available, recommended: true, action,
+          description: 'VOKO 通过 Cursor ACP 复用隔离会话，并默认拒绝外部访客触发工具授权。',
+        },
+        {
+          mode: 'cli', label: 'CLI 单次唤起', role: 'fallback',
+          status, selected: available, action,
+          description: 'ACP 不可用时，以只读 plan 模式调用 Cursor CLI。',
         },
         pull,
       ];
@@ -968,7 +992,7 @@ class RegistrationOrchestrator {
       detail = '主动获取始终可用';
     } else if (mode === 'cli'
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
-      || (provider === 'github-copilot' && mode === 'acp')
+      || ((provider === 'github-copilot' || provider === 'cursor') && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
@@ -976,7 +1000,9 @@ class RegistrationOrchestrator {
           ? 'hermes'
           : provider === 'zeroclaw'
             ? resolveZeroClawCommand()
-            : (CLI_COMMANDS[provider] || provider);
+            : provider === 'cursor'
+              ? resolveCursorCommand()
+              : (CLI_COMMANDS[provider] || provider);
       if (provider === 'zeroclaw') {
         const status = mode === 'acp_ws'
           ? zeroclawWsReadiness(session.provider?.instanceId)
