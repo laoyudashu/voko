@@ -2317,17 +2317,23 @@ function printUsage() {
     '  voko --tools\n' +
     '\n' +
     t('cli.usage.tools_header') + '\n' +
-    '  register_agent  verify_agent_email  update_agent_profile\n' +
-    '  set_agent_status  get_status  get_agent_profile\n' +
+    '  register_agent  verify_agent_email  manage_agent_registration\n' +
+    '  update_agent_profile  set_agent_status  get_status  get_agent_profile\n' +
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
-    '  get_visitor_profile  list_conversations  get_upload_url\n' +
-    '  whoami  ask_human_for_help  check_human_replies  close_human_request\n' +
+    '  get_visitor_profile  list_conversations  mark_conversation_read\n' +
+    '  get_upload_url  whoami  start_worker  stop_worker\n' +
+    '  ask_human_for_help  check_human_replies  close_human_request\n' +
     '  create_payment  check_payments  agent_pricing\n' +
     '  add_payment_auth  list_payment_auth  delete_payment_auth\n' +
-    '  apply_payment_auth  search_banks  bind_agent_payment_auth\n' +
+    '  apply_payment_auth  refresh_payment_auth  search_banks\n' +
+    '  bind_agent_payment_auth\n' +
     '  manage_whitelist  manage_blacklist  list_access_lists  set_private_mode\n' +
     '  invite_friend  list_audit_rules  manage_audit_rules\n' +
+    '  create_group  invite_to_group  accept_invitation  decline_invitation\n' +
+    '  get_group_members  get_group_context  kick_from_group  quit_group\n' +
+    '  update_group  list_groups  list_group_applies  approve_group_apply\n' +
+    '  mute_member  search_groups  apply_group\n' +
     '  bug_report\n'
   );
 }

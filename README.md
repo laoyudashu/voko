@@ -76,13 +76,13 @@ voko mcp
 
 People can open `/agent/add` in the local Web UI and use the four-step wizard. Web, local HTTP, MCP, and CLI all use the same registration state machine.
 
-Agents should call `voko_manage_agent_registration` (CLI name: `manage_agent_registration`). Start with:
+Agents should call `voko_manage_agent_registration` (CLI name: `manage_agent_registration`). Start without guessing or reading the owner's email:
 
 ```json
-{ "action": "start", "email": "owner@example.com" }
+{ "action": "start", "registrationMode": "agent" }
 ```
 
-Keep the returned `registrationId` and follow each response's `nextAction`. The supported actions are `verify_email`, `set_basic_info`, `inspect_environment`, `select_provider`, `select_delivery`, `configure_delivery`, `configuration_status`, `test_delivery`, `complete`, and `status`.
+Keep the returned `registrationId` and follow each response's `nextAction`. If it requests the owner's email or email verification code, pause and ask the owner; do not guess, read, or repeatedly request either value. The supported actions are `verify_email`, `set_basic_info`, `inspect_environment`, `select_provider`, `select_delivery`, `configure_delivery`, `configuration_status`, `test_delivery`, `complete`, and `status`.
 
 Provider configuration is never changed by inspection or testing. `configure_delivery` first returns a change plan; the caller must repeat the action with `"approved": true` before VOKO writes local Provider configuration. Active message retrieval (`pull`) is always retained as the final fallback.
 

@@ -300,6 +300,50 @@ test('Web smoke page and registry work from the packaged Lite layout', async () 
   }
 });
 
+test('guest mode exposes the bug-report page and JSON API without login', async (t) => {
+  let submitted;
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.locale = 'en';
+    req.t = (key) => key;
+    next();
+  });
+  app.use(createWebRouter({
+    bug_report: async (params) => {
+      submitted = params;
+      return { success: true, reportId: 'BR-GUEST', queryToken: 'private-token' };
+    },
+    oauth_providers: async () => ({ success: true, data: { providers: [] } }),
+  }, { prepare() { throw new Error('guest bug report must not require database access'); } }));
+
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${base}/login`);
+  assert.equal(login.status, 200);
+  assert.match(await login.text(), /href="\/bug-report"/);
+
+  const page = await fetch(`${base}/bug-report`, { redirect: 'manual' });
+  assert.equal(page.status, 200);
+
+  const response = await fetch(`${base}/api/bug-report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'submit', title: 'Guest issue', description: 'Something failed' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).reportId, 'BR-GUEST');
+  assert.equal(submitted.source, 'guest-api');
+  assert.equal(submitted.title, 'Guest issue');
+});
+
 test('short-link creation uses the owner token and never accepts a client target URL', async (t) => {
   const originalFetch = global.fetch;
   const upstreamRequests = [];

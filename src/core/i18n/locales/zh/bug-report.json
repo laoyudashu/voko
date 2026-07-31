@@ -30,6 +30,8 @@
   "web.bug_report.severity.high": "高 — 主要功能无法正常使用",
   "web.bug_report.severity.critical": "严重 — 崩溃、数据或安全问题",
   "web.bug_report.submit": "提交错误",
+  "web.bug_report.submit_success": "错误报告已提交",
+  "web.bug_report.submit_another": "继续提交",
   "web.bug_report.report_id": "报告 ID",
   "web.bug_report.query_token": "私密查询凭证",
   "web.bug_report.save_token": "请妥善保存这两项信息。查询凭证仅用于查看本报告进展，请勿分享。",

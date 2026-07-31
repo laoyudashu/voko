@@ -30,6 +30,8 @@
   "web.bug_report.severity.high": "高 — 主要機能が利用不可",
   "web.bug_report.severity.critical": "重大 — クラッシュ、データ、セキュリティ問題",
   "web.bug_report.submit": "報告を送信",
+  "web.bug_report.submit_success": "バグ報告を送信しました",
+  "web.bug_report.submit_another": "続けて報告",
   "web.bug_report.report_id": "レポート ID",
   "web.bug_report.query_token": "非公開照会トークン",
   "web.bug_report.save_token": "両方を安全に保存してください。照会トークンはこの報告の確認専用で、共有しないでください。",

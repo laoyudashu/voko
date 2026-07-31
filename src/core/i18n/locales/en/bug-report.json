@@ -30,6 +30,8 @@
   "web.bug_report.severity.high": "High — core feature unavailable",
   "web.bug_report.severity.critical": "Critical — crash, data, or security issue",
   "web.bug_report.submit": "Submit report",
+  "web.bug_report.submit_success": "Bug report submitted",
+  "web.bug_report.submit_another": "Submit another",
   "web.bug_report.report_id": "Report ID",
   "web.bug_report.query_token": "Private query token",
   "web.bug_report.save_token": "Save both values. The query token is only for checking this report and should not be shared.",

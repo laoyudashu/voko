@@ -106,7 +106,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       mode: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.mode')),
       taskId: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.taskId')),
       approved: z.boolean().optional().describe(T('mcp.tool.manage_agent_registration.p.approved')),
-      registrationMode: z.enum(['human', 'agent']).optional(),
+      registrationMode: z.enum(['human', 'agent']).optional().describe(T('mcp.tool.manage_agent_registration.p.registrationMode')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_agent_registration(params);
