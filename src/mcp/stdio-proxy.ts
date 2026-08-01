@@ -17,6 +17,7 @@ export {};
  */
 
 const readline = require('readline');
+const crypto = require('crypto');
 const { t } = require('../core/i18n');
 const {
   detectCurrentAgentInstance,
@@ -59,8 +60,16 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
   refreshRuntimeToken();
   const callerProvider = detectCurrentAgentType();
   const callerInstance = callerProvider ? detectCurrentAgentInstance(callerProvider) : null;
+  const { detectProviderSessionFromEnv } = require('../core/registration-caller-context');
+  const callerSession = detectProviderSessionFromEnv(callerProvider);
+  const callerConnection = crypto.randomUUID();
   if (callerProvider) headers['X-VOKO-Caller-Provider'] = callerProvider;
   if (callerInstance) headers['X-VOKO-Caller-Instance'] = callerInstance;
+  if (callerSession) {
+    headers['X-VOKO-Caller-Session'] = callerSession;
+    headers['X-VOKO-Caller-Evidence'] = 'provider_env';
+  }
+  headers['X-VOKO-Caller-Connection'] = callerConnection;
 
   process.stderr.write(t('cli.mcp.ready', { url: mcpUrl() }) + '\n');
 

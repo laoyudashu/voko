@@ -14,6 +14,7 @@
  */
 
 const os = require('os');
+const crypto = require('crypto');
 const { CliAdapter } = require('../../adapters/cli-adapter');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
@@ -34,9 +35,30 @@ class ClaudeCliProvider extends CliAdapter {
         '--strict-mcp-config',
         '--no-chrome',
         '--disable-slash-commands',
-        '--no-session-persistence',
         '--permission-mode', 'plan',
       ],
+      adapterType: 'claude-cli',
+      createManagedSessionId: () => crypto.randomUUID(),
+      argsForSession: (sessionId: string | null, isNew: boolean) => [
+        '-p',
+        '--output-format', 'stream-json',
+        '--verbose',
+        '--include-partial-messages',
+        '--bare',
+        '--safe-mode',
+        '--tools=',
+        '--strict-mcp-config',
+        '--no-chrome',
+        '--disable-slash-commands',
+        ...(sessionId ? (isNew ? ['--session-id', sessionId] : ['--resume', sessionId]) : []),
+        '--permission-mode', 'plan',
+      ],
+      sessionIdFromLine: (line: string) => {
+        try {
+          const event = JSON.parse(line);
+          return String(event.session_id || event.sessionId || '').trim() || null;
+        } catch (_) { return null; }
+      },
       parser: 'stream-json',
       matchType: 'claude-code',
       priority: 1,

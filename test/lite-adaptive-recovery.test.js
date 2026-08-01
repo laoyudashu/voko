@@ -104,3 +104,65 @@ test('ACP restores only when its session is newly created', async () => {
   }
 });
 
+test('ACP attaches the requested session ID when resume returns an empty result', async () => {
+  const adapter = new AcpAdapter();
+  adapter._loadSdk = async () => ({ methods: { agent: { session: { resume: 'resume' } } } });
+  let attachedResponse;
+  const state = {
+    agentCtx: {
+      request: async () => ({}),
+      attachSession: (response) => {
+        attachedResponse = response;
+        return { sessionId: response.sessionId, dispose() {} };
+      },
+    },
+  };
+
+  const session = await adapter._resumeSession(state, 'existing-session');
+  assert.equal(session.sessionId, 'existing-session');
+  assert.equal(attachedResponse.sessionId, 'existing-session');
+});
+
+test('ACP propagates a rejected resume request', async () => {
+  const adapter = new AcpAdapter();
+  adapter._loadSdk = async () => ({ methods: { agent: { session: { resume: 'resume' } } } });
+  const state = {
+    agentCtx: {
+      request: async () => { throw new Error('session unavailable'); },
+      attachSession: () => assert.fail('failed resume must not attach a session'),
+    },
+  };
+
+  await assert.rejects(adapter._resumeSession(state, 'existing-session'), /session unavailable/);
+});
+
+test('ACP propagates prompt failures instead of emitting an empty successful reply', async () => {
+  const adapter = new AcpAdapter();
+  const replies = [];
+  adapter.on('agent.reply', (reply) => replies.push(reply));
+  adapter._ensureAgent = async () => ({ sessions: new Map() });
+  adapter._ensureSession = async () => ({
+    sessionId: 'session-a',
+    prompt: async () => { throw new Error('prompt failed'); },
+    nextUpdate: async () => new Promise(() => {}),
+    dispose() {},
+  });
+
+  await assert.rejects(adapter._pushViaAcp(basePayload), /prompt failed/);
+  assert.equal(replies.length, 0);
+});
+
+test('ACP CLI fallback failures remain unhandled so dispatcher can leave the message for Pull', async () => {
+  const adapter = new AcpAdapter({
+    cliFallback: {
+      cmd: process.execPath,
+      args: ['-e', 'process.exit(7)'],
+      parser: 'raw',
+    },
+  });
+  const replies = [];
+  adapter.on('agent.reply', (reply) => replies.push(reply));
+
+  await assert.rejects(adapter._pushViaCli(basePayload), /code 7/);
+  assert.equal(replies.length, 0);
+});

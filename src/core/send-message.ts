@@ -103,9 +103,10 @@ function persistAgentMessage(
   messageType = 'text',
   channelType = 1,
   mentions: unknown = null,
+  requestedMessageId?: string,
 ) {
   const now = Date.now();
-  const msgId = `msg-${agentId}-${channelId}-${now}-${Math.random().toString(36).slice(2, 10)}`;
+  const msgId = requestedMessageId || `msg-${agentId}-${channelId}-${now}-${Math.random().toString(36).slice(2, 10)}`;
   const timestamp = Math.floor(now / 1000);
   const uid = fromUid || 'voko';
 
@@ -118,7 +119,7 @@ function persistAgentMessage(
     db.prepare(`
       INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(msgId, uid, channelId, content, channelId, channelType || 1, agentId, timestamp, 1, 'sent', null, null, 0, 0, 0, contentType, mentions ? JSON.stringify(mentions) : null);
+    `).run(msgId, uid, channelId, content, channelId, channelType || 1, agentId, timestamp, 1, 'pending', null, null, 0, 0, 0, contentType, mentions ? JSON.stringify(mentions) : null);
   } catch (e: unknown) {
     const message = errorMessage(e);
     if (!message.includes('UNIQUE constraint')) {
@@ -168,6 +169,7 @@ function createSendMessage({ db, deliver }: {
     messageType = 'text',
     channelType = 1,
     mentions?: unknown,
+    requestedMessageId?: string,
   ) {
     // 归一化换行：客户端可能将 \n 作为字面字符发送
     content = content.replace(/\\n/g, '\n');
@@ -183,7 +185,9 @@ function createSendMessage({ db, deliver }: {
     }
 
     // 2. 落库（共享：messages + conversations）
-    const { msgId, timestamp, contentType } = persistAgentMessage(db, agentId, channelId, content, fromUid, messageType, channelType, mentions);
+    const { msgId, timestamp, contentType } = persistAgentMessage(
+      db, agentId, channelId, content, fromUid, messageType, channelType, mentions, requestedMessageId,
+    );
 
     // 3. 统一投递（worker 优先 → wukongIM 直连兜底）
     const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId);
@@ -196,8 +200,11 @@ function createSendMessage({ db, deliver }: {
     });
 
     if (!sendResult.success) {
+      try { db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
       return { success: false, error: sendResult.error, messageId: sendResult.messageId || msgId };
     }
+
+    try { db.prepare(`UPDATE messages SET status='sent' WHERE id=?`).run(msgId); } catch (_) {}
 
     return { success: true, messageId: sendResult.messageId || msgId, clientMsgNo: sendResult.clientMsgNo, messageSeq: sendResult.messageSeq };
   };

@@ -29,7 +29,7 @@ function createDb() {
 }
 
 describe('Dispatcher final reply idempotency', () => {
-  it('同一 turn 的重复 final 只向下游投递一次，且不消费下一轮上下文', () => {
+  it('同一 turn 的重复 final 只向下游投递一次，且不消费下一轮上下文', async () => {
     const provider = new ReplyProvider();
     const replies = [];
     const dispatcher = createDispatcher({
@@ -56,6 +56,8 @@ describe('Dispatcher final reply idempotency', () => {
       senderUid: 'sender-2',
       messageId: 'turn-2',
     });
+
+    await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(provider.payloads[0].turnId, 'turn-1');
     assert.equal(provider.payloads[1].turnId, 'turn-2');

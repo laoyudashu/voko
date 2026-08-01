@@ -23,6 +23,18 @@ function createTestDatabase(t) {
   return db;
 }
 
+test('database initialization creates a missing parent directory', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-parent-'));
+  const dbPath = path.join(root, 'config', 'voko', 'voko.db');
+  const db = initDatabase(dbPath, { silent: true });
+  t.after(() => {
+    db.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.equal(fs.existsSync(dbPath), true);
+});
+
 test('invalid channel config shape falls back to the default channel', (t) => {
   const db = createTestDatabase(t);
   db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')

@@ -16,7 +16,8 @@ const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
 const { compareVersions } = require('./core/auto-updater');
 const { t } = require('./core/i18n');
-const { runWithRegistrationCaller } = require('./core/registration-caller-context');
+const { runWithProviderCaller, detectProviderSessionFromEnv } = require('./core/registration-caller-context');
+const { detectCurrentAgentInstance, detectCurrentAgentType } = require('./core/registration-orchestrator');
 const { spawnSync } = require('child_process');
 const path = require('path');
 
@@ -312,9 +313,16 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
       return { success: r.success !== false };
     }
 
-    const result = toolName === 'manage_agent_registration'
-      ? await runWithRegistrationCaller({ source: 'cli' }, () => handlers[toolName](params))
-      : await handlers[toolName](params);
+    const providerType = detectCurrentAgentType();
+    const nativeSessionId = detectProviderSessionFromEnv(providerType);
+    const caller = {
+      source: 'cli',
+      providerType: providerType || null,
+      providerInstanceId: providerType ? detectCurrentAgentInstance(providerType) : null,
+      nativeSessionId,
+      evidence: nativeSessionId ? 'provider_env' : null,
+    };
+    const result = await runWithProviderCaller(caller, () => handlers[toolName](params));
     console.log(JSON.stringify(result, null, 2));
     return { success: result.success !== false };
   } catch (err: any) {

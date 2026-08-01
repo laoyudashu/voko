@@ -4,6 +4,7 @@ const os = require('os');
 const { PushProvider } = require('../base-provider');
 const { runCli, killTree, checkCliAvailable } = require('../../adapters/cli-spawner');
 const { createParser } = require('../../adapters/cli-parsers');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const {
   isolatedOpenCodeEnv,
   buildOpenCodeVisitorContent,
@@ -61,6 +62,9 @@ class OpenCodeAttachProvider extends PushProvider {
   constructor(options: Options = {}) {
     super();
     this._db = options.db || null;
+    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(options.db as any)
+      : null;
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
     this._cmd = resolveOpenCodeCommand();
@@ -168,11 +172,39 @@ class OpenCodeAttachProvider extends PushProvider {
   }
 
   async push(payload: PushPayload): Promise<void> {
+    try {
+      await this._pushOnce(payload);
+    } catch (error) {
+      const binding = payload.providerBinding?.providerType === 'opencode' ? payload.providerBinding : null;
+      if (!binding || (payload as any).__vokoManagedRetry) throw error;
+      try { this._bindingStore?.markStale(binding.id); } catch (_) {}
+      await this._pushOnce({ ...payload, providerBinding: null, __vokoManagedRetry: true });
+    }
+  }
+
+  async _pushOnce(payload: PushPayload): Promise<void> {
     await this._ensureServer();
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `opencode-${Date.now()}`);
     const sessionKey = `opencode:${agentId}:${fromUid}`;
-    const savedSession = this._loadSession(agentId, fromUid);
+    const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
+    const activeBinding = (payload as any).__vokoManagedRetry
+      ? null
+      : payload.providerBinding?.providerType === 'opencode'
+      ? payload.providerBinding
+      : this._bindingStore?.getByAdapter(agentId, channelId, channelType, ADAPTER_TYPE)
+        || this._bindingStore?.importLegacy({
+          agentId,
+          channelId,
+          channelType,
+          providerType: 'opencode',
+          deliveryMode: 'attach',
+          adapterType: ADAPTER_TYPE,
+          legacyVisitorId: fromUid,
+        });
+    const savedSession = activeBinding?.nativeSessionId
+      || ((payload as any).__vokoManagedRetry ? null : this._loadSession(agentId, fromUid));
     const prompt = this._prompt(agentId, fromUid, content);
     const args = [
       'run', '--attach', `http://127.0.0.1:${this._port}`, '--format', 'json',
@@ -186,10 +218,6 @@ class OpenCodeAttachProvider extends PushProvider {
       format: 'opencode-json',
       onText: (chunk: string) => {
         fullContent = (fullContent + chunk).slice(0, MAX_REPLY_CHARS);
-        this.emit('agent.reply', {
-          agentId, visitorId: fromUid, content: fullContent, done: false,
-          sessionKey, turnId, replyId: turnId,
-        });
       },
     });
     const result = await runCli({
@@ -202,6 +230,7 @@ class OpenCodeAttachProvider extends PushProvider {
         ...isolatedOpenCodeEnv(),
         OPENCODE_SERVER_PASSWORD: this._password,
       },
+      logOutput: false,
       onStdoutLine: (line: string) => {
         try {
           const event = JSON.parse(line);
@@ -212,11 +241,22 @@ class OpenCodeAttachProvider extends PushProvider {
         } catch {}
         parser.handleLine(line);
       },
-      onStderrLine: (line: string) => console.error(`[OPENCODE ATTACH] ${line}`),
     });
     parser.finish();
     if (result.code !== 0) throw new Error(`OpenCode attach exited with code ${result.code}`);
-    if (observedSession) this._saveSession(agentId, fromUid, observedSession);
+    if (observedSession && this._bindingStore) {
+      this._bindingStore.saveManaged({
+        agentId,
+        channelId,
+        channelType,
+        providerType: 'opencode',
+        providerInstanceId: activeBinding?.providerInstanceId || null,
+        nativeSessionId: observedSession,
+        deliveryMode: 'attach',
+        adapterType: ADAPTER_TYPE,
+        expectedVersion: activeBinding?.bindingVersion ?? 0,
+      });
+    }
     if (eventError) throw new Error(eventError);
     if (!fullContent && observedSession) fullContent = await this._loadLatestReply(observedSession);
     if (!fullContent) throw new Error('OpenCode attach returned no reply');

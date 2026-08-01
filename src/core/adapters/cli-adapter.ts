@@ -22,6 +22,7 @@
 const { PushProvider } = require('../dispatcher/base-provider');
 const { runCli, checkCliAvailable, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
+const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, PushPayload } from '../dispatcher/types';
 
@@ -39,6 +40,16 @@ export interface CliAdapterOptions {
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cwd?: string;
+  adapterType?: string;
+  argsForSession?: (sessionId: string | null, isNew: boolean) => string[];
+  createManagedSessionId?: () => string | null;
+  sessionIdFromLine?: (line: string) => string | null;
+  resolveSessionIdAfterRun?: (context: {
+    agentId: string;
+    fromUid: string;
+    startedAt: number;
+    cwd: string;
+  }) => Promise<string | null> | string | null;
 }
 
 export type CliProviderOptions = Pick<CliAdapterOptions, 'contextWindow' | 'db' | 'cwd'>;
@@ -85,6 +96,14 @@ class CliAdapter extends PushProvider {
     this._contextWindow = opts.contextWindow ?? 0;
     this._db = opts.db || null;
     this._cwd = opts.cwd || null;
+    this._adapterType = String(opts.adapterType || opts.matchType || opts.name || 'cli').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+    this._argsForSession = opts.argsForSession || null;
+    this._createManagedSessionId = opts.createManagedSessionId || null;
+    this._sessionIdFromLine = opts.sessionIdFromLine || null;
+    this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
+    this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(opts.db as any)
+      : null;
     this._available = null;
   }
 
@@ -105,10 +124,19 @@ class CliAdapter extends PushProvider {
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `cli-${Date.now()}`);
     const sessionKey = `cli:${agentId}:${fromUid}`;
+    const binding = payload.providerBinding?.providerType === this._matchType
+      ? payload.providerBinding
+      : null;
+    let nativeSessionId = binding?.nativeSessionId || null;
+    let newManagedSession = false;
+    if (!nativeSessionId && this._createManagedSessionId) {
+      nativeSessionId = this._createManagedSessionId();
+      newManagedSession = !!nativeSessionId;
+    }
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
-    if (this._contextWindow > 0 && this._db) {
+    if (!nativeSessionId && this._contextWindow > 0 && this._db) {
       try {
         contextMsgs = (this._db.prepare(
           `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
@@ -123,19 +151,27 @@ class CliAdapter extends PushProvider {
 
     // 构造参数：args 含 {prompt} 占位则替换；否则 prompt 经 stdin 传入
     // （避开 Windows cmd.exe 对含换行多行命令行参数的破坏）
-    const useStdin = !this._args.includes('{prompt}');
+    const configuredArgs = this._argsForSession
+      ? this._argsForSession(nativeSessionId, newManagedSession)
+      : this._args;
+    const useStdin = !configuredArgs.includes('{prompt}');
     // Windows 下 {prompt} 经命令行参数传入时须净化 cmd.exe 元字符，否则访客
     // 消息中的 " 会断裂 cmd 引号、&|<> 充当命令分隔/重定向 → 任意命令执行 (RCE)，
     // 换行会截断命令行。用函数式 replacement 避免 String.replace 对 $ 模式的展开。
     const safePrompt = process.platform === 'win32' ? sanitizeCmdArg(prompt) : prompt;
     const args = useStdin
-      ? [...this._args]
-      : this._args.map((a: string) => a.replace('{prompt}', () => safePrompt));
+      ? [...configuredArgs]
+      : configuredArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
     const cmd = this._cmd;
 
     let fullContent = '';
     let error: Error | null = null;
     let exitCode: number | null = null;
+    let observedSessionId = nativeSessionId;
+    const observeSession = (line: string) => {
+      if (!this._sessionIdFromLine) return;
+      try { observedSessionId = this._sessionIdFromLine(line) || observedSessionId; } catch (_) {}
+    };
 
     // 创建解析器
     const parser = createParser({
@@ -144,20 +180,13 @@ class CliAdapter extends PushProvider {
       onText: (chunk: string) => {
         fullContent += chunk;
         if (fullContent.length > MAX_REPLY_CHARS) fullContent = fullContent.slice(0, MAX_REPLY_CHARS) + '\n…[回复过长，已截断]';
-        this.emit('agent.reply', {
-          agentId, visitorId: fromUid,
-          content: fullContent,
-          done: false,
-          sessionKey,
-          turnId,
-          replyId: turnId,
-        });
       },
       onDone: () => {
         // silent 模式下由 finish() 触发
       },
     });
 
+    const runStartedAt = Date.now();
     try {
       const result = await runCli({
         cmd,
@@ -167,18 +196,35 @@ class CliAdapter extends PushProvider {
         tag: this._name,
         timeout: this._timeout,
         env: this._env,
-        onStdoutLine: (line: string) => parser.handleLine(line),
-        onStderrLine: (line: string) => console.error(`[${this._name}] ${line}`),
+        logOutput: false,
+        onStdoutLine: (line: string) => {
+          observeSession(line);
+          parser.handleLine(line);
+        },
+        onStderrLine: (line: string) => {
+          observeSession(line);
+        },
       });
 
       exitCode = result.code;
+
+      if (!observedSessionId && exitCode === 0 && this._resolveSessionIdAfterRun) {
+        try {
+          observedSessionId = await this._resolveSessionIdAfterRun({
+            agentId,
+            fromUid,
+            startedAt: runStartedAt,
+            cwd: this._cwd || process.cwd(),
+          });
+        } catch (_) {}
+      }
 
       // silent 模式：不解析，进程退出即完成
       if (this._parserName === 'silent') {
         parser.finish();
       }
 
-      if (exitCode !== 0 && !fullContent) {
+      if (exitCode !== 0) {
         error = new Error(`${this._name} 退出 code=${exitCode}`);
       }
     } catch (err) {
@@ -186,14 +232,39 @@ class CliAdapter extends PushProvider {
       console.error(`[${this._name}] push 失败: ${errorMessage(err)}`);
     }
 
+    if (error && binding && !(payload as any).__vokoManagedRetry) {
+      try { this._bindingStore?.markStale(binding.id); } catch (_) {}
+      return this.push({ ...payload, providerBinding: null, __vokoManagedRetry: true });
+    }
+
+    if (!error && observedSessionId && this._bindingStore) {
+      const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+      const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
+      if (binding && observedSessionId === binding.nativeSessionId) {
+        this._bindingStore.touch(binding.id);
+      } else {
+        this._bindingStore.saveManaged({
+          agentId,
+          channelId,
+          channelType,
+          providerType: this._matchType,
+          providerInstanceId: binding?.providerInstanceId || null,
+          nativeSessionId: observedSessionId,
+          deliveryMode: 'cli',
+          adapterType: this._adapterType,
+          expectedVersion: binding?.bindingVersion ?? 0,
+        });
+      }
+    }
+
+    if (error) throw error;
     this.emit('agent.reply', {
       agentId, visitorId: fromUid,
-      content: fullContent || (error ? `[${this._name} Error] ${error.message}` : ''),
+      content: fullContent,
       done: true,
       sessionKey,
       turnId,
       replyId: turnId,
-      error: error ? { code: `cli_${exitCode || 'failed'}`, message: error.message } : undefined,
     });
   }
 

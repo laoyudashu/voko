@@ -12,7 +12,7 @@ export {};
 
 const { Router } = require('express');
 const { normalizeBackendType } = require('../../core/agent-backend-types');
-const { runWithRegistrationCaller } = require('../../core/registration-caller-context');
+const { runWithProviderCaller } = require('../../core/registration-caller-context');
 
 const MCP_VERSION = '2025-11-25';
 const SERVER_NAME = 'voko';
@@ -102,10 +102,16 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
             source: 'mcp',
             ...(allowedProviders.has(providerType) ? {
               providerType,
-              instanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 160) || null,
+              providerInstanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
+              instanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
+              nativeSessionId: String(req.headers['x-voko-caller-session'] || '').slice(0, 512) || null,
+              connectionId: String(req.headers['x-voko-caller-connection'] || '').slice(0, 128) || null,
+              evidence: ['provider_env', 'provider_hook', 'provider_event', 'voko_created'].includes(
+                String(req.headers['x-voko-caller-evidence'] || ''),
+              ) ? String(req.headers['x-voko-caller-evidence']) : null,
             } : {}),
           };
-          const result = await runWithRegistrationCaller(
+          const result = await runWithProviderCaller(
             caller,
             () => handler({ method: 'tools/call', params: msg.params }),
           );

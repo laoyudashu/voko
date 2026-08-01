@@ -14,6 +14,8 @@ const { t } = require('../core/i18n');
 const { normalizeBackendType } = require('../core/agent-backend-types');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
+const { getProviderCaller } = require('../core/registration-caller-context');
+const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
 import type { LiteContext } from '../context';
 import type { DatabaseLike } from '../types/database';
 
@@ -238,7 +240,7 @@ type McpContext = Omit<LiteContext,
   startAgentWorker?(agentId?: string, config?: unknown, appPaths?: unknown): unknown;
   stopAgentWorker?(agentId?: string): Promise<unknown> | unknown;
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
-  sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown): Promise<DynamicRow>;
+  sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string): Promise<DynamicRow>;
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
   uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string): Promise<unknown>;
   getPaymentAuth?(agentId?: string): unknown;
@@ -534,6 +536,7 @@ async function probeFileMetadata(url?: string) {
 }
 
 function createToolHandlers(cx: McpContext) {
+  const providerBindings = new ProviderConversationBindingStore(cx.db);
   // These tools can change identity, access, external delivery or payment
   // state. MCP definitions mark mutations as destructive; retain a minimal
   // local audit trail without persisting arguments, credentials or content.
@@ -1152,7 +1155,56 @@ function createToolHandlers(cx: McpContext) {
       }
 
       const mentions = channelType === 2 ? (p.mentions || null) : null;
-      const result = await cx.sendMessage(p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions);
+      let pendingBinding: { id: string } | null = null;
+      let isolateWithManagedSession = false;
+      const outboundMessageId = `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const caller = getProviderCaller();
+      if (caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
+        try {
+          const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
+            'SELECT backend_type, backend_instance_id FROM agents WHERE agent_id=? LIMIT 1',
+            [p.agentId],
+          )[0];
+          const agentProvider = normalizeBackendType(agent?.backend_type || '');
+          if (agentProvider && agentProvider === normalizeBackendType(caller.providerType)) {
+            isolateWithManagedSession = providerBindings.isActiveElsewhere({
+              agentId: p.agentId,
+              channelId: p.toUid,
+              channelType,
+              providerType: agentProvider,
+              providerInstanceId: caller.providerInstanceId || caller.instanceId || agent?.backend_instance_id || null,
+              nativeSessionId: caller.nativeSessionId,
+            });
+            pendingBinding = providerBindings.beginCallerBinding({
+              agentId: p.agentId,
+              channelId: p.toUid,
+              channelType,
+              providerType: agentProvider,
+              providerInstanceId: caller.providerInstanceId || caller.instanceId || agent?.backend_instance_id || null,
+              nativeSessionId: caller.nativeSessionId,
+              deliveryMode: caller.source === 'cli' ? 'cli' : 'mcp',
+              adapterType: `${agentProvider}-${caller.source === 'cli' ? 'cli' : 'mcp'}`,
+              pendingMessageId: outboundMessageId,
+            });
+          }
+        } catch (_) {
+          pendingBinding = null;
+        }
+      }
+
+      const result = await cx.sendMessage(
+        p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
+      );
+      if (pendingBinding) {
+        try {
+          if (result?.success !== false) providerBindings.activatePending(pendingBinding.id);
+          else providerBindings.discardPending(pendingBinding.id);
+        } catch (_) {
+          try { providerBindings.discardPending(pendingBinding.id); } catch (_) {}
+        }
+      } else if (isolateWithManagedSession && result?.success !== false) {
+        try { providerBindings.markConversationStale(p.agentId, p.toUid, channelType); } catch (_) {}
+      }
       // 检测收消息通道是否畅通
       if (cx.checkReceiveChannel) {
         const ch = cx.checkReceiveChannel(p.agentId);

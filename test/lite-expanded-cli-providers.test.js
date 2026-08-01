@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { QwenCliProvider } = require('../build/core/dispatcher/providers/qwen-cli');
 const { KiroCliProvider } = require('../build/core/dispatcher/providers/kiro-cli');
@@ -44,8 +46,11 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
 });
 
-test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
+test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted alias', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-zeroclaw-fallback-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const db = {
+    _dbPath: path.join(root, 'voko.db'),
     prepare(sql) {
       assert.match(sql, /backend_instance_id/);
       return { get: () => ({ backend_instance_id: 'voko_test' }) };
@@ -56,6 +61,22 @@ test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
   assert.deepEqual(provider._cliArgs, ['acp']);
   assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
+  const fallbackArgs = provider._cliFallback.argsForPayload({
+    agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
+  });
+  assert.deepEqual(fallbackArgs.slice(0, 3), ['agent', '--agent', 'voko_test']);
+  assert.ok(fallbackArgs.includes('--session-state-file'));
+  assert.equal(provider._cliFallback.stdinPrompt, true);
+  assert.equal(provider._cliFallback.parser, 'zeroclaw-interactive');
+  assert.equal(fallbackArgs.includes('--message'), false);
+  const stateFile = fallbackArgs[fallbackArgs.indexOf('--session-state-file') + 1];
+  assert.match(path.basename(stateFile), /^[a-f0-9]{64}\.json$/);
+  assert.doesNotMatch(stateFile, /agent-voko|visitor-secret/);
+  fs.writeFileSync(stateFile, '{}', { mode: 0o644 });
+  provider._cliFallback.afterRun({
+    agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
+  });
+  if (process.platform !== 'win32') assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
 });
 
 test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', () => {
@@ -163,8 +184,10 @@ test('Codex and Claude run safely from a non-project temporary directory', () =>
   const args = claude._args.join(' ');
   for (const flag of [
     '--bare', '--safe-mode', '--tools=', '--strict-mcp-config',
-    '--no-chrome', '--disable-slash-commands', '--no-session-persistence',
+    '--no-chrome', '--disable-slash-commands',
   ]) assert.ok(claude._args.includes(flag), flag);
+  assert.ok(!claude._args.includes('--no-session-persistence'));
+  assert.ok(claude._argsForSession('session-id', false).includes('--resume'));
   assert.match(args, /--permission-mode plan/);
   assert.doesNotMatch(args, /dangerously-skip-permissions|bypassPermissions/);
 });
@@ -233,6 +256,19 @@ test('Kiro parser removes terminal formatting and usage lines', () => {
   assert.equal(output.trim(), 'VOKO_KIRO_OK');
 });
 
+test('ZeroClaw interactive parser emits only the Agent reply', () => {
+  const chunks = [];
+  const parser = createParser({ format: 'zeroclaw-interactive', onText: (chunk) => chunks.push(chunk) });
+  parser.handleLine('🦀 ZeroClaw Interactive Mode');
+  parser.handleLine('Type /help for commands.');
+  parser.handleLine('');
+  parser.handleLine('> first line');
+  parser.handleLine('second line');
+  parser.handleLine('> ');
+  parser.finish();
+  assert.equal(chunks.join(''), 'first line\nsecond line\n');
+});
+
 test('registration detects all added CLIs but only exposes safe automatic delivery', () => {
   const commands = new Set(['qwen', 'kiro-cli', 'copilot', 'openhands', 'aider', 'q', 'cursor-agent', 'grok', 'zeroclaw']);
   const service = new RegistrationOrchestrator({
@@ -252,7 +288,7 @@ test('registration detects all added CLIs but only exposes safe automatic delive
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
   const zeroModes = service.deliveryCapabilities('zeroclaw');
-  assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp_ws', 'acp', 'pull']);
+  assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp_ws', 'acp', 'cli', 'pull']);
   assert.equal(zeroModes[0].status, 'configuration_required');
   assert.equal(zeroModes[0].selected, false);
   assert.equal(zeroModes[1].status, 'configuration_required');

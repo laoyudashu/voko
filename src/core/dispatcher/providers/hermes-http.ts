@@ -2,6 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { PushProvider } = require('../base-provider');
 const { buildConversationRecoveryPrompt } = require('../conversation-context');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { ChildProcess } from 'child_process';
 import type {
   HermesApiClientOptions,
@@ -46,6 +47,9 @@ class HermesHttpProvider extends PushProvider {
   constructor(database: unknown, mainWindow: unknown, options: HermesHttpOptions = {}) {
     super();
     this.db = database;
+    this._bindingStore = database && typeof (database as any).exec === 'function'
+      ? new ProviderConversationBindingStore(database as any)
+      : null;
     this.mainWindow = mainWindow;
     this.options = options;
     this.enabled = false;
@@ -275,7 +279,7 @@ class HermesHttpProvider extends PushProvider {
   ): Promise<void> {
     const parts = sessionKey.split(':');
     if (parts.length < 3 || parts[0] !== 'hermes') {
-      throw new Error(`无效的 Hermes sessionKey: ${sessionKey}`);
+      throw new Error('无效的 Hermes session');
     }
     const agentId = parts[1]!;
     const visitorId = parts.slice(2).join(':');
@@ -467,7 +471,22 @@ class HermesHttpProvider extends PushProvider {
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
-    const sessionKey = `hermes:${agentId}:${fromUid}`;
+    const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
+      && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionKey = canResumeBinding
+      ? payload.providerBinding!.nativeSessionId
+      : `hermes:${agentId}:${fromUid}`;
+    const profileId = this._profileForAgent(agentId);
+    const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
+    const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
+    if (!canResumeBinding && this._bindingStore) {
+      this._bindingStore.saveManaged({
+        agentId, channelId: bindingChannelId, channelType: bindingChannelType,
+        providerType: 'hermes', providerInstanceId: profileId,
+        nativeSessionId: sessionKey, deliveryMode: 'http',
+        adapterType: 'hermes-http', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
+      });
+    }
     const prompt = this._recoveryWarmedSessions.has(sessionKey)
       ? content
       : buildConversationRecoveryPrompt(this.db, payload);

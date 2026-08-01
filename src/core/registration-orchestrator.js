@@ -14,7 +14,8 @@ const { discoverHermes } = require('../server/hermes-discovery');
 const { getRegistrationCaller } = require('./registration-caller-context');
 const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types');
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
-const { resolveCursorCommand } = require('./dispatcher/cursor-command');
+const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
+const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -548,7 +549,9 @@ class RegistrationOrchestrator {
     const knownLabels = new Map(known.map((item) => [item.value, item.label]));
     for (const [type, command] of Object.entries(DETECTABLE_CLI_COMMANDS)) {
       const available = type === 'cursor'
-        ? hasCommand('cursor-agent') || hasCommand('agent')
+        ? (this.options.commandAvailable
+          ? hasCommand('cursor-agent') || hasCommand('agent')
+          : isCursorCommandAvailable())
         : hasCommand(command);
       if (type === 'openclaw' || type === 'hermes' || !available) continue;
       detected.push({
@@ -714,6 +717,13 @@ class RegistrationOrchestrator {
           action: !available ? null : stdio.ready ? 'test' : null,
           description: 'WebSocket 不可用时，为该 Agent 启动独立 ACP 进程。',
         },
+        {
+          mode: 'cli', label: 'CLI 持久会话', role: 'fallback',
+          status: available && instanceId ? 'ready' : 'configuration_required',
+          selected: available && !!instanceId,
+          action: available && instanceId ? 'test' : null,
+          description: 'ACP 不可用时，使用已确认的 Agent 实例和独立会话状态文件继续接收消息。',
+        },
         pull,
       ];
     }
@@ -759,7 +769,9 @@ class RegistrationOrchestrator {
       ];
     }
     if (type === 'cursor') {
-      const available = hasCommand('cursor-agent') || hasCommand('agent');
+      const available = this.options.commandAvailable
+        ? hasCommand('cursor-agent') || hasCommand('agent')
+        : isCursorCommandAvailable();
       const status = available ? 'ready' : 'unavailable';
       const action = available ? 'test' : null;
       return [
@@ -778,7 +790,9 @@ class RegistrationOrchestrator {
     }
     const cliCommand = CLI_COMMANDS[type];
     if (cliCommand) {
-      const available = hasCommand(cliCommand);
+      const available = type === 'gemini' && !this.options.commandAvailable
+        ? hasCommand(cliCommand) && isGeminiSandboxAvailable()
+        : hasCommand(cliCommand);
       const metadata = CLI_DELIVERY_METADATA[type] || {};
       return [
         {

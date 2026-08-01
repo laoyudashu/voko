@@ -41,6 +41,7 @@ interface ParserContext {
   _aiderSawRepoMap?: boolean;
   _aiderReplyStarted?: boolean;
   _aiderThinking?: boolean;
+  _zeroclawReplyStarted?: boolean;
 }
 
 interface ParserOptions {
@@ -348,6 +349,23 @@ function rawParser(line: string, ctx: ParserContext) {
   if (line) ctx.onText(line + '\n');
 }
 
+function zeroclawInteractiveParser(line: string, ctx: ParserContext) {
+  const plain = line
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .trimEnd();
+  if (!plain || /ZeroClaw Interactive Mode/i.test(plain) || /^Type \/help/i.test(plain)) return;
+  const promptLine = plain.match(/^\s*>\s?(.*)$/);
+  if (promptLine) {
+    const content = promptLine[1].trimEnd();
+    if (!content) return;
+    ctx._zeroclawReplyStarted = true;
+    ctx.onText(content + '\n');
+    return;
+  }
+  if (ctx._zeroclawReplyStarted) ctx.onText(plain + '\n');
+}
+
 // ── Aider 单次消息输出解析器 ──────────────────────────────────────────
 //
 // aider --message --no-stream 会在正文前后打印版本、模型和 token/cost 信息。
@@ -426,6 +444,7 @@ function createParser({
     'opencode-json': opencodeJsonParser,
     jsonl: jsonlParser,
     raw: rawParser,
+    'zeroclaw-interactive': zeroclawInteractiveParser,
     'aider-output': aiderOutputParser,
     'kiro-output': kiroOutputParser,
     silent: silentParser,
@@ -467,6 +486,7 @@ module.exports = {
   opencodeJsonParser,
   jsonlParser,
   rawParser,
+  zeroclawInteractiveParser,
   aiderOutputParser,
   kiroOutputParser,
   silentParser,

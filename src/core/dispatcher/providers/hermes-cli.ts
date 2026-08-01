@@ -1,5 +1,6 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
@@ -36,6 +37,9 @@ class HermesCliProvider extends PushProvider {
     super();
     this._contextWindow = options.contextWindow ?? 0;
     this._db = options.db || null;
+    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(options.db as any)
+      : null;
     this._available = null;
   }
 
@@ -65,8 +69,21 @@ class HermesCliProvider extends PushProvider {
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `hermes-cli-${Date.now()}`);
-    const sessionKey = `hermes:${agentId}:${fromUid}`;
+    const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
+      && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionKey = canResumeBinding
+      ? payload.providerBinding!.nativeSessionId
+      : `hermes:${agentId}:${fromUid}`;
     const profileId = this._instanceForAgent(agentId);
+    const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
+    if (!canResumeBinding && this._bindingStore) {
+      this._bindingStore.saveManaged({
+        agentId, channelId, channelType, providerType: 'hermes',
+        providerInstanceId: profileId, nativeSessionId: sessionKey,
+        deliveryMode: 'cli', adapterType: 'hermes-cli', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
+      });
+    }
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
@@ -81,7 +98,7 @@ class HermesCliProvider extends PushProvider {
     const notification = _buildNotification(agentId, fromUid, content, contextMsgs);
     // Windows 下 -z 经 cmd.exe 传多行/含元字符的 notification 会被截断或注入，净化为单行
     const safeNotification = process.platform === 'win32' ? sanitizeCmdArg(notification) : notification;
-    console.error(`[HermesCli] push agent=${agentId} visitor=${fromUid} sessionKey=${sessionKey}`);
+    console.error(`[HermesCli] push agent=${agentId} visitor=${fromUid} session=selected`);
 
     try {
       const result = await runCli({
@@ -89,10 +106,7 @@ class HermesCliProvider extends PushProvider {
         args: ['--profile', profileId, '-z', safeNotification],
         tag: 'hermes-cli',
         timeout: 120000,
-        onStderrLine: (line: string) => {
-          if (line.startsWith("[agent/embedded] [trace:") || line.startsWith("[sessions/store]")) return;
-          console.error(`[HermesCli] ${line}`);
-        },
+        logOutput: false,
       });
 
       if (result.code === 0) {
@@ -134,10 +148,7 @@ class HermesCliProvider extends PushProvider {
         args: ['--profile', profileId, '-z', notification],
         tag: 'hermes-cli',
         timeout: 120000,
-        onStderrLine: (line: string) => {
-          if (line.startsWith("[agent/embedded] [trace:") || line.startsWith("[sessions/store]")) return;
-          console.error(`[HermesCli] ${line}`);
-        },
+        logOutput: false,
       });
       const replyText = _extractReply(result.stdout);
       if (replyText) {

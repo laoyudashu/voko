@@ -2,6 +2,7 @@ const path = require('path');
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable } = require('../../adapters/cli-spawner');
 const { resolveGooseCommand } = require('../goose-command');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
@@ -37,6 +38,9 @@ class GooseCliProvider extends PushProvider {
     this._available = null;
     this._binPath = options.binPath || resolveGooseCommand();
     this._db = options.db || null;
+    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(options.db as any)
+      : null;
     this._contextWindow = options.contextWindow ?? 0;
   }
 
@@ -58,6 +62,20 @@ class GooseCliProvider extends PushProvider {
     const turnId = String(payload.turnId || payload.messageId || `goose-cli-${Date.now()}`);
     const sessionKey = `goose:${agentId}:${fromUid}`;
     const sessionName = `goose:${agentId}:${fromUid}`;
+    const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
+    const activeBinding = payload.providerBinding?.providerType === 'goose'
+      ? payload.providerBinding
+      : this._bindingStore?.getByAdapter(agentId, channelId, channelType, 'goose')
+        || this._bindingStore?.importLegacy({
+          agentId,
+          channelId,
+          channelType,
+          providerType: 'goose',
+          deliveryMode: 'cli',
+          adapterType: 'goose',
+          legacyVisitorId: fromUid,
+        });
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
@@ -76,9 +94,7 @@ class GooseCliProvider extends PushProvider {
         return `[${i + 1}] ${role}: ${m.content}`;
       }).join('\n')}`;
     }
-    const hasSession = this._db ? !!this._db.prepare(
-      `SELECT 1 FROM agent_session_handles WHERE agent_id=? AND visitor_id=? AND adapter_type='goose'`
-    ).get(agentId, fromUid) : false;
+    const hasSession = !!activeBinding;
 
     const args = ['run', '-i', '-', '--name', sessionName, '--quiet', '--output-format', 'json'];
     if (hasSession) args.push('--resume');
@@ -91,15 +107,23 @@ class GooseCliProvider extends PushProvider {
         stdinInput: notification,
         tag: 'goose-cli',
         timeout: 180000,
-        onStderrLine: (line: string) => console.error(`[GooseCli] ${line}`),
+        logOutput: false,
       });
 
-      if (!hasSession && this._db && result.code === 0) {
-        try {
-          this._db.prepare(
-            `INSERT OR REPLACE INTO agent_session_handles (agent_id, visitor_id, adapter_type, session_handle, updated_at) VALUES (?, ?, 'goose', ?, ?)`
-          ).run(agentId, fromUid, sessionName, Date.now());
-        } catch {}
+      if (result.code !== 0) throw new Error(`Goose exited with code ${result.code}`);
+
+      if (result.code === 0 && this._bindingStore) {
+        this._bindingStore.saveManaged({
+          agentId,
+          channelId,
+          channelType,
+          providerType: 'goose',
+          providerInstanceId: activeBinding?.providerInstanceId || null,
+          nativeSessionId: activeBinding?.nativeSessionId || sessionName,
+          deliveryMode: 'cli',
+          adapterType: 'goose',
+          expectedVersion: activeBinding?.bindingVersion ?? 0,
+        });
       }
 
       const replyText = _extractReply(result.stdout);
@@ -116,6 +140,7 @@ class GooseCliProvider extends PushProvider {
       }
     } catch (err) {
       console.error(`[GooseCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      throw err;
     }
   }
 

@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
 const { buildConversationRecoveryPrompt } = require('../conversation-context');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, PushPayload } from '../types';
 
 type ProtocolMessage = Record<string, any>; // OpenClaw gateway 的动态 JSON 协议边界
@@ -50,6 +51,9 @@ class OpenClawWsProvider {
 
   constructor(database: unknown, mainWindow: unknown) {
     this.db = database;
+    this._bindingStore = database && typeof (database as any).exec === 'function'
+      ? new ProviderConversationBindingStore(database as any)
+      : null;
     this.mainWindow = mainWindow;
 
     // Gateway 配置
@@ -311,7 +315,7 @@ class OpenClawWsProvider {
     const lastTime = this._processedMsgs.get(dedupKey);
     if (lastTime && Date.now() - lastTime < 30000) return;
     this._processedMsgs.set(dedupKey, Date.now());
-    console.log(`[OpenClaw WS] ✅ 收到完整回复 sessionKey=${resolvedKey} visitorId=${visitorId} 内容="${text.substring(0, 80)}"`);
+    console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
     this.emit('agent.reply', { agentId, visitorId, content: text, sessionKey: resolvedKey, ...identity });
   }
 
@@ -842,10 +846,10 @@ class OpenClawWsProvider {
 
           if (subscribed) {
             this.subscribedSessions.add(key);
-            console.log(`[OpenClaw WS] ✅ 订阅成功 sessionKey=${key} 耗时=${elapsed}ms`);
+            console.log(`[OpenClaw WS] ✅ 订阅成功 耗时=${elapsed}ms`);
             pending.resolve?.();
           } else {
-            console.log(`[OpenClaw WS] ❌ 订阅失败 sessionKey=${key} 耗时=${elapsed}ms`);
+            console.log(`[OpenClaw WS] ❌ 订阅失败 耗时=${elapsed}ms`);
             pending.reject?.(new Error(`OpenClaw session subscription failed: ${key}`));
           }
           // 订阅完成后处理排队消息
@@ -910,7 +914,7 @@ class OpenClawWsProvider {
 
         if (isFinal) {
           const finalReply = pending ? pending.currentReply : text;
-          console.log(`[OpenClaw WS] ✅ 收到完整回复 sessionKey=${sessionKey} visitorId=${visitorId} 内容="${finalReply}"`);
+          console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
 
           // 不再直接发送回复到访客，只存储到 pending 状态等待后续处理
           // 清理 pending reply 状态
@@ -1095,10 +1099,10 @@ class OpenClawWsProvider {
     const now = Date.now();
     for (const [key, pending] of this.pendingSubscriptions) {
       if (now - pending.timestamp > maxAgeMs) {
-        console.warn(`[OpenClaw WS] 清除过期订阅 pending sessionKey=${key}`);
+        console.warn('[OpenClaw WS] 清除过期订阅');
         this.pendingSubscriptions.delete(key);
         if (pending.timeout) clearTimeout(pending.timeout);
-        pending.reject?.(new Error(`OpenClaw session subscription timeout: ${key}`));
+        pending.reject?.(new Error('OpenClaw session subscription timeout'));
       }
     }
   }
@@ -1156,7 +1160,7 @@ class OpenClawWsProvider {
 
         if (item.type === 'sendToSession') {
           // 处理 sendToSession 类型的消息
-          console.log(`[OpenClaw WS] 处理队列中的sendToSession sessionKey=${item.sessionKey}`);
+          console.log('[OpenClaw WS] 处理队列中的 sendToSession');
           this.sendToSession(item.sessionKey, item.message, item.extraData).then(() => {
             if (item.onSent) item.onSent();
           });
@@ -1233,10 +1237,10 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null,
   ): Promise<void> {
     const now = Date.now();
-    console.log(`[OpenClaw WS] 🚀 sendToSession sessionKey=${sessionKey} t=${now}`);
+    console.log(`[OpenClaw WS] 🚀 sendToSession t=${now}`);
     this._evictStalePendingSubscriptions();
     if (!this._supportsSessionSubscribe()) {
-      if (!this.connected || this.connecting) throw new Error(`OpenClaw WebSocket unavailable: ${sessionKey}`);
+      if (!this.connected || this.connecting) throw new Error('OpenClaw WebSocket unavailable');
       this.subscribedSessions.add(sessionKey);
       this.sendChatSend(sessionKey, message, extraData, now);
       return;
@@ -1249,7 +1253,7 @@ class OpenClawWsProvider {
     if (this.subscribedSessions.has(sessionKey)) return Promise.resolve();
     const existing = this.pendingSubscriptions.get(sessionKey);
     if (existing?.promise) return existing.promise;
-    if (!this.connected || this.connecting) return Promise.reject(new Error(`OpenClaw WebSocket unavailable: ${sessionKey}`));
+    if (!this.connected || this.connecting) return Promise.reject(new Error('OpenClaw WebSocket unavailable'));
 
     const now = Date.now();
     const reqId = this.generateId();
@@ -1258,7 +1262,7 @@ class OpenClawWsProvider {
       const timeout = setTimeout(() => {
         if (this.pendingSubscriptions.get(sessionKey) !== pending) return;
         this.pendingSubscriptions.delete(sessionKey);
-        reject(new Error(`OpenClaw session subscription timeout: ${sessionKey}`));
+        reject(new Error('OpenClaw session subscription timeout'));
       }, 30000);
       pending = { timestamp: now, id: reqId, resolve, reject, timeout, promise: null };
       this.pendingSubscriptions.set(sessionKey, pending);
@@ -1307,7 +1311,7 @@ class OpenClawWsProvider {
       messageId: extraData?.messageId || '',
       timestamp: extraData?.timestamp || Math.floor((sendTimestamp || Date.now()) / 1000)
     });
-    console.log(`[OpenClaw WS] 📤 发送chat.send sessionKey=${sessionKey} visitorId=${visitorId} t=${sendTimestamp}`);
+    console.log(`[OpenClaw WS] 📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
 
     this.send({
       type: 'req',
@@ -1440,7 +1444,21 @@ class OpenClawWsProvider {
       ).get(agentId, 'openclaw');
       targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
     } catch (_) {}
-    const sessionKey = `agent:${targetAgentId}:${fromUid}`;
+    const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionKey = canResumeBinding
+      ? payload.providerBinding!.nativeSessionId
+      : `agent:${targetAgentId}:${fromUid}`;
+    const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
+    const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
+    if (!canResumeBinding && this._bindingStore) {
+      this._bindingStore.saveManaged({
+        agentId, channelId: bindingChannelId, channelType: bindingChannelType,
+        providerType: 'openclaw', providerInstanceId: targetAgentId,
+        nativeSessionId: sessionKey, deliveryMode: 'websocket',
+        adapterType: 'openclaw-ws', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
+      });
+    }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const recoveryKey = sessionKey.toLowerCase();
     const prompt = this._recoveryWarmedSessions.has(recoveryKey)

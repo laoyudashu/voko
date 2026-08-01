@@ -225,7 +225,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 
 // DB schema 版本号（lite/desktop 版本脱钩后，靠此数字感知对方写入的库结构）
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 // ============================================
 // DB 写入串行队列
@@ -251,6 +251,9 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   const _origErr = console.error;
   if (options.silent) console.error = () => {};
   try {
+  if (dbPath !== ':memory:') {
+    fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+  }
   const db = new Database(dbPath);
   db._dbPath = dbPath;
   try { db.exec('PRAGMA journal_mode = WAL'); } catch (_: any) {}
@@ -448,6 +451,37 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL,
       UNIQUE(agent_id, visitor_id, adapter_type)
     )
+  `);
+
+  // Unified local-only mapping from a VOKO conversation to a provider-native session.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_conversation_bindings (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      channel_type INTEGER NOT NULL DEFAULT 1,
+      provider_type TEXT NOT NULL,
+      provider_instance_id TEXT,
+      delivery_mode TEXT NOT NULL,
+      adapter_type TEXT NOT NULL,
+      native_session_id TEXT NOT NULL,
+      session_origin TEXT NOT NULL CHECK(session_origin IN ('caller','voko_managed')),
+      status TEXT NOT NULL CHECK(status IN ('pending','active','stale','unavailable')),
+      binding_version INTEGER NOT NULL,
+      pending_message_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_binding_active_conversation
+      ON provider_conversation_bindings(agent_id, channel_id, channel_type)
+      WHERE status='active';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_binding_active_native_session
+      ON provider_conversation_bindings(provider_type, COALESCE(provider_instance_id,''), native_session_id)
+      WHERE status='active';
+    CREATE INDEX IF NOT EXISTS idx_provider_binding_pending_message
+      ON provider_conversation_bindings(pending_message_id)
+      WHERE status='pending';
   `);
   try {
     const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_session_handles'")
@@ -1835,9 +1869,11 @@ function createDatabaseAPI(db: DatabaseSync) {
         if (agentId) {
           db.prepare(`DELETE FROM messages WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
           db.prepare(`DELETE FROM conversations WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
+          db.prepare(`DELETE FROM provider_conversation_bindings WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
         } else {
           db.prepare(`DELETE FROM messages WHERE channel_id = ?`).run(channelId);
           db.prepare(`DELETE FROM conversations WHERE channel_id = ?`).run(channelId);
+          db.prepare(`DELETE FROM provider_conversation_bindings WHERE channel_id = ?`).run(channelId);
         }
         return { success: true };
       } catch (e: any) { return { success: false, error: e.message }; }

@@ -28,6 +28,18 @@ export interface PushPayload {
     instructions: string[];
     ownerCommandsOnlyVia: string;
   };
+  providerBinding?: {
+    id: string;
+    bindingVersion: number;
+    providerType: string;
+    providerInstanceId: string | null;
+    deliveryMode: string;
+    adapterType: string;
+    nativeSessionId: string;
+    sessionOrigin: 'caller' | 'voko_managed';
+    channelId: string;
+    channelType: number;
+  } | null;
   [key: string]: unknown;
 }
 

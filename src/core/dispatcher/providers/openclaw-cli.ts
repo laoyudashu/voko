@@ -1,5 +1,6 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
@@ -44,6 +45,9 @@ class OpenClawCliProvider extends PushProvider {
     super();
     this._contextWindow = options.contextWindow ?? 0;
     this._db = options.db || null;
+    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(options.db as any)
+      : null;
     this._available = null;
     this._isWin = process.platform === 'win32';
   }
@@ -76,7 +80,20 @@ class OpenClawCliProvider extends PushProvider {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `openclaw-cli-${Date.now()}`);
     const targetAgentId = this._instanceForAgent(agentId);
-    const sessionKey = `agent:${targetAgentId}:${fromUid}`;
+    const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionKey = canResumeBinding
+      ? payload.providerBinding!.nativeSessionId
+      : `agent:${targetAgentId}:${fromUid}`;
+    const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
+    if (!canResumeBinding && this._bindingStore) {
+      this._bindingStore.saveManaged({
+        agentId, channelId, channelType, providerType: 'openclaw',
+        providerInstanceId: targetAgentId, nativeSessionId: sessionKey,
+        deliveryMode: 'cli', adapterType: 'openclaw-cli', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
+      });
+    }
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
@@ -87,7 +104,7 @@ class OpenClawCliProvider extends PushProvider {
         ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
       } catch (_) {}
     }
-    console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} sessionKey=${sessionKey} contextWindow=${this._contextWindow}`);
+    console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=selected contextWindow=${this._contextWindow}`);
 
     const notification = _buildNotification(agentId, fromUid, content, contextMsgs, sessionKey);
     // Windows 下 --message 经 cmd.exe 传多行/含元字符 notification 会被截断或注入，净化为单行
@@ -99,10 +116,7 @@ class OpenClawCliProvider extends PushProvider {
         args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', safeNotification, '--local', '--json'],
         tag: 'openclaw-cli',
         timeout: 120000,
-        onStderrLine: (line: string) => {
-          if (line.startsWith("[agent/embedded] [trace:") || line.startsWith("[sessions/store]")) return;
-          console.error(`[OpenClawCli] ${line}`);
-        },
+        logOutput: false,
       });
       // 从 JSON stdout 提取 agent 回复并 emit（messenger.js 会写入 DB）
       const replyText = _extractReply(result.stdout);
@@ -126,7 +140,7 @@ class OpenClawCliProvider extends PushProvider {
     const targetAgentId = this._instanceForAgent(agentId);
     const sessionKey = `agent:${targetAgentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `openclaw-cli-steer-${Date.now()}`);
-    console.error(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} sessionKey=${sessionKey}`);
+    console.error(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} session=selected`);
     const notification = JSON.stringify({
       type: 'voko_owner_message',
       visitorId,
@@ -140,10 +154,7 @@ class OpenClawCliProvider extends PushProvider {
         args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', notification, '--local', '--json'],
         tag: 'openclaw-cli',
         timeout: 120000,
-        onStderrLine: (line: string) => {
-          if (line.startsWith("[agent/embedded] [trace:") || line.startsWith("[sessions/store]")) return;
-          console.error(`[OpenClawCli] ${line}`);
-        },
+        logOutput: false,
       });
       const replyText = _extractReply(result.stdout);
       if (replyText) {

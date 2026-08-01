@@ -16,6 +16,7 @@
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
+const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 
 interface DispatcherProvider {
   priority?: number;
@@ -155,6 +156,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
+  const _bindingStore = new ProviderConversationBindingStore(db);
+  const _conversationRoutes = new Map<string, Promise<void>>();
+  try { _bindingStore.recoverPending(); } catch (_) {}
   const _processedFinalReplies = new Map<string, number>();
   const FINAL_REPLY_TTL_MS = 10 * 60 * 1000;
   function _replyContextKey(agentId?: string, visitorId?: string): string {
@@ -501,6 +505,41 @@ ${body}
   }
 
   /** 实际路由 push；统一保存回复上下文。 */
+  function _enqueueRoute(agentId: string, payload: PushPayload, context: ReplyContext | null): void {
+    const channelId = payload.channelId || payload.fromUid;
+    const channelType = payload.channelType === 2 ? 2 : 1;
+    const key = `${agentId}::${channelType}::${channelId}`;
+    const previous = _conversationRoutes.get(key);
+    const next = previous
+      ? previous.catch(() => {}).then(() => _doRoute(agentId, payload, context))
+      : _doRoute(agentId, payload, context);
+    _conversationRoutes.set(key, next);
+    void next.finally(() => {
+      if (_conversationRoutes.get(key) === next) _conversationRoutes.delete(key);
+    });
+  }
+
+  function _captureProviderBinding(agentId: string, payload: PushPayload): PushPayload {
+    const channelId = payload.channelId || payload.fromUid;
+    const channelType = payload.channelType === 2 ? 2 : 1;
+    const binding = _bindingStore.getActive(agentId, channelId, channelType);
+    return {
+      ...payload,
+      providerBinding: binding ? {
+        id: binding.id,
+        bindingVersion: binding.bindingVersion,
+        providerType: binding.providerType,
+        providerInstanceId: binding.providerInstanceId,
+        deliveryMode: binding.deliveryMode,
+        adapterType: binding.adapterType,
+        nativeSessionId: binding.nativeSessionId,
+        sessionOrigin: binding.sessionOrigin,
+        channelId: binding.channelId,
+        channelType: binding.channelType,
+      } : null,
+    };
+  }
+
   async function _doRoute(
     agentId: string,
     payload: PushPayload,
@@ -521,6 +560,7 @@ ${body}
         rawContent: payload.rawContent ?? payload.content,
         content: wrapPushContent(routedPayload.content, sourceType),
         securityContext: createMessageSecurityContext(sourceType),
+        providerBinding: payload.providerBinding ?? null,
       };
       const replyContext = {
         agentId,
@@ -536,6 +576,10 @@ ${body}
           await provider.push!(providerPayload);
           return;
         } catch (err) {
+          if (providerPayload.providerBinding?.id) {
+            try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
+            providerPayload.providerBinding = null;
+          }
           console.error(`[Dispatcher] push 通道失败，尝试备选 agent=${agentId}:`, errorMessage(err));
         }
       }
@@ -553,14 +597,17 @@ ${body}
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
-    const workingPayload = { ...payload, rawContent: payload.rawContent ?? payload.content };
+    const workingPayload = _captureProviderBinding(agentId, {
+      ...payload,
+      rawContent: payload.rawContent ?? payload.content,
+    });
     const prepared = _prepareA2A(agentId, workingPayload);
     if (prepared.blocked) return;
     if (prepared.delay) {
       const meta = _metaOf(agentId);
       const context = prepared.context;
       if (!context || !meta.imUid) {
-        void _doRoute(agentId, workingPayload, context);
+        _enqueueRoute(agentId, workingPayload, context);
         return;
       }
       const localAgentUid = meta.imUid;
@@ -569,11 +616,11 @@ ${body}
       console.log(`[Dispatcher] A2A 降速 agent=${agentId} from=${peerUid} 延迟 ${prepared.delay}ms`);
       setTimeout(() => {
         if (_consumeConverged(localAgentUid, peerUid, scope)) return;
-        void _doRoute(agentId, workingPayload, context);
+        _enqueueRoute(agentId, workingPayload, context);
       }, prepared.delay);
       return;
     }
-    void _doRoute(agentId, workingPayload, prepared.context);
+    _enqueueRoute(agentId, workingPayload, prepared.context);
   }
 
   /** pull 路径复用同一治理；被收敛/熔断的消息返回 null，否则返回注入 STATE 后的副本。 */

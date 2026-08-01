@@ -23,6 +23,7 @@ export interface RunCliOptions {
   stdinInput?: string;
   cwd?: string;
   maxOutputBytes?: number;
+  logOutput?: boolean;
 }
 
 export interface RunCliResult {
@@ -103,6 +104,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     stdinInput,
     cwd,
     maxOutputBytes = 8 * 1024 * 1024,
+    logOutput = true,
   } = opts;
 
   const log = _makeLogger(tag);
@@ -201,14 +203,14 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       if (_lineBuffer && onStdoutLine) {
         try { onStdoutLine(_lineBuffer); } catch {}
       }
-      if (stdout) {
+      if (logOutput && stdout) {
         if (stdout.length > 500) {
           log(`[${tag}] stdout(${stdout.length}chars):\n${stdout.slice(0, 200)}...${stdout.slice(-100)}`);
         } else {
           log(`[${tag}] stdout:\n${stdout}`);
         }
       }
-      if (stderr) log(`[${tag}] stderr(尾3000):\n${stderr.slice(-3000)}`);
+      if (logOutput && stderr) log(`[${tag}] stderr(尾3000):\n${stderr.slice(-3000)}`);
       resolve({ stdout, stderr, code, signal });
     });
   });

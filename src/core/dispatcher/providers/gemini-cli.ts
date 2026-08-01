@@ -17,8 +17,24 @@
  */
 
 const os = require('os');
+const { execFileSync } = require('child_process');
 const { CliAdapter } = require('../../adapters/cli-adapter');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
+
+let sandboxAvailable: boolean | null = null;
+
+function isGeminiSandboxAvailable(): boolean {
+  if (sandboxAvailable !== null) return sandboxAvailable;
+  try {
+    execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], {
+      stdio: 'ignore', windowsHide: true, timeout: 5000,
+    });
+    sandboxAvailable = true;
+  } catch (_) {
+    sandboxAvailable = false;
+  }
+  return sandboxAvailable;
+}
 
 class GeminiCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
@@ -37,6 +53,10 @@ class GeminiCliProvider extends CliAdapter {
       cwd: options.cwd || os.tmpdir(),
     });
   }
+
+  isAvailable(agentId: string): boolean {
+    return super.isAvailable(agentId) && isGeminiSandboxAvailable();
+  }
 }
 
-module.exports = { GeminiCliProvider };
+module.exports = { GeminiCliProvider, isGeminiSandboxAvailable };

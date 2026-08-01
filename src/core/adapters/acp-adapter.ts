@@ -21,6 +21,7 @@ const { PushProvider } = require('../dispatcher/base-provider');
 const { runCli, sanitizeCmdArg, checkCliAvailable } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
+const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
@@ -28,8 +29,11 @@ import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
 interface CliFallbackOptions {
   cmd: string;
   args?: string[];
+  argsForPayload?: (payload: PushPayload) => string[];
   parser?: string;
   timeout?: number;
+  stdinPrompt?: boolean;
+  afterRun?: (payload: PushPayload) => void;
 }
 
 export interface AcpAdapterOptions {
@@ -149,6 +153,9 @@ class AcpAdapter extends PushProvider {
 
     // DB 引用（session 句柄持久化）
     this._db = options.db || null;
+    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+      ? new ProviderConversationBindingStore(options.db as any)
+      : null;
 
     // 日志前缀（用于区分不同 ACP 实现）
     this._logPrefix = options.name || 'ACP';
@@ -283,15 +290,16 @@ class AcpAdapter extends PushProvider {
 
     let session: AcpSession;
     try {
-      session = await this._ensureSession(state, agentId, fromUid);
-      console.error(`[${this._logPrefix}:${agentId}] session 创建成功 (sessionId=${session.sessionId})`);
+      session = await this._ensureSession(state, agentId, fromUid, payload);
+      console.error(`[${this._logPrefix}:${agentId}] session 已就绪`);
     } catch (err) {
       console.error(`[${this._logPrefix}:${agentId}] session/new 失败: ${errorMessage(err)}`);
       throw err;
     }
 
     const sessionKey = `acp:${agentId}:${fromUid}`;
-    const needsRecovery = this._recoveryNeededSessions.delete(sessionKey);
+    const cacheKey = Array.from(state.sessions.entries()).find(([, value]) => value === session)?.[0] || sessionKey;
+    const needsRecovery = this._recoveryNeededSessions.delete(cacheKey);
     let fullContent = '';
 
     try {
@@ -321,7 +329,7 @@ class AcpAdapter extends PushProvider {
 
         // prompt 已失败且无 stop 事件 → 提前退出
         if (update === null) {
-          try { await promptPromise; } catch {}
+          await promptPromise;
           break;
         }
 
@@ -339,7 +347,7 @@ class AcpAdapter extends PushProvider {
             if (fullContent.length > MAX_REPLY_CHARS) {
               console.error(`[${this._logPrefix}:${agentId}] 回复超过 ${MAX_REPLY_CHARS} 字符上限，截断以防 OOM`);
               fullContent = fullContent.slice(0, MAX_REPLY_CHARS) + '\n…[回复过长，已截断]';
-              state.sessions.delete(sessionKey);
+              state.sessions.delete(cacheKey);
               try { session.dispose(); } catch {}
               this._deleteSessionHandle(agentId, fromUid); // 同步清 DB 持久化句柄，免下次 resume 失效 session
               break;
@@ -355,7 +363,7 @@ class AcpAdapter extends PushProvider {
 
       if (stopReceived) await promptPromise;
     } catch (err) {
-      state.sessions.delete(sessionKey);
+      state.sessions.delete(cacheKey);
       this._deleteSessionHandle(agentId, fromUid);
       throw err;
     }
@@ -382,7 +390,8 @@ class AcpAdapter extends PushProvider {
     // 函数式 replacement 避免 String.replace 的 $ 模式展开（CODE-5）
     const rawContent = this._wrapVisitorPrompt(content, payload);
     const safeContent = process.platform === 'win32' ? sanitizeCmdArg(rawContent) : rawContent;
-    const args = (fb.args || []).map((arg: string) =>
+    const fallbackArgs = fb.argsForPayload ? fb.argsForPayload(payload) : (fb.args || []);
+    const args = fallbackArgs.map((arg: string) =>
       arg.replace(/\{prompt\}/g, () => safeContent)
     );
 
@@ -407,23 +416,29 @@ class AcpAdapter extends PushProvider {
         timeout: fb.timeout || 120000,
         env: this.options.env,
         cwd: this._cwd,
+        stdinInput: fb.stdinPrompt ? `${rawContent.replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n` : undefined,
+        logOutput: false,
         onStdoutLine: (line: string) => parser.handleLine(line),
       });
 
-      if (result.code !== 0) {
-        error = new Error(`CLI fallback 退出 code=${result.code}`);
-      }
+      if (result.code !== 0) error = new Error(`CLI fallback exited with code ${result.code}`);
       parser.finish();
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
+    } finally {
+      try { fb.afterRun?.(payload); } catch (err) {
+        error = err instanceof Error ? err : new Error(String(err));
+      }
     }
+
+    if (error) throw error;
+    if (!fullContent.trim()) throw new Error('CLI fallback produced no reply');
 
     this.emit('agent.reply', {
       agentId, visitorId: fromUid,
-      content: fullContent || (error ? `[CLI Fallback Error] ${error.message}` : ''),
+      content: fullContent,
       done: true, sessionKey,
       turnId, replyId: turnId,
-      error: error ? { code: 'cli_fallback_failed', message: error.message } : undefined,
     });
   }
 
@@ -601,14 +616,32 @@ class AcpAdapter extends PushProvider {
     state: AcpAgentState,
     agentId: string,
     visitorId: string,
+    payload: PushPayload,
   ): Promise<AcpSession> {
-    const sessionKey = `acp:${agentId}:${visitorId}`;
+    const channelId = payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, '');
+    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
+    let binding = payload.providerBinding?.providerType === this._matchType
+      ? payload.providerBinding
+      : null;
+    if (!binding && this._bindingStore) {
+      binding = this._bindingStore.getByAdapter(agentId, channelId, channelType, this._adapterType)
+        || this._bindingStore.importLegacy({
+          agentId,
+          channelId,
+          channelType,
+          providerType: this._matchType || 'acp',
+          deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
+          adapterType: this._adapterType,
+          legacyVisitorId: visitorId,
+        });
+    }
+    const handle = binding?.nativeSessionId || null;
+    const sessionKey = `acp:${agentId}:${visitorId}:${handle || 'managed'}`;
     // 1. 内存缓存命中
     const existing = state.sessions.get(sessionKey);
     if (existing) return existing;
 
     // 2. 尝试从 DB 句柄恢复 session
-    const handle = this._loadSessionHandle(agentId, visitorId);
     if (handle) {
       try {
         const session = await this._resumeSession(state, handle);
@@ -620,6 +653,7 @@ class AcpAdapter extends PushProvider {
         console.error(`[${this._logPrefix}] session resume 失败 agent=${agentId} visitor=${visitorId}: ${errorMessage(err)}`);
       }
       // resume 失败 → 清除失效句柄
+      if (binding?.id) this._bindingStore?.markStale(binding.id);
       this._deleteSessionHandle(agentId, visitorId);
     }
 
@@ -633,9 +667,22 @@ class AcpAdapter extends PushProvider {
     }).start();
 
     // 4. 持久化 session 句柄
-    this._saveSessionHandle(agentId, visitorId, session.sessionId);
+    const saved = this._bindingStore?.saveManaged({
+      agentId,
+      channelId,
+      channelType,
+      providerType: this._matchType || 'acp',
+      providerInstanceId: binding?.providerInstanceId || null,
+      nativeSessionId: session.sessionId,
+      deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
+      adapterType: this._adapterType,
+      expectedVersion: binding?.bindingVersion ?? 0,
+    });
 
     state.sessions.set(sessionKey, session);
+    if (saved?.nativeSessionId) {
+      state.sessions.set(`acp:${agentId}:${visitorId}:${saved.nativeSessionId}`, session);
+    }
     this._recoveryNeededSessions.add(sessionKey);
     return session;
   }
@@ -689,7 +736,17 @@ class AcpAdapter extends PushProvider {
       mcpServers: [],
     });
     // attachSession 将 session/resume 响应包装为 ActiveSession
-    return agentCtx.attachSession(response);
+    const responseWithSessionId = response && typeof response === 'object'
+      ? { ...(response as Record<string, unknown>), sessionId: (response as any).sessionId || sessionId }
+      : { sessionId };
+    const session = agentCtx.attachSession(responseWithSessionId);
+    // ZeroClaw's resume extension returns an empty object on success, so the
+    // requested, already-validated ID is supplied above for the SDK router.
+    if (!session || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
+      try { session?.dispose(); } catch {}
+      throw new Error('ACP session/resume did not return a valid session ID');
+    }
+    return session;
   }
 
   /** 断开 agent 连接，清理资源 */

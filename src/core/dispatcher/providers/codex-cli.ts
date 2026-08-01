@@ -25,6 +25,16 @@ class CodexCliProvider extends CliAdapter {
       cmd: 'codex',
       // --sandbox read-only：禁止写操作和命令执行（含 curl），仅允许读文件
       args: ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-'],
+      adapterType: 'codex-cli',
+      argsForSession: (sessionId: string | null) => sessionId
+        ? ['--sandbox', 'read-only', 'exec', 'resume', sessionId, '--json', '--skip-git-repo-check', '-']
+        : ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-'],
+      sessionIdFromLine: (line: string) => {
+        try {
+          const event = JSON.parse(line);
+          return String(event.thread_id || event.threadId || event.thread?.id || '').trim() || null;
+        } catch (_) { return null; }
+      },
       parser: 'codex-jsonl',
       matchType: 'codex',
       priority: 1,
