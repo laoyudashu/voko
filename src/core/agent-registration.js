@@ -20,6 +20,7 @@ const {
 } = require('./url-security');
 
 const USER_ACCESS_TOKEN_CONFIG_TYPE = 'user_access_token';
+const CURRENT_USER_EMAIL_CONFIG_TYPE = 'current_user_email';
 const DEFAULT_IM_SERVER_URL = ENDPOINTS.im.wsUrl;
 
 function isRecord(value) {
@@ -103,6 +104,12 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     if (!normalized || !token) return;
     // 只保留当前登录邮箱（登录新邮箱即切换用户，覆盖旧 token）
     await saveUserAccessTokenConfig({ [normalized]: { user_access_token: token, updated_at: Date.now() } });
+    if (writeConfig) {
+      await writeConfig(CURRENT_USER_EMAIL_CONFIG_TYPE, normalized);
+    } else {
+      db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+        .run(CURRENT_USER_EMAIL_CONFIG_TYPE, JSON.stringify(normalized), Date.now());
+    }
     // 同步更新 runtime.userEmail，确保首页展示当前用户 agent（而非旧缓存）
     try {
       const rtRow = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
@@ -118,6 +125,11 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
   function getUserAccessToken() {
     try {
       const map = loadUserAccessTokenConfig();
+      const selectedRow = db.prepare('SELECT data FROM config WHERE type = ?').get(CURRENT_USER_EMAIL_CONFIG_TYPE);
+      const selected = normalizeUserEmail(selectedRow?.data ? JSON.parse(selectedRow.data) : '');
+      if (selected && map[selected]?.user_access_token) {
+        return { success: true, data: { email: selected, token: map[selected].user_access_token } };
+      }
       const entries = Object.entries(map);
       if (entries.length === 0) return { success: true, data: null };
       entries.sort((a, b) => (b[1]?.updated_at || 0) - (a[1]?.updated_at || 0));

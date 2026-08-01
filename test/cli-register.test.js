@@ -24,7 +24,17 @@ function createMockCore() {
     registerAgentInDb: async (p) => { calls.registerAgentInDb = p; return { success: true }; },
     updateAgentBinding: async (p) => { calls.updateAgentBinding = p; return { success: true }; },
   };
-  const db = { prepare: () => ({ all: () => [], get: () => undefined, run: () => ({}) }) };
+  const db = {
+    prepare: (sql) => ({
+      all: () => sql.includes("type='current_user_email'")
+        ? [{ data: JSON.stringify('a@b.com') }]
+        : (sql.includes("type='user_access_token'")
+          ? [{ data: JSON.stringify({ 'a@b.com': { user_access_token: 'token', updated_at: 1 } }) }]
+          : []),
+      get: () => undefined,
+      run: () => ({}),
+    }),
+  };
   const agentManager = { workers: new Map(), start: () => {}, stop: () => {}, getStatus: () => ({}) };
   return { db, databaseAPI: {}, agentRegistration, agentManager, _calls: calls };
 }

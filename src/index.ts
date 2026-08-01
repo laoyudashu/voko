@@ -2049,10 +2049,8 @@ async function createLiteApp(options: any = {}) {
  */
 function getCurrentUserEmail(db?: any) {
   try {
-    const { loadUserAccessTokenConfig } = require('./core/database');
-    const map = loadUserAccessTokenConfig(db);
-    const emails = Object.keys(map);
-    if (emails.length > 0) return emails[0];
+    const { getCurrentUserEmail: getActiveUserEmail } = require('./core/database');
+    return getActiveUserEmail(db);
   } catch (_: any) {}
   return null;
 }
@@ -2528,7 +2526,7 @@ async function main() {
               path: '/api/quit',
               method: 'POST',
               timeout: 3000,
-              headers: { 'X-VOKO-Instance-ID': instance.instanceId },
+              headers: { 'X-VOKO-Instance-ID': instance.instanceId, 'X-VOKO-Token': instance.mcpToken },
             }, (res: any) => {
               res.resume();
               res.on('end', () => res.statusCode === 200

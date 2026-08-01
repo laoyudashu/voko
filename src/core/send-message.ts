@@ -177,7 +177,7 @@ function createSendMessage({ db, deliver }: {
     if (channelType !== 2) {
       try {
         if (!ac.isWhitelisted(db, agentId, channelId)) {
-          ac.addEntry(db, { agentId, listType: 'whitelist', visitorId: channelId });
+          ac.addEntry(db, { agentId, listType: 'whitelist', visitorId: channelId, source: 'outbound_contact' });
         }
       } catch (_) { /* 静默失败不影响消息发送 */ }
     }

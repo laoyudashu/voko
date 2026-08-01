@@ -36,19 +36,21 @@ function getList(db, { agentId, listType, limit, offset, keyword }) {
  *
  * @param {Function} [onWhitelistAdded] - (agentId, visitorId) => void
  */
-function addEntry(db, { agentId, listType, visitorId, reason }, { onWhitelistAdded } = {}) {
+function addEntry(db, { agentId, listType, visitorId, reason, source = 'manual' }, { onWhitelistAdded } = {}) {
   try {
     const id = `acl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const now = Date.now();
     db.prepare(
       `INSERT INTO agent_access_lists
-         (id, agent_id, list_type, visitor_id, reason, manual_managed, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+         (id, agent_id, list_type, visitor_id, reason, source, manual_managed, auto_trust_disabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
        ON CONFLICT(agent_id, list_type, visitor_id) DO UPDATE SET
-         manual_managed = 1,
+         manual_managed = excluded.manual_managed,
+         source = excluded.source,
+         auto_trust_disabled = CASE WHEN excluded.source = 'same_owner_default' THEN agent_access_lists.auto_trust_disabled ELSE 0 END,
          reason = COALESCE(excluded.reason, agent_access_lists.reason),
          updated_at = excluded.updated_at`
-    ).run(id, agentId, listType, visitorId, reason || null, now, now);
+    ).run(id, agentId, listType, visitorId, reason || null, source, source === 'manual' ? 1 : 0, now, now);
     // 白名单添加成功后自动通知访客
     if (listType === 'whitelist' && onWhitelistAdded) {
       try { onWhitelistAdded(agentId, visitorId); } catch (_) {}
@@ -73,8 +75,12 @@ function removeEntryByVisitor(db, agentId, visitorId, listType) {
         SET manual_managed=0, updated_at=?
         WHERE agent_id=? AND visitor_id=? AND list_type=? AND server_managed=1`)
         .run(Date.now(), agentId, visitorId, listType);
+      db.prepare(`UPDATE agent_access_lists
+        SET auto_trust_disabled=1, manual_managed=0, updated_at=?
+        WHERE agent_id=? AND visitor_id=? AND list_type=? AND source='same_owner_default'`)
+        .run(Date.now(), agentId, visitorId, listType);
       db.prepare(`DELETE FROM agent_access_lists
-        WHERE agent_id=? AND visitor_id=? AND list_type=? AND server_managed=0`)
+        WHERE agent_id=? AND visitor_id=? AND list_type=? AND server_managed=0 AND source!='same_owner_default'`)
         .run(agentId, visitorId, listType);
       db.exec('COMMIT');
     } catch (error) {
@@ -122,7 +128,13 @@ function isBlacklisted(db, agentId, visitorId) {
  */
 function isWhitelisted(db, agentId, visitorId) {
   return !!db.prepare(
-    `SELECT 1 FROM agent_access_lists WHERE agent_id = ? AND list_type = 'whitelist' AND visitor_id = ?`
+    `SELECT 1 FROM agent_access_lists WHERE agent_id = ? AND list_type = 'whitelist' AND visitor_id = ? AND auto_trust_disabled=0`
+  ).get(agentId, visitorId);
+}
+
+function isAutoTrustDisabled(db, agentId, visitorId) {
+  return !!db.prepare(
+    `SELECT 1 FROM agent_access_lists WHERE agent_id = ? AND list_type = 'whitelist' AND visitor_id = ? AND source='same_owner_default' AND auto_trust_disabled=1`
   ).get(agentId, visitorId);
 }
 
@@ -183,6 +195,7 @@ module.exports = {
   removeEntryByVisitor,
   isBlacklisted,
   isWhitelisted,
+  isAutoTrustDisabled,
   autoApproveIfFriendRequest,
   postAgentStatus,
 };

@@ -713,8 +713,9 @@ test('Lite OAuth login follows the server session contract and persists only the
   assert.match(requests[0].url, /\/api\/auth\/lite\/oauth\/providers$/);
   assert.equal(JSON.parse(requests[1].options.body).provider, 'google');
   assert.equal(JSON.parse(requests[3].options.body).exchangeCode, 'loe_test');
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   assert.match(String(writes[0].args[1]), /ut_oauth_test/);
+  assert.equal(writes[1].args[0], 'current_user_email');
   assert.doesNotMatch(JSON.stringify(requests), /ut_oauth_test/);
 });
 

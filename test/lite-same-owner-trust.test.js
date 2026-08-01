@@ -46,6 +46,17 @@ test('different-owner Agents are not auto-whitelisted', (t) => {
   assert.equal(accessControl.isWhitelisted(db, 'agent-c', 'uid-b'), false);
 });
 
+test('removing same-owner default trust persists an opt-out', (t) => {
+  const { db, handler, cleanup } = setup();
+  t.after(cleanup);
+  handler.handleAgentMessage('agent-a', message('uid-b', 'first'));
+  assert.equal(accessControl.removeEntryByVisitor(db, 'agent-a', 'uid-b', 'whitelist').success, true);
+  assert.equal(accessControl.isWhitelisted(db, 'agent-a', 'uid-b'), false);
+  handler.handleAgentMessage('agent-a', message('uid-b', 'second'));
+  assert.equal(accessControl.isWhitelisted(db, 'agent-a', 'uid-b'), false);
+  assert.equal(accessControl.isAutoTrustDisabled(db, 'agent-a', 'uid-b'), true);
+});
+
 test('an explicit blacklist prevents same-owner auto-trust', (t) => {
   const { db, handler, cleanup } = setup();
   t.after(cleanup);

@@ -557,9 +557,12 @@ function createToolHandlers(cx: McpContext) {
   }
   function _currentOwnerEmail(): string {
     try {
+      const selected = cx.query<ConfigDataRow>("SELECT data FROM config WHERE type='current_user_email'")[0];
+      const email = String(selected?.data ? JSON.parse(selected.data) : '').trim().toLowerCase();
+      if (email) return email;
       const rows = cx.query<ConfigDataRow>("SELECT data FROM config WHERE type='user_access_token'");
       const data = rows[0]?.data ? JSON.parse(rows[0].data) : {};
-      return String(Object.keys(data)[0] || '').trim().toLowerCase();
+      return Object.entries(data).sort((a: any, b: any) => (b[1]?.updated_at || 0) - (a[1]?.updated_at || 0))[0]?.[0]?.trim().toLowerCase() || '';
     } catch (_) { return ''; }
   }
   function _agentOwnershipError(agentId?: string): string | null {
@@ -770,8 +773,13 @@ function createToolHandlers(cx: McpContext) {
     // ─── 2b. 用 access-token 创建 Agent（已登录用户，无需验证码）───
     // 与 verify_agent_email 同结构，仅把 step1 的 verifyCode 换成 createAgentByToken。
     async create_agent_by_token(p: McpToolParams = {}) {
-      const email = p.email;
+      const requestedEmail = String(p.email || '').trim().toLowerCase();
+      const email = _currentOwnerEmail()
+        || (requestedEmail && cx.getUserAccessToken?.(requestedEmail) ? requestedEmail : '');
       if (!email) return { success: false, error: '未登录（缺少 user_access_token）', noToken: true };
+      if (requestedEmail && requestedEmail !== email) {
+        return { success: false, error: '请求邮箱与当前登录用户不一致', code: 'CURRENT_USER_MISMATCH' };
+      }
       // backendType 必填；category 可选，默认 general（与 verify_agent_email 保持一致）
       if (!p.backendType) {
         return { success: false, error: 'backendType 为必填字段' };
@@ -2560,11 +2568,7 @@ function createToolHandlers(cx: McpContext) {
     loginByCode: (params: unknown) => cx.agentRegistration.loginByCode(params),
     completeAgent: (params: unknown) => handlers.create_agent_by_token(params),
     getLoggedEmail: () => {
-      try {
-        const rows = cx.query<ConfigDataRow>("SELECT data FROM config WHERE type='user_access_token'");
-        const data = rows[0]?.data ? JSON.parse(rows[0].data) : {};
-        return Object.keys(data)[0] || '';
-      } catch (_: any) { return ''; }
+      return _currentOwnerEmail();
     },
   });
   handlers.manage_agent_registration = async (params: McpToolParams = {}) =>

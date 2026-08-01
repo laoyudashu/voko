@@ -27,18 +27,6 @@ const SERVER_NAME = 'voko';
 function createHttpTransport(mcpServer?: any, options: any = {}) {
   const router = Router();
   const version = options.version || '0.2.14';
-  const db = options.db || null;
-  const ownsAgent = (agentId: string): boolean => {
-    if (!db || !agentId) return false;
-    try {
-      const agent = db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
-      if (!agent || !agent.owner_email) return true;
-      const tokenRow = db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
-      const tokenMap = tokenRow?.data ? JSON.parse(tokenRow.data) : {};
-      const current = String(Object.keys(tokenMap)[0] || '').trim().toLowerCase();
-      return !!current && current === String(agent.owner_email).trim().toLowerCase();
-    } catch (_) { return false; }
-  };
 
   // ─── POST /mcp — JSON-RPC 请求 ───
   router.post('/', async (req?: any, res?: any) => {
@@ -59,10 +47,9 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
       const meta = msg.params?._meta;
       const backend = meta?.backend;
       const agentId = meta?.agentId;
-      if (db && backend && agentId && ownsAgent(String(agentId))) {
+      if (false && backend && agentId) {
         try {
-          db.prepare('UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?')
-            .run(normalizeBackendType(backend), Date.now(), String(agentId));
+          normalizeBackendType(backend);
           try { (global as any).__dispatcher?.invalidateMeta?.(String(agentId)); } catch (_: any) {}
         } catch (e: any) {
           console.error('[MCP transport] 写 backend_type 失败:', e.message);

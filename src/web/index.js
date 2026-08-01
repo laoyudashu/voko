@@ -353,6 +353,18 @@ function ajaxRowRemove(url,body,row){fetch(url,{method:"POST",headers:{"Content-
 
 function createWebRouter(handlers, db, opts={}){
   const R=Router();
+  const currentOwnerEmail=()=>{
+    try{
+      const selected=db.prepare("SELECT data FROM config WHERE type='current_user_email'").get();
+      const email=String(selected?.data?JSON.parse(selected.data):'').trim().toLowerCase();
+      if(email)return email;
+    }catch(_){}
+    try{
+      const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
+      const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};
+      return Object.entries(tokenMap).sort((a,b)=>(b[1]?.updated_at||0)-(a[1]?.updated_at||0))[0]?.[0]?.trim().toLowerCase()||'';
+    }catch(_){return ''}
+  };
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -360,9 +372,7 @@ function createWebRouter(handlers, db, opts={}){
     try{
       const row=db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
       if(!row||!row.owner_email)return next();
-      const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
-      const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};
-      const current=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase();
+      const current=String(currentOwnerEmail()).trim().toLowerCase();
       if(current&&current===String(row.owner_email).trim().toLowerCase())return next();
       return res.status(403).send('Forbidden');
     }catch(_){return res.status(500).send('Unable to verify Agent ownership')}
@@ -1451,7 +1461,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const T=req.t,L=k=>esc(T(k));
       // 查所有已发布 agent 供选择
       let agents=[];
-      try{if(db){const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};const ownerEmail=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase();if(ownerEmail)agents=db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=? ORDER BY agent_name").all(ownerEmail)}}catch{}
+      try{if(db){const ownerEmail=String(currentOwnerEmail()).trim().toLowerCase();if(ownerEmail)agents=db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=? ORDER BY agent_name").all(ownerEmail)}}catch{}
       const opts=agents.map(a=>'<option value="'+esc(a.agent_id)+'">'+esc(a.agent_name||a.agent_id)+'</option>').join('\n');
       res.send(renderPage(req,T('web.invite.title'),'<div class="card"><form method="POST" action="/invite" data-agent-action="invite.send"><label for="ia">'+L('web.invite.select_agent')+'</label><select id="ia" name="agentId" required autofocus><option value="">'+L('web.invite.select_ph')+'</option>'+opts+'</select><label for="ie">'+L('web.invite.email')+'</label><input type="email" id="ie" name="friendEmail" required placeholder="friend@example.com" autocomplete="email"><br><br><button type="submit">'+L('web.invite.send_btn')+'</button></form></div>'+inviteConfirmUi(T,'form[data-agent-action="invite.send"]')+'<a href="/">← '+L('common.btn.home')+'</a>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.invite.breadcrumb')}))
     }catch(e){next(e)}
@@ -1489,7 +1499,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const aid=req.query.agentId||'',vid=req.query.visitorId||'',st=req.query.status||'',oid=req.query.orderNo||'',fstart=req.query.start||'',fend=req.query.end||'',amtMin=parseFloat(req.query.amtMin)||0,amtMax=parseFloat(req.query.amtMax)||0,txn=req.query.txn||'',desc=req.query.desc||'';
       let orders=[],total=0,sumAmt=0;
       if(db){
-        let ownerEmail='';try{const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};ownerEmail=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase()}catch{}
+        let ownerEmail='';try{ownerEmail=String(currentOwnerEmail()).trim().toLowerCase()}catch{}
         if(ownerEmail){
           let w=['LOWER(TRIM(a.owner_email))=?'];let p=[ownerEmail];
           if(aid&&aid!='all'){w.push('po.agent_id=?');p.push(aid)}

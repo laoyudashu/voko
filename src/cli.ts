@@ -14,7 +14,7 @@ const { createMcpServer, getToolList } = require('./mcp/server');
 const { processPendingPaymentOrder } = require('./core/payment');
 const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
-const { fetchManifest, compareVersions } = require('./core/auto-updater');
+const { compareVersions } = require('./core/auto-updater');
 const { t } = require('./core/i18n');
 const { runWithRegistrationCaller } = require('./core/registration-caller-context');
 const { spawnSync } = require('child_process');
@@ -25,13 +25,17 @@ const path = require('path');
  */
 async function checkVersion() {
   try {
-    const manifest = await fetchManifest();
-    if (!manifest || !manifest.version) return null;
-    const updateAvailable = compareVersions(manifest.version, pkg.version) > 0;
+    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const result = spawnSync(npmCommand, ['view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10000,
+    });
+    const latestVersion = String(result.stdout || '').trim();
+    if (result.error || result.status !== 0 || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latestVersion)) return null;
+    const updateAvailable = compareVersions(latestVersion, pkg.version) > 0;
     if (updateAvailable) {
-      console.error(t('cli.updater.new_version_available', { version: manifest.version, current: pkg.version }));
+      console.error(t('cli.updater.new_version_available', { version: latestVersion, current: pkg.version }));
     }
-    return { currentVersion: pkg.version, latestVersion: manifest.version, updateAvailable };
+    return { currentVersion: pkg.version, latestVersion, updateAvailable };
   } catch (_: any) {}
   return null;
 }

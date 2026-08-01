@@ -153,6 +153,11 @@ function createMockCx() {
   const calls = { sendCode: 0, loginByCode: 0, verifyCode: 0, verifyCodePreview: 0, createAgentByToken: 0, registerAgentInDb: 0, updateAgentBinding: 0, startAgentWorker: 0 };
   return {
     _calls: calls,
+    query: (sql) => {
+      if (sql.includes("type='current_user_email'")) return [{ data: JSON.stringify('a@b.com') }];
+      if (sql.includes("type='user_access_token'")) return [{ data: JSON.stringify({ 'a@b.com': { user_access_token: 'token', updated_at: 1 } }) }];
+      return [];
+    },
     agentRegistration: {
       sendCode: async () => { calls.sendCode++; return { success: true }; },
       loginByCode: async () => { calls.loginByCode++; return { success: true }; },
@@ -315,10 +320,11 @@ describe('create_agent_by_token 必填校验', () => {
     assert.strictEqual(captured.category, 'general');
   });
 
-  it('缺 email（未登录）→ 报错 noToken', async () => {
+  it('无当前登录令牌 → 报错 noToken', async () => {
     const cx = createMockCx();
+    cx.query = () => [];
     const h = createToolHandlers(cx);
-    const r = await h.create_agent_by_token({ backendType: 'codex', category: 'technology' });
+    const r = await h.create_agent_by_token({ email: 'a@b.com', backendType: 'codex', category: 'technology' });
     assert.strictEqual(r.success, false);
     assert.strictEqual(r.noToken, true);
   });
@@ -333,6 +339,17 @@ describe('create_agent_by_token 必填校验', () => {
     assert.strictEqual(captured.category, 'technology');
     assert.strictEqual(captured.description, '描述');
     assert.strictEqual(captured.backendType, 'codex');
+    assert.strictEqual(captured.ownerEmail, 'a@b.com');
+  });
+
+  it('拒绝客户端伪造其他登录邮箱', async () => {
+    const cx = createMockCx();
+    const r = await createToolHandlers(cx).create_agent_by_token({
+      email: 'other@example.com', agentName: 'X', backendType: 'codex',
+    });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'CURRENT_USER_MISMATCH');
+    assert.strictEqual(cx._calls.createAgentByToken, 0);
   });
 
   it('云端缺少 DID 私钥时不写库、不启动 Worker', async () => {

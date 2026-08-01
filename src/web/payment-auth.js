@@ -86,9 +86,12 @@ function createPaymentAuthRouter(handlers, db) {
 
   function currentOwnerEmail() {
     try {
+      const selected = db && db.prepare("SELECT data FROM config WHERE type='current_user_email'").get();
+      const current = String(selected?.data ? JSON.parse(selected.data) : '').trim().toLowerCase();
+      if (current) return current;
       const row = db && db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
       const data = row?.data ? JSON.parse(row.data) : {};
-      return String(Object.keys(data)[0] || '').trim().toLowerCase();
+      return Object.entries(data).sort((a,b)=>(b[1]?.updated_at||0)-(a[1]?.updated_at||0))[0]?.[0]?.trim().toLowerCase() || '';
     } catch (_) { return ''; }
   }
 

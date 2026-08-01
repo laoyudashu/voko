@@ -3,6 +3,15 @@
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const SAFE_FETCH_SITES = new Set(['', 'none', 'same-origin', 'same-site']);
 const BRIDGE_CONFIG_TYPES = new Set(['channel_config', 'llm_config', 'model', 'hermes_config']);
+const TOKEN_PROTECTED_API_PATHS = new Set([
+  '/api/reload-web', '/api/quit',
+  '/api/hermes/reconnect', '/api/hermes/test-connection', '/api/hermes/test-agent',
+  '/api/openclaw/reconnect', '/api/gateway/setup', '/api/gateway/forward',
+  '/api/agent/cache-save', '/api/agent/register-in-db', '/api/agent/update-binding-fields',
+  '/api/agent/register-capabilities', '/api/agent/update-binding', '/api/agent/publish',
+  '/api/agent/unpublish', '/api/agents/restart', '/api/simulate-message',
+  '/api/message/send', '/api/messages/insert-system',
+]);
 
 function parseLoopbackAuthority(value, asOrigin = false) {
   try {
@@ -54,6 +63,7 @@ function requiresLocalToken(path) {
   const requestPath = String(path || '');
   return requestPath === '/mcp' ||
     requestPath.startsWith('/mcp/') ||
+    TOKEN_PROTECTED_API_PATHS.has(requestPath) ||
     requestPath === '/api/llm/config' ||
     requestPath === '/api/config/save' ||
     requestPath === '/api/config/delete';

@@ -307,6 +307,9 @@ test('privileged local bridge APIs require the instance token and accept only sa
   assert.equal(requiresLocalToken('/api/llm/config'), true);
   assert.equal(requiresLocalToken('/api/config/save'), true);
   assert.equal(requiresLocalToken('/api/config/delete'), true);
+  assert.equal(requiresLocalToken('/api/agent/register-in-db'), true);
+  assert.equal(requiresLocalToken('/api/message/send'), true);
+  assert.equal(requiresLocalToken('/api/simulate-message'), true);
   assert.equal(isAllowedBridgeConfigType('channel_config'), true);
   assert.equal(isAllowedBridgeConfigType('llm_config'), true);
   assert.equal(isAllowedBridgeConfigType('user_access_token'), false);
@@ -616,7 +619,7 @@ test('version checks only notify while voko update uses the official npm registr
   const cliSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const webSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
-  assert.match(cliSource, /return \{ currentVersion: pkg\.version, latestVersion: manifest\.version, updateAvailable \}/);
+  assert.match(cliSource, /return \{ currentVersion: pkg\.version, latestVersion, updateAvailable \}/);
   assert.match(cliSource, /--registry=https:\/\/registry\.npmjs\.org\//);
   assert.match(cliSource, /'view', '@voko\/lite', 'version'/);
   assert.match(cliSource, /`@voko\/lite@\$\{latestVersion\}`/);

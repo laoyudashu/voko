@@ -852,6 +852,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       manual_managed INTEGER NOT NULL DEFAULT 1,
       server_managed INTEGER NOT NULL DEFAULT 0,
       server_source_invitation_id TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      auto_trust_disabled INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(agent_id, list_type, visitor_id)
@@ -867,6 +869,12 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     }
     if (!accessCols.includes('server_source_invitation_id')) {
       db.exec('ALTER TABLE agent_access_lists ADD COLUMN server_source_invitation_id TEXT');
+    }
+    if (!accessCols.includes('source')) {
+      db.exec("ALTER TABLE agent_access_lists ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+    }
+    if (!accessCols.includes('auto_trust_disabled')) {
+      db.exec('ALTER TABLE agent_access_lists ADD COLUMN auto_trust_disabled INTEGER NOT NULL DEFAULT 0');
     }
     db.exec(`UPDATE agent_access_lists
       SET manual_managed=0, server_managed=1
@@ -913,6 +921,21 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     }
   } catch (e: any) {
     console.warn('[Config] 迁移 user_access_tokens 类型名失败:', e.message);
+  }
+
+  // 旧库可能保留多个登录 token；首次升级时固定最近使用者，避免依赖对象键顺序。
+  try {
+    const selected = db.prepare("SELECT data FROM config WHERE type = 'current_user_email'").get() as ConfigRow | undefined;
+    if (!selected?.data) {
+      const map = loadUserAccessTokenConfig(db);
+      const current = Object.entries(map)
+        .filter(([, value]) => !!value.user_access_token)
+        .sort((left, right) => (right[1].updated_at || 0) - (left[1].updated_at || 0))[0]?.[0];
+      if (current) db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+        .run(CURRENT_USER_EMAIL_CONFIG_TYPE, JSON.stringify(current), Date.now());
+    }
+  } catch (e: any) {
+    console.warn('[Config] current user migration failed:', e.message);
   }
 
   // 初始化默认 OSS 配置（留空，凭证由环境变量或用户手动配置注入；运行时从 DB 读取）
@@ -1824,6 +1847,7 @@ function createDatabaseAPI(db: DatabaseSync) {
 // User Access Token 工具
 // ============================================
 const USER_ACCESS_TOKEN_CONFIG_TYPE = 'user_access_token';
+const CURRENT_USER_EMAIL_CONFIG_TYPE = 'current_user_email';
 
 function databaseErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -1904,6 +1928,27 @@ function saveUserAccessToken(db: DatabaseSync, email: unknown, token: string): v
   // 只保留当前登录邮箱（登录新邮箱即切换用户，覆盖旧 token）
   const map = { [normalized]: { user_access_token: token, updated_at: Date.now() } };
   saveUserAccessTokenConfig(db, map);
+  db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+    .run(CURRENT_USER_EMAIL_CONFIG_TYPE, JSON.stringify(normalized), Date.now());
+}
+
+function getCurrentUserEmail(db: DatabaseSync): string | null {
+  try {
+    const tokenMap = loadUserAccessTokenConfig(db);
+    let selected = '';
+    try {
+      const selectedRow = db.prepare('SELECT data FROM config WHERE type = ?')
+        .get(CURRENT_USER_EMAIL_CONFIG_TYPE) as ConfigRow | undefined;
+      selected = selectedRow?.data ? normalizeUserEmail(JSON.parse(selectedRow.data)) : '';
+    } catch (_) {}
+    if (selected && tokenMap[selected]?.user_access_token) return selected;
+    const entries = Object.entries(tokenMap)
+      .filter(([, value]) => !!value.user_access_token)
+      .sort((left, right) => (right[1].updated_at || 0) - (left[1].updated_at || 0));
+    return entries[0]?.[0] || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function getUserAccessToken(db: DatabaseSync, email: unknown): string | null {
@@ -1979,6 +2024,7 @@ module.exports = {
   migrateUserAccessTokensToConfig,
   saveUserAccessToken,
   getUserAccessToken,
+  getCurrentUserEmail,
   getPrimaryOwnerEmail,
   getHermesConfig,
   saveHermesConfig,

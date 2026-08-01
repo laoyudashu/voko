@@ -196,11 +196,13 @@ class MessageHandler extends EventEmitter {
       if (!receiver || !sender || sender.agent_id === receiver.agent_id || !receiverOwner || receiverOwner !== senderOwner || !receiver.imUid) return;
       if (this.ac.isBlacklisted(this.db, receiver.agent_id, fromUid)
         || this.ac.isBlacklisted(this.db, sender.agent_id, receiver.imUid)) return;
+      if (this.ac.isAutoTrustDisabled?.(this.db, receiver.agent_id, fromUid)
+        || this.ac.isAutoTrustDisabled?.(this.db, sender.agent_id, receiver.imUid)) return;
       if (!this.ac.isWhitelisted(this.db, receiver.agent_id, fromUid)) {
-        this.ac.addEntry(this.db, { agentId: receiver.agent_id, listType: 'whitelist', visitorId: fromUid, reason: '同主人 Agent 默认信任' });
+        this.ac.addEntry(this.db, { agentId: receiver.agent_id, listType: 'whitelist', visitorId: fromUid, reason: '同主人 Agent 默认信任', source: 'same_owner_default' });
       }
       if (!this.ac.isWhitelisted(this.db, sender.agent_id, receiver.imUid)) {
-        this.ac.addEntry(this.db, { agentId: sender.agent_id, listType: 'whitelist', visitorId: receiver.imUid, reason: '同主人 Agent 默认信任' });
+        this.ac.addEntry(this.db, { agentId: sender.agent_id, listType: 'whitelist', visitorId: receiver.imUid, reason: '同主人 Agent 默认信任', source: 'same_owner_default' });
       }
     } catch (_) {}
   }
