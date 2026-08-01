@@ -14,7 +14,7 @@ This is an engineering release review, not a legal opinion or a guarantee that n
 
 **Public release status: NO-GO until the remaining P0 owner actions below are completed.**
 
-The candidate is isolated from the Desktop repository and has a new local Git history with no inherited Desktop commits. No Git remote is configured and no code has been pushed to GitHub.
+The candidate is isolated from the Desktop repository and has a new local Git history with no inherited Desktop commits. At the time of this review, no public GitHub remote was configured and no code had been pushed to GitHub.
 
 ## What was changed
 

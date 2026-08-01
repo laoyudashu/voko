@@ -60,7 +60,8 @@ function isAllowedLocalWebSocketOrigin(origin, host) {
 }
 
 function requiresLocalToken(path) {
-  const requestPath = String(path || '');
+  const rawPath = String(path || '').split('?', 1)[0] || '/';
+  const requestPath = rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath;
   return requestPath === '/mcp' ||
     requestPath.startsWith('/mcp/') ||
     TOKEN_PROTECTED_API_PATHS.has(requestPath) ||

@@ -1002,38 +1002,6 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
-  app.post('/api/owner-intervention/forward-reply', (req?: any, res?: any) => {
-    const { id, ownerReply } = req.body || {};
-    if (!id || !ownerReply) return res.json({ success: false, error: '缺少 id 或 ownerReply' });
-    try {
-      const row = db.prepare('SELECT * FROM owner_interventions WHERE id = ?').get(id);
-      if (!row) return res.json({ success: false, error: '未找到记录' });
-      if (!currentOwnsAgent(String(row.agent_id || ''))) return res.status(403).json({ success: false, error: '无权转发该介入记录' });
-      const intervention = {
-        id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
-        sessionKey: row.session_key, problem: row.problem, askTime: row.ask_time,
-      };
-      const { buildOwnerReplyPrompt } = require('./channels/registry');
-      const forwardMsg = buildOwnerReplyPrompt(intervention, ownerReply);
-      const oh = (global as any).__openclawHandler;
-      const hh = (global as any).__hermesHandler;
-      const doNotify = () => {
-        db.prepare('UPDATE owner_interventions SET agent_notified=1, status=?, updated_at=? WHERE id=?').run('resolved', Date.now(), id);
-      };
-      if (intervention.agentId) {
-        const backendRow = db.prepare('SELECT backend_type FROM agents WHERE agent_id = ?').get(intervention.agentId);
-        const backendType = backendRow?.backend_type;
-        if (backendType === 'hermes' && hh?.connected) {
-          const hKey = 'hermes:' + intervention.agentId + ':' + intervention.visitorId;
-          hh.steer(hKey, forwardMsg).then(doNotify).catch((e: any) => console.error('[转发回复] Hermes 失败:', e.message));
-        } else if (backendType === 'openclaw' && oh?.connected) {
-          oh.sendToSession(intervention.sessionKey, forwardMsg).then(doNotify).catch((e: any) => console.error('[转发回复] OpenClaw 失败:', e.message));
-        }
-      }
-      res.json({ success: true });
-    } catch (e: any) { res.json({ success: false, error: e.message }); }
-  });
-
   // ── 支付操作 ──
   app.post('/api/payment/submit', (req?: any, res?: any) => {
     const { agentId, visitorId, amount, description, type } = req.body || {};

@@ -82,24 +82,27 @@ function createBugReportClient({ apiBaseUrl, db }: BugReportClientOptions) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        redirect: 'error',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const result: any = await response.json().catch(() => ({}));
-      if (!response.ok || result.success === false) {
-        const structuredError = result.error && typeof result.error === 'object' ? result.error : null;
-        return {
-          success: false,
-          error: clean(structuredError?.message || result.error || result.message || `HTTP ${response.status}`, 500),
-          ...(structuredError?.code ? { code: clean(structuredError.code, 80) } : {}),
-        };
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          redirect: 'error',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const result: any = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+          const structuredError = result.error && typeof result.error === 'object' ? result.error : null;
+          return {
+            success: false,
+            error: clean(structuredError?.message || result.error || result.message || `HTTP ${response.status}`, 500),
+            ...(structuredError?.code ? { code: clean(structuredError.code, 80) } : {}),
+          };
+        }
+        return result;
+      } finally {
+        clearTimeout(timer);
       }
-      return result;
     } catch (error: any) {
       return { success: false, error: error?.name === 'AbortError' ? 'Request timed out' : clean(error?.message, 500) };
     }

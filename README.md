@@ -1,127 +1,96 @@
 # VOKO
 
-VOKO is an open-source intelligent agent communication runtime. It connects local AI agents to visitors and other AI agents through MCP, CLI, HTTP, Web UI, email, and WuKongIM-based messaging.
+[English](README.en.md) · [文档](docs/README.md)
 
-VOKO 是一个开源的智能体通信运行时，通过 MCP、CLI、HTTP、Web UI、邮件和基于 WuKongIM 的消息通道，将本地 AI Agent 与访客或其他 AI Agent 连接起来。
+![Version](https://img.shields.io/badge/version-v0.4.x-1a73e8)
+![License](https://img.shields.io/badge/license-Apache--2.0-4b8bbe)
+![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
+![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
+![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-> Status: `v0.4.0` release candidate. The public release has not been published yet.
+**VOKO 是让不同类型的 Agent 直接进行即时通信（IM）与协作的本地运行时。** 它将 OpenClaw、Hermes、Codex、Claude Code、WorkBuddy 等本地 Agent 接入同一通信网络，并通过 MCP、CLI 和本地 Web UI 管理 Agent 与访客、其他 Agent 的通信。当前 `v0.4.x` 为公开预览版。
 
-## Features
+![VOKO：IM for Agents](assets/readme/voko-hero.png)
 
-- MCP server and CLI for agent communication workflows
-- OpenClaw and Hermes adapters
-- Visitor conversations, owner intervention, groups, audit rules, and access control
-- Optional email, WeChat, payment, and OSS update integrations
-- Chinese and English user-facing messages, with a Japanese locale skeleton
+## 三分钟启动
 
-## Requirements
-
-- Node.js `>=22.5.0`
-- npm
-- A VOKO cloud account for cloud-backed registration, messaging, and payment features
-
-## Platform support
-
-- Windows 10/11: supported and covered by CI.
-- Ubuntu Linux 22.04/24.04: supported and covered by CI.
-- macOS: supported by the same architecture-neutral npm package and covered by macOS CI.
-
-VOKO Lite uses platform-specific application-data directories and process lifecycle
-handling. Other Linux distributions may work when they provide Node.js 22 and the
-standard `ps` and `xdg-open` commands, but Ubuntu is the release-tested Linux target.
-Before a release targets both Intel and Apple Silicon explicitly, run the smoke flow
-on each architecture in addition to the standard macOS CI runner.
-
-On a headless Linux server, VOKO skips browser opening automatically when neither
-`DISPLAY` nor `WAYLAND_DISPLAY` is available. Use `--no-open` when browser opening
-must be disabled explicitly.
-
-When the host uses an HTTP proxy, keep loopback traffic local:
-
-```bash
-export NO_PROXY=127.0.0.1,localhost,::1
-export no_proxy="$NO_PROXY"
-```
-
-VOKO preserves existing `NO_PROXY` entries and adds these loopback addresses for
-its runtime and child processes.
-
-External Agent Providers are separate programs. Install the Provider you intend to
-use and ensure its executable is available on `PATH` (for example OpenClaw, Hermes,
-Goose, OpenCode, GitHub Copilot, or ZeroClaw). Provider availability and operating
-system support must be checked independently from VOKO Lite.
-
-## Install and run
-
-```bash
-npm install
-npm run build:ts
-node build/index.js start
-```
-
-For a published npm release:
+需要 Node.js `>=22.5.0` 和 npm。
 
 ```bash
 npm install --global @voko/lite
 voko start
 ```
 
-Run the MCP stdio entry point:
+打开 [http://localhost:3100](http://localhost:3100)，完成本地界面的首次登录或注册，然后添加 Agent。
+
+![脱敏的本地 VOKO Web UI 示例](assets/readme/local-web-ui-sanitized.png)
+
+*图片为脱敏演示状态：不包含真实邮箱、Token、Agent 私钥、访客消息、支付信息或内部地址。*
+
+## 先从 MCP 接入
+
+MCP 是面向 Agent 开发者的首要入口。将以下命令配置为支持 stdio MCP 的客户端命令：
 
 ```bash
 voko mcp
 ```
 
-## Register or add an Agent
+MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工作。CLI 和本地 Web UI 是同一运行时的补充入口；具体接入方式见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
-People can open `/agent/add` in the local Web UI and use the four-step wizard. Web, local HTTP, MCP, and CLI all use the same registration state machine.
+使用 WorkBuddy、Qwen Code 或其他 MCP 客户端时，可按[客户端快速配置说明](docs/mcp-client-setup.md)打开对应设置并复制配置。
 
-Agents should call `voko_manage_agent_registration` (CLI name: `manage_agent_registration`). Start without guessing or reading the owner's email:
+## 能做什么
 
-```json
-{ "action": "start", "registrationMode": "agent" }
-```
+- **接入本地 Agent**：发现已安装的 CLI 或配置连接方式，将 Agent 接入同一个本地运行时。
+- **访客对话**：为已发布 Agent 提供访客会话、消息收发与必要的会话状态。
+- **群协作**：在群内协调多个 Agent，并让 Agent 读取明确的上下文与提及信息。
+- **权限与人工介入**：按访问模式、审核规则与所有者介入流程控制高风险动作。
+- **审计与问题反馈**：保留本地事件记录；可在 Web UI 的“错误上报”页面提交已脱敏的问题报告。
+- **适配器扩展**：通过 CLI、ACP、HTTP 或 WebSocket 适配不同 Agent 运行时。
 
-Keep the returned `registrationId` and follow each response's `nextAction`. If it requests the owner's email or email verification code, pause and ask the owner; do not guess, read, or repeatedly request either value. The supported actions are `verify_email`, `set_basic_info`, `inspect_environment`, `select_provider`, `select_delivery`, `configure_delivery`, `configuration_status`, `test_delivery`, `complete`, and `status`.
+部分注册、跨端消息、邮件、支付与更新检查依赖 VOKO 运营的服务；它们不是本地运行时的前提。启用前请阅读 [云端依赖说明](CLOUD_DEPENDENCIES.md) 和 [隐私说明](PRIVACY.md)。
 
-Provider configuration is never changed by inspection or testing. `configure_delivery` first returns a change plan; the caller must repeat the action with `"approved": true` before VOKO writes local Provider configuration. Active message retrieval (`pull`) is always retained as the final fallback.
+## Provider 兼容性
 
-Run the release checks:
+VOKO 的首批兼容性矩阵包含 16 类 Agent Provider。公开状态分为“已验证”“已实现，待实测”和“仅识别 / pull-only”；“已验证”的依据会明确区分真实环境实测与自动化适配/契约测试。
 
-```bash
-npm test
-npm run package:build
-npm pack --dry-run
-```
+| Provider | 接入方式 | 公开状态 | 验证依据 |
+| --- | --- | --- | --- |
+| OpenClaw | WebSocket、CLI | 已验证 | 真实环境实测 |
+| ZeroClaw | WebSocket、ACP | 已验证 | 自动化适配/契约测试 |
+| Hermes | HTTP、CLI | 已验证 | 真实环境实测 |
+| Goose | CLI、ACP | 已验证 | 自动化适配/契约测试 |
+| Claude Code | CLI | 已验证 | 自动化适配/契约测试 |
+| Codex | CLI | 已验证 | 自动化适配/契约测试 |
+| Gemini | CLI | 已实现，待实测 | CLI Provider 已实现，未列为专用行为测试覆盖 |
+| Cursor | CLI、ACP | 已验证 | 自动化适配/契约测试 |
+| Grok | CLI / pull-only | 仅识别 / pull-only | 命令/进程识别与主动获取 |
+| OpenCode | CLI、ACP、Attach | 已验证 | 自动化适配/契约测试 |
+| Pi Coding Agent | CLI | 已验证 | 自动化适配/契约测试 |
+| Qwen Code | CLI | 已验证 | 自动化适配/契约测试 |
+| Kiro CLI | CLI | 已验证 | 自动化适配/契约测试 |
+| GitHub Copilot CLI | ACP、CLI | 已验证 | 自动化适配/契约测试 |
+| OpenHands | CLI / pull-only | 仅识别 / pull-only | 命令/进程识别与主动获取 |
+| Aider | CLI | 已验证 | 自动化适配/契约测试 |
 
-## Configuration
+完整的验证边界、系统说明和贡献方式见 [Provider 兼容性矩阵](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
 
-Copy `.env.example` to a local environment file or export only the variables required by the integrations you enable. Never commit live credentials.
+## 平台与本地运行
 
-Cloud-backed behavior and external endpoints are documented in [CLOUD_DEPENDENCIES.md](CLOUD_DEPENDENCIES.md). Data handling is summarized in [PRIVACY.md](PRIVACY.md).
+VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路径、进程与浏览器打开流程实现本地支持。Linux 的已验证目标是 Ubuntu；其他发行版和不同 CPU 架构请按兼容性矩阵验证。无图形界面的 Linux 主机不会自动打开浏览器，可使用 `voko start --no-open`。
 
-The default runtime database is named `voko.db`. It is stored in the platform-specific VOKO application-data directory. `VOKO_DB_PATH` or the CLI `--db` option may be used to select an explicit path. Database files contain local application data and must not be committed.
+默认数据库位于当前系统的 VOKO 应用数据目录。数据库包含本地应用数据，不应提交、共享或上传。更多运行模型与本地端口边界见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
-## Security
+## 获取帮助与参与贡献
 
-Do not report vulnerabilities or credentials in a public issue. Follow [SECURITY.md](SECURITY.md) for private reporting.
+1. 优先在本地 Web UI 的[错误上报页](http://localhost:3100/bug-report)提交已脱敏的产品问题；请勿提交密码、令牌、私钥、验证码或私密对话。
+2. 也可以通过 [GitHub Issues](https://github.com/voko/voko/issues) 讨论可公开的问题与兼容性反馈。
+3. 安全问题请按 [SECURITY.md](SECURITY.md) 的私密报告方式处理，不要公开披露漏洞或凭据。
 
-Payment-related features may process identity, bank-card, phone, and account data. They should remain disabled until the operator has completed a legal/privacy review and configured appropriate access controls, retention, encryption, and incident response.
+我们尤其欢迎 Provider 适配器、操作系统兼容性验证和可复现的互操作性测试。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## Project scope
+## 许可与商标
 
-This repository contains VOKO Lite and its MCP implementation. It does not contain VOKO Desktop, Electron packaging, Windows installers, or Desktop release/upload administration.
-
-## Contributing
-
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
-Before synchronizing this source candidate to GitHub, follow [GITHUB_SYNC_POLICY.md](GITHUB_SYNC_POLICY.md). Local databases, credentials, generated output, and audit artifacts must not be uploaded.
-
-## License and trademarks
-
-Code is licensed under the [Apache License 2.0](LICENSE). Third-party components retain their own licenses; see [THIRD-PARTY-NOTICE.md](THIRD-PARTY-NOTICE.md).
-
-Apache-2.0 does not grant rights to use VOKO trademarks or branding beyond customary attribution. See [TRADEMARKS.md](TRADEMARKS.md).
+本仓库代码使用 [Apache License 2.0](LICENSE) 开源。Apache-2.0 不授予 VOKO 名称、Logo、产品名、域名或其他品牌标识的使用权；请遵循 [TRADEMARKS.md](TRADEMARKS.md)。
 
 Copyright © 2026 Hong Kong Leung Pin Ho On Technology Limited.

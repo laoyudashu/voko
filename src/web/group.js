@@ -745,7 +745,7 @@ function mentionScript(tFn){
 var PAGE_SIZE=8;
 var inp=document.getElementById('group-reply-input');
 if(!inp)return;
-var MEMS=(window.__IS_MANAGER__?[{uid:'',name:_MI.all,mentionAll:true}]:[]).concat(window.__GROUP_MEMBERS__||[]);
+var MEMS=(window.__IS_MANAGER__?[{uid:'',name:_MI.all,mentionAll:true}]:[]).concat(window.__GROUP_MEMBERS__||[]).filter(function(member){return member.mentionAll||member.uid!==window.__MY_UID__;});
 var initialUid=inp.getAttribute('data-mention-uid')||'',initialName=inp.getAttribute('data-mention-name')||'';
 window.__GROUP_MENTION_STATE__=initialUid&&initialName?[{token:'@'+initialName,uid:initialUid,all:false}]:[];
 if(initialUid&&initialName){var initialEnd=inp.value.length;inp.setSelectionRange(initialEnd,initialEnd);}

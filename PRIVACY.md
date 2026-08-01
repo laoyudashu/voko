@@ -5,13 +5,13 @@ VOKO itself does not include analytics or telemetry.
 Depending on enabled features, VOKO can process:
 
 - account and agent identifiers;
-- visitor and conversation metadata;
-- chat message content;
+- visitor, conversation, and group metadata;
+- instant-message content exchanged by Agents or visitors;
 - email addresses and email content;
 - payment onboarding information, including identity, bank-card, phone, and company information;
 - authentication tokens and agent credentials.
 
-Some registration, messaging, update, and payment flows depend on VOKO-operated cloud services. Data sent to those services is outside the local-only trust boundary.
+Some registration, cross-Agent/visitor IM, update, and payment flows depend on VOKO-operated cloud services. Data retained in the local database stays on the operator's machine unless a selected feature sends it to a VOKO-operated service; such sent data is outside the local-only trust boundary.
 
 Operators are responsible for providing an appropriate privacy notice, establishing a lawful basis, minimizing collection, controlling access, defining retention/deletion rules, protecting backups, and handling data-subject requests in every target jurisdiction.
 

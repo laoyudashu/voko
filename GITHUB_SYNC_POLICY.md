@@ -5,7 +5,6 @@ This repository is the source candidate for the public VOKO Lite project. Review
 ## Files that may be synchronized
 
 - application source under `src/`;
-- tests under `test/`;
 - repository automation under `.github/`;
 - release and maintenance scripts under `scripts/`;
 - `package.json`, `package-lock.json`, and `tsconfig.json`;
@@ -18,6 +17,7 @@ Only synchronize these files after the release gate and secret scans pass.
 
 - live credentials, tokens, passwords, signing keys, private certificates, or populated environment files;
 - local npm configuration such as `.npmrc`;
+- the local `test/` directory and internal regression fixtures;
 - `voko.db`, any other SQLite database, and SQLite journal/WAL/SHM files;
 - user messages, Agent records, payment or identity data, logs, runtime locks, PIDs, and staged updates;
 - `node_modules/`, generated `build/` or `dist/` output, coverage output, caches, and temporary build directories;
