@@ -214,10 +214,10 @@ class FakeSenderChild extends EventEmitter {
   }
 }
 
-function createManagerFixture({ hang = false, requestTimeoutMs = 100 } = {}) {
+function createManagerFixture({ hang = false, requestTimeoutMs = 100, serverUrl = 'wss://wukongim.vokovoko.com' } = {}) {
   const rows = {
-    'agent-a': { imUid: 'uid-a', imToken: 'token-a', im_server_url: 'ws://a.test' },
-    'agent-b': { imUid: 'uid-b', imToken: 'token-b', im_server_url: 'ws://b.test' },
+    'agent-a': { imUid: 'uid-a', imToken: 'token-a', im_server_url: serverUrl },
+    'agent-b': { imUid: 'uid-b', imToken: 'token-b', im_server_url: serverUrl },
   };
   const children = [];
   const registered = [];
@@ -312,6 +312,13 @@ test('sender manager returns bounded failures for timeout and child crash', asyn
     error: 'WuKongIM sender exited with code 1',
   });
   await crashFixture.sender.disconnectAll();
+});
+
+test('sender manager rejects a persisted non-official IM endpoint before spawning', async () => {
+  const fixture = createManagerFixture({ serverUrl: 'wss://attacker.example' });
+  const result = await fixture.sender.send('agent-a', 'visitor-1', 'blocked');
+  assert.equal(result.success, false);
+  assert.equal(fixture.children.length, 0);
 });
 
 test('sender worker exits when its parent IPC channel disappears', async () => {

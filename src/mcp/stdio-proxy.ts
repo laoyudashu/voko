@@ -48,9 +48,15 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
 
   // baseUrl 按当前 targetPort 动态计算：端口变更（Lite 重启换端口）后下一条消息自动用新端口
   const mcpUrl = () => `http://localhost:${targetPort}/mcp`;
-  // 鉴权 token（若 Lite 设置了 VOKO_MCP_TOKEN，本地 stdio 代理同环境需带上）
+  // 优先使用显式 token；否则读取当前 Lite 实例生成的随机 token。
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.VOKO_MCP_TOKEN) headers['X-VOKO-Token'] = process.env.VOKO_MCP_TOKEN;
+  const { readInstanceMetadata } = require('../core/process-lifecycle');
+  const refreshRuntimeToken = () => {
+    const runtimeToken = process.env.VOKO_MCP_TOKEN || readInstanceMetadata(dbPath)?.mcpToken;
+    if (runtimeToken) headers['X-VOKO-Token'] = runtimeToken;
+    else delete headers['X-VOKO-Token'];
+  };
+  refreshRuntimeToken();
   const callerProvider = detectCurrentAgentType();
   const callerInstance = callerProvider ? detectCurrentAgentInstance(callerProvider) : null;
   if (callerProvider) headers['X-VOKO-Caller-Provider'] = callerProvider;
@@ -73,6 +79,7 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
     // 转发到 Lite /mcp
     let res;
     try {
+      refreshRuntimeToken();
       res = await fetchWithTimeout(mcpUrl(), {
         method: 'POST',
         headers,
@@ -83,6 +90,7 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
       const retryPort = options.port || getActiveRuntimePort(dbPath);
       if (retryPort && retryPort !== targetPort) {
         targetPort = retryPort;
+        refreshRuntimeToken();
         process.stderr.write(t('cli.mcp.port_changed', { port: targetPort }) + '\n');
         try {
           res = await fetchWithTimeout(mcpUrl(), {

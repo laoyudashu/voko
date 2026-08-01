@@ -12,6 +12,8 @@ const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-c
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
 const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor-acp');
 const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor-cli');
+const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw-cli');
+const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
 const {
   RegistrationOrchestrator,
@@ -54,6 +56,21 @@ test('ZeroClaw uses ACP with an explicitly persisted agent alias', () => {
   assert.deepEqual(provider._cliArgs, ['acp']);
   assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
+});
+
+test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', () => {
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /backend_instance_id/);
+      return {
+        get: (_agentId, backendType) => ({
+          backend_instance_id: backendType === 'openclaw' ? 'openclaw-instance' : 'hermes-profile',
+        }),
+      };
+    },
+  };
+  assert.equal(new OpenClawCliProvider({ db })._instanceForAgent('voko-agent'), 'openclaw-instance');
+  assert.equal(new HermesCliProvider({ db })._instanceForAgent('voko-agent'), 'hermes-profile');
 });
 
 test('Cursor prefers ACP with a restricted CLI fallback', () => {

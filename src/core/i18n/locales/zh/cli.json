@@ -24,6 +24,7 @@
   "cli.updater.no_version": "❌ 无法获取版本信息（OSS 不可达或尚未发布 lite-latest.json）",
   "cli.updater.current_latest": "当前 {current}，OSS 最新 {latest}",
   "cli.updater.already_latest": "✅ 已是最新版本",
+  "cli.updater.registry_not_newer": "npm registry 最新版本 {latest} 不高于当前 {current}，跳过升级",
   "cli.updater.download_failed": "❌ 下载失败，请重试",
   "cli.updater.done": "✅ 升级完成，请重启 VOKO",
   "cli.updater.install_failed": "❌ 安装失败，请重试",

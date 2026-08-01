@@ -36,6 +36,10 @@ function timeTag(ts){
   return'<time datetime="'+iso+'">'+readable+'</time>'
 }
 
+function ajaxPaginationScript(){
+  return '<script>(function(){var selections={};function remember(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:checked:not(:disabled)").forEach(function(input){var key=form.action+"|"+input.name;(selections[key]||(selections[key]=new Set())).add(input.value)})})}function restore(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:not(:disabled)").forEach(function(input){var picked=selections[form.action+"|"+input.name];if(picked&&picked.has(input.value))input.checked=true})})}document.addEventListener("click",function(event){var link=event.target.closest("a[href*=\\"page=\\" i]");if(!link||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();var region=document.querySelector("main[data-voko-page-region]");if(!region)return location.assign(link.href);remember(region);region.setAttribute("aria-busy","true");fetch(link.href,{headers:{"X-Requested-With":"voko-pagination"}}).then(function(response){if(!response.ok)throw new Error("page request failed");return response.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("page region missing");region.replaceWith(next);restore(next);history.pushState(null,"",link.href);next.scrollIntoView({block:"nearest"})}).catch(function(){location.assign(link.href)})});})();</script>'
+}
+
 function page(title,body,opt={},tFn,locale){
   const t=tFn||(k=>k);
   const loc=locale||'zh';
@@ -49,7 +53,7 @@ function page(title,body,opt={},tFn,locale){
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
-  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+'\n</body>\n</html>'
+  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+ajaxPaginationScript()+'\n</body>\n</html>'
 }
 
 function agentNav(aid,aname,tFn){const home=tFn?tFn('common.nav.home'):'首页';return'<a href="/">'+esc(home)+'</a> › <a href="/agents/'+esc(aid)+'">'+esc(aname||aid)+'</a>'}
@@ -229,7 +233,7 @@ function createGroupRouter(handlers, db) {
           const mentionBtn=isDissolved?'':'<a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=messages&amp;mentionUid='+memberUid+'" class="btn btn-xs" style="background:#fff;color:#1a73e8;border-color:#1a73e8">'+L('web.group.btn.mention')+'</a>';
           const kickBtn = canManage ? '<button type="button" class="btn btn-danger btn-xs" aria-label="'+esc(T('web.group.kick_confirm',{name:disp}))+'" onclick="showKickDlg(\x27'+esc(m.uid)+'\x27,\x27'+escName+'\x27)">'+L('web.group.btn.kick')+'</button>' : '';
           const muteBtn = canManage
-            ? '<form method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/mute" style="display:inline;margin:0"><input type="hidden" name="targetUid" value="'+esc(m.uid)+'"><input type="hidden" name="muted" value="'+(isMuted?'0':'1')+'"><button type="submit" class="btn-xs" aria-label="'+(isMuted?esc(T('web.group.unmute_confirm',{name:disp})):esc(T('web.group.mute_confirm',{name:disp})))+'" style="background:#e37400;border-color:#b06800">'+(isMuted?L('web.group.btn.unmute'):L('web.group.btn.mute'))+'</button></form>'
+            ? '<form method="POST" data-group-ajax action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/mute" style="display:inline;margin:0"><input type="hidden" name="targetUid" value="'+esc(m.uid)+'"><input type="hidden" name="muted" value="'+(isMuted?'0':'1')+'"><button type="submit" class="btn-xs" aria-label="'+(isMuted?esc(T('web.group.unmute_confirm',{name:disp})):esc(T('web.group.mute_confirm',{name:disp})))+'" style="background:#e37400;border-color:#b06800">'+(isMuted?L('web.group.btn.unmute'):L('web.group.btn.mute'))+'</button></form>'
             : '';
           const statusCell = isMuted
             ? '<td style="text-align:center;color:#e37400;font-weight:600">'+L('web.group.status.muted')+'</td>'
@@ -266,7 +270,7 @@ function createGroupRouter(handlers, db) {
         if(applies.length){
           applyHtml+='<div class="table-wrap"><table><thead><tr><th>'+L('web.group.apply.requester')+'</th><th style="text-align:center">'+L('web.group.apply.type')+'</th><th style="text-align:center">'+L('web.group.col.action')+'</th></tr></thead><tbody>';
           for(const ap of applies){
-            applyHtml+='<tr><td>'+esc(ap.name||ap.nickname||applyNameMap[ap.uid]||ap.uid)+'</td><td style="text-align:center">'+L(ap.type==='invite'?'web.group.apply.invite':'web.group.apply.apply')+'</td><td style="white-space:nowrap;text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/apply" style="display:inline;margin:0"><input type="hidden" name="applyId" value="'+esc(ap.id)+'"><input type="hidden" name="action" value="approve"><button type="submit" class="btn btn-success btn-xs">'+L('web.group.apply.approve')+'</button></form> <form method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/apply" style="display:inline;margin:0"><input type="hidden" name="applyId" value="'+esc(ap.id)+'"><input type="hidden" name="action" value="reject"><button type="submit" class="btn btn-danger btn-xs">'+L('web.group.apply.reject')+'</button></form></td></tr>';
+            applyHtml+='<tr><td>'+esc(ap.name||ap.nickname||applyNameMap[ap.uid]||ap.uid)+'</td><td style="text-align:center">'+L(ap.type==='invite'?'web.group.apply.invite':'web.group.apply.apply')+'</td><td style="white-space:nowrap;text-align:center"><form method="POST" data-group-ajax action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/apply" style="display:inline;margin:0"><input type="hidden" name="applyId" value="'+esc(ap.id)+'"><input type="hidden" name="action" value="approve"><button type="submit" class="btn btn-success btn-xs">'+L('web.group.apply.approve')+'</button></form> <form method="POST" data-group-ajax action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/apply" style="display:inline;margin:0"><input type="hidden" name="applyId" value="'+esc(ap.id)+'"><input type="hidden" name="action" value="reject"><button type="submit" class="btn btn-danger btn-xs">'+L('web.group.apply.reject')+'</button></form></td></tr>';
           }
           applyHtml+='</tbody></table></div>';
         }else{
@@ -295,11 +299,14 @@ function createGroupRouter(handlers, db) {
       const dangerZone=(dissolveHtml||quitHtml)?'<div class="gm-manage-section"><h3 class="gm-manage-section-title">'+L('web.group.manage.danger_zone')+'</h3><div class="gm-danger-zone">'+dissolveHtml+quitHtml+'</div></div>':'';
       const opsPanel = allowedMember ? panel('ops')+'<div class="gm-ops-shell">'+managementIntroHtml+opsSection+applyHtml+opsHtml+dangerZone+'</div></div>' : '';
       // 统一危险操作 dialog：踢人 / 解散群聊
-      const kickDlg='<dialog id="kick-dlg" class="gm-dialog"><div class="gm-dialog-body"><div class="gm-dialog-icon" aria-hidden="true">!</div><h3>'+L('web.group.kick_dlg_title')+'</h3><p id="kick-dlg-msg"></p></div><form id="kick-form" method="POST" class="gm-dialog-actions"><button type="button" class="btn btn-outline" onclick="closeKickDlg()">'+L('web.group.kick_dlg_cancel')+'</button><button type="submit" class="btn btn-danger">'+L('web.group.kick_dlg_confirm')+'</button></form></dialog>';
+      const kickDlg='<dialog id="kick-dlg" class="gm-dialog"><div class="gm-dialog-body"><div class="gm-dialog-icon" aria-hidden="true">!</div><h3>'+L('web.group.kick_dlg_title')+'</h3><p id="kick-dlg-msg"></p></div><form id="kick-form" method="POST" data-group-ajax class="gm-dialog-actions"><button type="button" class="btn btn-outline" onclick="closeKickDlg()">'+L('web.group.kick_dlg_cancel')+'</button><button type="submit" class="btn btn-danger">'+L('web.group.kick_dlg_confirm')+'</button></form></dialog>';
       const dissolveDlg='<dialog id="dissolve-dlg" class="gm-dialog"><div class="gm-dialog-body"><div class="gm-dialog-icon" aria-hidden="true">!</div><h3>'+L('web.group.dissolve.dialog_title')+'</h3><p>'+L('web.group.dissolve.dialog_desc')+'</p><p class="gm-dialog-warning">'+L('web.group.dissolve.dialog_warning')+'</p><div id="dissolve-feedback" class="gm-dialog-feedback" role="alert"></div></div><div class="gm-dialog-actions"><button type="button" class="btn btn-outline" onclick="closeDissolveDlg()">'+L('common.btn.cancel')+'</button><button id="dissolve-confirm-btn" type="button" class="btn btn-danger" onclick="return confirmDissolveGroup()">'+L('web.group.dissolve.button')+'</button></div></dialog>';
       const dlgScript='<script>'
         +'function showKickDlg(uid,name){var d=document.getElementById("kick-dlg");var f=document.getElementById("kick-form");f.action="/agents/'+aId+'/g/'+cId+'/kick";var h=f.querySelector("input[name=targetUid]");if(!h){h=document.createElement("input");h.type="hidden";h.name="targetUid";f.appendChild(h)}h.value=uid;document.getElementById("kick-dlg-msg").textContent=name;d.showModal()}'
         +'function closeKickDlg(){document.getElementById("kick-dlg").close()}'
+        +'function groupActionError(form,message){var old=form.parentNode.querySelector(".group-action-error");if(old)old.remove();var note=document.createElement("p");note.className="error group-action-error";note.style.margin="6px 0 0";note.textContent=message||"'+esc(T('common.action.failed'))+'";form.insertAdjacentElement("afterend",note)}'
+        +'function refreshGroupMembers(){var url=new URL(location.href);url.searchParams.set("tab","members");return fetch(url,{headers:{"X-Requested-With":"voko-group-action"}}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");var current=document.querySelector("main[data-voko-page-region]");if(!next||!current)throw new Error("refresh region missing");current.replaceWith(next);history.replaceState(null,"",url)})}'
+        +'document.addEventListener("submit",function(e){var f=e.target.closest("form[data-group-ajax]");if(!f)return;e.preventDefault();var b=f.querySelector("button[type=submit]");if(b)b.disabled=true;var d=document.getElementById("kick-dlg");if(d&&d.open)d.close();fetch(f.action,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"},body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json().catch(function(){return{success:false,error:"'+esc(T('common.action.failed'))+'"}})}).then(function(data){if(!data.success)throw new Error(data.error||"'+esc(T('common.action.failed'))+'");return refreshGroupMembers()}).catch(function(err){groupActionError(f,err.message)}).finally(function(){if(b)b.disabled=false})})'
         +'function saveGroupProfile(e){e.preventDefault();var f=e.target;var b=f.querySelector("button");var s=document.getElementById("save-feedback");var d=JSON.stringify({name:document.getElementById("grp-name").value,notice:document.getElementById("grp-notice").value,approve_mode:document.getElementById("grp-approve").checked?"manual":"auto",searchable:document.getElementById("grp-searchable").checked?1:0});b.disabled=true;b.textContent="...";s.textContent="";fetch(f.dataset.url,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:d}).then(function(r){return r.json()}).then(function(j){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';if(j.success){s.style.color="#0f9d58";s.textContent="✓ '+esc(T('web.group.updated'))+'";var nn=document.getElementById("grp-name").value;if(nn){document.title="VOKO — "+nn;var h1s=document.querySelector("h1 span");var h1=document.querySelector("h1");if(h1s)h1s.textContent="'+esc(T('web.group.detail_title'))+': "+nn;else if(h1)h1.textContent="'+esc(T('web.group.detail_title'))+': "+nn;var nav=document.querySelector("nav");if(nav){var as=nav.querySelectorAll("a");if(as.length)as[as.length-1].textContent=nn}}setTimeout(function(){s.textContent=""},2000)}else{s.style.color="#d93025";s.textContent=j.error||"'+esc(T('common.action.failed'))+'"}}).catch(function(err){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';s.style.color="#d93025";s.textContent=err.message});return false}'
         +'</script>';
 
@@ -333,9 +340,10 @@ function createGroupRouter(handlers, db) {
       allAgents.forEach(a=>{const k=a.imUid||a.agentId;if((a.imUid&&memberUids.has(a.imUid))||memberUids.has(a.agentId))agentInGroup.add(k);});
 
       // 白名单好友（分页）
+      const inviteKeyword=String(req.query.keyword||'').trim().slice(0,100);
       const wlPage=Math.max(1,parseInt(req.query.wlPage)||1), wlPageSize=10, wlOffset=(wlPage-1)*wlPageSize;
       let wlTotal=0, allFriends=[];
-      try{const wl=await handlers.list_access_lists({agentId,listType:'whitelist',limit:wlPageSize,offset:wlOffset});if(wl.success){allFriends=wl.data||[];wlTotal=wl.total||0;}}catch(_){}
+      try{const wl=await handlers.list_access_lists({agentId,listType:'whitelist',limit:wlPageSize,offset:wlOffset,keyword:inviteKeyword});if(wl.success){allFriends=wl.data||[];wlTotal=wl.total||0;}}catch(_){}
 
       // 好友昵称（从 user_cache 取，无则仅显示 ID）
       const friendNickMap={};
@@ -347,26 +355,30 @@ function createGroupRouter(handlers, db) {
       const checkRow=(uid,label,sub,isMember,noIm)=>{const cbId='inv-'+esc(uid);const dis=isMember||noIm;const reason=isMember?L('web.group.invite.already_member'):(noIm?L('web.group.invite.no_imuid'):'');return'<label for="'+cbId+'" style="display:flex;align-items:center;gap:8px;margin:4px 0;font-weight:400;cursor:'+(dis?'not-allowed':'pointer')+';'+(dis?'opacity:0.55':'')+'"><input type="checkbox" name="inviteUids" id="'+cbId+'" value="'+esc(uid)+'" style="width:auto;max-width:none;margin:0" '+(isMember?'checked ':'')+(dis?'disabled':'')+'>'+esc(label)+(sub?' <span class="meta" style="font-size:13px">'+esc(sub)+'</span>':'')+(reason?' <span class="meta" style="color:#888;font-size:13px">'+reason+'</span>':'')+'</label>';};
 
       // 构建选项 HTML
+      const searchText=inviteKeyword.toLowerCase();
+      const visibleAgents=searchText?allAgents.filter(a=>[a.agentName,a.agentId,a.backendType].some(v=>String(v||'').toLowerCase().includes(searchText))):allAgents;
       let opts='';
-      if(allAgents.length){
+      if(visibleAgents.length){
         opts+='<h3>'+L('web.group.invite.agents')+'</h3>';
-        allAgents.forEach(a=>{const uid=a.imUid||a.agentId;opts+=checkRow(uid,a.agentName||a.agentId,a.agentId,agentInGroup.has(uid),!a.imUid);});
+        visibleAgents.forEach(a=>{const uid=a.imUid||a.agentId;opts+=checkRow(uid,a.agentName||a.agentId,a.agentId,agentInGroup.has(uid),!a.imUid);});
       }
       if(allFriends.length){
         opts+='<h3>'+L('web.group.invite.friends')+'</h3>';
         allFriends.forEach(f=>{const nick=friendNickMap[f.visitor_id];opts+=checkRow(f.visitor_id,nick||f.visitor_id,nick?f.visitor_id:null,memberUids.has(f.visitor_id));});
       }
-      if(!allAgents.length&&!allFriends.length) opts='<p class="meta">'+L('web.group.create.no_agents')+'</p>';
+      if(!visibleAgents.length&&!allFriends.length) opts='<p class="meta">'+L('web.group.create.no_agents')+'</p>';
 
       // 好友分页栏（有好友即显示，单页也展示计数）
       const wlPages=Math.max(1,Math.ceil(wlTotal/wlPageSize));let wlPgBar='';
       if(wlTotal>0){
         wlPgBar='<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:14px">';
-        if(wlPage>1)wlPgBar+='<a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/invite?wlPage='+(wlPage-1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';
+        if(wlPage>1)wlPgBar+='<button type="button" data-invite-page="'+(wlPage-1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</button>';
         wlPgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:wlPage,total:wlPages}))+'</span>';
-        if(wlPage<wlPages)wlPgBar+='<a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/invite?wlPage='+(wlPage+1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';
+        if(wlPage<wlPages)wlPgBar+='<button type="button" data-invite-page="'+(wlPage+1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</button>';
         wlPgBar+=' <span class="meta">'+esc(T('web.group.create.total_people',{count:wlTotal}))+'</span></div>';
       }
+      const candidatesHtml=opts+wlPgBar;
+      if(req.query.partial==='1')return res.json({success:true,html:candidatesHtml});
 
       // 邀请链接区（AJAX 局部刷新）
       const linkPrefixText=T('web.group.invite.link_prefix_text',{inviter:aName,group:groupName});
@@ -416,17 +428,20 @@ function createGroupRouter(handlers, db) {
       const friendsPanel='<div id="itab-friends" style="'+(inviteTab==='friends'?'':'display:none')+'">'
         +'<form method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/invite" onsubmit="return inviteSubmit()">'
         +'<input type="hidden" name="members" id="invite-members">'
-        +opts+wlPgBar
+        +'<div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px"><label style="margin:0;flex:1;min-width:220px">'+L('web.agent.search_ph')+'<input type="search" id="invite-search" value="'+esc(inviteKeyword)+'" autocomplete="off" style="max-width:none"></label><button type="button" id="invite-search-btn" class="btn-sm">'+L('web.agent.search_btn')+'</button></div>'
+        +'<div id="invite-candidates">'+candidatesHtml+'</div>'
         +'<button type="submit" id="invite-submit-btn" disabled style="margin-top:16px;opacity:0.55">'+L('web.group.invite_page_submit')+'</button>'
         +'</form></div>';
       const linkPanel='<div id="itab-link" style="'+(inviteTab==='link'?'':'display:none')+'">'+linkSection+'</div>';
+      const inviteSearchErrorHtml=JSON.stringify('<p class="error">'+esc(T('web.group.search.fail'))+'</p>');
 
       const body=iTabBar+friendsPanel+linkPanel
         +'<script>'
         +'(function(){var btns=document.querySelectorAll("button[data-itab]");btns.forEach(function(b){b.addEventListener("click",function(){var t=b.getAttribute("data-itab");document.getElementById("itab-friends").style.display=t==="friends"?"":"none";document.getElementById("itab-link").style.display=t==="link"?"":"none";btns.forEach(function(x){var on=x.getAttribute("data-itab")===t;x.style.borderBottomColor=on?"#1a73e8":"transparent";x.style.color=on?"#1a73e8":"#666";x.style.fontWeight=on?"700":"600"});var u=new URL(location.href);if(t==="link")u.searchParams.set("itab","link");else u.searchParams.delete("itab");history.replaceState(null,"",u)})})})();'
-        +'function _updateInviteBtn(){var cbs=document.querySelectorAll("input[name=inviteUids]:not([disabled])");var has=Array.from(cbs).some(function(cb){return cb.checked});var b=document.getElementById("invite-submit-btn");if(b){b.disabled=!has;b.style.opacity=has?"1":"0.55"}};'
-        +'document.querySelectorAll("input[name=inviteUids]").forEach(function(cb){cb.addEventListener("change",_updateInviteBtn)});'
-        +'function inviteSubmit(){var cbs=document.querySelectorAll("input[name=inviteUids]:checked:not([disabled])");var uids=Array.from(cbs).map(function(cb){return cb.value}).join(",");document.getElementById("invite-members").value=uids;if(!uids){alert("'+esc(T('web.group.create.no_agents'))+'");return false}return true}'
+        +'var _inviteSelected=new Set();function _bindInviteCandidates(){document.querySelectorAll("input[name=inviteUids]").forEach(function(cb){if(!cb.disabled){cb.checked=_inviteSelected.has(cb.value);cb.addEventListener("change",function(){if(cb.checked)_inviteSelected.add(cb.value);else _inviteSelected.delete(cb.value);_updateInviteBtn()})}});document.querySelectorAll("button[data-invite-page]").forEach(function(b){b.addEventListener("click",function(){_loadInviteCandidates(b.getAttribute("data-invite-page"))})})}function _updateInviteBtn(){var b=document.getElementById("invite-submit-btn");if(b){b.disabled=!_inviteSelected.size;b.style.opacity=_inviteSelected.size?"1":"0.55"}};'
+        +'function _loadInviteCandidates(page){var box=document.getElementById("invite-candidates"),input=document.getElementById("invite-search"),u=new URL(location.href);u.searchParams.set("partial","1");u.searchParams.set("wlPage",page||"1");if(input.value.trim())u.searchParams.set("keyword",input.value.trim());else u.searchParams.delete("keyword");fetch(u.toString(),{headers:{Accept:"application/json"}}).then(function(r){return r.json()}).then(function(r){if(!r.success)throw new Error("failed");box.innerHTML=r.html;_bindInviteCandidates();var visible=new URL(location.href);visible.searchParams.set("wlPage",page||"1");if(input.value.trim())visible.searchParams.set("keyword",input.value.trim());else visible.searchParams.delete("keyword");history.replaceState(null,"",visible)}).catch(function(){box.insertAdjacentHTML("afterbegin",'+inviteSearchErrorHtml+')})}'
+        +'document.getElementById("invite-search-btn").addEventListener("click",function(){_loadInviteCandidates("1")});document.getElementById("invite-search").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();_loadInviteCandidates("1")}});_bindInviteCandidates();'
+        +'function inviteSubmit(){var uids=Array.from(_inviteSelected).join(",");document.getElementById("invite-members").value=uids;if(!uids){alert("'+esc(T('web.group.create.no_agents'))+'");return false}return true}'
         +'</script>'
         +linkJS
         +'<p style="margin-top:16px"><a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members">'+L('web.group.invite_page_back')+'</a></p>';
@@ -543,7 +558,7 @@ function createGroupRouter(handlers, db) {
       let msg;
       if(allInvites.length){const fn=failed.length?T('web.group.create.failed_note',{count:failed.length}):'';msg=T('web.group.create.success',{channelId:cr.channelId,ok:String(ok),failed:fn});}
       else msg=T('web.group.create.success_no_invite',{channelId:cr.channelId});
-      res.redirect('/agents/'+esc(agentId)+'?ok='+encodeURIComponent(msg));
+      res.redirect('/agents/'+esc(agentId)+'?tab=group&created='+encodeURIComponent(cr.channelId)+'&ok='+encodeURIComponent(msg));
     }catch(e){next(e)}
   });
 
@@ -559,24 +574,27 @@ function createGroupRouter(handlers, db) {
   R.post('/agents/:agentId/g/:channelId/kick', async (req,res,next) => {
     const T=req.t; const {agentId,channelId}=req.params;
     try{const r=await handlers.kick_from_group({agentId,channelId,targetUid:req.body.targetUid});
+      if(req.headers.accept==='application/json')return res.json({success:!!r.success,error:r.error});
       res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&'+(r.success?'ok=':'err=')+encodeURIComponent(r.success?T('web.group.kicked'):r.error||T('common.action.failed')));
-    }catch(e){res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?err='+encodeURIComponent(e.message));}
+    }catch(e){if(req.headers.accept==='application/json')return res.status(500).json({success:false,error:e.message});res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?err='+encodeURIComponent(e.message));}
   });
 
   R.post('/agents/:agentId/g/:channelId/mute', async (req,res,next) => {
     const T=req.t; const {agentId,channelId}=req.params;
     const muted=req.body.muted!=='0';
     try{const r=await handlers.mute_member({agentId,channelId,targetUid:req.body.targetUid,muted});
+      if(req.headers.accept==='application/json')return res.json({success:!!r.success,error:r.error});
       res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&'+(r.success?'ok=':'err=')+encodeURIComponent(r.success?T(muted?'web.group.btn.mute':'web.group.btn.unmute')+' OK':r.error||T('common.action.failed')));
-    }catch(e){res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&err='+encodeURIComponent(e.message));}
+    }catch(e){if(req.headers.accept==='application/json')return res.status(500).json({success:false,error:e.message});res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&err='+encodeURIComponent(e.message));}
   });
 
   R.post('/agents/:agentId/g/:channelId/apply', async (req,res,next) => {
     const T=req.t; const {agentId,channelId}=req.params;
     const {applyId,action}=req.body;
     try{const r=await handlers.approve_group_apply({agentId,channelId,applyId,action});
+      if(req.headers.accept==='application/json')return res.json({success:!!r.success,error:r.error});
       res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&'+(r.success?'ok=':'err=')+encodeURIComponent(r.success?T('web.group.apply.processed'):r.error||T('common.action.failed')));
-    }catch(e){res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&err='+encodeURIComponent(e.message));}
+    }catch(e){if(req.headers.accept==='application/json')return res.status(500).json({success:false,error:e.message});res.redirect('/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members&err='+encodeURIComponent(e.message));}
   });
 
   R.get('/agents/:agentId/g/:channelId/status', async (req,res) => {
@@ -804,7 +822,7 @@ document.addEventListener('mousedown',function(ev){if(trigAt<0)return;if(pop&&!p
 
 /** 群详情三 Tab（群消息/群成员/群操作）切换脚本 */
 function gTabScript(){
-  return '<script>(function(){var btns=document.querySelectorAll("button[data-gtab]");var ids=["messages","members","ops"];function setTab(t){ids.forEach(function(id){var p=document.getElementById("gtab-"+id);if(p)p.style.display=(id===t?"":"none");});btns.forEach(function(b){var on=b.getAttribute("data-gtab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="messages")u.searchParams.delete("tab");else u.searchParams.set("tab",t);history.replaceState(null,"",u);}btns.forEach(function(b){b.addEventListener("click",function(){setTab(b.getAttribute("data-gtab"))});});})();</script>';
+  return '<script>(function(){var ids=["messages","members","ops"];function setTab(t){ids.forEach(function(id){var p=document.getElementById("gtab-"+id);if(p)p.style.display=(id===t?"":"none");});document.querySelectorAll("button[data-gtab]").forEach(function(b){var on=b.getAttribute("data-gtab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="messages")u.searchParams.delete("tab");else u.searchParams.set("tab",t);history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-gtab]");if(b)setTab(b.getAttribute("data-gtab"))});})();</script>';
 }
 
 /** 群成员表搜索 + 分页（每页 10）：SSR 已渲染全部行（含排序），前端按搜索词/页码显隐 */

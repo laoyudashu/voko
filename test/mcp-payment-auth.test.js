@@ -8,6 +8,7 @@ afterEach(() => {
 });
 
 function makeCx() {
+  let activeOwner = 'owner@example.com';
   const paymentAuthRows = [];
   const bankRows = [
     { code: 'ICBC', name: '中国工商银行', short_name: '工商银行' },
@@ -20,22 +21,25 @@ function makeCx() {
   return {
     db: {},
     query: (sql, params) => {
+      if (/FROM config WHERE type='user_access_token'/i.test(sql)) {
+        return [{ data: JSON.stringify({ [activeOwner]: 'ut_test_token' }) }];
+      }
       if (/FROM payment_auth/i.test(sql)) {
-        if (/WHERE id = ?/i.test(sql)) {
-          return paymentAuthRows.filter((r) => r.id === params[0]);
+        if (/WHERE id\s*=\s*\?/i.test(sql)) {
+          return paymentAuthRows.filter((r) => r.id === params[0] && (!/owner_email/i.test(sql) || r.owner_email === params[1]));
         }
         if (/WHERE payment_auth_id = ? AND agent_id != ?/i.test(sql)) {
           return paymentAuthRows
             .filter((r) => r.payment_auth_id === params[0] && r.agent_id !== params[1])
             .map((r) => ({ payment_fee_rate: r.payment_fee_rate, agent_usage_fee_rate: r.agent_usage_fee_rate }));
         }
-        if (/WHERE name LIKE \? OR bank_card LIKE \? OR phone LIKE \?/i.test(sql)) {
-          const kw = params[0].replace(/%/g, '');
+        if (/name LIKE \? OR bank_card LIKE \? OR phone LIKE \?/i.test(sql)) {
+          const kw = params[1].replace(/%/g, '');
           return paymentAuthRows
-            .filter((r) => r.name.includes(kw) || r.bank_card.includes(kw) || r.phone.includes(kw))
+            .filter((r) => r.owner_email === params[0] && (r.name.includes(kw) || r.bank_card.includes(kw) || r.phone.includes(kw)))
             .map((r) => ({ ...r }));
         }
-        return paymentAuthRows.map((r) => ({ ...r }));
+        return paymentAuthRows.filter((r) => !/owner_email/i.test(sql) || r.owner_email === params[0]).map((r) => ({ ...r }));
       }
       if (/FROM bank_head_offices/i.test(sql)) {
         if (!params || params.length === 0) return bankRows;
@@ -74,11 +78,11 @@ function makeCx() {
     exec: (sql, params) => {
       if (/INSERT INTO payment_auth/i.test(sql)) {
         const [
-          id, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name,
+          id, owner_email, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name,
           company_name, unified_social_credit_code, legal_name, legal_licence_no, status, created_at, updated_at,
         ] = params;
         paymentAuthRows.push({
-          id, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name,
+          id, owner_email, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name,
           company_name, unified_social_credit_code, legal_name, legal_licence_no,
           status, created_at, updated_at, receiver_apply_status: 'none',
         });
@@ -148,6 +152,7 @@ function makeCx() {
     VOKO_API_URL: 'http://test.voko.com',
     _paymentAuthRows: paymentAuthRows,
     _agentRows: agentRows,
+    _setActiveOwner: (email) => { activeOwner = email; },
   };
 }
 
@@ -477,6 +482,24 @@ describe('MCP payment auth', () => {
     assert.equal(result.success, false);
     assert.equal(result.error, '支付服务维护中');
     assert.equal(cx._agentRows[0].payment_auth_id, null);
+  });
+
+  it('payment auth records are isolated from a different logged-in owner', async () => {
+    const cx = makeCx();
+    const handlers = createToolHandlers(cx);
+    const created = await handlers.add_payment_auth({
+      name: 'Owner', idCard: '110101199001011234', bankCard: '6222021234567891234',
+      phone: '13800138000', bankCode: 'ICBC', bankName: 'ICBC',
+    });
+    assert.equal(created.success, true);
+    const id = cx._paymentAuthRows[0].id;
+
+    cx._setActiveOwner('other@example.com');
+    const listed = await handlers.list_payment_auth({});
+    assert.deepEqual(listed.data, []);
+    const removed = await handlers.delete_payment_auth({ id });
+    assert.equal(removed.success, false);
+    assert.equal(cx._paymentAuthRows.length, 1);
   });
 
   it('bind_agent_payment_auth 在上游非 JSON HTTP 失败时保留状态码', async () => {

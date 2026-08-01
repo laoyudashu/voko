@@ -72,6 +72,7 @@ interface PaymentOrderDbRow extends DynamicRow {
 
 interface PaymentAuthDbRow extends DynamicRow {
   id: string;
+  owner_email?: string | null;
   name?: string | null;
   bank_card?: string | null;
   id_card?: string | null;
@@ -384,6 +385,7 @@ interface McpToolParams {
   applyId?: string;
   approve_mode?: string;
   approved?: boolean;
+  approvalToken?: string;
   accessMode?: string;
   avatar?: string;
   bankCard?: string;
@@ -553,6 +555,25 @@ function createToolHandlers(cx: McpContext) {
       db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)").run('cursor:' + key, JSON.stringify(val), Date.now());
     } catch (_: any) {}
   }
+  function _currentOwnerEmail(): string {
+    try {
+      const rows = cx.query<ConfigDataRow>("SELECT data FROM config WHERE type='user_access_token'");
+      const data = rows[0]?.data ? JSON.parse(rows[0].data) : {};
+      return String(Object.keys(data)[0] || '').trim().toLowerCase();
+    } catch (_) { return ''; }
+  }
+  function _agentOwnershipError(agentId?: string): string | null {
+    if (!agentId) return null;
+    const row = cx.query<{ owner_email?: string | null }>(
+      'SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1',
+      [agentId],
+    )[0];
+    if (!row || !row.owner_email) return null;
+    const current = _currentOwnerEmail();
+    return current && current === String(row.owner_email).trim().toLowerCase()
+      ? null
+      : '当前登录用户无权访问该 Agent';
+  }
   function fmtMsg(r: MessageDbRow) {
     let mention = null;
     if (r.mention) {
@@ -697,6 +718,7 @@ function createToolHandlers(cx: McpContext) {
         ownerEmail: p.email,
         backendType,
         instanceId: p.instanceId,
+        deliveryModes: p.deliveryModes,
         agentName: data.agentName,
         category,
         description: p.description,
@@ -775,6 +797,7 @@ function createToolHandlers(cx: McpContext) {
         ownerEmail: email,
         backendType,
         instanceId: p.instanceId,
+        deliveryModes: p.deliveryModes,
         agentName: data.name || data.agentName || p.agentName,
         did: data.did,
         publicKey: data.publicKey,
@@ -831,7 +854,16 @@ function createToolHandlers(cx: McpContext) {
       }
       // backendType 仅本地更新，不同步服务端
       if (p.backendType) {
-        cx.exec(`UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?`, [normalizeBackendType(p.backendType), Date.now(), p.agentId]);
+        const nextBackendType = normalizeBackendType(p.backendType);
+        const current = cx.query(`SELECT backend_type FROM agents WHERE agent_id = ?`, [p.agentId])[0];
+        if (current && normalizeBackendType(current.backend_type) !== nextBackendType) {
+          cx.exec(
+            `UPDATE agents SET backend_type=?, backend_instance_id=NULL, delivery_modes=?, updated_at=? WHERE agent_id=?`,
+            [nextBackendType, JSON.stringify(['pull']), Date.now(), p.agentId],
+          );
+        } else {
+          cx.exec(`UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?`, [nextBackendType, Date.now(), p.agentId]);
+        }
         try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_: any) {} // 失效 dispatcher 的 backend_type 缓存
       }
 
@@ -1349,9 +1381,12 @@ function createToolHandlers(cx: McpContext) {
     async whoami(p: McpToolParams = {}) {
       let sql = `SELECT agent_id AS agent_id, agent_name, description, short_description, category, backend_type, publish_status, access_mode, owner_email, created_at FROM agents`;
       const params: unknown[] = [];
-      if (p.ownerEmail) {
+      const currentOwner = _currentOwnerEmail();
+      if (currentOwner) {
         sql += ` WHERE owner_email=?`;
-        params.push(p.ownerEmail);
+        params.push(currentOwner);
+      } else {
+        sql += ` WHERE owner_email IS NULL OR TRIM(owner_email)=''`;
       }
       sql += ` ORDER BY created_at ASC`;
       const rows = cx.query<AgentDbRow>(sql, params);
@@ -1551,11 +1586,15 @@ function createToolHandlers(cx: McpContext) {
     // ─── 18. 查询支付 ───
 
     async check_payments(p: McpToolParams = {}) {
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法查询支付订单' };
       // 按 orderId 查单条
       if (p.orderId) {
-        const orderScope = p.agentId && p.agentId !== 'all' ? ` AND agent_id=?` : '';
-        const orderParams = p.agentId && p.agentId !== 'all' ? [p.orderId, p.orderId, p.agentId] : [p.orderId, p.orderId];
-        const r = cx.query(`SELECT id, agent_id, visitor_id, amount, description, order_no, status, created_at, updated_at FROM payment_orders WHERE (id=? OR order_no=?)${orderScope}`, orderParams)[0];
+        const orderScope = p.agentId && p.agentId !== 'all' ? ` AND po.agent_id=?` : '';
+        const orderParams = p.agentId && p.agentId !== 'all'
+          ? [p.orderId, p.orderId, currentOwner, p.agentId]
+          : [p.orderId, p.orderId, currentOwner];
+        const r = cx.query(`SELECT po.id, po.agent_id, po.visitor_id, po.amount, po.description, po.order_no, po.status, po.created_at, po.updated_at FROM payment_orders po JOIN agents a ON a.agent_id=po.agent_id WHERE (po.id=? OR po.order_no=?) AND LOWER(TRIM(a.owner_email))=?${orderScope}`, orderParams)[0];
         return {
           success: true,
           orders: r ? [{
@@ -1583,17 +1622,17 @@ function createToolHandlers(cx: McpContext) {
         since = _getCursorDb(cx.db, cursorKey);
       }
 
-      const conditions = [];
-      const params: unknown[] = [];
-      if (p.agentId && p.agentId !== 'all') { conditions.push(`agent_id=?`); params.push(p.agentId); }
-      if (p.visitorId) { conditions.push(`visitor_id=?`); params.push(p.visitorId); }
-      if (p.status) { conditions.push(`status=?`); params.push(p.status); }
-      if (since) { conditions.push(`created_at>?`); params.push(since); }
+      const conditions = [`LOWER(TRIM(a.owner_email))=?`];
+      const params: unknown[] = [currentOwner];
+      if (p.agentId && p.agentId !== 'all') { conditions.push(`po.agent_id=?`); params.push(p.agentId); }
+      if (p.visitorId) { conditions.push(`po.visitor_id=?`); params.push(p.visitorId); }
+      if (p.status) { conditions.push(`po.status=?`); params.push(p.status); }
+      if (since) { conditions.push(`po.created_at>?`); params.push(since); }
       params.push(multi, offset);
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const rows = cx.query<PaymentOrderDbRow>(
-        `SELECT id, agent_id, visitor_id, amount, description, order_no, status, created_at, updated_at FROM payment_orders ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT po.id, po.agent_id, po.visitor_id, po.amount, po.description, po.order_no, po.status, po.created_at, po.updated_at FROM payment_orders po JOIN agents a ON a.agent_id=po.agent_id ${whereClause} ORDER BY po.created_at DESC LIMIT ? OFFSET ?`,
         params
       );
 
@@ -1626,6 +1665,8 @@ function createToolHandlers(cx: McpContext) {
     async add_payment_auth(p: McpToolParams = {}) {
       const { name, idCard, bankCard, phone, bankCode, bankName } = p;
       const now = Date.now();
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法添加支付认证' };
 
       if (!bankCode) return { success: false, error: 'bankCode 不能为空，请先通过 voko_search_banks 选择银行' };
       if (!bankCard) return { success: false, error: 'bankCard 不能为空' };
@@ -1637,21 +1678,23 @@ function createToolHandlers(cx: McpContext) {
       if (!/^\d{17}[\dXx]$/.test(String(idCard).trim())) return { success: false, error: '身份证号格式不正确，应为18位' };
 
       const newId = 'pid_' + now + '_' + Math.random().toString(36).substr(2, 6);
-      cx.exec(`INSERT INTO payment_auth (id, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name, company_name, unified_social_credit_code, legal_name, legal_licence_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [newId, name, idCard || '', cleanBankCard || '', phone || '', 1, bankCode || '', bankName || '', '', '', '', '', 'unverified', now, now]);
+      cx.exec(`INSERT INTO payment_auth (id, owner_email, name, id_card, bank_card, phone, receiver_type, bank_code, bank_name, company_name, unified_social_credit_code, legal_name, legal_licence_no, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newId, currentOwner, name, idCard || '', cleanBankCard || '', phone || '', 1, bankCode || '', bankName || '', '', '', '', '', 'unverified', now, now]);
       return { success: true, id: newId };
     },
 
     // ─── 18c. 查看入账银行卡列表 ───
 
     async list_payment_auth(p: McpToolParams = {}) {
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法查看支付认证', data: [] };
       const keyword = (p.keyword || '').trim();
-      let sql = `SELECT * FROM payment_auth ORDER BY updated_at DESC`;
-      let params: unknown[] = [];
+      let sql = `SELECT * FROM payment_auth WHERE LOWER(TRIM(owner_email))=? ORDER BY updated_at DESC`;
+      let params: unknown[] = [currentOwner];
       if (keyword) {
         const kw = `%${keyword}%`;
-        sql = `SELECT * FROM payment_auth WHERE name LIKE ? OR bank_card LIKE ? OR phone LIKE ? ORDER BY updated_at DESC`;
-        params = [kw, kw, kw];
+        sql = `SELECT * FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND (name LIKE ? OR bank_card LIKE ? OR phone LIKE ?) ORDER BY updated_at DESC`;
+        params = [currentOwner, kw, kw, kw];
       }
       const rows = cx.query<PaymentAuthDbRow>(sql, params);
       const receiverStatusLabel: Record<string, string> = {
@@ -1684,9 +1727,13 @@ function createToolHandlers(cx: McpContext) {
 
     async delete_payment_auth(p: McpToolParams = {}) {
       if (!p.id) return { success: false, error: '缺少 id' };
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法删除支付认证' };
+      const owned = cx.query(`SELECT id FROM payment_auth WHERE id=? AND LOWER(TRIM(owner_email))=?`, [p.id, currentOwner])[0];
+      if (!owned) return { success: false, error: '未找到支付认证信息' };
       // 若该银行卡已被 Agent 绑定，先解除绑定
-      cx.exec(`UPDATE agents SET payment_auth_id = NULL, updated_at = ? WHERE payment_auth_id = ?`, [Date.now(), p.id]);
-      cx.exec(`DELETE FROM payment_auth WHERE id = ?`, [p.id]);
+      cx.exec(`UPDATE agents SET payment_auth_id = NULL, updated_at = ? WHERE payment_auth_id = ? AND LOWER(TRIM(owner_email))=?`, [Date.now(), p.id, currentOwner]);
+      cx.exec(`DELETE FROM payment_auth WHERE id = ? AND LOWER(TRIM(owner_email))=?`, [p.id, currentOwner]);
       return { success: true };
     },
 
@@ -1696,10 +1743,13 @@ function createToolHandlers(cx: McpContext) {
       const { paymentAuthId, email: explicitEmail } = p;
       if (!paymentAuthId) return { success: false, error: '缺少 paymentAuthId' };
 
-      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法申请支付认证' };
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ? AND LOWER(TRIM(owner_email))=?`, [paymentAuthId, currentOwner])[0];
       if (!auth) return { success: false, error: '未找到支付认证信息' };
 
-      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : '';
+      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : currentOwner;
+      if (email !== currentOwner) return { success: false, error: '支付认证邮箱必须与当前登录用户一致' };
       if (!email) {
         const boundAgent = cx.query<PaymentAgentRow>(`SELECT owner_email FROM agents WHERE payment_auth_id = ? AND owner_email IS NOT NULL LIMIT 1`, [paymentAuthId])[0];
         email = boundAgent?.owner_email || '';
@@ -1769,11 +1819,14 @@ function createToolHandlers(cx: McpContext) {
     async refresh_payment_auth(p: McpToolParams = {}) {
       const { paymentAuthId, email: explicitEmail } = p;
       if (!paymentAuthId) return { success: false, error: t('mcp.payment.missing_auth_id') };
-      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: t('mcp.payment.refresh_identity_missing') };
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT * FROM payment_auth WHERE id = ? AND LOWER(TRIM(owner_email))=?`, [paymentAuthId, currentOwner])[0];
       if (!auth) return { success: false, error: t('mcp.payment.auth_not_found') };
       if (!auth.request_no) return { success: false, error: t('mcp.payment.auth_not_applied') };
 
-      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : '';
+      let email = explicitEmail ? String(explicitEmail).trim().toLowerCase() : currentOwner;
+      if (email !== currentOwner) return { success: false, error: t('mcp.payment.refresh_identity_missing') };
       if (!email) {
         const boundAgent = cx.query<PaymentAgentRow>(`SELECT owner_email FROM agents WHERE payment_auth_id = ? AND owner_email IS NOT NULL LIMIT 1`, [paymentAuthId])[0];
         email = boundAgent?.owner_email || '';
@@ -1842,7 +1895,9 @@ function createToolHandlers(cx: McpContext) {
       const { agentId, paymentAuthId } = p;
       if (!agentId || !paymentAuthId) return { success: false, error: '缺少 agentId 或 paymentAuthId' };
 
-      const auth = cx.query<PaymentAuthDetailRow>(`SELECT payment_user_uid, request_no, id_card, unified_social_credit_code, receiver_type, receiver_apply_status FROM payment_auth WHERE id = ?`, [paymentAuthId])[0];
+      const currentOwner = _currentOwnerEmail();
+      if (!currentOwner) return { success: false, error: '未登录，无法绑定支付认证' };
+      const auth = cx.query<PaymentAuthDetailRow>(`SELECT payment_user_uid, request_no, id_card, unified_social_credit_code, receiver_type, receiver_apply_status FROM payment_auth WHERE id = ? AND LOWER(TRIM(owner_email))=?`, [paymentAuthId, currentOwner])[0];
       if (!auth) return { success: false, error: '未找到支付认证信息' };
       if (String(auth.receiver_apply_status || '').trim().toUpperCase() !== 'COMPLETED') {
         return { success: false, error: '该银行卡尚未申请认证，请先调用 voko_apply_payment_auth 完成认证（receiverApplyStatus=COMPLETED 后再绑定）' };
@@ -2519,6 +2574,17 @@ function createToolHandlers(cx: McpContext) {
     if (typeof cx.bugReport !== 'function') return { success: false, error: 'Bug report service is unavailable' };
     return cx.bugReport({ ...params, source: (params as any).source || 'agent' });
   };
+
+  // 对所有携带现有 agentId 的 MCP/CLI/Web handler 统一执行 owner 边界校验。
+  // 注册流程访问尚未落库的 Agent，不受此包装影响。
+  for (const [name, handler] of Object.entries(handlers)) {
+    if (typeof handler !== 'function' || name === 'bug_report' || name.startsWith('_')) continue;
+    handlers[name] = async (params: McpToolParams = {}) => {
+      const ownershipError = _agentOwnershipError(params?.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
+      return handler.call(handlers, params);
+    };
+  }
 
   return handlers;
 }

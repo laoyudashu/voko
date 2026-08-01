@@ -108,11 +108,13 @@ class OpenClawWsProvider {
     // 订阅状态追踪
     this.subscribedSessions = new Set();  // 已成功订阅的 session key
     this.pendingSubscriptions = new Map();  // 待确认的订阅请求 {sessionKey: {timestamp, id}}
+    this._sessionSendChains = new Map(); // sessionKey -> 顺序发送链，订阅中的同 session 消息共享结果
     this._caseMap = new Map();  // gateway 转小写后的 key → 原始大小写 key
     this._processedMsgs = new Map();  // 已处理 final 消息去重 key → timestamp
     this._chatFinalSessions = new Map();  // 新版 chat final 到达时间，抑制同轮旧版事件
     this._legacyReplyTimers = new Map();  // 旧版 final 短暂延迟，优先采用新版完整回复
     this._sessionTurns = new Map();  // sessionKey → 当前入站 turn 身份
+    this._vokoAgentBySession = new Map(); // OpenClaw 实例 session → VOKO agentId
     this._recoveryWarmedSessions = new Set();
 
     // 初始化
@@ -277,7 +279,10 @@ class OpenClawWsProvider {
   _parseAgentSessionKey(sessionKey: string): { agentId: string | null; visitorId: string | null } {
     const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
     if (!agentMatch) return { agentId: null, visitorId: null };
-    return { agentId: agentMatch[1], visitorId: agentMatch[2] };
+    return {
+      agentId: this._vokoAgentBySession.get(sessionKey.toLowerCase()) || agentMatch[1],
+      visitorId: agentMatch[2],
+    };
   }
 
   _replyIdentity(msg: ProtocolMessage, sessionKey: string): { turnId?: string; replyId?: string } {
@@ -675,7 +680,7 @@ class OpenClawWsProvider {
         this.ws = null;
         // 断线后订阅状态失效；不清除会导致新消息永远卡在「订阅中」
         this.subscribedSessions.clear();
-        this.pendingSubscriptions.clear();
+        this._rejectPendingSubscriptions(new Error('OpenClaw WebSocket closed'));
         this._recoveryWarmedSessions.clear();
 
         // 如果启用了自动回复，尝试重连
@@ -833,12 +838,15 @@ class OpenClawWsProvider {
           const pending = this.pendingSubscriptions.get(key);
           const elapsed = Date.now() - pending.timestamp;
           this.pendingSubscriptions.delete(key);
+          if (pending.timeout) clearTimeout(pending.timeout);
 
           if (subscribed) {
             this.subscribedSessions.add(key);
             console.log(`[OpenClaw WS] ✅ 订阅成功 sessionKey=${key} 耗时=${elapsed}ms`);
+            pending.resolve?.();
           } else {
             console.log(`[OpenClaw WS] ❌ 订阅失败 sessionKey=${key} 耗时=${elapsed}ms`);
+            pending.reject?.(new Error(`OpenClaw session subscription failed: ${key}`));
           }
           // 订阅完成后处理排队消息
           this.processMessageQueue();
@@ -874,13 +882,9 @@ class OpenClawWsProvider {
 
       // 从 sessionKey 提取 visitorId 和 agentId
       // 格式: agent:{agentId}:{visitorId}
-      let visitorId = null;
-      let agentId = null;
-      const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
-      if (agentMatch) {
-        agentId = agentMatch[1];
-        visitorId = agentMatch[2];
-      }
+      const parsedSession = this._parseAgentSessionKey(sessionKey);
+      let visitorId = parsedSession.visitorId;
+      let agentId = parsedSession.agentId;
 
       if (role === 'assistant') {
         // 只提取 type="text" 的内容，过滤掉 thinking
@@ -977,7 +981,8 @@ class OpenClawWsProvider {
 
     // 清理订阅状态
     this.subscribedSessions.clear();
-    this.pendingSubscriptions.clear();
+    this._rejectPendingSubscriptions(new Error('OpenClaw WebSocket disconnected'));
+    this._sessionSendChains.clear();
     this._caseMap.clear();
     for (const reply of this._legacyReplyTimers.values()) clearTimeout(reply.timer);
     this._legacyReplyTimers.clear();
@@ -1092,8 +1097,18 @@ class OpenClawWsProvider {
       if (now - pending.timestamp > maxAgeMs) {
         console.warn(`[OpenClaw WS] 清除过期订阅 pending sessionKey=${key}`);
         this.pendingSubscriptions.delete(key);
+        if (pending.timeout) clearTimeout(pending.timeout);
+        pending.reject?.(new Error(`OpenClaw session subscription timeout: ${key}`));
       }
     }
+  }
+
+  _rejectPendingSubscriptions(error: Error): void {
+    for (const pending of this.pendingSubscriptions.values()) {
+      if (pending.timeout) clearTimeout(pending.timeout);
+      pending.reject?.(error);
+    }
+    this.pendingSubscriptions.clear();
   }
 
   /**
@@ -1196,89 +1211,63 @@ class OpenClawWsProvider {
     message: string,
     extraData: Partial<PushPayload> | null = null,
   ): Promise<void> {
-    return new Promise<void>((resolve) => {
-      // Gateway 内部统一用小写处理，voko 侧对齐
-      const originalKey = sessionKey;
-      sessionKey = sessionKey.toLowerCase();
-      if (originalKey !== sessionKey) {
-        this._caseMap.set(sessionKey, originalKey);
-      }
-      const now = Date.now();
-      console.log(`[OpenClaw WS] 🚀 sendToSession sessionKey=${sessionKey} t=${now}`);
+    const originalKey = sessionKey;
+    sessionKey = sessionKey.toLowerCase();
+    if (originalKey !== sessionKey) this._caseMap.set(sessionKey, originalKey);
 
-      this._evictStalePendingSubscriptions();
-
-      // OpenClaw 2026.3+ 无 sessions.messages.subscribe，认证后直接 chat.send
-      if (!this._supportsSessionSubscribe()) {
-        if (!this.connected || this.connecting) {
-          console.log(`[OpenClaw WS] ⚠️ 未连接或连接中，等待... sessionKey=${sessionKey} connected=${this.connected} connecting=${this.connecting}`);
-          this.queueMessage({ type: 'sendToSession', sessionKey, message, extraData, timestamp: now, onSent: resolve });
-          return;
-        }
-        this.subscribedSessions.add(sessionKey);
-        console.log(`[OpenClaw WS] 📤 直接 chat.send（无 subscribe API）sessionKey=${sessionKey}`);
-        this.sendChatSend(sessionKey, message, extraData, now);
-        resolve();
-        return;
-      }
-
-      // 如果已经订阅过该 session，直接发送消息
-      if (this.subscribedSessions.has(sessionKey)) {
-        console.log(`[OpenClaw WS] 📤 已订阅，直接发送chat.send sessionKey=${sessionKey} t=${now}`);
-        this.sendChatSend(sessionKey, message, extraData, now);
-        resolve();
-        return;
-      }
-
-      // 如果正在等待订阅确认，不重复订阅，排队等待
-      if (this.pendingSubscriptions.has(sessionKey)) {
-        console.log(`[OpenClaw WS] 订阅中，排队等待 sessionKey=${sessionKey}`);
-        this.queueMessage({ type: 'sendToSession', sessionKey, message, extraData, timestamp: now, onSent: resolve });
-        return;
-      }
-
-      // 如果未连接或正在连接中，等待连接完成
-      if (!this.connected || this.connecting) {
-        console.log(`[OpenClaw WS] ⚠️ 未连接或连接中，等待... sessionKey=${sessionKey} connected=${this.connected} connecting=${this.connecting}`);
-        // 放入队列，连接成功后会自动处理
-        this.queueMessage({ type: 'sendToSession', sessionKey, message, extraData, timestamp: now, onSent: resolve });
-        return;
-      }
-
-      // 发起订阅请求
-      console.log(`[OpenClaw WS] 📤 发起订阅请求 sessionKey=${sessionKey} t=${now}`);
-      const reqId = this.generateId();
-      this.pendingSubscriptions.set(sessionKey, { timestamp: now, id: reqId, onSent: resolve, extraData });
-
-      this.send({
-        type: 'req',
-        id: reqId,
-        method: 'sessions.messages.subscribe',
-        params: { key: sessionKey }
-      });
-
-      // 等待订阅确认后发送消息
-      const waitForSubscribe = (): void => {
-        const pending = this.pendingSubscriptions.get(sessionKey);
-        if (!pending) {
-          // 订阅已完成（成功或失败）
-          if (this.subscribedSessions.has(sessionKey)) {
-            console.log(`[OpenClaw WS] 📤 订阅确认后发送chat.send sessionKey=${sessionKey} t=${Date.now()}`);
-            this.sendChatSend(sessionKey, message, extraData, Date.now());
-            resolve();
-          } else {
-            console.log(`[OpenClaw WS] ❌ 订阅失败，跳过消息发送 sessionKey=${sessionKey}`);
-            resolve(); // 也 resolve，避免永久等待
-          }
-        } else {
-          // 还在等待，继续检查
-          setTimeout(waitForSubscribe, 50);
-        }
-      };
-
-      // 延迟检查订阅状态（订阅响应应该很快）
-      setTimeout(waitForSubscribe, 100);
+    const send = () => this._sendToSessionNow(sessionKey, message, extraData);
+    const previous = this._sessionSendChains.get(sessionKey);
+    const operation = previous ? previous.then(send) : send();
+    const chain = operation.finally(() => {
+      if (this._sessionSendChains.get(sessionKey) === chain) this._sessionSendChains.delete(sessionKey);
     });
+    // 保留 rejection 供同 session 排队消息共享，同时避免内部链产生未处理 rejection 警告。
+    chain.catch(() => {});
+    this._sessionSendChains.set(sessionKey, chain);
+    return operation;
+  }
+
+  async _sendToSessionNow(
+    sessionKey: string,
+    message: string,
+    extraData: Partial<PushPayload> | null,
+  ): Promise<void> {
+    const now = Date.now();
+    console.log(`[OpenClaw WS] 🚀 sendToSession sessionKey=${sessionKey} t=${now}`);
+    this._evictStalePendingSubscriptions();
+    if (!this._supportsSessionSubscribe()) {
+      if (!this.connected || this.connecting) throw new Error(`OpenClaw WebSocket unavailable: ${sessionKey}`);
+      this.subscribedSessions.add(sessionKey);
+      this.sendChatSend(sessionKey, message, extraData, now);
+      return;
+    }
+    if (!this.subscribedSessions.has(sessionKey)) await this._subscribeSession(sessionKey);
+    this.sendChatSend(sessionKey, message, extraData, Date.now());
+  }
+
+  _subscribeSession(sessionKey: string): Promise<void> {
+    if (this.subscribedSessions.has(sessionKey)) return Promise.resolve();
+    const existing = this.pendingSubscriptions.get(sessionKey);
+    if (existing?.promise) return existing.promise;
+    if (!this.connected || this.connecting) return Promise.reject(new Error(`OpenClaw WebSocket unavailable: ${sessionKey}`));
+
+    const now = Date.now();
+    const reqId = this.generateId();
+    let pending: any;
+    const promise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (this.pendingSubscriptions.get(sessionKey) !== pending) return;
+        this.pendingSubscriptions.delete(sessionKey);
+        reject(new Error(`OpenClaw session subscription timeout: ${sessionKey}`));
+      }, 30000);
+      pending = { timestamp: now, id: reqId, resolve, reject, timeout, promise: null };
+      this.pendingSubscriptions.set(sessionKey, pending);
+      this.send({
+        type: 'req', id: reqId, method: 'sessions.messages.subscribe', params: { key: sessionKey }
+      });
+    });
+    pending.promise = promise;
+    return promise;
   }
 
   /**
@@ -1444,7 +1433,15 @@ class OpenClawWsProvider {
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
-    const sessionKey = `agent:${agentId}:${fromUid}`;
+    let targetAgentId = agentId;
+    try {
+      const row = this.db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'openclaw');
+      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {}
+    const sessionKey = `agent:${targetAgentId}:${fromUid}`;
+    this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const recoveryKey = sessionKey.toLowerCase();
     const prompt = this._recoveryWarmedSessions.has(recoveryKey)
       ? content
@@ -1460,7 +1457,15 @@ class OpenClawWsProvider {
     content: string,
     metadata?: { turnId?: string },
   ): Promise<void> {
-    const sessionKey = `agent:${agentId}:${visitorId}`;
+    let targetAgentId = agentId;
+    try {
+      const row = this.db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'openclaw');
+      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {}
+    const sessionKey = `agent:${targetAgentId}:${visitorId}`;
+    this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     return this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
   }
 

@@ -58,6 +58,7 @@
   "common.footer.status_ok": "Normal",
   "common.footer.status_im_down": "IM Disconnected",
   "common.footer.status_init": "Initializing",
+  "common.footer.update_available": "V{version} available; run voko update",
   "common.home.copied": "Copied",
   "common.home.gen_creating": "Generating...",
   "common.home.gen_failed": "Generate failed",

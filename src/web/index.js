@@ -73,6 +73,18 @@ function renderAuditContent(content,tFn,timeHtml){
   return'<div class="audit-message"><div class="audit-message-head"><strong>'+esc(title)+'</strong><span class="audit-message-result">'+esc(result)+'</span>'+(timeHtml?'<span class="meta">'+timeHtml+'</span>':'')+'</div>'+keyword+original+'</div>';
 }
 
+function ajaxPaginationScript(){
+  return '<script>(function(){var selections={};function remember(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:checked:not(:disabled)").forEach(function(input){var key=form.action+"|"+input.name;(selections[key]||(selections[key]=new Set())).add(input.value)})})}function restore(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:not(:disabled)").forEach(function(input){var picked=selections[form.action+"|"+input.name];if(picked&&picked.has(input.value))input.checked=true})})}document.addEventListener("click",function(event){var link=event.target.closest("a[href*=\\"page=\\" i]");if(!link||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();var region=document.querySelector("main[data-voko-page-region]");if(!region)return location.assign(link.href);remember(region);region.setAttribute("aria-busy","true");fetch(link.href,{headers:{"X-Requested-With":"voko-pagination"}}).then(function(response){if(!response.ok)throw new Error("page request failed");return response.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("page region missing");region.replaceWith(next);restore(next);history.pushState(null,"",link.href);next.scrollIntoView({block:"nearest"})}).catch(function(){location.assign(link.href)})});})();</script>'
+}
+
+function ajaxListFilterScript(){
+  return '<script>(function(){document.addEventListener("submit",function(event){var form=event.target;if(form.tagName!=="FORM"||String(form.method).toLowerCase()!=="get"||!form.querySelector("[name=keyword],[name=q]"))return;var region=document.querySelector("main[data-voko-page-region]");if(!region)return;event.preventDefault();var url=new URL(form.action||location.href,location.origin),data=new FormData(form);data.forEach(function(value,key){if(value)url.searchParams.set(key,value);else url.searchParams.delete(key)});region.setAttribute("aria-busy","true");fetch(url,{headers:{"X-Requested-With":"voko-filter"}}).then(function(r){if(!r.ok)throw new Error("filter failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("filter region missing");region.replaceWith(next);history.pushState(null,"",url)}).catch(function(){location.assign(url)})})})();</script>'
+}
+
+function ajaxAccessListScript(){
+  return '<script>(function(){function fail(form,message){var old=form.querySelector(".access-action-error");if(old)old.remove();var note=document.createElement("span");note.className="error access-action-error";note.style.marginLeft="8px";note.textContent=message||"Action failed";form.appendChild(note)}function refresh(){return fetch(location.href,{headers:{"X-Requested-With":"voko-access-list"}}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");var current=document.querySelector("main[data-voko-page-region]");if(!next||!current)throw new Error("refresh region missing");current.replaceWith(next)})}document.addEventListener("submit",function(event){var form=event.target.closest("form[data-voko-access-list]");if(!form)return;event.preventDefault();var button=form.querySelector("button[type=submit]");if(button)button.disabled=true;var data={};new FormData(form).forEach(function(value,key){data[key]=value});var url=new URL(form.action,location.origin);fetch("/api"+url.pathname+"/action",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(data)}).then(function(r){return r.json().catch(function(){return{success:false,error:"Action failed"}})}).then(function(result){if(!result.success)throw new Error(result.error||"Action failed");return refresh()}).catch(function(err){fail(form,err.message)}).finally(function(){if(button)button.disabled=false})})})();</script>'
+}
+
 function page(title,body,opt={},tFn,locale){
   // P2 i18n：tFn/locale 由 renderPage(req,...) 传入；未改造路由不传 → 透传 k=>k，渲染行为不变
   const t=tFn||(k=>k);
@@ -91,13 +103,13 @@ function page(title,body,opt={},tFn,locale){
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
-  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+submitLockScript()+'\n</body>\n</html>'
+  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+submitLockScript()+ajaxPaginationScript()+ajaxListFilterScript()+ajaxAccessListScript()+'\n</body>\n</html>'
 }
 
 function agentNav(aid,aname,tFn){const home=tFn?tFn('common.nav.home'):'首页';return'<a href="/">'+esc(home)+'</a> › <a href="/agents/'+esc(aid)+'">'+esc(aname||aid)+'</a>'}
 
 /** 生成 POST 到 /agents/{id} 的表单 */
-function actionForm(aid,action,fields,btn,cls,agentAction,submitLabel){
+function actionForm(aid,action,fields,btn,cls,agentAction,submitLabel,formAttrs){
   const daa=agentAction||action;
   const lockAttrs=submitLabel?' data-submit-lock="1" data-submit-label="'+esc(submitLabel)+'"':'';
   let _af=fields.findIndex(f=>!f.val);if(_af<0)_af=0;const f=fields.map((fld,i)=>{const ff=i===_af?' autofocus':'';
@@ -113,7 +125,7 @@ function actionForm(aid,action,fields,btn,cls,agentAction,submitLabel){
     }
     return h
   }).join('\n');
-  return '<form method="POST" action="/agents/'+esc(aid)+'" data-agent-kind="action" data-agent-action="'+daa+'"'+lockAttrs+'>\n<input type="hidden" name="_action" value="'+action+'">\n'+f+'\n<button type="submit" class="'+(cls||'')+'" data-agent-kind="action" data-agent-action="'+daa+'.submit">'+esc(btn||'提交')+'</button>\n</form>'
+  return '<form method="POST" action="/agents/'+esc(aid)+'" data-agent-kind="action" data-agent-action="'+daa+'"'+lockAttrs+(formAttrs||'')+'>\n<input type="hidden" name="_action" value="'+action+'">\n'+f+'\n<button type="submit" class="'+(cls||'')+'" data-agent-kind="action" data-agent-action="'+daa+'.submit">'+esc(btn||'提交')+'</button>\n</form>'
 }
 
 /** 原生 POST 表单的同步提交锁；fetch 型入口仍在各自函数内用 try/finally 解锁。 */
@@ -341,6 +353,20 @@ function ajaxRowRemove(url,body,row){fetch(url,{method:"POST",headers:{"Content-
 
 function createWebRouter(handlers, db, opts={}){
   const R=Router();
+  R.use((req,res,next)=>{
+    const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
+    const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
+    if(!agentId)return next();
+    try{
+      const row=db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+      if(!row||!row.owner_email)return next();
+      const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
+      const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};
+      const current=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase();
+      if(current&&current===String(row.owner_email).trim().toLowerCase())return next();
+      return res.status(403).send('Forbidden');
+    }catch(_){return res.status(500).send('Unable to verify Agent ownership')}
+  });
   const refreshProfiles=typeof opts.refreshUserProfiles==='function'
     ? opts.refreshUserProfiles
     : uids=>refreshUserProfiles(db,uids);
@@ -408,6 +434,8 @@ function createWebRouter(handlers, db, opts={}){
       const rt=db.prepare("SELECT data FROM config WHERE type='runtime'").get();
       if(!rt)return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>';
       const d=JSON.parse(rt.data);
+      let updateNotice='';
+      try{const ur=db.prepare("SELECT data FROM config WHERE type='update_status'").get();const u=ur&&ur.data?JSON.parse(ur.data):null;if(u&&u.updateAvailable&&u.latestVersion){updateNotice=' <span style="color:#b45309;font-weight:700">'+esc(t('common.footer.update_available',{version:u.latestVersion}))+'</span>'}}catch{}
       // 运行状态
       let statusKey='common.footer.status_init',statusColor='#888';
       if(d.agents&&d.agents.length){
@@ -418,6 +446,7 @@ function createWebRouter(handlers, db, opts={}){
       return '<div class="info-bar" style="margin-top:20px;font-size:13px;color:#888;display:flex;justify-content:space-between;align-items:center">'
         +'<span>'
         +'<span>版本：V'+esc(pkg.version)+'</span>'
+        +updateNotice
         +(d.port?' <span>'+esc(t('common.footer.port'))+': '+esc(d.port)+'</span>':'')
         +' <span>PID: '+esc(d.pid||'')+'</span>'
         +' <span>'+esc(t('common.footer.status'))+': <span id="footer-status-text" style="color:'+statusColor+';font-weight:700">'+esc(t(statusKey))+'</span></span>'
@@ -622,6 +651,7 @@ function createWebRouter(handlers, db, opts={}){
       const limit = 10;
       const offset = (page - 1) * limit;
       const activeTab=req.query.tab==='group'?'group':'conv';
+      const createdGroupId=String(req.query.created||'');
       let convs=[],convTotal=0,convPages=0;
       try{const cr=await handlers.list_conversations({agentId,filter:'all',limit,offset,keyword,channelType:'direct'});convs=cr.conversations||[];convTotal=cr.total||0;convPages=Math.ceil(convTotal/limit)}catch{}
       if(activeTab==='conv'&&convs.length){try{await refreshProfiles(convs.map(c=>c.channelId))}catch(_){}}
@@ -641,20 +671,42 @@ function createWebRouter(handlers, db, opts={}){
           fetchOffset+=batch.length;
           if(!batch.length||fetchOffset>=groupTotal)break;
         }while(true);
-        const lastByChannel={};
+        const activityByChannel={};
         try{
           const self=db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId);
           if(self&&self.imUid){
             const rows=db.prepare('SELECT channel_id,last_timestamp FROM conversations WHERE user_uid=? AND channel_type=2').all(self.imUid);
-            rows.forEach(r=>{lastByChannel[r.channel_id]=Number(r.last_timestamp)||0;});
+            rows.forEach(r=>{activityByChannel[r.channel_id]={lastConversation:Number(r.last_timestamp)||0,lastMessage:0,lastSystem:0};});
           }
         }catch(_){}
+        try{
+          const channelIds=[...new Set(allGroups.map(g=>String(g.channel_id||'')).filter(Boolean))];
+          for(let i=0;i<channelIds.length;i+=500){
+            const chunk=channelIds.slice(i,i+500);
+            const rows=db.prepare('SELECT channel_id,MAX(CASE WHEN content_type!=12 THEN timestamp ELSE 0 END) AS last_message_timestamp,MAX(CASE WHEN content_type=12 THEN timestamp ELSE 0 END) AS last_system_timestamp FROM messages WHERE channel_type=2 AND channel_id IN ('+chunk.map(()=>'?').join(',')+') GROUP BY channel_id').all(...chunk);
+            rows.forEach(r=>{const a=activityByChannel[r.channel_id]||(activityByChannel[r.channel_id]={lastConversation:0,lastMessage:0,lastSystem:0});a.lastMessage=Number(r.last_message_timestamp)||0;a.lastSystem=Number(r.last_system_timestamp)||0;});
+          }
+        }catch(_){}
+        const sortableTime=value=>{if(value===undefined||value===null||value==='')return 0;if(typeof value==='number'||/^\d+(?:\.\d+)?$/.test(String(value))){const n=Number(value);return Number.isFinite(n)?(n<1e12?n*1000:n):0;}const parsed=Date.parse(String(value));return Number.isFinite(parsed)?parsed:0;};
+        const groupActivityTime=g=>{
+          const local=activityByChannel[g.channel_id]||{};
+          return Math.max(
+            sortableTime(g.created_at??g.createdAt),
+            sortableTime(g.notice_updated_at??g.noticeUpdatedAt??g.announcement_updated_at??g.announcementUpdatedAt??g.updated_at??g.updatedAt),
+            sortableTime(g.last_system_message_at??g.lastSystemMessageAt),
+            sortableTime(g.last_message_at??g.lastMessageAt??g.last_message_time??g.lastMessageTime),
+            sortableTime(local.lastConversation),sortableTime(local.lastSystem),sortableTime(local.lastMessage),
+          );
+        };
         allGroups.sort((a,b)=>{
           const aDissolved=(a.status||'active')==='dissolved';
           const bDissolved=(b.status||'active')==='dissolved';
           if(aDissolved!==bDissolved)return aDissolved?1:-1;
-          const byMessage=(lastByChannel[b.channel_id]||0)-(lastByChannel[a.channel_id]||0);
-          if(byMessage)return byMessage;
+          const aCreated=createdGroupId&&String(a.channel_id)===createdGroupId;
+          const bCreated=createdGroupId&&String(b.channel_id)===createdGroupId;
+          if(aCreated!==bCreated)return aCreated?-1:1;
+          const byActivity=groupActivityTime(b)-groupActivityTime(a);
+          if(byActivity)return byActivity;
           return new Date(b.joined_at||0).getTime()-new Date(a.joined_at||0).getTime();
         });
         groups=allGroups.slice(goffset,goffset+limit);
@@ -748,7 +800,7 @@ function createWebRouter(handlers, db, opts={}){
       const groupPanel='<div id="tab-group" style="'+(activeTab==='group'?'':'display:none')+'">'+groupHtml+gPgBar+groupOps+'</div>';
       const body=infoBar+tabBar+convPanel+groupPanel+'<p><a href="/">← '+L('common.btn.home')+'</a></p>';
 
-      const tabScript='<script>(function(){var btns=document.querySelectorAll("button[data-tab]");function setTab(t){var c=document.getElementById("tab-conv"),g=document.getElementById("tab-group");if(c)c.style.display=(t==="conv"?"":"none");if(g)g.style.display=(t==="group"?"":"none");btns.forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group")u.searchParams.set("tab","group");else u.searchParams.delete("tab");history.replaceState(null,"",u);}btns.forEach(function(b){b.addEventListener("click",function(){setTab(b.getAttribute("data-tab"))});});})();</script>';
+      const tabScript='<script>(function(){function setTab(t){var c=document.getElementById("tab-conv"),g=document.getElementById("tab-group");if(c)c.style.display=(t==="conv"?"":"none");if(g)g.style.display=(t==="group"?"":"none");document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group")u.searchParams.set("tab","group");else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
 
       res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript}))
     }catch(e){next(e)}
@@ -918,11 +970,11 @@ function createWebRouter(handlers, db, opts={}){
       const{agentId}=req.params;const page=parseInt(req.query.page,10)||1,keyword=req.query.keyword||'',limit=20,offset=(page-1)*limit;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const prefill=esc(req.query.visitorId||'');
       let listHtml='<p class="meta">'+L('web.agent.whitelist.empty')+'</p>';var totalPages=0;
-      try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit,offset,keyword});const es=r.data||r.entries||r.accessList||[],total=r.total||es.length;totalPages=Math.ceil(total/limit);let wlNickMap={};if(es.length){try{const vids=es.map(e=>e.visitor_id||e.visitorId||'').filter(Boolean);if(vids.length){const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+vids.map(()=>'?').join(',')+')').all(...vids);rows.forEach(r=>{wlNickMap[r.uid]=r.nickname||'';});}}catch(_){}const wlName=(vid)=>{const n=wlNickMap[vid];return n?esc(n)+' ('+esc(vid)+')':esc(vid);};listHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.whitelist.col.visitor')+'</th><th>'+L('web.agent.whitelist.col.reason')+'</th><th style="text-align:center">'+L('web.agent.whitelist.col.action')+'</th></tr></thead><tbody>'+es.map(e=>'<tr><td>'+wlName(e.visitor_id||e.visitorId||'')+'</td><td>'+esc(e.reason||'-')+'</td><td style="text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'" style="display:inline"><input type="hidden" name="_action" value="remove_whitelist"><input type="hidden" name="visitorId" value="'+esc(e.visitor_id||e.visitorId||'')+'"><button type="submit" class="btn-xs btn-outline" style="margin:0;padding:2px 8px;font-size:11px;min-height:auto">'+L('common.btn.remove')+'</button></form></td></tr>').join('\n')+'</tbody></table></div>'}}catch{}
+      try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit,offset,keyword});const es=r.data||r.entries||r.accessList||[],total=r.total||es.length;totalPages=Math.ceil(total/limit);let wlNickMap={};if(es.length){try{const vids=es.map(e=>e.visitor_id||e.visitorId||'').filter(Boolean);if(vids.length){const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+vids.map(()=>'?').join(',')+')').all(...vids);rows.forEach(r=>{wlNickMap[r.uid]=r.nickname||'';});}}catch(_){}const wlName=(vid)=>{const n=wlNickMap[vid];return n?esc(n)+' ('+esc(vid)+')':esc(vid);};listHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.whitelist.col.visitor')+'</th><th>'+L('web.agent.whitelist.col.reason')+'</th><th style="text-align:center">'+L('web.agent.whitelist.col.action')+'</th></tr></thead><tbody>'+es.map(e=>'<tr><td>'+wlName(e.visitor_id||e.visitorId||'')+'</td><td>'+esc(e.reason||'-')+'</td><td style="text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'" data-voko-access-list style="display:inline"><input type="hidden" name="_action" value="remove_whitelist"><input type="hidden" name="visitorId" value="'+esc(e.visitor_id||e.visitorId||'')+'"><button type="submit" class="btn-xs btn-outline" style="margin:0;padding:2px 8px;font-size:11px;min-height:auto">'+L('common.btn.remove')+'</button></form></td></tr>').join('\n')+'</tbody></table></div>'}}catch{}
       const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/whitelist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.wl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/whitelist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderFormPage(T('web.agent.whitelist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+L('web.agent.whitelist.add_title')+'</h3>'+actionForm(agentId,'add_whitelist',[
         {id:'wv',name:'visitorId',label:T('web.agent.whitelist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.whitelist.ph.visitor'))+'"'},
         {id:'wr',name:'reason',label:T('web.agent.whitelist.reason_opt'),type:'text'},
-      ],T('common.btn.add'),'','whitelist.add'),req.t,req.locale))
+      ],T('common.btn.add'),'','whitelist.add',undefined,' data-voko-access-list'),req.t,req.locale))
     }catch(e){next(e)}
   });
 
@@ -934,7 +986,7 @@ function createWebRouter(handlers, db, opts={}){
       const prefill=esc(req.query.visitorId||'');
       let listHtml='<p class="meta">'+L('web.agent.blacklist.empty')+'</p>';
       let alreadyBlacklisted = false, totalPages = 0;
-      try{const r=await handlers.list_access_lists({agentId,listType:'blacklist',limit,offset,keyword});const es=r.data||r.entries||r.accessList||[],total=r.total||es.length;totalPages=Math.ceil(total/limit);let blNickMap={};if(es.length){try{const vids=es.map(e=>e.visitor_id||e.visitorId||'').filter(Boolean);if(vids.length){const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+vids.map(()=>'?').join(',')+')').all(...vids);rows.forEach(r=>{blNickMap[r.uid]=r.nickname||'';});}}catch(_){}const blName=(vid)=>{const n=blNickMap[vid];return n?esc(n)+' ('+esc(vid)+')':esc(vid);};listHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.blacklist.col.visitor')+'</th><th>'+L('web.agent.blacklist.col.reason')+'</th><th style="text-align:center">'+L('web.agent.blacklist.col.action')+'</th></tr></thead><tbody>'+es.map(e=>'<tr><td>'+blName(e.visitor_id||e.visitorId||'')+'</td><td>'+esc(e.reason||'-')+'</td><td style="text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'" style="display:inline"><input type="hidden" name="_action" value="remove_blacklist"><input type="hidden" name="visitorId" value="'+esc(e.visitor_id||e.visitorId||'')+'"><button type="submit" class="btn-xs btn-outline" style="margin:0;padding:2px 8px;font-size:11px;min-height:auto">'+L('common.btn.remove')+'</button></form></td></tr>').join('\n')+'</tbody></table></div>';if(prefill && es.some(e=>(e.visitor_id||e.visitorId||'')===prefill))alreadyBlacklisted=true}}catch{}
+      try{const r=await handlers.list_access_lists({agentId,listType:'blacklist',limit,offset,keyword});const es=r.data||r.entries||r.accessList||[],total=r.total||es.length;totalPages=Math.ceil(total/limit);let blNickMap={};if(es.length){try{const vids=es.map(e=>e.visitor_id||e.visitorId||'').filter(Boolean);if(vids.length){const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+vids.map(()=>'?').join(',')+')').all(...vids);rows.forEach(r=>{blNickMap[r.uid]=r.nickname||'';});}}catch(_){}const blName=(vid)=>{const n=blNickMap[vid];return n?esc(n)+' ('+esc(vid)+')':esc(vid);};listHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.blacklist.col.visitor')+'</th><th>'+L('web.agent.blacklist.col.reason')+'</th><th style="text-align:center">'+L('web.agent.blacklist.col.action')+'</th></tr></thead><tbody>'+es.map(e=>'<tr><td>'+blName(e.visitor_id||e.visitorId||'')+'</td><td>'+esc(e.reason||'-')+'</td><td style="text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'" data-voko-access-list style="display:inline"><input type="hidden" name="_action" value="remove_blacklist"><input type="hidden" name="visitorId" value="'+esc(e.visitor_id||e.visitorId||'')+'"><button type="submit" class="btn-xs btn-outline" style="margin:0;padding:2px 8px;font-size:11px;min-height:auto">'+L('common.btn.remove')+'</button></form></td></tr>').join('\n')+'</tbody></table></div>';if(prefill && es.some(e=>(e.visitor_id||e.visitorId||'')===prefill))alreadyBlacklisted=true}}catch{}
       const formTitle = alreadyBlacklisted ? T('web.agent.blacklist.remove_title') : T('web.agent.blacklist.add_title');
       const formBtn = alreadyBlacklisted ? T('common.bl.remove') : T('web.agent.blacklist.block_btn');
       const formAction = alreadyBlacklisted ? 'remove_blacklist' : 'add_blacklist';
@@ -943,7 +995,7 @@ function createWebRouter(handlers, db, opts={}){
         ? [{id:'bv',name:'visitorId',label:T('web.agent.blacklist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.blacklist.ph.visitor'))+'"'}]
         : [{id:'bv',name:'visitorId',label:T('web.agent.blacklist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.blacklist.ph.visitor'))+'"'},
            {id:'br',name:'reason',label:T('web.agent.blacklist.reason_opt'),type:'text'}];
-      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/blacklist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.bl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/blacklist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderFormPage(T('web.agent.blacklist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+esc(formTitle)+'</h3>'+actionForm(agentId,formAction,formFields,formBtn,formCls,'blacklist.'+formAction),req.t,req.locale))
+      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/blacklist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.bl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/blacklist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderFormPage(T('web.agent.blacklist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+esc(formTitle)+'</h3>'+actionForm(agentId,formAction,formFields,formBtn,formCls,'blacklist.'+formAction,undefined,' data-voko-access-list'),req.t,req.locale))
     }catch(e){next(e)}
   });
 
@@ -1399,7 +1451,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const T=req.t,L=k=>esc(T(k));
       // 查所有已发布 agent 供选择
       let agents=[];
-      if(db) agents=db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' ORDER BY agent_name").all();
+      try{if(db){const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};const ownerEmail=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase();if(ownerEmail)agents=db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=? ORDER BY agent_name").all(ownerEmail)}}catch{}
       const opts=agents.map(a=>'<option value="'+esc(a.agent_id)+'">'+esc(a.agent_name||a.agent_id)+'</option>').join('\n');
       res.send(renderPage(req,T('web.invite.title'),'<div class="card"><form method="POST" action="/invite" data-agent-action="invite.send"><label for="ia">'+L('web.invite.select_agent')+'</label><select id="ia" name="agentId" required autofocus><option value="">'+L('web.invite.select_ph')+'</option>'+opts+'</select><label for="ie">'+L('web.invite.email')+'</label><input type="email" id="ie" name="friendEmail" required placeholder="friend@example.com" autocomplete="email"><br><br><button type="submit">'+L('web.invite.send_btn')+'</button></form></div>'+inviteConfirmUi(T,'form[data-agent-action="invite.send"]')+'<a href="/">← '+L('common.btn.home')+'</a>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.invite.breadcrumb')}))
     }catch(e){next(e)}
@@ -1437,20 +1489,24 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const aid=req.query.agentId||'',vid=req.query.visitorId||'',st=req.query.status||'',oid=req.query.orderNo||'',fstart=req.query.start||'',fend=req.query.end||'',amtMin=parseFloat(req.query.amtMin)||0,amtMax=parseFloat(req.query.amtMax)||0,txn=req.query.txn||'',desc=req.query.desc||'';
       let orders=[],total=0,sumAmt=0;
       if(db){
-        let w=[];let p=[];
-        if(aid&&aid!='all'){w.push('agent_id=?');p.push(aid)}
-        if(vid){w.push('visitor_id LIKE ?');p.push('%'+vid+'%')}
-        if(st){w.push('status=?');p.push(st)}
-        if(oid){w.push('(id LIKE ? OR order_no LIKE ?)');p.push('%'+oid+'%','%'+oid+'%')}
-        if(fstart){w.push('created_at>=?');p.push(new Date(fstart).getTime())}
-        if(fend){w.push('created_at<=?');p.push(new Date(fend).getTime())}
-        if(amtMin>0){w.push('CAST(amount AS REAL)>=?');p.push(amtMin)}
-        if(amtMax>0){w.push('CAST(amount AS REAL)<=?');p.push(amtMax)}
-        if(txn){w.push('(third_trade_no LIKE ? OR trade_no LIKE ?)');p.push('%'+txn+'%','%'+txn+'%')}
-        if(desc){w.push('description LIKE ?');p.push('%'+desc+'%')}
-        const wh=w.length?' WHERE '+w.join(' AND '):'';
-        const c=db.prepare('SELECT COUNT(*) as c, COALESCE(SUM(CAST(amount AS REAL)),0) as s FROM payment_orders'+wh).get(...p);total=c?c.c:0;sumAmt=c?c.s:0;
-        orders=db.prepare('SELECT * FROM payment_orders'+wh+' ORDER BY created_at DESC LIMIT ? OFFSET ?').all(...p,limit,offset);
+        let ownerEmail='';try{const tokenRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();const tokenMap=tokenRow&&tokenRow.data?JSON.parse(tokenRow.data):{};ownerEmail=String(Object.keys(tokenMap)[0]||'').trim().toLowerCase()}catch{}
+        if(ownerEmail){
+          let w=['LOWER(TRIM(a.owner_email))=?'];let p=[ownerEmail];
+          if(aid&&aid!='all'){w.push('po.agent_id=?');p.push(aid)}
+          if(vid){w.push('po.visitor_id LIKE ?');p.push('%'+vid+'%')}
+          if(st){w.push('po.status=?');p.push(st)}
+          if(oid){w.push('(po.id LIKE ? OR po.order_no LIKE ?)');p.push('%'+oid+'%','%'+oid+'%')}
+          if(fstart){w.push('po.created_at>=?');p.push(new Date(fstart).getTime())}
+          if(fend){w.push('po.created_at<=?');p.push(new Date(fend).getTime())}
+          if(amtMin>0){w.push('CAST(po.amount AS REAL)>=?');p.push(amtMin)}
+          if(amtMax>0){w.push('CAST(po.amount AS REAL)<=?');p.push(amtMax)}
+          if(txn){w.push('(po.third_trade_no LIKE ? OR po.trade_no LIKE ?)');p.push('%'+txn+'%','%'+txn+'%')}
+          if(desc){w.push('po.description LIKE ?');p.push('%'+desc+'%')}
+          const wh=' WHERE '+w.join(' AND ');
+          const from=' FROM payment_orders po JOIN agents a ON a.agent_id=po.agent_id';
+          const c=db.prepare('SELECT COUNT(*) as c, COALESCE(SUM(CAST(po.amount AS REAL)),0) as s'+from+wh).get(...p);total=c?c.c:0;sumAmt=c?c.s:0;
+          orders=db.prepare('SELECT po.*'+from+wh+' ORDER BY po.created_at DESC LIMIT ? OFFSET ?').all(...p,limit,offset);
+        }
       }
       let agentOpts='<option value="all">'+esc(T('web.payments.all_agents'))+'</option>';
       try{const ags=await getAgentList(handlers);for(const a of ags)agentOpts+='<option value="'+esc(a.agentId)+'"'+(aid===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>'}catch{}

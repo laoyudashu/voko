@@ -84,6 +84,14 @@ function bankSelectScript(tFn) {
 function createPaymentAuthRouter(handlers, db) {
   const R = Router();
 
+  function currentOwnerEmail() {
+    try {
+      const row = db && db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
+      const data = row?.data ? JSON.parse(row.data) : {};
+      return String(Object.keys(data)[0] || '').trim().toLowerCase();
+    } catch (_) { return ''; }
+  }
+
   function renderPage(req, title, body, opt) {
     return page(title, body, opt, req.t, req.locale);
   }
@@ -172,7 +180,8 @@ function createPaymentAuthRouter(handlers, db) {
     try {
       const T = req.t, L = k => esc(T(k));
       let auth = null;
-      if (db) { const r = db.prepare('SELECT * FROM payment_auth WHERE id=?').all(req.params.id); if (r.length) auth = r[0]; }
+      const ownerEmail = currentOwnerEmail();
+      if (db && ownerEmail) { const r = db.prepare('SELECT * FROM payment_auth WHERE id=? AND LOWER(TRIM(owner_email))=?').all(req.params.id, ownerEmail); if (r.length) auth = r[0]; }
       if (!auth) return res.send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + T('web.payment_auth.not_found_msg') + '</p><a href="/payment-auth">' + L('common.btn.back') + '</a>'));
       res.send(renderPage(req, T('web.payment_auth.confirm_title'), '<div class="card"><p>' + T('web.payment_auth.confirm_msg') + '</p><table><tr><th>' + L('web.payment_auth.th.name') + '</th><td>' + esc(auth.name || '') + '</td></tr><tr><th>' + L('web.payment_auth.th.bank') + '</th><td>' + esc(auth.bank_name || '') + '</td></tr><tr><th>' + L('web.payment_auth.th.card') + '</th><td>' + esc((auth.bank_card || '').substr(-4)) + '</td></tr></table><br><form method="POST" action="/payment-auth/' + esc(req.params.id) + '/delete"><button type="submit" class="btn-danger" data-testid="confirm-delete-btn">' + L('web.payment_auth.confirm_btn') + '</button><a href="/payment-auth" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>', { nav: '<a href="/">' + L('common.nav.home') + '</a> › <a href="/payment-auth">' + L('web.payment_auth.breadcrumb') + '</a> › ' + L('web.payment_auth.delete_crumb') }));
     } catch (e) { next(e); }
@@ -186,7 +195,9 @@ function createPaymentAuthRouter(handlers, db) {
   R.get('/payment-auth/:id/apply', (req, res) => {
     const T = req.t, L = k => esc(T(k));
     let userEmail = '';
-    try { if (db) { const rt = db.prepare("SELECT data FROM config WHERE type='runtime'").get(); if (rt) { const d = JSON.parse(rt.data); userEmail = d.userEmail || ''; } } } catch {}
+    userEmail = currentOwnerEmail();
+    const auth = db && userEmail ? db.prepare('SELECT id FROM payment_auth WHERE id=? AND LOWER(TRIM(owner_email))=?').get(req.params.id, userEmail) : null;
+    if (!auth) return res.status(404).send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + T('web.payment_auth.not_found_msg') + '</p>'));
     res.send(renderPage(req, T('web.payment_auth.apply_title'), '<div class="card"><form method="POST" action="/payment-auth/' + esc(req.params.id) + '/apply"><p>' + T('web.payment_auth.apply_msg') + '</p><label for="ae">' + L('web.payment_auth.apply_email_lbl') + '</label><input type="email" id="ae" name="email" value="' + esc(userEmail) + '" autocomplete="email"><br><br><button type="submit" class="btn-success">' + L('web.payment_auth.apply_btn') + '</button><a href="/payment-auth" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>', { nav: '<a href="/">' + L('common.nav.home') + '</a> › <a href="/payment-auth">' + L('web.payment_auth.breadcrumb') + '</a> › ' + L('web.payment_auth.apply_crumb') }));
   });
 
@@ -204,9 +215,10 @@ function createPaymentAuthRouter(handlers, db) {
   // ── 从 Agent 侧绑定或更换银行卡 ──
   R.get('/agents/:agentId/payment-auth', (req, res) => {
     const T = req.t, L = k => esc(T(k));
-    const agent = db ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents WHERE agent_id=?').get(req.params.agentId) : null;
+    const ownerEmail = currentOwnerEmail();
+    const agent = db && ownerEmail ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents WHERE agent_id=? AND LOWER(TRIM(owner_email))=?').get(req.params.agentId, ownerEmail) : null;
     if (!agent) return res.status(404).send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + L('web.payment_auth.agent_not_found') + '</p><a href="/">' + L('common.btn.back') + '</a>'));
-    const auths = db ? db.prepare("SELECT id,bank_name,bank_card FROM payment_auth WHERE UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all() : [];
+    const auths = db && ownerEmail ? db.prepare("SELECT id,bank_name,bank_card FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all(ownerEmail) : [];
     const options = auths.map(a => '<option value="' + esc(a.id) + '"' + (a.id === agent.payment_auth_id ? ' selected' : '') + '>' + esc((a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4)) + '</option>').join('');
     const select = options
       ? '<select id="paymentAuthId" name="paymentAuthId" required><option value="">' + L('web.payment_auth.bind_select_card') + '</option>' + options + '</select>'
@@ -226,7 +238,10 @@ function createPaymentAuthRouter(handlers, db) {
   // 兼容旧书签；新入口统一从 Agent 列表进入。
   R.get('/payment-auth/:id/bind', (req, res) => {
     const T = req.t, L = k => esc(T(k));
-    const agents = db ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents ORDER BY agent_name, agent_id').all() : [];
+    const ownerEmail = currentOwnerEmail();
+    const ownedAuth = db && ownerEmail ? db.prepare('SELECT id FROM payment_auth WHERE id=? AND LOWER(TRIM(owner_email))=?').get(req.params.id, ownerEmail) : null;
+    if (!ownedAuth) return res.status(404).send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + T('web.payment_auth.not_found_msg') + '</p>'));
+    const agents = db ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents WHERE LOWER(TRIM(owner_email))=? ORDER BY agent_name, agent_id').all(ownerEmail) : [];
     const options = agents.map(a => '<option value="' + esc(a.agent_id) + '"' + (a.payment_auth_id === req.params.id ? ' selected' : '') + '>' + esc(a.agent_name || a.agent_id) + '</option>').join('');
     const body = '<div class="card"><form method="POST" action="/payment-auth/' + esc(req.params.id) + '/bind"><label for="agentId">' + L('web.payment_auth.bind_agent') + '</label><select id="agentId" name="agentId" required><option value="">' + L('web.payment_auth.bind_select') + '</option>' + options + '</select><br><button type="submit" class="btn-success">' + L('web.payment_auth.bind_btn') + '</button><a href="/payment-auth" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>';
     res.send(renderPage(req, T('web.payment_auth.bind_title'), body, { nav: '<a href="/">' + L('common.nav.home') + '</a> › <a href="/payment-auth">' + L('web.payment_auth.breadcrumb') + '</a> › ' + L('web.payment_auth.bind_title') }));

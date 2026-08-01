@@ -10,15 +10,17 @@
  */
 function getList(db, { agentId, listType, limit, offset, keyword }) {
   try {
-    let where = 'WHERE agent_id = ? AND list_type = ?';
+    let where = 'WHERE a.agent_id = ? AND a.list_type = ?';
     const params = [agentId, listType];
     if (keyword) {
-      where += ' AND visitor_id LIKE ?';
-      params.push('%' + keyword + '%');
+      where += ' AND (a.visitor_id LIKE ? OR COALESCE(u.nickname, \'\') LIKE ? OR COALESCE(a.reason, \'\') LIKE ?)';
+      const pattern = '%' + keyword + '%';
+      params.push(pattern, pattern, pattern);
     }
-    const countRow = db.prepare(`SELECT COUNT(*) as cnt FROM agent_access_lists ${where}`).get(...params);
+    const from = 'FROM agent_access_lists a LEFT JOIN user_cache u ON u.uid = a.visitor_id';
+    const countRow = db.prepare(`SELECT COUNT(*) as cnt ${from} ${where}`).get(...params);
     const total = countRow?.cnt || 0;
-    let sql = `SELECT id, visitor_id, reason, created_at FROM agent_access_lists ${where} ORDER BY created_at DESC`;
+    let sql = `SELECT a.id, a.visitor_id, a.reason, a.created_at ${from} ${where} ORDER BY a.created_at DESC`;
     if (limit) { sql += ' LIMIT ?'; params.push(limit); }
     if (offset) { sql += ' OFFSET ?'; params.push(offset); }
     const rows = db.prepare(sql).all(...params);

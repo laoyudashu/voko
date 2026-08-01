@@ -42,6 +42,7 @@ function createDb() {
       access_mode TEXT NOT NULL DEFAULT 'private',
       backend_type TEXT,
       backend_instance_id TEXT,
+      delivery_modes TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -65,10 +66,11 @@ describe('registerAgentInDb description 写入', () => {
     try {
       const r = registerAgentInDbOnDb(db, {
         agentId: 'agent-desc',
-        uid: 'uid-1', token: 'tok-1', serverUrl: 'wss://im',
+        uid: 'uid-1', token: 'tok-1', serverUrl: 'wss://wukongim.vokovoko.com',
         ownerEmail: 'owner@test.com',
         backendType: 'codex',
         instanceId: 'codex_profile_test',
+        deliveryModes: ['cli', 'pull'],
         agentName: '我的Codex助手',
         category: 'technology',
         description: '一个只读的代码分析助手',
@@ -77,11 +79,12 @@ describe('registerAgentInDb description 写入', () => {
       });
       assert.strictEqual(r.success, true);
 
-      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
+      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, delivery_modes, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
       assert.strictEqual(row.description, '一个只读的代码分析助手');
       assert.strictEqual(row.category, 'technology');
       assert.strictEqual(row.backend_type, 'codex');
       assert.strictEqual(row.backend_instance_id, 'codex_profile_test');
+      assert.deepStrictEqual(JSON.parse(row.delivery_modes), ['cli', 'pull']);
       assert.strictEqual(row.agent_name, '我的Codex助手');
       assert.strictEqual(row.access_mode, 'public');
     } finally { cleanupDb(db); }
@@ -92,7 +95,7 @@ describe('registerAgentInDb description 写入', () => {
     try {
       const r = registerAgentInDbOnDb(db, {
         agentId: 'agent-nodesc',
-        uid: 'uid-2', token: 'tok-2', serverUrl: 'wss://im',
+        uid: 'uid-2', token: 'tok-2', serverUrl: 'wss://wukongim.vokovoko.com',
         backendType: 'gemini', category: 'education',
       });
       assert.strictEqual(r.success, true);
@@ -106,11 +109,11 @@ describe('registerAgentInDb description 写入', () => {
     const db = createDb();
     try {
       registerAgentInDbOnDb(db, {
-        agentId: 'agent-normalized', uid: 'u1', token: 't1', serverUrl: 'wss://im',
+        agentId: 'agent-normalized', uid: 'u1', token: 't1', serverUrl: 'wss://wukongim.vokovoko.com',
         backendType: ' Claude_Code ',
       });
       registerAgentInDbOnDb(db, {
-        agentId: 'agent-custom', uid: 'u2', token: 't2', serverUrl: 'wss://im',
+        agentId: 'agent-custom', uid: 'u2', token: 't2', serverUrl: 'wss://wukongim.vokovoko.com',
         backendType: 'Work Buddy',
       });
       assert.strictEqual(db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get('agent-normalized').backend_type, 'claude-code');
@@ -123,12 +126,12 @@ describe('registerAgentInDb description 写入', () => {
     try {
       // 首次：有 description
       registerAgentInDbOnDb(db, {
-        agentId: 'agent-up', uid: 'u', token: 't', serverUrl: 'wss://im',
+        agentId: 'agent-up', uid: 'u', token: 't', serverUrl: 'wss://wukongim.vokovoko.com',
         backendType: 'codex', category: 'technology', description: '旧描述',
       });
       // 二次：换 description + backendType
       registerAgentInDbOnDb(db, {
-        agentId: 'agent-up', uid: 'u2', token: 't2', serverUrl: 'wss://im',
+        agentId: 'agent-up', uid: 'u2', token: 't2', serverUrl: 'wss://wukongim.vokovoko.com',
         backendType: 'gemini', category: 'education', description: '新描述',
       });
       const row = db.prepare('SELECT description, backend_type, category, imUid FROM agents WHERE agent_id=?').get('agent-up');

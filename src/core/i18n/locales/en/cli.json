@@ -24,6 +24,7 @@
   "cli.updater.no_version": "❌ Failed to fetch version info (OSS unreachable or lite-latest.json not published yet)",
   "cli.updater.current_latest": "Current {current}, OSS latest {latest}",
   "cli.updater.already_latest": "✅ Already up to date",
+  "cli.updater.registry_not_newer": "npm registry version {latest} is not newer than current {current}; update skipped",
   "cli.updater.download_failed": "❌ Download failed, please retry",
   "cli.updater.done": "✅ Upgrade complete, please restart VOKO",
   "cli.updater.install_failed": "❌ Install failed, please retry",

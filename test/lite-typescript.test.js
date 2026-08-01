@@ -20,6 +20,8 @@ const { RuntimeState } = require('../build/core/runtime-state');
 const liteEvents = require('../build/core/lite-events');
 const smoke = require('../build/testing/smoke-all');
 const { createWebRouter } = require('../build/web');
+const { requiresLocalToken, isAllowedBridgeConfigType } = require('../build/core/local-http-security');
+const { updateLite } = require('../build/cli');
 
 test('pluralRule keeps the existing locale behavior', () => {
   assert.equal(pluralRule('en', 1), 'one');
@@ -300,6 +302,17 @@ test('Web smoke page and registry work from the packaged Lite layout', async () 
   }
 });
 
+test('privileged local bridge APIs require the instance token and accept only safe config types', () => {
+  assert.equal(requiresLocalToken('/mcp'), true);
+  assert.equal(requiresLocalToken('/api/llm/config'), true);
+  assert.equal(requiresLocalToken('/api/config/save'), true);
+  assert.equal(requiresLocalToken('/api/config/delete'), true);
+  assert.equal(isAllowedBridgeConfigType('channel_config'), true);
+  assert.equal(isAllowedBridgeConfigType('llm_config'), true);
+  assert.equal(isAllowedBridgeConfigType('user_access_token'), false);
+  assert.equal(isAllowedBridgeConfigType('runtime'), false);
+});
+
 test('guest mode exposes the bug-report page and JSON API without login', async (t) => {
   let submitted;
   const app = express();
@@ -415,6 +428,44 @@ test('short-link creation uses the owner token and never accepts a client target
   });
 });
 
+test('payments page scopes SQL queries to the current owner', async (t) => {
+  const queries = [];
+  const db = {
+    prepare(sql) {
+      return {
+        get(...args) {
+          queries.push({ sql, args });
+          if (sql.includes("type='user_access_token'")) {
+            return { data: JSON.stringify({ 'owner@example.com': { user_access_token: 'ut_owner' } }) };
+          }
+          if (sql.includes('COUNT(*) as c')) return { c: 0, s: 0 };
+          return null;
+        },
+        all(...args) {
+          queries.push({ sql, args });
+          return [];
+        },
+      };
+    },
+  };
+  const app = express();
+  app.use(createWebRouter({ whoami: async () => ({ agents: [] }) }, db));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/payments`);
+  assert.equal(response.status, 200);
+  const paymentQuery = queries.find((entry) => entry.sql.includes('COUNT(*) as c'));
+  assert.match(paymentQuery.sql, /payment_orders po JOIN agents a ON a\.agent_id=po\.agent_id/);
+  assert.match(paymentQuery.sql, /LOWER\(TRIM\(a\.owner_email\)\)=\?/);
+  assert.equal(paymentQuery.args[0], 'owner@example.com');
+});
+
 test('agent actions return to the same agent subpage and conversation controls use native POST forms', async (t) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
@@ -427,7 +478,17 @@ test('agent actions return to the same agent subpage and conversation controls u
     manage_whitelist: async () => ({ success: true }),
     manage_blacklist: async () => ({ success: true }),
   };
-  app.use(createWebRouter(handlers, { prepare() { throw new Error('unexpected database access'); } }));
+  app.use(createWebRouter(handlers, {
+    prepare(sql) {
+      return {
+        get() {
+          if (/owner_email FROM agents/i.test(sql)) return { owner_email: 'owner@example.com' };
+          if (/user_access_token/i.test(sql)) return { data: JSON.stringify({ 'owner@example.com': 'ut_test' }) };
+          throw new Error('unexpected database access');
+        },
+      };
+    },
+  }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, () => resolve(instance));
     instance.once('error', reject);
@@ -544,11 +605,62 @@ test('smoke-test Lite instances never open a browser window', () => {
   assert.match(entrySource, /process\.env\.VOKO_SMOKE_TEST\s*!==\s*'1'/);
 });
 
-test('kebab and camel auto-update flags both disable startup and pending upgrades', () => {
+test('auto-update remains disabled until signed releases are enforced', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  assert.match(entrySource, /args\.noAutoUpdate \|\| args\['no-auto-update'\]/);
-  assert.equal((entrySource.match(/!autoUpdateDisabled\(args\)/g) || []).length, 2);
-  assert.match(entrySource, /options\.autoUpdate !== false/);
+  assert.match(entrySource, /function autoUpdateEnabled[\s\S]*?return false;/);
+  assert.equal((entrySource.match(/autoUpdateEnabled\(args\)/g) || []).length, 2);
+  assert.match(entrySource, /options\.autoUpdate === true && autoUpdateEnabled\(\)/);
+});
+
+test('version checks only notify while voko update uses the official npm registry', () => {
+  const cliSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli.ts'), 'utf8');
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const webSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(cliSource, /return \{ currentVersion: pkg\.version, latestVersion: manifest\.version, updateAvailable \}/);
+  assert.match(cliSource, /--registry=https:\/\/registry\.npmjs\.org\//);
+  assert.match(cliSource, /'view', '@voko\/lite', 'version'/);
+  assert.match(cliSource, /`@voko\/lite@\$\{latestVersion\}`/);
+  assert.match(cliSource, /--ignore-scripts/);
+  assert.match(entrySource, /function checkVersionAndPersist/);
+  assert.match(entrySource, /'update_status'/);
+  assert.match(webSource, /common\.footer\.update_available/);
+});
+
+test('voko update installs only from npm registry in a published installation', async () => {
+  const calls = [];
+  let exitCode;
+  await updateLite({
+    installDir: path.join('C:', 'npm', 'node_modules', '@voko', 'lite', 'build'),
+    spawn(command, args, options) {
+      calls.push({ command, args, options });
+      return calls.length === 1 ? { status: 0, stdout: '0.4.1\n' } : { status: 0 };
+    },
+    exit(code) { exitCode = code; },
+  });
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].command, process.platform === 'win32' ? 'npm.cmd' : 'npm');
+  assert.deepEqual(calls[0].args, [
+    'view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/',
+  ]);
+  assert.deepEqual(calls[1].args, [
+    'install', '-g', '--ignore-scripts', '--registry=https://registry.npmjs.org/', '@voko/lite@0.4.1',
+  ]);
+});
+
+test('voko update never downgrades when npm registry is behind the installed version', async () => {
+  const calls = [];
+  let exitCode;
+  await updateLite({
+    installDir: path.join('C:', 'npm', 'node_modules', '@voko', 'lite', 'build'),
+    spawn(command, args) {
+      calls.push({ command, args });
+      return { status: 0, stdout: '0.3.8\n' };
+    },
+    exit(code) { exitCode = code; },
+  });
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 1);
 });
 
 test('account switching waits for old workers to stop before starting new workers', () => {

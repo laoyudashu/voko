@@ -20,7 +20,7 @@ const { syncOfflineMessages } = require('../build/core/offline-sync');
 const { createDeliver, createSendMessage } = require('../build/core/send-message');
 const { processPendingPaymentOrder, startPaymentPolling } = require('../build/core/payment');
 const { selectWindowsOpenclawCommand } = require('../build/core/dispatcher/providers/openclaw-ws');
-const { normalizeOfficialPublicUrl } = require('../build/core/url-security');
+const { normalizeOfficialImServerUrl, normalizeOfficialPublicUrl } = require('../build/core/url-security');
 const ENDPOINTS = require('../build/endpoints.json');
 
 const TEST_PRIVATE_KEY = Buffer.alloc(32, 1).toString('hex');
@@ -34,6 +34,17 @@ test('official public URLs use the non-redirecting www host', () => {
   assert.equal(
     normalizeOfficialPublicUrl('https://www.vokovoko.com/s/agent-1', { canonicalMain: true }),
     'https://www.vokovoko.com/s/agent-1',
+  );
+});
+
+test('IM credentials can only be sent to the official secure endpoint', () => {
+  assert.equal(
+    normalizeOfficialImServerUrl('wss://wukongim.vokovoko.com/'),
+    'wss://wukongim.vokovoko.com',
+  );
+  assert.throws(
+    () => normalizeOfficialImServerUrl('wss://example.test'),
+    /无效|invalid|endpoint|VOKO/i,
   );
 });
 

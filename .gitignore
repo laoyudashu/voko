@@ -26,6 +26,12 @@ id_ed25519
 *.db-wal
 *.sqlite
 *.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Local runtime state.
 events.jsonl

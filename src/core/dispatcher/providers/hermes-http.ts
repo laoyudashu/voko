@@ -253,6 +253,17 @@ class HermesHttpProvider extends PushProvider {
     return true;
   }
 
+  _profileForAgent(agentId: string): string {
+    try {
+      const row = this.db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'hermes');
+      return String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {
+      return agentId;
+    }
+  }
+
   /**
    * 发送访客消息到 Hermes agent（走 API Server）
    * sessionKey 格式: hermes:{agentId}:{visitorId}
@@ -268,6 +279,7 @@ class HermesHttpProvider extends PushProvider {
     }
     const agentId = parts[1]!;
     const visitorId = parts.slice(2).join(':');
+    const profileId = this._profileForAgent(agentId);
     const turnId = String(extraData?.turnId || extraData?.messageId || `hermes-${Date.now()}`);
 
     this.addLog(`📤 转发消息 ${agentId} (visitor=${visitorId.substring(0, 12)}...)`);
@@ -286,11 +298,11 @@ class HermesHttpProvider extends PushProvider {
 
     // 自动启动 gateway
     const justStarted = !this.connected;
-    await this._ensureGatewayRunning(agentId);
-    if (!this.connected || !this.client) return;
+    await this._ensureGatewayRunning(profileId);
+    if (!this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     try {
-      const result = await this.client.chat(agentId, visitorId, structuredMsg);
+      const result = await this.client.chat(profileId, visitorId, structuredMsg);
       const replyLen = (result.reply || '').length;
       const replyPreview = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
       this.addLog(`📥 收到回复 ${agentId} (${replyLen} 字) 内容="${replyPreview}"`);
@@ -307,23 +319,22 @@ class HermesHttpProvider extends PushProvider {
       const message = errorMessage(err);
       // 401: gateway 用的旧 key 与 config.yaml/client 新 key 不匹配（常见于一键配置后未重启）。
       // 强制 --replace 重启 gateway 重载 key，再重试一次；每 agent 进程内仅一次，防循环。
-      if (message.includes('HTTP 401') && this._mark401Restart(agentId)) {
-        if (await this._restartGateway(agentId)) {
+      if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
+        if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.chat(agentId, visitorId, structuredMsg);
+            const result = await this.client.chat(profileId, visitorId, structuredMsg);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
             return;
           } catch (retryErr) { this.addLog(`❌ 重启后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`); }
         }
-        this.emit('agent.reply', { agentId, visitorId, content: '[Hermes 网关鉴权失败，请稍后重试]', sessionKey, turnId, replyId: `${turnId}:auth-error` });
-        return;
+        throw new Error('Hermes gateway authentication failed');
       }
       // 刚启动的 gateway 可能因 --replace 切换窗口而短暂不可用，等 2s 重试
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.chat(agentId, visitorId, structuredMsg);
+          const result = await this.client.chat(profileId, visitorId, structuredMsg);
           const replyLen2 = (result.reply || '').length;
           const replyPrev2 = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
           this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字) 内容="${replyPrev2}"`);
@@ -333,7 +344,7 @@ class HermesHttpProvider extends PushProvider {
         } catch (retryErr) {}
       }
       this.addLog(`❌ chat 失败 ${agentId}: ${message}`);
-      this.emit('agent.reply', { agentId, visitorId, content: '[Hermes 暂时无法响应，请稍后重试]', sessionKey, turnId, replyId: `${turnId}:error` });
+      throw err;
     }
   }
 
@@ -348,13 +359,14 @@ class HermesHttpProvider extends PushProvider {
     metadata?: { turnId?: string },
   ): Promise<HermesSteerResult | null | undefined> {
     const sessionKey = `hermes:${agentId}:${visitorId}`;
+    const profileId = this._profileForAgent(agentId);
     const turnId = String(metadata?.turnId || `hermes-steer-${Date.now()}`);
     this.addLog(`📝 注入系统消息 ${agentId}`);
 
     // 自动启动 gateway
     const justStarted = !this.connected;
-    await this._ensureGatewayRunning(agentId);
-    if (!this.connected || !this.client) return;
+    await this._ensureGatewayRunning(profileId);
+    if (!this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     // hermes steer 本身不 emit agent.reply（其 chat 才 emit），手动补偿以走 onAgentReply → handleAgentReply
     const emitReply = (result: HermesSteerResult): void => {
@@ -364,34 +376,35 @@ class HermesHttpProvider extends PushProvider {
     };
 
     try {
-      const result = await this.client.steer(agentId, visitorId, content);
+      const result = await this.client.steer(profileId, visitorId, content);
       this.addLog(`✅ steer 完成 ${agentId} (回复 ${(result.output || '').length} 字)`);
       emitReply(result);
       return result;
     } catch (err) {
       const message = errorMessage(err);
       // 401: 同 sendToSession，强制重启 gateway 重载 key 后重试一次。
-      if (message.includes('HTTP 401') && this._mark401Restart(agentId)) {
-        if (await this._restartGateway(agentId)) {
+      if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
+        if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.steer(agentId, visitorId, content);
+            const result = await this.client.steer(profileId, visitorId, content);
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);
             return result;
           } catch (retryErr) { this.addLog(`❌ 重启后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`); }
         }
-        return null;
+        throw new Error('Hermes gateway authentication failed');
       }
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.steer(agentId, visitorId, content);
+          const result = await this.client.steer(profileId, visitorId, content);
           this.addLog(`✅ steer 完成 ${agentId} (重试)`);
           emitReply(result);
           return result;
         } catch (retryErr) {}
       }
       this.addLog(`❌ steer 失败 ${agentId}: ${message}`);
+      throw err;
     }
   }
 

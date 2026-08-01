@@ -33,6 +33,7 @@
   "mcp.tool.manage_agent_registration.p.mode": "設定またはテストするメッセージ受信方式",
   "mcp.tool.manage_agent_registration.p.taskId": "非同期設定タスク ID",
   "mcp.tool.manage_agent_registration.p.approved": "ローカル Provider 設定の変更を明示的に承認するか。approved=true の場合のみ実行します",
+  "mcp.tool.manage_agent_registration.p.approvalToken": "変更計画とともに返される一回限りの設定承認トークン",
   "mcp.tool.manage_agent_registration.p.registrationMode": "呼び出し元モード：Agent 自身の登録は agent、ユーザー主導の UI 登録は human。Agent は agent を指定します",
 
   "mcp.tool.update_agent_profile.desc": "编辑 Agent 基本信息，包括名称、描述、简短介绍、分类、标签、头像。修改后会通过 DID 签名同步到服务端，并更新本地数据库。",

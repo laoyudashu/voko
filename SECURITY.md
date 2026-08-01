@@ -4,7 +4,7 @@
 
 Do not disclose vulnerabilities, credentials, personal data, or exploit details in a public issue.
 
-Report security concerns privately to `yutingjin@gmail.com`. Include the affected version, reproduction steps, expected impact, and any suggested mitigation. Do not send live credentials; revoke and rotate exposed credentials immediately.
+Use GitHub private vulnerability reporting for security concerns. Include the affected version, reproduction steps, expected impact, and any suggested mitigation. Do not send live credentials; revoke and rotate exposed credentials immediately.
 
 ## Supported versions
 

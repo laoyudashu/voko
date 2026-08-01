@@ -52,9 +52,9 @@ function profilePort(profileName: string, profiles?: HermesProfiles): number {
   return entry?.port || DEFAULT_PORT;
 }
 
-/** 日志脱敏：apiKey 只显示前8位 */
+/** 日志只记录配置状态，不输出任何 key 材料。 */
 function _keyLog(k: string): string {
-  return k ? `"${k.substring(0, 8)}..." (len=${k.length})` : '(空)';
+  return k ? 'configured' : 'not-configured';
 }
 
 class HermesApiClient extends EventEmitter {

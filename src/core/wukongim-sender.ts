@@ -2,6 +2,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { fork } = require('child_process');
 const { registerWorker, unregisterWorker } = require('./process-lifecycle');
+const { normalizeOfficialImServerUrl } = require('./url-security');
 
 import type { ChildProcess } from 'child_process';
 import type { InstanceMetadata } from './process-lifecycle';
@@ -73,10 +74,13 @@ function createWukongimSender(db: any, options: SenderOptions = {}) {
     if (!agent?.imUid || !agent?.imToken || !agent?.im_server_url) {
       return null;
     }
+    let serverUrl;
+    try { serverUrl = normalizeOfficialImServerUrl(agent.im_server_url); }
+    catch (_) { return null; }
     return {
       uid: agent.imUid,
       token: agent.imToken,
-      serverUrl: agent.im_server_url,
+      serverUrl,
     };
   }
 

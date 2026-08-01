@@ -63,6 +63,15 @@ describe('Dispatcher final reply idempotency', () => {
     provider.emit('agent.reply', {
       agentId: 'gym',
       visitorId: 'visitor',
+      content: 'second reply',
+      done: true,
+      sessionKey: 'agent:gym:visitor',
+      turnId: 'turn-2',
+      replyId: 'reply-2',
+    });
+    provider.emit('agent.reply', {
+      agentId: 'gym',
+      visitorId: 'visitor',
       content: 'first reply',
       done: true,
       sessionKey: 'agent:gym:visitor',
@@ -78,20 +87,23 @@ describe('Dispatcher final reply idempotency', () => {
       turnId: 'turn-1',
       replyId: 'reply-1b',
     });
-    provider.emit('agent.reply', {
-      agentId: 'gym',
-      visitorId: 'visitor',
-      content: 'first reply',
-      done: true,
-      sessionKey: 'agent:gym:visitor',
-      turnId: 'turn-2',
-      replyId: 'reply-2',
-    });
 
     assert.equal(replies.length, 2);
-    assert.equal(replies[0].senderUid, 'sender-1');
-    assert.equal(replies[1].senderUid, 'sender-2');
+    assert.equal(replies[0].senderUid, 'sender-2');
+    assert.equal(replies[0].content, 'second reply');
+    assert.equal(replies[1].senderUid, 'sender-1');
     assert.equal(replies[1].content, 'first reply');
+
+    dispatcher.dispatch('gym', {
+      agentId: 'gym', fromUid: 'visitor', content: 'third', channelId: 'visitor',
+      channelType: 1, senderUid: 'sender-3', messageId: 'turn-3',
+    });
+    provider.emit('agent.reply', {
+      agentId: 'gym', visitorId: 'visitor', content: 'late reply', done: true,
+      sessionKey: 'agent:gym:visitor', turnId: 'unknown-turn', replyId: 'late-reply',
+    });
+    assert.equal(replies[2].senderUid, undefined, 'unknown turn must not consume the FIFO context');
+    assert.equal(replies[2].content, 'late reply');
   });
 
   it('流式中间块不占用 final 幂等键', () => {

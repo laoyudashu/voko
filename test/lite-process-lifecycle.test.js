@@ -4,7 +4,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
 const lifecycle = require('../build/core/process-lifecycle');
@@ -265,6 +265,7 @@ describe('Lite process lifecycle identity', () => {
     const dbB = path.join(dir, 'b.db');
     const first = await lifecycle.acquireInstanceLock(dbA, entry);
     assert.equal(first.acquired, true);
+    assert.match(first.lock.metadata.mcpToken, /^[A-Za-z0-9_-]{40,}$/);
     const duplicate = await lifecycle.acquireInstanceLock(dbA, entry);
     assert.equal(duplicate.acquired, false);
     assert.equal(duplicate.existing.instanceId, first.lock.metadata.instanceId);
@@ -282,6 +283,46 @@ describe('Lite process lifecycle identity', () => {
     const result = await lifecycle.acquireInstanceLock(dbPath, path.resolve(process.argv[1]));
     assert.equal(result.acquired, true);
     result.lock.release();
+  });
+
+  it('fails closed before writing an MCP token when runtime protection cannot be applied', async () => {
+    const dbPath = path.join(tempDir(), 'acl-failure.db');
+    await assert.rejects(
+      lifecycle.acquireInstanceLock(dbPath, path.resolve(process.argv[1]), {
+        securePath: () => { throw new Error('ACL unavailable'); },
+      }),
+      /ACL unavailable/,
+    );
+    assert.equal(lifecycle.readInstanceMetadata(dbPath), null);
+  });
+
+  it('restricts the Windows owner file DACL to the current user', {
+    skip: process.platform !== 'win32',
+  }, async () => {
+    const dbPath = path.join(tempDir(), 'windows-acl.db');
+    const lock = await lifecycle.acquireInstanceLock(dbPath, path.resolve(process.argv[1]));
+    try {
+      const encodedPath = Buffer.from(lock.lock.ownerFile, 'utf8').toString('base64');
+      const script = [
+        `$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+        '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+        '$acl = Get-Acl -LiteralPath $path',
+        '$allow = @($acl.Access | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.FileSystemRights -ne 0 } | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })',
+        '[pscustomobject]@{ protected = [bool]$acl.AreAccessRulesProtected; allow = @($allow) } | ConvertTo-Json -Compress',
+      ].join('; ');
+      const probe = spawnSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+      ], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      assert.equal(probe.status, 0, probe.stderr);
+      const acl = JSON.parse(probe.stdout);
+      const currentSid = spawnSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+      ], { encoding: 'utf8', timeout: 10000, windowsHide: true }).stdout.trim();
+      assert.equal(acl.protected, true);
+      assert.deepStrictEqual(Array.isArray(acl.allow) ? acl.allow : [acl.allow], [currentSid]);
+    } finally {
+      lock.lock.release();
+    }
   });
 });
 

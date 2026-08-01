@@ -57,7 +57,13 @@ function assertSecureEndpoint(value, kind = 'http') {
 function normalizeOfficialImServerUrl(value) {
   const trimmed = String(value || '').trim().replace(/\/$/, '');
   if (!trimmed || LEGACY_IM_WS_URLS.has(trimmed)) return OFFICIAL_IM_WS_URL;
-  return assertSecureEndpoint(trimmed, 'websocket');
+  const normalized = assertSecureEndpoint(trimmed, 'websocket');
+  const parsed = new URL(normalized);
+  if (parsed.protocol !== 'wss:' || normalizeHostname(parsed.hostname) !== 'wukongim.vokovoko.com') {
+    throw new Error(t('errors.security.invalid_endpoint'));
+  }
+  parsed.port = '';
+  return parsed.toString().replace(/\/$/, '');
 }
 
 function normalizeOfficialPublicUrl(value, { canonicalMain = false } = {}) {

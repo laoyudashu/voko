@@ -39,6 +39,7 @@ interface ProviderReply {
 }
 
 interface ReplyContext {
+  agentId?: string;
   channelType?: number;
   channelId?: string;
   senderUid?: string;
@@ -48,6 +49,7 @@ interface ReplyContext {
   a2aTurn?: number;
   turnId?: string;
   interventionResume?: boolean;
+  rememberedAt?: number;
   [key: string]: unknown;
 }
 
@@ -152,6 +154,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // provider 的回复通常只带 visitorId。这里按投递顺序补回群发送者、频道和 A2A scope，
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
   const _replyContexts = new Map<string, ReplyContext[]>();
+  const _replyContextsByTurn = new Map<string, ReplyContext>();
   const _processedFinalReplies = new Map<string, number>();
   const FINAL_REPLY_TTL_MS = 10 * 60 * 1000;
   function _replyContextKey(agentId?: string, visitorId?: string): string {
@@ -163,18 +166,45 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     context: ReplyContext,
   ): void {
     const key = _replyContextKey(agentId, visitorId);
+    context.rememberedAt = Date.now();
     const queue = _replyContexts.get(key) || [];
     queue.push(context);
-    if (queue.length > 20) queue.shift();
+    if (queue.length > 20) {
+      const evicted = queue.shift();
+      if (evicted?.turnId) _replyContextsByTurn.delete(`${agentId}::${evicted.turnId}`);
+    }
     _replyContexts.set(key, queue);
+    if (context.turnId) {
+      _replyContextsByTurn.set(`${agentId}::${context.turnId}`, context);
+    }
+  }
+  function _removeReplyContext(context: ReplyContext): void {
+    if (context.turnId) _replyContextsByTurn.delete(`${context.agentId || ''}::${context.turnId}`);
+    for (const [key, queue] of _replyContexts) {
+      const index = queue.indexOf(context);
+      if (index < 0) continue;
+      queue.splice(index, 1);
+      if (!queue.length) _replyContexts.delete(key);
+      break;
+    }
   }
   function _contextualizeReply(reply: ProviderReply): ProviderReply {
     const key = _replyContextKey(reply?.agentId, reply?.visitorId);
     const queue = _replyContexts.get(key);
-    const context = queue?.[0];
+    const exact = reply.turnId
+      ? _replyContextsByTurn.get(`${reply.agentId || ''}::${reply.turnId}`)
+      : undefined;
+    if (exact?.rememberedAt && Date.now() - exact.rememberedAt > FINAL_REPLY_TTL_MS) {
+      _removeReplyContext(exact);
+    }
+    // 有 turnId 时必须精确关联；未知或已过期的 turn 不能回退 FIFO，
+    // 否则延迟回复会继承另一轮消息的频道/发送者上下文。
+    const context = reply.turnId
+      ? _replyContextsByTurn.get(`${reply.agentId || ''}::${reply.turnId}`)
+      : queue?.[0];
     if (context && reply?.done !== false) {
-      queue.shift();
-      if (!queue.length) _replyContexts.delete(key);
+      if (context.turnId) _replyContextsByTurn.delete(`${reply.agentId || ''}::${context.turnId}`);
+      _removeReplyContext(context);
     }
     return context ? { ...reply, ...context } : reply;
   }
@@ -216,7 +246,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // backend_type 内存缓存：避免每条访客消息都查一次 DB（match/isAvailable 已是同步纯判断，
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
-  const _metaCache = new Map<string, AgentMetaRow & { ts: number }>(); // agentId -> { backend_type, ts }
+  const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
   const _convergedMap = new Map<string, number>();   // scopeKey -> markedAt
@@ -227,14 +257,25 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   function _metaOf(agentId: string): AgentMetaRow {
     const now = Date.now();
     const cached = _metaCache.get(agentId);
-    if (cached && now - cached.ts < META_CACHE_TTL) return { backend_type: cached.backend_type, imUid: cached.imUid };
+    if (cached && now - cached.ts < META_CACHE_TTL) return {
+      backend_type: cached.backend_type,
+      backend_instance_id: cached.backend_instance_id,
+      delivery_modes: cached.delivery_modes,
+      imUid: cached.imUid,
+    };
     try {
-      const row = db.prepare('SELECT backend_type, imUid FROM agents WHERE agent_id=?')
-        .get(agentId) as AgentMetaRow | undefined;
+      const row = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid FROM agents WHERE agent_id=?')
+        .get(agentId) as (AgentMetaRow & { delivery_modes?: string | string[] | null }) | undefined;
       const backend_type = row?.backend_type || null;
+      const backend_instance_id = row?.backend_instance_id || null;
+      let delivery_modes: string[] | null = null;
+      try {
+        const parsed = typeof row?.delivery_modes === 'string' ? JSON.parse(row.delivery_modes) : row?.delivery_modes;
+        if (Array.isArray(parsed)) delivery_modes = parsed.map(String);
+      } catch (_) {}
       const imUid = row?.imUid || null;
-      _metaCache.set(agentId, { backend_type, imUid, ts: now });
-      return { backend_type, imUid };
+      _metaCache.set(agentId, { backend_type, backend_instance_id, delivery_modes, imUid, ts: now });
+      return { backend_type, backend_instance_id, delivery_modes, imUid };
     } catch (_) { return {}; }
   }
 
@@ -256,24 +297,41 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
    * 长连接（HTTP/WS，priority 高）优先；不通（isAvailable=false）则降级到 CLI（priority 低）兜底；
    * 全 miss（不认识/未上报 runtime）或命中但全不就绪 → 返回 null（留库 pull）。
    */
-  function resolveProvider(agentId: string): DispatcherProvider | null {
+  function _providerMode(key: string): string {
+    if (key === 'openclaw-ws') return 'websocket';
+    if (key === 'hermes-http') return 'http';
+    if (key === 'opencode-attach') return 'attach';
+    if (key === 'zeroclaw-ws') return 'acp_ws';
+    if (key.endsWith('-acp')) return 'acp';
+    if (key.endsWith('-cli')) return 'cli';
+    return key;
+  }
+
+  function resolveProviders(agentId: string): DispatcherProvider[] {
     const meta = _metaOf(agentId);
-    const matched: DispatcherProvider[] = [];
-    for (const p of Object.values(providers)) {
+    const matched: Array<{ provider: DispatcherProvider; mode: string }> = [];
+    for (const [key, p] of Object.entries(providers)) {
       try {
-        if (typeof p.match === 'function' && p.match(agentId, meta)) matched.push(p);
+        const mode = _providerMode(key);
+        const selected = !meta.delivery_modes || meta.delivery_modes.includes(mode);
+        if (selected && typeof p.match === 'function' && p.match(agentId, meta)) matched.push({ provider: p, mode });
       } catch (_) {}
     }
-    if (!matched.length) return null;
-    matched.sort((a: DispatcherProvider, b: DispatcherProvider) =>
-      (b.priority || 0) - (a.priority || 0)
-    );
-    for (const p of matched) {
-      try {
-        if (typeof p.isAvailable === 'function' && p.isAvailable(agentId)) return p;
-      } catch (_) {}
-    }
-    return null;
+    matched.sort((a, b) => {
+      if (meta.delivery_modes) {
+        const modeOrder = meta.delivery_modes.indexOf(a.mode) - meta.delivery_modes.indexOf(b.mode);
+        if (modeOrder) return modeOrder;
+      }
+      return (b.provider.priority || 0) - (a.provider.priority || 0);
+    });
+    return matched.map(({ provider }) => provider).filter((provider) => {
+      try { return typeof provider.isAvailable === 'function' && provider.isAvailable(agentId); }
+      catch (_) { return false; }
+    });
+  }
+
+  function resolveProvider(agentId: string): DispatcherProvider | null {
+    return resolveProviders(agentId)[0] || null;
   }
 
   /** A2A scope key：私聊与每个群完全隔离，同一 scope 内按无序 Agent 对收敛。 */
@@ -443,13 +501,13 @@ ${body}
   }
 
   /** 实际路由 push；统一保存回复上下文。 */
-  function _doRoute(
+  async function _doRoute(
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
-  ): void {
-    const provider = resolveProvider(agentId);
-    if (!provider || !provider.isAvailable?.(agentId) || !provider.push) {
+  ): Promise<void> {
+    const candidates = resolveProviders(agentId).filter((provider) => typeof provider.push === 'function');
+    if (!candidates.length) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
@@ -464,15 +522,25 @@ ${body}
         content: wrapPushContent(routedPayload.content, sourceType),
         securityContext: createMessageSecurityContext(sourceType),
       };
-      _rememberReplyContext(agentId, providerPayload.fromUid, {
+      const replyContext = {
+        agentId,
         turnId: providerPayload.turnId,
         channelType: payload.channelType || 1,
         channelId: payload.channelId || providerPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,
         ...(a2aContext || {})
-      });
-      Promise.resolve(provider.push(providerPayload)).catch((err: unknown) =>
-        console.error(`[Dispatcher] push 失败 agent=${agentId}:`, errorMessage(err)));
+      };
+      _rememberReplyContext(agentId, providerPayload.fromUid, replyContext);
+      for (const provider of candidates) {
+        try {
+          await provider.push!(providerPayload);
+          return;
+        } catch (err) {
+          console.error(`[Dispatcher] push 通道失败，尝试备选 agent=${agentId}:`, errorMessage(err));
+        }
+      }
+      _removeReplyContext(replyContext);
+      console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
     }
@@ -492,7 +560,7 @@ ${body}
       const meta = _metaOf(agentId);
       const context = prepared.context;
       if (!context || !meta.imUid) {
-        _doRoute(agentId, workingPayload, context);
+        void _doRoute(agentId, workingPayload, context);
         return;
       }
       const localAgentUid = meta.imUid;
@@ -501,11 +569,11 @@ ${body}
       console.log(`[Dispatcher] A2A 降速 agent=${agentId} from=${peerUid} 延迟 ${prepared.delay}ms`);
       setTimeout(() => {
         if (_consumeConverged(localAgentUid, peerUid, scope)) return;
-        _doRoute(agentId, workingPayload, context);
+        void _doRoute(agentId, workingPayload, context);
       }, prepared.delay);
       return;
     }
-    _doRoute(agentId, workingPayload, prepared.context);
+    void _doRoute(agentId, workingPayload, prepared.context);
   }
 
   /** pull 路径复用同一治理；被收敛/熔断的消息返回 null，否则返回注入 STATE 后的副本。 */
@@ -559,16 +627,26 @@ ${body}
     content: string,
     replyContext: ReplyContext | null = null,
   ): Promise<unknown> {
-    const provider = resolveProvider(agentId);
-    if (!provider) return null;
+    const candidates = resolveProviders(agentId).filter((provider) => typeof provider.steer === 'function');
+    if (!candidates.length) return null;
     try {
       const turnId = String(replyContext?.turnId || replyContext?.interventionId || `steer-${Date.now()}`);
       if (replyContext) {
         _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
       }
-      return provider.steer
-        ? await provider.steer(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId })
-        : null;
+      for (const provider of candidates) {
+        try {
+          return await provider.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId });
+        } catch (error) {
+          console.error(`[Dispatcher] steer 通道失败，尝试备选 agent=${agentId}:`, errorMessage(error));
+        }
+      }
+      if (replyContext) {
+        const queue = _replyContexts.get(_replyContextKey(agentId, visitorId));
+        const context = queue?.find((item) => item.turnId === turnId);
+        if (context) _removeReplyContext(context);
+      }
+      return null;
     } catch (err) {
       console.error(`[Dispatcher] steer 失败 agent=${agentId}:`, errorMessage(err));
       return null;
@@ -592,7 +670,7 @@ ${body}
     }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, steer, start, stop, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, steer, start, stop, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
 }
 
 module.exports = { createDispatcher };

@@ -51,10 +51,22 @@ class HermesCliProvider extends PushProvider {
     return this._available;
   }
 
+  _instanceForAgent(agentId: string): string {
+    try {
+      const row = this._db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'hermes');
+      return String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {
+      return agentId;
+    }
+  }
+
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `hermes-cli-${Date.now()}`);
     const sessionKey = `hermes:${agentId}:${fromUid}`;
+    const profileId = this._instanceForAgent(agentId);
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
@@ -74,7 +86,7 @@ class HermesCliProvider extends PushProvider {
     try {
       const result = await runCli({
         cmd: 'hermes',
-        args: ['--profile', agentId, '-z', safeNotification],
+        args: ['--profile', profileId, '-z', safeNotification],
         tag: 'hermes-cli',
         timeout: 120000,
         onStderrLine: (line: string) => {
@@ -106,6 +118,7 @@ class HermesCliProvider extends PushProvider {
 
   async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<null> {
     const sessionKey = `hermes:${agentId}:${visitorId}`;
+    const profileId = this._instanceForAgent(agentId);
     const turnId = String(metadata?.turnId || `hermes-cli-steer-${Date.now()}`);
     console.error(`[HermesCli] steer agent=${agentId} visitor=${visitorId}`);
     const notification = JSON.stringify({
@@ -118,7 +131,7 @@ class HermesCliProvider extends PushProvider {
     try {
       const result = await runCli({
         cmd: 'hermes',
-        args: ['--profile', agentId, '-z', notification],
+        args: ['--profile', profileId, '-z', notification],
         tag: 'hermes-cli',
         timeout: 120000,
         onStderrLine: (line: string) => {

@@ -216,11 +216,11 @@ async function setupHermesGateway(databaseAPI, agentId, log) {
   }
   h.options = h.options || {};
   h.options.apiKey = apiKey;
-  h.options.profiles = cfg.hermes_config.profiles;
+  h.options.profiles = cfg.profiles;
   if (typeof h._initClient === 'function') { await h._initClient(); log('✓ Hermes 客户端已重建'); }
 
   // spawn gateway（--replace 替换同 profile 旧实例）
-  const target = agentId || Object.keys(cfg.hermes_config.profiles)[0];
+  const target = agentId || Object.keys(cfg.profiles)[0];
   if (target) {
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };

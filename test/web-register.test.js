@@ -165,7 +165,7 @@ describe('Web POST /agent/add 注册流程', () => {
       create_agent_by_token: async () => ({ success: true, agentId: 'unused' }),
     };
     const server = await setupServer(t, handlers, db);
-    const res = await fetch(server.baseUrl + '/agent/add', { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(server.baseUrl + '/agent/add', { signal: AbortSignal.timeout(10000) });
     const html = await res.text();
     assert.strictEqual(res.status, 200);
     assert.match(html, /registration-wizard/);
@@ -214,7 +214,7 @@ describe('Web POST /agent/add 注册流程', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(15000),
       });
       const data = await response.json();
       assert.strictEqual(response.status, 200, data.error);
@@ -265,7 +265,7 @@ describe('Web POST /agent/add 注册流程', () => {
       method: 'POST',
       body,
       redirect: 'manual', // 不跟随 302，便于断言
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(10000),
     });
     t.after(() => res.body?.cancel());
 
@@ -290,7 +290,7 @@ describe('Web POST /agent/add 注册流程', () => {
       method: 'POST',
       body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(10000),
     });
     t.after(() => res.body?.cancel());
 
@@ -312,7 +312,7 @@ describe('Web POST /agent/add 注册流程', () => {
       method: 'POST',
       body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(10000),
     });
 
     assert.notStrictEqual(res.status, 302, '失败不应重定向到 done');

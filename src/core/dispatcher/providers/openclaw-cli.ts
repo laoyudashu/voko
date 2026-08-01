@@ -61,10 +61,22 @@ class OpenClawCliProvider extends PushProvider {
     return this._available;
   }
 
+  _instanceForAgent(agentId: string): string {
+    try {
+      const row = this._db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'openclaw');
+      return String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {
+      return agentId;
+    }
+  }
+
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `openclaw-cli-${Date.now()}`);
-    const sessionKey = `agent:${agentId}:${fromUid}`;
+    const targetAgentId = this._instanceForAgent(agentId);
+    const sessionKey = `agent:${targetAgentId}:${fromUid}`;
 
     // 取上下文
     let contextMsgs: ContextMessage[] = [];
@@ -77,14 +89,14 @@ class OpenClawCliProvider extends PushProvider {
     }
     console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} sessionKey=${sessionKey} contextWindow=${this._contextWindow}`);
 
-    const notification = _buildNotification(agentId, fromUid, content, contextMsgs);
+    const notification = _buildNotification(agentId, fromUid, content, contextMsgs, sessionKey);
     // Windows 下 --message 经 cmd.exe 传多行/含元字符 notification 会被截断或注入，净化为单行
     const safeNotification = this._isWin ? sanitizeCmdArg(notification) : notification;
 
     try {
       const result = await runCli({
         cmd: this._isWin ? 'openclaw' : 'openclaw',
-        args: ['agent', '--agent', agentId, '--session-key', sessionKey, '--message', safeNotification, '--local', '--json'],
+        args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', safeNotification, '--local', '--json'],
         tag: 'openclaw-cli',
         timeout: 120000,
         onStderrLine: (line: string) => {
@@ -111,7 +123,8 @@ class OpenClawCliProvider extends PushProvider {
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<null> {
-    const sessionKey = `agent:${agentId}:${visitorId}`;
+    const targetAgentId = this._instanceForAgent(agentId);
+    const sessionKey = `agent:${targetAgentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `openclaw-cli-steer-${Date.now()}`);
     console.error(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} sessionKey=${sessionKey}`);
     const notification = JSON.stringify({
@@ -124,7 +137,7 @@ class OpenClawCliProvider extends PushProvider {
     try {
       const result = await runCli({
         cmd: this._isWin ? 'openclaw' : 'openclaw',
-        args: ['agent', '--agent', agentId, '--session-key', sessionKey, '--message', notification, '--local', '--json'],
+        args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', notification, '--local', '--json'],
         tag: 'openclaw-cli',
         timeout: 120000,
         onStderrLine: (line: string) => {
@@ -178,6 +191,7 @@ function _buildNotification(
   fromUid: string,
   content: string,
   contextMsgs: ContextMessage[],
+  sessionKey?: string,
 ): string {
   let msg = `【访客消息】\n访客：${fromUid}\n消息：${content}`;
 
@@ -188,7 +202,7 @@ function _buildNotification(
     }).join('\n')}`;
   }
 
-  msg += `\n\n当前 session: agent:${agentId}:${fromUid}`;
+  msg += `\n\n当前 session: ${sessionKey || `agent:${agentId}:${fromUid}`}`;
   return msg;
 }
 

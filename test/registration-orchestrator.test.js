@@ -422,27 +422,72 @@ describe('shared registration orchestrator', () => {
       },
     });
     try {
+      const asWeb = (callback) => runWithRegistrationCaller({ source: 'web' }, callback);
       service.inspectEnvironment = () => ({
-        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [], deliveryModes: [] }],
+        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [
+          { id: 'instance-a', name: 'A' }, { id: 'instance-b', name: 'B' },
+        ], deliveryModes: [] }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },
       });
-      const started = await service.start({ email: 'owner@example.com' });
-      service.setBasicInfo(started.registrationId, { agentName: 'OpenClaw Agent' });
-      service.selectProvider(started.registrationId, { providerType: 'openclaw' });
+      const started = await asWeb(() => service.start({ email: 'owner@example.com' }));
+      asWeb(() => service.setBasicInfo(started.registrationId, { agentName: 'OpenClaw Agent' }));
+      asWeb(() => service.selectProvider(started.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' }));
 
-      const plan = service.configureDelivery(started.registrationId, { mode: 'websocket' });
+      const plan = asWeb(() => service.configureDelivery(started.registrationId, { mode: 'websocket' }));
       assert.strictEqual(plan.status, 'approval_required');
       assert.strictEqual(plan.changePlan.backup, true);
+      assert.ok(plan.approvalToken);
       assert.strictEqual(setupCount, 0);
 
-      const approved = service.configureDelivery(started.registrationId, {
+      const rejected = asWeb(() => service.configureDelivery(started.registrationId, {
+        mode: 'websocket', approved: true, approvalToken: 'wrong-token',
+      }));
+      assert.strictEqual(rejected.success, false);
+      assert.strictEqual(setupCount, 0);
+
+      asWeb(() => service.selectProvider(started.registrationId, { providerType: 'openclaw', instanceId: 'instance-b' }));
+      const switched = asWeb(() => service.configureDelivery(started.registrationId, {
+        mode: 'websocket', approved: true, approvalToken: plan.approvalToken,
+      }));
+      assert.strictEqual(switched.success, false);
+      assert.strictEqual(setupCount, 0);
+
+      const currentPlan = asWeb(() => service.configureDelivery(started.registrationId, { mode: 'websocket' }));
+
+      const remoteApproval = await runWithRegistrationCaller(
+        { source: 'mcp', providerType: 'openclaw' },
+        () => service.configureDelivery(started.registrationId, {
+          mode: 'websocket', approved: true, approvalToken: currentPlan.approvalToken,
+        }),
+      );
+      assert.strictEqual(remoteApproval.code, 'HUMAN_CONFIGURATION_REQUIRED');
+      assert.strictEqual(setupCount, 0);
+
+      const approved = asWeb(() => service.configureDelivery(started.registrationId, {
         mode: 'websocket',
         approved: true,
-      });
+        approvalToken: currentPlan.approvalToken,
+      }));
       assert.strictEqual(approved.taskId, 'task-approved');
       assert.strictEqual(setupCount, 1);
+
+      const agentStarted = await service.start({ email: 'owner@example.com', registrationMode: 'agent' });
+      service.setBasicInfo(agentStarted.registrationId, { agentName: 'Agent-managed' });
+      service.selectProvider(agentStarted.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' });
+      const agentPlan = service.configureDelivery(agentStarted.registrationId, { mode: 'websocket' });
+      const agentApproved = service.configureDelivery(agentStarted.registrationId, {
+        mode: 'websocket', approved: true, approvalToken: agentPlan.approvalToken,
+      });
+      assert.strictEqual(agentApproved.code, 'HUMAN_CONFIGURATION_REQUIRED');
+      assert.strictEqual(setupCount, 1);
+
+      const spoofed = await runWithRegistrationCaller(
+        { source: 'mcp', providerType: 'openclaw' },
+        () => service.start({ email: 'owner@example.com', registrationMode: 'human' }),
+      );
+      assert.strictEqual(spoofed.registrationMode, 'agent');
     } finally {
       db.close();
     }

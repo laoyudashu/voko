@@ -11,6 +11,7 @@ const { VOKO_API_URL } = require('../core/api-signature');
 const { discoverHermes } = require('../server/hermes-discovery');
 const { getClientBundle } = require('../core/i18n');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderLanguageFooter } = require('./language-switcher');
 const fs = require('fs');
 const path = require('path');
@@ -401,9 +402,10 @@ function wizardJs(t) {
   document.getElementById('wf-deliveries').addEventListener('change',function(e){if(e.target.type==='checkbox'){e.target.closest('.delivery-card').classList.toggle('selected',e.target.checked);updateOrder()}});
   function renderAccess(){document.getElementById('wf-step4-title').textContent=I.accessTitle;document.getElementById('wf-access-desc').textContent=I.accessDesc;document.getElementById('wf-result').innerHTML='<div class="provider-list"><label class="provider-card'+(selectedAccessMode==='private'?' selected':'')+'"><input type="radio" name="wf-access" value="private"'+(selectedAccessMode==='private'?' checked':'')+'><span><span class="card-title">'+escHtml(I.privateMode)+'</span><span class="card-desc">'+escHtml(I.privateDesc)+'</span></span></label><label class="provider-card'+(selectedAccessMode==='public'?' selected':'')+'"><input type="radio" name="wf-access" value="public"'+(selectedAccessMode==='public'?' checked':'')+'><span><span class="card-title">'+escHtml(I.publicMode)+'</span><span class="card-desc">'+escHtml(I.publicDesc)+'</span></span></label></div>'}
   document.getElementById('wf-result').addEventListener('change',function(e){if(e.target.name==='wf-access'){selectedAccessMode=e.target.value;renderAccess();saveDraft()}});
-  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=I.configureDesc;document.getElementById('wf-config').classList.add('show')}else{b.disabled=true;b.textContent=I.testing;api('test_delivery',{mode:b.dataset.mode}).then(function(r){b.disabled=false;b.textContent=r.ready?I.testOk:I.testFailed}).catch(fail)}});
+  var configApprovalToken='';
+  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;b.disabled=true;api('configure_delivery',{mode:configMode}).then(function(r){configApprovalToken=r.approvalToken||'';document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=(r.changePlan&&r.changePlan.message)||I.configureDesc;document.getElementById('wf-config').classList.add('show');b.disabled=false}).catch(function(e2){b.disabled=false;fail(e2)})}else{b.disabled=true;b.textContent=I.testing;api('test_delivery',{mode:b.dataset.mode}).then(function(r){b.disabled=false;b.textContent=r.ready?I.testOk:I.testFailed}).catch(fail)}});
   document.getElementById('wf-config-back').onclick=function(){document.getElementById('wf-config').classList.remove('show')};
-  document.getElementById('wf-config-confirm').onclick=function(){var b=this;b.disabled=true;b.textContent=I.configuring;api('configure_delivery',{mode:configMode,approved:true}).then(function(r){poll(r.taskId,b)}).catch(function(e){b.disabled=false;b.textContent=I.configureConfirm;fail(e)})};
+  document.getElementById('wf-config-confirm').onclick=function(){var b=this;b.disabled=true;b.textContent=I.configuring;api('configure_delivery',{mode:configMode,approved:true,approvalToken:configApprovalToken}).then(function(r){configApprovalToken='';poll(r.taskId,b)}).catch(function(e){b.disabled=false;b.textContent=I.configureConfirm;fail(e)})};
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
   next.onclick=function(){
     next.disabled=true;
@@ -746,7 +748,10 @@ function createRegisterRouter(handlers, db) {
   R.post('/api/agent-registration', async (req, res) => {
     const input = { ...(req.body || {}) };
     if (input.action === 'start' && !input.email) input.email = getLoggedEmail();
-    const result = await registrationOrchestrator.manage(input);
+    const result = await runWithRegistrationCaller(
+      { source: 'web' },
+      () => registrationOrchestrator.manage(input),
+    );
     res.status(result.success === false ? 400 : 200).json(result);
   });
 

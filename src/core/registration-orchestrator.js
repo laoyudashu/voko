@@ -441,6 +441,20 @@ class RegistrationOrchestrator {
       error.code = 'REGISTRATION_SESSION_NOT_FOUND';
       throw error;
     }
+    if (session.ownerBound && this.db) {
+      try {
+        const row = this.db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
+        const data = row?.data ? JSON.parse(row.data) : {};
+        const currentEmail = String(Object.keys(data)[0] || '').trim().toLowerCase();
+        if (currentEmail && currentEmail !== String(session.email || '').trim().toLowerCase()) {
+          const error = new Error('当前登录用户与该注册会话不一致');
+          error.code = 'REGISTRATION_OWNER_MISMATCH';
+          throw error;
+        }
+      } catch (error) {
+        if (error?.code === 'REGISTRATION_OWNER_MISMATCH') throw error;
+      }
+    }
     return session;
   }
 
@@ -784,6 +798,10 @@ class RegistrationOrchestrator {
 
   async start(input = {}) {
     this._cleanup();
+    // The caller mode is a security boundary, not a user-selectable field.
+    // Only the local Web registration route enters the trusted human context.
+    const caller = getRegistrationCaller();
+    const registrationSource = caller?.source === 'web' ? 'web' : 'agent';
     let email = cleanText(input.email, 320).toLowerCase();
     if (!email) {
       try { email = cleanText(await this.options.getLoggedEmail?.(), 320).toLowerCase(); } catch (_) {}
@@ -814,7 +832,9 @@ class RegistrationOrchestrator {
       provider: null,
       deliveryModes: [],
       accessMode: 'private',
-      registrationMode: input.registrationMode === 'agent' ? 'agent' : 'human',
+      registrationMode: registrationSource === 'web' ? 'human' : 'agent',
+      registrationSource,
+      ownerBound: loggedIn,
       providerLock: null,
       warnings: [],
       createdAt: now(),
@@ -837,6 +857,7 @@ class RegistrationOrchestrator {
     const verified = await loginByCode({ email: session.email, code: cleanText(code, 12) });
     if (!verified?.success) return { success: false, error: verified?.error || '验证码错误或已过期' };
     session.status = 'basic_info_required';
+    session.ownerBound = true;
     return this._save(session);
   }
 
@@ -915,6 +936,7 @@ class RegistrationOrchestrator {
       instanceName: instances.find((item) => item.id === instanceId)?.name || null,
       detected: !!detected,
     };
+    delete session.pendingApproval;
     session.deliveryModes = this.deliveryCapabilities(
       providerType,
       providerType === 'zeroclaw'
@@ -927,6 +949,7 @@ class RegistrationOrchestrator {
 
   selectDelivery(id, input = {}) {
     const session = this._get(id);
+    delete session.pendingApproval;
     const requested = Array.isArray(input.deliveryModes) ? input.deliveryModes.map(String) : [];
     session.deliveryModes = session.deliveryModes.map((mode) => ({
       ...mode,
@@ -943,10 +966,20 @@ class RegistrationOrchestrator {
     const expected = provider === 'openclaw' ? 'websocket' : provider === 'hermes' ? 'http' : null;
     if (!expected || mode !== expected) return { success: false, error: '该 Provider 不支持配置此消息通道' };
     if (input.approved !== true) {
+      const approvalToken = crypto.randomBytes(32).toString('base64url');
+      session.pendingApproval = {
+        tokenHash: crypto.createHash('sha256').update(approvalToken).digest('hex'),
+        provider,
+        mode,
+        instanceId: session.provider?.instanceId || null,
+        expiresAt: now() + 5 * 60 * 1000,
+      };
+      this._save(session);
       return {
         success: true,
         registrationId: session.id,
         status: 'approval_required',
+        approvalToken,
         changePlan: {
           provider,
           instanceId: session.provider?.instanceId || null,
@@ -955,16 +988,46 @@ class RegistrationOrchestrator {
           rollback: true,
           message: '将备份并更新本机 Provider 配置；只有明确 approved=true 后才会执行。',
         },
-        nextAction: { type: 'configure_delivery', required: ['registrationId', 'mode', 'approved'] },
+        nextAction: { type: 'configure_delivery', required: ['registrationId', 'mode', 'approved', 'approvalToken'] },
       };
     }
+    const approvalToken = cleanText(input.approvalToken, 200);
+    const pending = session.pendingApproval;
+    const tokenHash = approvalToken
+      ? crypto.createHash('sha256').update(approvalToken).digest('hex')
+      : '';
+    const validApproval = pending
+      && pending.provider === provider
+      && pending.mode === mode
+      && pending.instanceId === (session.provider?.instanceId || null)
+      && pending.expiresAt >= now()
+      && tokenHash.length === pending.tokenHash.length
+      && crypto.timingSafeEqual(Buffer.from(tokenHash), Buffer.from(pending.tokenHash));
+    if (!validApproval) {
+      return { success: false, error: '配置确认已失效，请重新查看变更计划后确认' };
+    }
+    const caller = getRegistrationCaller();
+    if (session.registrationSource !== 'web' || caller?.source !== 'web') {
+      return {
+        success: false,
+        code: 'HUMAN_CONFIGURATION_REQUIRED',
+        error: 'Provider 配置必须由主人在 VOKO Web 注册页面中确认；Agent 接口不能代替主人批准配置变更。',
+      };
+    }
+    delete session.pendingApproval;
+    this._save(session);
     const gatewaySetup = this.options.gatewaySetup || require('./gateway-setup');
     const task = gatewaySetup.startSetup(provider, session.provider?.instanceId, this.db ? dbConfigAdapter(this.db) : null);
+    session.configurationTaskId = task.taskId;
+    this._save(session);
     return { success: true, registrationId: session.id, status: 'configuration_started', ...task };
   }
 
   configurationStatus(id, taskId) {
     const session = this._get(id);
+    if (!taskId || taskId !== session.configurationTaskId) {
+      return { success: false, error: '配置任务不属于当前注册会话' };
+    }
     const gatewaySetup = this.options.gatewaySetup || require('./gateway-setup');
     const task = gatewaySetup.getTask(taskId);
     if (!task) return { success: false, error: '配置任务不存在或已过期' };

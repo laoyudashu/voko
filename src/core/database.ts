@@ -556,6 +556,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const agentFields = [
       ['backend_type', "TEXT NOT NULL DEFAULT 'openclaw'"],
       ['backend_instance_id', 'TEXT'],
+      ['delivery_modes', 'TEXT'],
       ['agent_name', 'TEXT'],
       ['category', "TEXT DEFAULT 'other'"],
       ['category_label', 'TEXT'],
@@ -665,6 +666,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS payment_auth (
       id TEXT PRIMARY KEY,
+      owner_email TEXT,
       name TEXT DEFAULT '',
       id_card TEXT DEFAULT '',
       bank_card TEXT DEFAULT '',
@@ -689,15 +691,30 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     )
   `);
 
-  // 迁移：payment_auth 兼容 payment_user_uid
+  // 迁移：payment_auth 兼容 owner_email / payment_user_uid
   try {
     const paCols = db.prepare(`PRAGMA table_info(payment_auth)`).all().map((c: TableInfoRow) => c.name);
+    if (!paCols.includes('owner_email')) {
+      db.exec(`ALTER TABLE payment_auth ADD COLUMN owner_email TEXT`);
+      db.exec(`
+        UPDATE payment_auth
+        SET owner_email = (
+          SELECT MIN(a.owner_email) FROM agents a
+          WHERE a.payment_auth_id = payment_auth.id AND a.owner_email IS NOT NULL
+        )
+        WHERE owner_email IS NULL AND 1 = (
+          SELECT COUNT(DISTINCT LOWER(TRIM(a.owner_email))) FROM agents a
+          WHERE a.payment_auth_id = payment_auth.id AND a.owner_email IS NOT NULL
+        )
+      `);
+      console.error('Added owner_email column to payment_auth');
+    }
     if (!paCols.includes('payment_user_uid')) {
       db.exec(`ALTER TABLE payment_auth ADD COLUMN payment_user_uid TEXT`);
       console.error('Added payment_user_uid column to payment_auth');
     }
   } catch (e: any) {
-    console.error('payment_auth payment_user_uid migration:', e.message);
+    console.error('payment_auth owner migration:', e.message);
   }
 
   // 新建 payment_orders 表

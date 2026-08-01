@@ -14,8 +14,11 @@ const { createMcpServer, getToolList } = require('./mcp/server');
 const { processPendingPaymentOrder } = require('./core/payment');
 const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
-const { fetchManifest, compareVersions, checkAndStageUpdate, applyPendingUpgrade, readPending } = require('./core/auto-updater');
+const { fetchManifest, compareVersions } = require('./core/auto-updater');
 const { t } = require('./core/i18n');
+const { runWithRegistrationCaller } = require('./core/registration-caller-context');
+const { spawnSync } = require('child_process');
+const path = require('path');
 
 /**
  * 检查 OSS 最新版本（统一从 OSS manifest 读取）
@@ -23,10 +26,14 @@ const { t } = require('./core/i18n');
 async function checkVersion() {
   try {
     const manifest = await fetchManifest();
-    if (manifest && manifest.version && compareVersions(manifest.version, pkg.version) > 0) {
+    if (!manifest || !manifest.version) return null;
+    const updateAvailable = compareVersions(manifest.version, pkg.version) > 0;
+    if (updateAvailable) {
       console.error(t('cli.updater.new_version_available', { version: manifest.version, current: pkg.version }));
     }
+    return { currentVersion: pkg.version, latestVersion: manifest.version, updateAvailable };
   } catch (_: any) {}
+  return null;
 }
 
 /**
@@ -44,31 +51,40 @@ function softExit(code?: any) {
 }
 
 /**
- * voko update — 从 OSS 下载并升级到最新版（复用 auto-updater 的暂存 + 应用流程）
+ * voko update — 通过 npm 官方 registry 手动升级到最新版。
+ * 自动更新保持关闭；此处不会信任或执行更新源提供的安装包。
  */
-async function updateLite() {
-  const manifest = await fetchManifest().catch(() => null);
-  if (!manifest || !manifest.version) {
+async function updateLite(options: { installDir?: string; spawn?: any; exit?: (code?: any) => any } = {}) {
+  const exit = options.exit || softExit;
+  const installedPath = path.normalize(options.installDir || __dirname).toLowerCase();
+  if (!installedPath.includes(path.join('node_modules', '@voko', 'lite').toLowerCase())) {
+    console.error('当前是开发或链接安装，拒绝覆盖；请在发布版中运行 voko update。');
+    return exit(1);
+  }
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const spawn = options.spawn || spawnSync;
+  const versionResult = spawn(npmCommand, ['view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/'], {
+    encoding: 'utf8', windowsHide: true,
+  });
+  const latestVersion = String(versionResult.stdout || '').trim();
+  if (versionResult.error || versionResult.status !== 0 || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latestVersion)) {
     console.error(t('cli.updater.no_version'));
-    return softExit(1);
+    return exit(1);
   }
-  console.error(t('cli.updater.current_latest', { current: pkg.version, latest: manifest.version }));
-  if (compareVersions(manifest.version, pkg.version) <= 0) {
-    console.error(t('cli.updater.already_latest'));
-    return softExit(0);
+  if (compareVersions(latestVersion, pkg.version) <= 0) {
+    console.error(t('cli.updater.registry_not_newer', { current: pkg.version, latest: latestVersion }));
+    return exit(0);
   }
-  const staged = await checkAndStageUpdate();
-  if (!staged && !readPending()) {
-    console.error(t('cli.updater.download_failed'));
-    return softExit(1);
-  }
-  if (applyPendingUpgrade()) {
-    console.error(t('cli.updater.done'));
-    return softExit(0);
-  } else {
+  console.error(`正在从 npm 官方 registry 安装 @voko/lite@${latestVersion}…`);
+  const result = spawn(npmCommand, [
+    'install', '-g', '--ignore-scripts', '--registry=https://registry.npmjs.org/', `@voko/lite@${latestVersion}`,
+  ], { stdio: 'inherit', windowsHide: true });
+  if (result.error || result.status !== 0) {
     console.error(t('cli.updater.install_failed'));
-    return softExit(1);
+    return exit(1);
   }
+  console.error(t('cli.updater.done'));
+  return exit(0);
 }
 
 // ═══════════════════════════════════════════════
@@ -84,7 +100,7 @@ async function updateLite() {
 const TOOL_PARAM_SCHEMAS = {
   register_agent:          { email: 'string' },
   verify_agent_email:      { email: 'string', code: 'string', agentId: 'string', agentName: 'string', backendType: 'string', category: 'string', description: 'string' },
-  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', registrationMode: 'string' },
+  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', registrationMode: 'string' },
   bug_report: { action: 'string', reportId: 'string', queryToken: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
@@ -292,7 +308,9 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
       return { success: r.success !== false };
     }
 
-    const result = await handlers[toolName](params);
+    const result = toolName === 'manage_agent_registration'
+      ? await runWithRegistrationCaller({ source: 'cli' }, () => handlers[toolName](params))
+      : await handlers[toolName](params);
     console.log(JSON.stringify(result, null, 2));
     return { success: result.success !== false };
   } catch (err: any) {

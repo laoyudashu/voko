@@ -2,6 +2,8 @@ export type SessionMode = 'deterministic-key' | 'agent-issued-id';
 
 export interface AgentMeta {
   backend_type?: string | null;
+  backend_instance_id?: string | null;
+  delivery_modes?: string[] | null;
   [key: string]: unknown;
 }
 

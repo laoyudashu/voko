@@ -57,6 +57,48 @@ describe('Lite OpenClaw WS provider', () => {
     );
   });
 
+  it('同一 session 在订阅中按发送顺序共享订阅结果', async () => {
+    const provider = createProvider();
+    const requests = [];
+    const sent = [];
+    provider._gatewayMethods = ['sessions.messages.subscribe'];
+    provider.connected = true;
+    provider.send = (message) => requests.push(message);
+    provider.sendChatSend = (sessionKey, message) => sent.push({ sessionKey, message });
+
+    const first = provider.sendToSession('agent:instance:visitor', 'first');
+    const second = provider.sendToSession('agent:instance:visitor', 'second');
+    assert.equal(requests.length, 1, 'only one subscription request is sent');
+
+    const timer = setTimeout(() => {}, 1000);
+    await provider.handleMessage({
+      type: 'res', payload: { key: 'agent:instance:visitor', subscribed: true },
+    }, undefined, timer);
+    clearTimeout(timer);
+    await Promise.all([first, second]);
+    assert.deepEqual(sent.map((item) => item.message), ['first', 'second']);
+  });
+
+  it('同一 session 的订阅失败对等待消息返回同一失败结果', async () => {
+    const provider = createProvider();
+    const requests = [];
+    provider._gatewayMethods = ['sessions.messages.subscribe'];
+    provider.connected = true;
+    provider.send = (message) => requests.push(message);
+
+    const first = provider.sendToSession('agent:instance:visitor', 'first');
+    const second = provider.sendToSession('agent:instance:visitor', 'second');
+    assert.equal(requests.length, 1);
+
+    const timer = setTimeout(() => {}, 1000);
+    await provider.handleMessage({
+      type: 'res', payload: { key: 'agent:instance:visitor', subscribed: false },
+    }, undefined, timer);
+    clearTimeout(timer);
+    await assert.rejects(first, /subscription failed/);
+    await assert.rejects(second, /subscription failed/);
+  });
+
   it('final 回复还原原始 session key，并在短时间内去重', () => {
     const provider = createProvider();
     const replies = [];

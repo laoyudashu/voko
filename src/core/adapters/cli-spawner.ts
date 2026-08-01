@@ -22,6 +22,7 @@ export interface RunCliOptions {
   windowsHide?: boolean;
   stdinInput?: string;
   cwd?: string;
+  maxOutputBytes?: number;
 }
 
 export interface RunCliResult {
@@ -101,6 +102,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     windowsHide = true,
     stdinInput,
     cwd,
+    maxOutputBytes = 8 * 1024 * 1024,
   } = opts;
 
   const log = _makeLogger(tag);
@@ -131,6 +133,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     }
 
     let stdout = '', stderr = '';
+    let stdoutBytes = 0, stderrBytes = 0;
     let settled = false;
     let _lineBuffer = ''; // 跨 data chunk 的不完整行累积
 
@@ -142,7 +145,18 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       reject(new Error(`cli 超时 (${timeout}ms)`));
     }, timeout);
 
+    const rejectOversizedOutput = (stream: 'stdout' | 'stderr'): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (child.pid !== undefined) killTree(child.pid);
+      reject(new Error(`cli ${stream} 输出超过安全上限 (${maxOutputBytes} bytes)`));
+    };
+
     child.stdout!.on('data', (d: Buffer) => {
+      if (settled) return;
+      stdoutBytes += d.length;
+      if (stdoutBytes > maxOutputBytes) return rejectOversizedOutput('stdout');
       const text = d.toString();
       stdout += text;
       if (onStdoutLine) {
@@ -157,6 +171,9 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     });
 
     child.stderr!.on('data', (d: Buffer) => {
+      if (settled) return;
+      stderrBytes += d.length;
+      if (stderrBytes > maxOutputBytes) return rejectOversizedOutput('stderr');
       const text = d.toString();
       stderr += text;
       if (onStderrLine) {

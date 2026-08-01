@@ -73,6 +73,7 @@ const {
   isAllowedLocalOrigin,
   isAllowedLocalWebSocketOrigin,
   requiresLocalToken,
+  isAllowedBridgeConfigType,
   setLocalSecurityHeaders,
 } = require('./core/local-http-security');
 const { generateOSSSignature, initOSSFromConfig } = require('./server/oss');
@@ -272,8 +273,19 @@ function openLocalWebPage(port: number) {
   }
 }
 
-function autoUpdateDisabled(args: Record<string, any> = {}): boolean {
-  return Boolean(args.noAutoUpdate || args['no-auto-update']);
+function autoUpdateEnabled(args: Record<string, any> = {}): boolean {
+  void args;
+  return false;
+}
+
+function checkVersionAndPersist(db: any): void {
+  void cli.checkVersion().then((result: any) => {
+    if (!result) return;
+    try {
+      db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('update_status', ?, ?)")
+        .run(JSON.stringify({ ...result, checkedAt: Date.now() }), Date.now());
+    } catch (_: any) {}
+  });
 }
 
 function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
@@ -414,21 +426,42 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     next();
   });
 
-  // 可选 MCP token 鉴权：本地 Web/API 由 loopback + Host + Origin 防护；
-  // 设置 VOKO_MCP_TOKEN 后，仅 /mcp 需带 X-VOKO-Token（或 Authorization: Bearer）。
-  const _authToken = process.env.VOKO_MCP_TOKEN;
-  if (_authToken) {
-    app.use((req?: any, res?: any, next?: any) => {
-      if (!requiresLocalToken(req.path)) return next();
-      const suppliedToken = req.headers['x-voko-token'] || String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-      if (suppliedToken !== _authToken) return res.status(401).json({ error: t('errors.unauthorized_token') });
-      next();
-    });
-  }
+  // MCP 默认使用每次 Lite 实例生成的随机 token。stdio 代理从仅当前用户可访问的
+  // runtime owner 文件读取，避免任意本地 HTTP 调用方直接获得 Agent 高权限工具。
+  const _authToken = process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken;
+  app.use((req?: any, res?: any, next?: any) => {
+    if (!requiresLocalToken(req.path)) return next();
+    const suppliedToken = req.headers['x-voko-token'] || String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!_authToken || suppliedToken !== _authToken) return res.status(401).json({ error: t('errors.unauthorized_token') });
+    next();
+  });
 
   // 先完成来源、Host 和可选 token 校验，再读取请求体，避免无效来源消耗解析资源。
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  const currentOwnsAgent = (agentId: string): boolean => {
+    if (!agentId) return false;
+    const row = db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+    const current = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+    return !!row?.owner_email && !!current && current === String(row.owner_email).trim().toLowerCase();
+  };
+  const interventionAgentId = (id: string): string => String(
+    db.prepare('SELECT agent_id FROM owner_interventions WHERE id=? LIMIT 1').get(id)?.agent_id || '',
+  );
+
+  // 所有直接本地 API 在命中现有 Agent 时统一校验当前登录 owner，避免绕过 handlers。
+  app.use('/api', (req?: any, res?: any, next?: any) => {
+    const pathMatch = String(req.path || '').match(/^\/agents?\/([^/]+)/);
+    const agentId = String(req.body?.agentId || req.query?.agentId || pathMatch?.[1] || '').trim();
+    if (!agentId) return next();
+    try {
+      const row = db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+      if (!row) return next();
+      if (currentOwnsAgent(agentId)) return next();
+      return res.status(403).json({ success: false, error: '当前登录用户无权访问该 Agent', code: 'AGENT_OWNER_MISMATCH' });
+    } catch (_) { return res.status(500).json({ success: false, error: '无法验证 Agent 归属', code: 'AGENT_OWNER_CHECK_FAILED' }); }
+  });
 
   const httpTransport = createHttpTransport(mcpServer, { version: pkg.version, db });
   app.use('/mcp', httpTransport);
@@ -598,16 +631,18 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     catch (e: any) { res.json({ ready: false, error: e.message }); }
   });
   app.post('/api/gateway/setup', (req?: any, res?: any) => {
-    try {
-      const { backend, agentId } = req.body || {};
-      if (backend !== 'openclaw' && backend !== 'hermes') return res.json({ error: '不支持的 backend' });
-      res.json(gatewaySetup.startSetup(backend, agentId, databaseAPI));
-    } catch (e: any) { res.json({ error: e.message }); }
+    res.status(410).json({
+      success: false,
+      error: '请通过 Agent 注册流程查看变更计划并明确确认后再配置消息通道',
+      code: 'GATEWAY_SETUP_REQUIRES_REGISTRATION_APPROVAL',
+    });
   });
   app.get('/api/gateway/setup-status', (req?: any, res?: any) => {
-    const t = gatewaySetup.getTask(req.query.id);
-    if (!t) return res.json({ error: '任务不存在或已过期' });
-    res.json({ logs: t.logs, done: t.done, ok: t.ok, error: t.error });
+    res.status(410).json({
+      success: false,
+      error: '请通过注册流程查询当前会话的配置任务',
+      code: 'GATEWAY_SETUP_STATUS_REQUIRES_REGISTRATION_SESSION',
+    });
   });
 
   // ── Gateway 转发（desktop gateway:forwardToAgent → 此端点） ──
@@ -652,15 +687,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── 会话操作 ──
   app.post('/api/conversations/update-mode', (req?: any, res?: any) => {
     const { channelId, agentId, mode } = req.body || {};
-    if (!channelId) return res.json({ success: false, error: '缺少 channelId' });
+    if (!channelId || !agentId) return res.status(400).json({ success: false, error: '缺少 channelId 或 agentId' });
     try {
       const validModes = [null, 'MANUAL', 'AUTO'];
       if (!validModes.includes(mode)) return res.json({ success: false, error: '无效模式' });
-      if (agentId) {
-        db.prepare(`UPDATE conversations SET mode = ? WHERE channel_id = ? AND agent_id = ?`).run(mode, channelId, agentId);
-      } else {
-        db.prepare(`UPDATE conversations SET mode = ? WHERE channel_id = ?`).run(mode, channelId);
-      }
+      db.prepare(`UPDATE conversations SET mode = ? WHERE channel_id = ? AND agent_id = ?`).run(mode, channelId, agentId);
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -669,6 +700,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   app.post('/api/conversations/save', (req?: any, res?: any) => {
     try {
       const { userUid, conversation } = req.body || {};
+      const agentId = String(conversation?.agentId || conversation?.agent_id || '');
+      if (!currentOwnsAgent(agentId)) return res.status(403).json({ success: false, error: '当前登录用户无权访问该 Agent' });
       databaseAPI.saveConversation(userUid, conversation);
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -676,15 +709,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
 
   app.post('/api/conversations/delete', (req?: any, res?: any) => {
     const { channelId, agentId } = req.body || {};
-    if (!channelId) return res.json({ success: false, error: '缺少 channelId' });
+    if (!channelId || !agentId) return res.status(400).json({ success: false, error: '缺少 channelId 或 agentId' });
     try {
-      if (agentId) {
-        db.prepare(`DELETE FROM messages WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
-        db.prepare(`DELETE FROM conversations WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
-      } else {
-        db.prepare(`DELETE FROM messages WHERE channel_id = ?`).run(channelId);
-        db.prepare(`DELETE FROM conversations WHERE channel_id = ?`).run(channelId);
-      }
+      db.prepare(`DELETE FROM messages WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
+      db.prepare(`DELETE FROM conversations WHERE channel_id = ? AND agent_id = ?`).run(channelId, agentId);
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -705,6 +733,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     const { id, ownerReply, replyTime, channelType } = req.body || {};
     if (!id) return res.json({ success: false, error: '缺少 id' });
     try {
+      if (!currentOwnsAgent(interventionAgentId(id))) return res.status(403).json({ success: false, error: '无权修改该介入记录' });
       const { createDatabaseAPI } = require('./core/database');
       const api = createDatabaseAPI(db);
       api.updateOwnerInterventionReply(id, ownerReply, replyTime, channelType || null);
@@ -715,6 +744,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     const { id } = req.body || {};
     if (!id) return res.json({ success: false, error: '缺少 id' });
     try {
+      if (!currentOwnsAgent(interventionAgentId(id))) return res.status(403).json({ success: false, error: '无权删除该介入记录' });
       db.prepare('DELETE FROM owner_interventions WHERE id = ?').run(id);
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -725,6 +755,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { intervention } = req.body || {};
       if (!intervention || !intervention.id) return res.json({ success: false, error: '缺少 intervention.id' });
+      if (!currentOwnsAgent(String(intervention.agentId || intervention.agent_id || ''))) return res.status(403).json({ success: false, error: '无权保存该介入记录' });
       const { createDatabaseAPI } = require('./core/database');
       createDatabaseAPI(db).saveOwnerIntervention(intervention);
       res.json({ success: true, id: intervention.id });
@@ -736,6 +767,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { id, fields } = req.body || {};
       if (!id) return res.json({ success: false, error: '缺少 id' });
+      if (!currentOwnsAgent(interventionAgentId(id))) return res.status(403).json({ success: false, error: '无权修改该介入记录' });
       const COL_MAP: Record<string, string> = {
         skip_reply: 'skip_reply', is_sent: 'is_sent',
         parentMessageId: 'parent_message_id', parent_message_id: 'parent_message_id',
@@ -758,11 +790,15 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { type, data } = req.body || {};
       if (data === undefined) return res.json({ success: false, error: '缺少 data' });
-      const normalizedData = type === 'model' && data?.baseUrl
+      const configType = String(type || 'channel_config').trim();
+      if (!isAllowedBridgeConfigType(configType)) {
+        return res.status(400).json({ success: false, error: '不支持写入该配置类型' });
+      }
+      const normalizedData = configType === 'model' && data?.baseUrl
         ? { ...data, baseUrl: assertSecureEndpoint(data.baseUrl, 'http') }
         : data;
       db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
-        .run(type || 'channel_config', JSON.stringify(normalizedData), Date.now());
+        .run(configType, JSON.stringify(normalizedData), Date.now());
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -771,7 +807,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { type } = req.body || {};
       if (!type) return res.json({ success: false, error: '缺少 type' });
-      db.prepare('DELETE FROM config WHERE type = ?').run(type);
+      const configType = String(type).trim();
+      if (!isAllowedBridgeConfigType(configType)) {
+        return res.status(400).json({ success: false, error: '不支持删除该配置类型' });
+      }
+      db.prepare('DELETE FROM config WHERE type = ?').run(configType);
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -815,7 +855,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { updateAgentBindingOnDb } = require('./core/agent-registration');
       const { agentId, updates } = req.body || {};
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
-      res.json(updateAgentBindingOnDb(db, { agentId, updates: updates || {} }));
+      const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
+      const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
+      const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
+      if (result.success !== false) try { (global as any).__dispatcher?.invalidateMeta?.(agentId); } catch (_: any) {}
+      res.json(result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -837,9 +881,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { agentId } = d;
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
       const F = {
-        imUid: d.uid, imToken: d.token, im_server_url: d.serverUrl, owner_email: d.ownerEmail,
-        backend_type: d.backendType === undefined ? undefined : normalizeBackendType(d.backendType), agent_name: d.agentName, category: d.category, category_label: d.categoryLabel,
-        did: d.did, public_key: d.publicKey, private_key: d.privateKey, login_token: d.loginToken,
+        backend_type: d.backendType === undefined ? undefined : normalizeBackendType(d.backendType),
+        backend_instance_id: d.instanceId,
+        delivery_modes: d.deliveryModes === undefined ? undefined : JSON.stringify(Array.isArray(d.deliveryModes) ? d.deliveryModes : []),
+        agent_name: d.agentName,
+        category: d.category,
       };
       const sets = [], vals = [];
       for (const [k, v] of Object.entries(F)) {
@@ -936,18 +982,21 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   app.post('/api/payment/write-auth', (req?: any, res?: any) => {
     try {
       const { id, fields, mode } = req.body || {};
+      const ownerEmail = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+      if (!ownerEmail) return res.status(403).json({ success: false, error: '未登录' });
       const now = Date.now();
       const cols = Object.keys(fields || {}).filter((k: any) => ALLOWED_AUTH_FIELDS.has(k));
       if (mode === 'insert') {
-        const allCols = ['id', ...cols, 'status', 'created_at', 'updated_at'];
-        const allVals = [id, ...cols.map((k?: any) => fields[k]), 'unverified', now, now];
+        const allCols = ['id', 'owner_email', ...cols, 'status', 'created_at', 'updated_at'];
+        const allVals = [id, ownerEmail, ...cols.map((k?: any) => fields[k]), 'unverified', now, now];
         db.prepare(`INSERT INTO payment_auth (${allCols.join(', ')}) VALUES (${allCols.map(() => '?').join(', ')})`).run(...allVals);
       } else {
         if (!id) return res.json({ success: false, error: '缺少 id' });
         if (!cols.length) return res.json({ success: false, error: '缺少 fields' });
         const sets = cols.map((k?: any) => `${k} = ?`);
         const vals = [...cols.map((k?: any) => fields[k]), now, id];
-        db.prepare(`UPDATE payment_auth SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...vals);
+        vals.push(ownerEmail);
+        db.prepare(`UPDATE payment_auth SET ${sets.join(', ')}, updated_at = ? WHERE id = ? AND LOWER(TRIM(owner_email))=?`).run(...vals);
       }
       res.json({ success: true, id });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -959,6 +1008,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const row = db.prepare('SELECT * FROM owner_interventions WHERE id = ?').get(id);
       if (!row) return res.json({ success: false, error: '未找到记录' });
+      if (!currentOwnsAgent(String(row.agent_id || ''))) return res.status(403).json({ success: false, error: '无权转发该介入记录' });
       const intervention = {
         id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
         sessionKey: row.session_key, problem: row.problem, askTime: row.ask_time,
@@ -1260,8 +1310,8 @@ async function startMcpServer(args?: any, core?: any) {
   if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${publishedAgentCount} 个 Agent Worker`);
 
   // ── 版本检查（异步，不阻塞） ──
-  cli.checkVersion();
-  if (!autoUpdateDisabled(args)) startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
+  checkVersionAndPersist(db);
+  if (autoUpdateEnabled(args)) startAutoUpdater(); // 仅显式启用；签名升级机制就绪前默认关闭
 
   // ── 创建后端处理器（OpenClaw + Hermes） ──
   let openclawHandler = null;
@@ -1628,6 +1678,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { key: 'cursor-acp',   mod: './core/dispatcher/providers/cursor-acp',   named: 'CursorAcpProvider',   args: { db, contextWindow: 20 } },
     { key: 'cursor-cli',   mod: './core/dispatcher/providers/cursor-cli',   named: 'CursorCliProvider',   args: { db, contextWindow: 20 } },
     { key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
+    { key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
     { key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
     { key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
     { key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
@@ -1973,8 +2024,8 @@ async function createLiteApp(options: any = {}) {
   }
 
   // ── 版本检查（异步，不阻塞） ──
-  cli.checkVersion();
-  if (options.autoUpdate !== false) startAutoUpdater(); // 后台自动升级（4h 定时检查 + 暂存，下次启动应用）
+  checkVersionAndPersist(db);
+  if (options.autoUpdate === true && autoUpdateEnabled()) startAutoUpdater();
 
   return {
     db, databaseAPI, agentManager, agentRegistration,
@@ -2424,7 +2475,7 @@ async function main() {
 
   // 自动升级：启动服务前应用已暂存的升级（替换全局包文件后退出）。
   const _willServe = !subcommand || subcommand === 'start' || subcommand === 'mcp';
-  if (_willServe && !autoUpdateDisabled(args)) {
+  if (_willServe && autoUpdateEnabled(args)) {
     if (applyPendingUpgrade()) {
       console.error(t('cli.index.autoupdate_restart'));
       process.exit(0);

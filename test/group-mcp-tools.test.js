@@ -34,11 +34,11 @@ function setup(options = {}) {
     .run('1', 'agentA', 'imuidA', 'tok', 'ws://fake', 'published', 'public', 'a@a.com', now, now);
   db.prepare(`INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, publish_status, access_mode, owner_email, agent_name, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run('2', 'agentB', 'imuidB', 'tok', 'ws://fake', 'published', 'public', 'b@b.com', 'AgentB', now, now);
+  const tokenMap = options.activeOwner === 'b@b.com'
+    ? { 'b@b.com': { user_access_token: 'test-token-b' }, 'a@a.com': { user_access_token: 'test-token-a' } }
+    : { 'a@a.com': { user_access_token: 'test-token-a' }, 'b@b.com': { user_access_token: 'test-token-b' } };
   db.prepare('INSERT INTO config (type, data, updated_at) VALUES (?, ?, ?)')
-    .run('user_access_token', JSON.stringify({
-      'a@a.com': { user_access_token: 'test-token-a' },
-      'b@b.com': { user_access_token: 'test-token-b' },
-    }), now);
+    .run('user_access_token', JSON.stringify(tokenMap), now);
 
   // 访客 + 群聊消息
   db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -121,7 +121,7 @@ await test('send_message 透传群聊 @全体和成员 UID', async () => {
   } finally { cleanup(); }
 });
 await test('send_message 拒绝普通成员 @全体', async () => {
-  const { handlers, sentMessages, cleanup } = setup();
+  const { handlers, sentMessages, cleanup } = setup({ activeOwner: 'b@b.com' });
   try {
     const r = await handlers.send_message({
       agentId: 'agentB',
@@ -267,7 +267,7 @@ await test('create_group 调用群服务并返回 channelId', async () => {
 });
 
 await test('accept_invitation 通过群信息接口校验成员身份', async () => {
-  const { handlers, fetchCalls, cleanup } = setup();
+  const { handlers, fetchCalls, cleanup } = setup({ activeOwner: 'b@b.com' });
   try {
     const r = await handlers.accept_invitation({ agentId: 'agentB', channelId: 'room1' });
     assert.strictEqual(r.success, true);
@@ -280,7 +280,7 @@ await test('accept_invitation 通过群信息接口校验成员身份', async ()
 });
 
 await test('invite_to_group 通过群服务邀请成员', async () => {
-  const { handlers, fetchCalls, cleanup } = setup();
+  const { handlers, fetchCalls, cleanup } = setup({ activeOwner: 'b@b.com' });
   try {
     const r = await handlers.invite_to_group({ agentId: 'agentB', channelId: 'room1', members: ['visitor1'] });
     assert.strictEqual(r.success, true);

@@ -2,6 +2,7 @@
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const SAFE_FETCH_SITES = new Set(['', 'none', 'same-origin', 'same-site']);
+const BRIDGE_CONFIG_TYPES = new Set(['channel_config', 'llm_config', 'model', 'hermes_config']);
 
 function parseLoopbackAuthority(value, asOrigin = false) {
   try {
@@ -52,7 +53,14 @@ function isAllowedLocalWebSocketOrigin(origin, host) {
 function requiresLocalToken(path) {
   const requestPath = String(path || '');
   return requestPath === '/mcp' ||
-    requestPath.startsWith('/mcp/');
+    requestPath.startsWith('/mcp/') ||
+    requestPath === '/api/llm/config' ||
+    requestPath === '/api/config/save' ||
+    requestPath === '/api/config/delete';
+}
+
+function isAllowedBridgeConfigType(type) {
+  return BRIDGE_CONFIG_TYPES.has(String(type || '').trim());
 }
 
 function setLocalSecurityHeaders(res) {
@@ -70,5 +78,6 @@ module.exports = {
   isAllowedLocalOrigin,
   isAllowedLocalWebSocketOrigin,
   requiresLocalToken,
+  isAllowedBridgeConfigType,
   setLocalSecurityHeaders,
 };

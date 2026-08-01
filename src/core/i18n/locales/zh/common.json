@@ -58,6 +58,7 @@
   "common.footer.status_ok": "正常",
   "common.footer.status_im_down": "IM 断开",
   "common.footer.status_init": "初始化中",
+  "common.footer.update_available": "发现 V{version}，运行 voko update 升级",
   "common.home.copied": "已复制",
   "common.home.gen_creating": "生成中...",
   "common.home.gen_failed": "生成失败",

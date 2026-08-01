@@ -318,4 +318,28 @@ describe('Agent invitation and access sync', () => {
       db.close();
     }
   });
+
+  it('searches access lists by locally cached nickname as well as visitor ID and reason', () => {
+    const db = fixture();
+    const now = Date.now();
+    db.prepare(`INSERT INTO agent_access_lists
+      (id,agent_id,list_type,visitor_id,reason,manual_managed,server_managed,created_at,updated_at)
+      VALUES (?,?,?,?,?,1,0,?,?)`)
+      .run('dashuu-entry', 'agent-a', 'whitelist', 'actor_123', 'trusted friend', now, now);
+    db.prepare('INSERT INTO user_cache (uid,nickname,updated_at) VALUES (?,?,?)')
+      .run('actor_123', 'dashuu', now);
+    try {
+      const byNickname = accessControl.getList(db, {
+        agentId: 'agent-a', listType: 'whitelist', keyword: 'dashuu', limit: 10, offset: 0,
+      });
+      assert.equal(byNickname.total, 1);
+      assert.equal(byNickname.data[0].visitor_id, 'actor_123');
+      const byReason = accessControl.getList(db, {
+        agentId: 'agent-a', listType: 'whitelist', keyword: 'trusted', limit: 10, offset: 0,
+      });
+      assert.equal(byReason.total, 1);
+    } finally {
+      db.close();
+    }
+  });
 });

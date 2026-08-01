@@ -471,6 +471,7 @@ function registerAgentInDbOnDb(db, {
   ownerEmail,
   backendType,
   instanceId,
+  deliveryModes,
   agentName,
   category,
   categoryLabel,
@@ -490,6 +491,9 @@ function registerAgentInDbOnDb(db, {
     const payRate = paymentFeeRate != null ? paymentFeeRate : 0.006;
     const usageRate = agentUsageFeeRate != null ? agentUsageFeeRate : 0.1;
     const resolvedAccessMode = accessMode === 'public' ? 'public' : 'private';
+    const resolvedDeliveryModes = Array.isArray(deliveryModes)
+      ? JSON.stringify([...new Set(deliveryModes.map(String).filter(Boolean))])
+      : null;
 
     // categoryLabel 缺失时从 i18n 自动补齐（MCP/CLI/web-add 注册只传 category 码）
     let resolvedCategoryLabel = categoryLabel || '';
@@ -503,8 +507,8 @@ function registerAgentInDbOnDb(db, {
       INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, owner_email,
         agent_name, category, category_label, description, did, public_key, private_key, login_token,
         payment_fee_rate, agent_usage_fee_rate,
-        publish_status, access_mode, backend_type, backend_instance_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
+        publish_status, access_mode, backend_type, backend_instance_id, delivery_modes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?)
       ON CONFLICT(agent_id) DO UPDATE SET
         imUid = excluded.imUid, imToken = excluded.imToken,
         im_server_url = excluded.im_server_url, owner_email = excluded.owner_email,
@@ -516,13 +520,14 @@ function registerAgentInDbOnDb(db, {
         payment_fee_rate = excluded.payment_fee_rate,
         agent_usage_fee_rate = excluded.agent_usage_fee_rate,
         access_mode = excluded.access_mode, backend_type = excluded.backend_type,
-        backend_instance_id = excluded.backend_instance_id, updated_at = excluded.updated_at
+        backend_instance_id = excluded.backend_instance_id,
+        delivery_modes = excluded.delivery_modes, updated_at = excluded.updated_at
     `).run(
       `agent-${agentId}`, agentId, uid, token, imServerUrl, ownerEmail || null,
       agentName || null, category || null, resolvedCategoryLabel || null, description || null,
       did || null, publicKey || null, privateKey || null, loginToken || null,
       payRate, usageRate,
-      resolvedAccessMode, backend, instanceId || null, now, now
+      resolvedAccessMode, backend, instanceId || null, resolvedDeliveryModes, now, now
     );
 
     console.log('[AgentRegistration] registerAgentInDb success:', agentId);
@@ -555,6 +560,17 @@ function updateAgentBindingOnDb(db, { agentId, updates }) {
     if (updates.short_link_url !== undefined) { sets.push('short_link_url = ?'); values.push(normalizeOfficialPublicUrl(updates.short_link_url, { canonicalMain: true })); }
     if (updates.qr_code_url !== undefined) { sets.push('qr_code_url = ?'); values.push(updates.qr_code_url); }
     if (updates.icon_url !== undefined) { sets.push('icon_url = ?'); values.push(updates.icon_url); }
+    if (updates.backend_type !== undefined) { sets.push('backend_type = ?'); values.push(normalizeBackendType(updates.backend_type)); }
+    if (updates.backend_instance_id !== undefined) { sets.push('backend_instance_id = ?'); values.push(String(updates.backend_instance_id || '').trim() || null); }
+    if (updates.agent_name !== undefined) { sets.push('agent_name = ?'); values.push(String(updates.agent_name || '').trim()); }
+    if (updates.category !== undefined) { sets.push('category = ?'); values.push(String(updates.category || '').trim() || 'general'); }
+    if (updates.description !== undefined) { sets.push('description = ?'); values.push(String(updates.description || '').trim() || null); }
+    if (updates.delivery_modes !== undefined) {
+      const modes = Array.isArray(updates.delivery_modes) ? updates.delivery_modes : JSON.parse(updates.delivery_modes);
+      if (!Array.isArray(modes)) throw new Error('delivery_modes must be an array');
+      sets.push('delivery_modes = ?');
+      values.push(JSON.stringify([...new Set(modes.map((mode) => String(mode).trim()).filter(Boolean))]));
+    }
 
     if (sets.length === 0) return { success: true };
     sets.push('updated_at = ?');

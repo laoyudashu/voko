@@ -17,6 +17,7 @@ export interface ProcessIdentity {
 export interface InstanceMetadata extends ProcessIdentity {
   version: 1;
   instanceId: string;
+  mcpToken: string;
   dbPath: string;
   entryPath: string;
   port: number | null;
@@ -51,6 +52,7 @@ export interface AcquireInstanceResult {
 interface ProcessLifecycleDeps {
   inspectProcess?: (pid: number) => ProcessIdentity | null;
   sleep?: (ms: number) => Promise<void>;
+  securePath?: (filePath: string, isDirectory: boolean) => void;
 }
 
 const LOCK_INIT_GRACE_MS = 5000;
@@ -88,11 +90,59 @@ function getRuntimePaths(dbPath: string): {
   };
 }
 
+function secureWindowsPathForCurrentUser(filePath: string, isDirectory: boolean): void {
+  const encodedPath = Buffer.from(path.resolve(filePath), 'utf8').toString('base64');
+  const inheritance = isDirectory
+    ? '[System.Security.AccessControl.InheritanceFlags]"ContainerInherit, ObjectInherit"'
+    : '[System.Security.AccessControl.InheritanceFlags]::None';
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+    '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User',
+    '& icacls.exe $path /inheritance:r | Out-Null',
+    'if ($LASTEXITCODE -ne 0) { throw "Unable to disable ACL inheritance" }',
+    '$acl = Get-Acl -LiteralPath $path',
+    'foreach ($rule in @($acl.Access)) {',
+    '  if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }',
+    '  $ruleSid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value',
+    '  if ($ruleSid -eq $sid.Value) { continue }',
+    '  & icacls.exe $path /remove:g ("*" + $ruleSid) | Out-Null',
+    '  if ($LASTEXITCODE -ne 0) { throw "Unable to remove a foreign ACL grant" }',
+    '}',
+    `$grant = "*" + $sid.Value + ":" + ${isDirectory ? "'(OI)(CI)F'" : "'F'"}`,
+    '& icacls.exe $path /grant:r $grant | Out-Null',
+    'if ($LASTEXITCODE -ne 0) { throw "Unable to grant the current user runtime access" }',
+    '$verified = Get-Acl -LiteralPath $path',
+    'if (-not $verified.AreAccessRulesProtected) { throw "ACL inheritance is still enabled" }',
+    '$allow = @($verified.Access | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.FileSystemRights -ne 0 })',
+    '$foreign = @($allow | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value })',
+    'if ($foreign.Count -ne 0) { throw "ACL grants access to another identity" }',
+    '$mine = @($allow | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $sid.Value -and (($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl) })',
+    'if ($mine.Count -eq 0) { throw "Current user lacks FullControl" }',
+  ].join('; ');
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Unable to protect VOKO runtime path for the current Windows user: ${String(result.error?.message || result.stderr || result.status)}`);
+  }
+}
+
+function securePrivatePath(filePath: string, isDirectory: boolean): void {
+  if (process.platform === 'win32') {
+    secureWindowsPathForCurrentUser(filePath, isDirectory);
+    return;
+  }
+  fs.chmodSync(filePath, isDirectory ? 0o700 : 0o600);
+}
+
 function atomicWriteJson(filePath: string, value: unknown): void {
   const tempPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), { encoding: 'utf8', flag: 'wx' });
+  fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   try {
     fs.renameSync(tempPath, filePath);
+    securePrivatePath(filePath, false);
   } catch (error) {
     try { fs.rmSync(tempPath, { force: true }); } catch {}
     throw error;
@@ -268,6 +318,7 @@ function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetad
     version: 1,
     ...identity,
     instanceId: crypto.randomUUID(),
+    mcpToken: crypto.randomBytes(32).toString('base64url'),
     dbPath: canonicalDbPath(dbPath),
     entryPath: normalizePath(entryPath),
     port: null,
@@ -313,14 +364,22 @@ export async function acquireInstanceLock(
   const paths = getRuntimePaths(dbPath);
   const inspect = deps.inspectProcess || inspectProcess;
   const sleep = deps.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
-  fs.mkdirSync(paths.runtimeDir, { recursive: true });
+  const securePath = deps.securePath || securePrivatePath;
+  fs.mkdirSync(paths.runtimeDir, { recursive: true, mode: 0o700 });
+  securePath(paths.runtimeDir, true);
 
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
-      fs.mkdirSync(paths.lockDir);
-      const metadata = buildInstanceMetadata(dbPath, entryPath);
-      atomicWriteJson(paths.ownerFile, metadata);
-      return { acquired: true, lock: createLockHandle(metadata, paths.lockDir, paths.ownerFile) };
+      fs.mkdirSync(paths.lockDir, { mode: 0o700 });
+      try {
+        securePath(paths.lockDir, true);
+        const metadata = buildInstanceMetadata(dbPath, entryPath);
+        atomicWriteJson(paths.ownerFile, metadata);
+        return { acquired: true, lock: createLockHandle(metadata, paths.lockDir, paths.ownerFile) };
+      } catch (error) {
+        try { fs.rmSync(paths.lockDir, { recursive: true, force: true }); } catch {}
+        throw error;
+      }
     } catch (error: any) {
       if (error?.code !== 'EEXIST') throw error;
     }
@@ -436,7 +495,8 @@ export function registerWorker(
     createdAt: Date.now(),
   };
   const filePath = workerFile(dbPath, workerToken);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  securePrivatePath(path.dirname(filePath), true);
   atomicWriteJson(filePath, metadata);
   return metadata;
 }
@@ -475,7 +535,8 @@ export function registerWorkers(
       createdAt: Date.now(),
     };
     const filePath = workerFile(dbPath, item.workerToken);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    securePrivatePath(path.dirname(filePath), true);
     atomicWriteJson(filePath, metadata);
     result.set(item.workerToken, metadata);
   }
