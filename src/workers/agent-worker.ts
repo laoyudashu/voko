@@ -4,7 +4,8 @@ export {};
  * Agent Worker - 每个 Agent 的独立 WuKongIM 连接进程
  *
  * 通过 fork 启动，每个 worker 有独立的 V8 实例和 WKSDK.shared() 实例
- * 用法: node agent-worker.js <agentId> <configJson>
+ * 用法: node agent-worker.js <agentId> [lifecycle arguments]
+ * 连接凭据仅由父进程通过 fork() 的 IPC 通道传入，绝不出现在 argv。
  */
 
 // 日志统一到 voko-im.log：worker 不再自写文件，console 经 fork stdio 继承到 Lite 主进程统一写
@@ -43,21 +44,17 @@ function workerErr(...args: unknown[]): void { console.error(...args); }
 // 父进程退出/kill 后 IPC 通道关闭，裸 process.send 会抛 ERR_IPC_CHANNEL_CLOSED，统一兜底
 function safeSend(m: object): void { try { process.send?.(m); } catch (_) { /* IPC channel closed */ } }
 
-// 获取命令行参数
+// agentId 可出现在 argv；连接凭据必须只走父子 IPC。
 const agentId = process.argv[2];
-let config: WorkerConfig = {};
-try {
-  config = JSON.parse(process.argv[3] || '{}');
-} catch (e) {
-  workerErr(`[${agentId || 'unknown'}] 解析 config JSON 失败:`, errorMessage(e), '原始参数:', process.argv[3]);
+if (!agentId) {
+  workerErr('[unknown] Worker 缺少 agentId');
   process.exit(1);
 }
 
+function startWorker(config: WorkerConfig): void {
 const { uid, token, serverUrl } = config;
-
-
-if (!agentId || !uid || !token || !serverUrl) {
-  workerErr(`[${agentId || 'unknown'}] Worker 启动参数不足`, { agentId, uid, token, serverUrl });
+if (!uid || !token || !serverUrl) {
+  workerErr(`[${agentId}] Worker 初始化参数不足`);
   process.exit(1);
 }
 
@@ -409,3 +406,24 @@ if (process.platform === 'win32') {
 }
 
 workerLog(`[${agentId}] Worker 已启动，等待连接...`);
+}
+
+let initialized = false;
+const initTimeout = setTimeout(() => {
+  if (!initialized) {
+    workerErr(`[${agentId}] 未收到父进程初始化配置`);
+    process.exit(1);
+  }
+}, 10000);
+
+process.once('message', (message: unknown) => {
+  const init = message as { type?: string; config?: WorkerConfig } | null;
+  if (!init || init.type !== 'worker.init') {
+    workerErr(`[${agentId}] 收到无效初始化消息`);
+    process.exit(1);
+    return;
+  }
+  initialized = true;
+  clearTimeout(initTimeout);
+  startWorker(init.config || {});
+});

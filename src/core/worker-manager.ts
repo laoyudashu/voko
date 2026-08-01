@@ -39,6 +39,19 @@ interface WorkerEntry {
   workerMetadata?: WorkerMetadata | null;
 }
 
+function workerEnvironment(): NodeJS.ProcessEnv {
+  // Do not leak every Lite environment variable to an IM worker. Keep only
+  // runtime/locale variables required by Node and the operating system.
+  const names = process.platform === 'win32'
+    ? ['NODE_ENV', 'NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE', 'PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'LANG', 'TZ']
+    : ['NODE_ENV', 'NODE_OPTIONS', 'PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ'];
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of names) {
+    if (process.env[name] !== undefined) env[name] = process.env[name];
+  }
+  return env;
+}
+
 interface WorkerEventPayload {
   agentId: string;
   status?: string;
@@ -227,13 +240,15 @@ class AgentWorkerManager extends EventEmitter {
     let worker: ChildProcess;
     const workerToken = crypto.randomUUID();
     try {
-      const env = { ...process.env };
+      const env = workerEnvironment();
       worker = fork(workerPath, [
         agentId,
-        JSON.stringify(config),
         `--voko-worker-token=${workerToken}`,
         `--voko-instance-id=${this.instance?.instanceId || ''}`,
       ], { env, windowsHide: true });
+      // fork() creates a private parent/child IPC channel. Keep connection
+      // credentials out of argv, process listings, diagnostics and crash logs.
+      worker.send({ type: 'worker.init', config });
     } catch (err) {
       console.error(`[Agent Worker] ${agentId} fork 失败:`, errorMessage(err));
       return;

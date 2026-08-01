@@ -534,6 +534,23 @@ async function probeFileMetadata(url?: string) {
 }
 
 function createToolHandlers(cx: McpContext) {
+  // These tools can change identity, access, external delivery or payment
+  // state. MCP definitions mark mutations as destructive; retain a minimal
+  // local audit trail without persisting arguments, credentials or content.
+  const highRiskTools = new Set([
+    'create_agent_by_token', 'manage_whitelist', 'manage_blacklist', 'set_private_mode',
+    'send_email', 'reply_email', 'add_payment_auth', 'delete_payment_auth',
+    'apply_payment_auth', 'bind_agent_payment_auth', 'invite_friend',
+  ]);
+  const recordHighRiskTool = (toolName: string, params: McpToolParams, success: boolean) => {
+    if (!highRiskTools.has(toolName)) return;
+    try {
+      cx.exec(
+        'INSERT INTO mcp_security_events (id, tool_name, agent_id, success, created_at) VALUES (?, ?, ?, ?, ?)',
+        [`mcpsec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, toolName, params?.agentId || null, success ? 1 : 0, Date.now()],
+      );
+    } catch (_) { /* Auditing must not turn a completed user action into a failure. */ }
+  };
   // cx: { db, query, exec, sendMessage, sendSystemMessage, startAgentWorker, stopAgentWorker,
   //        getAgentStatus, registerCapabilities, searchCapabilities, updateAgentProfile, setAgentStatus,
   //        publishAgent, unpublishAgent,
@@ -2586,7 +2603,15 @@ function createToolHandlers(cx: McpContext) {
     handlers[name] = async (params: McpToolParams = {}) => {
       const ownershipError = _agentOwnershipError(params?.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
-      return handler.call(handlers, params);
+      try {
+        const result = await handler.call(handlers, params);
+        const success = !(result && typeof result === 'object' && (result as { success?: unknown }).success === false);
+        recordHighRiskTool(name, params, success);
+        return result;
+      } catch (error) {
+        recordHighRiskTool(name, params, false);
+        throw error;
+      }
     };
   }
 

@@ -20,7 +20,7 @@ function getList(db, { agentId, listType, limit, offset, keyword }) {
     const from = 'FROM agent_access_lists a LEFT JOIN user_cache u ON u.uid = a.visitor_id';
     const countRow = db.prepare(`SELECT COUNT(*) as cnt ${from} ${where}`).get(...params);
     const total = countRow?.cnt || 0;
-    let sql = `SELECT a.id, a.visitor_id, a.reason, a.created_at ${from} ${where} ORDER BY a.created_at DESC`;
+    let sql = `SELECT a.id, a.visitor_id, a.reason, a.source, a.auto_trust_disabled, a.created_at ${from} ${where} ORDER BY a.created_at DESC`;
     if (limit) { sql += ' LIMIT ?'; params.push(limit); }
     if (offset) { sql += ' OFFSET ?'; params.push(offset); }
     const rows = db.prepare(sql).all(...params);

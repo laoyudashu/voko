@@ -883,6 +883,18 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.error('[DB migrate v4] agent_access_lists provenance:', e.message);
   }
 
+  // MCP 高风险操作审计：仅记录操作元数据，不记录凭据或业务正文。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mcp_security_events (
+      id TEXT PRIMARY KEY,
+      tool_name TEXT NOT NULL,
+      agent_id TEXT,
+      success INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_mcp_security_events_created ON mcp_security_events(created_at DESC)');
+
   // 迁移：config 表旧版 id 主键 → type 主键
   const colInfo = db.prepare('PRAGMA table_info(config)').all();
   const hasLegacyId = colInfo.some((col: TableInfoRow) => col.name === 'id');
