@@ -46,6 +46,11 @@ interface AgentStatusRow {
   owner_email: string | null;
   access_mode: string | null;
 }
+interface AgentTrustRow {
+  agent_id: string;
+  imUid: string | null;
+  owner_email: string | null;
+}
 interface BackendRow { backend_type: string | null }
 interface ConversationUserRow { user_uid: string }
 interface ConversationSessionRow {
@@ -175,6 +180,30 @@ class MessageHandler extends EventEmitter {
   setOpenclawHandler(handler: BackendHandlerLike) { this.openclawHandler = handler; }
   /** 设置消息分发决策层（push/pull） */
   setDispatcher(dispatcher: NonNullable<MessageHandlerOptions['dispatcher']>) { this.dispatcher = dispatcher; }
+
+  /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
+  private _autoTrustSameOwnerAgent(agentId: string, fromUid: string): void {
+    if (!this.ac || !agentId || !fromUid) return;
+    try {
+      const receiver = this.db.prepare(
+        'SELECT agent_id, imUid, owner_email FROM agents WHERE agent_id=? LIMIT 1',
+      ).get<AgentTrustRow>(agentId);
+      const sender = this.db.prepare(
+        'SELECT agent_id, imUid, owner_email FROM agents WHERE imUid=? LIMIT 1',
+      ).get<AgentTrustRow>(fromUid);
+      const receiverOwner = String(receiver?.owner_email || '').trim().toLowerCase();
+      const senderOwner = String(sender?.owner_email || '').trim().toLowerCase();
+      if (!receiver || !sender || sender.agent_id === receiver.agent_id || !receiverOwner || receiverOwner !== senderOwner || !receiver.imUid) return;
+      if (this.ac.isBlacklisted(this.db, receiver.agent_id, fromUid)
+        || this.ac.isBlacklisted(this.db, sender.agent_id, receiver.imUid)) return;
+      if (!this.ac.isWhitelisted(this.db, receiver.agent_id, fromUid)) {
+        this.ac.addEntry(this.db, { agentId: receiver.agent_id, listType: 'whitelist', visitorId: fromUid, reason: '同主人 Agent 默认信任' });
+      }
+      if (!this.ac.isWhitelisted(this.db, sender.agent_id, receiver.imUid)) {
+        this.ac.addEntry(this.db, { agentId: sender.agent_id, listType: 'whitelist', visitorId: receiver.imUid, reason: '同主人 Agent 默认信任' });
+      }
+    } catch (_) {}
+  }
 
   // ==========================================
   // 审计：插入被拦截消息
@@ -358,6 +387,8 @@ class MessageHandler extends EventEmitter {
       this._sendSystemMessage(agentId, fromUid, 'agent_unpublished', { ownerEmail }, timestamp);
       return;
     }
+
+    this._autoTrustSameOwnerAgent(agentId, fromUid);
 
     // 黑白名单检查
     if (agentStatusRow && this.ac) {
