@@ -109,7 +109,7 @@ let __webSocketServer: any = null;
 let __shuttingDown = false;
 let __serviceHealth: 'ok' | 'draining' | 'unhealthy' = 'ok';
 let __fatalHandling = false;
-let __shutdownContext: { agentManager?: any; wukongimSender?: any; db?: any } | null = null;
+let __shutdownContext: { agentManager?: any; wukongimSender?: any; db?: any; taskManager?: any } | null = null;
 
 function handleFatalError(kind: 'uncaughtException' | 'unhandledRejection', error: unknown): void {
   console.error(`[Lite][${kind}]`, error instanceof Error ? error.stack || error.message : error);
@@ -131,6 +131,7 @@ function handleFatalError(kind: 'uncaughtException' | 'unhandledRejection', erro
     context.db,
     `fatal:${kind}`,
     1,
+    context.taskManager,
   ).then(
     () => process.exit(1),
     (shutdownError: unknown) => {
@@ -446,7 +447,7 @@ let __runtimePort: any = null;
 /**
  * 启动 MCP 传输层（stdio 或 HTTP）
  */
-async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any) {
+async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any, taskManager?: any) {
   const port = parseInt(args.port, 10) || 3100;
   const app = express();
   app.use((req?: any, res?: any, next?: any) => {
@@ -568,6 +569,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     status: __serviceHealth,
     uptime: process.uptime(),
     instanceId: __instanceLock?.metadata?.instanceId || null,
+    tasks: taskManager?.snapshot?.() || [],
   }));
   app.post('/api/quit', (req?: any, res?: any) => {
     const expected = __instanceLock?.metadata?.instanceId;
@@ -892,7 +894,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // ── Agent 绑定字段更新（snake_case updates，与 agent-registration.updateAgentBinding 一致）──
-  app.post('/api/agent/update-binding-fields', (req?: any, res?: any) => {
+  app.post('/api/agent/update-binding-fields', async (req?: any, res?: any) => {
     try {
       const { updateAgentBindingOnDb } = require('./core/agent-registration');
       const { agentId, updates } = req.body || {};
@@ -900,7 +902,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
       const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
       const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
-      if (result.success !== false) try { (global as any).__dispatcher?.invalidateMeta?.(agentId); } catch (_: any) {}
+      if (result.success !== false) try {
+        const backendType = String(safeUpdates.backend_type || db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type || '');
+        await (global as any).__dispatcher?.ensureBackend?.(backendType);
+        (global as any).__dispatcher?.invalidateMeta?.(agentId);
+      } catch (_: any) {}
       res.json(result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -917,7 +923,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // ── Agent 绑定更新（imUid/imToken/did/keys 等，对应 ipc/agent.js connect 的本地 UPDATE）──
-  app.post('/api/agent/update-binding', (req?: any, res?: any) => {
+  app.post('/api/agent/update-binding', async (req?: any, res?: any) => {
     try {
       const d = req.body || {};
       const { agentId } = d;
@@ -933,7 +939,14 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       for (const [k, v] of Object.entries(F)) {
         if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
       }
-      if (sets.length) { vals.push(agentId); db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE agent_id = ?`).run(...vals); try { (global as any).__dispatcher?.invalidateMeta?.(agentId); } catch (_: any) {} }
+      if (sets.length) {
+        vals.push(agentId);
+        db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE agent_id = ?`).run(...vals);
+        try {
+          await (global as any).__dispatcher?.ensureBackend?.(F.backend_type || db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type);
+          (global as any).__dispatcher?.invalidateMeta?.(agentId);
+        } catch (_: any) {}
+      }
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -955,6 +968,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         setAgentStatus: (params?: any) => setAgentStatus({ db, ...params }),
         endpoints: require('./endpoints.json'),
       });
+      if (result?.success !== false) {
+        const backendType = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type;
+        await (global as any).__dispatcher?.ensureBackend?.(backendType);
+        (global as any).__dispatcher?.invalidateMeta?.(agentId);
+      }
       res.json(result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
@@ -1247,7 +1265,13 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         });
         // Console 实时 WS — 依附在已有 _wss 上，按路径 /voko/events/ws 路由
         const { createLiveEventsWs } = require('./web/live-events-ws');
-        const consoleWs = createLiveEventsWs(_wss, runtimeState);
+        const consoleWs = createLiveEventsWs(_wss, runtimeState, taskManager);
+        taskManager?.subscribe?.((tasks: object[]) => {
+          const message = JSON.stringify({ type: 'tasks', data: tasks });
+          for (const ws of consoleWs.clients) {
+            try { ws.send(message); } catch {}
+          }
+        });
         // RuntimeState 变更时广播到 WS 客户端
         if (runtimeState) {
           const { getHistory } = require('./core/lite-events');
@@ -1255,6 +1279,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           runtimeState.subscribe((agents?: any) => {
             const msg = JSON.stringify({ type: 'snapshot', data: {
               agents, summary: runtimeState.summary(),
+              tasks: taskManager?.snapshot?.() || [],
               recentEvents: getHistory(null, null, 100),
               recentAudit: query({ limit: 50 }),
             }});
@@ -1281,7 +1306,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
 
 async function startMcpServer(args?: any, core?: any) {
   const { db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage } = core;
-  __shutdownContext = { agentManager, wukongimSender, db };
+  const { TaskManager } = require('./core/task-manager');
+  const taskManager = new TaskManager();
+  __shutdownContext = { agentManager, wukongimSender, db, taskManager };
   const userEmail = getCurrentUserEmail(db);
   const litePort = parseInt(args.port, 10) || 3100;
 
@@ -1329,13 +1356,14 @@ async function startMcpServer(args?: any, core?: any) {
   let openclawHandler = null;
   let hermesHandler = null;
   let messageHandler: any = null;
-  let dispatcher = null;
+  let dispatcher: any = null;
   try {
     const hc = databaseAPI.getConfigFromDb('hermes_config') || {};
     const hcResult = createHandlers({
       db,
       databaseAPI,
       openclawMode: 'ws',
+      backendTypes: published.map((agent: any) => agent.backend_type || 'openclaw'),
       hermesConfig: { apiHost: hc.apiHost, apiPort: hc.apiPort, apiKey: hc.apiKey, profiles: hc.profiles || {} },
       onAgentReply: (data?: any) => {
         void messageHandler?.handleAgentReply(data)?.catch((error: any) => {
@@ -1431,7 +1459,7 @@ async function startMcpServer(args?: any, core?: any) {
   });
 
   // ── 离线消息同步：Agent 连接后拉取服务端缓存消息 ──
-  {
+  await taskManager.start('offline-sync', () => {
     let _offlineSyncTriggered = false;
     const _syncingAgents = new Set<string>();
     const _syncAgent = (agentId: string) => {
@@ -1450,17 +1478,23 @@ async function startMcpServer(args?: any, core?: any) {
       doSync(db, messageHandler).catch((e: any) => console.error('[离线同步] 失败:', e.message));
     };
     // 每个 Agent 连接时检查是否全部就绪
-    agentManager.on('status', (msg?: any) => {
+    const onStatus = (msg?: any) => {
       if (msg.status === 'connected') _syncAgent(msg.agentId);
       if ((msg.status === 'connected' || msg.statusCode === 2) &&
           publishedAgentCount > 0 &&
           agentManager.connectedAgents.size >= publishedAgentCount) {
         _trySync();
       }
-    });
+    };
+    agentManager.on('status', onStatus);
     // 兜底：启动 30 秒后仍尝试一次
-    setTimeout(() => { _trySync(); }, 30000);
-  }
+    const fallbackTimer = setTimeout(() => { _trySync(); }, 30000);
+    fallbackTimer.unref?.();
+    return () => {
+      clearTimeout(fallbackTimer);
+      agentManager.off?.('status', onStatus);
+    };
+  });
 
   // ── 将处理器挂在全局，供 startTransport 的 API 路由使用 ──
   (global as any).__openclawHandler = openclawHandler;
@@ -1510,7 +1544,10 @@ async function startMcpServer(args?: any, core?: any) {
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
     });
-    ownerInterventionNotifier.startScan();
+    await taskManager.start('owner-intervention', () => {
+      ownerInterventionNotifier.startScan();
+      return () => ownerInterventionNotifier.stop();
+    });
   } catch (e: any) {
     console.error('[Lite] 主人介入通知器初始化失败:', e.message);  }
 
@@ -1518,27 +1555,36 @@ async function startMcpServer(args?: any, core?: any) {
   let stopPaymentPolling = null;
   try {
     const ENDPOINTS = require('./endpoints.json');
-    stopPaymentPolling = require('./core/payment').startPaymentPolling({
-      db, databaseAPI,
-      agentWorkers: agentManager.workers,
-      deliver,
-      endpoints: ENDPOINTS,
-      hermesHandler, openclawHandler,
-      sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-      payLog: () => {},
-      ownerInterventionNotifier,
+    await taskManager.start('payment-polling', () => {
+      stopPaymentPolling = require('./core/payment').startPaymentPolling({
+        db, databaseAPI,
+        agentWorkers: agentManager.workers,
+        deliver,
+        endpoints: ENDPOINTS,
+        hermesHandler, openclawHandler,
+        sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
+        payLog: () => {},
+        ownerInterventionNotifier,
+      });
+      return stopPaymentPolling;
     });
   } catch (e: any) {
     console.error('[Lite] 支付轮询初始化失败:', e.message);
   }
 
   // ── 启动心跳（带处理器引用，支持健康检查 + 网关恢复） ──
-  startHeartbeat(db, agentManager, openclawHandler, hermesHandler, { port: litePort, agentCount: publishedAgentCount });
+  await taskManager.start('heartbeat', () => startHeartbeat(
+    db, agentManager, openclawHandler, hermesHandler,
+    { port: litePort, agentCount: publishedAgentCount },
+  ));
 
   // ── 启动休眠唤醒检测（定时器偏差检测，不依赖 Electron powerMonitor） ──
   const { PowerManager } = require('./core/power-manager');
   const powerManager = new PowerManager(agentManager, db);
-  powerManager.start();
+  await taskManager.start('power-manager', () => {
+    powerManager.start();
+    return () => powerManager.stop();
+  });
 
   const cx = createContext({
     db,
@@ -1551,10 +1597,10 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
-  require('./core/agent-invitations').startAgentAccessSync({
+  await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,
-  });
+  }));
   // 注入支付处理能力（MCP 工具创建订单后立即处理，不依赖轮询）
   const { processPendingPaymentOrder } = require('./core/payment');
   const ENDPOINTS = require('./endpoints.json');
@@ -1609,6 +1655,7 @@ const { RuntimeState } = require('./core/runtime-state');
     handlers,
     runtimeState,
     wukongimSender,
+    taskManager,
   );
 }
 
@@ -1652,13 +1699,17 @@ function createResumeOwnerIntervention(dispatcher?: any) {
   };
 }
 
-function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {}, onAgentReply }: any = {}) {
+function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
   let openclawHandler = null;
   let hermesHandler = null;
   const providers: Record<string, any> = {};
+  const requiredBackends: Set<string> | null = Array.isArray(backendTypes)
+    ? new Set(backendTypes.map((value: unknown) => String(value || '').trim()).filter(Boolean))
+    : null;
+  const needsBackend = (...types: string[]) => !requiredBackends || types.some(type => requiredBackends.has(type));
 
   // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
-  try {
+  if (needsBackend('openclaw')) try {
     const OpenClawHandler = openclawMode === 'ws'
       ? require('./core/dispatcher/providers/openclaw-ws')
       : require('./server/openclaw-handler-cli');
@@ -1674,7 +1725,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
   }
 
   // ── Hermes provider（连接/spawn 收敛在 provider 内） ──
-  try {
+  if (needsBackend('hermes')) try {
     const HermesHandler = require('./core/dispatcher/providers/hermes-http');
     hermesHandler = new HermesHandler(db, null, { // Provider 历史恢复需要原生数据库连接
       host: hermesConfig.apiHost || '127.0.0.1',
@@ -1697,30 +1748,31 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
   const GOOSE_BIN = resolveGooseCommand();
   const PROVIDER_REGISTRY = [
     // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
-    { key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
-    { key: 'hermes-cli',   mod: './core/dispatcher/providers/hermes-cli',   args: { db, contextWindow: 20 } },
-    { key: 'goose-cli',    mod: './core/dispatcher/providers/goose-cli',    args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
+    { backend: ['openclaw'], key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
+    { backend: ['hermes'], key: 'hermes-cli', mod: './core/dispatcher/providers/hermes-cli', args: { db, contextWindow: 20 } },
+    { backend: ['goose', 'goose-ai', 'goose-acp'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
     // Goose ACP（stdio JSON-RPC，priority=10 与 WS/HTTP 同级；backend_type='acp-goose'）
-    { key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
+    { backend: ['acp-goose'], key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
     // 各 CLI runtime（priority=1，本地装了对应 CLI 才 isAvailable）
-    { key: 'claude-cli',   mod: './core/dispatcher/providers/claude-cli',   named: 'ClaudeCliProvider',   args: { db, contextWindow: 20 } },
-    { key: 'codex-cli',    mod: './core/dispatcher/providers/codex-cli',    named: 'CodexCliProvider',    args: { db, contextWindow: 20 } },
-    { key: 'gemini-cli',   mod: './core/dispatcher/providers/gemini-cli',   named: 'GeminiCliProvider',   args: { db, contextWindow: 20 } },
-    { key: 'cursor-acp',   mod: './core/dispatcher/providers/cursor-acp',   named: 'CursorAcpProvider',   args: { db, contextWindow: 20 } },
-    { key: 'cursor-cli',   mod: './core/dispatcher/providers/cursor-cli',   named: 'CursorCliProvider',   args: { db, contextWindow: 20 } },
-    { key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
-    { key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
-    { key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
-    { key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
-    { key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
-    { key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
-    { key: 'pi-cli',       mod: './core/dispatcher/providers/pi-cli',       named: 'PiCliProvider',       args: { db, contextWindow: 20 } },
-    { key: 'qwen-cli',     mod: './core/dispatcher/providers/qwen-cli',     named: 'QwenCliProvider',     args: { db, contextWindow: 20 } },
-    { key: 'kiro-cli',     mod: './core/dispatcher/providers/kiro-cli',     named: 'KiroCliProvider',     args: { db, contextWindow: 20 } },
-    { key: 'aider-cli',    mod: './core/dispatcher/providers/aider-cli',    named: 'AiderCliProvider',    args: { db, contextWindow: 20 } },
-    { key: 'grok-cli',     mod: './core/dispatcher/providers/grok-cli',     named: 'GrokCliProvider',     args: { db, contextWindow: 20 } },
+    { backend: ['claude-code'], key: 'claude-cli', mod: './core/dispatcher/providers/claude-cli', named: 'ClaudeCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['codex'], key: 'codex-cli', mod: './core/dispatcher/providers/codex-cli', named: 'CodexCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['gemini'], key: 'gemini-cli', mod: './core/dispatcher/providers/gemini-cli', named: 'GeminiCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['cursor'], key: 'cursor-acp', mod: './core/dispatcher/providers/cursor-acp', named: 'CursorAcpProvider', args: { db, contextWindow: 20 } },
+    { backend: ['cursor'], key: 'cursor-cli', mod: './core/dispatcher/providers/cursor-cli', named: 'CursorCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['opencode'], key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
+    { backend: ['opencode'], key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
+    { backend: ['github-copilot'], key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
+    { backend: ['zeroclaw'], key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
+    { backend: ['zeroclaw'], key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
+    { backend: ['opencode'], key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['pi'], key: 'pi-cli', mod: './core/dispatcher/providers/pi-cli', named: 'PiCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['qwen-code'], key: 'qwen-cli', mod: './core/dispatcher/providers/qwen-cli', named: 'QwenCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['kiro'], key: 'kiro-cli', mod: './core/dispatcher/providers/kiro-cli', named: 'KiroCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['aider'], key: 'aider-cli', mod: './core/dispatcher/providers/aider-cli', named: 'AiderCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
   ];
-  for (const { key, mod, named, args } of PROVIDER_REGISTRY) {
+  for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
+    if (!needsBackend(...backend)) continue;
     try {
       const M = require(mod);
       const Ctor = named ? M[named] : M;
@@ -1738,11 +1790,50 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
 
   // ── Dispatcher：统一 push/pull 决策。onAgentReply 统一接到各 provider。
   //    启动期建连 gateway 由 dispatcher.start() 触发（等价原 createHandlers 的启动 spawn）。──
-  let dispatcher = null;
+  let dispatcher: any = null;
   try {
     const { createDispatcher } = require('./core/dispatcher');
     dispatcher = createDispatcher({ db, providers, onAgentReply });
-    dispatcher.start().catch((e: any) => console.error('[Lite] dispatcher.start 失败:', e.message));
+    const backendLoads = new Map<string, Promise<void>>();
+    dispatcher.ensureBackend = (backendType: string) => {
+      const type = String(backendType || '').trim();
+      if (!type) return Promise.resolve();
+      if (backendLoads.has(type)) return backendLoads.get(type);
+      const load = (async () => {
+        const additions: Record<string, any> = {};
+        if (type === 'openclaw' && !dispatcher.providers['openclaw-ws']) {
+          const OpenClawHandler = require('./core/dispatcher/providers/openclaw-ws');
+          openclawHandler = new OpenClawHandler(db, null);
+          additions['openclaw-ws'] = openclawHandler;
+          (global as any).__openclawHandler = openclawHandler;
+        }
+        if (type === 'hermes' && !dispatcher.providers['hermes-http']) {
+          const HermesHandler = require('./core/dispatcher/providers/hermes-http');
+          hermesHandler = new HermesHandler(db, null, {
+            host: hermesConfig.apiHost || '127.0.0.1',
+            port: hermesConfig.apiPort || 8642,
+            apiKey: hermesConfig.apiKey || '',
+            profiles: hermesConfig.profiles || {},
+          });
+          additions['hermes-http'] = hermesHandler;
+          (global as any).__hermesHandler = hermesHandler;
+        }
+        for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
+          if (!backend.includes(type) || dispatcher.providers[key] || additions[key]) continue;
+          const M = require(mod);
+          const Ctor = named ? M[named] : M;
+          additions[key] = new Ctor(args);
+        }
+        await dispatcher.addProviders(additions);
+        dispatcher.invalidateMeta();
+      })().catch((error: any) => {
+        backendLoads.delete(type);
+        throw error;
+      });
+      backendLoads.set(type, load);
+      return load;
+    };
+    if (startProviders) dispatcher.start().catch((e: any) => console.error('[Lite] dispatcher.start 失败:', e.message));
   } catch (e: any) {
     console.error('[Lite] dispatcher 创建失败:', e.message);
   }
@@ -1798,6 +1889,8 @@ function createMessageHandler(db?: any, params?: any) {
  */
 async function createLiteApp(options: any = {}) {
   const dbPath = options.dbPath || resolveDbPath({});
+  const { TaskManager } = require('./core/task-manager');
+  const taskManager = new TaskManager();
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
   if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
@@ -1943,6 +2036,8 @@ async function createLiteApp(options: any = {}) {
       db,
       databaseAPI,
       openclawMode: h.openclawMode || 'ws',
+      backendTypes: h.backendTypes || db.prepare("SELECT DISTINCT backend_type FROM agents WHERE publish_status='published'")
+        .all().map((row: any) => row.backend_type || 'openclaw'),
       hermesConfig,
       onAgentReply: h.onAgentReply
         ? (data?: any) => h.onAgentReply(data, messageHandler)
@@ -2091,19 +2186,24 @@ async function createLiteApp(options: any = {}) {
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
 
+  if (typeof stopAgentAccessSync === 'function') await taskManager.start('agent-access-sync', () => stopAgentAccessSync);
+  if (typeof stopHeartbeat === 'function') await taskManager.start('heartbeat', () => stopHeartbeat);
+  if (typeof stopPaymentPolling === 'function') await taskManager.start('payment-polling', () => stopPaymentPolling);
+  if (ownerInterventionNotifier) await taskManager.start('owner-intervention', () => () => ownerInterventionNotifier.stop());
+
   return {
     db, databaseAPI, agentManager, agentRegistration,
     openclawHandler, hermesHandler, messageHandler,
     channelInstances,
     ownerInterventionNotifier,
+    taskManager,
     currentUserEmail,
     stopHeartbeat: stopHeartbeat || (() => {}),
     stopPaymentPolling: stopPaymentPolling || (() => {}),
     stopAgentAccessSync,
-    dispose: () => {
-      if (typeof stopPaymentPolling === 'function') stopPaymentPolling();
-      stopAgentAccessSync();
-      shutdownAll(agentManager, wukongimSender, db, 'dispose');
+    dispose: async () => {
+      await taskManager.stopAll();
+      await shutdownAll(agentManager, wukongimSender, db, 'dispose');
     },
   };
 }
@@ -2290,6 +2390,8 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
     }
   };
   const timer = setInterval(heartbeatFn, 60000);
+  let firstBeatTimer: NodeJS.Timeout | null = null;
+  let firstBeatStatusHandler: ((msg: any) => void) | null = null;
 
   // Agent 全部连接就绪后立即执行首次心跳（无需等 60s），5s 兜底
   if (agentCount > 0) {
@@ -2301,13 +2403,18 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         heartbeatFn();
       }
     };
-    agentManager.on('status', (msg?: any) => {
+    firstBeatStatusHandler = (msg?: any) => {
       if (msg.status === 'connected' || msg.statusCode === 2) _tryFirstBeat();
-    });
-    setTimeout(() => _tryFirstBeat(), 5000);
+    };
+    agentManager.on('status', firstBeatStatusHandler);
+    firstBeatTimer = setTimeout(() => _tryFirstBeat(), 5000);
   }
 
-  return () => { clearInterval(timer); };
+  return () => {
+    clearInterval(timer);
+    if (firstBeatTimer) clearTimeout(firstBeatTimer);
+    if (firstBeatStatusHandler) agentManager.off?.('status', firstBeatStatusHandler);
+  };
 }
 
 function checkLiteRunning(dbOrPath?: any) {
@@ -2334,11 +2441,14 @@ async function shutdownAll(
   db?: any,
   signal?: any,
   exitCode = 0,
+  taskManager?: any,
 ) {
   if (__shuttingDown) return;
   __shuttingDown = true;
+  taskManager ||= __shutdownContext?.taskManager;
   __serviceHealth = signal?.startsWith?.('fatal:') ? 'unhealthy' : 'draining';
   if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
+  try { await taskManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] 后台任务清理失败:', e.message); }
   // 停各 provider（含 gateway 进程清理，避免 detached gateway 在退出后泄漏）
   try { await (global as any).__dispatcher?.stop?.(); } catch (e: any) { console.error('[VOKO Lite] dispatcher.stop 失败:', e.message); }
   try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] IM Hub 清理失败:', e.message); }

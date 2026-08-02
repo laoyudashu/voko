@@ -227,6 +227,34 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
 const SCHEMA_VERSION = 5;
 
+function readSchemaVersion(db: DatabaseSync): number {
+  const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
+  return Number(row?.user_version || 0);
+}
+
+function backupLegacyDatabase(db: DatabaseSync, dbPath: string): string | null {
+  if (!dbPath || dbPath === ':memory:' || !fs.existsSync(dbPath)) return null;
+  const backupPath = `${dbPath}.pre-schema-v${SCHEMA_VERSION}.bak`;
+  if (fs.existsSync(backupPath)) return backupPath;
+  try { db.exec('PRAGMA wal_checkpoint(FULL)'); } catch (_) {}
+  fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+function runCurrentStartupMaintenance(db: DatabaseSync): void {
+  try {
+    const pkg = require('../../package.json');
+    db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+      .run('version', pkg.version || '0.0.0', Date.now());
+  } catch (_) {}
+  try {
+    const { seedBackendTypes } = require('./agent-backend-types');
+    seedBackendTypes(db);
+  } catch (e: any) {
+    console.error('[DB] agent_backend_types seed 失败:', e.message);
+  }
+}
+
 // ============================================
 // DB 写入串行队列
 // ============================================
@@ -259,6 +287,32 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   try { db.exec('PRAGMA journal_mode = WAL'); } catch (_: any) {}
   try { db.exec('PRAGMA synchronous = NORMAL'); } catch (_: any) {}
   try { db.exec('PRAGMA busy_timeout = 5000'); } catch (_: any) {}
+
+  const schemaVersion = readSchemaVersion(db);
+  if (schemaVersion > SCHEMA_VERSION) {
+    try { db.close(); } catch (_) {}
+    throw new Error(`Database schema v${schemaVersion} is newer than supported v${SCHEMA_VERSION}`);
+  }
+  if (schemaVersion === SCHEMA_VERSION) {
+    runCurrentStartupMaintenance(db);
+    return db;
+  }
+  const hasExistingSchema = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1",
+  ).get();
+  if (hasExistingSchema) {
+    const hasConfig = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='config'").get();
+    if (hasConfig) {
+      const legacyVersionRow = db.prepare("SELECT data FROM config WHERE type='schema_version'").get() as ConfigRow | undefined;
+      const legacyVersion = legacyVersionRow?.data ? Number(JSON.parse(legacyVersionRow.data)) : 0;
+      if (legacyVersion > SCHEMA_VERSION) {
+        try { db.close(); } catch (_) {}
+        throw new Error(`Database schema v${legacyVersion} is newer than supported v${SCHEMA_VERSION}`);
+      }
+    }
+    const backupPath = backupLegacyDatabase(db, dbPath);
+    if (backupPath && !options.silent) console.error(`[DB] 历史数据库迁移前备份: ${backupPath}`);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -1154,13 +1208,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.error(`Initialized ${BANK_HEAD_OFFICES.length} bank head offices`);
   }
 
-  // 初始化 agent 后端类型配置（不存在则写入默认列表）
-  try {
-    const { seedBackendTypes } = require('./agent-backend-types');
-    seedBackendTypes(db);
-  } catch (e: any) {
-    console.error('[DB] agent_backend_types seed 失败:', e.message);
-  }
+  runCurrentStartupMaintenance(db);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
   return db;
   } finally {
@@ -2071,6 +2120,7 @@ module.exports = {
   initDatabase,
   createDatabaseAPI,
   SCHEMA_VERSION,
+  readSchemaVersion,
   enqueueDbWrite,
   waitForDbQueue,
   normalizeUserEmail,

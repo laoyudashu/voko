@@ -36,30 +36,38 @@ test('database initialization creates a missing parent directory', (t) => {
   assert.equal(fs.existsSync(dbPath), true);
   const schema = db.prepare("SELECT data FROM config WHERE type='schema_version'").get();
   assert.equal(JSON.parse(schema.data), SCHEMA_VERSION);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
 
-test('older code never downgrades a newer database schema marker', (t) => {
+test('older code refuses a database with a newer schema marker', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-newer-schema-'));
   const dbPath = path.join(root, 'voko.db');
   const first = initDatabase(dbPath, { silent: true });
-  first.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
-    .run('schema_version', JSON.stringify(SCHEMA_VERSION + 1), Date.now());
+  first.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
   first.close();
 
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(' '));
-  const reopened = initDatabase(dbPath, { silent: true });
-  console.warn = originalWarn;
-  t.after(() => {
-    reopened.close();
-    fs.rmSync(root, { recursive: true, force: true });
-  });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => initDatabase(dbPath, { silent: true }), /newer than supported/);
+});
 
-  const row = reopened.prepare("SELECT data FROM config WHERE type='schema_version'").get();
-  assert.equal(JSON.parse(row.data), SCHEMA_VERSION + 1);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /未执行降级.*voko update/);
+test('legacy database is backed up and migrated only once', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-legacy-'));
+  const dbPath = path.join(root, 'voko.db');
+  const legacy = new DatabaseSync(dbPath);
+  legacy.exec('CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY)');
+  legacy.close();
+
+  const migrated = initDatabase(dbPath, { silent: true });
+  assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  migrated.close();
+  const backupPath = `${dbPath}.pre-schema-v${SCHEMA_VERSION}.bak`;
+  assert.equal(fs.existsSync(backupPath), true);
+  const backupMtime = fs.statSync(backupPath).mtimeMs;
+
+  const reopened = initDatabase(dbPath, { silent: true });
+  reopened.close();
+  assert.equal(fs.statSync(backupPath).mtimeMs, backupMtime);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 });
 
 test('invalid channel config shape falls back to the default channel', (t) => {

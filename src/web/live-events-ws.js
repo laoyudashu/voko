@@ -35,7 +35,7 @@ function authorizeConsoleRequest(req, authToken) {
  * @param {object} runtimeState - RuntimeState 实例
  * @returns {{ broadcast, clients, close }}
  */
-function createLiveEventsWs(wss, runtimeState) {
+function createLiveEventsWs(wss, runtimeState, taskManager) {
   const clients = new Set();
   const PATH_PREFIX = '/voko/events/ws';
 
@@ -71,6 +71,7 @@ function createLiveEventsWs(wss, runtimeState) {
         ws.send(JSON.stringify({ type: 'snapshot', data: {
           agents: runtimeState.getAll(),
           summary: runtimeState.summary(),
+          tasks: taskManager?.snapshot?.() || [],
           recentEvents: getHistory(null, null, 100),
           recentAudit: query({ limit: 50 }),
         }}));

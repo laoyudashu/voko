@@ -1331,7 +1331,7 @@ class OpenClawWsProvider {
    * 销毁处理器（清理资源）
    */
   destroy(): void {
-    console.log('[OpenClaw WS] 销毁处理器...');
+    console.log('[OpenClaw WS] 正在释放资源...');
     this.stopConfigWatcher();
     this.disconnect();
     this.messageQueue = [];

@@ -79,7 +79,7 @@
   "cli.index.another_instance": "[Lite] 检测到另一个 Lite 实例，跳过 worker/处理器启动",
   "cli.index.instance_running": "VOKO 已在运行（PID {pid}，端口 {port}）：{url}",
   "cli.index.signal_cleanup": "[VOKO Lite] 收到 {signal}，正在清理...",
-  "cli.index.graceful_exit": "[VOKO Lite] 已优雅退出",
+  "cli.index.graceful_exit": "[VOKO Lite] 已正常退出",
   "cli.index.autoupdate_restart": "[AutoUpdate] 退出以应用升级；请重新运行 voko start",
   "cli.index.stopping": "VOKO (端口 {port}) 正在关闭...",
   "cli.index.no_instance": "未检测到运行中的 VOKO 实例",

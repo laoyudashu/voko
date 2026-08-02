@@ -234,19 +234,19 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     }
     return true;
   }
-  if (onAgentReply) {
-    for (const p of Object.values(providers)) {
-      if (typeof p.on === 'function') {
-        p.on('agent.reply', (reply: ProviderReply) => {
+  const attachedReplyProviders = new Set<DispatcherProvider>();
+  function attachReplyProvider(p: DispatcherProvider): void {
+    if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
+    attachedReplyProviders.add(p);
+    p.on('agent.reply', (reply: ProviderReply) => {
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
           if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
           const contextualized = _contextualizeReply(reply);
           if (!(reply.turnId || reply.replyId) && !_acceptFinalReply(contextualized)) return;
           onAgentReply(contextualized);
-        });
-      }
-    }
+    });
   }
+  for (const p of Object.values(providers)) attachReplyProvider(p);
   // backend_type 内存缓存：避免每条访客消息都查一次 DB（match/isAvailable 已是同步纯判断，
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
@@ -744,7 +744,9 @@ ${body}
     }
   }
 
+  let started = false;
   async function start() {
+    started = true;
     for (const p of Object.values(providers)) {
       try { await p.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     }
@@ -760,6 +762,16 @@ ${body}
       console.error('[Dispatcher] provider 路由初始化失败:', errorMessage(e));
     }
   }
+  async function addProviders(additions: Record<string, DispatcherProvider>) {
+    for (const [key, provider] of Object.entries(additions)) {
+      if (providers[key]) continue;
+      providers[key] = provider;
+      attachReplyProvider(provider);
+      if (started) {
+        try { await provider.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
+      }
+    }
+  }
   async function stop() {
     for (const p of Object.values(providers)) {
       try { await p.stop?.(); } catch (e) { console.error('[Dispatcher] provider.stop 失败:', errorMessage(e)); }
@@ -772,7 +784,7 @@ ${body}
     }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, steer, start, stop, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, steer, start, stop, addProviders, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
 }
 
 module.exports = { createDispatcher };
