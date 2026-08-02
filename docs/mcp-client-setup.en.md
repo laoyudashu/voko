@@ -118,9 +118,11 @@ Add `"type": "stdio"` if the client requires an explicit transport. If it cannot
 
 ## Troubleshooting
 
-1. **No running Lite instance**: run `voko start` and complete local sign-in or registration at `http://localhost:3100`.
+1. **No running Lite instance**: run `voko start`. A graphical desktop opens `http://localhost:3100`; an interactive headless terminal automatically starts email sign-in and Agent registration. For systemd, Docker, CI, or another non-TTY environment, first run `voko login` and `voko manage_agent_registration --interactive` in a terminal, then start the service with `voko start --no-open --no-interactive`.
 2. **Client cannot find `voko`**: restart the client so it inherits `PATH`, or use the absolute path to `voko` in its MCP setting.
 3. **No tools after configuration**: check JSON commas and braces, keep only one `voko` server, then restart and recheck the MCP manager.
+
+`voko_manage_agent_registration` is always a non-interactive MCP state machine. Retain its `registrationId`, follow each `nextAction`, and pause for the owner when email, a verification code, or Provider-configuration approval is required. The automatic headless CLI wizard does not change the MCP schema and never makes `voko mcp` read terminal input.
 4. **Never copy a Token**: this configuration does not need a VOKO Token, email code, password, or Agent private key.
 
 For Qwen Code syntax, refer to the [official Qwen Code MCP documentation](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md). WorkBuddy UI labels can vary by version; the configuration-file path is a fallback.

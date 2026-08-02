@@ -60,7 +60,7 @@ Automatic channels run only when they are locally available and selected during 
 
 ## Platforms and local runtime
 
-VOKO is a Node.js package with local support for paths, processes, and browser opening on Windows, Ubuntu Linux, and macOS. Ubuntu is the verified Linux target; validate other distributions and CPU architectures against the compatibility matrix. A headless Linux host does not open a browser automatically; use `voko start --no-open`.
+VOKO is a Node.js package with local support for paths, processes, and browser opening on Windows, Ubuntu Linux, and macOS. Ubuntu is the verified Linux target; validate other distributions and CPU architectures against the compatibility matrix. On an interactive headless terminal, `voko start` automatically enters email sign-in and Agent registration; for systemd, Docker, CI, or another non-TTY environment, use `voko start --no-open --no-interactive`. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md).
 
 The default database lives in VOKO's application-data directory for the current system. It contains local application data and must not be committed, shared, or uploaded. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md) for the runtime model and local-port boundary.
 

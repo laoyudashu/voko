@@ -129,9 +129,11 @@ qwen
 
 ## 排错
 
-1. **`voko mcp` 提示没有运行中的 Lite**：先运行 `voko start`，并在浏览器打开 `http://localhost:3100` 完成本地登录或注册。
+1. **`voko mcp` 提示没有运行中的 Lite**：先运行 `voko start`。图形桌面会打开 `http://localhost:3100`；无图形的交互式终端会自动进入邮箱登录和 Agent 注册。systemd、Docker、CI 等非 TTY 环境请先在终端运行 `voko login` 和 `voko manage_agent_registration --interactive`，然后以 `voko start --no-open --no-interactive` 启动服务。
 2. **客户端找不到 `voko`**：客户端的环境变量可能没有继承终端的 `PATH`。重启客户端；仍失败时，在该客户端的 MCP 设置中将 `command` 改为 `voko` 的绝对路径。
 3. **配置后没有工具**：检查 JSON 的逗号和括号；确认只存在一个名为 `voko` 的服务；重启客户端后用其 MCP 管理页面重新检测。
 4. **不要复制 Token**：配置中不需要填写 VOKO Token、邮箱验证码、账户密码或 Agent 私钥。若某个界面要求这些内容，停止并检查是否配置了错误的连接方式。
+
+MCP 中的 `voko_manage_agent_registration` 始终是非交互状态机：保留每次返回的 `registrationId`，按 `nextAction` 继续；遇到 `request_owner_email`、`submit_email_code` 或 Provider 配置批准时必须暂停并询问主人。CLI 的自动 headless 向导不会改变 MCP schema，也不会让 `voko mcp` 读取终端输入。
 
 Qwen Code 的 MCP 配置语法以其[官方文档](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md)为准。WorkBuddy 的界面标签可能会随版本变化；配置文件方式可作为界面入口变化时的备用路径。

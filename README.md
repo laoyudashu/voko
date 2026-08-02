@@ -60,7 +60,7 @@ VOKO 的公开矩阵覆盖 16 类主要 Provider，并记录 Amazon Q、WorkBudd
 
 ## 平台与本地运行
 
-VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路径、进程与浏览器打开流程实现本地支持。Linux 的已验证目标是 Ubuntu；其他发行版和不同 CPU 架构请按兼容性矩阵验证。无图形界面的 Linux 主机不会自动打开浏览器，可使用 `voko start --no-open`。
+VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路径、进程与浏览器打开流程实现本地支持。Linux 的已验证目标是 Ubuntu；其他发行版和不同 CPU 架构请按兼容性矩阵验证。无图形的交互式终端运行 `voko start` 时会自动进入邮箱登录和 Agent 注册；systemd、Docker、CI 等非 TTY 环境可使用 `voko start --no-open --no-interactive`，详见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
 默认数据库位于当前系统的 VOKO 应用数据目录。数据库包含本地应用数据，不应提交、共享或上传。更多运行模型与本地端口边界见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 

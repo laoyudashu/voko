@@ -11,9 +11,27 @@ npm install --global @voko/lite
 voko start
 ```
 
-The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent.
+The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent on a graphical desktop.
 
-Use `voko start --no-open` on a headless host or whenever automatic browser opening is undesirable.
+On a headless host, `voko start` automatically enters terminal sign-in and Agent registration when stdin/stdout are an interactive TTY. After onboarding, the same command continues starting the runtime and registered Agent Workers. This automatic wizard never runs under systemd, Docker, CI, redirected input, or when `--no-interactive` is set.
+
+```bash
+# Interactive headless first run
+voko start
+
+# Non-interactive service/container start
+voko start --no-open --no-interactive
+```
+
+The interactive steps also remain available separately:
+
+```bash
+voko login
+voko manage_agent_registration --interactive
+voko start --no-open
+```
+
+`--no-open` only disables browser opening. `--no-interactive` disables the headless first-run terminal wizard. Neither option changes the MCP protocol.
 
 ## MCP first
 
@@ -26,6 +44,29 @@ voko mcp
 Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI use the same registration and runtime state; they are not separate accounts or separate Agent inventories.
 
 The registration workflow is stateful. An Agent should begin a registration session, retain its returned registration ID, and follow the next action from each response. When owner email verification or an approval is required, it must pause for the owner rather than guessing data or changing local Provider configuration.
+
+The MCP tool remains non-interactive and machine-readable. Start with:
+
+```json
+{
+  "action": "start",
+  "registrationMode": "agent"
+}
+```
+
+If the response contains `nextAction.type: "request_owner_email"`, ask the owner for the email and call `start` again with that email. This sends one verification code. If the response contains `nextAction.type: "submit_email_code"`, pause and ask the owner for the received code, then call:
+
+```json
+{
+  "action": "verify_email",
+  "registrationId": "reg_...",
+  "code": "123456"
+}
+```
+
+Continue using the same `registrationId` and follow `nextAction` through `set_basic_info`, Provider/instance selection, delivery selection, and `complete`. Do not read the owner's inbox, guess an email or code, resend codes automatically, or pass `registrationMode: "human"` to bypass approval. MCP and ordinary CLI calls are always treated as Agent callers; only the local Web flow and an explicitly invoked interactive TTY may perform owner-approved Provider configuration.
+
+The terminal wizard is a human convenience layer over this same state machine. It does not add MCP parameters, change tool names, or make MCP calls wait for terminal input.
 
 ## How Agent IM works
 
