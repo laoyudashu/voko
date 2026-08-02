@@ -16,6 +16,7 @@ const { createRegistrationOrchestrator } = require('../core/registration-orchest
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
+const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 import type { LiteContext } from '../context';
 import type { DatabaseLike } from '../types/database';
 
@@ -605,15 +606,61 @@ function createToolHandlers(cx: McpContext) {
   /** 格式化消息行 */
   // 游标持久化到 DB（config 表），跨重启保留。注意：多客户端共享同一游标，需精确控制请显式传 since/messageSeq
   function _getCursorDb(db: DatabaseLike, key: string) {
+    const separator = key.indexOf(':');
+    const name = separator < 0 ? key : key.slice(0, separator);
+    const scopeKey = separator < 0 ? '' : key.slice(separator + 1);
     try {
+      const checkpoint = getCheckpoint(db, `mcp.${name}`, scopeKey);
+      if (checkpoint) return Number(checkpoint.committedValue) || 0;
       const row = db.prepare("SELECT data FROM config WHERE type=?").get<ConfigDataRow>('cursor:' + key);
-      return row ? (Number(JSON.parse(row.data)) || 0) : 0;
+      const legacy = row ? (Number(JSON.parse(row.data)) || 0) : 0;
+      if (row) setCheckpoint(db, `mcp.${name}`, scopeKey, 'sequence', legacy);
+      return legacy;
     } catch (_: any) { return 0; }
   }
   function _setCursorDb(db: DatabaseLike, key: string, val: number) {
+    const separator = key.indexOf(':');
+    const name = separator < 0 ? key : key.slice(0, separator);
+    const scopeKey = separator < 0 ? '' : key.slice(separator + 1);
     try {
-      db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)").run('cursor:' + key, JSON.stringify(val), Date.now());
+      const committed = advanceCheckpoint(db, `mcp.${name}`, scopeKey, val);
+      db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)").run('cursor:' + key, JSON.stringify(committed), Date.now());
     } catch (_: any) {}
+  }
+  function _getTimestampIdCursorDb(db: DatabaseLike, key: string): { timestamp: number; id: string } {
+    const separator = key.indexOf(':');
+    const name = separator < 0 ? key : key.slice(0, separator);
+    const scopeKey = separator < 0 ? '' : key.slice(separator + 1);
+    try {
+      const checkpoint = getCheckpoint(db, `mcp.${name}`, scopeKey);
+      if (checkpoint?.committedValue) {
+        try {
+          const parsed = JSON.parse(checkpoint.committedValue);
+          if (parsed && typeof parsed === 'object') {
+            return { timestamp: Number(parsed.timestamp) || 0, id: String(parsed.id || '') };
+          }
+          return { timestamp: Number(parsed) || 0, id: '' };
+        } catch (_) {
+          return { timestamp: Number(checkpoint.committedValue) || 0, id: '' };
+        }
+      }
+      const row = db.prepare('SELECT data FROM config WHERE type=?').get<ConfigDataRow>('cursor:' + key);
+      const timestamp = row ? (Number(JSON.parse(row.data)) || 0) : 0;
+      if (row) setCheckpoint(db, `mcp.${name}`, scopeKey, 'timestamp_id', JSON.stringify({ timestamp, id: '' }));
+      return { timestamp, id: '' };
+    } catch (_) {
+      return { timestamp: 0, id: '' };
+    }
+  }
+  function _setTimestampIdCursorDb(db: DatabaseLike, key: string, timestamp: number, id: string): void {
+    const separator = key.indexOf(':');
+    const name = separator < 0 ? key : key.slice(0, separator);
+    const scopeKey = separator < 0 ? '' : key.slice(separator + 1);
+    try {
+      setCheckpoint(db, `mcp.${name}`, scopeKey, 'timestamp_id', JSON.stringify({ timestamp, id }));
+      db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+        .run('cursor:' + key, JSON.stringify(timestamp), Date.now());
+    } catch (_) {}
   }
   function _currentOwnerEmail(): string {
     try {
@@ -1599,10 +1646,9 @@ function createToolHandlers(cx: McpContext) {
 
       // 自动游标：不传 since 时自动记录上次查询的最大 askTime
       const cursorKey = `check_human_replies:${p.agentId}`;
-      let since = p.since;
-      if (since === undefined) {
-        since = _getCursorDb(cx.db, cursorKey);
-      }
+      const automaticCursor = p.since === undefined;
+      const checkpoint = automaticCursor ? _getTimestampIdCursorDb(cx.db, cursorKey) : null;
+      const since = automaticCursor ? checkpoint!.timestamp : p.since;
 
       // 构造 SQL
       const conditions = [`agent_id=?`, `status!='resolved'`];
@@ -1612,23 +1658,27 @@ function createToolHandlers(cx: McpContext) {
         params.push(p.visitorId);
       }
       if (since) {
-        conditions.push(`ask_time>?`);
-        params.push(since);
+        if (automaticCursor) {
+          conditions.push(`(ask_time>? OR (ask_time=? AND id>?))`);
+          params.push(since, since, checkpoint!.id);
+        } else {
+          conditions.push(`ask_time>?`);
+          params.push(since);
+        }
       }
-      params.push(multi, offset);
+      params.push(multi, automaticCursor ? 0 : offset);
 
       const rows = cx.query<InterventionDbRow>(
-        `SELECT * FROM owner_interventions WHERE ${conditions.join(' AND ')} ORDER BY ask_time DESC LIMIT ? OFFSET ?`,
+        `SELECT * FROM owner_interventions WHERE ${conditions.join(' AND ')} ORDER BY ask_time ${automaticCursor ? 'ASC, id ASC' : 'DESC'} LIMIT ? OFFSET ?`,
         params
       );
 
-      // 更新游标到 DB
-      if (p.since === undefined && rows.length > 0) {
-        const maxTime = Math.max(...rows.map((row) => row.ask_time));
-        _setCursorDb(cx.db, cursorKey, maxTime);
-      }
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
+      if (automaticCursor && rows.length > 0) {
+        const last = rows[rows.length - 1];
+        _setTimestampIdCursorDb(cx.db, cursorKey, last.ask_time, last.id);
+      }
       return {
         success: true,
         interventions: rows.map((r) => ({
@@ -1745,33 +1795,38 @@ function createToolHandlers(cx: McpContext) {
 
       // 自动游标
       const cursorKey = `check_payments:${p.agentId || 'all'}`;
-      let since = p.since;
-      if (since === undefined) {
-        since = _getCursorDb(cx.db, cursorKey);
-      }
+      const automaticCursor = p.since === undefined;
+      const checkpoint = automaticCursor ? _getTimestampIdCursorDb(cx.db, cursorKey) : null;
+      const since = automaticCursor ? checkpoint!.timestamp : p.since;
 
       const conditions = [`LOWER(TRIM(a.owner_email))=?`];
       const params: unknown[] = [currentOwner];
       if (p.agentId && p.agentId !== 'all') { conditions.push(`po.agent_id=?`); params.push(p.agentId); }
       if (p.visitorId) { conditions.push(`po.visitor_id=?`); params.push(p.visitorId); }
       if (p.status) { conditions.push(`po.status=?`); params.push(p.status); }
-      if (since) { conditions.push(`po.created_at>?`); params.push(since); }
-      params.push(multi, offset);
+      if (since) {
+        if (automaticCursor) {
+          conditions.push(`(po.created_at>? OR (po.created_at=? AND po.id>?))`);
+          params.push(since, since, checkpoint!.id);
+        } else {
+          conditions.push(`po.created_at>?`);
+          params.push(since);
+        }
+      }
+      params.push(multi, automaticCursor ? 0 : offset);
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const rows = cx.query<PaymentOrderDbRow>(
-        `SELECT po.id, po.agent_id, po.visitor_id, po.amount, po.description, po.order_no, po.status, po.created_at, po.updated_at FROM payment_orders po JOIN agents a ON a.agent_id=po.agent_id ${whereClause} ORDER BY po.created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT po.id, po.agent_id, po.visitor_id, po.amount, po.description, po.order_no, po.status, po.created_at, po.updated_at FROM payment_orders po JOIN agents a ON a.agent_id=po.agent_id ${whereClause} ORDER BY po.created_at ${automaticCursor ? 'ASC, po.id ASC' : 'DESC'} LIMIT ? OFFSET ?`,
         params
       );
 
-      // 更新游标到 DB
-      if (p.since === undefined && rows.length > 0) {
-        const maxTime = Math.max(...rows.map((row) => row.created_at));
-        _setCursorDb(cx.db, cursorKey, maxTime);
-      }
-
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
+      if (automaticCursor && rows.length > 0) {
+        const last = rows[rows.length - 1];
+        _setTimestampIdCursorDb(cx.db, cursorKey, last.created_at, last.id);
+      }
       return {
         success: true,
         orders: rows.map((r) => ({
@@ -2126,7 +2181,6 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 20. 轮询新消息 ───
 
-    _fetchCursors: new Map<string, number>(),
     _fetchBlocks: new Map<string, PollController>(),
 
     _channelCursorKey(agentId?: string, channelId?: string) {

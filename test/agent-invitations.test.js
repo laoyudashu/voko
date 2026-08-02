@@ -16,6 +16,7 @@ const {
   syncAgentAccess,
 } = require('../build/core/agent-invitations');
 const { t } = require('../build/core/i18n');
+const { getCheckpoint } = require('../build/core/checkpoint-store');
 const accessControl = require('../src/core/access-control-api');
 
 const API = 'https://api.example.test';
@@ -237,8 +238,10 @@ describe('Agent invitation and access sync', () => {
     try {
       assert.equal((await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' })).success, false);
       assert.equal(cursor(db), undefined);
+      assert.equal(getCheckpoint(db, 'access_sync', 'agent-a').pendingValue, 'cursor-1');
       assert.equal((await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' })).success, true);
       assert.equal(cursor(db), 'cursor-1');
+      assert.equal(getCheckpoint(db, 'access_sync', 'agent-a').pendingValue, null);
       assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM agent_access_lists
         WHERE agent_id='agent-a' AND visitor_id='agent_uid_b'`).get().count, 1);
     } finally {

@@ -1,5 +1,12 @@
 const crypto = require('crypto');
 const { getPrimaryOwnerEmail, getUserAccessToken } = require('./database');
+const {
+  clearCheckpoint,
+  commitCheckpoint,
+  getCheckpoint,
+  setCheckpoint,
+  stageCheckpoint,
+} = require('./checkpoint-store');
 import type { DatabaseLike } from '../types/database';
 
 type JsonRecord = Record<string, any>;
@@ -24,6 +31,7 @@ interface SyncEvent {
 }
 
 const CURSOR_CONFIG_TYPE = 'agent_access_sync_cursors';
+const CHECKPOINT_NAMESPACE = 'access_sync';
 const SERVER_INVITATION_REASON = 'server_invitation';
 
 function errorMessage(error: unknown): string {
@@ -146,12 +154,21 @@ function loadCursorMap(db: DatabaseLike): Record<string, string> {
   }
 }
 
-function saveCursor(db: DatabaseLike, agentId: string, cursor: unknown): void {
+function saveLegacyCursor(db: DatabaseLike, agentId: string, cursor: unknown): void {
   const map = loadCursorMap(db);
   if (cursor === null || cursor === undefined || cursor === '') delete map[agentId];
   else map[agentId] = String(cursor);
   db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
     .run(CURSOR_CONFIG_TYPE, JSON.stringify(map), Date.now());
+}
+
+function saveCursor(db: DatabaseLike, agentId: string, cursor: unknown): void {
+  if (cursor === null || cursor === undefined || cursor === '') {
+    clearCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+  } else {
+    setCheckpoint(db, CHECKPOINT_NAMESPACE, agentId, 'opaque', cursor);
+  }
+  saveLegacyCursor(db, agentId, cursor);
 }
 
 function normalizeRelation(item: JsonRecord): { listType: string; visitorId: string; reason: string } | null {
@@ -165,7 +182,13 @@ function normalizeRelation(item: JsonRecord): { listType: string; visitorId: str
   };
 }
 
-function applyEvents(db: DatabaseLike, agentId: string, items: SyncEvent[]): void {
+function applyEvents(
+  db: DatabaseLike,
+  agentId: string,
+  items: SyncEvent[],
+  nextCursor: unknown,
+  eventIds: string[],
+): void {
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const item of items) {
@@ -206,6 +229,7 @@ function applyEvents(db: DatabaseLike, agentId: string, items: SyncEvent[]): voi
           now,
         );
     }
+    stageCheckpoint(db, CHECKPOINT_NAMESPACE, agentId, 'opaque', nextCursor, { eventIds });
     db.exec('COMMIT');
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch (_) {}
@@ -315,9 +339,24 @@ async function syncAgentAccess({
     const { token } = credentials;
     serverAgentId = credentials.serverAgentId;
     const cursorMap = loadCursorMap(db);
-    const hasCursor = Object.prototype.hasOwnProperty.call(cursorMap, agentId);
+    let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+    if (!checkpoint && Object.prototype.hasOwnProperty.call(cursorMap, agentId)) {
+      setCheckpoint(db, CHECKPOINT_NAMESPACE, agentId, 'opaque', cursorMap[agentId]);
+      checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+    }
+    if (checkpoint?.pendingValue !== null && checkpoint?.pendingValue !== undefined) {
+      let pendingMeta: { eventIds?: string[] } = {};
+      try { pendingMeta = checkpoint.pendingMeta ? JSON.parse(checkpoint.pendingMeta) : {}; } catch (_) {}
+      const pendingEventIds = Array.isArray(pendingMeta.eventIds) ? pendingMeta.eventIds.map(String).filter(Boolean) : [];
+      if (!pendingEventIds.length) throw new Error('AccessSync pending checkpoint 缺少 eventIds');
+      await acknowledgeEvents(apiBaseUrl, token, serverAgentId, pendingEventIds);
+      commitCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+      saveLegacyCursor(db, agentId, checkpoint.pendingValue);
+      checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+    }
+    const hasCursor = checkpoint?.committedValue !== null && checkpoint?.committedValue !== undefined;
     if (!hasCursor) await reconcileSnapshot(db, apiBaseUrl, token, agentId, serverAgentId);
-    let cursor = hasCursor ? cursorMap[agentId] : '';
+    let cursor = hasCursor ? String(checkpoint?.committedValue || '') : '';
     let applied = 0;
     do {
       const query = new URLSearchParams({ agentId: serverAgentId, limit: String(limit) });
@@ -342,11 +381,14 @@ async function syncAgentAccess({
         .filter(Boolean);
       if (eventIds.length !== items.length) throw new Error('访问同步事件缺少 eventId');
       if (items.length) {
-        applyEvents(db, agentId, items);
+        applyEvents(db, agentId, items, nextCursor, eventIds);
         await acknowledgeEvents(apiBaseUrl, token, serverAgentId, eventIds);
+        commitCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+        saveLegacyCursor(db, agentId, nextCursor);
         applied += items.length;
+      } else {
+        saveCursor(db, agentId, nextCursor);
       }
-      saveCursor(db, agentId, nextCursor);
       cursor = String(nextCursor || '');
       if (!data.hasMore && !data.has_more) break;
       if (!items.length) throw new Error('访问同步返回 hasMore 但没有事件');

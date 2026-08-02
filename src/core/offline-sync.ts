@@ -14,6 +14,7 @@ const {
   waitForDbQueue,
 } = require('./database');
 const { t, getLocale } = require('./i18n');
+const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('./checkpoint-store');
 const ENDPOINTS = require('../endpoints.json');
 import type { DatabaseLike } from '../types/database';
 import type { ForwardPayload, InboundMessage } from './messenger-types';
@@ -49,6 +50,7 @@ interface MessageHandlerLike {
 }
 
 const OFFLINE_SYNC_CURSOR_CONFIG_TYPE = 'offline_sync_cursors';
+const CHECKPOINT_NAMESPACE = 'offline_messages';
 
 function cursorKey(agentId: string, channelId: string): string {
   return JSON.stringify([agentId, channelId]);
@@ -69,7 +71,7 @@ function saveCursorMap(db: DatabaseLike, advances: Map<string, number>): void {
   if (!advances.size) return;
   const cursors = loadCursorMap(db);
   for (const [key, seq] of advances) {
-    cursors[key] = Math.max(Number(cursors[key]) || 0, seq);
+    cursors[key] = advanceCheckpoint(db, CHECKPOINT_NAMESPACE, key, seq);
   }
   db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
     .run(OFFLINE_SYNC_CURSOR_CONFIG_TYPE, JSON.stringify(cursors), Date.now());
@@ -110,7 +112,12 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       for (const conv of convs) {
         const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
         const key = cursorKey(agent.agent_id, conv.channel_id);
-        const startSeq = Math.max(maxRow?.m || 0, Number(cursorMap[key]) || 0) + 1;
+        let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
+        if (!checkpoint && cursorMap[key] !== undefined) {
+          setCheckpoint(db, CHECKPOINT_NAMESPACE, key, 'sequence', cursorMap[key]);
+          checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
+        }
+        const startSeq = Math.max(maxRow?.m || 0, Number(checkpoint?.committedValue) || 0, Number(cursorMap[key]) || 0) + 1;
 
         try {
           const resp = await fetch(`${httpBase}/channel/messagesync`, {
@@ -195,17 +202,27 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     const collected: ForwardPayload[] = [];
     await new Promise<void>(resolve => {
       enqueueDbWrite(() => {
-        const advances = new Map<string, number>();
-        for (const p of pendingMessages) {
-          if (p.data) {
-            const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
-            if (payload) collected.push(payload);
+        const supportsTransactions = typeof (db as any).exec === 'function';
+        if (supportsTransactions) (db as any).exec('BEGIN IMMEDIATE');
+        try {
+          const advances = new Map<string, number>();
+          for (const p of pendingMessages) {
+            if (p.data) {
+              const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
+              if (payload) collected.push(payload);
+            }
+            if (p.messageSeq !== undefined) {
+              advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
+            }
           }
-          if (p.messageSeq !== undefined) {
-            advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
+          saveCursorMap(db, advances);
+          if (supportsTransactions) (db as any).exec('COMMIT');
+        } catch (error) {
+          if (supportsTransactions) {
+            try { (db as any).exec('ROLLBACK'); } catch (_) {}
           }
+          throw error;
         }
-        saveCursorMap(db, advances);
       });
       waitForDbQueue().then(() => setImmediate(resolve));
     });

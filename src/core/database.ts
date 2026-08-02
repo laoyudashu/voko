@@ -11,6 +11,7 @@ const fs = require('fs');
 const { BANK_HEAD_OFFICES } = require('../bankHeadOffices');
 const ENDPOINTS = require('../endpoints.json');
 const { migrateOfficialHttpsUrls } = require('./https-migration');
+const { migrateLegacyCheckpoints } = require('./checkpoint-store');
 
 type DatabaseSync = InstanceType<typeof Database>;
 type DbWrite = () => unknown | Promise<unknown>;
@@ -225,7 +226,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 
 // DB schema 版本号（lite/desktop 版本脱钩后，靠此数字感知对方写入的库结构）
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -241,7 +242,39 @@ function backupLegacyDatabase(db: DatabaseSync, dbPath: string): string | null {
   return backupPath;
 }
 
+function ensureSyncCheckpointSchema(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_checkpoints (
+      namespace TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      cursor_kind TEXT NOT NULL CHECK(cursor_kind IN ('opaque','sequence','timestamp_id')),
+      committed_value TEXT,
+      pending_value TEXT,
+      pending_meta TEXT,
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(namespace, scope_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_checkpoints_namespace
+      ON sync_checkpoints(namespace);
+  `);
+  const hasConfig = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='config'",
+  ).get();
+  if (!hasConfig) return;
+  try {
+    const result = migrateLegacyCheckpoints(db);
+    if (result.invalid.length) {
+      console.warn(`[DB] ${result.invalid.length} 个旧游标无法迁移，已保留原始 config 数据`);
+    }
+  } catch (e: any) {
+    console.warn('[DB] 旧游标迁移失败，已保留原始 config 数据:', e.message);
+  }
+}
+
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
+  ensureSyncCheckpointSchema(db);
   try {
     const pkg = require('../../package.json');
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
@@ -877,6 +910,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL
     )
   `);
+
+  ensureSyncCheckpointSchema(db);
 
   // v4：邀请关系改由 AgentDID 服务端权威管理；旧本地邀请码无法安全迁移，停止使用并删除。
   db.exec('DROP TABLE IF EXISTS friend_invitations');
