@@ -7,6 +7,7 @@ type JsonRecord = Record<string, any>;
 interface AgentRow {
   agent_id: string;
   owner_email?: string | null;
+  did?: string | null;
 }
 
 interface SyncEvent {
@@ -42,15 +43,22 @@ function readJson(responseText: string): JsonRecord | null {
   }
 }
 
-function getAgentToken(db: DatabaseLike, agentId: string): { token: string; email: string } {
-  const agent = db.prepare('SELECT agent_id, owner_email FROM agents WHERE agent_id=?')
+function serverAgentIdFromDid(did: unknown): string | null {
+  const tail = String(did || '').split(':').pop() || '';
+  const hex = tail.replace(/-/g, '');
+  if (!/^[0-9a-f]{32}$/i.test(hex)) return null;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toLowerCase();
+}
+
+function getAgentToken(db: DatabaseLike, agentId: string): { token: string; email: string; serverAgentId: string } {
+  const agent = db.prepare('SELECT agent_id, owner_email, did FROM agents WHERE agent_id=?')
     .get<AgentRow>(agentId);
   if (!agent) throw new Error('Agent 不存在');
   const email = String(agent.owner_email || getPrimaryOwnerEmail(db) || '').trim().toLowerCase();
   const token = email ? getUserAccessToken(db, email) : null;
   if (!token) throw new Error('未找到当前用户的 User Access Token，请重新登录');
   if (!String(token).startsWith('ut_')) throw new Error('当前凭证不是有效的 User Access Token，请重新登录');
-  return { token, email };
+  return { token, email, serverAgentId: serverAgentIdFromDid(agent.did) || agentId };
 }
 
 async function requestJson(
@@ -221,11 +229,12 @@ async function reconcileSnapshot(
   db: DatabaseLike,
   apiBaseUrl: string,
   token: string,
-  agentId: string,
+  localAgentId: string,
+  serverAgentId = localAgentId,
 ): Promise<number> {
   const { payload } = await requestJson(
     apiBaseUrl,
-    `/api/external/v1/agent-access-relations?agentId=${encodeURIComponent(agentId)}`,
+    `/api/external/v1/agent-access-relations?agentId=${encodeURIComponent(serverAgentId)}`,
     token,
   );
   const data = resultData(payload);
@@ -246,18 +255,18 @@ async function reconcileSnapshot(
       list_type: string;
       visitor_id: string;
       manual_managed: number;
-    }>(agentId);
+    }>(localAgentId);
     for (const row of current) {
       if (!keep.has(`${row.list_type}\u0000${row.visitor_id}`)) {
         if (row.manual_managed) {
           db.prepare(`UPDATE agent_access_lists
             SET server_managed=0, server_source_invitation_id=NULL, updated_at=?
             WHERE agent_id=? AND list_type=? AND visitor_id=?`)
-            .run(Date.now(), agentId, row.list_type, row.visitor_id);
+            .run(Date.now(), localAgentId, row.list_type, row.visitor_id);
         } else {
           db.prepare(`DELETE FROM agent_access_lists
             WHERE agent_id=? AND list_type=? AND visitor_id=?`)
-            .run(agentId, row.list_type, row.visitor_id);
+            .run(localAgentId, row.list_type, row.visitor_id);
         }
       }
     }
@@ -271,14 +280,14 @@ async function reconcileSnapshot(
           server_managed=1,
           reason=CASE WHEN agent_access_lists.manual_managed=1 THEN agent_access_lists.reason ELSE excluded.reason END,
           updated_at=excluded.updated_at`)
-        .run(crypto.randomUUID(), agentId, relation.listType, relation.visitorId, relation.reason, now, now);
+        .run(crypto.randomUUID(), localAgentId, relation.listType, relation.visitorId, relation.reason, now, now);
     }
     db.exec('COMMIT');
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch (_) {}
     throw error;
   }
-  saveCursor(db, agentId, null);
+  saveCursor(db, localAgentId, null);
   return relations.length;
 }
 
@@ -300,15 +309,18 @@ async function syncAgentAccess({
   agentId: string;
   limit?: number;
 }): Promise<{ success: boolean; applied?: number; snapshot?: boolean; skipped?: boolean; error?: string }> {
+  let serverAgentId = agentId;
   try {
-    const { token } = getAgentToken(db, agentId);
+    const credentials = getAgentToken(db, agentId);
+    const { token } = credentials;
+    serverAgentId = credentials.serverAgentId;
     const cursorMap = loadCursorMap(db);
     const hasCursor = Object.prototype.hasOwnProperty.call(cursorMap, agentId);
-    if (!hasCursor) await reconcileSnapshot(db, apiBaseUrl, token, agentId);
+    if (!hasCursor) await reconcileSnapshot(db, apiBaseUrl, token, agentId, serverAgentId);
     let cursor = hasCursor ? cursorMap[agentId] : '';
     let applied = 0;
     do {
-      const query = new URLSearchParams({ agentId, limit: String(limit) });
+      const query = new URLSearchParams({ agentId: serverAgentId, limit: String(limit) });
       if (cursor) query.set('cursor', cursor);
       let payload: JsonRecord;
       try {
@@ -319,7 +331,7 @@ async function syncAgentAccess({
         ));
       } catch (error: unknown) {
         if (!isCursorError(error)) throw error;
-        const count = await reconcileSnapshot(db, apiBaseUrl, token, agentId);
+        const count = await reconcileSnapshot(db, apiBaseUrl, token, agentId, serverAgentId);
         return { success: true, applied: count, snapshot: true };
       }
       const data = resultData(payload);
@@ -331,7 +343,7 @@ async function syncAgentAccess({
       if (eventIds.length !== items.length) throw new Error('访问同步事件缺少 eventId');
       if (items.length) {
         applyEvents(db, agentId, items);
-        await acknowledgeEvents(apiBaseUrl, token, agentId, eventIds);
+        await acknowledgeEvents(apiBaseUrl, token, serverAgentId, eventIds);
         applied += items.length;
       }
       saveCursor(db, agentId, nextCursor);
@@ -341,8 +353,8 @@ async function syncAgentAccess({
     } while (true);
     return { success: true, applied };
   } catch (error: unknown) {
-    const candidate = error as { status?: number };
-    if (candidate?.status === 404 && /agent not found/i.test(errorMessage(error))) {
+    if (/^agent not found$/i.test(errorMessage(error).trim())) {
+      if (serverAgentId !== agentId) return { success: false, error: `服务端 Agent ${serverAgentId} 不存在` };
       return { success: true, applied: 0, skipped: true };
     }
     return { success: false, error: errorMessage(error) };
@@ -397,6 +409,7 @@ function startAgentAccessSync({
 
 module.exports = {
   CURSOR_CONFIG_TYPE,
+  serverAgentIdFromDid,
   SERVER_INVITATION_REASON,
   createAgentInvitation,
   syncAgentAccess,

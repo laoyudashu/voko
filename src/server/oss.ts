@@ -37,7 +37,6 @@ function loadConfigFromObject(config?: any) {
 function initOSSFromConfig(config?: any) {
   if (OSS_ACCESS_KEY_ID && OSS_ACCESS_KEY_SECRET) return; // 环境变量优先
   if (loadConfigFromObject(config)) {
-    console.log('[OSS] 从 SQLite 加载配置');
   }
   if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
     console.warn('[OSS] AccessKey 未配置，OSS 签名接口将不可用');

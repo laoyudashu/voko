@@ -12,6 +12,7 @@ const {
 const {
   CURSOR_CONFIG_TYPE,
   createAgentInvitation,
+  serverAgentIdFromDid,
   syncAgentAccess,
 } = require('../build/core/agent-invitations');
 const { t } = require('../build/core/i18n');
@@ -246,17 +247,44 @@ describe('Agent invitation and access sync', () => {
   });
 
   it('treats a missing remote legacy Agent as unsupported without changing local data', async () => {
+    for (const status of [200, 404]) {
+      const db = fixture();
+      global.fetch = async () => response(status, {
+        success: false,
+        message: 'Agent not found',
+      });
+      try {
+        const result = await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' });
+        assert.deepEqual(result, { success: true, applied: 0, skipped: true });
+        assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agents WHERE agent_id='agent-a'").get().count, 1);
+        assert.equal(db.prepare('SELECT COUNT(*) AS count FROM agent_access_lists').get().count, 0);
+        assert.equal(cursor(db), undefined);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it('uses the server UUID from DID for AccessSync while keeping the local Agent ID in SQLite', async () => {
     const db = fixture();
-    global.fetch = async () => response(404, {
-      success: false,
-      message: 'Agent not found',
-    });
+    const serverAgentId = '2b4a3c62-efba-4c97-add9-6f09ee092462';
+    db.prepare('UPDATE agents SET did=? WHERE agent_id=?')
+      .run('did:wba:8.153.167.187:2b4a3c62efba4c97add96f09ee092462', 'agent-a');
+    const calls = [];
+    global.fetch = async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      if (String(url).includes('/agent-access-relations')) {
+        return response(200, { success: true, data: [{ listType: 'whitelist', visitorId: 'visitor-1' }] });
+      }
+      return response(200, { success: true, data: { items: [], nextCursor: 'cursor-1', hasMore: false } });
+    };
     try {
-      const result = await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' });
-      assert.deepEqual(result, { success: true, applied: 0, skipped: true });
-      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agents WHERE agent_id='agent-a'").get().count, 1);
-      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM agent_access_lists').get().count, 0);
-      assert.equal(cursor(db), undefined);
+      assert.equal(serverAgentIdFromDid('did:wba:host:2b4a3c62efba4c97add96f09ee092462'), serverAgentId);
+      assert.equal((await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' })).success, true);
+      assert.match(calls[0].url, new RegExp(`agentId=${serverAgentId}`));
+      assert.match(calls[1].url, new RegExp(`agentId=${serverAgentId}`));
+      assert.equal(db.prepare(`SELECT agent_id FROM agent_access_lists WHERE visitor_id='visitor-1'`).get().agent_id, 'agent-a');
+      assert.equal(cursor(db), 'cursor-1');
     } finally {
       db.close();
     }

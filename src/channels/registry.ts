@@ -267,7 +267,7 @@ function initializeAllChannels(deps: ChannelRegistryDeps) {
       continue;
     }
 
-    console.log(`[${def.displayName}] 初始化中...`);
+    if (name !== 'voko-email') console.log(`[${def.displayName}] 初始化中...`);
 
     try {
       const HandlerClass = require(def.handlerClass) as ChannelHandlerConstructor;
@@ -305,7 +305,9 @@ function initializeAllChannels(deps: ChannelRegistryDeps) {
       // Email 渠道始终启动 IMAP（IDLE + 30秒轮询），无记录时轮询会快速返回
       {
         handler.start().then(() => {
-          console.log(`[${def.displayName}] ✅ ${def.displayName} 处理器已启动 at`, new Date().toISOString());
+          if (name !== 'voko-email') {
+            console.log(`[${def.displayName}] ✅ ${def.displayName} 处理器已启动 at`, new Date().toISOString());
+          }
       }).catch((err: unknown) => {
         console.error(`[${def.displayName}] ❌ 启动失败:`, errorMessage(err));
       });

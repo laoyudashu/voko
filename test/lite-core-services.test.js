@@ -993,6 +993,71 @@ test('Lite offline sync decodes, persists and forwards a pulled message', async 
   assert.equal(forwarded[0][3], 'visitor-1');
 });
 
+test('Lite offline sync advances past an intentionally skipped empty message', async (t) => {
+  const originalFetch = global.fetch;
+  const starts = [];
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    starts.push(request.start_message_seq);
+    return {
+      ok: true,
+      json: async () => ({
+        messages: request.start_message_seq === 1 ? [{
+          message_id: 'empty-1',
+          message_seq: 1,
+          from_uid: 'visitor-1',
+          content: '',
+          timestamp: 123,
+        }] : [],
+      }),
+    };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  let cursorData;
+  const db = {
+    prepare(sql) {
+      return {
+        all() {
+          if (sql.includes('FROM agents')) {
+            return [{ agent_id: 'agent-1', imUid: 'agent-uid', owner_email: 'owner@example.test' }];
+          }
+          if (sql.includes('FROM conversations')) return [{ channel_id: 'visitor-1' }];
+          return [];
+        },
+        get() {
+          if (sql === 'SELECT data FROM config WHERE type=?') {
+            return cursorData ? { data: cursorData } : undefined;
+          }
+          if (sql.includes('SELECT MAX(message_seq)')) return { m: null };
+          if (sql.includes('type = ?')) {
+            return { data: JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }) };
+          }
+          return undefined;
+        },
+        run(type, data) {
+          if (sql.includes('INSERT OR REPLACE INTO config') && type === 'offline_sync_cursors') {
+            cursorData = data;
+          }
+        },
+      };
+    },
+  };
+  let handled = 0;
+  const handler = {
+    handleAgentMessage() {
+      handled++;
+      return undefined;
+    },
+    forwardToAgent() {},
+  };
+
+  assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 1);
+  assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 0);
+  assert.deepEqual(starts, [1, 2]);
+  assert.equal(handled, 1);
+});
+
 test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () => {
   const calls = [];
   const deliver = createDeliver({

@@ -690,6 +690,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       keyword TEXT NOT NULL,
       action TEXT NOT NULL,
       prompt TEXT,
+      prompt_key TEXT,
       is_default INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -828,7 +829,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
 
   // 同步版本号
   try {
-    const pkg = require('../package.json');
+    const pkg = require('../../package.json');
     const ver = pkg.version || '0.0.0';
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)').run('version', ver, Date.now());
     console.error('Version synced to config:', ver);
@@ -837,12 +838,16 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   // DB schema version 协商：lite/desktop 版本脱钩后，用此数字感知对方写入的库结构。
   // 旧库无记录视为 0；DB 值高于当前代码 → 可能由更高版本写入，告警（只警告不阻塞，保持向前兼容）。
   try {
+    const codeVersion = require('../../package.json').version || '0.0.0';
     const svRow = db.prepare("SELECT data FROM config WHERE type = 'schema_version'").get();
     const dbSchemaVer = svRow ? (parseInt(JSON.parse(svRow.data), 10) || 0) : 0;
-    if (dbSchemaVer > SCHEMA_VERSION) {
-      console.warn(`[DB] 数据库 schema_version=${dbSchemaVer} 高于当前代码支持的 ${SCHEMA_VERSION}，可能由更高版本写入，当前版本可能不兼容`);
-    }
-    if (dbSchemaVer < SCHEMA_VERSION) {
+    const databaseIsNewer = dbSchemaVer > SCHEMA_VERSION;
+    if (databaseIsNewer) {
+      console.warn(
+        `[DB] 当前 VOKO ${codeVersion} 仅支持 schema ${SCHEMA_VERSION}，数据库为 schema ${dbSchemaVer}。`
+        + '已保留数据库版本且未执行降级；请运行 voko update 后再启动。',
+      );
+    } else if (dbSchemaVer < SCHEMA_VERSION) {
       // ── v2 (i18n) 迁移：payment_auth.status 中文→英文枚举；messages/audit_rules/user_cache 加列 ──
       const _addCol = (table: any, col: any, type: any) => {
         try {
@@ -869,8 +874,10 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       _addCol('user_cache', 'locale', 'TEXT');        // P5.4 访客 locale
       console.error('[DB] 迁移到 schema v2（i18n：payment_auth.status 英文化 + messages/audit_rules/user_cache 新列）');
     }
-    db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
-      .run('schema_version', JSON.stringify(SCHEMA_VERSION), Date.now());
+    if (!databaseIsNewer) {
+      db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+        .run('schema_version', JSON.stringify(SCHEMA_VERSION), Date.now());
+    }
   } catch (e: any) {
     console.error('[DB] schema_version 协商记录失败:', e.message);
   }

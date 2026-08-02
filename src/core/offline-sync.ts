@@ -28,6 +28,7 @@ interface AgentRow {
 
 interface ConversationRow { channel_id: string }
 interface MaxSeqRow { m?: number | null }
+interface CursorRow { data?: string | null }
 
 interface SyncMessage {
   message_id?: string;
@@ -45,6 +46,33 @@ interface SyncMessage {
 interface MessageHandlerLike {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
   forwardToAgent(...args: unknown[]): unknown;
+}
+
+const OFFLINE_SYNC_CURSOR_CONFIG_TYPE = 'offline_sync_cursors';
+
+function cursorKey(agentId: string, channelId: string): string {
+  return JSON.stringify([agentId, channelId]);
+}
+
+function loadCursorMap(db: DatabaseLike): Record<string, number> {
+  try {
+    const row = db.prepare('SELECT data FROM config WHERE type=?')
+      .get<CursorRow>(OFFLINE_SYNC_CURSOR_CONFIG_TYPE);
+    const parsed = row?.data ? JSON.parse(row.data) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveCursorMap(db: DatabaseLike, advances: Map<string, number>): void {
+  if (!advances.size) return;
+  const cursors = loadCursorMap(db);
+  for (const [key, seq] of advances) {
+    cursors[key] = Math.max(Number(cursors[key]) || 0, seq);
+  }
+  db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+    .run(OFFLINE_SYNC_CURSOR_CONFIG_TYPE, JSON.stringify(cursors), Date.now());
 }
 
 function errorMessage(error: unknown): string {
@@ -67,7 +95,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
   try {
     const agents = db.prepare(`SELECT agent_id, imUid, imToken, im_server_url, owner_email FROM agents WHERE publish_status = 'published'`).all<AgentRow>();
     const primaryOwnerEmail = getPrimaryOwnerEmail(db);
-    const pendingMessages: Array<{ agentId: string; data: InboundMessage }> = [];
+    const cursorMap = loadCursorMap(db);
+    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string; messageSeq?: number }> = [];
 
     for (const agent of agents) {
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
@@ -80,7 +109,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
 
       for (const conv of convs) {
         const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
-        const startSeq = (maxRow?.m || 0) + 1;
+        const key = cursorKey(agent.agent_id, conv.channel_id);
+        const startSeq = Math.max(maxRow?.m || 0, Number(cursorMap[key]) || 0) + 1;
 
         try {
           const resp = await fetch(`${httpBase}/channel/messagesync`, {
@@ -111,7 +141,13 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
 
           for (const msg of msgs) {
             const msgId = msg.message_id || msg.messageID;
-            if (!msgId) continue;
+            const messageSeq = Number.isSafeInteger(Number(msg.message_seq)) && Number(msg.message_seq) > 0
+              ? Number(msg.message_seq)
+              : undefined;
+            if (!msgId) {
+              pendingMessages.push({ agentId: agent.agent_id, cursorKey: key, messageSeq });
+              continue;
+            }
             let content = msg.content || '';
             let contentType = msg.content_type || 1;
             if (msg.payload && !content) {
@@ -124,6 +160,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
             const toUid = msg.from_uid === agent.imUid ? conv.channel_id : agent.imUid;
             pendingMessages.push({
               agentId: agent.agent_id,
+              cursorKey: key,
+              messageSeq,
               data: {
                 fromUid: msg.from_uid || '',
                 toUid,
@@ -133,7 +171,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
                 contentType,
                 messageId: msgId,
                 timestamp: msg.timestamp || 0,
-                messageSeq: msg.message_seq,
+                messageSeq,
                 clientMsgNo: msg.client_msg_no,
                 noPersist: msg.header?.no_persist ? 1 : 0,
                 redDot: msg.header?.red_dot ? 1 : 0,
@@ -157,10 +195,17 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     const collected: ForwardPayload[] = [];
     await new Promise<void>(resolve => {
       enqueueDbWrite(() => {
+        const advances = new Map<string, number>();
         for (const p of pendingMessages) {
-          const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
-          if (payload) collected.push(payload);
+          if (p.data) {
+            const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
+            if (payload) collected.push(payload);
+          }
+          if (p.messageSeq !== undefined) {
+            advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
+          }
         }
+        saveCursorMap(db, advances);
       });
       waitForDbQueue().then(() => setImmediate(resolve));
     });

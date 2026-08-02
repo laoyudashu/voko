@@ -11,6 +11,7 @@ const {
   getUserAccessToken,
   loadUserAccessTokenConfig,
   saveUserAccessToken,
+  SCHEMA_VERSION,
 } = require('../build/core/database');
 
 function createTestDatabase(t) {
@@ -33,6 +34,32 @@ test('database initialization creates a missing parent directory', (t) => {
   });
 
   assert.equal(fs.existsSync(dbPath), true);
+  const schema = db.prepare("SELECT data FROM config WHERE type='schema_version'").get();
+  assert.equal(JSON.parse(schema.data), SCHEMA_VERSION);
+});
+
+test('older code never downgrades a newer database schema marker', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-newer-schema-'));
+  const dbPath = path.join(root, 'voko.db');
+  const first = initDatabase(dbPath, { silent: true });
+  first.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+    .run('schema_version', JSON.stringify(SCHEMA_VERSION + 1), Date.now());
+  first.close();
+
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  const reopened = initDatabase(dbPath, { silent: true });
+  console.warn = originalWarn;
+  t.after(() => {
+    reopened.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const row = reopened.prepare("SELECT data FROM config WHERE type='schema_version'").get();
+  assert.equal(JSON.parse(row.data), SCHEMA_VERSION + 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /未执行降级.*voko update/);
 });
 
 test('invalid channel config shape falls back to the default channel', (t) => {

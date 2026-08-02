@@ -615,11 +615,10 @@ test('smoke-test Lite instances never open a browser window', () => {
   assert.match(entrySource, /process\.env\.VOKO_SMOKE_TEST\s*!==\s*'1'/);
 });
 
-test('auto-update remains disabled until signed releases are enforced', () => {
+test('runtime has no automatic update scheduler or staged-update apply path', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  assert.match(entrySource, /function autoUpdateEnabled[\s\S]*?return false;/);
-  assert.equal((entrySource.match(/autoUpdateEnabled\(args\)/g) || []).length, 2);
-  assert.match(entrySource, /options\.autoUpdate === true && autoUpdateEnabled\(\)/);
+  assert.doesNotMatch(entrySource, /startAutoUpdater|applyPendingUpgrade|autoUpdateEnabled/);
+  assert.doesNotMatch(entrySource, /自动升级：启动服务前应用已暂存的升级/);
 });
 
 test('version checks only notify while voko update uses the official npm registry', () => {
@@ -723,4 +722,14 @@ test('shared Hub runtime logs inbound, outbound, SENDACK and heartbeat summaries
   assert.match(sendSource, /\[IM 发送\]/);
   assert.match(sendSource, /\[IM SENDACK\]/);
   assert.match(entrySource, /\[\$\{ts\}\]\[IM 心跳\]/);
+});
+
+test('normal startup omits routine OSS and legacy worker registry noise', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const ossSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'server', 'oss.ts'), 'utf8');
+  const channelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'channels', 'registry.ts'), 'utf8');
+  assert.doesNotMatch(entrySource, /历史 worker 身份无法确认/);
+  assert.doesNotMatch(ossSource, /从 SQLite 加载配置/);
+  assert.match(channelSource, /name !== 'voko-email'.*初始化中/);
+  assert.match(channelSource, /name !== 'voko-email'[\s\S]*?处理器已启动/);
 });

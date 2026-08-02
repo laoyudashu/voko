@@ -65,7 +65,6 @@ const {
   getUserAccessToken,
   SCHEMA_VERSION,
 } = require('./core/database');
-const { applyPendingUpgrade, startAutoUpdater } = require('./core/auto-updater');
 const { createAgentRegistration } = require('./core/agent-registration');
 const { assertSecureEndpoint } = require('./core/url-security');
 const {
@@ -315,11 +314,6 @@ function openLocalWebPage(port: number) {
     console.error(`[Lite] 无法自动打开 ${url}: ${error.message}`);
     return false;
   }
-}
-
-function autoUpdateEnabled(args: Record<string, any> = {}): boolean {
-  void args;
-  return false;
 }
 
 function checkVersionAndPersist(db: any): void {
@@ -1306,9 +1300,6 @@ async function startMcpServer(args?: any, core?: any) {
   if (orphanResult.killed.length > 0) {
     console.error(`[Lite] 已精确清理 ${orphanResult.killed.length} 个孤儿 worker`);
   }
-  if (orphanResult.skipped.length > 0) {
-    console.error(`[Lite] ${orphanResult.skipped.length} 个历史 worker 身份无法确认，未执行终止`);
-  }
 
   // ── 自动恢复已发布的 agent（仅当前用户名下） ──
   if (!userEmail) {
@@ -1330,7 +1321,6 @@ async function startMcpServer(args?: any, core?: any) {
 
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
-  if (autoUpdateEnabled(args)) startAutoUpdater(); // 仅显式启用；签名升级机制就绪前默认关闭
 
   // ── 创建后端处理器（OpenClaw + Hermes） ──
   let openclawHandler = null;
@@ -2097,7 +2087,6 @@ async function createLiteApp(options: any = {}) {
 
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
-  if (options.autoUpdate === true && autoUpdateEnabled()) startAutoUpdater();
 
   return {
     db, databaseAPI, agentManager, agentRegistration,
@@ -2532,15 +2521,6 @@ async function main() {
       try { if (db?.open) db.close(); } catch (_: any) {}
     }
     return;
-  }
-
-  // 自动升级：启动服务前应用已暂存的升级（替换全局包文件后退出）。
-  const _willServe = !subcommand || subcommand === 'start' || subcommand === 'mcp';
-  if (_willServe && autoUpdateEnabled(args)) {
-    if (applyPendingUpgrade()) {
-      console.error(t('cli.index.autoupdate_restart'));
-      process.exit(0);
-    }
   }
 
   // mcp — stdio MCP 代理（供 Claude Code 等外部 MCP 客户端连接，端口透明）
