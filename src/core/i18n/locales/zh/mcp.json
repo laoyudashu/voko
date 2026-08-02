@@ -75,7 +75,7 @@
   "mcp.tool.send_message.p.agentId": "哪个 Agent 发送",
   "mcp.tool.send_message.p.toUid": "目标访客 UID",
   "mcp.tool.send_message.p.content": "消息内容：文字直接填；图片填 OSS URL；文件建议填 JSON 字符串 {url,name,size,type}，也可只填 URL",
-  "mcp.tool.send_message.p.contentType": "内容类型：1=文字 2=图片 3=文件",
+  "mcp.tool.send_message.p.contentType": "内容类型：1=文字 2=图片 8=文件",
 
   "mcp.tool.get_chat_history.desc": "查看与指定访客的完整聊天历史（双方消息）。支持关键词搜索和分页，hasMore=true 表示还有更多。通过 offset+limit 翻页",
   "mcp.tool.get_chat_history.p.channelId": "频道 ID（通常为访客 UID）",

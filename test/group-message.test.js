@@ -253,6 +253,24 @@ test('outbound group mention metadata survives persistence for history rendering
   } finally { cleanup(); }
 });
 
+test('outbound file uses WuKongIM content type 8', () => {
+  const { db, cleanup } = setup();
+  try {
+    const saved = persistAgentMessage(
+      db,
+      'agent_test',
+      'visitor1',
+      JSON.stringify({ url: 'https://files.example/file.txt', name: 'file.txt', size: 12 }),
+      'imuid_test',
+      'file',
+      1,
+    );
+    assert.strictEqual(saved.contentType, 8);
+    const row = db.prepare('SELECT content_type FROM messages WHERE id=?').get(saved.msgId);
+    assert.strictEqual(row.content_type, 8);
+  } finally { cleanup(); }
+});
+
 test('direct agent reply keeps the existing direct-message route', () => {
   const { db, handler, delivered, cleanup } = setup();
   try {

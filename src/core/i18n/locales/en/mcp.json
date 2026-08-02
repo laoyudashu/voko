@@ -75,7 +75,7 @@
   "mcp.tool.send_message.p.agentId": "Which Agent is sending",
   "mcp.tool.send_message.p.toUid": "Target visitor UID",
   "mcp.tool.send_message.p.content": "Message content: for text, write it directly; for images, use the OSS URL; for files, preferably pass a JSON string {url,name,size,type} or just the URL",
-  "mcp.tool.send_message.p.contentType": "Content type: 1=text, 2=image, 3=file",
+  "mcp.tool.send_message.p.contentType": "Content type: 1=text, 2=image, 8=file",
 
   "mcp.tool.get_chat_history.desc": "View the complete chat history with a specific visitor (messages from both sides). Supports keyword search and pagination. hasMore=true means there are more messages. Scroll with offset+limit.",
   "mcp.tool.get_chat_history.p.channelId": "Channel ID (usually the visitor UID)",

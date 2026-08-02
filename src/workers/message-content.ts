@@ -4,13 +4,13 @@ export {};
  * 自定义 IM 消息内容类
  *
  * WuKongIM JS SDK 内置：MessageText(1)、MessageImage(2)、MessageVideo(3) 等。
- * 文件消息（contentType=4）没有现成类，因此参考 chatroom 项目实现自定义 MessageFile。
+ * 文件消息（contentType=8）没有现成类，因此实现自定义 MessageFile。
  */
 
 const { MessageContent } = require('wukongimjssdk');
 
-// WuKongIM SDK 当前版本未导出 file 常量，文件消息统一使用 contentType = 4
-const MESSAGE_CONTENT_TYPE_FILE = 4;
+// 与 WuKongIM 官方应用层消息约定保持一致：文件消息使用 contentType = 8。
+const MESSAGE_CONTENT_TYPE_FILE = 8;
 
 interface FileMessageJson {
   url?: string;

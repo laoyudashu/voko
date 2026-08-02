@@ -105,10 +105,10 @@ try {
   sdk.config.addr = serverUrl;
   sdk.config.autoReconnect = true; // SDK 内置自动重连，退出手动管理避免冲突
 
-  // 注册自定义文件消息类型（contentType=4），确保收发都能正确编解码
+  // 注册官方约定的文件消息类型（contentType=8），确保收发都能正确编解码
   if (MessageFile) {
     try {
-      WKSDK.shared().messageContentManager.register(4, MessageFile);
+      WKSDK.shared().messageContentManager.register(8, MessageFile);
     } catch (err) {
       workerErr(`[${agentId}] 注册 MessageFile 失败:`, errorMessage(err));
     }
@@ -173,7 +173,7 @@ sdk.chatManager.addMessageListener((rawMsg: DynamicSdkValue) => {
   // 检测是否是文件（有 name, url, size 字段的对象）
   const isFileObject = contentObj?.name && contentObj?.url;
 
-  if (contentType === 4 || isFileObject) {
+  if (contentType === 8 || isFileObject) {
     // 文件消息：统一提取 name, url, size, type 用于图形化显示
     content = JSON.stringify({
       name: contentObj?.name || contentObj?.fileName || '',

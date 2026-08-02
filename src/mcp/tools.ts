@@ -568,7 +568,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
       fileName,
       fileSize: stat.size,
       mimeType,
-      contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 3,
+      contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 8,
     };
   } catch (e: any) {
     return { success: false, error: '上传失败: ' + e.message };
@@ -1168,10 +1168,10 @@ function createToolHandlers(cx: McpContext) {
           return { success: false, error: e.message };
         }
       }
-      // 将数字 contentType 映射为字符串 messageType：1=text 2=image 3=file（内部统一按桌面端 4=file 处理）
+      // 新文件消息统一使用 8；3/4 仅兼容 VOKO 历史调用。
       let messageType = 'text';
       if (p.contentType === 2 || p.contentType === '2' || p.contentType === 'image') messageType = 'image';
-      else if (p.contentType === 3 || p.contentType === '3' || p.contentType === 'file') messageType = 'file';
+      else if ([3, 4, 8, '3', '4', '8', 'file'].includes(p.contentType as any)) messageType = 'file';
       else if (typeof p.contentType === 'string') messageType = p.contentType;
 
       // 文件消息 content 归一化：支持 JSON 字符串 / 对象 / 纯 URL

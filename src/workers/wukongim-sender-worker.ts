@@ -90,7 +90,7 @@ function createSenderRuntime(options: SenderRuntimeOptions) {
     sdk.config.addr = config.serverUrl;
     sdk.config.autoReconnect = false;
     try {
-      sdk.messageContentManager.register(4, MessageFile);
+      sdk.messageContentManager.register(8, MessageFile);
     } catch {
       // Re-registering the same content type is harmless for this isolated process.
     }

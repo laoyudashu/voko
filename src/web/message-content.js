@@ -99,7 +99,7 @@ function createMessageRenderer(labels) {
       return { kind: 'image', url };
     }
 
-    if (type === 4) {
+    if (type === 8 || type === 4) {
       const name = payload && (payload.name || payload.fileName || payload.file_name);
       const size = payload && (payload.size ?? payload.fileSize ?? payload.file_size);
       const mime = payload && (payload.type || payload.mimeType || payload.mime_type);

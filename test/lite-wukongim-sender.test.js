@@ -11,6 +11,7 @@ const {
 
 function createRuntimeFixture() {
   const sent = [];
+  const registeredContentTypes = [];
   let active = 0;
   let maxActive = 0;
   const listeners = new Set();
@@ -21,7 +22,7 @@ function createRuntimeFixture() {
       addConnectStatusListener(listener) { listeners.add(listener); },
       removeConnectStatusListener(listener) { listeners.delete(listener); },
     },
-    messageContentManager: { register() {} },
+    messageContentManager: { register(contentType) { registeredContentTypes.push(contentType); } },
     connect() {
       sdk.connectManager.status = 1;
       for (const listener of [...listeners]) listener(1);
@@ -63,7 +64,7 @@ function createRuntimeFixture() {
     MessageFile,
     idleTimeoutMs: 0,
   });
-  return { runtime, sdk, sent, getMaxActive: () => maxActive };
+  return { runtime, sdk, sent, registeredContentTypes, getMaxActive: () => maxActive };
 }
 
 test('sender worker locks identity and serializes requests for one Agent', async () => {
@@ -129,6 +130,7 @@ test('sender worker preserves image and file message payloads', async () => {
     token: 'token-a',
     serverUrl: 'ws://im.test',
   });
+  assert.deepEqual(fixture.registeredContentTypes, [8]);
 
   await fixture.runtime.send({
     agentId: 'agent-a',

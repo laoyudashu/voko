@@ -110,10 +110,10 @@ function persistAgentMessage(
   const timestamp = Math.floor(now / 1000);
   const uid = fromUid || 'voko';
 
-  // content_type: 1=文字, 2=图片, 3=文件
+  // content_type: 1=文字, 2=图片, 8=文件（WuKongIM 官方应用层约定）
   let contentType = 1;
   if (messageType === 'image') contentType = 2;
-  else if (messageType === 'file') contentType = 3;
+  else if (messageType === 'file') contentType = 8;
 
   try {
     db.prepare(`

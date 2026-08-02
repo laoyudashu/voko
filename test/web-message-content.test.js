@@ -34,7 +34,7 @@ test('图片附件 JSON 根据文件名渲染图片预览', () => {
     size: 44169,
     type: 3,
   });
-  const html = renderer.render(4, content);
+  const html = renderer.render(8, content);
 
   assert.match(html, /class="voko-media-image-preview"/);
   assert.match(html, /src="https:\/\/files\.example\.com\/screenshot\.png"/);
