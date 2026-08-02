@@ -23,3 +23,31 @@ test('shared web footer renders runtime status and global actions', () => {
   assert.match(html, /href="\/bug-report"[\s\S]*错误上报/);
   assert.match(html, /data-voko-language-switcher/);
 });
+
+test('shared web footer shows a compact manual update hint without the latest version', () => {
+  const runtime = { port: 3100, pid: 48264, agents: [{ imConnected: true }] };
+  const update = { updateAvailable: true, latestVersion: '0.4.1' };
+  const db = { prepare: (sql) => ({ get: () => sql.includes("type='runtime'") ? { data: JSON.stringify(runtime) } : { data: JSON.stringify(update) } }) };
+  const labels = {
+    'common.footer.version': '版本',
+    'common.footer.port': '端口',
+    'common.footer.status': '运行状态',
+    'common.footer.status_ok': '正常',
+    'common.footer.update_available': '有更新',
+    'common.footer.update_title': '更新 VOKO',
+    'common.footer.update_instruction': '请在终端运行以下命令。升级完成后，重新启动 VOKO 即可使用新版本。',
+    'common.footer.copy_command': '复制',
+    'common.footer.command_copied': '已复制升级命令',
+    'common.btn.close': '关闭',
+    'web.bug_report.link': '错误上报',
+  };
+  const html = renderSystemFooter(db, (key) => labels[key] || key, 'zh');
+
+  assert.match(html, /data-voko-update-hint/);
+  assert.match(html, />有更新<\/button>/);
+  assert.match(html, /id="voko-update-dialog"/);
+  assert.match(html, /id="voko-update-command"[\s\S]*voko update/);
+  assert.match(html, /id="voko-copy-update"[\s\S]*复制/);
+  assert.match(html, /升级完成后/);
+  assert.doesNotMatch(html, /0\.4\.1/);
+});

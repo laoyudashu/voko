@@ -470,9 +470,9 @@ function createWebRouter(handlers, db, opts={}){
     }catch{return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>'}
   }
 
-  function renderAgentFormPage(title,agentId,agentName,formHtml,tFn,locale){
+  function renderAgentFormPage(title,agentId,agentName,formHtml,tFn,locale,opt){
     const back=esc(tFn('common.btn.back_to_agent',{name:agentName}));
-    return page(title,'<div class="card">'+formHtml+'</div><p><a href="/agents/'+esc(agentId)+'">'+back+'</a></p>',{nav:agentNav(agentId,agentName,tFn),footer:renderFooter(tFn,locale)},tFn,locale);
+    return page(title,'<div class="card">'+formHtml+'</div><p><a href="/agents/'+esc(agentId)+'">'+back+'</a></p>',{...(opt||{}),nav:agentNav(agentId,agentName,tFn),footer:renderFooter(tFn,locale)},tFn,locale);
   }
 
   // ────────── favicon ──────────
@@ -614,7 +614,7 @@ function createWebRouter(handlers, db, opts={}){
         try{const st=await getAgentStatus(handlers,a.agentId);const ag=st.agent;if(ag)connStatus=ag.imConnected?'<span class="online">'+L('common.status.online')+'</span>':'<span class="offline">'+L('common.status.offline')+'</span>'}catch{}
         var bt=a.backendType||'-';
         var shortCell='<button class="btn btn-sm btn-outline" data-role="gen-link" data-agent="'+esc(a.agentId)+'" style="margin:0;padding:2px 8px;font-size:12px;min-height:auto">'+L('common.btn.generate_link')+'</button>';
-        if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);shortCell='<a href="'+su+'" target="_blank" style="font-size:13px">'+su.substring(0,35)+(su.length>35?'…':'')+'</a> <button class="btn-sm" data-role="copy-link" data-url="'+su+'" style="margin:0;padding:4px 10px;font-size:12px;min-height:auto;background:#fff;color:#1a73e8;border:1px solid #1a73e8;border-radius:4px;cursor:pointer">'+L('common.btn.copy')+'</button>'}}catch(ex){}}
+        if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);shortCell='<a href="'+su+'" target="_blank" style="font-size:13px">'+su.substring(0,35)+(su.length>35?'…':'')+'</a> <button class="btn btn-sm btn-outline" data-role="copy-link" data-url="'+su+'" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.copy')+'</button>'}}catch(ex){}}
         var actionHtml='<a href="/agents/'+esc(a.agentId)+'/edit" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.edit')+'</a> <a href="/agents/'+esc(a.agentId)+'/caps" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.caps')+'</a> <span class="'+(a.publishStatus==='published'?'online':'pending')+'" data-role="toggle-pub" data-agent="'+esc(a.agentId)+'" data-pub-status="'+(a.publishStatus==='published'?'published':'unpublished')+'" title="'+esc(a.publishStatus==='published'?T('common.pub.title_published'):T('common.pub.title_unpublished'))+'" style="cursor:pointer;font-size:12px">'+L(a.publishStatus==='published'?'common.pub.published':'common.pub.unpublished')+'</span> <span class="'+(a.accessMode==='private'?'online':'pending')+'" data-role="toggle-acc" data-agent="'+esc(a.agentId)+'" data-acc-mode="'+(a.accessMode==='private'?'private':'public')+'" title="'+esc(a.accessMode==='private'?T('common.acc.title_private'):T('common.acc.title_public'))+'" style="cursor:pointer;font-size:12px">'+L(a.accessMode==='private'?'common.acc.private':'common.acc.public')+'</span>';
         rows.push('<tr><td><a href="/agents/'+esc(a.agentId)+'">'+esc(a.agentName||a.agentId)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
       }
@@ -628,7 +628,7 @@ function createWebRouter(handlers, db, opts={}){
         +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add?new=1" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
         +'</div>'
         +(filtered.length>0
-          ?'<div class="table-wrap"><table><thead><tr><th>'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th>'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
+          ?'<div class="table-wrap"><table><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
           :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
@@ -902,6 +902,16 @@ function createWebRouter(handlers, db, opts={}){
   // ══════════════════════════════════════════════════════════
 
   // ── 编辑资料 ──
+  R.get('/api/agent-backend-types',(req,res)=>{
+    try{
+      const T=req.t;
+      const types=getBackendTypes(db);
+      let detected=new Set();
+      try{detected=new Set(createRegistrationOrchestrator({db}).inspectEnvironment().detected.map(x=>x.type));}catch(_){}
+      res.json({success:true,types:types.map(t=>({value:t.value,label:t.value==='others'?T('db.backend_type.others'):t.label,detected:detected.has(t.value)}))});
+    }catch(e){res.status(500).json({success:false,error:e.message})}
+  });
+
   R.get('/agents/:agentId/edit',async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
@@ -916,14 +926,6 @@ function createWebRouter(handlers, db, opts={}){
       if(!catList.length)catList=[{code:'general'},{code:'other'}];
       const catOpts=catList.map(c=>{const key='db.agent.category.'+c.code;const lbl=T(key);const label=lbl!==key?lbl:(c.label||c.code);return '<option value="'+c.code+'"'+(p.category===c.code?' selected':'')+'>'+esc(label)+'</option>';}).join('');
       const btTypes=getBackendTypes(db);const knownVals=getBackendTypeValues(db);
-      let detectedTypes=new Set();
-      try{detectedTypes=new Set(createRegistrationOrchestrator({db}).inspectEnvironment().detected.map(x=>x.type));}catch(_){}
-      const btOption=t=>{const lbl=t.value==='others'?T('db.backend_type.others'):t.label;return '<div class="voko-option" data-value="'+esc(t.value)+'">'+esc(lbl)+'</div>';};
-      const detectedOpts=btTypes.filter(t=>detectedTypes.has(t.value)).map(btOption).join('');
-      const moreOpts=btTypes.filter(t=>t.value!=='others'&&!detectedTypes.has(t.value)).map(btOption).join('');
-      const othersOpt=btTypes.filter(t=>t.value==='others').map(btOption).join('');
-      const btOpts=(detectedOpts?'<div class="voko-option-group">'+L('register.flow.provider.local')+'</div>'+detectedOpts:'')
-        +'<div class="voko-option-group">'+L('register.flow.provider.more')+'</div>'+moreOpts+othersOpt;
       var btInitValue='',btInitText=T('web.agent.edit.select_backend_type');
       if(p.backendType&&knownVals.includes(p.backendType)){var tm=btTypes.find(function(x){return x.value===p.backendType});btInitValue=p.backendType;btInitText=tm?(tm.value==='others'?T('db.backend_type.others'):tm.label):p.backendType;}
       else if(p.backendType){btInitValue=p.backendType;btInitText=T('db.backend_type.others');}
@@ -933,7 +935,7 @@ function createWebRouter(handlers, db, opts={}){
         +'<div class="voko-select-trigger" id="bt-trigger" tabindex="0"><span class="voko-select-text" id="bt-text">'+esc(btInitText)+'</span><span class="voko-select-arrow">▼</span></div>'
         +'<div class="voko-select-dropdown" id="bt-dropdown">'
         +'<input type="text" class="voko-select-search" id="bt-search" placeholder="'+esc(T('web.agent.edit.search_type_ph'))+'" autocomplete="off">'
-        +'<div class="voko-select-options" id="bt-options">'+btOpts+'</div></div>'
+        +'<div class="voko-select-options" id="bt-options"><div class="voko-option voko-option-empty">'+L('web.agent.edit.types_load_on_open')+'</div></div></div>'
         +'<input type="hidden" id="bt" name="backendType" value="'+esc(btInitValue)+'">'
         +'</div></div>';
       // 构建 2 列表单，字段紧凑排列
@@ -959,8 +961,10 @@ function createWebRouter(handlers, db, opts={}){
         +'</form>'
         +'<script>(function(){'
         +'var w=document.getElementById("bt-wrapper"),tr=document.getElementById("bt-trigger"),dd=document.getElementById("bt-dropdown"),bs=document.getElementById("bt-search"),bt=document.getElementById("bt"),tx=document.getElementById("bt-text"),oc=document.getElementById("bt-options");'
-        +'var all=oc?Array.from(oc.querySelectorAll(".voko-option")):[],TXT_NO_MATCH='+JSON.stringify(T('web.agent.edit.no_match'))+';'
-        +'function open(){dd.style.display="block";bs.focus();}'
+        +'var all=[],loaded=false,loading=false,TXT_NO_MATCH='+JSON.stringify(T('web.agent.edit.no_match'))+',TXT_LOADING='+JSON.stringify(T('web.agent.edit.types_loading'))+',TXT_FAILED='+JSON.stringify(T('web.agent.edit.types_load_failed'))+',TXT_LOCAL='+JSON.stringify(T('register.flow.provider.local'))+',TXT_MORE='+JSON.stringify(T('register.flow.provider.more'))+';'
+        +'function esc3(s){return String(s==null?"":s).replace(/[&<>"\']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]})}'
+        +'function loadTypes(){if(loaded||loading)return;loading=true;oc.innerHTML=\'<div class="voko-option voko-option-empty">\'+esc3(TXT_LOADING)+"</div>";fetch("/api/agent-backend-types",{headers:{Accept:"application/json"}}).then(function(r){if(!r.ok)throw new Error("load failed");return r.json()}).then(function(j){if(!j.success)throw new Error(j.error||"load failed");var local=j.types.filter(function(x){return x.detected}),more=j.types.filter(function(x){return !x.detected});function opts(xs){return xs.map(function(x){return \'<div class="voko-option" data-value="\'+esc3(x.value)+\'">\'+esc3(x.label)+"</div>"}).join("")}oc.innerHTML=(local.length?\'<div class="voko-option-group">\'+esc3(TXT_LOCAL)+"</div>"+opts(local):"")+\'<div class="voko-option-group">\'+esc3(TXT_MORE)+"</div>"+opts(more);all=Array.from(oc.querySelectorAll(".voko-option:not(.voko-option-empty)"));loaded=true}).catch(function(){oc.innerHTML=\'<div class="voko-option voko-option-empty">\'+esc3(TXT_FAILED)+"</div>"}).finally(function(){loading=false})}'
+        +'function open(){dd.style.display="block";loadTypes();bs.focus();}'
         +'function close(){dd.style.display="none";bs.value="";all.forEach(function(o){o.style.display="";});var h=oc.querySelector(".voko-option-empty");if(h)h.remove();}'
         +'if(tr&&dd){tr.addEventListener("click",function(e){e.stopPropagation();if(dd.style.display==="block")close();else open();});}'
         +'if(bs&&oc){bs.addEventListener("input",function(){var q=bs.value.toLowerCase(),hm=false;all.forEach(function(o){if(!q||o.textContent.toLowerCase().indexOf(q)!==-1){o.style.display="";hm=true;}else{o.style.display="none";}});var h=oc.querySelector(".voko-option-empty");if(!hm&&q){if(!h){h=document.createElement("div");h.className="voko-option voko-option-empty";h.textContent=TXT_NO_MATCH;oc.appendChild(h);}}else if(h){h.remove();}});bs.addEventListener("click",function(e){e.stopPropagation();});}'
@@ -1057,13 +1061,12 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     try{
       const T=req.t,L=k=>esc(T(k));
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
-      let ability='';
-      try{const r=await handlers.get_agent_profile({agentId});if(r.success&&r.data){const a=r.data.ability;ability=a?JSON.stringify(a,null,2):''}}catch{}
-      const fmt=T('web.agent.caps.fmt_help');
+      let abilities=[];
+      try{const r=await handlers.get_agent_profile({agentId});if(r.success&&r.data&&Array.isArray(r.data.ability))abilities=r.data.ability}catch{}
+      const initial=JSON.stringify(abilities).replace(/</g,'\\u003c');
       res.send(renderAgentFormPage(T('web.agent.caps.title'),agentId,agent.agentName||agentId,
-        '<p>'+T('web.agent.caps.intro')+'</p>'+'<div class="card"><h3>'+L('web.agent.caps.current')+'</h3>'+actionForm(agentId,'declare_caps',[
-          {id:'ab',name:'ability',label:'',type:'textarea',val:ability,attr:'rows="8" spellcheck="false" placeholder="'+esc(T('web.agent.caps.ph'))+'"'},
-        ],T('web.agent.caps.declare_btn'),null,'agent.caps.declare')+'</div>'+fmt,req.t,req.locale))
+        '<p>'+T('web.agent.caps.intro')+'</p><form method="POST" action="/agents/'+esc(agentId)+'" id="caps-form" data-agent-action="agent.caps.declare"><input type="hidden" name="_action" value="declare_caps"><input type="hidden" name="ability" id="caps-json"><div id="caps-list"></div><button type="submit">'+L('web.agent.caps.declare_btn')+'</button></form>'
+        +'<script>(function(){var list=document.getElementById("caps-list"),form=document.getElementById("caps-form"),initial='+initial+',labels='+JSON.stringify({name:T('web.agent.caps.name'),namePh:T('web.agent.caps.name_ph'),fields:T('web.agent.caps.fields'),fieldPh:T('web.agent.caps.field_ph'),addField:T('web.agent.caps.add_field'),remove:T('common.btn.remove'),removeCap:T('web.agent.caps.remove'),empty:T('web.agent.caps.empty')}).replace(/</g,'\\u003c')+';function esc4(s){return String(s==null?"":s).replace(/[&<>"\']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]})}function meta(v){return encodeURIComponent(JSON.stringify(v||{}))}function field(f){f=f||{};return \'<div class="cap-field" data-meta="\'+meta(f)+\'" style="display:flex;gap:10px;align-items:center;margin:8px 0"><input class="cf-name" value="\'+esc4(f.name||"")+\'" placeholder="\'+esc4(labels.fieldPh)+\'" required style="flex:1;max-width:none;margin:0"><button type="button" class="cap-remove-field" style="margin:0;padding:8px 14px;min-width:0;background:#f5e9ff;color:#b067e8;border:1px solid #d8b4fe">\'+esc4(labels.remove)+"</button></div>"}function capability(c){c=c||{};var el=document.createElement("div");el.className="card cap-card";el.dataset.meta=meta(c);el.style.cssText="padding:20px;border-radius:10px;margin:14px 0";el.innerHTML=\'<label style="margin-top:0">\'+esc4(labels.name)+\'</label><input class="cap-name" value="\'+esc4(c.name||"")+\'" placeholder="\'+esc4(labels.namePh)+\'" required style="max-width:none"><div style="padding:8px 28px 0"><label>\'+esc4(labels.fields)+\'</label><div class="cap-fields"></div><button type="button" class="cap-add-field" style="margin:4px 0 0;padding:0;min-width:0;background:none;border:0;color:#5b7cfa;font-size:15px">+ \'+esc4(labels.addField)+\'</button></div><div style="display:flex;justify-content:flex-end;margin-top:10px"><button type="button" class="cap-remove" style="margin:0;padding:9px 18px;min-width:0;background:#ef5350;border-color:#e53935">\'+esc4(labels.removeCap)+"</button></div>";var fs=el.querySelector(".cap-fields");(Array.isArray(c.fields)?c.fields:[]).forEach(function(x){fs.insertAdjacentHTML("beforeend",field(x))});return el}function add(c){list.appendChild(capability(c))}if(initial.length)initial.forEach(add);else list.innerHTML=\'<p class="meta" id="caps-empty">\'+esc4(labels.empty)+"</p>";document.getElementById("caps-add").onclick=function(){var e=document.getElementById("caps-empty");if(e)e.remove();add({})};list.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;if(b.classList.contains("cap-remove"))b.closest(".cap-card").remove();if(b.classList.contains("cap-add-field"))b.previousElementSibling.insertAdjacentHTML("beforeend",field({}));if(b.classList.contains("cap-remove-field"))b.closest(".cap-field").remove()});form.addEventListener("submit",function(){var data=Array.from(list.querySelectorAll(".cap-card")).map(function(c){var out={};try{out=JSON.parse(decodeURIComponent(c.dataset.meta))}catch(_){}out.name=c.querySelector(".cap-name").value.trim();out.fields=Array.from(c.querySelectorAll(".cap-field")).map(function(f){var x={type:"string"};try{x=JSON.parse(decodeURIComponent(f.dataset.meta))}catch(_){}x.name=f.querySelector(".cf-name").value.trim();return x});return out});document.getElementById("caps-json").value=JSON.stringify(data)});})();</script>',req.t,req.locale,{headerAction:'<button type="button" id="caps-add" class="btn-sm btn-outline" style="margin:0">'+L('web.agent.caps.add')+'</button>'}))
     }catch(e){next(e)}
   });
 
@@ -1265,7 +1268,9 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           case'set_access_mode':await handleAction(req,res,handlers.set_private_mode({agentId,enabled:req.body.enabled==='true'}),'common.action.access_mode_changed');break;
           case'declare_caps':{
             let ab;try{ab=JSON.parse(req.body.ability)}catch{ab=req.body.ability}
-            await handleAction(req,res,handlers.declare_capabilities({agentId,ability:ab}),'common.action.caps_declared');break
+            const r=await handlers.declare_capabilities({agentId,ability:ab});
+            if(r.success===false||r.error)return res.redirect(actionResultLocation('/','err',r.error||req.t('common.action.failed')));
+            return res.redirect(actionResultLocation('/','ok',req.t('common.action.caps_declared')))
           }
           case'set_pricing':await handleAction(req,res,handlers.agent_pricing({
             agentId,pricingModel:req.body.pricingModel||'free',
@@ -1289,7 +1294,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           }),'common.action.human_requested');break;
           default:res.redirect('/agents/'+esc(agentId)+'?err='+encodeURIComponent(req.t('common.action.unknown')))
         }
-      }catch(e){res.redirect('/agents/'+esc(agentId)+'?err='+encodeURIComponent(e.message))}
+      }catch(e){res.redirect(a==='declare_caps'?actionResultLocation('/','err',e.message):'/agents/'+esc(agentId)+'?err='+encodeURIComponent(e.message))}
     }catch(e){next(e)}
   });
 
