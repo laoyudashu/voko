@@ -33,11 +33,17 @@ id_ed25519
 *.sqlite3-shm
 *.sqlite3-wal
 
+# Database migration backups.
+*.db.pre-schema-v*.bak
+*.sqlite.pre-schema-v*.bak
+*.sqlite3.pre-schema-v*.bak
+
 # Local runtime state.
 events.jsonl
 *.pid
 *.lock
 staged-update/
+provider-sessions/
 
 .DS_Store
 Thumbs.db
@@ -45,6 +51,8 @@ Thumbs.db
 .vscode/
 .claude/
 .firecrawl/
+.aider.chat.history.md
+.aider.input.history
 
 # Local channel credentials.
 config/channel_config - *.json

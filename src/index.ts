@@ -106,6 +106,7 @@ const { setLocale, detectCliLocale, t } = require('./core/i18n');
 let __instanceLock: any = null;
 let __httpServer: any = null;
 let __webSocketServer: any = null;
+let __consoleLiveEvents: any = null;
 let __shuttingDown = false;
 let __serviceHealth: 'ok' | 'draining' | 'unhealthy' = 'ok';
 let __fatalHandling = false;
@@ -1266,6 +1267,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         // Console 实时 WS — 依附在已有 _wss 上，按路径 /voko/events/ws 路由
         const { createLiveEventsWs } = require('./web/live-events-ws');
         const consoleWs = createLiveEventsWs(_wss, runtimeState, taskManager);
+        __consoleLiveEvents = consoleWs;
         taskManager?.subscribe?.((tasks: object[]) => {
           const message = JSON.stringify({ type: 'tasks', data: tasks });
           for (const ws of consoleWs.clients) {
@@ -2449,11 +2451,19 @@ async function shutdownAll(
   __serviceHealth = signal?.startsWith?.('fatal:') ? 'unhealthy' : 'draining';
   if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
   try { await taskManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] 后台任务清理失败:', e.message); }
+  try {
+    const handlers = registry.getAllHandlers?.() || {};
+    for (const handler of Object.values(handlers) as any[]) await handler?.stop?.();
+  } catch {}
   // 停各 provider（含 gateway 进程清理，避免 detached gateway 在退出后泄漏）
   try { await (global as any).__dispatcher?.stop?.(); } catch (e: any) { console.error('[VOKO Lite] dispatcher.stop 失败:', e.message); }
   try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] IM Hub 清理失败:', e.message); }
   if (wukongimSender && wukongimSender !== agentManager) {
     try { await wukongimSender.disconnectAll?.(); } catch (e: any) { console.error('[VOKO Lite] 兼容发送器清理失败:', e.message); }
+  }
+  if (__consoleLiveEvents) {
+    try { __consoleLiveEvents.close?.(); } catch {}
+    __consoleLiveEvents = null;
   }
   if (__webSocketServer) {
     try {
