@@ -50,6 +50,7 @@
   "common.btn.back_to_agent": "← 返回 {name}",
   "common.btn.retry": "重试",
   "common.label.failed": "失败",
+  "common.footer.version": "版本",
   "common.footer.port": "端口",
   "common.footer.uptime_min": "{n} 分钟",
   "common.footer.uptime_hr": "{h} 小时 {m} 分钟",

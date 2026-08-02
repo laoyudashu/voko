@@ -13,6 +13,7 @@
 const { Router } = require('express');
 const { getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter, renderLanguageSwitcher } = require('./language-switcher');
+const { renderSystemFooter } = require('./footer');
 const { defaultGroupName } = require('../core/group-client');
 const { MESSAGE_CONTENT_CSS, createMessageRenderer, messageLabels, messageRendererScript } = require('./message-content');
 const ENDPOINTS = require('../endpoints.json');
@@ -127,8 +128,9 @@ function roleBadge(role,tFn){
 
 function createGroupRouter(handlers, db) {
   const R = Router();
+  const renderFooter = (tFn, locale) => renderSystemFooter(db, tFn, locale);
 
-  function renderPage(req,title,body,opt){ return page(title,body,opt,req.t,req.locale); }
+  function renderPage(req,title,body,opt){const options=opt||{};return page(title,body,{...options,footer:options.footer===undefined?renderSystemFooter(db,req.t,req.locale):options.footer},req.t,req.locale);}
 
   // 取 agent 展示名（nav/title 用）
   async function agentName(agentId){

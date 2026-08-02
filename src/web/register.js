@@ -12,7 +12,7 @@ const { discoverHermes } = require('../server/hermes-discovery');
 const { getClientBundle } = require('../core/i18n');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
-const { renderLanguageFooter } = require('./language-switcher');
+const { renderSystemFooter } = require('./footer');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -102,11 +102,11 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
-function page(title, body, tFn, locale) {
+function page(title, body, tFn, locale, db) {
   const loc = locale || 'zh';
   const lang = loc === 'en' ? 'en' : (loc === 'ja' ? 'ja' : 'zh-CN');
   const boot = '<script>window.__LOCALE__=' + JSON.stringify(loc) + ';window.__I18N__=' + JSON.stringify(getClientBundle(loc)) + '</script>';
-  const footer = renderLanguageFooter(loc, 'margin-top:18px;font-size:13px;color:#667085;display:flex;justify-content:center');
+  const footer = renderSystemFooter(db, tFn, loc);
   return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + '\n</body>\n</html>';
 }
 
@@ -858,7 +858,7 @@ function createRegisterRouter(handlers, db) {
     const email = req.query.email || '';
     const err = req.query.err || '';
     let body = loginBody(email, err, req.t);
-    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale) + loginJs(req.t));
+    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db) + loginJs(req.t));
   });
 
   R.get('/api/login/oauth/providers', async (_req, res) => {
@@ -983,13 +983,13 @@ function createRegisterRouter(handlers, db) {
   R.get('/agent/add', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (req.query.done) {
-      return res.send(page(req.t('register.done.page_title'), doneBody(req.query.done, req.t), req.t, req.locale));
+      return res.send(page(req.t('register.done.page_title'), doneBody(req.query.done, req.t), req.t, req.locale, db));
     }
     const email = getLoggedEmail();
     if (!email) return res.redirect('/login');
     const categories = await _loadCategories();
     const body = addAgentWizardBody(email, categories, db, req.t);
-    res.send(page(req.t('register.add.page_title'), body, req.t, req.locale) + wizardJs(req.t));
+    res.send(page(req.t('register.add.page_title'), body, req.t, req.locale, db) + wizardJs(req.t));
   });
 
   R.post('/agent/add', async (req, res, next) => {
@@ -1028,9 +1028,9 @@ function createRegisterRouter(handlers, db) {
         if (r.noToken) return res.redirect('/login?err=' + encodeURIComponent(req.t('register.err_token_expired')));
         // 名称被占用特殊提示
         if (r.error && r.error.includes('名称')) {
-          return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.rename_btn')) + '</a></div>', req.t, req.locale));
+          return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.rename_btn')) + '</a></div>', req.t, req.locale, db));
         }
-        return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error || req.t('register.create_failed_default')) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.retry_btn')) + '</a></div>', req.t, req.locale));
+        return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error || req.t('register.create_failed_default')) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.retry_btn')) + '</a></div>', req.t, req.locale, db));
       }
 
       res.redirect('/agent/add');

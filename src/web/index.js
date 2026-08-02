@@ -18,6 +18,7 @@ const { getCurrentUserEmail, getUserAccessToken } = require('../core/database');
 const { getBackendTypes, getBackendTypeValues } = require('../core/agent-backend-types');
 const { detectWebLocale, makeT, getClientBundle, SUPPORTED_LOCALES } = require('../core/i18n');
 const { renderLanguageFooter, renderLanguageSwitcher } = require('./language-switcher');
+const { renderSystemFooter } = require('./footer');
 const ENDPOINTS = require('../endpoints.json');
 const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
@@ -432,11 +433,14 @@ function createWebRouter(handlers, db, opts={}){
 
   // ── SSR i18n 渲染入口：路由用 renderPage(req,...) 即自动带 req.t/req.locale ──
   function renderPage(req,title,body,opt){
-    return page(title,body,opt,req.t,req.locale);
+    const options=opt||{};
+    return page(title,body,{...options,footer:options.footer===undefined?renderFooter(req.t,req.locale):options.footer},req.t,req.locale);
   }
 
   // ── 页脚：运行时信息 ──
   function renderFooter(tFn, locale){
+    return renderSystemFooter(db,tFn,locale);
+    /* Legacy implementation retained below for this release. */
     const t=tFn||(k=>k);
     const langSwitcher=renderLanguageSwitcher(locale);
     const bugLink='<a href="/bug-report" style="font-size:13px">'+esc(t('web.bug_report.link'))+'</a>';
@@ -464,6 +468,11 @@ function createWebRouter(handlers, db, opts={}){
         +'<span style="display:flex;gap:14px;align-items:center">'+bugLink+langSwitcher+'</span>'
         +'</div>';
     }catch{return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>'}
+  }
+
+  function renderAgentFormPage(title,agentId,agentName,formHtml,tFn,locale){
+    const back=esc(tFn('common.btn.back_to_agent',{name:agentName}));
+    return page(title,'<div class="card">'+formHtml+'</div><p><a href="/agents/'+esc(agentId)+'">'+back+'</a></p>',{nav:agentNav(agentId,agentName,tFn),footer:renderFooter(tFn,locale)},tFn,locale);
   }
 
   // ────────── favicon ──────────
@@ -878,11 +887,11 @@ function createWebRouter(handlers, db, opts={}){
       }
       if(!agentId||!toUid||!content){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
-        return res.status(400).send(page('错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
+        return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
       }
       const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions});
       if(req.is('json'))return res.json(r.success!==false?{success:true,message:'消息已发送',messageId:r.messageId,messageSeq:r.messageSeq}:{success:false,error:r.error||'未知错误'});
-      r.success?res.redirect('/agents/'+esc(agentId)+'/c/'+esc(toUid)+'?ok='+encodeURIComponent('消息已发送')):res.send(page('发送失败','<p class="error">❌ '+esc(r.error||'未知错误')+'</p><a href="/agents/'+esc(agentId)+'/c/'+esc(toUid)+'">返回</a>'))
+      r.success?res.redirect('/agents/'+esc(agentId)+'/c/'+esc(toUid)+'?ok='+encodeURIComponent('消息已发送')):res.send(renderPage(req,'发送失败','<p class="error">❌ '+esc(r.error||'未知错误')+'</p><a href="/agents/'+esc(agentId)+'/c/'+esc(toUid)+'">返回</a>'))
     }catch(e){next(e)}
   });
 
@@ -929,7 +938,7 @@ function createWebRouter(handlers, db, opts={}){
         +'</div></div>';
       // 构建 2 列表单，字段紧凑排列
       const f=function(l,id,v,attr){return '<div><label for="'+id+'">'+esc(l)+'</label><input type="text" id="'+id+'" name="'+id+'" value="'+esc(v||'')+'" '+(attr||'')+'></div>'};
-      res.send(renderFormPage(T('web.agent.edit.title'),agentId,aname,
+      res.send(renderAgentFormPage(T('web.agent.edit.title'),agentId,aname,
         '<form method="POST" action="/agents/'+esc(agentId)+'" data-agent-action="agent.profile.update" class="form-grid">\n'
         +'<input type="hidden" name="_action" value="update_profile">\n'
         +'<div class="full edit-section-title">'+L('web.agent.edit.section_profile')+'</div>'
@@ -970,7 +979,7 @@ function createWebRouter(handlers, db, opts={}){
       const T=req.t;
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const pub=agent.publishStatus==='published';
-      res.send(renderFormPage(T('web.agent.status.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.status.title'),agentId,agent.agentName||agentId,
         '<p>'+T('web.agent.status.current')+'：<strong>'+(pub?T('common.pub.published'):T('web.agent.status.unpublished'))+'</strong></p>'+actionForm(agentId,'set_status',[
           {id:'st',name:'status',label:T('web.agent.status.action'),type:'select',options:pub?{'0':T('web.agent.status.unpub_opt')}:{'1':T('web.agent.status.pub_opt')}},
         ],T('common.btn.confirm'),null,'agent.status.set'),req.t,req.locale))
@@ -985,7 +994,7 @@ function createWebRouter(handlers, db, opts={}){
       const prefill=esc(req.query.visitorId||'');
       let listHtml='<p class="meta">'+L('web.agent.whitelist.empty')+'</p>';var totalPages=0;
 try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit,offset,keyword});const es=r.data||r.entries||r.accessList||[],total=r.total||es.length;totalPages=Math.ceil(total/limit);let wlNickMap={};if(es.length){try{const vids=es.map(e=>e.visitor_id||e.visitorId||'').filter(Boolean);if(vids.length){const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+vids.map(()=>'?').join(',')+')').all(...vids);rows.forEach(r=>{wlNickMap[r.uid]=r.nickname||'';});}}catch(_){}const wlName=(vid)=>{const n=wlNickMap[vid];return n?esc(n)+' ('+esc(vid)+')':esc(vid);};const wlSource=(e)=>e.source==='same_owner_default'?(e.auto_trust_disabled?'已关闭自动信任':'同一主人自动信任'):(e.source==='outbound_contact'?'主动联系自动加入':'手动添加');listHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.whitelist.col.visitor')+'</th><th>来源</th><th>'+L('web.agent.whitelist.col.reason')+'</th><th style="text-align:center">'+L('web.agent.whitelist.col.action')+'</th></tr></thead><tbody>'+es.map(e=>'<tr><td>'+wlName(e.visitor_id||e.visitorId||'')+'</td><td>'+esc(wlSource(e))+'</td><td>'+esc(e.reason||'-')+'</td><td style="text-align:center"><form method="POST" action="/agents/'+esc(agentId)+'" data-voko-access-list style="display:inline"><input type="hidden" name="_action" value="remove_whitelist"><input type="hidden" name="visitorId" value="'+esc(e.visitor_id||e.visitorId||'')+'"><button type="submit" class="btn-xs btn-outline" style="margin:0;padding:2px 8px;font-size:11px;min-height:auto">'+L('common.btn.remove')+'</button></form></td></tr>').join('\n')+'</tbody></table></div>'}}catch{}
-      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/whitelist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.wl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/whitelist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderFormPage(T('web.agent.whitelist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+L('web.agent.whitelist.add_title')+'</h3>'+actionForm(agentId,'add_whitelist',[
+      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/whitelist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/whitelist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.wl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/whitelist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderAgentFormPage(T('web.agent.whitelist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+L('web.agent.whitelist.add_title')+'</h3>'+actionForm(agentId,'add_whitelist',[
         {id:'wv',name:'visitorId',label:T('web.agent.whitelist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.whitelist.ph.visitor'))+'"'},
         {id:'wr',name:'reason',label:T('web.agent.whitelist.reason_opt'),type:'text'},
       ],T('common.btn.add'),'','whitelist.add',undefined,' data-voko-access-list'),req.t,req.locale))
@@ -1009,7 +1018,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         ? [{id:'bv',name:'visitorId',label:T('web.agent.blacklist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.blacklist.ph.visitor'))+'"'}]
         : [{id:'bv',name:'visitorId',label:T('web.agent.blacklist.col.visitor'),type:'text',val:prefill,attr:'required placeholder="'+esc(T('web.agent.blacklist.ph.visitor'))+'"'},
            {id:'br',name:'reason',label:T('web.agent.blacklist.reason_opt'),type:'text'}];
-      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/blacklist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.bl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/blacklist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderFormPage(T('web.agent.blacklist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+esc(formTitle)+'</h3>'+actionForm(agentId,formAction,formFields,formBtn,formCls,'blacklist.'+formAction,undefined,' data-voko-access-list'),req.t,req.locale))
+      const keywordEsc=esc(keyword);const kwParam=keywordEsc?'&keyword='+encodeURIComponent(keyword):'';var pgBar='';if(totalPages>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page-1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="/agents/'+esc(agentId)+'/blacklist?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}var searchBox='<form method="GET" action="/agents/'+esc(agentId)+'/blacklist" style="margin:8px 0;display:flex;align-items:center;gap:6px"><input type="text" name="keyword" value="'+keywordEsc+'" placeholder="'+esc(T('web.agent.bl_search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keywordEsc?'<a href="/agents/'+esc(agentId)+'/blacklist" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form>';res.send(renderAgentFormPage(T('web.agent.blacklist.title'),agentId,agent.agentName||agentId,searchBox+listHtml+pgBar+'<h3>'+esc(formTitle)+'</h3>'+actionForm(agentId,formAction,formFields,formBtn,formCls,'blacklist.'+formAction,undefined,' data-voko-access-list'),req.t,req.locale))
     }catch(e){next(e)}
   });
 
@@ -1019,7 +1028,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       const T=req.t;
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const priv=agent.accessMode==='private';
-      res.send(renderFormPage(T('web.agent.access.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.access.title'),agentId,agent.agentName||agentId,
         '<p>'+T('web.agent.access.current')+'：<strong>'+(priv?T('web.agent.access.private_desc'):T('web.agent.access.public_desc'))+'</strong></p>'+actionForm(agentId,'set_access_mode',[
           {id:'am',name:'enabled',label:T('web.agent.access.switch_to'),type:'select',options:priv?{false:T('web.agent.access.public_opt')}:{true:T('web.agent.access.private_opt')}},
         ],T('common.btn.switch'),null,'access.mode.set'),req.t,req.locale))
@@ -1034,7 +1043,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       let p={pricingModel:'free',price:null,durationMinutes:null};
       try{const pr=await handlers.agent_pricing({agentId});if(pr.pricingModel)p=pr}catch{}
       const curLabel=p.pricingModel==='free'?T('web.agent.pricing.free'):T('web.agent.pricing.paid',{price:p.price,duration:p.durationMinutes});
-      res.send(renderFormPage(T('web.agent.pricing.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.pricing.title'),agentId,agent.agentName||agentId,
         '<div class="card"><p>'+T('web.agent.pricing.current')+'：<strong>'+curLabel+'</strong></p>'+actionForm(agentId,'set_pricing',[
           {id:'pm',name:'pricingModel',label:T('web.agent.pricing.model'),type:'select',options:{free:T('web.agent.pricing.free_opt'),duration:T('web.agent.pricing.duration_opt')},val:p.pricingModel},
           {id:'pp',name:'price',label:T('web.agent.pricing.price'),type:'number',attr:'step="0.01" min="0"',val:p.price},
@@ -1051,7 +1060,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       let ability='';
       try{const r=await handlers.get_agent_profile({agentId});if(r.success&&r.data){const a=r.data.ability;ability=a?JSON.stringify(a,null,2):''}}catch{}
       const fmt=T('web.agent.caps.fmt_help');
-      res.send(renderFormPage(T('web.agent.caps.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.caps.title'),agentId,agent.agentName||agentId,
         '<p>'+T('web.agent.caps.intro')+'</p>'+'<div class="card"><h3>'+L('web.agent.caps.current')+'</h3>'+actionForm(agentId,'declare_caps',[
           {id:'ab',name:'ability',label:'',type:'textarea',val:ability,attr:'rows="8" spellcheck="false" placeholder="'+esc(T('web.agent.caps.ph'))+'"'},
         ],T('web.agent.caps.declare_btn'),null,'agent.caps.declare')+'</div>'+fmt,req.t,req.locale))
@@ -1063,7 +1072,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     try{
       const T=req.t;
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
-      res.send(renderFormPage(T('web.agent.invite.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.invite.title'),agentId,agent.agentName||agentId,
         actionForm(agentId,'invite',[
           {id:'fe',name:'friendEmail',label:T('web.agent.invite.email'),type:'email',attr:'required placeholder="friend@example.com"'},
         ],T('web.agent.invite.send_btn'),null,'agent.invite.send')
@@ -1076,7 +1085,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     try{
       const T=req.t,L=k=>esc(T(k));
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
-      res.send(renderFormPage(T('web.agent.human.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.human.title'),agentId,agent.agentName||agentId,
         '<div class="card"><h3>'+L('web.agent.human.request_title')+'</h3>'+actionForm(agentId,'ask_human',[
           {id:'hv',name:'visitorId',label:T('web.agent.human.visitor'),type:'text',val:esc(req.query.visitorId||''),attr:'required placeholder="'+esc(T('web.agent.human.visitor_ph'))+'"'},
           {id:'hp',name:'problem',label:T('web.agent.human.problem'),type:'textarea',attr:'rows="3" required placeholder="'+esc(T('web.agent.human.problem_ph'))+'"'},
@@ -1113,7 +1122,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           }else result='<p class="meta">'+L('web.agent.visitor.not_found')+'</p>'
         }catch{result='<p class="error">'+L('web.agent.visitor.query_failed')+'</p>'}
       }
-      res.send(renderFormPage(T('web.agent.visitor.title'),agentId,agent.agentName||agentId,
+      res.send(renderAgentFormPage(T('web.agent.visitor.title'),agentId,agent.agentName||agentId,
         '<div class="card"><form method="GET" action="/agents/'+esc(agentId)+'/visitor"><label for="vu">'+L('web.agent.visitor.col.id')+'</label><input type="text" id="vu" name="uid" value="'+esc(req.query.uid||'')+'" required placeholder="'+esc(T('web.agent.visitor.ph'))+'"><button type="submit" style="margin-left:8px">'+L('common.btn.search')+'</button></form></div>'+result,req.t,req.locale))
     }catch(e){next(e)}
   });
@@ -1124,14 +1133,25 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       const T=req.t,L=k=>esc(T(k));
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const aid=esc(agentId);
-      const prefillToUid=esc(req.query.toUid||'');
+      const rawToUid=String(req.query.toUid||'');
       const prefillChannelType=Number(req.query.channelType)===2?'2':'1';
+      let recipientName='';
+      if(rawToUid&&prefillChannelType==='2'){
+        try{const g=await handlers.get_group_context({agentId,channelId:rawToUid,limit:1});if(g&&g.success)recipientName=String(g.groupName||g.name||'')}catch(_){}
+        if(!recipientName)try{const r=db.prepare('SELECT name FROM conversations WHERE channel_id=? AND channel_type=2 AND name IS NOT NULL LIMIT 1').get(rawToUid);if(r&&r.name!==rawToUid)recipientName=String(r.name)}catch(_){}
+      }else if(rawToUid){
+        try{const r=db.prepare('SELECT agent_name FROM agents WHERE imUid=? LIMIT 1').get(rawToUid);if(r&&r.agent_name)recipientName=String(r.agent_name)}catch(_){}
+        if(!recipientName)try{const r=db.prepare('SELECT nickname FROM user_cache WHERE uid=? LIMIT 1').get(rawToUid);if(r&&r.nickname)recipientName=String(r.nickname)}catch(_){}
+        if(!recipientName)try{const r=db.prepare('SELECT name FROM conversations WHERE channel_id=? AND channel_type=1 AND name IS NOT NULL LIMIT 1').get(rawToUid);if(r&&r.name!==rawToUid)recipientName=String(r.name)}catch(_){}
+      }
+      const prefillRecipient=esc(recipientName||rawToUid);
+      const returnPath=rawToUid?'/agents/'+encodeURIComponent(agentId)+'/'+(prefillChannelType==='2'?'g':'c')+'/'+encodeURIComponent(rawToUid):'/agents/'+encodeURIComponent(agentId);
       res.send(renderPage(req,T('web.agent.upload.title'),
         '<style>.upload-zone{border:2px dashed #bbb;border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s}.upload-zone:hover,.upload-zone.drag-over{border-color:#1a73e8;background:#e8f0fe}#upload-file{display:none}.upload-zone p{margin:4px 0;font-size:14px;color:#666}#upload-filename{margin-top:8px}#upload-progress{display:none;margin:8px 0;font-size:14px;color:#1a73e8}#upload-result{margin-top:10px;font-size:14px}#upload-result .url-box{word-break:break-all;background:#f0f0f0;padding:8px;border-radius:4px;margin:4px 0}</style>'+
         '<div class="card"><h3>📎 '+L('web.agent.upload.browser_title')+'</h3>'+
         '<div class="upload-zone" id="upload-zone"><p><strong>'+L('web.agent.upload.click')+'</strong> '+L('web.agent.upload.drag')+'</p><p style="font-size:12px;color:#999">'+L('web.agent.upload.hint')+'</p></div>'+
         '<input type="file" id="upload-file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.mp3,.mp4,.txt,.json,.webp,.gif">'+
-        '<label for="upload-to">'+L('web.agent.upload.to_uid')+'</label><input type="text" id="upload-to" value="'+prefillToUid+'" required placeholder="'+L('web.agent.upload.to_uid_ph')+'">'+
+        '<label for="upload-to">'+L('web.agent.upload.to_uid')+'</label><input type="text" id="upload-to" value="'+prefillRecipient+'" data-to-uid="'+esc(rawToUid)+'" data-initial-display="'+prefillRecipient+'" required placeholder="'+L('web.agent.upload.to_uid_ph')+'">'+
         '<input type="hidden" id="upload-channel-type" value="'+prefillChannelType+'">'+
         '<label for="upload-message">'+L('web.agent.upload.message')+'</label><textarea id="upload-message" rows="2" placeholder="'+L('web.agent.upload.message_ph')+'"></textarea>'+
         '<input type="text" id="upload-filename" placeholder="'+esc(T('web.agent.upload.name_ph'))+'" style="margin-top:8px;display:block">'+
@@ -1153,9 +1173,9 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           'function handleFiles(files){if(uploading)return;if(files.length){selectedFile=files[0];z.innerHTML="<p><strong>"+esc2(selectedFile.name)+"</strong></p><p style=\\"font-size:12px;color:#999\\">"+(selectedFile.size/1024).toFixed(1)+" KB</p>";btn.disabled=false}}'+
           'btn.addEventListener("click",async function(){if(uploading||!selectedFile)return;if(!to.value.trim()){to.focus();return}uploading=true;var file=selectedFile,uploadName=fn.value||selectedFile.name;btn.disabled=true;btn.setAttribute("aria-busy","true");btn.innerHTML=\'<span class="voko-spinner" aria-hidden="true"></span>\'+'+JSON.stringify(T('web.agent.upload.uploading'))+';f.disabled=true;fn.disabled=true;to.disabled=true;ct.disabled=true;msg.disabled=true;z.setAttribute("aria-busy","true");z.style.opacity=".55";z.style.cursor="not-allowed";prog.style.display="block";resDiv.innerHTML="";'+
             'var fd=new FormData();fd.append("file",file,uploadName);'+
-            'var params=new URLSearchParams({toUid:to.value.trim(),channelType:ct.value,message:msg.value.trim()});'+
+            'var initialDisplay=to.getAttribute("data-initial-display")||"",storedUid=to.getAttribute("data-to-uid")||"",recipient=to.value.trim()===initialDisplay&&storedUid?storedUid:to.value.trim();var params=new URLSearchParams({toUid:recipient,channelType:ct.value,message:msg.value.trim()});'+
             'try{var r=await fetch("/api/agents/'+aid+'/send-file?"+params,{method:"POST",body:fd});var j=await r.json();'+
-              'if(j.success){resDiv.innerHTML="<p class=\\"success\\">"+'+JSON.stringify(T('web.agent.upload.sent'))+'+"</p>";selectedFile=null;f.value="";msg.value="";btn.disabled=true}'+
+              'if(j.success){location.href='+JSON.stringify(returnPath)+';return}'+
               'else{resDiv.innerHTML="<p class=\\"error\\">❌ "+esc2(j.error||"上传失败")+"</p>"}'+
             '}catch(e){resDiv.innerHTML="<p class=\\"error\\">❌ 网络错误: "+esc2(e.message)+"</p>"}'+
             'finally{uploading=false;if(selectedFile)btn.disabled=false;btn.removeAttribute("aria-busy");btn.innerHTML=idleBtnHtml;f.disabled=false;fn.disabled=false;to.disabled=false;ct.disabled=false;msg.disabled=false;z.removeAttribute("aria-busy");z.style.opacity="";z.style.cursor="";prog.style.display="none"}'+

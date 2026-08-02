@@ -50,6 +50,7 @@
   "common.btn.back_to_agent": "← Back to {name}",
   "common.btn.retry": "Retry",
   "common.label.failed": "Failed",
+  "common.footer.version": "Version",
   "common.footer.port": "Port",
   "common.footer.uptime_min": "{n} min",
   "common.footer.uptime_hr": "{h}h {m}m",

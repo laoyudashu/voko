@@ -8,12 +8,17 @@ test('attachment page prefills recipient and sends multipart through upload_and_
   let sent;
   const handlers = {
     whoami: async () => ({ agents: [{ agentId: 'gym', agentName: 'Gym' }] }),
+    get_group_context: async ({ channelId }) => ({ success: true, groupName: channelId === 'group-1' ? 'Running Club' : '' }),
     upload_and_send_file: async (params) => {
       sent = params;
       return { success: true, messageId: 'file-message-1' };
     },
   };
-  const db = { prepare: () => ({ get: () => null, all: () => [], run() {} }) };
+  const db = { prepare: (sql) => ({
+    get: (id) => sql.includes('FROM user_cache') && id === 'visitor-1' ? { nickname: 'Alice' } : null,
+    all: () => [],
+    run() {},
+  }) };
   const app = express();
   app.use(express.raw({ type: 'multipart/form-data', limit: '25mb' }));
   app.use((req, _res, next) => {
@@ -34,17 +39,21 @@ test('attachment page prefills recipient and sends multipart through upload_and_
   const page = await fetch(`${base}/agents/gym/upload?toUid=visitor-1&channelType=1`);
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /id="upload-to" value="visitor-1"/);
+  assert.match(html, /id="upload-to" value="Alice" data-to-uid="visitor-1"/);
   assert.match(html, /type="hidden" id="upload-channel-type" value="1"/);
+  assert.match(html, /location\.href="\/agents\/gym\/c\/visitor-1"/);
   assert.doesNotMatch(html, /<select id="upload-channel-type"/);
   assert.match(html, /id="upload-message"/);
+  assert.match(html, /data-voko-system-footer/);
+  assert.match(html, /\/bug-report/);
   assert.match(html, /id="upload-submit-btn"[^>]*>发送附件<\/button>/);
   assert.doesNotMatch(html, /get_upload_url|upload_url|\/upload-file|Get URL/);
 
   const groupPage = await fetch(`${base}/agents/gym/upload?toUid=group-1&channelType=2`);
   const groupHtml = await groupPage.text();
-  assert.match(groupHtml, /id="upload-to" value="group-1"/);
+  assert.match(groupHtml, /id="upload-to" value="Running Club" data-to-uid="group-1"/);
   assert.match(groupHtml, /type="hidden" id="upload-channel-type" value="2"/);
+  assert.match(groupHtml, /location\.href="\/agents\/gym\/g\/group-1"/);
   assert.doesNotMatch(groupHtml, /<select id="upload-channel-type"/);
 
   const boundary = '----voko-test-boundary';

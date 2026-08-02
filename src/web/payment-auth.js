@@ -12,6 +12,7 @@
 const { Router } = require('express');
 const { SUPPORTED_LOCALES, getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter } = require('./language-switcher');
+const { renderSystemFooter } = require('./footer');
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
@@ -96,7 +97,8 @@ function createPaymentAuthRouter(handlers, db) {
   }
 
   function renderPage(req, title, body, opt) {
-    return page(title, body, opt, req.t, req.locale);
+    const options = opt || {};
+    return page(title, body, { ...options, footer: renderSystemFooter(db, req.t, req.locale) + (options.footer || '') }, req.t, req.locale);
   }
 
   // ── 银行卡列表 + 添加 ──
