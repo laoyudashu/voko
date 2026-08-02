@@ -299,7 +299,7 @@ async function syncAgentAccess({
   apiBaseUrl: string;
   agentId: string;
   limit?: number;
-}): Promise<{ success: boolean; applied?: number; snapshot?: boolean; error?: string }> {
+}): Promise<{ success: boolean; applied?: number; snapshot?: boolean; skipped?: boolean; error?: string }> {
   try {
     const { token } = getAgentToken(db, agentId);
     const cursorMap = loadCursorMap(db);
@@ -341,6 +341,10 @@ async function syncAgentAccess({
     } while (true);
     return { success: true, applied };
   } catch (error: unknown) {
+    const candidate = error as { status?: number };
+    if (candidate?.status === 404 && /agent not found/i.test(errorMessage(error))) {
+      return { success: true, applied: 0, skipped: true };
+    }
     return { success: false, error: errorMessage(error) };
   }
 }
@@ -357,6 +361,7 @@ function startAgentAccessSync({
   let stopped = false;
   let running = false;
   const lastErrors = new Map<string, string>();
+  const unsupportedAgents = new Set<string>();
   const run = async () => {
     if (stopped || running) return;
     running = true;
@@ -364,10 +369,12 @@ function startAgentAccessSync({
       const agents = db.prepare(`SELECT agent_id,owner_email FROM agents
         WHERE owner_email IS NOT NULL AND TRIM(owner_email)!=''`).all<AgentRow>();
       for (const agent of agents) {
+        if (unsupportedAgents.has(agent.agent_id)) continue;
         if (!getUserAccessToken(db, agent.owner_email)) continue;
         const result = await syncAgentAccess({ db, apiBaseUrl, agentId: agent.agent_id });
         if (result.success) {
           lastErrors.delete(agent.agent_id);
+          if (result.skipped) unsupportedAgents.add(agent.agent_id);
         } else {
           const error = result.error || '同步失败';
           if (lastErrors.get(agent.agent_id) === error) continue;

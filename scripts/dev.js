@@ -181,7 +181,11 @@ function startRuntime(openMainPage = false) {
   runtime.once('exit', (code, signal) => {
     runtime = null;
     if (!closing && !building) {
-      console.error(`[dev] Runtime exited (${signal || code}). Waiting for a source change.`);
+      if (code === 0 && !signal) {
+        console.log('[dev] Existing VOKO instance remains active; continuing to watch for source changes.');
+      } else {
+        console.error(`[dev] Runtime exited (${signal || code}). Waiting for a source change.`);
+      }
     }
   });
 }

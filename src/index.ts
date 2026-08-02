@@ -408,20 +408,24 @@ function initCore(args?: any, options: any = {}) {
   return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, deliver, sendMessage };
 }
 
-function printStartupBanner(db: any, port: number, ownerEmail?: string | null) {
+function printReadyBanner(db: any, port: number, ownerEmail: string | null, agentManager: any) {
   const ORANGE = '\x1b[38;5;202m';
   const RESET = '\x1b[0m';
+  const summary = agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0 };
+  const connected = agentManager?.connectedAgents?.size || 0;
   const details = [
     '  Version:    ' + pkg.version,
     '  PID:        ' + process.pid,
     '  Time:       ' + new Date().toLocaleString('zh-CN', { hour12: false }),
     '  Port:       ' + port,
+    `  IM:         ${connected}/${summary.agentCount || 0} connected, ${summary.hubCount || 0} Hub(s)`,
   ];
   if (ownerEmail) details.push('  Owner:      ' + ownerEmail);
   details.push(
     '  DB:         ' + (db._dbPath || ''),
     '  Web:        http://localhost:' + port,
     '  MCP:        http://localhost:' + port + '/mcp',
+    '  Status:     READY',
   );
   console.error([
     '',
@@ -1264,7 +1268,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         }
         // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
         if (!args.noOpen && !args['no-open'] && process.env.VOKO_SMOKE_TEST !== '1') {
+          printReadyBanner(db, actualPort, getCurrentUserEmail(db), agentManager);
           openLocalWebPage(port);
+        } else {
+          printReadyBanner(db, actualPort, getCurrentUserEmail(db), agentManager);
         }
       })
       .on('error', (err?: any) => {
@@ -1280,7 +1287,6 @@ async function startMcpServer(args?: any, core?: any) {
   __shutdownContext = { agentManager, wukongimSender, db };
   const userEmail = getCurrentUserEmail(db);
   const litePort = parseInt(args.port, 10) || 3100;
-  printStartupBanner(db, litePort, userEmail);
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
   if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
@@ -2243,7 +2249,8 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
 
       // ── 上报 ──
       const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-      console.log(`[${ts}][心跳] IM=${imOnline}/${rows.length} 后端=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
+      const hubCount = agentManager?.getHubSummary?.()?.hubCount || 0;
+      console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 后端=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
       if (warnings.length > 0) {
         console.error(`[${ts}][心跳] 发现 ${warnings.length} 个异常:\n${warnings.map((w: any) => `  ${w.message}`).join('\n')}`);
       }

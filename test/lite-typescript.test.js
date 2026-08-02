@@ -694,11 +694,13 @@ test('default lifecycle logs stay concise and stop hides the database path', () 
   assert.doesNotMatch(notifierSource, /模块初始化, mainWindow=/);
   assert.doesNotMatch(databaseSource, /created\/verified|opened successfully/);
   assert.doesNotMatch(databaseSource, /数据库初始化完成/);
-  assert.match(entrySource, /if \(ownerEmail\) details\.push\('  Owner:/);
+  assert.match(entrySource, /function printReadyBanner/);
+  assert.match(entrySource, /Status:\s+READY/);
+  assert.match(entrySource, /IM:\s+.*connected,.*Hub\(s\)/);
   const startupSource = entrySource.slice(entrySource.indexOf('async function startMcpServer'));
   assert.ok(
-    startupSource.indexOf('printStartupBanner(db, litePort, userEmail)')
-      < startupSource.indexOf('await agentManager.startMany('),
+    startupSource.indexOf('await agentManager.startMany(')
+      < startupSource.indexOf('await startTransport('),
   );
 });
 
@@ -709,5 +711,16 @@ test('development mode skips fresh builds and compiles changes incrementally', (
   assert.match(devSource, /'--incremental'/);
   assert.match(devSource, /'\.dev\.tsbuildinfo'/);
   assert.match(devSource, /syncAsset\(relative\)/);
+  assert.match(devSource, /Existing VOKO instance remains active/);
   assert.doesNotMatch(devSource, /await fullBuild\(\);[\s\S]*?rebuildAndRestart/);
+});
+
+test('shared Hub runtime logs inbound, outbound, SENDACK and heartbeat summaries', () => {
+  const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'worker-manager.ts'), 'utf8');
+  const sendSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'send-message.ts'), 'utf8');
+  assert.match(managerSource, /\[IM 接收\]/);
+  assert.match(sendSource, /\[IM 发送\]/);
+  assert.match(sendSource, /\[IM SENDACK\]/);
+  assert.match(entrySource, /\[\$\{ts\}\]\[IM 心跳\]/);
 });

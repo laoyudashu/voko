@@ -245,6 +245,23 @@ describe('Agent invitation and access sync', () => {
     }
   });
 
+  it('treats a missing remote legacy Agent as unsupported without changing local data', async () => {
+    const db = fixture();
+    global.fetch = async () => response(404, {
+      success: false,
+      message: 'Agent not found',
+    });
+    try {
+      const result = await syncAgentAccess({ db, apiBaseUrl: API, agentId: 'agent-a' });
+      assert.deepEqual(result, { success: true, applied: 0, skipped: true });
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM agents WHERE agent_id='agent-a'").get().count, 1);
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM agent_access_lists').get().count, 0);
+      assert.equal(cursor(db), undefined);
+    } finally {
+      db.close();
+    }
+  });
+
   it('uses an authoritative snapshot when the local cursor is missing without deleting manual entries', async () => {
     const db = fixture();
     const now = Date.now();
