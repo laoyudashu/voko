@@ -473,6 +473,18 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(approved.taskId, 'task-approved');
       assert.strictEqual(setupCount, 1);
 
+      const asInteractiveCli = (callback) => runWithRegistrationCaller({ source: 'cli_interactive' }, callback);
+      const cliStarted = await asInteractiveCli(() => service.start({ email: 'owner@example.com' }));
+      asInteractiveCli(() => service.setBasicInfo(cliStarted.registrationId, { agentName: 'Headless Agent' }));
+      asInteractiveCli(() => service.selectProvider(cliStarted.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' }));
+      const cliPlan = asInteractiveCli(() => service.configureDelivery(cliStarted.registrationId, { mode: 'websocket' }));
+      const cliApproved = asInteractiveCli(() => service.configureDelivery(cliStarted.registrationId, {
+        mode: 'websocket', approved: true, approvalToken: cliPlan.approvalToken,
+      }));
+      assert.strictEqual(cliStarted.registrationMode, 'human');
+      assert.strictEqual(cliApproved.taskId, 'task-approved');
+      assert.strictEqual(setupCount, 2);
+
       const agentStarted = await service.start({ email: 'owner@example.com', registrationMode: 'agent' });
       service.setBasicInfo(agentStarted.registrationId, { agentName: 'Agent-managed' });
       service.selectProvider(agentStarted.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' });
@@ -481,7 +493,7 @@ describe('shared registration orchestrator', () => {
         mode: 'websocket', approved: true, approvalToken: agentPlan.approvalToken,
       });
       assert.strictEqual(agentApproved.code, 'HUMAN_CONFIGURATION_REQUIRED');
-      assert.strictEqual(setupCount, 1);
+      assert.strictEqual(setupCount, 2);
 
       const spoofed = await runWithRegistrationCaller(
         { source: 'mcp', providerType: 'openclaw' },

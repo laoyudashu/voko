@@ -1,4 +1,10 @@
 {
+  "cli.index.headless_onboarding": "グラフィカル環境のないターミナルで未ログインのため、初回ログインを開始します。",
+  "cli.index.headless_register": "このメールアドレスには Agent がないため、対話式 Agent 登録を続行します。",
+  "cli.usage.no_interactive": "ヘッドレスターミナルの初回対話ウィザードを無効化",
+  "cli.usage.login": "ターミナルでメール認証コードを使用してログイン",
+  "cli.usage.register_interactive": "ターミナルで対話式 Agent 登録を完了",
+  "cli.index.headless_login": "グラフィカルセッションがなく、VOKO にログインしていません。対話式ターミナルで次を実行してください：\n  voko login\n  voko manage_agent_registration --interactive\n完了後、voko start --no-open を再実行してください。\nSSH 転送も利用できます：ssh -L {port}:127.0.0.1:{port} user@server",
   "cli.usage.title": "VOKO Lite — 纯 Node.js 轻量版",
   "cli.usage.usage_header": "用法:",
   "cli.usage.start_default": "启动 Lite MCP Server（默认）",

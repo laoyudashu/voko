@@ -119,8 +119,9 @@ test('loopback proxy bypass preserves existing hosts and adds every local addres
 
 test('Linux browser opening requires a graphical session', () => {
   const source = fs.readFileSync(path.join(LITE_SRC, 'index.ts'), 'utf8');
-  assert.match(source, /platform !== 'linux'/);
+  assert.match(source, /platform === 'linux'/);
   assert.match(source, /env\.DISPLAY \|\| env\.WAYLAND_DISPLAY/);
+  assert.match(source, /env\.SSH_CONNECTION/);
   assert.match(source, /if \(!hasGraphicalSession\(\)\) return false/);
 });
 

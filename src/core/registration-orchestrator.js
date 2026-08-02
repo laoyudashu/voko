@@ -813,9 +813,10 @@ class RegistrationOrchestrator {
   async start(input = {}) {
     this._cleanup();
     // The caller mode is a security boundary, not a user-selectable field.
-    // Only the local Web registration route enters the trusted human context.
+    // Only local Web registration or an explicit interactive TTY enters the trusted human context.
     const caller = getRegistrationCaller();
-    const registrationSource = caller?.source === 'web' ? 'web' : 'agent';
+    const humanSource = caller?.source === 'web' || caller?.source === 'cli_interactive';
+    const registrationSource = humanSource ? caller.source : 'agent';
     let email = cleanText(input.email, 320).toLowerCase();
     if (!email) {
       try { email = cleanText(await this.options.getLoggedEmail?.(), 320).toLowerCase(); } catch (_) {}
@@ -846,7 +847,7 @@ class RegistrationOrchestrator {
       provider: null,
       deliveryModes: [],
       accessMode: 'private',
-      registrationMode: registrationSource === 'web' ? 'human' : 'agent',
+      registrationMode: humanSource ? 'human' : 'agent',
       registrationSource,
       ownerBound: loggedIn,
       providerLock: null,
@@ -1021,7 +1022,10 @@ class RegistrationOrchestrator {
       return { success: false, error: '配置确认已失效，请重新查看变更计划后确认' };
     }
     const caller = getRegistrationCaller();
-    if (session.registrationSource !== 'web' || caller?.source !== 'web') {
+    const trustedHuman = session.registrationSource === 'web'
+      ? caller?.source === 'web'
+      : session.registrationSource === 'cli_interactive' && caller?.source === 'cli_interactive';
+    if (!trustedHuman) {
       return {
         success: false,
         code: 'HUMAN_CONFIGURATION_REQUIRED',

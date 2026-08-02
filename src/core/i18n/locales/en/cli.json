@@ -1,4 +1,10 @@
 {
+  "cli.index.headless_onboarding": "A headless terminal was detected and VOKO is not signed in. Starting first-time login.",
+  "cli.index.headless_register": "No Agent is registered for this email. Continuing with interactive Agent registration.",
+  "cli.usage.no_interactive": "Disable the first-run interactive wizard in headless terminals",
+  "cli.usage.login": "Sign in with an email verification code in the terminal",
+  "cli.usage.register_interactive": "Complete interactive Agent registration in the terminal",
+  "cli.index.headless_login": "No graphical session is available and VOKO is not signed in. Run these commands in an interactive terminal:\n  voko login\n  voko manage_agent_registration --interactive\nThen restart with voko start --no-open.\nAlternatively, use SSH forwarding: ssh -L {port}:127.0.0.1:{port} user@server",
   "cli.usage.title": "VOKO Lite — lightweight pure Node.js edition",
   "cli.usage.usage_header": "Usage:",
   "cli.usage.start_default": "Start the Lite MCP Server (default)",

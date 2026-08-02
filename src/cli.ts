@@ -246,7 +246,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   }
 
   // 剔除 CLI 全局保留键（身份/帮助/日志开关），它们不是工具参数
-  const RESERVED_KEYS = new Set(['agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools']);
+  const RESERVED_KEYS = new Set(['agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive']);
   const cleanParams: Record<string, any> = {};
   for (const [k, v] of Object.entries(rawParams || {})) {
     if (!RESERVED_KEYS.has(k)) cleanParams[k] = v;

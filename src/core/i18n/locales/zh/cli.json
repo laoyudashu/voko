@@ -1,4 +1,10 @@
 {
+  "cli.index.headless_onboarding": "检测到无图形终端且尚未登录，开始 VOKO 首次登录。",
+  "cli.index.headless_register": "当前邮箱尚未注册 Agent，继续完成交互式 Agent 注册。",
+  "cli.usage.no_interactive": "禁用无图形终端的首次启动交互向导",
+  "cli.usage.login": "在终端使用邮箱验证码登录",
+  "cli.usage.register_interactive": "在终端完成交互式 Agent 注册",
+  "cli.index.headless_login": "当前环境没有可用的图形界面，且尚未登录 VOKO。请在交互式终端依次运行：\n  voko login\n  voko manage_agent_registration --interactive\n完成后重新运行 voko start --no-open。\n也可以使用 SSH 端口转发：ssh -L {port}:127.0.0.1:{port} user@server",
   "cli.usage.title": "VOKO Lite — 纯 Node.js 轻量版",
   "cli.usage.usage_header": "用法:",
   "cli.usage.start_default": "启动 Lite MCP Server（默认）",

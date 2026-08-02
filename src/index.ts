@@ -242,8 +242,53 @@ function hasGraphicalSession(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (platform !== 'linux') return true;
-  return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+  if (platform === 'linux') return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+  if (platform === 'darwin' || platform === 'win32') {
+    return !env.SSH_CONNECTION && !env.SSH_TTY;
+  }
+  return false;
+}
+
+function printHeadlessLoginGuidance(port: number) {
+  console.error(t('cli.index.headless_login', { port }));
+}
+
+function interactiveStartEnabled(
+  args: Record<string, any>,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  input: NodeJS.ReadStream = process.stdin,
+  output: NodeJS.WriteStream = process.stdout,
+): boolean {
+  const rawDisabled = args.noInteractive ?? args['no-interactive'];
+  const disabled = rawDisabled === true || rawDisabled === 'true' || rawDisabled === '1';
+  return !disabled && !hasGraphicalSession(platform, env) && !!input.isTTY && !!output.isTTY;
+}
+
+function hasAgentForOwner(db: any, email: string | null): boolean {
+  if (!email) return false;
+  try {
+    return !!db.prepare('SELECT 1 FROM agents WHERE LOWER(TRIM(owner_email)) = ? LIMIT 1')
+      .get(String(email).trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+async function runHeadlessOnboarding(args: Record<string, any>, core: any) {
+  if (!interactiveStartEnabled(args)) return false;
+  const interactive = require('./cli-interactive');
+  let email = getCurrentUserEmail(core.db);
+  if (!email) {
+    console.error(t('cli.index.headless_onboarding'));
+    const login = await interactive.runInteractiveLogin(core);
+    email = login.email;
+  }
+  if (!hasAgentForOwner(core.db, email)) {
+    console.error(t('cli.index.headless_register'));
+    await interactive.runInteractiveRegistration(core);
+  }
+  return true;
 }
 
 function openLocalWebPage(port: number) {
@@ -1265,6 +1310,9 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 自动恢复已发布的 agent（仅当前用户名下） ──
   if (!userEmail) {
     console.error(t('cli.index.login_required', { port: parseInt(args.port, 10) || 3100 }));
+    if (!hasGraphicalSession()) {
+      printHeadlessLoginGuidance(litePort);
+    }
   }
   const published = userEmail
     ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?").all(userEmail)
@@ -2312,6 +2360,9 @@ function printUsage() {
     t('cli.usage.usage_header') + '\n' +
     '  voko                       ' + t('cli.usage.start_default') + '\n' +
     '  voko start [--port PORT]   ' + t('cli.usage.start') + '\n' +
+    '  voko login                 ' + t('cli.usage.login') + '\n' +
+    '  voko manage_agent_registration --interactive\n' +
+    '                             ' + t('cli.usage.register_interactive') + '\n' +
     '  voko <tool-name> [--agent <id>] [--param=value ...]\n' +
     '                             ' + t('cli.usage.invoke_tool') + '\n' +
     '  voko <tool-name> --help    ' + t('cli.usage.tool_help') + '\n' +
@@ -2327,6 +2378,7 @@ function printUsage() {
     '  --agent <agentId>          ' + t('cli.usage.agent') + '\n' +
     '                             ' + t('cli.usage.agent_env') + '\n' +
     '  --verbose                  ' + t('cli.usage.verbose') + '\n' +
+    '  --no-interactive           ' + t('cli.usage.no_interactive') + '\n' +
     '  --lang <zh|en>             ' + t('cli.usage.lang') + '\n' +
     '\n' +
     t('cli.usage.examples_header') + '\n' +
@@ -2384,7 +2436,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'mcp', 'stop', 'status', 'update', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'mcp', 'stop', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2573,7 +2625,13 @@ async function main() {
   try {
     if (!subcommand || subcommand === 'start') {
       // voko（无参数）或 voko start → 启动 Lite MCP Server
+      await runHeadlessOnboarding(args, core);
       await startMcpServer(args, core);
+    } else if (subcommand === 'login') {
+      await require('./cli-interactive').runInteractiveLogin(core);
+    } else if (subcommand === 'manage_agent_registration'
+      && (args.interactive === true || args.interactive === 'true' || args.interactive === '1')) {
+      await require('./cli-interactive').runInteractiveRegistration(core);
     } else {
       const result = await cli.runToolCommand(subcommand, args, core, { agentId: cliAgent, debug: verbose });
       if (result === null) {
@@ -2603,4 +2661,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager, MessageFile: require('./workers/message-content').MessageFile };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager, MessageFile: require('./workers/message-content').MessageFile };
