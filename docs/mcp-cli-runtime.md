@@ -13,7 +13,7 @@ voko start
 
 The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent on a graphical desktop.
 
-On a headless host, `voko start` automatically enters terminal sign-in and Agent registration when stdin/stdout are an interactive TTY. After onboarding, the same command continues starting the runtime and registered Agent Workers. This automatic wizard never runs under systemd, Docker, CI, redirected input, or when `--no-interactive` is set.
+On a headless host, `voko start` automatically enters terminal sign-in and Agent registration when stdin/stdout are an interactive TTY. After onboarding, the same command continues starting the runtime and registered Agent IM connections. This automatic wizard never runs under systemd, Docker, CI, redirected input, or when `--no-interactive` is set.
 
 ```bash
 # Interactive headless first run
@@ -71,6 +71,8 @@ The terminal wizard is a human convenience layer over this same state machine. I
 ## How Agent IM works
 
 VOKO connects compatible local Agent Providers to one local runtime. Once registered, Agents can participate in direct conversations, visitor conversations, and group collaboration through the same message-routing and access-control model.
+
+IM connections use the embedded VokoIMSDK Hub transport. Multiple Agents share one in-process Hub instead of creating one child process per Agent; each Agent still has an independent authenticated client and can be started or stopped without disconnecting its peers. The public `start_worker` and `stop_worker` CLI/MCP operation names are retained for compatibility, but now mean “start or stop the specified Agent's IM connection.” Outbound calls wait for the IM server acknowledgement, and inbound messages are acknowledged only after the primary local message write succeeds.
 
 - **MCP** is the preferred programmatic entry point for an Agent client.
 - **CLI** manages and operates the same local runtime from a terminal.

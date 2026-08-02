@@ -3,9 +3,7 @@
  *
  * 供桌面端主进程（src/main.js）的 IPC handler、HTTP API、MCP 工具共同调用。
  *
- * 统一投递入口：createDeliver —— 唯一决定"走 Worker 还是 wukongIM 直连"的地方。
- *   - Worker 入口存在（已发布 agent 的常驻连接）→ Worker IPC（fire-and-forget）
- *   - 否则 → wukongimSender 直连（CLI 模式 / 未发布 / worker 异常时的兜底）
+ * 统一投递入口：createDeliver —— 所有消息经共享 VokoIMSDK Hub 发送并等待 SENDACK。
  * 所有发送点（send_message、sendSystemMessage、agent 回复、支付通知）都应经 deliver，
  * 不再各自内联 worker.send 或自写兜底。
  */
@@ -13,10 +11,6 @@
 const ac = require('./access-control-api');
 const bus = require('./lite-bus');
 import type { DatabaseLike } from '../types/database';
-
-interface WorkerEntry {
-  worker: { send(message: Record<string, unknown>): void };
-}
 
 interface SendResult {
   success: boolean;
@@ -28,8 +22,16 @@ interface SendResult {
   [key: string]: unknown;
 }
 
-interface SenderLike {
-  send(...args: unknown[]): Promise<Partial<SendResult> | undefined>;
+interface TransportLike {
+  deliver(
+    agentId: string,
+    channelId: string,
+    content: string,
+    messageType?: string,
+    channelType?: number,
+    mentions?: unknown,
+    localMsgId?: string | null,
+  ): Promise<Partial<SendResult> | undefined>;
 }
 
 type Deliver = (
@@ -49,36 +51,21 @@ function errorMessage(error: unknown): string {
 /**
  * 创建统一投递函数 deliver(agentId, channelId, content, messageType)
  *
- * 这是全仓唯一的"worker 优先 → wukongIM 直连兜底"判定点。
+ * 这是全仓唯一的 IM 传输调用点。
  * @param {object} deps
- * @param {Map} deps.agentWorkers - agentId → { worker, config } Worker 进程 Map
- * @param {object} deps.wukongimSender - { send(agentId, channelId, content, messageType) } 直连发送器
+ * @param {object} deps.transportManager - 共享 Hub 传输管理器
  * @returns {Function} async deliver → { success, via, messageId?, error?, ... }
  */
-function createDeliver({ agentWorkers, wukongimSender }: {
-  agentWorkers?: Map<string, WorkerEntry>;
-  wukongimSender?: SenderLike;
+function createDeliver({ transportManager }: {
+  transportManager: TransportLike;
 }): Deliver {
   return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null) {
-    // 优先走 Worker（已发布 agent 的常驻 IM 连接）
-    const workerEntry = agentWorkers?.get(agentId);
-    if (workerEntry) {
-      // 优先用调用方传入的 localMsgId（= persistAgentMessage 落库的 msgId），
-      // 使 sent 事件回填 UPDATE 能按 id 命中、补上 client_msg_no/message_seq
-      const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
-      workerEntry.worker.send({ type: 'send', channelId, content, messageType, localMsgId: lmId, channelType, mentions });
-      return { success: true, via: 'worker', messageId: lmId };
-    }
-
-    // 兜底：wukongIM 直连（CLI 模式 / 未发布 / worker 异常）
-    if (!wukongimSender) {
-      return { success: false, via: 'none', error: 'wukongIM 发送器未初始化' };
-    }
+    const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
     try {
-      const r = await wukongimSender.send(agentId, channelId, content, messageType, channelType, mentions);
-      return { success: r?.success !== false, via: 'wukongim', ...(r || {}) };
+      const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId);
+      return { success: result?.success !== false, via: 'hub', messageId: lmId, ...(result || {}) };
     } catch (e: unknown) {
-      return { success: false, via: 'wukongim', error: errorMessage(e) };
+      return { success: false, via: 'hub', messageId: lmId, error: errorMessage(e) };
     }
   };
 }
@@ -124,6 +111,7 @@ function persistAgentMessage(
     const message = errorMessage(e);
     if (!message.includes('UNIQUE constraint')) {
       console.error('[sendMessage] 写入消息失败:', message);
+      throw e;
     }
   }
 
@@ -158,7 +146,7 @@ function persistAgentMessage(
 function createSendMessage({ db, deliver }: {
   db: DatabaseLike;
   deliver: Deliver;
-  agentWorkers?: Map<string, WorkerEntry>;
+  agentWorkers?: Map<string, unknown>;
   mainWindow?: unknown;
 }) {
   return async function sendMessage(
@@ -189,7 +177,7 @@ function createSendMessage({ db, deliver }: {
       db, agentId, channelId, content, fromUid, messageType, channelType, mentions, requestedMessageId,
     );
 
-    // 3. 统一投递（worker 优先 → wukongIM 直连兜底）
+    // 3. 统一通过共享 Hub 投递并等待 SENDACK
     const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId);
 
     // 4. 通知渲染进程（通过事件总线）

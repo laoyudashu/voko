@@ -162,7 +162,7 @@ class MessageHandler extends EventEmitter {
     this.dispatcher = options.dispatcher || null;
     this.ac = options.ac || null;
     this._sendSystemMessage = options.sendSystemMessage || (() => {});
-    this._deliver = options.deliver || null;  // 统一投递器（worker 优先 → wukongIM 直连兜底）
+    this._deliver = options.deliver || null;  // 统一 VokoIMSDK Hub 投递器
     this._checkAuditRules = options.checkAuditRules || (() => ({ action: 'allow' }));
     this._substitutePromptVariables = options.substitutePromptVariables || ((prompt: string) => prompt);
     this._notifyUI = options.notifyUI || (() => {});
@@ -353,6 +353,7 @@ class MessageHandler extends EventEmitter {
         return;
       }
       console.error(`[消息存储] 失败:`, errorMessage(error));
+      throw error;
     }
 
     // 更新会话（未读计数 +1）
@@ -560,6 +561,7 @@ class MessageHandler extends EventEmitter {
         if (!stored || stored.agent_id === agentId) return;
       } else {
         console.error('[群聊消息存储] 失败:', errorMessage(error));
+        throw error;
       }
     }
 
@@ -862,7 +864,7 @@ class MessageHandler extends EventEmitter {
     return request as CapabilityRequest;
   }
 
-  handleAgentReply(data: AgentReplyMessage): void {
+  async handleAgentReply(data: AgentReplyMessage): Promise<void> {
     const { agentId, visitorId, content, done } = data;
     if (!content || !content.trim()) return;
     if (done === false) return; // 流式中间块，等待最终 done=true 再处理
@@ -959,26 +961,27 @@ class MessageHandler extends EventEmitter {
       }
     }
 
-    // 发送给访客（统一投递：worker 优先，无则 wukongIM 直连）
-    if (this._deliver) {
-      this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId)
-        .catch((error: unknown) => console.error('[Agent回复] 投递失败:', errorMessage(error)));
-    } else {
-      const workerEntry = this.agentWorkers?.get(agentId);
-      if (workerEntry) {
-        workerEntry.worker.send({ type: 'send', channelId: replyChannelId, channelType: replyChannelType, content: trimmedContent, localMsgId: msgId, mentions: replyMentions });
-      } else {
-        console.error(`[Agent回复] 未找到 worker: ${agentId}`);
-      }
+    // 发送给访客（统一通过 VokoIMSDK Hub）
+    if (!this._deliver) {
+      this.db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId);
+      console.error(`[Agent回复] IM Hub 投递器未初始化: ${agentId}`);
+      return;
     }
 
+    // 保持本地会话即时可见；最终 sent/failed 状态由下面的 SENDACK 结果更新。
     logEvent('message.replied', { agentId, visitorId: replyChannelId, id: msgId, messageId: msgId, data: { replyLength: trimmedContent.length, channelType: replyChannelType } });
-
-    // 通知 UI
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid: replyChannelId, channelId: replyChannelId, channelType: replyChannelType,
       content: trimmedContent, contentType: 1, messageId: msgId, timestamp, isMe: true, mention: replyMentions
     });
+
+    const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId);
+    if ((delivery as { success?: boolean })?.success === false) {
+      this.db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId);
+      console.error('[Agent回复] 投递失败:', (delivery as { error?: string })?.error || 'unknown error');
+      return;
+    }
+
   }
 }
 

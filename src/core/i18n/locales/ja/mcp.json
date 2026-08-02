@@ -107,12 +107,12 @@
   "mcp.tool.whoami.desc": "查询本地 DB 中所有 Agent 信息。支持按主人邮箱过滤，不传 ownerEmail 则返回全部",
   "mcp.tool.whoami.p.ownerEmail": "主人邮箱，传了只返回该邮箱的 agent，不传返回全部",
 
-  "mcp.tool.start_worker.desc": "启动 Agent 的 IM Worker 进程",
+  "mcp.tool.start_worker.desc": "指定した Agent の IM 接続を開始",
   "mcp.tool.start_worker.p.uid": "IM UID",
   "mcp.tool.start_worker.p.token": "IM Token",
   "mcp.tool.start_worker.p.serverUrl": "IM 服务器地址",
 
-  "mcp.tool.stop_worker.desc": "停止 Agent 的 IM Worker 进程",
+  "mcp.tool.stop_worker.desc": "指定した Agent の IM 接続を停止",
 
   "mcp.tool.ask_human_for_help.desc": "当 agent 遇到无法处理的场景（如需要主人决策、超出权限等），请求主人介入。主人回复后 agent 会收到通知或可通过 check_human_replies 查看",
   "mcp.tool.ask_human_for_help.p.agentId": "哪个 Agent 请求介入",

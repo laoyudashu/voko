@@ -79,7 +79,6 @@ const {
 const { generateOSSSignature, initOSSFromConfig } = require('./server/oss');
 const { AgentWorkerManager } = require('./core/worker-manager');
 const { createDeliver, createSendMessage } = require('./core/send-message');
-const { createWukongimSender } = require('./core/wukongim-sender');
 const {
   acquireInstanceLock,
   cleanupOrphanedWorkers,
@@ -400,12 +399,9 @@ function initCore(args?: any, options: any = {}) {
     dbPath,
     instance: __instanceLock?.metadata || null,
   });
-  // 统一 IM 投递：worker 优先 → wukongIM 直连兜底；注入 agentManager 供 sendSystemMessage 等使用
-  const wukongimSender = createWukongimSender(db, {
-    dbPath,
-    instance: __instanceLock?.metadata || null,
-  });
-  const deliver = createDeliver({ agentWorkers: agentManager.workers, wukongimSender });
+  // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
+  const wukongimSender = agentManager;
+  const deliver = createDeliver({ transportManager: agentManager });
   const sendMessage = createSendMessage({ db, deliver, agentWorkers: agentManager.workers, mainWindow: null });
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;  // 供 /api/message/send 等 HTTP 端点统一发送（自带兜底）
@@ -989,9 +985,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
       ).all(email);
       // 3. 逐个启动
-      for (const a of agents) {
-        agentManager.start(a.agent_id, { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url });
-      }
+      await agentManager.startMany(agents.map((a: any) => ({
+        agentId: a.agent_id,
+        config: { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url },
+      })));
       // 4. 立刻写 runtime
       const agentList = agents.map((a: any) => ({
         agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
@@ -1125,7 +1122,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!agentId || !channelId || !content) {
         return res.json({ success: false, error: '缺少参数: agentId, channelId, content' });
       }
-      // 统一发送：落库 + 会话更新 + 投递（worker 优先 → wukongIM 兜底）
+      // 统一发送：落库 + 会话更新 + 共享 Hub 投递
       res.json(await agentManager.sendImMessage(agentId, channelId, content, fromUid, messageType));
     } catch (e: any) {
       res.json({ success: false, error: e.message });
@@ -1318,12 +1315,12 @@ async function startMcpServer(args?: any, core?: any) {
     ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?").all(userEmail)
     : db.prepare("SELECT * FROM agents WHERE publish_status = 'published'").all();
   const publishedAgentCount = published.length;
-  for (const agent of published) {
-    const config = { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url };
-    agentManager.start(agent.agent_id, config, undefined, true);
-  }
-  agentManager.flushWorkerRegistry();
-  if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${publishedAgentCount} 个 Agent Worker`);
+  const startupResults = await agentManager.startMany(published.map((agent: any) => ({
+    agentId: agent.agent_id,
+    config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
+  })));
+  const startupConnected = startupResults.filter((result: any) => result.connected).length;
+  if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${startupConnected}/${publishedAgentCount} 个 Agent IM 连接`);
 
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
@@ -1341,7 +1338,11 @@ async function startMcpServer(args?: any, core?: any) {
       databaseAPI,
       openclawMode: 'ws',
       hermesConfig: { apiHost: hc.apiHost, apiPort: hc.apiPort, apiKey: hc.apiKey, profiles: hc.profiles || {} },
-      onAgentReply: (data?: any) => messageHandler?.handleAgentReply(data),
+      onAgentReply: (data?: any) => {
+        void messageHandler?.handleAgentReply(data)?.catch((error: any) => {
+          console.error('[Agent回复] 处理失败:', error.message);
+        });
+      },
     });
     openclawHandler = hcResult.openclawHandler;
     hermesHandler = hcResult.hermesHandler;
@@ -1389,13 +1390,14 @@ async function startMcpServer(args?: any, core?: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
   }
 
-  // ── 接管 Worker 事件：消息 → handleAgentMessage（转发给 agent） ──
+  // ── 接管 IM Hub 事件：主消息持久化后才向服务端 ACK ──
   agentManager.on('message', (msg?: any) => {
-    if (messageHandler) {
-      messageHandler.handleAgentMessage(msg.agentId, msg.data);
-    } else {
-      // 兜底：只存不转发
-      try {
+    const data = msg?.data || msg;
+    try {
+      if (messageHandler) {
+        messageHandler.handleAgentMessage(msg.agentId, data);
+      } else {
+        // 兜底：只存不转发；写入失败必须进入 NACK。
         const d = msg.data || msg;
         databaseAPI.saveMessage({
           id: d.messageId || `wk-${msg.agentId}-${Date.now()}`,
@@ -1405,7 +1407,11 @@ async function startMcpServer(args?: any, core?: any) {
           isMe: false, status: 'received', messageSeq: d.messageSeq,
           clientMsgNo: d.clientMsgNo, contentType: d.contentType || 1,
         });
-      } catch (e: any) { console.error('[VOKO Lite] 消息写入失败:', e.message); }
+      }
+      data?.ack?.();
+    } catch (e: any) {
+      console.error('[VOKO Lite] 消息处理失败，已 NACK:', e.message);
+      data?.nack?.(e);
     }
   });
 
@@ -1428,6 +1434,15 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 离线消息同步：Agent 连接后拉取服务端缓存消息 ──
   {
     let _offlineSyncTriggered = false;
+    const _syncingAgents = new Set<string>();
+    const _syncAgent = (agentId: string) => {
+      if (!agentId || !messageHandler || _syncingAgents.has(agentId)) return;
+      _syncingAgents.add(agentId);
+      const { syncOfflineMessages: doSync } = require('./core/offline-sync');
+      doSync(db, messageHandler, agentId)
+        .catch((e: any) => console.error(`[离线同步] Agent ${agentId} 失败:`, e.message))
+        .finally(() => _syncingAgents.delete(agentId));
+    };
     const _trySync = () => {
       if (_offlineSyncTriggered) return;
       _offlineSyncTriggered = true;
@@ -1437,6 +1452,7 @@ async function startMcpServer(args?: any, core?: any) {
     };
     // 每个 Agent 连接时检查是否全部就绪
     agentManager.on('status', (msg?: any) => {
+      if (msg.status === 'connected') _syncAgent(msg.agentId);
       if ((msg.status === 'connected' || msg.statusCode === 2) &&
           publishedAgentCount > 0 &&
           agentManager.connectedAgents.size >= publishedAgentCount) {
@@ -1797,12 +1813,9 @@ async function createLiteApp(options: any = {}) {
     dbPath,
     instance: options.instance || null,
   });
-  // 统一 IM 投递/发送（与 initCore 一致），注入 agentManager 供 sendSystemMessage 等
-  const wukongimSender = createWukongimSender(db, {
-    dbPath,
-    instance: options.instance || null,
-  });
-  const deliver = createDeliver({ agentWorkers: agentManager.workers, wukongimSender });
+  // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
+  const wukongimSender = agentManager;
+  const deliver = createDeliver({ transportManager: agentManager });
   const sendMessage = createSendMessage({ db, deliver, agentWorkers: agentManager.workers, mainWindow: null });
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;
@@ -1841,18 +1854,18 @@ async function createLiteApp(options: any = {}) {
     }
   }
 
-  // ── 自动恢复 worker（仅启动当前用户名下 agent） ──
+  // ── 自动恢复 IM 连接（仅启动当前用户名下 agent） ──
   if (options.autoStartWorkers !== false) {
     const sql = currentUserEmail
       ? "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
       : "SELECT * FROM agents WHERE publish_status = 'published'";
     const published = currentUserEmail ? db.prepare(sql).all(currentUserEmail) : db.prepare(sql).all();
-    for (const agent of published) {
-      const config = { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url };
-      agentManager.start(agent.agent_id, config, options.appPaths, true);
-    }
-    agentManager.flushWorkerRegistry();
-    if (published.length > 0) console.error(`[VOKO Lite] 已启动 ${published.length} 个 Agent Worker`);
+    const startupResults = await agentManager.startMany(published.map((agent: any) => ({
+      agentId: agent.agent_id,
+      config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
+    })));
+    const startupConnected = startupResults.filter((result: any) => result.connected).length;
+    if (published.length > 0) console.error(`[VOKO Lite] 已启动 ${startupConnected}/${published.length} 个 Agent IM 连接`);
 
     // 消息处理 handler 在 MessageHandler 创建后统一注册（见下方）
   }
@@ -1864,13 +1877,49 @@ async function createLiteApp(options: any = {}) {
     messageHandler = new MessageHandler(db, {
       databaseAPI,
       agentWorkers: agentManager.workers,
-      deliver,  // 统一投递（worker 优先 → wukongIM 兜底），供 handleAgentReply 用
+      deliver,  // 统一 VokoIMSDK Hub 投递，供 handleAgentReply 使用
       ac: options.messageHandler.ac || null,
       ...options.messageHandler.callbacks,
     });
   }
 
-  // ── Worker 消息处理已在 main() 中统一注册（line ~1033），此处不重复注册 ──
+  // ── 独立 createLiteApp 调用也必须完成持久化后 ACK ──
+  agentManager.on('message', (msg?: any) => {
+    const data = msg?.data || msg;
+    try {
+      if (messageHandler) {
+        messageHandler.handleAgentMessage(msg.agentId, data);
+      } else {
+        databaseAPI.saveMessage({
+          id: data.messageId || `wk-${msg.agentId}-${Date.now()}`,
+          channelId: data.channelId, channelType: data.channelType || 1,
+          fromUid: data.fromUid, toUid: data.toUid || msg.agentId, agentId: msg.agentId,
+          content: data.content || '', timestamp: data.timestamp || Math.floor(Date.now() / 1000),
+          isMe: false, status: 'received', messageSeq: data.messageSeq,
+          clientMsgNo: data.clientMsgNo, contentType: data.contentType || 1,
+        });
+      }
+      data?.ack?.();
+    } catch (error: any) {
+      console.error('[VOKO Lite] 消息处理失败，已 NACK:', error.message);
+      data?.nack?.(error);
+    }
+  });
+  if (messageHandler) {
+    const syncingAgents = new Set<string>();
+    const syncAgent = (agentId: string) => {
+      if (!agentId || syncingAgents.has(agentId)) return;
+      syncingAgents.add(agentId);
+      require('./core/offline-sync').syncOfflineMessages(db, messageHandler, agentId)
+        .catch((error: any) => console.error(`[离线同步] Agent ${agentId} 失败:`, error.message))
+        .finally(() => syncingAgents.delete(agentId));
+    };
+    agentManager.on('status', (msg?: any) => {
+      if (msg.status === 'connected') syncAgent(msg.agentId);
+    });
+    void require('./core/offline-sync').syncOfflineMessages(db, messageHandler)
+      .catch((error: any) => console.error('[离线同步] 初始同步失败:', error.message));
+  }
 
   // ── 创建后端处理器（可选） ──
   let openclawHandler = null;
@@ -2139,21 +2188,6 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       for (const agent of rows) {
         // IM 状态
         let imOk = agentManager?.getStatus(agent.agent_id)?.connected || false;
-        if (!imOk && agentManager) {
-          try {
-            const workers = agentManager.workers;
-            const entry = workers?.get(agent.agent_id);
-            if (entry?.worker) {
-              imOk = await new Promise((resolve: any) => {
-                const timer2 = setTimeout(() => resolve(false), 2000);
-                entry.worker.once('message', (msg?: any) => {
-                  if (msg?.type === 'pong') { clearTimeout(timer2); resolve(msg.connected === true); }
-                });
-                entry.worker.send({ type: 'ping' });
-              });
-            }
-          } catch (_: any) {}
-        }
 
         // 后端状态跳过检测（已全面支持 CLI 模式，不再依赖长连接状态）
         let backendOk = true;
@@ -2307,9 +2341,10 @@ async function shutdownAll(
   if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
   // 停各 provider（含 gateway 进程清理，避免 detached gateway 在退出后泄漏）
   try { await (global as any).__dispatcher?.stop?.(); } catch (e: any) { console.error('[VOKO Lite] dispatcher.stop 失败:', e.message); }
-  try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] worker 清理失败:', e.message); }
-  if (agentManager?._allWorkers?.size > 0) agentManager.killAll();
-  try { await wukongimSender?.disconnectAll?.(); } catch (e: any) { console.error('[VOKO Lite] sender 清理失败:', e.message); }
+  try { await agentManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] IM Hub 清理失败:', e.message); }
+  if (wukongimSender && wukongimSender !== agentManager) {
+    try { await wukongimSender.disconnectAll?.(); } catch (e: any) { console.error('[VOKO Lite] 兼容发送器清理失败:', e.message); }
+  }
   if (__webSocketServer) {
     try {
       for (const client of __webSocketServer.clients || []) {
@@ -2584,6 +2619,20 @@ async function main() {
     return;
   }
 
+  // IM Hub clients belong to the long-running VOKO process. Short-lived CLI
+  // calls must execute these tools through that process instead of opening a
+  // duplicate IM connection or using the removed legacy direct sender.
+  if (['send_message', 'upload_and_send_file', 'start_worker', 'stop_worker'].includes(subcommand)) {
+    const result = await cli.runRuntimeToolCommand(
+      subcommand,
+      args,
+      resolveDbPath(args, { silent: true }),
+      { agentId: cliAgent, debug: verbose },
+    );
+    if (!result.success) process.exitCode = 1;
+    return;
+  }
+
   const willServe = !subcommand || subcommand === 'start';
   if (willServe) {
     const dbPath = resolveDbPath(args);
@@ -2661,4 +2710,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager, MessageFile: require('./workers/message-content').MessageFile };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

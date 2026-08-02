@@ -4,16 +4,16 @@
  * 把原来 main.js 中 agent-wukongim:connect / disconnect 的业务逻辑抽取出来，
  * 供主进程 IPC 和 MCP 工具共享。
  *
- * 注意：本模块零 Electron 依赖，所有副作用（启动/停止 worker、能力注册、通知 UI 等）
+ * 注意：本模块零 Electron 依赖，所有副作用（启动/停止 IM 连接、能力注册、通知 UI 等）
  * 都通过 opts 注入。
  */
 
 /**
- * 发布 Agent：启动 Worker、连接 IM、注册能力、同步资料、同步服务端状态
+ * 发布 Agent：连接 IM、注册能力、同步资料、同步服务端状态
  * @param {Object} opts
  * @param {Object} opts.db - better-sqlite3 Database 实例
  * @param {string} opts.agentId
- * @param {Function} opts.startAgentWorker - (agentId, config) => void
+ * @param {Function} opts.startAgentWorker - 兼容名称；启动指定 Agent 的 IM 连接
  * @param {Function} opts.stopAgentWorker - (agentId) => Promise|void
  * @param {Function} opts.registerCapabilities - (agentId, options?) => Promise
  * @param {Function} opts.updateAgentProfile - (params) => Promise
@@ -94,9 +94,12 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
       return { success: false, error: `WuKongIM 账号(${uid})已被 agent「${existing.agent_id}」占用，请先下架该 agent 或更换绑定` };
     }
 
-    // 启动 Worker 进程
+    // 启动指定 Agent 的共享 Hub IM 客户端（公开回调名保持兼容）
     if (startAgentWorker) {
-      startAgentWorker(agentId, { uid, token, serverUrl });
+      const imStatus = await startAgentWorker(agentId, { uid, token, serverUrl }) as { error?: string; status?: string } | undefined;
+      if (imStatus?.error || imStatus?.status === 'connect_fail') {
+        return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+      }
     }
 
     const now = Date.now();

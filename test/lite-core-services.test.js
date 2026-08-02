@@ -993,24 +993,23 @@ test('Lite offline sync decodes, persists and forwards a pulled message', async 
   assert.equal(forwarded[0][3], 'visitor-1');
 });
 
-test('Lite delivery prefers a worker and falls back to the direct sender', async () => {
-  const workerMessages = [];
-  const workerDeliver = createDeliver({
-    agentWorkers: new Map([['agent-1', { worker: { send: (message) => workerMessages.push(message) } }]]),
+test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () => {
+  const calls = [];
+  const deliver = createDeliver({
+    transportManager: {
+      async deliver(...args) {
+        calls.push(args);
+        return { success: true, messageId: 'remote-1', messageSeq: 7, clientMsgNo: args[6] };
+      },
+    },
   });
-  const workerResult = await workerDeliver('agent-1', 'visitor-1', 'hello', 'text', 1, null, 'local-1');
-  assert.deepEqual(workerResult, { success: true, via: 'worker', messageId: 'local-1' });
-  assert.equal(workerMessages[0].localMsgId, 'local-1');
-
-  const directCalls = [];
-  const directDeliver = createDeliver({
-    agentWorkers: new Map(),
-    wukongimSender: { async send(...args) { directCalls.push(args); return { success: true, messageId: 'remote-1' }; } },
-  });
-  const directResult = await directDeliver('agent-1', 'visitor-1', 'hello');
-  assert.equal(directResult.via, 'wukongim');
-  assert.equal(directResult.messageId, 'remote-1');
-  assert.equal(directCalls.length, 1);
+  const result = await deliver('agent-1', 'visitor-1', 'hello', 'text', 1, null, 'local-1');
+  assert.equal(result.success, true);
+  assert.equal(result.via, 'hub');
+  assert.equal(result.messageId, 'remote-1');
+  assert.equal(result.messageSeq, 7);
+  assert.equal(result.clientMsgNo, 'local-1');
+  assert.equal(calls.length, 1);
 });
 
 test('Lite send-message normalizes content, persists it and passes the local id to delivery', async () => {

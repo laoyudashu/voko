@@ -673,7 +673,7 @@ test('voko update never downgrades when npm registry is behind the installed ver
   assert.equal(calls.length, 1);
 });
 
-test('account switching waits for old workers to stop before starting new workers', () => {
+test('account switching waits for old IM clients to stop before starting the shared Hub clients', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const restartRoute = entrySource.slice(
     entrySource.indexOf("app.post('/api/agents/restart'"),
@@ -682,7 +682,7 @@ test('account switching waits for old workers to stop before starting new worker
   assert.match(restartRoute, /await agentManager\.stopAll\(\)/);
   assert.ok(
     restartRoute.indexOf('await agentManager.stopAll()')
-      < restartRoute.indexOf('agentManager.start('),
+      < restartRoute.indexOf('await agentManager.startMany('),
   );
 });
 
@@ -698,7 +698,7 @@ test('default lifecycle logs stay concise and stop hides the database path', () 
   const startupSource = entrySource.slice(entrySource.indexOf('async function startMcpServer'));
   assert.ok(
     startupSource.indexOf('printStartupBanner(db, litePort, userEmail)')
-      < startupSource.indexOf('agentManager.start(agent.agent_id'),
+      < startupSource.indexOf('await agentManager.startMany('),
   );
 });
 

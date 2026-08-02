@@ -18,7 +18,6 @@ const { AgentEmailApi } = require('./server/agent-email-api');
 const { getUserAccessToken, getPrimaryOwnerEmail } = require('./core/database');
 const ENDPOINTS = require('./endpoints.json');
 const { createSendMessage, createDeliver } = require('./core/send-message');
-const { createWukongimSender } = require('./core/wukongim-sender');
 const { signDidRequest } = require('./core/did-auth');
 const { createBugReportClient } = require('./core/bug-report');
 import type { DatabaseLike } from './types/database';
@@ -118,10 +117,10 @@ function createContext({
   enqueueOwnerIntervention,
 }: ContextDependencies) {
   // 统一 IM 投递：优先用 initCore 注入的，未传则自建（CLI 等独立调用兼容）
-  const wukongimSender = passedSender || createWukongimSender(db);
-  const deliver = passedDeliver || createDeliver({ agentWorkers: agentManager?.workers || new Map(), wukongimSender });
+  const wukongimSender = passedSender || agentManager;
+  const deliver = passedDeliver || createDeliver({ transportManager: agentManager });
 
-  // sendMessage 内部投递统一走 deliver（worker 优先 → wukongIM 直连兜底）
+  // sendMessage 内部投递统一走共享 IM Hub。
   const sendMessage = passedSendMessage || createSendMessage({
     db,
     deliver,
@@ -136,7 +135,7 @@ function createContext({
   return {
     db,
     wukongimSender,  // 暴露给 CLI 等场景直接使用
-    deliver,         // 暴露统一投递器（worker 优先 → wukongIM 直连）
+    deliver,         // 暴露统一 Hub 投递器
     query: (<T extends UnknownRecord = UnknownRecord>(sql: string, params?: SqlParam[]): T[] => {
       try {
         const stmt = db.prepare(sql);
@@ -184,7 +183,7 @@ function createContext({
         console.error('[Lite] agentManager 未初始化');
         return;
       }
-      agentManager.start(agentId, config, appPaths);
+      return agentManager.start(agentId, config, appPaths);
     },
 
     stopAgentWorker: async (agentId: string) => {
@@ -207,7 +206,7 @@ function createContext({
         }
       } catch (_: unknown) {}
 
-      // 兜底：实时查 Worker 进程
+      // 兜底：实时查询该 Agent 的 IM Hub 客户端
       if (!agentManager) return { imConnected: false, imStatus: 'unknown', backendConnected: false };
       const status = agentManager.getStatus(agentId);
       // 实时查 DB 获取 backend_type，决定后端状态（不依赖 runtime）

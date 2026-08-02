@@ -52,6 +52,23 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('propagates a primary message persistence failure so the transport can NACK', () => {
+    const fixture = createFixture();
+    const originalPrepare = fixture.db.prepare.bind(fixture.db);
+    fixture.db.prepare = (sql) => {
+      if (/INSERT INTO messages/i.test(String(sql))) throw new Error('database unavailable');
+      return originalPrepare(sql);
+    };
+    try {
+      assert.throws(
+        () => fixture.handler.handleAgentMessage('agent-1', inbound()),
+        /database unavailable/,
+      );
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('persists and forwards one direct inbound message with stable identifiers', () => {
     const fixture = createFixture();
     try {

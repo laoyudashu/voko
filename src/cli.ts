@@ -20,6 +20,7 @@ const { runWithProviderCaller, detectProviderSessionFromEnv } = require('./core/
 const { detectCurrentAgentInstance, detectCurrentAgentType } = require('./core/registration-orchestrator');
 const { spawnSync } = require('child_process');
 const path = require('path');
+const crypto = require('crypto');
 
 /**
  * 检查 OSS 最新版本（统一从 OSS manifest 读取）
@@ -234,7 +235,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   cx.processPaymentOrder = (order?: any) => processPendingPaymentOrder(order, {
     db, databaseAPI,
     agentWorkers: agentManager.workers,
-    deliver: cx.deliver,  // 统一投递（worker 优先 → wukongIM 直连兜底）
+    deliver: cx.deliver,  // 统一 VokoIMSDK Hub 投递
     sendMessage: cx.sendMessage,  // 统一发送（落库 + 投递 + UI 通知）
     endpoints: ENDPOINTS,
   });
@@ -332,6 +333,79 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   }
 }
 
+/**
+ * Execute transport-dependent CLI tools inside the running VOKO process.
+ * The Hub and its authenticated clients are process-owned, so a short-lived
+ * CLI process must not create a second connection for the same Agent.
+ */
+async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: any, cliCtx: any = {}) {
+  const { getActiveRuntimePort } = require('./core/runtime-port');
+  const { readInstanceMetadata } = require('./core/process-lifecycle');
+  const port = getActiveRuntimePort(dbPath);
+  const instance = readInstanceMetadata(dbPath);
+  if (!port || !instance?.mcpToken) {
+    const result = { success: false, error: 'VOKO 运行实例未启动，请先运行 voko start' };
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
+  const reserved = new Set(['agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive']);
+  const params: Record<string, any> = {};
+  for (const [key, value] of Object.entries(rawParams || {})) {
+    if (reserved.has(key)) continue;
+    const candidates = [key, kebabToCamel(key), kebabToSnake(key)];
+    const schemaKey = candidates.find(candidate => Object.prototype.hasOwnProperty.call(schema, candidate));
+    const targetKey = schemaKey || candidates[1] || key;
+    params[targetKey] = convertParam(value, schemaKey ? schema[schemaKey] : 'string');
+  }
+  if (Object.prototype.hasOwnProperty.call(schema, 'agentId') && !params.agentId && cliCtx.agentId) {
+    params.agentId = cliCtx.agentId;
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-VOKO-Token': instance.mcpToken,
+    'X-VOKO-Caller-Connection': crypto.randomUUID(),
+  };
+  const providerType = detectCurrentAgentType();
+  const providerInstance = providerType ? detectCurrentAgentInstance(providerType) : null;
+  const providerSession = detectProviderSessionFromEnv(providerType);
+  if (providerType) headers['X-VOKO-Caller-Provider'] = providerType;
+  if (providerInstance) headers['X-VOKO-Caller-Instance'] = providerInstance;
+  if (providerSession) {
+    headers['X-VOKO-Caller-Session'] = providerSession;
+    headers['X-VOKO-Caller-Evidence'] = 'provider_env';
+  }
+
+  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
+      params: { name: `voko_${toolName}`, arguments: params },
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
+  const rpc = await response.json().catch(() => null) as any;
+  if (!response.ok || !rpc || rpc.error) {
+    const result = { success: false, error: rpc?.error?.message || `HTTP ${response.status}` };
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  let result: any = rpc.result;
+  const textBlock = Array.isArray(result?.content)
+    ? result.content.find((block: any) => block?.type === 'text' && typeof block.text === 'string')
+    : null;
+  if (textBlock) {
+    try { result = JSON.parse(textBlock.text); }
+    catch { result = { success: result?.isError !== true, message: textBlock.text }; }
+  }
+  console.log(JSON.stringify(result, null, 2));
+  return { success: result?.success !== false && rpc.result?.isError !== true, result };
+}
+
 // ═══════════════════════════════════════════════
 //  工具文档（voko --tools / voko <tool> --help）
 // ═══════════════════════════════════════════════
@@ -422,4 +496,4 @@ async function printAllToolSchemas(core?: any) {
   console.log(JSON.stringify(cleaned, null, 2));
 }
 
-module.exports = { checkVersion, updateLite, runToolCommand, isKnownTool, printToolHelp, printAllToolSchemas, convertParam };
+module.exports = { checkVersion, updateLite, runToolCommand, runRuntimeToolCommand, isKnownTool, printToolHelp, printAllToolSchemas, convertParam };

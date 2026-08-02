@@ -822,9 +822,10 @@ function createToolHandlers(cx: McpContext) {
         });
       }
 
-      // Step 4：启动 IM Worker
+      // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType });
+        const imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as { error?: string; status?: string } | undefined;
+        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
       }
 
       return { success: true, message: '注册成功', agentId, agentName: data.agentName };
@@ -899,9 +900,10 @@ function createToolHandlers(cx: McpContext) {
         accessModeSynced = statusResult?.success !== false;
       }
 
-      // Step 4：启动 IM Worker
+      // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType });
+        const imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as { error?: string; status?: string } | undefined;
+        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
       }
 
       return {
@@ -1009,18 +1011,21 @@ function createToolHandlers(cx: McpContext) {
     // ─── 5b. 启动/停止 Worker ───
 
     async start_worker(p: McpToolParams = {}) {
-      if (!cx.startAgentWorker) return { success: false, error: '当前环境不支持启动 Worker' };
+      if (!cx.startAgentWorker) return { success: false, error: '当前环境不支持启动 IM 连接' };
       const agent = cx.query(`SELECT imUid, imToken, im_server_url, backend_type FROM agents WHERE agent_id=?`, [p.agentId])[0];
       if (!agent || !agent.imUid || !agent.imToken) {
         return { success: false, error: 'Agent IM 身份或凭证缺失' };
       }
-      cx.startAgentWorker(p.agentId, {
+      const status = await cx.startAgentWorker(p.agentId, {
         uid: agent.imUid,
         token: agent.imToken,
         serverUrl: agent.im_server_url || ENDPOINTS.im.wsUrl,
         backendType: agent.backend_type || 'openclaw',
-      });
-      return { success: true };
+      }) as { error?: string; status?: string } | undefined;
+      if (status?.error || status?.status === 'connect_fail') {
+        return { success: false, error: status.error || 'Agent IM 连接失败' };
+      }
+      return { success: true, status };
     },
 
     async stop_worker(p: McpToolParams = {}) {
@@ -2350,7 +2355,7 @@ function createToolHandlers(cx: McpContext) {
 
     // ═══════════════════════════════════════════
     //  群聊（group chat）—— 全部走服务端 /api/group/v1/*（服务端为权威 + 单一写者）
-    //  lite 不再直连 WuKongIM 做群管理；消息收发仍走 WKSDK（wukongim-sender / messenger）
+    // lite 不直连 WuKongIM 做群管理；消息收发统一走 VokoIMSDK Hub。
     // ═══════════════════════════════════════════
 
     // 本地补全成员昵称 + isAgent + mute_until（服务端成员回 uid/role/joined_at/mute_until）

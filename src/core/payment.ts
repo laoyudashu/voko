@@ -53,14 +53,10 @@ interface DatabaseApiLike {
   saveOwnerIntervention(data: Record<string, unknown>): unknown;
 }
 
-interface WorkerEntry {
-  worker: { send(message: Record<string, unknown>): void };
-}
-
 interface PaymentDeps {
   db: DatabaseLike;
   databaseAPI: DatabaseApiLike;
-  agentWorkers?: Map<string, WorkerEntry>;
+  agentWorkers?: Map<string, unknown>;
   wukongimSender?: { send(...args: unknown[]): Promise<unknown> };
   deliver?: (...args: unknown[]) => Promise<unknown>;
   sendMessage?: (...args: unknown[]) => Promise<unknown>;
@@ -186,7 +182,6 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
       await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text');
     } else {
       // 兜底（未注入 sendMessage）：保留原 落库 + 投递 逻辑
-      const entry = agentWorkers?.get(order.agent_id);
       const textMsgId = `pay_msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
       db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(textMsgId, fromUid, order.visitor_id, textMsg, order.visitor_id, 1, order.agent_id, timestamp, 1, 'sent', null, null, 0, 0, 0, 1);
@@ -194,11 +189,8 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
         .run(fromUid, order.visitor_id, 1, order.visitor_id, textMsg, timestamp, 0, order.agent_id);
       db.prepare(`UPDATE conversations SET last_message = ?, last_timestamp = ? WHERE user_uid = ? AND channel_id = ?`)
         .run(textMsg, timestamp, fromUid, order.visitor_id);
-      if (entry) {
-        entry.worker.send({ type: 'send', channelId: order.visitor_id, content: textMsg, messageType: 'text', localMsgId: textMsgId });
-      } else if (wukongimSender) {
-        try { await wukongimSender.send(order.agent_id, order.visitor_id, textMsg); } catch (err: unknown) { console.error('[Payment] wukongIM 直连发送失败:', errorMessage(err)); }
-      }
+      if (deliver) await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId);
+      else throw new Error('IM Hub 投递器未初始化');
     }
 
     if (!sendMessage) {

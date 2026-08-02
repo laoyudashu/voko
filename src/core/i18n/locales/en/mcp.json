@@ -109,12 +109,12 @@
   "mcp.tool.whoami.desc": "Query all Agent information from the local database. Optionally filter by owner email; returns all agents when ownerEmail is omitted.",
   "mcp.tool.whoami.p.ownerEmail": "Owner email address; when provided, returns only agents belonging to that email; when omitted, returns all",
 
-  "mcp.tool.start_worker.desc": "Start the IM Worker process for an Agent",
+  "mcp.tool.start_worker.desc": "Start the IM connection for the specified Agent",
   "mcp.tool.start_worker.p.uid": "IM UID",
   "mcp.tool.start_worker.p.token": "IM Token",
   "mcp.tool.start_worker.p.serverUrl": "IM server URL",
 
-  "mcp.tool.stop_worker.desc": "Stop the IM Worker process for an Agent",
+  "mcp.tool.stop_worker.desc": "Stop the IM connection for the specified Agent",
 
   "mcp.tool.ask_human_for_help.desc": "When an agent encounters a scenario it cannot handle (e.g. requires owner decision, exceeds permissions, etc.), request owner intervention. After the owner replies, the agent will receive a notification or can check via check_human_replies.",
   "mcp.tool.ask_human_for_help.p.agentId": "Which Agent is requesting intervention",
