@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
-const { buildConversationRecoveryPrompt } = require('../conversation-context');
+const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, PushPayload } from '../types';
 
@@ -119,7 +119,6 @@ class OpenClawWsProvider {
     this._legacyReplyTimers = new Map();  // 旧版 final 短暂延迟，优先采用新版完整回复
     this._sessionTurns = new Map();  // sessionKey → 当前入站 turn 身份
     this._vokoAgentBySession = new Map(); // OpenClaw 实例 session → VOKO agentId
-    this._recoveryWarmedSessions = new Set();
 
     // 初始化
     this.loadConfig();
@@ -685,7 +684,6 @@ class OpenClawWsProvider {
         // 断线后订阅状态失效；不清除会导致新消息永远卡在「订阅中」
         this.subscribedSessions.clear();
         this._rejectPendingSubscriptions(new Error('OpenClaw WebSocket closed'));
-        this._recoveryWarmedSessions.clear();
 
         // 如果启用了自动回复，尝试重连
         if (this.enabled) {
@@ -992,7 +990,6 @@ class OpenClawWsProvider {
     this._legacyReplyTimers.clear();
     this._chatFinalSessions.clear();
     this._sessionTurns.clear();
-    this._recoveryWarmedSessions.clear();
     this._replyProtocol = null;
 
     // 清理 pending replies
@@ -1460,11 +1457,7 @@ class OpenClawWsProvider {
       });
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
-    const recoveryKey = sessionKey.toLowerCase();
-    const prompt = this._recoveryWarmedSessions.has(recoveryKey)
-      ? content
-      : buildConversationRecoveryPrompt(this.db, payload);
-    this._recoveryWarmedSessions.add(recoveryKey);
+    const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
     return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
   }
 

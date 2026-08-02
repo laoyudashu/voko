@@ -1,18 +1,13 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
 interface OpenClawCliOptions {
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
-}
-
-interface ContextMessage {
-  content: string;
-  is_me: number;
-  timestamp: number;
 }
 
 interface OpenClawPayload {
@@ -29,16 +24,14 @@ function errorMessage(error: unknown): string {
  * 长连接（openclaw-ws）不可用时，通过 spawn 本地 openclaw CLI 通知 agent。
  *
  * 改进：
- * - contextWindow > 0 时从 DB 拉最近 N 条对话上下文内嵌到通知
+ * - 仅在原生 session 不可恢复时，从 DB 注入一次有限历史
  * - 通过 --json 解析 stdout 直接获取 agent 回复，不走 send_message
  * - 保留 get_chat_history 指令供 agent 按需 fetch 更早历史
  */
 class OpenClawCliProvider extends PushProvider {
   /**
    * @param {object} [options]
-   * @param {number} [options.contextWindow=0] - 推送时附带的上下文条数
-   *    0 = 只发原始消息
-   *    N = 从 messages 表拉最近 N 条对话附加上下文（CLI 模式无状态，index.js 默认传 20）
+   * @param {number} [options.contextWindow=0] - session 恢复失败时注入的历史条数
    * @param {object} [options.db] - better-sqlite3 实例（contextWindow>0 时需要）
    */
   constructor(options: OpenClawCliOptions = {}) {
@@ -95,18 +88,12 @@ class OpenClawCliProvider extends PushProvider {
       });
     }
 
-    // 取上下文
-    let contextMsgs: ContextMessage[] = [];
-    if (payload.channelType !== 2 && this._contextWindow > 0 && this._db) {
-      try {
-        contextMsgs = (this._db.prepare(
-          `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
-        ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
-      } catch (_) {}
-    }
-    console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=selected contextWindow=${this._contextWindow}`);
+    const deliveryContent = buildConversationDeliveryPrompt(
+      this._db, payload, canResumeBinding, this._contextWindow,
+    );
+    console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=${canResumeBinding ? 'resume' : 'new-or-recovery'}`);
 
-    const notification = _buildNotification(agentId, fromUid, content, contextMsgs, sessionKey);
+    const notification = _buildNotification(agentId, fromUid, deliveryContent, sessionKey);
     // Windows 下 --message 经 cmd.exe 传多行/含元字符 notification 会被截断或注入，净化为单行
     const safeNotification = this._isWin ? sanitizeCmdArg(notification) : notification;
 
@@ -201,18 +188,9 @@ function _buildNotification(
   agentId: string,
   fromUid: string,
   content: string,
-  contextMsgs: ContextMessage[],
   sessionKey?: string,
 ): string {
   let msg = `【访客消息】\n访客：${fromUid}\n消息：${content}`;
-
-  if (contextMsgs && contextMsgs.length > 0) {
-    msg += `\n\n【最近对话】\n${contextMsgs.map((m: ContextMessage, i: number) => {
-      const role = m.is_me >= 1 ? '你' : '访客';
-      return `[${i + 1}] ${role}: ${m.content}`;
-    }).join('\n')}`;
-  }
-
   msg += `\n\n当前 session: ${sessionKey || `agent:${agentId}:${fromUid}`}`;
   return msg;
 }

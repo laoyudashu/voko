@@ -1,18 +1,13 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
 interface HermesCliOptions {
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
-}
-
-interface ContextMessage {
-  content: string;
-  is_me: number;
-  timestamp: number;
 }
 
 function errorMessage(error: unknown): string {
@@ -25,12 +20,12 @@ function errorMessage(error: unknown): string {
  * 改进：
  * - JSON 格式 push（type/content/visitorId/safety/sessionKey）
  * - 解析 stdout 直接获取 agent 回复，不走 HTTP API
- * - 上下文窗口（contextWindow 参数）
+ * - 仅在原生 session 不可恢复时使用 contextWindow 恢复历史
  */
 class HermesCliProvider extends PushProvider {
   /**
    * @param {object} [options]
-   * @param {number} [options.contextWindow=0] - 推送时附带的上下文条数
+   * @param {number} [options.contextWindow=0] - session 恢复失败时注入的历史条数
    * @param {object} [options.db] - better-sqlite3 实例
    */
   constructor(options: HermesCliOptions = {}) {
@@ -85,17 +80,10 @@ class HermesCliProvider extends PushProvider {
       });
     }
 
-    // 取上下文
-    let contextMsgs: ContextMessage[] = [];
-    if (payload.channelType !== 2 && this._contextWindow > 0 && this._db) {
-      try {
-        contextMsgs = (this._db.prepare(
-          `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
-        ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
-      } catch (_) {}
-    }
-
-    const notification = _buildNotification(agentId, fromUid, content, contextMsgs);
+    const deliveryContent = buildConversationDeliveryPrompt(
+      this._db, payload, canResumeBinding, this._contextWindow,
+    );
+    const notification = _buildNotification(agentId, fromUid, deliveryContent);
     // Windows 下 -z 经 cmd.exe 传多行/含元字符的 notification 会被截断或注入，净化为单行
     const safeNotification = process.platform === 'win32' ? sanitizeCmdArg(notification) : notification;
     console.error(`[HermesCli] push agent=${agentId} visitor=${fromUid} session=selected`);
@@ -197,17 +185,8 @@ function _buildNotification(
   agentId: string,
   fromUid: string,
   content: string,
-  contextMsgs: ContextMessage[],
 ): string {
   let msg = `【访客消息】\n访客：${fromUid}\n消息：${content}`;
-
-  if (contextMsgs && contextMsgs.length > 0) {
-    msg += `\n\n【最近对话】\n${contextMsgs.map((m: ContextMessage, i: number) => {
-      const role = m.is_me >= 1 ? '你' : '访客';
-      return `[${i + 1}] ${role}: ${m.content}`;
-    }).join('\n')}`;
-  }
-
   msg += `\n\n当前 session: hermes:${agentId}:${fromUid}`;
 
   return msg;

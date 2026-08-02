@@ -5,6 +5,7 @@ const { PushProvider } = require('../base-provider');
 const { runCli, killTree, checkCliAvailable } = require('../../adapters/cli-spawner');
 const { createParser } = require('../../adapters/cli-parsers');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const {
   isolatedOpenCodeEnv,
   buildOpenCodeVisitorContent,
@@ -22,7 +23,6 @@ interface Options {
 }
 
 interface SessionRow { session_handle?: string }
-interface ContextRow { content: string; is_me: number }
 interface OpenCodeMessage {
   info?: { role?: string };
   parts?: Array<{ type?: string; text?: string }>;
@@ -138,22 +138,6 @@ class OpenCodeAttachProvider extends PushProvider {
     `).run(agentId, visitorId, ADAPTER_TYPE, sessionId, Date.now());
   }
 
-  _prompt(agentId: string, visitorId: string, content: string): string {
-    let history: ContextRow[] = [];
-    try {
-      history = (this._db?.prepare(`
-        SELECT content, is_me FROM messages
-        WHERE channel_id=? AND agent_id=? AND content_type!=11
-        ORDER BY timestamp DESC LIMIT ?
-      `).all(visitorId, agentId, this._contextWindow) as ContextRow[] || []).reverse();
-    } catch {}
-    const previous = history.map(row => `${row.is_me >= 1 ? 'Agent' : 'Visitor'}: ${row.content}`).join('\n');
-    return [
-      buildOpenCodeVisitorContent(agentId, visitorId, content),
-      previous ? `Recent conversation:\n${previous}` : '',
-    ].filter(Boolean).join('\n\n');
-  }
-
   async _loadLatestReply(sessionId: string): Promise<string> {
     if (!sessionId || !this._port || !this._password) return '';
     const auth = Buffer.from(`opencode:${this._password}`).toString('base64');
@@ -205,7 +189,10 @@ class OpenCodeAttachProvider extends PushProvider {
         });
     const savedSession = activeBinding?.nativeSessionId
       || ((payload as any).__vokoManagedRetry ? null : this._loadSession(agentId, fromUid));
-    const prompt = this._prompt(agentId, fromUid, content);
+    const deliveryContent = buildConversationDeliveryPrompt(
+      this._db, payload, Boolean(savedSession), this._contextWindow,
+    );
+    const prompt = buildOpenCodeVisitorContent(agentId, fromUid, deliveryContent);
     const args = [
       'run', '--attach', `http://127.0.0.1:${this._port}`, '--format', 'json',
       ...(savedSession ? ['--session', savedSession] : []),

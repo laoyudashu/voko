@@ -3,6 +3,7 @@ const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable } = require('../../adapters/cli-spawner');
 const { resolveGooseCommand } = require('../goose-command');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, PushPayload } from '../types';
 
@@ -10,12 +11,6 @@ export interface GooseCliOptions {
   binPath?: string;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   contextWindow?: number;
-}
-
-interface ContextMessage {
-  content: string;
-  is_me: number;
-  timestamp: number;
 }
 
 interface GooseContent {
@@ -77,24 +72,11 @@ class GooseCliProvider extends PushProvider {
           legacyVisitorId: fromUid,
         });
 
-    // 取上下文
-    let contextMsgs: ContextMessage[] = [];
-    if (payload.channelType !== 2 && this._contextWindow > 0 && this._db) {
-      try {
-        contextMsgs = (this._db.prepare(
-          `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
-        ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
-      } catch (_) {}
-    }
-
-    let notification = `session: goose:${agentId}:${fromUid}\n\n【访客最新消息】\n${content}`;
-    if (contextMsgs && contextMsgs.length > 0) {
-      notification += `\n\n【最近对话】\n${contextMsgs.map((m: ContextMessage, i: number) => {
-        const role = m.is_me >= 1 ? 'Agent' : '访客';
-        return `[${i + 1}] ${role}: ${m.content}`;
-      }).join('\n')}`;
-    }
     const hasSession = !!activeBinding;
+    const deliveryContent = buildConversationDeliveryPrompt(
+      this._db, payload, hasSession, this._contextWindow,
+    );
+    const notification = `session: goose:${agentId}:${fromUid}\n\n${deliveryContent}`;
 
     const args = ['run', '-i', '-', '--name', sessionName, '--quiet', '--output-format', 'json'];
     if (hasSession) args.push('--resume');

@@ -52,30 +52,11 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 
 部分注册、跨端消息、邮件、支付与更新检查依赖 VOKO 运营的服务；它们不是本地运行时的前提。启用前请阅读 [云端依赖说明](CLOUD_DEPENDENCIES.md) 和 [隐私说明](PRIVACY.md)。
 
-## Provider 兼容性
+## Provider 兼容性与实测
 
-VOKO 的首批兼容性矩阵包含 16 类 Agent Provider。公开状态分为“已验证”“已实现，待实测”和“仅识别 / pull-only”；“已验证”的依据会明确区分真实环境实测与自动化适配/契约测试。
+VOKO 的公开矩阵覆盖 16 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Goose、Codex、Claude Code、OpenCode 等已完成所列真机功能验证；Gemini、OpenHands 与 Amazon Q 仍有待验证或环境受阻的路径。
 
-| Provider | 接入方式 | 公开状态 | 验证依据 |
-| --- | --- | --- | --- |
-| OpenClaw | WebSocket、CLI | 已验证 | 真实环境实测 |
-| ZeroClaw | WebSocket、ACP | 已验证 | 自动化适配/契约测试 |
-| Hermes | HTTP、CLI | 已验证 | 真实环境实测 |
-| Goose | CLI、ACP | 已验证 | 自动化适配/契约测试 |
-| Claude Code | CLI | 已验证 | 自动化适配/契约测试 |
-| Codex | CLI | 已验证 | 自动化适配/契约测试 |
-| Gemini | CLI | 已实现，待实测 | CLI Provider 已实现，未列为专用行为测试覆盖 |
-| Cursor | CLI、ACP | 已验证 | 自动化适配/契约测试 |
-| Grok | CLI / pull-only | 仅识别 / pull-only | 命令/进程识别与主动获取 |
-| OpenCode | CLI、ACP、Attach | 已验证 | 自动化适配/契约测试 |
-| Pi Coding Agent | CLI | 已验证 | 自动化适配/契约测试 |
-| Qwen Code | CLI | 已验证 | 自动化适配/契约测试 |
-| Kiro CLI | CLI | 已验证 | 自动化适配/契约测试 |
-| GitHub Copilot CLI | ACP、CLI | 已验证 | 自动化适配/契约测试 |
-| OpenHands | CLI / pull-only | 仅识别 / pull-only | 命令/进程识别与主动获取 |
-| Aider | CLI | 已验证 | 自动化适配/契约测试 |
-
-完整的验证边界、系统说明和贡献方式见 [Provider 兼容性矩阵](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
+所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
 
 ## 平台与本地运行
 

@@ -52,30 +52,11 @@ For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup gui
 
 Some registration, cross-end messaging, email, payment, and update-check flows depend on VOKO-operated services. They are not prerequisites for the local runtime. Read [Cloud dependencies](CLOUD_DEPENDENCIES.md) and [Privacy](PRIVACY.md) before enabling them.
 
-## Provider compatibility
+## Provider compatibility and validation
 
-The initial compatibility matrix covers 16 Agent Provider families. Public status is “Verified,” “Implemented, pending field validation,” or “Discovery / pull-only.” The evidence column distinguishes real-environment validation from automated adapter or contract tests.
+VOKO's public matrix covers 16 primary Provider families and records recognized environments such as Amazon Q, WorkBuddy, and Doubao. Detection, functional validation, and complete real-device regression are different evidence levels: OpenClaw, Hermes, and Cursor have completed the documented real-device regression; Goose, Codex, Claude Code, and OpenCode have documented real-device functional validation; Gemini, OpenHands, and Amazon Q still contain pending or environment-blocked paths.
 
-| Provider | Integration | Public status | Evidence |
-| --- | --- | --- | --- |
-| OpenClaw | WebSocket, CLI | Verified | Real-environment validation |
-| ZeroClaw | WebSocket, ACP | Verified | Automated adapter/contract tests |
-| Hermes | HTTP, CLI | Verified | Real-environment validation |
-| Goose | CLI, ACP | Verified | Automated adapter/contract tests |
-| Claude Code | CLI | Verified | Automated adapter/contract tests |
-| Codex | CLI | Verified | Automated adapter/contract tests |
-| Gemini | CLI | Implemented, pending field validation | CLI Provider is implemented; no dedicated behavior-test coverage is claimed |
-| Cursor | CLI, ACP | Verified | Automated adapter/contract tests |
-| Grok | CLI / pull-only | Discovery / pull-only | Command/process detection and active retrieval |
-| OpenCode | CLI, ACP, Attach | Verified | Automated adapter/contract tests |
-| Pi Coding Agent | CLI | Verified | Automated adapter/contract tests |
-| Qwen Code | CLI | Verified | Automated adapter/contract tests |
-| Kiro CLI | CLI | Verified | Automated adapter/contract tests |
-| GitHub Copilot CLI | ACP, CLI | Verified | Automated adapter/contract tests |
-| OpenHands | CLI / pull-only | Discovery / pull-only | Command/process detection and active retrieval |
-| Aider | CLI | Verified | Automated adapter/contract tests |
-
-For verification scope, OS notes, and how to contribute a result, see the [Provider compatibility matrix](docs/provider-compatibility.md). Install and sign in to external Providers yourself, and make their executable available on `PATH`; their licensing, availability, and OS support are outside VOKO's guarantee.
+Automatic channels run only when they are locally available and selected during registration. Pull is always available: an Agent can retrieve messages through the VOKO CLI, MCP, or local interface. See [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md) for primary, fallback, and pull order; test OS notes; session-recovery boundaries; and safety limits. Install and sign in to external Providers yourself, and make their executable available on `PATH`; their licensing, availability, and OS support are outside VOKO's guarantee.
 
 ## Platforms and local runtime
 

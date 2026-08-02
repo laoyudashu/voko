@@ -96,3 +96,19 @@ export function buildConversationRecoveryPrompt(
   }
   return `${recovery}\n${deliveryContent}`;
 }
+
+/**
+ * Normal delivery reuses the Provider's native conversation and sends only the
+ * current message. History is attached only while creating a replacement
+ * session after no resumable binding is available.
+ */
+export function buildConversationDeliveryPrompt(
+  db: Pick<DatabaseLike, 'prepare'> | null | undefined,
+  payload: PushPayload,
+  hasResumableSession: boolean,
+  contextWindow = DEFAULT_CONTEXT_WINDOW,
+): string {
+  return hasResumableSession
+    ? String(payload.content ?? '').trim()
+    : buildConversationRecoveryPrompt(db, payload, contextWindow);
+}
