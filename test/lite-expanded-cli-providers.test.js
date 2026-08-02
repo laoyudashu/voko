@@ -100,7 +100,7 @@ test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', 
   assert.equal(new HermesCliProvider({ db })._instanceForAgent('voko-agent'), 'hermes-profile');
 });
 
-test('OpenClaw and Hermes CLI fallbacks reject failed processes so dispatcher can continue to Pull', async (t) => {
+test('OpenClaw rejects a failed CLI process and Hermes reports a background delivery error', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const previousPath = process.env.PATH;
@@ -118,7 +118,55 @@ test('OpenClaw and Hermes CLI fallbacks reject failed processes so dispatcher ca
   };
   const payload = { agentId: 'voko-agent', fromUid: 'visitor', content: 'hello', messageId: 'message' };
   await assert.rejects(new OpenClawCliProvider({ db }).push(payload), /OpenClaw exited with code 7/);
-  await assert.rejects(new HermesCliProvider({ db }).push(payload), /Hermes exited with code 7/);
+  const errors = [];
+  const hermes = new HermesCliProvider({
+    db,
+    runCli: async () => ({ stdout: '', stderr: '', code: 7, signal: null }),
+  });
+  hermes.on('delivery.error', (error) => errors.push(error));
+  await hermes.push(payload);
+  await hermes.waitForIdle();
+  assert.equal(errors[0].kind, 'execution_failed');
+});
+
+test('Hermes CLI fallback queues the same profile serially without blocking dispatch', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const starts = [];
+  const provider = new HermesCliProvider({
+    db: {
+      prepare: () => ({ get: () => ({ backend_instance_id: 'shared-profile' }) }),
+    },
+    runCli: async ({ args }) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      starts.push(args[args.length - 1]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active--;
+      return { stdout: 'queued reply', stderr: '', code: 0, signal: null };
+    },
+  });
+  const first = provider.push({ agentId: 'agent-a', fromUid: 'visitor-1', content: 'one', messageId: 'm1' });
+  const second = provider.push({ agentId: 'agent-a', fromUid: 'visitor-2', content: 'two', messageId: 'm2' });
+  await Promise.all([first, second]);
+  assert.equal(active <= 1, true);
+  await provider.waitForIdle('shared-profile');
+  assert.equal(maxActive, 1);
+  assert.equal(starts.length, 2);
+});
+
+test('Hermes CLI fallback classifies approval and timeout failures', async () => {
+  for (const [message, kind] of [['Hermes pending approval', 'approval_required'], ['cli 超时 (120000ms)', 'timeout']]) {
+    const errors = [];
+    const provider = new HermesCliProvider({
+      db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }) },
+      runCli: async () => { throw new Error(message); },
+    });
+    provider.on('delivery.error', (error) => errors.push(error));
+    await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: kind });
+    await provider.waitForIdle();
+    assert.equal(errors[0].kind, kind);
+  }
 });
 
 test('Cursor prefers ACP with a restricted CLI fallback', () => {

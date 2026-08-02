@@ -9,12 +9,22 @@ const path = require('path');
  */
 function getHermesDirCandidates() {
   const candidates = [];
+  const configuredHome = String(process.env.HERMES_HOME || '').trim();
+  if (configuredHome) {
+    const configuredPath = path.resolve(configuredHome);
+    candidates.push(path.basename(path.dirname(configuredPath)).toLowerCase() === 'profiles'
+      ? path.dirname(path.dirname(configuredPath))
+      : configuredPath);
+  }
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA;
     if (localAppData) candidates.push(path.join(localAppData, 'hermes'));
   }
   candidates.push(path.join(os.homedir(), '.hermes'));
-  return candidates;
+  return [...new Map(candidates.map(dir => {
+    const resolved = path.resolve(dir);
+    return [process.platform === 'win32' ? resolved.toLowerCase() : resolved, resolved];
+  })).values()];
 }
 
 /** 返回第一个存在的 Hermes 根目录，均不存在则 null */
@@ -38,6 +48,10 @@ function getHermesProfilePath(profileName, ...segments) {
   return path.join(getHermesProfilesDir(), profileName, ...segments);
 }
 
+function getHermesProfilePathCandidates(profileName, ...segments) {
+  return getHermesDirCandidates().map(dir => path.join(dir, 'profiles', profileName, ...segments));
+}
+
 function getHermesEnvPath() {
   return path.join(getHermesDir(), '.env');
 }
@@ -52,6 +66,7 @@ module.exports = {
   getHermesDir,
   getHermesProfilesDir,
   getHermesProfilePath,
+  getHermesProfilePathCandidates,
   getHermesEnvPath,
   getHermesConfigPath,
 };

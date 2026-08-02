@@ -4,6 +4,7 @@ import type { IncomingHttpHeaders } from 'http';
 
 interface HermesProfile {
   port?: number;
+  apiKey?: string;
 }
 
 type HermesProfiles = Record<string, HermesProfile>;
@@ -18,6 +19,7 @@ export interface HermesApiClientOptions {
 interface ConnectionOverrides {
   host?: string;
   port?: number;
+  apiKey?: string;
 }
 
 interface HermesCompletionResponse {
@@ -75,6 +77,15 @@ class HermesApiClient extends EventEmitter {
     return this.profiles?.[agentId]?.port || this.port;
   }
 
+  _agentConnection(agentId: string): ConnectionOverrides {
+    const profile = this.profiles?.[agentId] || {};
+    return { port: profile.port || this.port, apiKey: profile.apiKey || this.apiKey };
+  }
+
+  setProfile(agentId: string, profile: HermesProfile): void {
+    this.profiles[agentId] = { ...(this.profiles[agentId] || {}), ...profile };
+  }
+
   _request(
     method: string,
     path: string,
@@ -85,6 +96,7 @@ class HermesApiClient extends EventEmitter {
   ): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => {
       const data = body ? JSON.stringify(body) : null;
+      const apiKey = connOverrides.apiKey ?? this.apiKey;
       const options = {
         hostname: connOverrides.host || this.host,
         port: connOverrides.port || this.port,
@@ -93,7 +105,7 @@ class HermesApiClient extends EventEmitter {
         timeout: timeoutMs,
         headers: {
           'Content-Type': 'application/json',
-          ...(this.apiKey ? { 'Authorization': `Bearer ${this.apiKey}` } : {}),
+          ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
           ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
           ...extraHeaders
         }
@@ -106,7 +118,7 @@ class HermesApiClient extends EventEmitter {
           const statusCode = res.statusCode ?? 0;
           if (statusCode < 200 || statusCode >= 300) {
             if (statusCode === 401) {
-              console.warn(`[HermesApiClient] 401 ${method} ${path} port=${options.port} apiKey=${_keyLog(this.apiKey)}`);
+              console.warn(`[HermesApiClient] 401 ${method} ${path} port=${options.port} apiKey=${_keyLog(apiKey)}`);
             }
             reject(new Error(`HTTP ${statusCode}: ${buf.substring(0, 200)}`));
             return;
@@ -142,8 +154,8 @@ class HermesApiClient extends EventEmitter {
   ): Promise<HermesChatResult> {
     const sessionId = this._sessionKey(agentId, visitorId);
     const enriched = `[访客 ${visitorId}]: ${message}`;
-    const conn = { port: this._agentPort(agentId) };
-    console.log(`[HermesApiClient] chat agentId=${agentId} port=${conn.port} apiKey=${_keyLog(this.apiKey)}`);
+    const conn = this._agentConnection(agentId);
+    console.log(`[HermesApiClient] chat agentId=${agentId} port=${conn.port} apiKey=${_keyLog(conn.apiKey || '')}`);
 
     const resp = await this._request('POST', '/v1/chat/completions', {
       messages: [{ role: 'user', content: enriched }],
@@ -161,7 +173,7 @@ class HermesApiClient extends EventEmitter {
   async steer(agentId: string, visitorId: string, content: string): Promise<HermesSteerResult> {
     const sessionId = this._sessionKey(agentId, visitorId);
     const enriched = `[系统消息] ${content}`;
-    const conn = { port: this._agentPort(agentId) };
+    const conn = this._agentConnection(agentId);
 
     const resp = await this._request('POST', '/v1/chat/completions', {
       messages: [
@@ -181,10 +193,20 @@ class HermesApiClient extends EventEmitter {
    */
   async ping(agentId?: string): Promise<boolean> {
     try {
-      const conn = agentId ? { port: this._agentPort(agentId) } : {};
+      const conn = agentId ? this._agentConnection(agentId) : {};
       await this._request('GET', '/health', null, PING_TIMEOUT, {}, conn);
       return true;
     } catch (e) {
+      return false;
+    }
+  }
+
+  /** Verify both reachability and the selected profile credential. */
+  async authenticate(agentId: string): Promise<boolean> {
+    try {
+      await this._request('GET', '/v1/models', null, PING_TIMEOUT, {}, this._agentConnection(agentId));
+      return true;
+    } catch (_) {
       return false;
     }
   }

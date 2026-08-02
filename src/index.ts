@@ -596,7 +596,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       let apiKey = h.options?.apiKey || '';
       try {
         const hermesCfg = databaseAPI.getConfigFromDb('hermes_config') || {};
-        profiles = hermesCfg?.profiles || {};
+        profiles = Object.fromEntries(Object.entries(hermesCfg?.profiles || {}).map(([profileId, profile]: [string, any]) => [
+          profileId,
+          { port: profile?.port || null, hasApiKey: !!profile?.apiKey || !!hermesCfg?.apiKey },
+        ]));
         apiKey = apiKey || hermesCfg?.apiKey || '';
       } catch (_: any) {}
       const connectedAgents = h.connectedAgents ? Array.from(h.connectedAgents) : [];
@@ -2158,18 +2161,17 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── Hermes 健康检查 + 自动恢复 ──
       if (hermesHandler?.client) {
         try { await hermesHandler.healthCheck(); } catch (_: any) {}
-        if (!hermesHandler.connected) {
-          try {
-            const sql = userEmail
-              ? `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
-              : `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
-            const downAgents = userEmail ? db.prepare(sql).all(userEmail) : db.prepare(sql).all();
-            for (const { agent_id } of downAgents) {
-              try { await hermesHandler._ensureGatewayRunning(agent_id); }
-              catch (e: any) { console.error('[Lite] Hermes gateway 恢复失败:', agent_id, e.message); }
-            }
-          } catch (_: any) {}
-        }
+        try {
+          const sql = userEmail
+            ? `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
+            : `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
+          const hermesAgents = userEmail ? db.prepare(sql).all(userEmail) : db.prepare(sql).all();
+          for (const { agent_id } of hermesAgents) {
+            if (hermesHandler.isProfileReady?.(agent_id)) continue;
+            try { await hermesHandler._ensureGatewayRunning(agent_id); }
+            catch (e: any) { console.error('[Lite] Hermes gateway 恢复失败:', agent_id, e.message); }
+          }
+        } catch (_: any) {}
       }
 
       // ── 遍历 agent 检测状态 ──
@@ -2184,8 +2186,10 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         // IM 状态
         let imOk = agentManager?.getStatus(agent.agent_id)?.connected || false;
 
-        // 后端状态跳过检测（已全面支持 CLI 模式，不再依赖长连接状态）
-        let backendOk = true;
+        // Hermes 需同时具备 profile key 且最近未发生鉴权失败；其他 CLI 后端按可用处理。
+        const backendOk = agent.backend_type === 'hermes'
+          ? !!hermesHandler?.isProfileReady?.(agent.agent_id)
+          : true;
 
         if (imOk) imOnline++;
         if (backendOk) backendOnline++;
@@ -2229,7 +2233,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         else if (!s?.connected && !s?.connecting) warnings.push({ type: 'ws-disconnected', message: '⚠️ OpenClaw Gateway 未连接', action: null });
         else if (s?.connecting) warnings.push({ type: 'ws-connecting', message: '⏳ OpenClaw Gateway 连接中', action: null });
       }
-      if (hermesHandler && !hermesHandler.connected) {
+      if (hermesHandler && rows.some((a: any) => a.backend_type === 'hermes' && !hermesHandler.isProfileReady?.(a.agent_id))) {
         const hasHermesAgent = rows.some((a: any) => a.backend_type === 'hermes');
         if (hasHermesAgent) {
           warnings.push({ type: 'hermes-disconnected', message: '⚠️ Hermes Gateway 异常', action: 'settings-hermes' });
@@ -2254,7 +2258,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
           agentName: a.agent_name || a.agent_id,
           imConnected: agentManager?.getStatus(a.agent_id)?.connected || false,
           backendConnected: (a.backend_type === 'hermes')
-            ? (hermesHandler?.connectedAgents?.has(a.agent_id) || !!hermesHandler?.connected)
+            ? !!hermesHandler?.isProfileReady?.(a.agent_id)
             : (openclawHandler?.getStatus?.()?.connected || false),
         }));
         db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")

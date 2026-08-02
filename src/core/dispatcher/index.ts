@@ -251,6 +251,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
+  const _routeCache = new Map<string, DispatcherProvider>();
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
   const _convergedMap = new Map<string, number>();   // scopeKey -> markedAt
@@ -293,7 +294,14 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   }
   /** 主动失效 backend_type 缓存。传 agentId 失效单个，不传清空全部。TTL 已能兜底，调用为可选。 */
   function invalidateMeta(agentId?: string): void {
-    if (agentId) _metaCache.delete(agentId); else _metaCache.clear();
+    if (agentId) {
+      _metaCache.delete(agentId);
+      _routeCache.delete(`push:${agentId}`);
+      _routeCache.delete(`steer:${agentId}`);
+    } else {
+      _metaCache.clear();
+      _routeCache.clear();
+    }
   }
 
   /**
@@ -334,8 +342,33 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     });
   }
 
+  function _routeProvider(
+    agentId: string,
+    operation: 'push' | 'steer',
+    excluded: Set<DispatcherProvider> = new Set(),
+  ): DispatcherProvider | null {
+    const cacheKey = `${operation}:${agentId}`;
+    const cached = _routeCache.get(cacheKey);
+    if (cached && !excluded.has(cached)) {
+      try {
+        if (typeof cached[operation] === 'function' && cached.isAvailable?.(agentId)) return cached;
+      } catch (_) {}
+      _routeCache.delete(cacheKey);
+    }
+    const selected = resolveProviders(agentId).find(provider => (
+      !excluded.has(provider) && typeof provider[operation] === 'function'
+    )) || null;
+    if (selected) _routeCache.set(cacheKey, selected);
+    return selected;
+  }
+
+  function _forgetRoute(agentId: string, operation: 'push' | 'steer', provider: DispatcherProvider): void {
+    const cacheKey = `${operation}:${agentId}`;
+    if (_routeCache.get(cacheKey) === provider) _routeCache.delete(cacheKey);
+  }
+
   function resolveProvider(agentId: string): DispatcherProvider | null {
-    return resolveProviders(agentId)[0] || null;
+    return _routeProvider(agentId, 'push');
   }
 
   /** A2A scope key：私聊与每个群完全隔离，同一 scope 内按无序 Agent 对收敛。 */
@@ -545,8 +578,8 @@ ${body}
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
   ): Promise<void> {
-    const candidates = resolveProviders(agentId).filter((provider) => typeof provider.push === 'function');
-    if (!candidates.length) {
+    let provider = _routeProvider(agentId, 'push');
+    if (!provider) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
@@ -571,16 +604,21 @@ ${body}
         ...(a2aContext || {})
       };
       _rememberReplyContext(agentId, providerPayload.fromUid, replyContext);
-      for (const provider of candidates) {
+      const failed = new Set<DispatcherProvider>();
+      while (provider) {
         try {
           await provider.push!(providerPayload);
+          _routeCache.set(`push:${agentId}`, provider);
           return;
         } catch (err) {
+          failed.add(provider);
+          _forgetRoute(agentId, 'push', provider);
           if (providerPayload.providerBinding?.id) {
             try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
             providerPayload.providerBinding = null;
           }
           console.error(`[Dispatcher] push 通道失败，尝试备选 agent=${agentId}:`, errorMessage(err));
+          provider = _routeProvider(agentId, 'push', failed);
         }
       }
       _removeReplyContext(replyContext);
@@ -592,8 +630,8 @@ ${body}
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
   function dispatch(agentId: string, payload: PushPayload): void {
-    const provider = resolveProvider(agentId);
-    if (!provider || !provider.isAvailable?.(agentId)) {
+    const provider = _routeProvider(agentId, 'push');
+    if (!provider) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
@@ -674,18 +712,24 @@ ${body}
     content: string,
     replyContext: ReplyContext | null = null,
   ): Promise<unknown> {
-    const candidates = resolveProviders(agentId).filter((provider) => typeof provider.steer === 'function');
-    if (!candidates.length) return null;
+    let provider = _routeProvider(agentId, 'steer');
+    if (!provider) return null;
     try {
       const turnId = String(replyContext?.turnId || replyContext?.interventionId || `steer-${Date.now()}`);
       if (replyContext) {
         _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
       }
-      for (const provider of candidates) {
+      const failed = new Set<DispatcherProvider>();
+      while (provider) {
         try {
-          return await provider.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId });
+          const result = await provider.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId });
+          _routeCache.set(`steer:${agentId}`, provider);
+          return result;
         } catch (error) {
+          failed.add(provider);
+          _forgetRoute(agentId, 'steer', provider);
           console.error(`[Dispatcher] steer 通道失败，尝试备选 agent=${agentId}:`, errorMessage(error));
+          provider = _routeProvider(agentId, 'steer', failed);
         }
       }
       if (replyContext) {
@@ -703,6 +747,17 @@ ${body}
   async function start() {
     for (const p of Object.values(providers)) {
       try { await p.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
+    }
+    try {
+      const rows = db.prepare('SELECT agent_id FROM agents').all() as Array<{ agent_id?: string }>;
+      for (const row of rows) {
+        const agentId = String(row?.agent_id || '').trim();
+        if (!agentId) continue;
+        _routeProvider(agentId, 'push');
+        _routeProvider(agentId, 'steer');
+      }
+    } catch (e) {
+      console.error('[Dispatcher] provider 路由初始化失败:', errorMessage(e));
     }
   }
   async function stop() {

@@ -8,6 +8,7 @@ import type { AgentMeta, PushPayload } from '../types';
 interface HermesCliOptions {
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
+  runCli?: typeof runCli;
 }
 
 function errorMessage(error: unknown): string {
@@ -36,6 +37,8 @@ class HermesCliProvider extends PushProvider {
       ? new ProviderConversationBindingStore(options.db as any)
       : null;
     this._available = null;
+    this._runCli = options.runCli || runCli;
+    this._queues = new Map();
   }
 
   get priority() { return 1; }
@@ -61,7 +64,38 @@ class HermesCliProvider extends PushProvider {
     }
   }
 
+  _failureKind(error: unknown): 'approval_required' | 'timeout' | 'execution_failed' {
+    const message = errorMessage(error);
+    if (/pending[_ ]approval|approval.*(?:pending|required)|等待授权/i.test(message)) return 'approval_required';
+    if (/超时|timed?\s*out|timeout/i.test(message)) return 'timeout';
+    return 'execution_failed';
+  }
+
+  _enqueue(profileId: string, task: () => Promise<void>): void {
+    const previous = this._queues.get(profileId) || Promise.resolve();
+    const current = previous.catch(() => {}).then(task).catch((error: unknown) => {
+      const kind = this._failureKind(error);
+      const labels = { approval_required: '等待工具授权', timeout: '执行超时', execution_failed: '执行失败' };
+      console.error(`[HermesCli] ${labels[kind]} profile=${profileId}: ${errorMessage(error)}`);
+      this.emit('delivery.error', { provider: 'hermes-cli', profileId, kind, error: errorMessage(error) });
+    }).finally(() => {
+      if (this._queues.get(profileId) === current) this._queues.delete(profileId);
+    });
+    this._queues.set(profileId, current);
+  }
+
+  async waitForIdle(profileId?: string): Promise<void> {
+    if (profileId) await (this._queues.get(profileId) || Promise.resolve());
+    else await Promise.all(Array.from(this._queues.values()));
+  }
+
   async push(payload: PushPayload): Promise<void> {
+    const profileId = this._instanceForAgent(payload.agentId);
+    this._enqueue(profileId, () => this._runPush(payload));
+    console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
+  }
+
+  async _runPush(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `hermes-cli-${Date.now()}`);
     const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
@@ -88,13 +122,17 @@ class HermesCliProvider extends PushProvider {
     const safeNotification = process.platform === 'win32' ? sanitizeCmdArg(notification) : notification;
     console.error(`[HermesCli] push agent=${agentId} visitor=${fromUid} session=selected`);
 
+    let approvalPending = false;
+    const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
     try {
-      const result = await runCli({
+      const result = await this._runCli({
         cmd: 'hermes',
         args: ['--profile', profileId, '-z', safeNotification],
         tag: 'hermes-cli',
         timeout: 120000,
         logOutput: false,
+        onStdoutLine: observe,
+        onStderrLine: observe,
       });
 
       if (result.code === 0) {
@@ -111,15 +149,26 @@ class HermesCliProvider extends PushProvider {
           throw new Error('Hermes returned no reply text');
         }
       } else {
+        const detail = `${result.stdout || ''}\n${result.stderr || ''}`;
+        if (approvalPending || /pending[_ ]approval|approval.*(?:pending|required)/i.test(detail)) {
+          throw new Error('Hermes pending approval');
+        }
         throw new Error(`Hermes exited with code ${result.code}`);
       }
     } catch (err) {
-      console.error(`[HermesCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      if (approvalPending) throw new Error('Hermes pending approval');
       throw err;
     }
   }
 
-  async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<null> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<{ queued: true }> {
+    const profileId = this._instanceForAgent(agentId);
+    this._enqueue(profileId, () => this._runSteer(agentId, visitorId, content, metadata));
+    console.error(`[HermesCli] steer 已进入后台队列 agent=${agentId} profile=${profileId}`);
+    return { queued: true };
+  }
+
+  async _runSteer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<void> {
     const sessionKey = `hermes:${agentId}:${visitorId}`;
     const profileId = this._instanceForAgent(agentId);
     const turnId = String(metadata?.turnId || `hermes-cli-steer-${Date.now()}`);
@@ -131,13 +180,17 @@ class HermesCliProvider extends PushProvider {
       content,
       safety: '此消息来自主人（可信任）。请按主人要求执行。',
     });
+    let approvalPending = false;
+    const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
     try {
-      const result = await runCli({
+      const result = await this._runCli({
         cmd: 'hermes',
         args: ['--profile', profileId, '-z', notification],
         tag: 'hermes-cli',
         timeout: 120000,
         logOutput: false,
+        onStdoutLine: observe,
+        onStderrLine: observe,
       });
       const replyText = _extractReply(result.stdout);
       if (replyText) {
@@ -152,9 +205,9 @@ class HermesCliProvider extends PushProvider {
         console.error(`[HermesCli] steer OK agent=${agentId}`);
       }
     } catch (err) {
-      console.error(`[HermesCli] steer 失败 agent=${agentId}: ${errorMessage(err)}`);
+      if (approvalPending) throw new Error('Hermes pending approval');
+      throw err;
     }
-    return null;
   }
 
   start() {}

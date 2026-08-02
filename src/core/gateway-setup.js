@@ -168,6 +168,18 @@ function _writeKeyToProfile(profileName, apiKey, port, log) {
   log(`✓ 已写入 profile ${profileName} (port=${port})`);
 }
 
+function _readGatewayFromProfile(profileName) {
+  try {
+    const yaml = fs.readFileSync(getHermesProfilePath(profileName, 'config.yaml'), 'utf-8');
+    const block = yaml.match(/^\s{2}api_server:\s*\r?\n((?:\s{4,}.*(?:\r?\n|$))*)/m)?.[1] || '';
+    const apiKey = block.match(/^\s+key:\s*([^\r\n#]+)/m)?.[1]?.trim().replace(/^['"]|['"]$/g, '') || '';
+    const port = Number(block.match(/^\s+port:\s*(\d+)/m)?.[1]);
+    return { apiKey, port: Number.isSafeInteger(port) && port > 0 ? port : null };
+  } catch (_) {
+    return { apiKey: '', port: null };
+  }
+}
+
 async function setupHermesGateway(databaseAPI, agentId, log) {
   const h = global.__hermesHandler;
   if (!h) throw new Error('Hermes 处理器未初始化');
@@ -177,38 +189,23 @@ async function setupHermesGateway(databaseAPI, agentId, log) {
   // getHermesConfig 返回扁平结构 {apiKey, profiles}（旧嵌套已迁移），直接读写扁平字段，
   // 不再用 cfg.hermes_config.*（否则恒读不到 apiKey → 每次重生成覆盖所有 profile）
   cfg.profiles = cfg.profiles || {};
-  let apiKey = cfg.apiKey;
-
   let usedPorts = new Set(Object.values(cfg.profiles).map(p => p.port));
   let nextPort = 8642;
 
-  if (!apiKey) {
-    // 首次：生成全局 key，写入所有 profile
-    apiKey = crypto.randomBytes(32).toString('hex');
-    let profiles = [];
-    try { profiles = fs.readdirSync(getHermesProfilesDir()).filter(d => !d.startsWith('.')); } catch (_) {}
-    if (profiles.length === 0) throw new Error('未找到任何 Hermes profile，请先用 hermes 创建 profile');
-    for (const profile of profiles) {
-      while (usedPorts.has(nextPort)) nextPort++;
-      const port = nextPort++;
-      _writeKeyToProfile(profile, apiKey, port, log);
-      cfg.profiles[profile] = { port };
-      usedPorts.add(port);
-    }
-    cfg.apiKey = apiKey;
-    log(`✓ 已生成 API Key，写入 ${profiles.length} 个 profile`);
-  } else {
-    // 已有全局 key：仅补写当前 profile
-    if (agentId) {
-      if (!cfg.profiles[agentId]) {
-        while (usedPorts.has(nextPort)) nextPort++;
-        cfg.profiles[agentId] = { port: nextPort };
-      }
-      _writeKeyToProfile(agentId, apiKey, cfg.profiles[agentId].port, log);
-      log(`✓ API Key 已补写到 profile ${agentId}`);
-    } else {
-      log('✓ API Key 已存在，无需生成');
-    }
+  let profiles = [];
+  try { profiles = fs.readdirSync(getHermesProfilesDir()).filter(d => !d.startsWith('.')); } catch (_) {}
+  if (profiles.length === 0) throw new Error('未找到任何 Hermes profile，请先用 hermes 创建 profile');
+  const targets = agentId ? [agentId] : profiles;
+  for (const profile of targets) {
+    const discovered = _readGatewayFromProfile(profile);
+    const existing = cfg.profiles[profile] || {};
+    while (usedPorts.has(nextPort)) nextPort++;
+    const port = discovered.port || existing.port || nextPort++;
+    const apiKey = discovered.apiKey || existing.apiKey || cfg.apiKey || crypto.randomBytes(32).toString('hex');
+    cfg.profiles[profile] = { ...existing, port, apiKey };
+    usedPorts.add(port);
+    if (!discovered.apiKey || discovered.port !== port) _writeKeyToProfile(profile, apiKey, port, log);
+    else log(`✓ 已读取 profile ${profile} 的独立 API Key (port=${port})`);
   }
 
   // 保存配置（扁平结构，与 getHermesConfig 一致）
@@ -221,7 +218,7 @@ async function setupHermesGateway(databaseAPI, agentId, log) {
     h.client = null;
   }
   h.options = h.options || {};
-  h.options.apiKey = apiKey;
+  h.options.apiKey = cfg.apiKey || '';
   h.options.profiles = cfg.profiles;
   if (typeof h._initClient === 'function') { await h._initClient(); log('✓ Hermes 客户端已重建'); }
 
