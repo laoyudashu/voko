@@ -22,6 +22,7 @@
  */
 
 const os = require('os');
+const crypto = require('crypto');
 const { CliAdapter } = require('../../adapters/cli-adapter');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
@@ -32,16 +33,30 @@ class PiCliProvider extends CliAdapter {
     const modelArgs = deepseekKey
       ? ['--provider', 'deepseek', '--model', deepseekModel]
       : [];
+    const baseArgs = [
+      ...modelArgs,
+      '--no-tools',
+      '--no-extensions',
+      '--no-skills',
+      '-p',
+      '--mode', 'json',
+    ];
     super({
       name: 'PI CLI',
       cmd: 'pi',
-      // --tools read,grep,find,ls：仅只读工具，无 bash/edit/write（禁止命令执行和文件修改）
+      // 访客输入不可信：禁用工具、扩展和技能，避免通过“只读”能力泄露本机文件。
       // 不含 {prompt} 占位 → CliAdapter 自动走 stdin 传 prompt，与 claude-cli 对齐
-      args: [...modelArgs, '-p', '--mode', 'json', '--tools', 'read,grep,find,ls'],
+      args: baseArgs,
       parser: 'pi-jsonl',       // Pi JSONL 格式：message_update / turn_end / agent_end
       matchType: 'pi',
       priority: 1,
       timeout: 300000,
+      adapterType: 'pi-cli',
+      createManagedSessionId: () => crypto.randomUUID(),
+      argsForSession: (sessionId: string | null) => [
+        ...baseArgs,
+        ...(sessionId ? ['--session-id', sessionId] : []),
+      ],
       db: options.db,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),

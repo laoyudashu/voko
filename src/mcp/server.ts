@@ -307,20 +307,24 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     },
   );
 
-  // ─── 13. get_upload_url ───
+  // ─── 13. upload_and_send_file ───
   server.tool(
-    'voko_get_upload_url',
-    T('mcp.tool.get_upload_url.desc'),
+    'voko_upload_and_send_file',
+    T('mcp.tool.upload_and_send_file.desc'),
     {
-      filePath: z.string().describe(T('mcp.tool.get_upload_url.p.filePath')),
-      fileName: z.string().optional().describe(T('mcp.tool.get_upload_url.p.fileName')),
-      contentType: z.string().optional().describe(T('mcp.tool.get_upload_url.p.contentType')),
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      toUid: z.string().describe(T('mcp.tool.upload_and_send_file.p.toUid')),
+      filePath: z.string().describe(T('mcp.tool.upload_and_send_file.p.filePath')),
+      fileName: z.string().optional().describe(T('mcp.tool.upload_and_send_file.p.fileName')),
+      message: z.string().max(8000).optional().describe(T('mcp.tool.upload_and_send_file.p.message')),
+      channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.upload_and_send_file.p.channelType')),
+      mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe(T('mcp.tool.upload_and_send_file.p.mentions')),
     },
     async (params: unknown) => {
-      const r = await toolHandlers.get_upload_url(params);
+      const r = await toolHandlers.upload_and_send_file(params);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     },
-    { destructiveHint: false }
+    { destructiveHint: true }
   );
 
   // ─── 13. whoami ───

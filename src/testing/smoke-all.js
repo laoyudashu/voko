@@ -316,7 +316,7 @@ reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 37 个 vok
     'voko_set_agent_status', 'voko_get_status', 'voko_get_agent_profile',
     'voko_search_capabilities', 'voko_declare_capabilities', 'voko_send_message',
     'voko_get_chat_history', 'voko_get_visitor_profile', 'voko_list_conversations',
-    'voko_mark_conversation_read', 'voko_get_upload_url', 'voko_whoami',
+    'voko_mark_conversation_read', 'voko_upload_and_send_file', 'voko_whoami',
     'voko_start_worker', 'voko_stop_worker', 'voko_ask_human_for_help',
     'voko_check_human_replies', 'voko_close_human_request', 'voko_create_payment',
     'voko_check_payments', 'voko_add_payment_auth', 'voko_list_payment_auth',
@@ -446,7 +446,7 @@ for (const [table, expectedCols] of Object.entries(DB_TABLES)) {
     get_visitor_profile:       (ctx) => ['--visitor-id=' + ctx.visitorId, '--agent-id=' + ctx.agentId],
     list_conversations:        (ctx) => ['--agent-id=' + ctx.agentId, '--limit=3'],
     mark_conversation_read:    (ctx) => ['--agent-id=' + ctx.agentId, '--channel-id=' + ctx.visitorId],
-    get_upload_url:            null,
+    upload_and_send_file:      null,
     whoami:                    (ctx) => ['--owner-email='],
     start_worker:              null,
     stop_worker:               null,
@@ -791,12 +791,12 @@ full('G5h', '会话页 HTML 含 Console 消息', '发送消息 + 回读', '消�
 });
 
 // G6: 文件上传
-full('G6a', 'GET upload page', 'upload 页面/MCP', '页面含 upload-zone', async (ctx) => {
-  const r = await http(`/agents/${ctx.agentId}/upload`);
-  return [r.ok && r.text.includes('upload-zone'), r.ok ? '有上传区域' : `${r.status}`];
+full('G6a', 'Conversation attachment input', '附件发送/MCP', '会话页包含附件输入区', async (ctx) => {
+  const r = await http(`/agents/${ctx.agentId}/c/${ctx.visitorId}`);
+  return [r.ok && r.text.includes('attachment-send-form') && r.text.includes('attachment-file'), r.ok ? '有附件输入区' : `${r.status}`];
 });
-full('G6b', 'MCP get_upload_url', 'upload 页面/MCP', '页面含 upload-zone', async () => {
-  const m = await mcpCall('voko_get_upload_url', { filePath: '/nonexistent_smoke_test.txt' });
+full('G6b', 'MCP upload_and_send_file', '附件发送/MCP', '不存在的文件被拒绝', async () => {
+  const m = await mcpCall('voko_upload_and_send_file', { agentId: 'smoke-agent', toUid: 'smoke-user', filePath: '/nonexistent_smoke_test.txt' });
   return [m.ok || m.error, m.error || (m.data?.url || '').slice(0, 40)];
 });
 
@@ -1067,7 +1067,7 @@ async function runRegistry(ctx, mode, onItem) {
         'G5a': '—— Web 发送消息 ——', 'G5b': '—— Console 发送消息 ——',
         'G5c': '—— MCP 发送消息 ——', 'G5d': '—— 回读验证 ——',
         'G5g': '—— 会话页 HTML 验证 ——',
-        'G6a': '—— 上传页面 ——', 'G6b': '—— MCP get_upload_url ——',
+        'G6a': '—— 附件发送 ——', 'G6b': '—— MCP upload_and_send_file ——',
         'G7a': '—— 操作指导完整性 ——', 'G7c': '—— JSON-LD 结构化数据 ——',
         'G7e': '—— JSON Console 纯 JSON 模式 ——', 'G7g': '—— Deep Links 验证 ——',
         'G7k': '—— sitemap.xml 完整性 ——',

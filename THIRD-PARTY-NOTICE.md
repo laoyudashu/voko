@@ -2,6 +2,8 @@
 
 VOKO uses third-party open-source packages. Each component remains subject to its own license and copyright notices.
 
+The VOKO project code is licensed separately under GNU AGPL v3.0-only. The dependency licenses listed below apply only to their respective components.
+
 The authoritative dependency set is `package-lock.json`. Before every release, generate an SBOM and a license inventory from that exact lock file, then review every `UNKNOWN`, copyleft, proprietary, or custom license result.
 
 Direct runtime dependencies in the `0.4.0` lock file:

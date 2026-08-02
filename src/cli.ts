@@ -118,7 +118,7 @@ const TOOL_PARAM_SCHEMAS = {
   get_visitor_profile:     { visitorId: 'string', agentId: 'string', limit: 'number', offset: 'number' },
   list_conversations:      { agentId: 'string', filter: 'string', channelType: 'string', limit: 'number', offset: 'number', keyword: 'string' },
   mark_conversation_read:  { agentId: 'string', channelId: 'string' },
-  get_upload_url:          { filePath: 'string', fileName: 'string', contentType: 'string' },
+  upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json' },
   whoami:                  { ownerEmail: 'string' },
   start_worker:            { agentId: 'string' },
   stop_worker:             { agentId: 'string' },

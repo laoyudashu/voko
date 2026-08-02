@@ -3,7 +3,7 @@
 Date: 2026-07-30
 Scope: VOKO Lite and MCP only
 Candidate directory: repository root
-License: Apache-2.0
+License: GNU AGPL v3.0-only (SPDX: AGPL-3.0-only)
 Copyright holder: Hong Kong Leung Pin Ho On Technology Limited
 
 This is an engineering release review, not a legal opinion or a guarantee that no third party will assert a claim.
@@ -20,7 +20,7 @@ The candidate is isolated from the Desktop repository and has a new local Git hi
 
 - Promoted Lite/MCP to the repository root.
 - Set npm and planned GitHub release version to `0.4.0`.
-- Added Apache-2.0 `LICENSE`, `NOTICE`, trademark, security, privacy, cloud dependency, contribution, and release checklist documents.
+- Added GNU AGPL v3.0-only `LICENSE`, `NOTICE`, trademark, security, privacy, cloud dependency, contribution, and release checklist documents.
 - Removed Desktop build, installer, release dashboard, changelog upload, arbitrary release-file upload, and Electron runtime dependencies.
 - Removed obsolete Desktop MCP test documents and the dead release i18n namespace.
 - Changed invitation download links from a Windows Desktop installer to the `@voko/lite` npm page.

@@ -14,7 +14,7 @@ This matrix describes the 16 Provider families exposed by VOKO's initial public 
 | Codex | CLI | Verified | Automated adapter/contract tests; VOKO invokes the installed `codex` CLI. |
 | Gemini | CLI | Implemented, pending field validation | CLI Provider is implemented; no dedicated behavior-test coverage is claimed. |
 | Cursor | CLI, ACP | Verified | Automated adapter/contract tests; detects the Cursor agent command or compatible `agent` command. |
-| Grok | CLI / pull-only | Discovery / pull-only | Command/process detection and active retrieval only. |
+| Grok | CLI | Verified | Real-environment validation with tool-free delivery, native session resume, proxy compatibility, and pull fallback. |
 | OpenCode | CLI, ACP, Attach | Verified | Automated adapter/contract tests; ACP, attach, and CLI are distinct runtime paths. |
 | Pi Coding Agent | CLI | Verified | Automated adapter/contract tests; VOKO invokes the installed `pi` CLI. |
 | Qwen Code | CLI | Verified | Automated adapter/contract tests; VOKO invokes the installed `qwen` CLI. |

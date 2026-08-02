@@ -5,35 +5,58 @@
  * detection, shell suggestions, analytics and update checks are disabled.
  */
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { CliAdapter } = require('../../adapters/cli-adapter');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 class AiderCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
     const deepseekKey = process.env.DEEPSEEK_API_KEY?.trim();
+    const dbPath = String((options.db as any)?._dbPath || '');
+    const stateRoot = dbPath && dbPath !== ':memory:'
+      ? path.join(path.dirname(path.resolve(dbPath)), 'provider-sessions', 'aider')
+      : path.join(os.tmpdir(), 'voko-provider-sessions', 'aider');
+    const baseArgs = [
+      '--message', '{prompt}',
+      '--chat-mode', 'ask',
+      '--dry-run',
+      '--no-git',
+      '--no-auto-commits',
+      '--no-auto-lint',
+      '--no-auto-test',
+      '--no-browser',
+      '--no-detect-urls',
+      '--no-suggest-shell-commands',
+      '--analytics-disable',
+      '--no-check-update',
+      '--no-pretty',
+      '--no-stream',
+    ];
     super({
       name: 'AIDER CLI',
       cmd: 'aider',
-      args: [
-        '--message', '{prompt}',
-        '--chat-mode', 'ask',
-        '--dry-run',
-        '--no-git',
-        '--no-auto-commits',
-        '--no-auto-lint',
-        '--no-auto-test',
-        '--no-browser',
-        '--no-detect-urls',
-        '--no-suggest-shell-commands',
-        '--analytics-disable',
-        '--no-check-update',
-        '--no-pretty',
-        '--no-stream',
-      ],
+      args: baseArgs,
       parser: 'aider-output',
       matchType: 'aider',
       priority: 1,
       timeout: 180000,
+      adapterType: 'aider-cli',
+      createManagedSessionId: () => crypto.randomUUID(),
+      argsForSession: (sessionId: string | null, isNew: boolean) => {
+        if (!sessionId) return baseArgs;
+        fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+        const digest = crypto.createHash('sha256').update(sessionId).digest('hex');
+        const historyFile = path.join(stateRoot, `${digest}.md`);
+        if (!fs.existsSync(historyFile)) fs.writeFileSync(historyFile, '', { mode: 0o600 });
+        else fs.chmodSync(historyFile, 0o600);
+        return [
+          ...baseArgs,
+          '--chat-history-file', historyFile,
+          ...(!isNew ? ['--restore-chat-history'] : []),
+        ];
+      },
       env: {
         ...(deepseekKey ? {
           DEEPSEEK_API_KEY: deepseekKey,

@@ -30,6 +30,8 @@ interface CliFallbackOptions {
   cmd: string;
   args?: string[];
   argsForPayload?: (payload: PushPayload) => string[];
+  sessionIdFromLine?: (line: string) => string | null;
+  adapterType?: string;
   parser?: string;
   timeout?: number;
   stdinPrompt?: boolean;
@@ -385,6 +387,14 @@ class AcpAdapter extends PushProvider {
     const sessionKey = `acp:${agentId}:${fromUid}`;
     let error: Error | null = null;
     let fullContent = '';
+    const payloadBinding = payload.providerBinding;
+    let observedSessionId = payloadBinding && payloadBinding.providerType === this._matchType
+      ? payloadBinding.nativeSessionId
+      : null;
+    const observeSession = (line: string) => {
+      if (!fb.sessionIdFromLine) return;
+      try { observedSessionId = fb.sessionIdFromLine(line) || observedSessionId; } catch (_) {}
+    };
 
     // Windows 下 {prompt} 经 cmd.exe 传多行/含元字符会被截断或注入（同 cli-adapter/hermes-cli），净化为单行；
     // 函数式 replacement 避免 String.replace 的 $ 模式展开（CODE-5）
@@ -419,8 +429,12 @@ class AcpAdapter extends PushProvider {
         stdinInput: fb.stdinPrompt ? `${rawContent.replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n` : undefined,
         logOutput: false,
         onStdoutLine: (line: string) => parser.handleLine(line),
+        onStderrLine: observeSession,
       });
 
+      if (fb.sessionIdFromLine) {
+        for (const line of result.stdout.split(/\r?\n/)) observeSession(line);
+      }
       if (result.code !== 0) error = new Error(`CLI fallback exited with code ${result.code}`);
       parser.finish();
     } catch (err) {
@@ -432,6 +446,28 @@ class AcpAdapter extends PushProvider {
     }
 
     if (error) throw error;
+    if (observedSessionId && this._bindingStore) {
+      const binding = payload.providerBinding?.providerType === this._matchType
+        ? payload.providerBinding
+        : null;
+      const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
+      const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
+      if (binding && observedSessionId === binding.nativeSessionId) {
+        this._bindingStore.touch(binding.id);
+      } else {
+        this._bindingStore.saveManaged({
+          agentId,
+          channelId,
+          channelType,
+          providerType: this._matchType || 'acp',
+          providerInstanceId: binding?.providerInstanceId || null,
+          nativeSessionId: observedSessionId,
+          deliveryMode: 'cli',
+          adapterType: fb.adapterType || `${this._adapterType}-cli-fallback`,
+          expectedVersion: binding?.bindingVersion ?? 0,
+        });
+      }
+    }
     if (!fullContent.trim()) throw new Error('CLI fallback produced no reply');
 
     this.emit('agent.reply', {
@@ -492,7 +528,7 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
     }
 
-    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cliPath=${this._cliPath})`);
+    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : '-'})`);
     const sdk = await this._loadSdk();
     console.error(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
 
@@ -522,7 +558,7 @@ class AcpAdapter extends PushProvider {
       const isNodeScript = cliPath.endsWith('.js');
       const cmd = isNodeScript ? process.execPath : cliPath;
       const cmdArgs = isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs];
-      console.error(`[${this._logPrefix}:${agentId}] Spawning: ${cmd} ${cmdArgs.join(' ')}`);
+      console.error(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

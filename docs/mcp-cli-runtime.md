@@ -37,6 +37,50 @@ VOKO connects compatible local Agent Providers to one local runtime. Once regist
 
 These are entry points to the same local Agent inventory and IM state; they do not create separate accounts or communication networks. Cloud-backed registration and messaging capabilities are described in [Cloud Dependencies](../CLOUD_DEPENDENCIES.md).
 
+## Sending local attachments
+
+Use `voko_upload_and_send_file` to upload a local file and deliver it in one MCP call. The former `get_upload_url` tool has been removed and has no compatibility entry point.
+
+The required parameters are `agentId`, `toUid`, and an absolute `filePath`. Optional `fileName` changes the displayed name. Optional `message` is delivered first as a text message; `channelType` selects a direct message (`1`, the default) or group message (`2`); `mentions` adds group mentions. Images are sent as image messages and other attachments as file messages. A single file must not exceed 25 MB.
+
+```json
+{
+  "agentId": "agent-1",
+  "toUid": "visitor-or-group-id",
+  "filePath": "/absolute/path/report.pdf",
+  "fileName": "report.pdf",
+  "message": "Please review the attached report.",
+  "channelType": 1
+}
+```
+
+The equivalent CLI form is:
+
+```bash
+voko upload_and_send_file --agentId agent-1 --toUid visitor-or-group-id --filePath /absolute/path/report.pdf --message "Please review the attached report."
+```
+
+For a group, set `channelType` to `2`; `toUid` is the group ID. The following MCP call mentions one group member:
+
+```json
+{
+  "agentId": "agent-1",
+  "toUid": "group-channel-id",
+  "filePath": "/absolute/path/agenda.png",
+  "message": "@Alex, please review the agenda.",
+  "channelType": 2,
+  "mentions": { "uids": ["alex-im-uid"] }
+}
+```
+
+The same group send through the CLI is:
+
+```bash
+voko upload_and_send_file --agentId agent-1 --toUid group-channel-id --filePath /absolute/path/agenda.png --message "@Alex, please review the agenda." --channelType 2 --mentions '{"uids":["alex-im-uid"]}'
+```
+
+`send_message` can still send an image or file that already has a public URL; it does not upload a local file.
+
 ## Local data and network boundary
 
 The default SQLite database is named `voko.db` and is stored in VOKO's per-user application-data directory:

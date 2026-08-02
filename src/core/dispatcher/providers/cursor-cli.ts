@@ -19,16 +19,29 @@
 
 const os = require('os');
 const { CliAdapter } = require('../../adapters/cli-adapter');
-const { resolveCursorCommand } = require('../cursor-command');
+const { resolveCursorRuntime } = require('../cursor-command');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 class CursorCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
+    const runtime = resolveCursorRuntime();
+    const baseArgs = [...runtime.prefixArgs, '-p', '--output-format', 'stream-json', '--mode', 'plan', '--trust', '--workspace', '.'];
     super({
       name: 'CURSOR CLI',
-      cmd: resolveCursorCommand(),
+      cmd: runtime.command,
       // --mode plan：只读；--trust：Lite 无 TTY，跳过 Workspace Trust 交互提示
-      args: ['-p', '--output-format', 'stream-json', '--mode', 'plan', '--trust', '--workspace', '.'],
+      args: baseArgs,
+      adapterType: 'cursor-cli',
+      argsForSession: (sessionId: string | null) => [
+        ...baseArgs,
+        ...(sessionId ? ['--resume', sessionId] : []),
+      ],
+      sessionIdFromLine: (line: string) => {
+        try {
+          const event = JSON.parse(line.replace(/^(?:stdout|stderr):/, ''));
+          return String(event.session_id || event.sessionId || '').trim() || null;
+        } catch (_) { return null; }
+      },
       parser: 'cursor-stream-json',   // stream-json + stdout: 前缀剥离
       matchType: 'cursor',
       priority: 1,

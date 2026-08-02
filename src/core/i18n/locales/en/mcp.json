@@ -71,7 +71,7 @@
   "mcp.tool.declare_capabilities.p.ability.fields.required": "Whether the field is required",
   "mcp.tool.declare_capabilities.p.ability.fields.description": "Field description",
 
-  "mcp.tool.send_message.desc": "Send an IM message to a specific visitor. For text messages, put the content directly in content. For images/files, first call get_upload_url to obtain an OSS upload URL, upload directly, then put the OSS URL into content. For file messages, it's recommended to pass a JSON string {url,name,size,type}, or just the URL (name will be auto-completed and size detected; size will be 0 if detection fails). Note: this tool only delivers the message — it returns immediately with the delivery result (messageId) and does not wait for a visitor reply. To retrieve visitor replies, call voko_fetch_new_messages separately (pass visitorId with blockTimeout to block-wait for new replies and avoid empty polling).",
+  "mcp.tool.send_message.desc": "Send a text, image, or already-hosted file message to a specific visitor. To upload and send a local attachment in one operation, use voko_upload_and_send_file. Note: this tool only delivers the message — it returns immediately with the delivery result (messageId) and does not wait for a visitor reply.",
   "mcp.tool.send_message.p.agentId": "Which Agent is sending",
   "mcp.tool.send_message.p.toUid": "Target visitor UID",
   "mcp.tool.send_message.p.content": "Message content: for text, write it directly; for images, use the OSS URL; for files, preferably pass a JSON string {url,name,size,type} or just the URL",
@@ -98,10 +98,13 @@
   "mcp.tool.mark_conversation_read.desc": "Reset the unread message count of a conversation to 0. Call this after the visitor has read the messages to clear the unread badge.",
   "mcp.tool.mark_conversation_read.p.channelId": "Conversation ID (visitor UID)",
 
-  "mcp.tool.get_upload_url.desc": "Upload a file to OSS and return a publicly accessible URL (including filename, size, type). The Agent provides the local file path; VOKO uploads it and returns the URL, which the Agent can then use as the content parameter in send_message to deliver to the visitor.",
-  "mcp.tool.get_upload_url.p.filePath": "Local absolute file path, e.g. /path/to/photo.jpg",
-  "mcp.tool.get_upload_url.p.fileName": "Filename (optional; extracted from filePath if omitted)",
-  "mcp.tool.get_upload_url.p.contentType": "MIME type; auto-detected by default",
+  "mcp.tool.upload_and_send_file.desc": "Upload a local attachment to OSS and send it in one operation. Images are sent as image messages; other files are sent as file messages. When message is supplied, it is sent before the attachment. The maximum file size is 25 MB.",
+  "mcp.tool.upload_and_send_file.p.toUid": "Recipient visitor or group ID",
+  "mcp.tool.upload_and_send_file.p.filePath": "Local absolute file path, e.g. /path/to/photo.jpg",
+  "mcp.tool.upload_and_send_file.p.fileName": "Filename shown to the recipient (optional; extracted from filePath if omitted)",
+  "mcp.tool.upload_and_send_file.p.message": "Optional text message sent before the attachment",
+  "mcp.tool.upload_and_send_file.p.channelType": "1 for a direct message, 2 for a group message",
+  "mcp.tool.upload_and_send_file.p.mentions": "Optional group mentions, for example {all:true} or {uids:[\"user-1\"]}",
 
   "mcp.tool.whoami.desc": "Query all Agent information from the local database. Optionally filter by owner email; returns all agents when ownerEmail is omitted.",
   "mcp.tool.whoami.p.ownerEmail": "Owner email address; when provided, returns only agents belonging to that email; when omitted, returns all",

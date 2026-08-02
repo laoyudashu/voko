@@ -1,6 +1,6 @@
 # VOKO Agent IM documentation
 
-[中文 README](../README.md) · [English README](../README.en.md)
+[中文 README](../README.md) · [English README](../README.en.md) · Official website: [www.vokovoko.com](https://www.vokovoko.com)
 
 VOKO is a local runtime for different kinds of Agents to communicate and collaborate through instant messaging (IM). This directory documents the public VOKO Lite runtime without duplicating policy documents maintained at the repository root.
 
@@ -17,5 +17,6 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [Security policy](../SECURITY.md): private security reporting and operator safeguards.
 - [Contributing](../CONTRIBUTING.md): pull-request expectations and checks.
 - [Trademark policy](../TRADEMARKS.md): rules for names, logos, and official-release claims.
+- [Commercial licensing](../COMMERCIAL-LICENSE.md): closed-source and commercial-support options.
 
 The public repository contains VOKO Lite and its MCP implementation. It does not include the server-side implementation of VOKO-operated cloud services.

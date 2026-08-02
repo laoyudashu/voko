@@ -477,7 +477,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // 文件上传端点 — 需要 raw body 解析 multipart
-  app.post('/api/agents/:agentId/upload-file', (req?: any, res?: any, next?: any) => {
+  app.post('/api/agents/:agentId/send-file', (req?: any, res?: any, next?: any) => {
     if (req.is('multipart/form-data')) {
       let chunks: Buffer[] = [];
       let total = 0;
@@ -1655,6 +1655,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { key: 'qwen-cli',     mod: './core/dispatcher/providers/qwen-cli',     named: 'QwenCliProvider',     args: { db, contextWindow: 20 } },
     { key: 'kiro-cli',     mod: './core/dispatcher/providers/kiro-cli',     named: 'KiroCliProvider',     args: { db, contextWindow: 20 } },
     { key: 'aider-cli',    mod: './core/dispatcher/providers/aider-cli',    named: 'AiderCliProvider',    args: { db, contextWindow: 20 } },
+    { key: 'grok-cli',     mod: './core/dispatcher/providers/grok-cli',     named: 'GrokCliProvider',     args: { db, contextWindow: 20 } },
   ];
   for (const { key, mod, named, args } of PROVIDER_REGISTRY) {
     try {
@@ -2340,7 +2341,7 @@ function printUsage() {
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
     '  get_visitor_profile  list_conversations  mark_conversation_read\n' +
-    '  get_upload_url  whoami  start_worker  stop_worker\n' +
+    '  upload_and_send_file  whoami  start_worker  stop_worker\n' +
     '  ask_human_for_help  check_human_replies  close_human_request\n' +
     '  create_payment  check_payments  agent_pricing\n' +
     '  add_payment_auth  list_payment_auth  delete_payment_auth\n' +

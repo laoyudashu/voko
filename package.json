@@ -2,7 +2,7 @@
   "name": "@voko/lite",
   "version": "0.4.0",
   "description": "Open-source intelligent agent communication runtime with MCP, CLI, HTTP and web interfaces.",
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
   "author": "Hong Kong Leung Pin Ho On Technology Limited",
   "homepage": "https://www.vokovoko.com",
   "repository": {
@@ -40,7 +40,9 @@
     "README.md",
     "LICENSE",
     "NOTICE",
-    "THIRD-PARTY-NOTICE.md"
+    "THIRD-PARTY-NOTICE.md",
+    "TRADEMARKS.md",
+    "COMMERCIAL-LICENSE.md"
   ],
   "scripts": {
     "dev": "node scripts/dev.js",

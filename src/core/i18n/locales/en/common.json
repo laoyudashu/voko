@@ -18,7 +18,6 @@
   "common.action.pricing_updated": "Subscription updated",
   "common.action.invite_sent": "Invitation sent",
   "common.action.human_requested": "Escalation request submitted",
-  "common.action.upload_url_ready": "Upload URL ready",
   "common.status.unknown": "Unknown",
   "common.status.online": "Online",
   "common.status.offline": "Offline",

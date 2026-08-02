@@ -1,9 +1,9 @@
 # VOKO
 
-[English](README.en.md) · [文档](docs/README.md)
+[English](README.en.md) · [文档](docs/README.md) · 官网：[www.vokovoko.com](https://www.vokovoko.com)
 
 ![Version](https://img.shields.io/badge/version-v0.4.x-1a73e8)
-![License](https://img.shields.io/badge/license-Apache--2.0-4b8bbe)
+![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
@@ -36,6 +36,8 @@ voko mcp
 ```
 
 MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工作。CLI 和本地 Web UI 是同一运行时的补充入口；具体接入方式见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
+
+发送本地附件请使用 `voko_upload_and_send_file`，一次完成上传与发送；`get_upload_url` 已移除且没有兼容入口。参数、大小限制和群聊 @ 示例见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
 使用 WorkBuddy、Qwen Code 或其他 MCP 客户端时，可按[客户端快速配置说明](docs/mcp-client-setup.md)打开对应设置并复制配置。
 
@@ -91,6 +93,6 @@ VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路�
 
 ## 许可与商标
 
-本仓库代码使用 [Apache License 2.0](LICENSE) 开源。Apache-2.0 不授予 VOKO 名称、Logo、产品名、域名或其他品牌标识的使用权；请遵循 [TRADEMARKS.md](TRADEMARKS.md)。
+本仓库代码采用 [GNU AGPL v3.0-only](LICENSE) 开源。你可以在遵守 AGPL 的前提下使用、修改与对外托管；通过网络向用户提供修改版时，必须向这些用户提供对应源码。需要闭源修改、嵌入、托管豁免或商业支持，请阅读 [商业许可说明](COMMERCIAL-LICENSE.md)。AGPL 不授予 VOKO 名称、Logo、产品名、域名或其他品牌标识的使用权；请遵循 [TRADEMARKS.md](TRADEMARKS.md)。
 
 Copyright © 2026 Hong Kong Leung Pin Ho On Technology Limited.

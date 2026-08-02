@@ -34,9 +34,9 @@ const CLI_COMMANDS = {
   kiro: 'kiro-cli',
   aider: 'aider',
   'github-copilot': 'copilot',
+  grok: 'grok',
 };
 const PULL_ONLY_CLI_COMMANDS = {
-  grok: 'grok',
   openhands: 'openhands',
   'amazon-q': 'q',
 };

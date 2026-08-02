@@ -157,7 +157,7 @@ const ACTION_GROUPS=[
   {group:'pay',actions:['agent_pricing','create_payment','check_payments','add_payment_auth','list_payment_auth','delete_payment_auth','apply_payment_auth','refresh_payment_auth','search_banks','bind_agent_payment_auth']},
   {group:'audit',actions:['list_audit_rules','manage_audit_rules']},
   {group:'human',actions:['ask_human_for_help','check_human_replies','close_human_request']},
-  {group:'misc',actions:['register_agent','verify_agent_email','get_visitor_profile','get_upload_url','invite_friend']},
+  {group:'misc',actions:['register_agent','verify_agent_email','get_visitor_profile','upload_and_send_file','invite_friend']},
 ];
 function listActions(group){if(group==='all')return ACTION_GROUPS.flatMap(g=>g.actions);const g=ACTION_GROUPS.find(x=>x.group===group);return g?g.actions:[]}
 const GROUP_LABELS={zh:{im:'收发消息',manage:'Agent 管理',pay:'支付',audit:'审核',human:'人工介入',misc:'其他'},en:{im:'Messaging',manage:'Agent Management',pay:'Payments',audit:'Audit',human:'Human Intervention',misc:'Other'}};
@@ -174,7 +174,7 @@ const FORM_ACTIONS=[
   {name:'agent.caps.declare',path:'/agents/{id}',danger:'low'},
   {name:'agent.invite.send',path:'/agents/{id}',danger:'low'},
   {name:'human.ask',path:'/agents/{id}',danger:'low'},
-  {name:'file.upload',path:'/agents/{id}',danger:'low'},
+  {name:'file.send',path:'/api/agents/{id}/send-file',danger:'low'},
   {name:'payment.create',path:'/payments',danger:'medium'},
   {name:'payment.auth.manage',path:'/payment-auth',danger:'medium'},
   {name:'audit.rule.manage',path:'/audit-rules',danger:'low'},
@@ -851,7 +851,7 @@ function createWebRouter(handlers, db, opts={}){
 '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span class="meta" id="msg-count">'+T('web.conversation.count_msg',{count:msgs.length})+'</span></div>'
 +'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'
 +'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
-+'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
++'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
 {nav:agentNav(agentId,aName,T)+' › '+navId,jsonld:{'@context':'https://schema.org',agentId,channelId,messages:jd},footer:renderFooter(T, req.locale)+messageRendererScript(T)+'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'+'<script>var _A='+JSON.stringify(agentId)+',_C='+JSON.stringify(channelId)+',_R='+JSON.stringify({agent:T('web.conversation.from.agent'),visitor:peerLabel,no_msg:T('web.conversation.no_messages'),count_msg:T('web.conversation.count_msg'),auditIn:T('web.audit.message_inbound'),auditOut:T('web.audit.message_outbound'),auditBlocked:T('web.audit.message_blocked'),auditAllowed:T('web.audit.message_allowed'),auditKeyword:T('web.audit.message_keyword'),auditOriginal:T('web.audit.message_original'),auditInvalid:T('web.audit.message_invalid')})+',_seen={};'+"(function(){function _esc(s){return String(s==null?\"\":s).replace(/[&<>\"']/g,function(c){return{\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]})}function _audit(ct,t){try{var d=JSON.parse(ct),out=d.direction===\"outbound\"||(!d.direction&&String(d.audit||\"\").indexOf(\"出站\")>=0),title=out?_R.auditOut:_R.auditIn,result=d.action===\"hard_deny\"?_R.auditBlocked:_R.auditAllowed,rows=\"\";if(d.keyword)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditKeyword)+\"</span>\"+_esc(d.keyword)+\"</div>\";if(d.text)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditOriginal)+\"</span>\"+_esc(d.text).replace(/\\n/g,\"<br>\")+\"</div>\";return '<div class=\"audit-message\"><div class=\"audit-message-head\"><strong>'+_esc(title)+'</strong><span class=\"audit-message-result\">'+_esc(result)+'</span><span class=\"meta\">'+_esc(t)+\"</span></div>\"+rows+\"</div>\"}catch(_){return '<div class=\"audit-message\"><strong>'+_esc(_R.auditInvalid)+'</strong> <span class=\"meta\">'+_esc(t)+\"</span></div>\"}}function _addMsg(m){var bx=document.getElementById(\"msg-box\"),isMe=m.isMe===true||m.isMe===1,sr=isMe?_R.agent:_R.visitor,t=new Date((m.timestamp||0)*1000).toLocaleTimeString(),ct=(m.content||\"\"),h;if(m.contentType===11){h=_audit(ct,t)}else{var bc=isMe?\"#0f9d58\":\"#1a73e8\",bg=isMe?\"#e6f4ea\":\"#e8f0fe\";h='<div style=\"padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+bc+';background:'+bg+'\"><strong>'+_esc(sr)+'</strong> <span style=\"color:#888;font-size:13px\">['+_esc(t)+']</span><br>'+window.__vokoMessageRenderer.render(m.contentType,ct)+\"</div>\"}bx.insertAdjacentHTML(\"beforeend\",h);bx.scrollTop=bx.scrollHeight;var mc=document.getElementById(\"msg-count\");if(mc){mc.textContent=_R.count_msg.replace(\"{count}\",bx.children.length)}}function _connect(){try{var ws=new WebSocket(\"ws://\"+location.host+\"/ws\");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event===\"agent-wukongim:message\"){var m=d.data;if(m.agentId===_A&&m.channelId===_C&&m.messageId&&!_seen[m.messageId]){_seen[m.messageId]=1;_addMsg(m)}}}catch(_){}};ws.onclose=function(){setTimeout(_connect,3000)}}catch(_){setTimeout(_connect,5000)}}_connect()})();"+'</script>'}))
     }catch(e){next(e)}
   });
@@ -1114,33 +1114,32 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     }catch(e){next(e)}
   });
 
-  // ── 文件上传 ──
+  // ── 添加并发送附件 ──
   R.get('/agents/:agentId/upload',async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const aid=esc(agentId);
+      const prefillToUid=esc(req.query.toUid||'');
+      const prefillChannelType=Number(req.query.channelType)===2?'2':'1';
       res.send(renderPage(req,T('web.agent.upload.title'),
         '<style>.upload-zone{border:2px dashed #bbb;border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s}.upload-zone:hover,.upload-zone.drag-over{border-color:#1a73e8;background:#e8f0fe}#upload-file{display:none}.upload-zone p{margin:4px 0;font-size:14px;color:#666}#upload-filename{margin-top:8px}#upload-progress{display:none;margin:8px 0;font-size:14px;color:#1a73e8}#upload-result{margin-top:10px;font-size:14px}#upload-result .url-box{word-break:break-all;background:#f0f0f0;padding:8px;border-radius:4px;margin:4px 0}</style>'+
         '<div class="card"><h3>📎 '+L('web.agent.upload.browser_title')+'</h3>'+
         '<div class="upload-zone" id="upload-zone"><p><strong>'+L('web.agent.upload.click')+'</strong> '+L('web.agent.upload.drag')+'</p><p style="font-size:12px;color:#999">'+L('web.agent.upload.hint')+'</p></div>'+
         '<input type="file" id="upload-file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.mp3,.mp4,.txt,.json,.webp,.gif">'+
+        '<label for="upload-to">'+L('web.agent.upload.to_uid')+'</label><input type="text" id="upload-to" value="'+prefillToUid+'" required placeholder="'+L('web.agent.upload.to_uid_ph')+'">'+
+        '<label for="upload-channel-type">'+L('web.agent.upload.channel_type')+'</label><select id="upload-channel-type"><option value="1"'+(prefillChannelType==='1'?' selected':'')+'>'+L('web.agent.upload.direct')+'</option><option value="2"'+(prefillChannelType==='2'?' selected':'')+'>'+L('web.agent.upload.group')+'</option></select>'+
+        '<label for="upload-message">'+L('web.agent.upload.message')+'</label><textarea id="upload-message" rows="2" placeholder="'+L('web.agent.upload.message_ph')+'"></textarea>'+
         '<input type="text" id="upload-filename" placeholder="'+esc(T('web.agent.upload.name_ph'))+'" style="margin-top:8px;display:block">'+
         '<button id="upload-submit-btn" disabled style="margin-top:8px">'+L('web.agent.upload.submit_btn')+'</button>'+
         '<div id="upload-progress">'+L('web.agent.upload.uploading')+'</div>'+
         '<div id="upload-result"></div></div>'+
-        '<details class="card" style="background:#f8f9ff;border-color:#c0c8ff;margin-top:10px"><summary style="font-weight:700;font-size:16px;cursor:pointer;color:#1a73e8">📖 '+L('web.agent.upload.help_summary')+'</summary>'+
-        '<div style="margin-top:8px">'+T('web.agent.upload.help_html')+
-        actionForm(agentId,'upload_url',[
-          {id:'fp',name:'filePath',label:T('web.agent.upload.filepath'),type:'text',attr:'placeholder="C:\\\\Users\\\\xxx\\\\image.jpg"'},
-          {id:'fn',name:'fileName',label:T('web.agent.upload.filename'),type:'text',attr:'placeholder="'+esc(T('web.agent.upload.filename_ph'))+'"'},
-        ],T('web.agent.upload.get_url_btn'),null,'file.upload',T('web.agent.upload.uploading'))+
-        '<p style="font-size:12px;color:#999;margin-top:8px">'+L('web.agent.upload.note')+'</p></div></details>'+
+        '<p class="meta">'+L('web.agent.upload.send_hint')+'</p>'+
         '<script>'+
         '(function(){'+
           'var z=document.getElementById("upload-zone"),f=document.getElementById("upload-file"),'+
           'btn=document.getElementById("upload-submit-btn"),prog=document.getElementById("upload-progress"),'+
-          'resDiv=document.getElementById("upload-result"),fn=document.getElementById("upload-filename");'+
+          'resDiv=document.getElementById("upload-result"),fn=document.getElementById("upload-filename"),to=document.getElementById("upload-to"),ct=document.getElementById("upload-channel-type"),msg=document.getElementById("upload-message");'+
           'var selectedFile=null,uploading=false,idleBtnHtml=btn.innerHTML;'+
           'z.addEventListener("click",function(){if(!uploading)f.click()});'+
           'z.addEventListener("dragover",function(e){e.preventDefault();z.classList.add("drag-over")});'+
@@ -1148,13 +1147,14 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           'z.addEventListener("drop",function(e){e.preventDefault();z.classList.remove("drag-over");if(!uploading)handleFiles(e.dataTransfer.files)});'+
           'f.addEventListener("change",function(){if(!uploading)handleFiles(f.files)});'+
           'function handleFiles(files){if(uploading)return;if(files.length){selectedFile=files[0];z.innerHTML="<p><strong>"+esc2(selectedFile.name)+"</strong></p><p style=\\"font-size:12px;color:#999\\">"+(selectedFile.size/1024).toFixed(1)+" KB</p>";btn.disabled=false}}'+
-          'btn.addEventListener("click",async function(){if(uploading||!selectedFile)return;uploading=true;var file=selectedFile,uploadName=fn.value||selectedFile.name;btn.disabled=true;btn.setAttribute("aria-busy","true");btn.innerHTML=\'<span class="voko-spinner" aria-hidden="true"></span>\'+'+JSON.stringify(T('web.agent.upload.uploading'))+';f.disabled=true;fn.disabled=true;z.setAttribute("aria-busy","true");z.style.opacity=".55";z.style.cursor="not-allowed";prog.style.display="block";resDiv.innerHTML="";'+
+          'btn.addEventListener("click",async function(){if(uploading||!selectedFile)return;if(!to.value.trim()){to.focus();return}uploading=true;var file=selectedFile,uploadName=fn.value||selectedFile.name;btn.disabled=true;btn.setAttribute("aria-busy","true");btn.innerHTML=\'<span class="voko-spinner" aria-hidden="true"></span>\'+'+JSON.stringify(T('web.agent.upload.uploading'))+';f.disabled=true;fn.disabled=true;to.disabled=true;ct.disabled=true;msg.disabled=true;z.setAttribute("aria-busy","true");z.style.opacity=".55";z.style.cursor="not-allowed";prog.style.display="block";resDiv.innerHTML="";'+
             'var fd=new FormData();fd.append("file",file,uploadName);'+
-            'try{var r=await fetch("/api/agents/'+aid+'/upload-file",{method:"POST",body:fd});var j=await r.json();'+
-              'if(j.success){resDiv.innerHTML="<p class=\\"success\\">✅ 上传成功</p><p>文件 URL：</p><div class=\\"url-box\\"><code>"+esc2(j.url)+"</code></div>"+(j.fileSize?"<p style=\\"font-size:12px;color:#999\\">大小："+(j.fileSize/1024).toFixed(1)+" KB · 类型："+esc2(j.mimeType||"")+"</p>":"")}'+
+            'var params=new URLSearchParams({toUid:to.value.trim(),channelType:ct.value,message:msg.value.trim()});'+
+            'try{var r=await fetch("/api/agents/'+aid+'/send-file?"+params,{method:"POST",body:fd});var j=await r.json();'+
+              'if(j.success){resDiv.innerHTML="<p class=\\"success\\">"+'+JSON.stringify(T('web.agent.upload.sent'))+'+"</p>";selectedFile=null;f.value="";msg.value="";btn.disabled=true}'+
               'else{resDiv.innerHTML="<p class=\\"error\\">❌ "+esc2(j.error||"上传失败")+"</p>"}'+
             '}catch(e){resDiv.innerHTML="<p class=\\"error\\">❌ 网络错误: "+esc2(e.message)+"</p>"}'+
-            'finally{uploading=false;btn.disabled=false;btn.removeAttribute("aria-busy");btn.innerHTML=idleBtnHtml;f.disabled=false;fn.disabled=false;z.removeAttribute("aria-busy");z.style.opacity="";z.style.cursor="";prog.style.display="none"}'+
+            'finally{uploading=false;if(selectedFile)btn.disabled=false;btn.removeAttribute("aria-busy");btn.innerHTML=idleBtnHtml;f.disabled=false;fn.disabled=false;to.disabled=false;ct.disabled=false;msg.disabled=false;z.removeAttribute("aria-busy");z.style.opacity="";z.style.cursor="";prog.style.display="none"}'+
           '});'+
           'function esc2(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}'+
         '})();</script>'+
@@ -1163,8 +1163,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     }catch(e){next(e)}
   });
 
-  // 文件上传 API — 浏览器端文件上传
-  R.post('/api/agents/:agentId/upload-file', async (req, res) => {
+  // 附件发送 API — 浏览器上传后立即发送
+  R.post('/api/agents/:agentId/send-file', async (req, res) => {
     try {
       const { agentId } = req.params;
       const buf = req.rawBody;
@@ -1198,7 +1198,14 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       if (!tmpPath.startsWith(tmpDir)) return res.json({ success: false, error: '非法文件名' });
       require('fs').writeFileSync(tmpPath, filedata);
       try {
-        const result = await handlers.get_upload_url({ filePath: tmpPath, fileName: filename });
+        const result = await handlers.upload_and_send_file({
+          agentId,
+          toUid: String(req.query.toUid||''),
+          channelType: Number(req.query.channelType)===2?2:1,
+          message: String(req.query.message||''),
+          filePath: tmpPath,
+          fileName: filename,
+        });
         require('fs').unlinkSync(tmpPath);
         res.json(result);
       } catch (e) {
@@ -1256,7 +1263,6 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           case'ask_human':await handleAction(req,res,handlers.ask_human_for_help({
             agentId,visitorId:req.body.visitorId,problem:req.body.problem,suggestion:req.body.suggestion||''
           }),'common.action.human_requested');break;
-          case'upload_url':await handleAction(req,res,handlers.get_upload_url({filePath:req.body.filePath,fileName:req.body.fileName||undefined}),'common.action.upload_url_ready');break;
           default:res.redirect('/agents/'+esc(agentId)+'?err='+encodeURIComponent(req.t('common.action.unknown')))
         }
       }catch(e){res.redirect('/agents/'+esc(agentId)+'?err='+encodeURIComponent(e.message))}

@@ -1,9 +1,9 @@
 # VOKO
 
-[中文](README.md) · [Documentation](docs/README.md)
+[中文](README.md) · [Documentation](docs/README.md) · Official website: [www.vokovoko.com](https://www.vokovoko.com)
 
 ![Version](https://img.shields.io/badge/version-v0.4.x-1a73e8)
-![License](https://img.shields.io/badge/license-Apache--2.0-4b8bbe)
+![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
@@ -36,6 +36,8 @@ voko mcp
 ```
 
 MCP helps an Agent register, declare capabilities, and handle conversations and messages. The CLI and local Web UI are complementary entry points into the same runtime. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md).
+
+For a local attachment, use `voko_upload_and_send_file` to upload and send it in one operation. `get_upload_url` has been removed and has no compatibility entry point; see [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md) for parameters, limits, and group-mention examples.
 
 For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup guide](docs/mcp-client-setup.en.md) for copy-ready configuration.
 
@@ -91,6 +93,6 @@ Provider adapters, operating-system compatibility validation, and reproducible i
 
 ## License and trademarks
 
-The code in this repository is licensed under the [Apache License 2.0](LICENSE). Apache-2.0 does not grant rights to the VOKO name, logos, product names, domains, or other brand identifiers; see [TRADEMARKS.md](TRADEMARKS.md).
+The code in this repository is licensed under [GNU AGPL v3.0-only](LICENSE). You may use, modify, and host it under the AGPL; when you provide a modified network-facing version to users, you must offer those users its Corresponding Source. For closed-source modification, embedding, hosting exceptions, or commercial support, see [Commercial licensing](COMMERCIAL-LICENSE.md). The AGPL does not grant rights to the VOKO name, logos, product names, domains, or other brand identifiers; see [TRADEMARKS.md](TRADEMARKS.md).
 
 Copyright © 2026 Hong Kong Leung Pin Ho On Technology Limited.

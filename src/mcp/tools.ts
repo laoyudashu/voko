@@ -535,6 +535,46 @@ async function probeFileMetadata(url?: string) {
   }
 }
 
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ATTACHMENT_MIME_TYPES: Record<string, string> = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp', '.mp4': 'video/mp4', '.pdf': 'application/pdf',
+  '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.zip': 'application/zip', '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.json': 'application/json',
+};
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+
+async function uploadAttachment(cx: McpContext, p: McpToolParams) {
+  if (!cx.uploadFileToOSS) return { success: false, error: 'OSS 未配置' };
+  const fs = require('fs');
+  const path = require('path');
+  if (!p.filePath) return { success: false, error: '缺少 filePath' };
+  if (!fs.existsSync(p.filePath)) return { success: false, error: '文件不存在: ' + p.filePath };
+  const stat = fs.statSync(p.filePath);
+  if (!stat.isFile()) return { success: false, error: 'filePath 不是文件' };
+  if (stat.size > MAX_ATTACHMENT_BYTES) return { success: false, error: '文件超过 25 MB 限制' };
+  const fileName = p.fileName || path.basename(p.filePath);
+  const ext = path.extname(fileName).toLowerCase();
+  const mimeType = typeof p.contentType === 'string' ? p.contentType : (ATTACHMENT_MIME_TYPES[ext] || 'application/octet-stream');
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment';
+  const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
+  const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
+  try {
+    const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType);
+    return {
+      success: true,
+      url,
+      fileName,
+      fileSize: stat.size,
+      mimeType,
+      contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 3,
+    };
+  } catch (e: any) {
+    return { success: false, error: '上传失败: ' + e.message };
+  }
+}
+
 function createToolHandlers(cx: McpContext) {
   const providerBindings = new ProviderConversationBindingStore(cx.db);
   // These tools can change identity, access, external delivery or payment
@@ -1418,39 +1458,45 @@ function createToolHandlers(cx: McpContext) {
       }
     },
 
-    // ─── 13. 文件上传 ───
+    // ─── 13. 上传并发送附件 ───
 
-    async get_upload_url(p: McpToolParams = {}) {
-      if (!cx.uploadFileToOSS) {
-        return { success: false, error: 'OSS 未配置' };
+    async upload_and_send_file(p: McpToolParams = {}) {
+      const uploaded = await uploadAttachment(cx, p);
+      if (!uploaded.success) return uploaded;
+
+      const channelType = Number(p.channelType) === 2 ? 2 : 1;
+      const message = String(p.message || '').trim();
+      let textMessageId: string | undefined;
+      if (message) {
+        const textResult = await handlers.send_message({
+          agentId: p.agentId,
+          toUid: p.toUid,
+          channelType,
+          content: message,
+          mentions: p.mentions,
+        });
+        if (textResult?.success === false) return { ...uploaded, success: false, error: textResult.error };
+        textMessageId = textResult?.messageId;
       }
-      try {
-        const fs = require('fs');
-        if (!p.filePath) return { success: false, error: '缺少 filePath' };
-        if (!fs.existsSync(p.filePath)) return { success: false, error: '文件不存在: ' + p.filePath };
-        const stat = fs.statSync(p.filePath);
-        const fileName = p.fileName || require('path').basename(p.filePath);
-        const ext = require('path').extname(fileName).toLowerCase();
-        const mimeMap: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.mp4': 'video/mp4', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.zip': 'application/zip', '.mp3': 'audio/mpeg', '.txt': 'text/plain', '.json': 'application/json' };
-        const mimeType = typeof p.contentType === 'string'
-          ? p.contentType
-          : (mimeMap[ext] || 'application/octet-stream');
-        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        // 图片上传到 chat/images/，其他文件上传到 chat/files/，与桌面端保持一致
-        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-        const dir = imageExts.includes(ext) ? 'chat/images' : 'chat/files';
-        const objectName = `${dir}/${safeName}`;
-        const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType);
-        return {
-          success: true,
-          url,
-          fileName,
-          fileSize: stat.size,
-          mimeType,
-        };
-      } catch (e: any) {
-        return { success: false, error: '上传失败: ' + e.message };
+
+      const attachment = {
+        url: uploaded.url,
+        name: uploaded.fileName,
+        size: uploaded.fileSize,
+        type: uploaded.mimeType,
+      };
+      const fileResult = await handlers.send_message({
+        agentId: p.agentId,
+        toUid: p.toUid,
+        channelType,
+        contentType: uploaded.contentType,
+        content: uploaded.contentType === 2 ? uploaded.url : attachment,
+        mentions: p.mentions,
+      });
+      if (fileResult?.success === false) {
+        return { ...uploaded, success: false, error: fileResult.error, textMessageId };
       }
+      return { ...uploaded, messageId: fileResult?.messageId, textMessageId };
     },
 
     // ─── 13. whoami ───

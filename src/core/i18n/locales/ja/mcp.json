@@ -69,7 +69,7 @@
   "mcp.tool.declare_capabilities.p.ability.fields.required": "是否必填",
   "mcp.tool.declare_capabilities.p.ability.fields.description": "字段说明",
 
-  "mcp.tool.send_message.desc": "向指定访客发送 IM 消息。文字消息直接填 content；图片/文件先用 get_upload_url 获取 OSS 上传地址，直传后把 OSS URL 填入 content。文件消息建议传 JSON 字符串 {url,name,size,type}，也可只传 URL（会自动补全 name 并探测 size，探测失败时 size 为 0）。注意：本工具只负责把消息投递出去，调用后立即返回投递结果（messageId），不会等待访客回复。若需要拿到访客的回复，请单独调用 voko_fetch_new_messages（传 visitorId 并设置 blockTimeout 可阻塞等待新回复，避免空轮询）。",
+  "mcp.tool.send_message.desc": "指定した訪客にテキスト、画像、または既に公開されたファイルを送信します。ローカル添付のアップロードと送信は voko_upload_and_send_file を使用してください。",
   "mcp.tool.send_message.p.agentId": "哪个 Agent 发送",
   "mcp.tool.send_message.p.toUid": "目标访客 UID",
   "mcp.tool.send_message.p.content": "消息内容：文字直接填；图片填 OSS URL；文件建议填 JSON 字符串 {url,name,size,type}，也可只填 URL",
@@ -96,10 +96,13 @@
   "mcp.tool.mark_conversation_read.desc": "将会话的未读消息数重置为 0。访客已读消息后调用此工具清除未读标记",
   "mcp.tool.mark_conversation_read.p.channelId": "会话 ID（访客 UID）",
 
-  "mcp.tool.get_upload_url.desc": "上传文件到 OSS，返回可公开访问的 URL（含文件名、大小、类型）。Agent 提供文件路径，VOKO 上传完成后返回 URL，Agent 可将该 URL 作为 send_message 的 content 发送给访客",
-  "mcp.tool.get_upload_url.p.filePath": "文件路径（本地绝对路径，如 /path/to/photo.jpg）",
-  "mcp.tool.get_upload_url.p.fileName": "文件名（可选，不传则从 filePath 提取）",
-  "mcp.tool.get_upload_url.p.contentType": "MIME 类型，默认自动识别",
+  "mcp.tool.upload_and_send_file.desc": "ローカル添付を OSS へアップロードして一度に送信します。画像は画像メッセージ、それ以外はファイルメッセージになります。message を指定した場合は添付より先に送信します。1ファイルの上限は 25 MB です。",
+  "mcp.tool.upload_and_send_file.p.toUid": "受信者の訪客またはグループ ID",
+  "mcp.tool.upload_and_send_file.p.filePath": "ローカル絶対ファイルパス",
+  "mcp.tool.upload_and_send_file.p.fileName": "表示するファイル名（任意）",
+  "mcp.tool.upload_and_send_file.p.message": "添付より先に送信する任意のテキスト",
+  "mcp.tool.upload_and_send_file.p.channelType": "単聊は 1、群聊は 2",
+  "mcp.tool.upload_and_send_file.p.mentions": "任意の群聊メンション",
 
   "mcp.tool.whoami.desc": "查询本地 DB 中所有 Agent 信息。支持按主人邮箱过滤，不传 ownerEmail 则返回全部",
   "mcp.tool.whoami.p.ownerEmail": "主人邮箱，传了只返回该邮箱的 agent，不传返回全部",
