@@ -100,6 +100,27 @@ test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', 
   assert.equal(new HermesCliProvider({ db })._instanceForAgent('voko-agent'), 'hermes-profile');
 });
 
+test('OpenClaw and Hermes CLI fallbacks reject failed processes so dispatcher can continue to Pull', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const previousPath = process.env.PATH;
+  t.after(() => { process.env.PATH = previousPath; });
+  for (const command of ['openclaw', 'hermes']) {
+    const file = path.join(root, process.platform === 'win32' ? `${command}.cmd` : command);
+    fs.writeFileSync(file, process.platform === 'win32' ? '@exit /b 7\r\n' : '#!/bin/sh\nexit 7\n', { mode: 0o755 });
+  }
+  process.env.PATH = `${root}${path.delimiter}${previousPath || ''}`;
+  const db = {
+    prepare(sql) {
+      if (/backend_instance_id/.test(sql)) return { get: () => ({ backend_instance_id: 'isolated-test' }) };
+      return { get: () => null, all: () => [], run: () => ({ changes: 0 }) };
+    },
+  };
+  const payload = { agentId: 'voko-agent', fromUid: 'visitor', content: 'hello', messageId: 'message' };
+  await assert.rejects(new OpenClawCliProvider({ db }).push(payload), /OpenClaw exited with code 7/);
+  await assert.rejects(new HermesCliProvider({ db }).push(payload), /Hermes exited with code 7/);
+});
+
 test('Cursor prefers ACP with a restricted CLI fallback', () => {
   const acp = new CursorAcpProvider();
   const cli = new CursorCliProvider();

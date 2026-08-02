@@ -146,7 +146,13 @@ function _profileHasRootPlatforms(yaml) {
 function _writeKeyToProfile(profileName, apiKey, port, log) {
   const p = getHermesProfilePath(profileName, 'config.yaml');
   let yaml = '';
-  try { yaml = fs.readFileSync(p, 'utf-8'); } catch (_) { log(`⚠ 无法读取 ${profileName} 的 config.yaml`); return; }
+  try { yaml = fs.readFileSync(p, 'utf-8'); }
+  catch (error) {
+    if (error?.code !== 'ENOENT') {
+      log(`⚠ 无法读取 ${profileName} 的 config.yaml`);
+      return;
+    }
+  }
   const hasCRLF = yaml.includes('\r\n');
   yaml = yaml.replace(/\r\n/g, '\n');
   const block = '  api_server:\n    enabled: true\n    extra:\n      port: ' + port + '\n      key: ' + apiKey + '\n';

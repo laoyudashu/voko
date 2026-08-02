@@ -105,6 +105,7 @@ class OpenClawCliProvider extends PushProvider {
         timeout: 120000,
         logOutput: false,
       });
+      if (result.code !== 0) throw new Error(`OpenClaw exited with code ${result.code}`);
       // 从 JSON stdout 提取 agent 回复并 emit（messenger.js 会写入 DB）
       const replyText = _extractReply(result.stdout);
       if (replyText) {
@@ -116,10 +117,11 @@ class OpenClawCliProvider extends PushProvider {
         });
         console.error(`[OpenClawCli] push OK agent=${agentId} reply=${replyText.length}chars`);
       } else {
-        console.error(`[OpenClawCli] push OK agent=${agentId}（无回复文本）`);
+        throw new Error('OpenClaw returned no reply text');
       }
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      throw err;
     }
   }
 

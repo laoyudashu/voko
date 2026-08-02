@@ -158,6 +158,10 @@ class OpenClawWsProvider {
           // 如果已连接，需要重新连接以应用新配置
           if (this.connected || this.connecting) {
             console.log('[OpenClaw WS] 配置变化，触发重新连接...');
+            this.disconnect();
+            this._ensureGatewayRunning().catch((err: unknown) => {
+              console.error('[OpenClaw WS] 配置变化后启动 Gateway 失败:', errorMessage(err));
+            });
             this.scheduleReconnect(100); // 100ms 后重连
           }
         } else {

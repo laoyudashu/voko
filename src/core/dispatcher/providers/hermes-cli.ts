@@ -108,13 +108,14 @@ class HermesCliProvider extends PushProvider {
           });
           console.error(`[HermesCli] push OK agent=${agentId} reply=${replyText.length}chars`);
         } else {
-          console.error(`[HermesCli] push OK agent=${agentId}（无回复文本）`);
+          throw new Error('Hermes returned no reply text');
         }
       } else {
-        console.error(`[HermesCli] push 失败 agent=${agentId}: exit code ${result.code}`);
+        throw new Error(`Hermes exited with code ${result.code}`);
       }
     } catch (err) {
       console.error(`[HermesCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      throw err;
     }
   }
 
