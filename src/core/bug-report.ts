@@ -2,8 +2,6 @@ export {};
 
 type BugReportParams = {
   action?: string;
-  reportId?: string;
-  queryToken?: string;
   title?: string;
   description?: string;
   steps?: string;
@@ -26,6 +24,10 @@ function clean(value: unknown, max: number): string {
   return String(value || '').replace(/\0/g, '').trim().slice(0, max);
 }
 
+function cleanEmail(value: unknown): string {
+  return clean(value, 254).toLowerCase();
+}
+
 function metadataFromDb(db: any, agentId?: string) {
   if (!db || !agentId) return {};
   try {
@@ -33,6 +35,18 @@ function metadataFromDb(db: any, agentId?: string) {
       'SELECT agent_id, backend_type, owner_email FROM agents WHERE agent_id = ? LIMIT 1'
     ).get(agentId);
     return row ? { agentId: row.agent_id, agentType: row.backend_type || 'others', ownerEmail: row.owner_email || '' } : {};
+  } catch {
+    return {};
+  }
+}
+
+function currentUserFromDb(db: any) {
+  if (!db) return {};
+  try {
+    const { getCurrentUserEmail, getUserAccessToken } = require('./database');
+    const ownerEmail = getCurrentUserEmail(db) || '';
+    const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : '';
+    return { ownerEmail, userAccessToken: userAccessToken || '' };
   } catch {
     return {};
   }
@@ -47,16 +61,21 @@ function createBugReportClient({ apiBaseUrl, db }: BugReportClientOptions) {
     if (!apiBaseUrl) return { success: false, error: 'VOKO API URL is not configured' };
 
     let body: Record<string, unknown>;
+    const currentUser = currentUserFromDb(db);
     if (action === 'query') {
-      const reportId = clean(params.reportId, 64);
-      const queryToken = clean(params.queryToken, 160);
-      if (!reportId || !queryToken) return { success: false, error: 'reportId and queryToken are required' };
-      body = { action, reportId, queryToken };
+      if (!currentUser.ownerEmail || !currentUser.userAccessToken) {
+        return { success: false, error: 'Please sign in before checking bug report progress' };
+      }
+      body = { action };
     } else {
       const title = clean(params.title, 160);
       const description = clean(params.description, 8000);
       if (!title || !description) return { success: false, error: 'title and description are required' };
       const detected = metadataFromDb(db, clean(params.agentId, 64));
+      const ownerEmail = cleanEmail(currentUser.ownerEmail || params.ownerEmail || detected.ownerEmail);
+      if (ownerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
+        return { success: false, error: 'ownerEmail must be a valid email address' };
+      }
       body = {
         action,
         title,
@@ -74,7 +93,7 @@ function createBugReportClient({ apiBaseUrl, db }: BugReportClientOptions) {
         platform: process.platform,
         agentId: clean(params.agentId || detected.agentId, 64),
         agentType: clean(params.agentType || detected.agentType, 64),
-        ownerEmail: clean(params.ownerEmail || detected.ownerEmail, 254),
+        ownerEmail,
         source: clean(params.source || 'lite', 32),
       };
     }
@@ -86,7 +105,10 @@ function createBugReportClient({ apiBaseUrl, db }: BugReportClientOptions) {
         const response = await fetch(endpoint, {
           method: 'POST',
           redirect: 'error',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(currentUser.userAccessToken ? { Authorization: `Bearer ${currentUser.userAccessToken}` } : {}),
+          },
           body: JSON.stringify(body),
           signal: controller.signal,
         });

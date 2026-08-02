@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const test = require('node:test');
 const { DatabaseSync } = require('node:sqlite');
 const {
+  buildConversationDeliveryPrompt,
   buildConversationRecoveryPrompt,
 } = require('../build/core/dispatcher/conversation-context');
 const HermesHttpProvider = require('../build/core/dispatcher/providers/hermes-http');
@@ -81,6 +82,24 @@ test('group delivery never receives private-message recovery history', () => {
   }
 });
 
+test('resumable Provider sessions receive only the current message', () => {
+  const db = conversationDb();
+  try {
+    insert(db, 'm1', 'visitor-a', 'agent-a', 'old private fact', 0, 1);
+    insert(db, 'm2', 'visitor-a', 'agent-a', 'current question', 0, 2);
+    const payload = {
+      agentId: 'agent-a', fromUid: 'visitor-a', content: 'current question',
+      messageId: 'm2', channelType: 1,
+    };
+    assert.equal(buildConversationDeliveryPrompt(db, payload, true, 20), 'current question');
+    const recovery = buildConversationDeliveryPrompt(db, payload, false, 20);
+    assert.match(recovery, /old private fact/);
+    assert.equal((recovery.match(/current question/g) || []).length, 1);
+  } finally {
+    db.close();
+  }
+});
+
 test('Hermes HTTP and generic ACP delivery both receive VOKO recovery context', async () => {
   const db = conversationDb();
   try {
@@ -101,14 +120,29 @@ test('Hermes HTTP and generic ACP delivery both receive VOKO recovery context', 
       hermesPrompt = prompt;
     };
     await hermes.push(payload);
+    const recoveryPrompt = hermesPrompt;
+    hermesPrompt = '';
+    await hermes.push({
+      ...payload,
+      content: 'only current turn',
+      rawContent: 'only current turn',
+      messageId: 'm4',
+      providerBinding: {
+        id: 'binding-1', bindingVersion: 1, providerType: 'hermes',
+        providerInstanceId: null, deliveryMode: 'http', adapterType: 'hermes-http',
+        nativeSessionId: 'hermes:agent-a:visitor-a', sessionOrigin: 'voko_managed',
+        channelId: 'visitor-a', channelType: 1,
+      },
+    });
 
     const acp = new AcpAdapter({ db, contextWindow: 20 });
     const acpPrompt = acp._wrapVisitorPrompt(payload.content, payload);
 
-    assert.match(hermesPrompt, /我的目标体重是 70kg/);
+    assert.match(recoveryPrompt, /我的目标体重是 70kg/);
     assert.match(acpPrompt, /我的目标体重是 70kg/);
-    assert.equal((hermesPrompt.match(/目标是多少？/g) || []).length, 1);
+    assert.equal((recoveryPrompt.match(/目标是多少？/g) || []).length, 1);
     assert.equal((acpPrompt.match(/目标是多少？/g) || []).length, 1);
+    assert.equal(hermesPrompt, 'only current turn');
   } finally {
     db.close();
   }

@@ -33,40 +33,52 @@ const basePayload = {
   channelType: 1,
 };
 
-test('OpenClaw restores once, then sends only current content until reconnect', async () => {
+function binding(providerType, deliveryMode, adapterType, nativeSessionId) {
+  return {
+    id: `${providerType}-binding`, bindingVersion: 1, providerType,
+    providerInstanceId: null, deliveryMode, adapterType, nativeSessionId,
+    sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
+  };
+}
+
+test('OpenClaw sends history only when no resumable binding is available', async () => {
   const db = dbWithHistory();
   const provider = new OpenClawWsProvider(db, null);
   const sent = [];
   try {
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
-    await provider.push({ ...basePayload, content: 'second message' });
-    provider._recoveryWarmedSessions.clear();
-    await provider.push({ ...basePayload, content: 'after reconnect' });
+    const providerBinding = binding('openclaw', 'websocket', 'openclaw-ws', 'agent:agent-a:visitor-a');
+    await provider.push({ ...basePayload, content: 'second message', providerBinding });
+    await provider.push({ ...basePayload, content: 'after reconnect', providerBinding });
+    await provider.push({ ...basePayload, content: 'after failed resume', providerBinding: null });
 
     assert.match(sent[0], /remembered fact/);
     assert.equal(sent[1], 'second message');
-    assert.match(sent[2], /remembered fact/);
+    assert.equal(sent[2], 'after reconnect');
+    assert.match(sent[3], /remembered fact/);
   } finally {
     provider.destroy();
     db.close();
   }
 });
 
-test('Hermes restores once, then sends only current content until unavailable', async () => {
+test('Hermes sends history only when no resumable binding is available', async () => {
   const db = dbWithHistory();
   const provider = new HermesHttpProvider(db, null);
   const sent = [];
   try {
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
-    await provider.push({ ...basePayload, content: 'second message' });
-    provider._recoveryWarmedSessions.clear();
-    await provider.push({ ...basePayload, content: 'after reconnect' });
+    const providerBinding = binding('hermes', 'http', 'hermes-http', 'hermes:agent-a:visitor-a');
+    await provider.push({ ...basePayload, content: 'second message', providerBinding });
+    await provider.push({ ...basePayload, content: 'after reconnect', providerBinding });
+    await provider.push({ ...basePayload, content: 'after failed resume', providerBinding: null });
 
     assert.match(sent[0], /remembered fact/);
     assert.equal(sent[1], 'second message');
-    assert.match(sent[2], /remembered fact/);
+    assert.equal(sent[2], 'after reconnect');
+    assert.match(sent[3], /remembered fact/);
   } finally {
     db.close();
   }

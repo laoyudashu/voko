@@ -84,6 +84,7 @@ function setup(options = {}) {
       sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions });
       return { success: true };
     },
+    uploadFileToOSS: options.uploadFileToOSS || (async (_filePath, objectName) => `https://oss.example/${objectName}`),
     enqueueOwnerIntervention: record => interventions.push(record),
     wukongim: {
       getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
@@ -145,6 +146,38 @@ await test('dissolved 群在发送函数内部拒绝所有消息类型', async (
     }
     assert.strictEqual(sentMessages.length, 0);
   } finally { cleanup(); }
+});
+
+await test('upload_and_send_file 先发送文字，再发送标准附件消息', async () => {
+  const { handlers, sentMessages, cleanup } = setup();
+  const tmpFile = path.join(os.tmpdir(), 'voko-attachment-' + Date.now() + '.txt');
+  fs.writeFileSync(tmpFile, 'attachment');
+  try {
+    const r = await handlers.upload_and_send_file({
+      agentId: 'agentA', toUid: 'visitor1', filePath: tmpFile, message: '说明文字', channelType: 1,
+    });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(sentMessages.length, 2);
+    assert.strictEqual(sentMessages[0].content, '说明文字');
+    assert.strictEqual(sentMessages[0].messageType, 'text');
+    assert.strictEqual(sentMessages[1].messageType, 'file');
+    assert.deepStrictEqual(JSON.parse(sentMessages[1].content), {
+      url: r.url, name: path.basename(tmpFile), size: 10, type: 'text/plain',
+    });
+  } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
+});
+
+await test('upload_and_send_file 将图片发送为图片消息', async () => {
+  const { handlers, sentMessages, cleanup } = setup();
+  const tmpFile = path.join(os.tmpdir(), 'voko-image-' + Date.now() + '.png');
+  fs.writeFileSync(tmpFile, 'png');
+  try {
+    const r = await handlers.upload_and_send_file({ agentId: 'agentA', toUid: 'visitor1', filePath: tmpFile });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].messageType, 'image');
+    assert.strictEqual(sentMessages[0].content, r.url);
+  } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
 });
 
 await test('get_chat_history 群聊（channelType=2）按 channel_id 查全量，含其他 agent 的消息', async () => {

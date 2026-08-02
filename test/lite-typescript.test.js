@@ -328,6 +328,7 @@ test('guest mode exposes the bug-report page and JSON API without login', async 
   app.use(createWebRouter({
     bug_report: async (params) => {
       submitted = params;
+      if (params.action === 'query') return { success: true, reports: [{ title: 'Previous issue', description: 'History item', status: 'in_progress' }] };
       return { success: true, reportId: 'BR-GUEST', queryToken: 'private-token' };
     },
     oauth_providers: async () => ({ success: true, data: { providers: [] } }),
@@ -349,15 +350,21 @@ test('guest mode exposes the bug-report page and JSON API without login', async 
   const page = await fetch(`${base}/bug-report`, { redirect: 'manual' });
   assert.equal(page.status, 200);
 
+  const history = await fetch(`${base}/bug-report?view=query`);
+  const historyHtml = await history.text();
+  assert.match(historyHtml, /Previous issue/);
+  assert.doesNotMatch(historyHtml, /name="reportId"|name="queryToken"/);
+
   const response = await fetch(`${base}/api/bug-report`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'submit', title: 'Guest issue', description: 'Something failed' }),
+    body: JSON.stringify({ action: 'submit', title: 'Guest issue', description: 'Something failed', ownerEmail: 'guest@example.com' }),
   });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).reportId, 'BR-GUEST');
   assert.equal(submitted.source, 'guest-api');
   assert.equal(submitted.title, 'Guest issue');
+  assert.equal(submitted.ownerEmail, 'guest@example.com');
 });
 
 test('short-link creation uses the owner token and never accepts a client target URL', async (t) => {

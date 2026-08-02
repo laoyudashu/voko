@@ -10,6 +10,8 @@ const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-c
 const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
 const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
+const { OpenHandsAcpProvider } = require('../build/core/dispatcher/providers/openhands-acp');
+const { GrokCliProvider } = require('../build/core/dispatcher/providers/grok-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
 const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor-acp');
@@ -34,6 +36,10 @@ test('Qwen Code unattended delivery is tool-free and bounded', () => {
   assert.match(provider._args.join(' '), /--exclude-tools .*shell.*write.*edit.*agent/);
   assert.match(provider._args.join(' '), /--max-tool-calls 0/);
   assert.doesNotMatch(provider._args.join(' '), /yolo|auto-edit/);
+  assert.equal(provider._adapterType, 'qwen-cli');
+  assert.deepEqual(provider._argsForSession('qwen-session', false).slice(-2), ['--resume', 'qwen-session']);
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'qwen-session' })), 'qwen-session');
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'assistant', session_id: 'ignored' })), null);
 });
 
 test('Kiro unattended delivery does not pre-authorize any tool category', () => {
@@ -98,11 +104,18 @@ test('Cursor prefers ACP with a restricted CLI fallback', () => {
   const acp = new CursorAcpProvider();
   const cli = new CursorCliProvider();
   assert.equal(acp._adapterType, 'cursor-acp');
-  assert.deepEqual(acp._cliArgs, ['acp']);
+  assert.equal(acp._cliArgs.at(-1), 'acp');
   assert.equal(acp._matchType, 'cursor');
   assert.equal(acp._cliFallback.cmd, cli._cmd);
   assert.match(acp._cliFallback.args.join(' '), /--mode plan/);
   assert.equal(acp._cliFallback.parser, 'cursor-stream-json');
+  assert.deepEqual(
+    acp._cliFallback.argsForPayload({ providerBinding: { providerType: 'cursor', nativeSessionId: 'cursor-session' } }).slice(-2),
+    ['--resume', 'cursor-session'],
+  );
+  assert.equal(acp._cliFallback.sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
+  assert.deepEqual(cli._argsForSession('cursor-session', false).slice(-2), ['--resume', 'cursor-session']);
+  assert.equal(cli._sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
 });
 
 test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
@@ -128,8 +141,10 @@ test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
   }
 });
 
-test('Aider unattended delivery cannot edit, commit, browse or suggest commands', () => {
-  const provider = new AiderCliProvider();
+test('Aider unattended delivery cannot edit, commit, browse or suggest commands', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-aider-session-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const provider = new AiderCliProvider({ db: { _dbPath: path.join(root, 'voko.db'), prepare() {} } });
   const args = provider._args.join(' ');
   assert.equal(provider._cwd, os.tmpdir());
   assert.match(args, /--chat-mode ask/);
@@ -140,6 +155,59 @@ test('Aider unattended delivery cannot edit, commit, browse or suggest commands'
     '--no-check-update',
   ]) assert.ok(provider._args.includes(flag), flag);
   assert.doesNotMatch(args, /yes-always/);
+  assert.equal(provider._adapterType, 'aider-cli');
+  const sessionId = provider._createManagedSessionId();
+  const firstArgs = provider._argsForSession(sessionId, true);
+  const resumeArgs = provider._argsForSession(sessionId, false);
+  const historyFile = firstArgs[firstArgs.indexOf('--chat-history-file') + 1];
+  assert.match(path.basename(historyFile), /^[a-f0-9]{64}\.md$/);
+  assert.doesNotMatch(historyFile, new RegExp(sessionId));
+  if (process.platform !== 'win32') assert.equal(fs.statSync(historyFile).mode & 0o777, 0o600);
+  assert.equal(firstArgs.includes('--restore-chat-history'), false);
+  assert.equal(resumeArgs.includes('--restore-chat-history'), true);
+});
+
+test('Pi unattended delivery has native sessions with no tools, extensions or skills', () => {
+  const provider = new PiCliProvider();
+  const args = provider._args.join(' ');
+  assert.equal(provider._adapterType, 'pi-cli');
+  assert.match(args, /--no-tools/);
+  assert.match(args, /--no-extensions/);
+  assert.match(args, /--no-skills/);
+  assert.doesNotMatch(args, /--tools\s/);
+  const sessionId = provider._createManagedSessionId();
+  assert.deepEqual(provider._argsForSession(sessionId, true).slice(-2), ['--session-id', sessionId]);
+});
+
+test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallback', () => {
+  const provider = new OpenHandsAcpProvider();
+  assert.equal(provider._adapterType, 'openhands-acp');
+  assert.deepEqual(provider._cliArgs, ['acp']);
+  assert.equal(provider.options.env.PYTHONUTF8, '1');
+  assert.equal(provider.options.env.PYTHONIOENCODING, 'utf-8');
+  assert.equal(provider.options.env.OPENHANDS_SUPPRESS_BANNER, '1');
+  assert.equal(provider._cliFallback, null);
+});
+
+test('Grok unattended delivery is tool-free and resumes only its bound session', () => {
+  const provider = new GrokCliProvider();
+  const args = provider._args.join(' ');
+  assert.equal(provider._adapterType, 'grok-cli');
+  assert.match(args, /--permission-mode plan/);
+  assert.match(args, /--tools=none/);
+  assert.match(args, /--disable-web-search/);
+  assert.match(args, /--no-subagents/);
+  assert.match(args, /--no-memory/);
+  assert.doesNotMatch(args, /always-approve|bypassPermissions|yolo/);
+  const sessionId = provider._createManagedSessionId();
+  assert.deepEqual(
+    provider._argsForSession(sessionId, true).slice(-4),
+    ['--session-id', sessionId, '--single', '{prompt}'],
+  );
+  assert.deepEqual(
+    provider._argsForSession(sessionId, false).slice(-4),
+    ['--resume', sessionId, '--single', '{prompt}'],
+  );
 });
 
 test('DeepSeek environment is mapped without embedding credentials in command arguments', () => {
@@ -279,12 +347,12 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   for (const type of ['qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q', 'cursor', 'grok', 'zeroclaw']) {
     assert.ok(environment.detected.some((provider) => provider.type === type), type);
   }
-  for (const type of ['qwen-code', 'kiro', 'aider']) {
+  for (const type of ['qwen-code', 'kiro', 'aider', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['cli', 'pull']);
   }
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
-  for (const type of ['openhands', 'amazon-q', 'grok']) {
+  for (const type of ['openhands', 'amazon-q']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
   }
   const zeroModes = service.deliveryCapabilities('zeroclaw');

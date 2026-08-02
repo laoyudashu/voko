@@ -74,13 +74,32 @@ function createMessageRenderer(labels) {
     const rawUrl = urlFrom(payload, content);
     const url = safeUrl(rawUrl);
 
+    const attachment = payload && url && ['name', 'fileName', 'file_name', 'size', 'fileSize', 'file_size', 'type', 'mimeType', 'mime_type']
+      .some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+    if (attachment) {
+      const name = payload.name || payload.fileName || payload.file_name || nameFromUrl(url) || text.unknownFile;
+      const size = payload.size ?? payload.fileSize ?? payload.file_size;
+      const declaredType = payload.mimeType || payload.mime_type || payload.type;
+      const mime = typeof declaredType === 'string' && declaredType.includes('/') ? declaredType : '';
+      const imageName = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(String(name));
+      if ((mime && mime.toLowerCase().startsWith('image/')) || imageName) {
+        return { kind: 'image', url, name: String(name) };
+      }
+      const extension = String(name).match(/\.([^.]+)$/);
+      return {
+        kind: 'file',
+        url,
+        name: String(name),
+        size: formatSize(size),
+        mime: String(mime || (extension ? extension[1].toUpperCase() : '')),
+      };
+    }
+
     if (type === 2) {
       return { kind: 'image', url };
     }
 
-    const legacyFile = type === 3 && payload && ['name', 'fileName', 'file_name', 'size', 'fileSize', 'file_size', 'type', 'mimeType', 'mime_type']
-      .some((key) => Object.prototype.hasOwnProperty.call(payload, key));
-    if (type === 4 || legacyFile) {
+    if (type === 4) {
       const name = payload && (payload.name || payload.fileName || payload.file_name);
       const size = payload && (payload.size ?? payload.fileSize ?? payload.file_size);
       const mime = payload && (payload.type || payload.mimeType || payload.mime_type);
@@ -109,7 +128,7 @@ function createMessageRenderer(labels) {
         return '<div class="voko-file-card"><span class="voko-file-icon" aria-hidden="true">🖼️</span><span class="voko-file-info"><strong class="voko-file-name">' + esc(text.image) + '</strong></span><span class="voko-resource-unavailable">' + esc(text.unavailable) + '</span></div>';
       }
       const url = esc(media.url);
-      return '<a class="voko-media-image-link" href="' + url + '" target="_blank" rel="noopener noreferrer" title="' + esc(text.openOriginal) + '"><img class="voko-media-image-preview" src="' + url + '" alt="' + esc(text.image) + '" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="voko-media-fallback" hidden>' + esc(text.unavailable) + '</span><span class="voko-media-caption">' + esc(text.openOriginal) + '</span></a>';
+      return '<a class="voko-media-image-link" href="' + url + '" target="_blank" rel="noopener noreferrer" title="' + esc(text.openOriginal) + '"><img class="voko-media-image-preview" src="' + url + '" alt="' + esc(media.name || text.image) + '" loading="lazy" decoding="async" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="voko-media-fallback" hidden>' + esc(text.unavailable) + '</span><span class="voko-media-caption">' + esc(media.name || text.openOriginal) + '</span></a>';
     }
 
     const isVideo = media.kind === 'video';

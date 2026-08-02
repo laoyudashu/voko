@@ -42,17 +42,46 @@ test('bug report submit adds detected Agent metadata without authentication', as
   }
 });
 
-test('bug report query only sends report credentials', async () => {
+test('bug report query uses the current email and user access token', async () => {
   const originalFetch = global.fetch;
-  let body;
+  let body, headers;
   global.fetch = async (_url, options) => {
     body = JSON.parse(options.body);
+    headers = options.headers;
     return { ok: true, json: async () => ({ success: true, status: 'pending' }) };
   };
   try {
+    const db = {
+      prepare(sql) {
+        return { get(_type) {
+          if (sql.includes('type = ?') && _type === 'current_user_email') return { data: JSON.stringify('owner@example.com') };
+          if (sql.includes('type = ?')) return { data: JSON.stringify({ 'owner@example.com': { user_access_token: 'user-token' } }) };
+          return undefined;
+        } };
+      },
+    };
+    const report = createBugReportClient({ apiBaseUrl: 'https://api.example.com', db });
+    await report({ action: 'query' });
+    assert.deepEqual(body, { action: 'query' });
+    assert.equal(headers.Authorization, 'Bearer user-token');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('anonymous bug reports optionally keep a normalized email for later account history', async () => {
+  const originalFetch = global.fetch;
+  const bodies = [];
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ success: true }) };
+  };
+  try {
     const report = createBugReportClient({ apiBaseUrl: 'https://api.example.com', db: null });
-    await report({ action: 'query', reportId: 'BR-2', queryToken: 'private-token', ownerEmail: 'ignored@example.com' });
-    assert.deepEqual(body, { action: 'query', reportId: 'BR-2', queryToken: 'private-token' });
+    await report({ action: 'submit', title: 'With email', description: 'Failed', ownerEmail: ' Owner@Example.COM ' });
+    await report({ action: 'submit', title: 'Anonymous', description: 'Failed' });
+    assert.equal(bodies[0].ownerEmail, 'owner@example.com');
+    assert.equal(bodies[1].ownerEmail, '');
   } finally {
     global.fetch = originalFetch;
   }
@@ -64,7 +93,8 @@ test('bug report validates required fields before network access', async () => {
   try {
     const report = createBugReportClient({ apiBaseUrl: 'https://api.example.com', db: null });
     assert.equal((await report({ action: 'submit', title: '', description: '' })).success, false);
-    assert.equal((await report({ action: 'query', reportId: 'BR-3' })).success, false);
+    assert.equal((await report({ action: 'submit', title: 'Broken', description: 'Failed', ownerEmail: 'not-an-email' })).success, false);
+    assert.equal((await report({ action: 'query' })).success, false);
   } finally {
     global.fetch = originalFetch;
   }

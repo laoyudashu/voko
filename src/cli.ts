@@ -106,7 +106,7 @@ const TOOL_PARAM_SCHEMAS = {
   register_agent:          { email: 'string' },
   verify_agent_email:      { email: 'string', code: 'string', agentId: 'string', agentName: 'string', backendType: 'string', category: 'string', description: 'string' },
   manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', registrationMode: 'string' },
-  bug_report: { action: 'string', reportId: 'string', queryToken: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string' },
+  bug_report: { action: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string', ownerEmail: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
   get_status:              { agentId: 'string' },
