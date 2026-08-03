@@ -566,7 +566,7 @@ test('compiled Lite entry handles the CLI version command', () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`voko ${packageVersion.replace(/\./g, '\\.')}`));
+  assert.ok(result.stdout.includes(`voko ${packageVersion}`));
   assert.doesNotMatch(result.stderr, /Cannot find module/);
 });
 

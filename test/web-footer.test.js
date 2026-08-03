@@ -4,7 +4,6 @@ const assert = require('node:assert/strict');
 const { renderSystemFooter } = require('../src/web/footer');
 const { version: packageVersion } = require('../package.json');
 
-const versionPattern = packageVersion.replace(/\./g, '\\.');
 const nextVersion = packageVersion.replace(/(\d+)$/, (patch) => String(Number(patch) + 1));
 
 test('shared web footer renders runtime status and global actions', () => {
@@ -20,7 +19,7 @@ test('shared web footer renders runtime status and global actions', () => {
   const html = renderSystemFooter(db, (key) => labels[key] || key, 'zh');
 
   assert.match(html, /data-voko-system-footer/);
-  assert.match(html, new RegExp(`版本: V${versionPattern}`));
+  assert.ok(html.includes(`版本: V${packageVersion}`));
   assert.match(html, /端口: 3100/);
   assert.match(html, /PID: 48264/);
   assert.match(html, /运行状态:[\s\S]*正常/);
@@ -53,5 +52,5 @@ test('shared web footer shows a compact manual update hint without the latest ve
   assert.match(html, /id="voko-update-command"[\s\S]*voko update/);
   assert.match(html, /id="voko-copy-update"[\s\S]*复制/);
   assert.match(html, /升级完成后/);
-  assert.doesNotMatch(html, new RegExp(nextVersion.replace(/\./g, '\\.')));
+  assert.ok(!html.includes(nextVersion));
 });
