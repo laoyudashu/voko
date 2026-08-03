@@ -64,7 +64,7 @@
     "package:build": "npm run build:ts",
     "prepack": "npm run package:build",
     "test": "npm run release:gate:code",
-    "test:targeted": "npm run build:ts && node --test --test-concurrency=4 test/*.test.js && node test/group-mcp-tools.test.js",
+    "test:targeted": "npm run build:ts && node --test --test-concurrency=1 test/*.test.js && node test/group-mcp-tools.test.js",
     "test:channels": "npm run build:ts && node --test test/lite-channel-registry.test.js test/lite-mcp-contract.test.js test/lite-owner-intervention-context.test.js test/lite-owner-intervention-reliability.test.js test/owner-intervention-group-resume.test.js",
     "test:agent-files": "npm run build:ts && node --test test/lite-agent-files-contract.test.js test/agent-file-security.test.js",
     "test:voko-email": "npm run build:ts && node --test test/lite-voko-email.test.js test/lite-channel-registry.test.js test/owner-intervention-group-resume.test.js",
