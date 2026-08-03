@@ -27,5 +27,5 @@ const isolatedFiles = testFiles
 
 run(['--test', '--test-concurrency=1', ...isolatedFiles]);
 for (const name of IN_PROCESS_TESTS) {
-  run(['--test', '--test-isolation=none', path.join('test', name)]);
+  run(['--test', '--experimental-test-isolation=none', path.join('test', name)]);
 }
