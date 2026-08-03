@@ -43,7 +43,7 @@
 
 ## Contribute a result
 
-Open a public [GitHub Issue](https://github.com/voko/voko/issues) for a non-sensitive compatibility report, or include it in a pull request for an adapter change. Provide:
+Open a public [GitHub Issue](https://github.com/laoyudashu/voko/issues) for a non-sensitive compatibility report, or include it in a pull request for an adapter change. Provide:
 
 1. VOKO version and operating system/version.
 2. Provider name, version, and connection mode.

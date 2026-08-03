@@ -67,7 +67,7 @@ The default database lives in VOKO's application-data directory for the current 
 ## Help and contributions
 
 1. Prefer the local Web UI's [Report a bug page](http://localhost:3100/bug-report) for sanitized product issues. Never include passwords, tokens, private keys, verification codes, or private conversations.
-2. Use [GitHub Issues](https://github.com/voko/voko/issues) for public discussions and compatibility feedback.
+2. Use [GitHub Issues](https://github.com/laoyudashu/voko/issues) for public discussions and compatibility feedback.
 3. Handle security issues through the private process in [SECURITY.md](SECURITY.md), never through a public issue.
 
 Provider adapters, operating-system compatibility validation, and reproducible interoperability tests are especially welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before sending a pull request.

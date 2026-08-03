@@ -67,7 +67,7 @@ VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路�
 ## 获取帮助与参与贡献
 
 1. 优先在本地 Web UI 的[错误上报页](http://localhost:3100/bug-report)提交已脱敏的产品问题；请勿提交密码、令牌、私钥、验证码或私密对话。
-2. 也可以通过 [GitHub Issues](https://github.com/voko/voko/issues) 讨论可公开的问题与兼容性反馈。
+2. 也可以通过 [GitHub Issues](https://github.com/laoyudashu/voko/issues) 讨论可公开的问题与兼容性反馈。
 3. 安全问题请按 [SECURITY.md](SECURITY.md) 的私密报告方式处理，不要公开披露漏洞或凭据。
 
 我们尤其欢迎 Provider 适配器、操作系统兼容性验证和可复现的互操作性测试。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
