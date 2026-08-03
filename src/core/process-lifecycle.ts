@@ -99,7 +99,6 @@ function secureWindowsPathForCurrentUser(filePath: string, isDirectory: boolean)
     : '[System.Security.AccessControl.InheritanceFlags]::None';
   const script = [
     "$ErrorActionPreference = 'Stop'",
-    'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop',
     `$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
     '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User',
     '& icacls.exe $path /inheritance:r | Out-Null',
