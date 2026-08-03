@@ -554,8 +554,7 @@ class OpenClawWsProvider {
   }
 
   base64UrlEncode(bytes: Uint8Array): string {
-    return Buffer.from(bytes).toString('base64')
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return Buffer.from(bytes).toString('base64url');
   }
 
   base64UrlDecode(input: string): Uint8Array {

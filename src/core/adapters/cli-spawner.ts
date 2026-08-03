@@ -5,7 +5,8 @@
  * provider 中的重复代码。
  */
 
-const { spawn, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
+const spawn = require('cross-spawn');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
@@ -146,11 +147,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     };
 
     // .js/.exe 等直接 spawn；无扩展名的命令名交给系统 PATH
-    if (isWin && !path.extname(cmd) && !cmd.includes(path.sep) && !cmd.includes('/')) {
-      child = spawn('cmd.exe', ['/c', cmd, ...args], spawnOpts);
-    } else {
-      child = spawn(cmd, args, spawnOpts);
-    }
+    child = spawn(cmd, args, spawnOpts);
 
     if (useStdin) {
       child.stdin!.on('error', () => {}); // EPIPE 等忽略

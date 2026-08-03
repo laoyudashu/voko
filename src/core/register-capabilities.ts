@@ -169,7 +169,7 @@ async function registerCapabilitiesForAgent({ db, agentId }: RegisterOptions) {
       db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(result, Date.now(), agentId);
       return { success: false, error: result };
     }
-    console.log(`[registerCapabilities] Agent ${agentId} response:`, result);
+    console.log('[registerCapabilities] Agent response:', agentId, result);
     if (result.success) {
       db.prepare(`UPDATE agents SET cap_error = NULL, updated_at = ? WHERE agent_id = ?`).run(Date.now(), agentId);
       return { success: true, message: '能力已注册到服务器' };
@@ -178,7 +178,7 @@ async function registerCapabilitiesForAgent({ db, agentId }: RegisterOptions) {
     db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(errMsg, Date.now(), agentId);
     return { success: false, error: errMsg, detail: result };
   } catch (e: unknown) {
-    console.error(`[registerCapabilities] Agent ${agentId} error:`, e);
+    console.error('[registerCapabilities] Agent error:', agentId, e);
     const message = errorMessage(e);
     db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(message, Date.now(), agentId);
     return { success: false, error: message };

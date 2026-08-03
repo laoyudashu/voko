@@ -228,7 +228,7 @@ function createGroupRouter(handlers, db) {
           const canManage = !isDissolved && isManager && m.role!=='owner' && m.uid!==myUid && !(myRole==='admin'&&m.role==='admin');
           const isMuted = m.mute_until && new Date(m.mute_until) > new Date();
           const disp=m.name||m.nickname||m.uid;
-          const escName = esc(disp.replace(/'/g,"\'"));
+          const escName = esc(disp);
           const youTag = m.uid===myUid ? ' <span class="meta" style="color:#1a73e8">('+L('web.group.you')+')</span>' : '';
           const memberUid=esc(encodeURIComponent(String(m.uid)));
           const chatBtn='<a href="/agents/'+esc(agentId)+'/c/'+memberUid+'?action=reply&amp;focus=1" class="btn btn-xs">'+L('web.group.btn.private_chat')+'</a>';

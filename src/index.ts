@@ -1469,7 +1469,7 @@ async function startMcpServer(args?: any, core?: any) {
       _syncingAgents.add(agentId);
       const { syncOfflineMessages: doSync } = require('./core/offline-sync');
       doSync(db, messageHandler, agentId)
-        .catch((e: any) => console.error(`[离线同步] Agent ${agentId} 失败:`, e.message))
+        .catch((e: any) => console.error('[离线同步] Agent 失败:', agentId, e.message))
         .finally(() => _syncingAgents.delete(agentId));
     };
     const _trySync = () => {
@@ -2005,7 +2005,7 @@ async function createLiteApp(options: any = {}) {
       if (!agentId || syncingAgents.has(agentId)) return;
       syncingAgents.add(agentId);
       require('./core/offline-sync').syncOfflineMessages(db, messageHandler, agentId)
-        .catch((error: any) => console.error(`[离线同步] Agent ${agentId} 失败:`, error.message))
+        .catch((error: any) => console.error('[离线同步] Agent 失败:', agentId, error.message))
         .finally(() => syncingAgents.delete(agentId));
     };
     agentManager.on('status', (msg?: any) => {

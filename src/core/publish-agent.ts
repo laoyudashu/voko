@@ -129,7 +129,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
     // 注册能力到服务端
     if (registerCapabilities) {
       try { await registerCapabilities(agentId); } catch (e: unknown) {
-        console.warn(`[publishAgent] Agent ${agentId} 注册能力失败:`, errorMessage(e));
+        console.warn('[publishAgent] Agent registration failed:', agentId, errorMessage(e));
       }
     }
 
@@ -149,7 +149,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
           await updateAgentProfile({ agentId, ...fields });
         }
       } catch (e: unknown) {
-        console.warn(`[publishAgent] Agent ${agentId} 同步资料失败:`, errorMessage(e));
+        console.warn('[publishAgent] Agent profile sync failed:', agentId, errorMessage(e));
       }
     }
 
@@ -160,7 +160,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
 
     return { success: true, publishStatus: 'published', accessMode };
   } catch (e: unknown) {
-    console.error(`[publishAgent] Agent ${agentId} error:`, e);
+    console.error('[publishAgent] Agent error:', agentId, e);
     return { success: false, error: errorMessage(e) };
   }
 }
@@ -199,7 +199,7 @@ async function unpublishAgent(opts?: PublishOptions): Promise<PublishResult> {
 
     return { success: true, publishStatus: 'unpublished' };
   } catch (e: unknown) {
-    console.error(`[unpublishAgent] Agent ${agentId} error:`, e);
+    console.error('[unpublishAgent] Agent error:', agentId, e);
     return { success: false, error: errorMessage(e) };
   }
 }

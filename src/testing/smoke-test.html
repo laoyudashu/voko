@@ -190,7 +190,7 @@ const SEC_NAMES = {
   G9: 'G9. 数据一致性', G10: 'G10. 多Agent回路',
 };
 
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 // ── 交互 ──
 function toggleSection(el) {

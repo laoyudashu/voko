@@ -12,6 +12,7 @@ const pkg = require('../../package.json');
 const { createRegisterRouter } = require('./register');
 const { createPaymentAuthRouter } = require('./payment-auth');
 const { createGroupRouter } = require('./group');
+const { rateLimit } = require('express-rate-limit');
 const { MESSAGE_CONTENT_CSS, createMessageRenderer, messageLabels, messageRendererScript } = require('./message-content');
 const { VOKO_API_URL } = require('../core/api-signature');
 const { getCurrentUserEmail, getUserAccessToken } = require('../core/database');
@@ -354,6 +355,13 @@ function ajaxRowRemove(url,body,row){fetch(url,{method:"POST",headers:{"Content-
 
 function createWebRouter(handlers, db, opts={}){
   const R=Router();
+  R.use(rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { success: false, error: 'Too many requests' },
+  }));
   const currentOwnerEmail=()=>{
     try{
       const selected=db.prepare("SELECT data FROM config WHERE type='current_user_email'").get();
