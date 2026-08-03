@@ -74,15 +74,16 @@ function makeT(locale) {
 
 // ── Cookie 解析（不装 cookie-parser，保持零依赖） ───────────────────
 function parseCookie(header) {
-  const out = {};
+  const out = Object.create(null);
   if (!header) return out;
   for (const pair of String(header).split(';')) {
     const i = pair.indexOf('=');
     if (i < 0) continue;
     const k = pair.slice(0, i).trim();
     let v = pair.slice(i + 1).trim();
-    if (k) {
+    if (k && k !== '__proto__' && k !== 'prototype' && k !== 'constructor') {
       try { v = decodeURIComponent(v); } catch (_) {}
+      // out has a null prototype and prototype-mutating property names are rejected above.
       out[k] = v;
     }
   }

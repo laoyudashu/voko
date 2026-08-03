@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "entries": [
+    { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "8eb241f43aa7869b:1@18", "reason": "候选路径先经 realpath 工作区边界校验，写入目标还会拒绝现存符号链接；此条对应受控 lstat。" },
+    { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "8eb241f43aa7869b:1@45", "reason": "与同一受控 lstat 的第二条数据流重复，路径已限定在 realpath 工作区内。" },
+    { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "b4d802bcb2eb135:1@23", "reason": "读取前对候选文件执行 realpath，并验证真实目标仍位于 Agent 工作区。" },
+    { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "f64280ef53e61135:1@17", "reason": "写入前验证真实父目录位于工作区并拒绝现存符号链接；遍历、绝对路径和 junction 有回归测试。" },
+    { "ruleId": "js/remote-property-injection", "file": "src/core/i18n/index.js", "fingerprint": "89d54e192f42e773:1@4", "reason": "Cookie 容器使用 null prototype，且显式拒绝 __proto__、prototype、constructor，不存在原型链写入。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@4", "reason": "这是协议消息类型分派而非授权判断；nonce 已限制类型和长度，签名仍使用本机私钥。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@28", "reason": "同一 challenge 分派的数据流；远端只能提供待签 nonce，不能控制私钥或认证令牌。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@94", "reason": "同一 challenge 分派的数据流；消息类型和事件名必须精确匹配。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@114", "reason": "同一 challenge 分派的数据流；nonce 的类型和长度已在敏感操作前验证。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/local-http-security.js", "fingerprint": "b4e8ced11edb3ec9:1@8", "reason": "该函数本身就是 Host allowlist：仅接受 localhost、127.0.0.1、::1，并拒绝凭据和额外 URL 部分。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/registration-orchestrator.js", "fingerprint": "b8d50ca1cabe6688:1@4", "reason": "这是注册状态机 action 分派；verifyEmail 仍校验服务端签发的 registrationId、验证码和状态。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "2f31028c27c648ef:1@4", "reason": "这是登录 POST 的 sendCode action 分派；服务端 register_agent 执行邮箱校验和 OTP 限流。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "3fc902d8d6684c3e:1@4", "reason": "这是登录 POST 的 verify action 分派；login_by_code 在服务端权威校验邮箱验证码。" }
+  ]
+}

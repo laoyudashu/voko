@@ -1,0 +1,7 @@
+name: VOKO CodeQL configuration
+
+paths-ignore:
+  - build/**
+  - test/**
+  - .cache/**
+  - node_modules/**

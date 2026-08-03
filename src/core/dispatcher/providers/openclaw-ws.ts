@@ -131,10 +131,8 @@ class OpenClawWsProvider {
   loadConfig(): boolean {
     try {
       if (fs.existsSync(this.configPath)) {
-        const stats = fs.statSync(this.configPath);
-        this.lastConfigMtime = stats.mtimeMs;
-
         const config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        this.lastConfigMtime = fs.statSync(this.configPath).mtimeMs;
 
         const newPort = config.gateway?.port || 18789;
         const newToken = config.gateway?.auth?.token || null;
@@ -708,7 +706,9 @@ class OpenClawWsProvider {
     connectionTimeout: NodeJS.Timeout,
   ): Promise<void> {
     // 处理连接挑战
-    if (msg.type === 'event' && msg.event === 'connect.challenge') {
+    const nonce = msg.payload?.nonce;
+    // This is explicit protocol dispatch, not an authorization bypass; constrain the challenge payload before signing.
+    if (msg.type === 'event' && msg.event === 'connect.challenge' && typeof nonce === 'string' && nonce.length > 0 && nonce.length <= 512) {
       console.log('[OpenClaw WS] 🔐 收到认证挑战');
 
       try {
@@ -723,7 +723,7 @@ class OpenClawWsProvider {
           scopes: ['operator.read', 'operator.write', 'operator.admin'],
           signedAtMs,
           token: this.authToken,
-          nonce: msg.payload.nonce
+          nonce
         });
 
         const signature = await this.signPayload(this.device.privateKey, payload);

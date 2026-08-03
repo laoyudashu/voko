@@ -61,3 +61,7 @@ config/channel_config - *.json
 scancode-results/
 audit-results/
 native/
+
+# Local security scan output.
+.codeql-db/
+.codeql-results/

@@ -8,11 +8,12 @@ The most useful contributions are Provider adapters, reproducible Provider compa
 
 1. Create a focused branch from `main`.
 2. Do not include credentials, personal data, generated databases, or private service configuration.
-3. Describe the validation performed for every behavior change. The repository intentionally does not publish its local `test/` directory, so maintainers run the internal regression suite before release.
+3. Describe the validation performed for every behavior change. Maintainers run the complete regression and security gates before release.
 4. Run the checks available in your checkout:
 
 ```bash
 npm ci
+npm test
 npm run package:build
 npm pack --dry-run
 ```

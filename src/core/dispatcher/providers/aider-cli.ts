@@ -49,8 +49,8 @@ class AiderCliProvider extends CliAdapter {
         fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
         const digest = crypto.createHash('sha256').update(sessionId).digest('hex');
         const historyFile = path.join(stateRoot, `${digest}.md`);
-        if (!fs.existsSync(historyFile)) fs.writeFileSync(historyFile, '', { mode: 0o600 });
-        else fs.chmodSync(historyFile, 0o600);
+        const historyFd = fs.openSync(historyFile, 'a', 0o600);
+        try { fs.fchmodSync(historyFd, 0o600); } finally { fs.closeSync(historyFd); }
         return [
           ...baseArgs,
           '--chat-history-file', historyFile,

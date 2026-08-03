@@ -46,6 +46,7 @@ function resolveContainedFile(workspacePath, filename, forWrite = false) {
 
   const realParent = fs.realpathSync(path.dirname(candidate));
   if (realParent !== realWorkspace && !isPathInside(realWorkspace, realParent)) throw new Error('Invalid path');
+  // The resolved parent is confined to the real workspace; existing symlinks are rejected.
   if (fs.existsSync(candidate) && fs.lstatSync(candidate).isSymbolicLink()) throw new Error('Invalid path');
   return path.join(realParent, path.basename(candidate));
 }
@@ -98,6 +99,7 @@ function readFile(agentId, filename) {
   const workspacePath = resolveWorkspace(agentId);
   if (!workspacePath) throw new Error('Agent not found');
   const filePath = resolveContainedFile(workspacePath, filename);
+  // resolveContainedFile verifies both candidate and real target remain inside the workspace.
   return fs.readFileSync(filePath, 'utf-8');
 }
 
@@ -109,6 +111,7 @@ function writeFile(agentId, filename, content) {
     throw new Error('Invalid file content');
   }
   const filePath = resolveContainedFile(workspacePath, filename, true);
+  // resolveContainedFile confines the real parent and rejects an existing symlink target.
   fs.writeFileSync(filePath, content, 'utf-8');
   return true;
 }
