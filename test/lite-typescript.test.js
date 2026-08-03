@@ -22,6 +22,7 @@ const smoke = require('../build/testing/smoke-all');
 const { createWebRouter } = require('../build/web');
 const { requiresLocalToken, isAllowedBridgeConfigType } = require('../build/core/local-http-security');
 const { updateLite } = require('../build/cli');
+const { version: packageVersion } = require('../package.json');
 
 test('pluralRule keeps the existing locale behavior', () => {
   assert.equal(pluralRule('en', 1), 'one');
@@ -565,7 +566,7 @@ test('compiled Lite entry handles the CLI version command', () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /voko 0\.4\.0/);
+  assert.match(result.stdout, new RegExp(`voko ${packageVersion.replace(/\./g, '\\.')}`));
   assert.doesNotMatch(result.stderr, /Cannot find module/);
 });
 
@@ -638,11 +639,12 @@ test('version checks only notify while voko update uses the official npm registr
 test('voko update installs only from npm registry in a published installation', async () => {
   const calls = [];
   let exitCode;
+  const nextVersion = packageVersion.replace(/(\d+)$/, (patch) => String(Number(patch) + 1));
   await updateLite({
     installDir: path.join('C:', 'npm', 'node_modules', '@voko', 'lite', 'build'),
     spawn(command, args, options) {
       calls.push({ command, args, options });
-      return calls.length === 1 ? { status: 0, stdout: '0.4.1\n' } : { status: 0 };
+      return calls.length === 1 ? { status: 0, stdout: `${nextVersion}\n` } : { status: 0 };
     },
     exit(code) { exitCode = code; },
   });
@@ -653,7 +655,7 @@ test('voko update installs only from npm registry in a published installation', 
     'view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/',
   ]);
   assert.deepEqual(calls[1].args, [
-    'install', '-g', '--ignore-scripts', '--registry=https://registry.npmjs.org/', '@voko/lite@0.4.1',
+    'install', '-g', '--ignore-scripts', '--registry=https://registry.npmjs.org/', `@voko/lite@${nextVersion}`,
   ]);
 });
 
