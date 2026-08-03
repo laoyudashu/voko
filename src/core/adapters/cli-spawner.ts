@@ -75,6 +75,29 @@ function checkCliAvailable(cli?: string | null): boolean {
   }
 }
 
+function windowsUserPath(): string {
+  if (process.platform !== 'win32') return '';
+  try {
+    const output = String(execFileSync('reg.exe', ['query', 'HKCU\\Environment', '/v', 'Path'], {
+      encoding: 'utf8', windowsHide: true, timeout: 3000,
+    }));
+    const match = output.match(/\bREG_(?:EXPAND_)?SZ\s+([^\r\n]+)/i);
+    return match ? match[1].replace(/%([^%]+)%/g, (_: string, key: string) => process.env[key] || '').trim() : '';
+  } catch (_) { return ''; }
+}
+
+function childEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const merged = { ...process.env, ...(extra || {}) };
+  const userPath = windowsUserPath();
+  if (userPath) {
+    const current = String(merged.PATH || merged.Path || '');
+    const key = process.platform === 'win32' ? 'Path' : 'PATH';
+    merged[key] = [current, userPath].filter(Boolean).join(path.delimiter);
+    if (key === 'Path') merged.PATH = merged[key];
+  }
+  return merged;
+}
+
 /**
  * 运行 CLI 命令，返回 stdout 全文 + exit code。
  *
@@ -119,7 +142,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       windowsHide,
       detached: !isWin,
       cwd: cwd || undefined,
-      env: env ? { ...process.env, ...env } : process.env,
+      env: childEnv(env),
     };
 
     // .js/.exe 等直接 spawn；无扩展名的命令名交给系统 PATH

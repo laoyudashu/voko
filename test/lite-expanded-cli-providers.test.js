@@ -169,6 +169,21 @@ test('Hermes CLI fallback classifies approval and timeout failures', async () =>
   }
 });
 
+test('Hermes CLI does not publish an upstream authentication error as an Agent reply', async () => {
+  const errors = [];
+  const replies = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }) },
+    runCli: async () => ({ stdout: 'HTTP 401: Missing Authentication header\n', stderr: '', code: 0, signal: null }),
+  });
+  provider.on('delivery.error', (error) => errors.push(error));
+  provider.on('agent.reply', (reply) => replies.push(reply));
+  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'auth-error' });
+  await provider.waitForIdle();
+  assert.equal(replies.length, 0);
+  assert.equal(errors[0].kind, 'execution_failed');
+});
+
 test('Cursor prefers ACP with a restricted CLI fallback', () => {
   const acp = new CursorAcpProvider();
   const cli = new CursorCliProvider();

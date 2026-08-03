@@ -137,7 +137,7 @@ class HermesCliProvider extends PushProvider {
 
       if (result.code === 0) {
         const replyText = _extractReply(result.stdout);
-        if (replyText) {
+        if (replyText && !_isUpstreamErrorReply(replyText)) {
           this.emit('agent.reply', {
             agentId, visitorId: fromUid,
             content: replyText, done: true,
@@ -233,6 +233,10 @@ function _extractReply(stdout: string): string | null {
   if (contentLines.length > 0) return contentLines.join('\n').trim();
   // 兜底：取全部非空行的前 500 字
   return lines.join('\n').trim().slice(0, 500);
+}
+
+function _isUpstreamErrorReply(reply: string): boolean {
+  return /^(?:http\s+[45]\d{2}\b|(?:authentication|authorization)\s+(?:error|required|failed)|(?:invalid|missing)\s+(?:api[ _-]?key|authentication))/i.test(reply.trim());
 }
 
 function _buildNotification(
