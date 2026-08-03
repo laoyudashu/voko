@@ -56,6 +56,8 @@ interface ProcessLifecycleDeps {
 }
 
 const LOCK_INIT_GRACE_MS = 5000;
+const WORKER_EXIT_CONFIRM_TIMEOUT_MS = 2000;
+const PROCESS_POLL_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
 function normalizePath(value: string): string {
   const resolved = path.resolve(value);
@@ -222,17 +224,24 @@ function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
   return identities;
 }
 
+function parseLinuxProcessStat(stat: string): { parentPid: number | null; creationId: string } | null {
+  const close = stat.lastIndexOf(')');
+  if (close < 0) return null;
+  const fields = stat.slice(close + 2).trim().split(/\s+/);
+  if (fields[0] === 'Z') return null;
+  return {
+    parentPid: Number(fields[1]) || null,
+    creationId: String(fields[19] || ''),
+  };
+}
+
 function inspectLinuxProcess(pid: number): ProcessIdentity | null {
   try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const close = stat.lastIndexOf(')');
-    if (close < 0) return null;
-    const fields = stat.slice(close + 2).trim().split(/\s+/);
-    const parentPid = Number(fields[1]) || null;
-    const creationId = String(fields[19] || '');
+    const parsed = parseLinuxProcessStat(fs.readFileSync(`/proc/${pid}/stat`, 'utf8'));
+    if (!parsed) return null;
     const executablePath = fs.readlinkSync(`/proc/${pid}/exe`);
     const commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim();
-    return { pid, parentPid, creationId, executablePath, commandLine };
+    return { pid, ...parsed, executablePath, commandLine };
   } catch {
     return null;
   }
@@ -583,6 +592,10 @@ export function cleanupOrphanedWorkers(
         process.kill(metadata.pid, 'SIGKILL');
       }
     } catch {}
+    const deadline = Date.now() + WORKER_EXIT_CONFIRM_TIMEOUT_MS;
+    while (matchesWorkerProcess(metadata, inspector(metadata.pid)) && Date.now() < deadline) {
+      Atomics.wait(PROCESS_POLL_BUFFER, 0, 0, 10);
+    }
     if (!matchesWorkerProcess(metadata, inspector(metadata.pid))) {
       killed.push(metadata.pid);
       try { fs.rmSync(filePath, { force: true }); } catch {}
@@ -596,6 +609,7 @@ export function cleanupOrphanedWorkers(
 export const _test = {
   canonicalDbPath,
   getRuntimePaths,
+  parseLinuxProcessStat,
   parsePsProcessOutput,
   readJson,
 };

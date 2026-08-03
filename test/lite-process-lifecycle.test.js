@@ -134,6 +134,17 @@ afterEach(async () => {
 });
 
 describe('Lite process lifecycle identity', () => {
+  it('treats a Linux zombie as exited instead of a live worker identity', () => {
+    const fields = ['Z', '42', ...Array(17).fill('0'), '987'];
+    assert.equal(lifecycle._test.parseLinuxProcessStat(`123 (node worker) ${fields.join(' ')}`), null);
+
+    fields[0] = 'S';
+    assert.deepEqual(
+      lifecycle._test.parseLinuxProcessStat(`123 (node worker) ${fields.join(' ')}`),
+      { parentPid: 42, creationId: '987' },
+    );
+  });
+
   it('treats an instance that exits during graceful shutdown as stopped', async () => {
     const metadata = {
       pid: 12345,
