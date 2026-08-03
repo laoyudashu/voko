@@ -74,6 +74,7 @@
     "test:registration": "npm run build:ts && node --test test/agent-register-fields.test.js test/registration-orchestrator.test.js test/cli-register.test.js test/web-register.test.js test/lite-core-services.test.js",
     "test:lite": "npm run build:ts && npm run i18n:check && node test/smoke-all.js --require-running",
     "smoke:standalone": "npm run build:ts && node scripts/smoke-standalone.js",
+    "release:preflight": "npm run release:gate && npm pack --dry-run",
     "verify:published-release": "node scripts/verify-release-sources.js",
     "scan:package-secrets": "node scripts/scan-package-secrets.js",
     "sbom": "npm sbom --package-lock-only --sbom-format cyclonedx",

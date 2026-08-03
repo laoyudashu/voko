@@ -13,10 +13,8 @@
 ## Automated gate
 
 - [ ] `npm ci`
-- [ ] `npm run release:gate`
-- [ ] `npm run package:build`
-- [ ] `npm pack --dry-run`
-- [ ] Gitleaks working-tree scan
+- [ ] `npm run release:preflight` (includes `release:gate` and `npm pack --dry-run`)
+- [ ] GitHub Actions security job and Gitleaks scan pass on the exact commit to release.
 - [ ] ScanCode license/copyright scan
 - [ ] ORT dependency/license evaluation
 - [ ] CycloneDX SBOM generation
@@ -24,6 +22,7 @@
 ## Post-publication verification
 
 - [ ] `npm run verify:published-release`
+- [ ] Record GitHub Release URL, npm version, commit SHA, and gate results.
 
 ## GitHub settings
 
