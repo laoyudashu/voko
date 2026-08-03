@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createBugReportClient } = require('../build/core/bug-report');
+const { version: packageVersion } = require('../package.json');
 
 test('bug report submit adds detected Agent metadata without authentication', async () => {
   const originalFetch = global.fetch;
@@ -30,7 +31,7 @@ test('bug report submit adds detected Agent metadata without authentication', as
       actual: '',
       severity: 'medium',
       category: 'bug',
-      clientVersion: '0.4.0',
+      clientVersion: packageVersion,
       platform: process.platform,
       agentId: 'agent-1',
       agentType: 'openclaw',
