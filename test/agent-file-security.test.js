@@ -17,7 +17,8 @@ test('agent file resolver confines reads and writes to the real workspace', (t) 
   fs.writeFileSync(path.join(outside, 'secret.md'), 'secret');
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
 
-  assert.equal(resolveContainedFile(workspace, 'SOUL.md'), path.join(workspace, 'SOUL.md'));
+  const expectedFile = fs.realpathSync(path.join(workspace, 'SOUL.md'));
+  assert.equal(resolveContainedFile(workspace, 'SOUL.md'), expectedFile);
   assert.throws(() => resolveContainedFile(workspace, '../outside/secret.md'), /Invalid path/);
   assert.throws(() => resolveContainedFile(workspace, path.join(outside, 'secret.md')), /Invalid path/);
   assert.throws(() => resolveContainedFile(workspace, ''), /Invalid path/);
