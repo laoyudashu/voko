@@ -48,6 +48,7 @@ function isAllowedLocalOrigin(origin, host, method, secFetchSite) {
 }
 
 function isAllowedLocalHost(host) {
+  // This predicate is itself the Host allowlist guard used before local HTTP/WS actions.
   return !host || !!parseLoopbackAuthority(host);
 }
 

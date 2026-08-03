@@ -6,6 +6,7 @@
  */
 
 const { Router } = require('express');
+const { jsonForInlineScript } = require('./html-security');
 const fs = require('fs');
 const path = require('path');
 const pkg = require('../../package.json');
@@ -93,12 +94,12 @@ function page(title,body,opt={},tFn,locale){
   const loc=locale||'zh';
   const nav=opt.nav||('<a href="/">'+esc(t('common.nav.home'))+'</a>');
   // 客户端 bundle（common 子集，带 zh 回退）注入供 data-i18n 扫描 + window.t 用
-  const i18nBoot='<script>window.__LOCALE__='+JSON.stringify(loc)+';window.__I18N__='+JSON.stringify(getClientBundle(loc))+'</script>';
-  const jd=opt.jsonld?'\n<script type="application/ld+json">'+JSON.stringify(opt.jsonld)+'</script>':'';
+  const i18nBoot='<script>window.__LOCALE__='+jsonForInlineScript(loc)+';window.__I18N__='+jsonForInlineScript(getClientBundle(loc))+'</script>';
+  const jd=opt.jsonld?'\n<script type="application/ld+json">'+jsonForInlineScript(opt.jsonld)+'</script>':'';
   const msgBg=opt.msg?.warning?'#fff4ce':(opt.msg?.success?'#e6f4ea':'#fce8e6');
   const msgIcon=opt.msg?.warning?'⚠️ ':(opt.msg?.success?'✅ ':'❌ ');
   const msgStatus=opt.msg?.warning?'PotentialActionStatus':(opt.msg?.success?'CompletedSuccessfully':'Failed');
-  const msg=opt.msg?'<div role="alert" style="padding:8px 14px;border-radius:6px;background:'+msgBg+';margin-bottom:10px;font-weight:600" data-agent-kind="status">'+msgIcon+esc(opt.msg.text)+'</div>\n<script type="application/ld+json">{"@context":"https://schema.org","@type":"ActionStatusType","actionStatus":"'+msgStatus+'","description":'+JSON.stringify(opt.msg.text)+'}</script>':'';
+  const msg=opt.msg?'<div role="alert" style="padding:8px 14px;border-radius:6px;background:'+msgBg+';margin-bottom:10px;font-weight:600" data-agent-kind="status">'+msgIcon+esc(opt.msg.text)+'</div>\n<script type="application/ld+json">'+jsonForInlineScript({'@context':'https://schema.org','@type':'ActionStatusType',actionStatus:msgStatus,description:opt.msg.text})+'</script>':'';
   const st=opt.subtitle?' <span class="meta" style="font-size:14px;font-weight:400">('+esc(opt.subtitle)+')</span>':'';
   const ha=opt.headerAction||'';
   const h1=ha?'<h1 style="display:flex;justify-content:space-between;align-items:center"><span>'+esc(title)+st+'</span>'+ha+'</h1>':'<h1>'+esc(title)+st+'</h1>';
@@ -873,7 +874,7 @@ function createWebRouter(handlers, db, opts={}){
 +'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'
 +'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
 +'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
-{nav:agentNav(agentId,aName,T)+' › '+navId,jsonld:{'@context':'https://schema.org',agentId,channelId,messages:jd},footer:renderFooter(T, req.locale)+messageRendererScript(T)+'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'+'<script>var _A='+JSON.stringify(agentId)+',_C='+JSON.stringify(channelId)+',_R='+JSON.stringify({agent:T('web.conversation.from.agent'),visitor:peerLabel,no_msg:T('web.conversation.no_messages'),count_msg:T('web.conversation.count_msg'),auditIn:T('web.audit.message_inbound'),auditOut:T('web.audit.message_outbound'),auditBlocked:T('web.audit.message_blocked'),auditAllowed:T('web.audit.message_allowed'),auditKeyword:T('web.audit.message_keyword'),auditOriginal:T('web.audit.message_original'),auditInvalid:T('web.audit.message_invalid')})+',_seen={};'+"(function(){function _esc(s){return String(s==null?\"\":s).replace(/[&<>\"']/g,function(c){return{\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]})}function _audit(ct,t){try{var d=JSON.parse(ct),out=d.direction===\"outbound\"||(!d.direction&&String(d.audit||\"\").indexOf(\"出站\")>=0),title=out?_R.auditOut:_R.auditIn,result=d.action===\"hard_deny\"?_R.auditBlocked:_R.auditAllowed,rows=\"\";if(d.keyword)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditKeyword)+\"</span>\"+_esc(d.keyword)+\"</div>\";if(d.text)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditOriginal)+\"</span>\"+_esc(d.text).replace(/\\n/g,\"<br>\")+\"</div>\";return '<div class=\"audit-message\"><div class=\"audit-message-head\"><strong>'+_esc(title)+'</strong><span class=\"audit-message-result\">'+_esc(result)+'</span><span class=\"meta\">'+_esc(t)+\"</span></div>\"+rows+\"</div>\"}catch(_){return '<div class=\"audit-message\"><strong>'+_esc(_R.auditInvalid)+'</strong> <span class=\"meta\">'+_esc(t)+\"</span></div>\"}}function _addMsg(m){var bx=document.getElementById(\"msg-box\"),isMe=m.isMe===true||m.isMe===1,sr=isMe?_R.agent:_R.visitor,t=new Date((m.timestamp||0)*1000).toLocaleTimeString(),ct=(m.content||\"\"),h;if(m.contentType===11){h=_audit(ct,t)}else{var bc=isMe?\"#0f9d58\":\"#1a73e8\",bg=isMe?\"#e6f4ea\":\"#e8f0fe\";h='<div style=\"padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+bc+';background:'+bg+'\"><strong>'+_esc(sr)+'</strong> <span style=\"color:#888;font-size:13px\">['+_esc(t)+']</span><br>'+window.__vokoMessageRenderer.render(m.contentType,ct)+\"</div>\"}bx.insertAdjacentHTML(\"beforeend\",h);bx.scrollTop=bx.scrollHeight;var mc=document.getElementById(\"msg-count\");if(mc){mc.textContent=_R.count_msg.replace(\"{count}\",bx.children.length)}}function _connect(){try{var ws=new WebSocket(\"ws://\"+location.host+\"/ws\");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event===\"agent-wukongim:message\"){var m=d.data;if(m.agentId===_A&&m.channelId===_C&&m.messageId&&!_seen[m.messageId]){_seen[m.messageId]=1;_addMsg(m)}}}catch(_){}};ws.onclose=function(){setTimeout(_connect,3000)}}catch(_){setTimeout(_connect,5000)}}_connect()})();"+'</script>'}))
+{nav:agentNav(agentId,aName,T)+' › '+navId,jsonld:{'@context':'https://schema.org',agentId,channelId,messages:jd},footer:renderFooter(T, req.locale)+messageRendererScript(T)+'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'+'<script>var _A='+jsonForInlineScript(agentId)+',_C='+jsonForInlineScript(channelId)+',_R='+jsonForInlineScript({agent:T('web.conversation.from.agent'),visitor:peerLabel,no_msg:T('web.conversation.no_messages'),count_msg:T('web.conversation.count_msg'),auditIn:T('web.audit.message_inbound'),auditOut:T('web.audit.message_outbound'),auditBlocked:T('web.audit.message_blocked'),auditAllowed:T('web.audit.message_allowed'),auditKeyword:T('web.audit.message_keyword'),auditOriginal:T('web.audit.message_original'),auditInvalid:T('web.audit.message_invalid')})+',_seen={};'+"(function(){function _esc(s){return String(s==null?\"\":s).replace(/[&<>\"']/g,function(c){return{\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]})}function _audit(ct,t){try{var d=JSON.parse(ct),out=d.direction===\"outbound\"||(!d.direction&&String(d.audit||\"\").indexOf(\"出站\")>=0),title=out?_R.auditOut:_R.auditIn,result=d.action===\"hard_deny\"?_R.auditBlocked:_R.auditAllowed,rows=\"\";if(d.keyword)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditKeyword)+\"</span>\"+_esc(d.keyword)+\"</div>\";if(d.text)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditOriginal)+\"</span>\"+_esc(d.text).replace(/\\n/g,\"<br>\")+\"</div>\";return '<div class=\"audit-message\"><div class=\"audit-message-head\"><strong>'+_esc(title)+'</strong><span class=\"audit-message-result\">'+_esc(result)+'</span><span class=\"meta\">'+_esc(t)+\"</span></div>\"+rows+\"</div>\"}catch(_){return '<div class=\"audit-message\"><strong>'+_esc(_R.auditInvalid)+'</strong> <span class=\"meta\">'+_esc(t)+\"</span></div>\"}}function _addMsg(m){var bx=document.getElementById(\"msg-box\"),isMe=m.isMe===true||m.isMe===1,sr=isMe?_R.agent:_R.visitor,t=new Date((m.timestamp||0)*1000).toLocaleTimeString(),ct=(m.content||\"\"),h;if(m.contentType===11){h=_audit(ct,t)}else{var bc=isMe?\"#0f9d58\":\"#1a73e8\",bg=isMe?\"#e6f4ea\":\"#e8f0fe\";h='<div style=\"padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+bc+';background:'+bg+'\"><strong>'+_esc(sr)+'</strong> <span style=\"color:#888;font-size:13px\">['+_esc(t)+']</span><br>'+window.__vokoMessageRenderer.render(m.contentType,ct)+\"</div>\"}bx.insertAdjacentHTML(\"beforeend\",h);bx.scrollTop=bx.scrollHeight;var mc=document.getElementById(\"msg-count\");if(mc){mc.textContent=_R.count_msg.replace(\"{count}\",bx.children.length)}}function _connect(){try{var ws=new WebSocket(\"ws://\"+location.host+\"/ws\");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event===\"agent-wukongim:message\"){var m=d.data;if(m.agentId===_A&&m.channelId===_C&&m.messageId&&!_seen[m.messageId]){_seen[m.messageId]=1;_addMsg(m)}}}catch(_){}};ws.onclose=function(){setTimeout(_connect,3000)}}catch(_){setTimeout(_connect,5000)}}_connect()})();"+'</script>'}))
     }catch(e){next(e)}
   });
 
@@ -1226,13 +1227,12 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       }
       if (!filedata) return res.json({ success: false, error: '未找到上传文件' });
       const path = require('path');
-      const tmpDir = require('os').tmpdir();
+      const uploadDir = require('fs').mkdtempSync(path.join(require('os').tmpdir(), 'voko-upload-'));
       // 净化 filename：basename 剥离目录 + 剔除残留分隔符与 ..，防路径穿越写任意路径
       const safeName = path.basename(filename || 'upload').replace(/[\\/:]/g, '').replace(/\.\./g, '').trim() || 'upload';
-      const tmpPath = path.join(tmpDir, `voko-upload-${Date.now()}-${safeName}`);
-      if (!tmpPath.startsWith(tmpDir)) return res.json({ success: false, error: '非法文件名' });
-      require('fs').writeFileSync(tmpPath, filedata);
+      const tmpPath = path.join(uploadDir, safeName);
       try {
+        require('fs').writeFileSync(tmpPath, filedata, { flag: 'wx', mode: 0o600 });
         const result = await handlers.upload_and_send_file({
           agentId,
           toUid: String(req.query.toUid||''),
@@ -1241,10 +1241,10 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           filePath: tmpPath,
           fileName: filename,
         });
-        require('fs').unlinkSync(tmpPath);
+        require('fs').rmSync(uploadDir, { recursive: true, force: true });
         res.json(result);
       } catch (e) {
-        try { require('fs').unlinkSync(tmpPath); } catch (_) {}
+        try { require('fs').rmSync(uploadDir, { recursive: true, force: true }); } catch (_) {}
         res.json({ success: false, error: '上传到 OSS 失败: ' + e.message });
       }
     } catch (e) {
@@ -1539,7 +1539,9 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
         return res.send(renderPage(req,T('web.payments.create.title'),cbody,{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/payments">'+L('web.payments.breadcrumb')+'</a> › '+L('web.payments.create.breadcrumb')}));
       }
       const curPage=Math.max(1,parseInt(req.query.page,10)||1);const limit=10;const offset=(curPage-1)*limit;
-      const aid=req.query.agentId||'',vid=req.query.visitorId||'',st=req.query.status||'',oid=req.query.orderNo||'',fstart=req.query.start||'',fend=req.query.end||'',amtMin=parseFloat(req.query.amtMin)||0,amtMax=parseFloat(req.query.amtMax)||0,txn=req.query.txn||'',desc=req.query.desc||'';
+      const aid=req.query.agentId||'',vid=req.query.visitorId||'',rawStatus=String(req.query.status||''),oid=req.query.orderNo||'',fstart=req.query.start||'',fend=req.query.end||'',amtMin=parseFloat(req.query.amtMin)||0,amtMax=parseFloat(req.query.amtMax)||0,txn=req.query.txn||'',desc=req.query.desc||'';
+      const allowedPaymentStatuses=new Set(['','0','1','2','3','pending','processing','created','paid','failed','expired']);
+      const st=allowedPaymentStatuses.has(rawStatus)?rawStatus:'';
       let orders=[],total=0,sumAmt=0;
       if(db){
         let ownerEmail='';try{ownerEmail=String(currentOwnerEmail()).trim().toLowerCase()}catch{}
@@ -1574,7 +1576,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       }
       const pg=Math.ceil(total/limit);
       let pgBar='';
-      const qs=(aid&&aid!='all'?'&agentId='+encodeURIComponent(aid):'')+(vid?'&visitorId='+encodeURIComponent(vid):'')+(st?'&status='+st:'')+(oid?'&orderNo='+encodeURIComponent(oid):'')+(fstart?'&start='+fstart:'')+(fend?'&end='+fend:'')+(amtMin?'&amtMin='+amtMin:'')+(amtMax?'&amtMax='+amtMax:'')+(txn?'&txn='+encodeURIComponent(txn):'')+(desc?'&desc='+encodeURIComponent(desc):'');
+      const qs=(aid&&aid!='all'?'&agentId='+encodeURIComponent(aid):'')+(vid?'&visitorId='+encodeURIComponent(vid):'')+(st?'&status='+encodeURIComponent(st):'')+(oid?'&orderNo='+encodeURIComponent(oid):'')+(fstart?'&start='+encodeURIComponent(fstart):'')+(fend?'&end='+encodeURIComponent(fend):'')+(amtMin?'&amtMin='+encodeURIComponent(amtMin):'')+(amtMax?'&amtMax='+encodeURIComponent(amtMax):'')+(txn?'&txn='+encodeURIComponent(txn):'')+(desc?'&desc='+encodeURIComponent(desc):'');
       if(pg>1){pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(curPage>1)pgBar+='<a href="/payments?page='+(curPage-1)+qs+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:curPage,total:pg}))+'</span>';if(curPage<pg)pgBar+='<a href="/payments?page='+(curPage+1)+qs+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}
       const td=new Date();const ts=td.getFullYear()+'-'+String(td.getMonth()+1).padStart(2,'0')+'-'+String(td.getDate()).padStart(2,'0');
       const fld=(lab,inner)=>'<label style="display:flex;flex-direction:column;font-size:12px;color:#555;font-weight:600;gap:3px">'+lab+inner+'</label>';
@@ -1627,7 +1629,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const T=req.t,L=k=>esc(T(k));
       const dirCn=k=>T('db.audit_rules.direction.'+k);
       const actTxt=k=>T('db.audit_rules.action.'+k);
-      const dir=req.query.direction||'';
+      const dir=['outbound','inbound'].includes(req.query.direction)?req.query.direction:'';
       const curPage=Math.max(1,parseInt(req.query.page,10)||1);
       const limit=10;
       const offset=(curPage-1)*limit;
@@ -1660,7 +1662,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const title=T('web.audit.title');
 
       let pg='';
-      const qs=(dir?'direction='+dir:'')+(keyword?'&q='+encodeURIComponent(keyword):'');
+      const qs=(dir?'direction='+encodeURIComponent(dir):'')+(keyword?'&q='+encodeURIComponent(keyword):'');
       if(totalPages>1){
         pg='<div style="display:flex;gap:8px;align-items:center;margin:8px 0;font-size:14px">';
         if(curPage>1)pg+='<a href="/audit-rules?'+qs+'&page='+(curPage-1)+'" class="btn-sm" data-testid="prev-page" data-agent="prev_page">'+L('web.audit.prev_page')+'</a>';
@@ -1678,7 +1680,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
         +(dir?'<input type="hidden" name="direction" value="'+esc(dir)+'">':'')
         +'<div><label for="aq" style="font-size:14px;margin:0">'+L('web.audit.search_label')+'</label><input type="text" id="aq" name="q" value="'+esc(keyword)+'" style="width:200px;padding:6px 10px;font-size:14px" placeholder="'+esc(T('web.audit.search_ph'))+'" autofocus></div>'
         +'<button type="submit" class="btn-sm" style="margin:0;margin-top:18px" data-testid="search-btn" data-agent="search_btn">'+L('common.btn.search')+'</button>'
-        +(keyword?'<a href="/audit-rules'+(dir?'?direction='+dir:'')+'" class="btn-sm btn-outline" style="margin:0;margin-top:18px">'+L('web.audit.clear')+'</a>':'')
+        +(keyword?'<a href="/audit-rules'+(dir?'?direction='+encodeURIComponent(dir):'')+'" class="btn-sm btn-outline" style="margin:0;margin-top:18px">'+L('web.audit.clear')+'</a>':'')
         +'</form>'
         +'<div class="table-wrap" aria-live="polite"><table style="font-size:14px"><thead><tr><th style="text-align:center">'+L('web.audit.col.direction')+'</th><th>'+L('web.audit.col.keyword')+'</th><th>'+L('web.audit.col.prompt')+'</th><th style="text-align:center">'+L('web.audit.col.action')+'</th><th style="text-align:center">'+L('web.audit.col.op')+'</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'
         +pg
@@ -1786,7 +1788,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       res.send(renderPage(req,T('web.console.result_title'),'<div class="card"><p class="'+(success?'success':'error')+'">'+(success?'✅ '+T('web.console.exec_success'):'❌ '+T('web.console.exec_fail'))+'</p><p style="font-size:14px;color:#888">'+T('web.console.op')+': '+esc(action)+' | '+T('web.console.elapsed')+': '+elapsed+'s</p></div>'
       +'<div class="card"><h3>'+L('web.console.result_json')+'</h3><pre style="background:#f5f5f5;padding:10px;border-radius:4px;font-size:13px;line-height:1.5;overflow-x:auto;white-space:pre-wrap">'+esc(JSON.stringify(result,null,2))+'</pre></div>'
       +'<div class="card"><h3>'+L('web.console.continue_title')+'</h3><form method="POST" action="/api/console"><textarea name="json" rows="6" style="width:100%;font-family:monospace;font-size:14px" spellcheck="false">'+esc(JSON.stringify(input,null,2))+'</textarea><br><br><button type="submit">'+L('web.console.rerun')+'</button> <a href="/api/console" class="btn">'+L('web.console.new_cmd')+'</a></form></div>'
-      +'<script type="application/ld+json">'+JSON.stringify({actionStatus:success?'CompletedSuccessfully':'Failed',action,params,result,elapsed},null,2)+'</script>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/api/console">'+L('web.console.title')+'</a> › '+L('web.console.result_crumb')}))
+      +'<script type="application/ld+json">'+jsonForInlineScript({actionStatus:success?'CompletedSuccessfully':'Failed',action,params,result,elapsed})+'</script>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/api/console">'+L('web.console.title')+'</a> › '+L('web.console.result_crumb')}))
     }catch(e){
       if(wantJson)return res.type('application/json').status(500).json({success:false,error:e.message,action});
       next(e);

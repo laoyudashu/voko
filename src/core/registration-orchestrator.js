@@ -1160,6 +1160,7 @@ class RegistrationOrchestrator {
     const action = cleanText(input.action, 40) || 'status';
     try {
       if (action === 'start') return await this.start(input);
+      // Explicit state-machine dispatch; verifyEmail still validates the server-issued registration ID and code.
       if (action === 'verify_email') return await this.verifyEmail(input.registrationId, input.code);
       if (action === 'set_basic_info') return this.setBasicInfo(input.registrationId, input);
       if (action === 'inspect_environment') {

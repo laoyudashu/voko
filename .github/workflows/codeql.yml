@@ -20,4 +20,5 @@ jobs:
       - uses: github/codeql-action/init@bce182f857edf1feab116e9795a3393d21977282 # v4
         with:
           languages: javascript-typescript
+          config-file: ./.github/codeql-config.yml
       - uses: github/codeql-action/analyze@bce182f857edf1feab116e9795a3393d21977282 # v4

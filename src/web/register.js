@@ -911,12 +911,14 @@ function createRegisterRouter(handlers, db) {
       const action = req.body.action;
       const email = req.body.email || '';
 
+      // Explicit login-state dispatch; register_agent enforces server-side OTP rate limits.
       if (action === 'sendCode') {
         const r = await handlers.register_agent({ email });
         if (r.success) return res.json({ success: true });
         return res.status(r.status || 400).json({ success: false, error: r.error || req.t('register.login.send_failed') });
       }
 
+      // Explicit login-state dispatch; login_by_code performs the authoritative OTP verification.
       if (action === 'verify') {
         const code = req.body.code;
         const r = await handlers.login_by_code({ email, code });

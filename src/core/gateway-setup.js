@@ -96,9 +96,11 @@ async function setupOpenclawGateway(log) {
     log('✓ openclaw.json 已有 token，跳过生成');
   } else {
     const bak = OPENCLAW_CONFIG_PATH + '.bak';
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH) && !fs.existsSync(bak)) {
-      try { fs.copyFileSync(OPENCLAW_CONFIG_PATH, bak); log('✓ 已备份 openclaw.json → openclaw.json.bak'); }
-      catch (e) { log(`⚠ 备份失败: ${e.message}`); }
+    try {
+      fs.copyFileSync(OPENCLAW_CONFIG_PATH, bak, fs.constants.COPYFILE_EXCL);
+      log('✓ 已备份 openclaw.json → openclaw.json.bak');
+    } catch (e) {
+      if (e.code !== 'EEXIST' && e.code !== 'ENOENT') log(`⚠ 备份失败: ${e.message}`);
     }
     const token = `voko_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
     config.gateway.auth.token = token;

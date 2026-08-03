@@ -11,6 +11,7 @@
  */
 
 const { Router } = require('express');
+const { jsonForInlineScript } = require('./html-security');
 const { getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter, renderLanguageSwitcher } = require('./language-switcher');
 const { renderSystemFooter } = require('./footer');
@@ -45,8 +46,8 @@ function page(title,body,opt={},tFn,locale){
   const t=tFn||(k=>k);
   const loc=locale||'zh';
   const nav=opt.nav||('<a href="/">'+esc(t('common.nav.home'))+'</a>');
-  const i18nBoot='<script>window.__LOCALE__='+JSON.stringify(loc)+';window.__I18N__='+JSON.stringify(getClientBundle(loc))+'</script>';
-  const jd=opt.jsonld?'\n<script type="application/ld+json">'+JSON.stringify(opt.jsonld)+'</script>':'';
+  const i18nBoot='<script>window.__LOCALE__='+jsonForInlineScript(loc)+';window.__I18N__='+jsonForInlineScript(getClientBundle(loc))+'</script>';
+  const jd=opt.jsonld?'\n<script type="application/ld+json">'+jsonForInlineScript(opt.jsonld)+'</script>':'';
   const msg=opt.msg?'<div role="alert" style="padding:8px 14px;border-radius:6px;background:'+(opt.msg.success?'#e6f4ea':'#fce8e6')+';margin-bottom:10px;font-weight:600">'+(opt.msg.success?'✅ ':'❌ ')+esc(opt.msg.text)+'</div>':'';
   const st=opt.subtitle?' <span class="meta" style="font-size:14px;font-weight:400">('+esc(opt.subtitle)+')</span>':'';
   const ha=opt.headerAction||'';
@@ -689,12 +690,12 @@ function createGroupRouter(handlers, db) {
 /** 群详情实时 WS 脚本（抄 1:1 页，适配群：发送者名 + tip 居中）*/
 function groupWsScript(agentId, channelId, myUid, members, status, isManager, tFn){
   const t=tFn||(k=>k);
-  const membersJson=JSON.stringify((members||[]).map(m=>({uid:m.uid,name:m.name||m.nickname||m.uid,isAgent:!!m.isAgent})));
+  const membersJson=jsonForInlineScript((members||[]).map(m=>({uid:m.uid,name:m.name||m.nickname||m.uid,isAgent:!!m.isAgent})));
   const myName=((myUid&&(members||[]).find(m=>m.uid===myUid))||{}).name||myUid||'';
   const statusUrl='/agents/'+encodeURIComponent(agentId)+'/g/'+encodeURIComponent(channelId)+'/status';
   const dissolveUrl='/agents/'+encodeURIComponent(agentId)+'/g/'+encodeURIComponent(channelId)+'/dissolve';
-  return '<script>'+`window.__MY_UID__=${JSON.stringify(myUid||'')};window.__MY_NAME__=${JSON.stringify(myName)};window.__GROUP_MEMBERS__=${membersJson};window.__GROUP_STATUS__=${JSON.stringify(status||'active')};window.__IS_MANAGER__=${JSON.stringify(!!isManager)};
-var _GM_MENTION_TITLE=${JSON.stringify(t('web.group.mention.click_sender'))},_GM_ME=${JSON.stringify(t('web.group.mention.me_badge'))},_GM_ALL=${JSON.stringify(t('web.group.mention.all'))},_GM_DISSOLVED=${JSON.stringify(t('web.group.dissolved.label'))},_GM_DISSOLVED_PH=${JSON.stringify(t('web.group.dissolved.placeholder'))},_GM_REPLY_TITLE=${JSON.stringify(t('web.group.reply_title'))},_GM_DISSOLVE_LABEL=${JSON.stringify(t('web.group.dissolve.button'))},_GM_SENDING=${JSON.stringify(t('web.conversation.sending'))},_GM_SEND_FAILED=${JSON.stringify(t('common.action.failed'))},_GM_NETWORK_ERROR=${JSON.stringify(t('web.group.network_error'))},_GM_AUDIT_IN=${JSON.stringify(t('web.audit.message_inbound'))},_GM_AUDIT_OUT=${JSON.stringify(t('web.audit.message_outbound'))},_GM_AUDIT_BLOCKED=${JSON.stringify(t('web.audit.message_blocked'))},_GM_AUDIT_ALLOWED=${JSON.stringify(t('web.audit.message_allowed'))},_GM_AUDIT_KEYWORD=${JSON.stringify(t('web.audit.message_keyword'))},_GM_AUDIT_ORIGINAL=${JSON.stringify(t('web.audit.message_original'))},_GM_AUDIT_INVALID=${JSON.stringify(t('web.audit.message_invalid'))},_A=${JSON.stringify(agentId)},_C=${JSON.stringify(channelId)},_STATUS_URL=${JSON.stringify(statusUrl)},_DISSOLVE_URL=${JSON.stringify(dissolveUrl)},_seen={},_gmSending=false;
+  return '<script>'+`window.__MY_UID__=${jsonForInlineScript(myUid||'')};window.__MY_NAME__=${jsonForInlineScript(myName)};window.__GROUP_MEMBERS__=${membersJson};window.__GROUP_STATUS__=${jsonForInlineScript(status||'active')};window.__IS_MANAGER__=${jsonForInlineScript(!!isManager)};
+var _GM_MENTION_TITLE=${jsonForInlineScript(t('web.group.mention.click_sender'))},_GM_ME=${jsonForInlineScript(t('web.group.mention.me_badge'))},_GM_ALL=${jsonForInlineScript(t('web.group.mention.all'))},_GM_DISSOLVED=${jsonForInlineScript(t('web.group.dissolved.label'))},_GM_DISSOLVED_PH=${jsonForInlineScript(t('web.group.dissolved.placeholder'))},_GM_REPLY_TITLE=${jsonForInlineScript(t('web.group.reply_title'))},_GM_DISSOLVE_LABEL=${jsonForInlineScript(t('web.group.dissolve.button'))},_GM_SENDING=${jsonForInlineScript(t('web.conversation.sending'))},_GM_SEND_FAILED=${jsonForInlineScript(t('common.action.failed'))},_GM_NETWORK_ERROR=${jsonForInlineScript(t('web.group.network_error'))},_GM_AUDIT_IN=${jsonForInlineScript(t('web.audit.message_inbound'))},_GM_AUDIT_OUT=${jsonForInlineScript(t('web.audit.message_outbound'))},_GM_AUDIT_BLOCKED=${jsonForInlineScript(t('web.audit.message_blocked'))},_GM_AUDIT_ALLOWED=${jsonForInlineScript(t('web.audit.message_allowed'))},_GM_AUDIT_KEYWORD=${jsonForInlineScript(t('web.audit.message_keyword'))},_GM_AUDIT_ORIGINAL=${jsonForInlineScript(t('web.audit.message_original'))},_GM_AUDIT_INVALID=${jsonForInlineScript(t('web.audit.message_invalid'))},_A=${jsonForInlineScript(agentId)},_C=${jsonForInlineScript(channelId)},_STATUS_URL=${jsonForInlineScript(statusUrl)},_DISSOLVE_URL=${jsonForInlineScript(dissolveUrl)},_seen={},_gmSending=false;
 function _gmNameOf(uid){var ms=window.__GROUP_MEMBERS__||[];for(var i=0;i<ms.length;i++){if(ms[i].uid===uid)return ms[i].name||uid;}return uid||"?";}
 function _gmEsc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 function _gmMentioned(m){var x=m&&m.mention;return !!(x&&(x.all||(Array.isArray(x.uids)&&x.uids.indexOf(window.__MY_UID__)>=0)));}
@@ -881,7 +882,7 @@ function searchScript(agentId, myGroupIds, tFn){
     loading:t('web.group.search.loading'),
     msg_ph:t('web.group.search.msg_ph')
   });
-  return '<script>var _GS='+I+';var _GSA='+JSON.stringify(agentId)+';var _GSMG='+JSON.stringify(myGroupIds||[])+';'+
+  return '<script>var _GS='+I+';var _GSA='+jsonForInlineScript(agentId)+';var _GSMG='+jsonForInlineScript(myGroupIds||[])+';'+
 `(function(){
 var inp=document.getElementById('gs-kw');
 if(!inp)return;
