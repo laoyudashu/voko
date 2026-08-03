@@ -317,8 +317,8 @@ describe('Lite process lifecycle identity', () => {
       const script = [
         `$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
         '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
-        '$acl = Get-Acl -LiteralPath $path',
-        '$allow = @($acl.Access | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.FileSystemRights -ne 0 } | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })',
+        '$acl = [IO.FileInfo]::new($path).GetAccessControl()',
+        '$allow = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.FileSystemRights -ne 0 } | ForEach-Object { $_.IdentityReference.Value })',
         '[pscustomobject]@{ protected = [bool]$acl.AreAccessRulesProtected; allow = @($allow) } | ConvertTo-Json -Compress',
       ].join('; ');
       const probe = spawnSync('powershell.exe', [
