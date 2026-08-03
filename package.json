@@ -91,7 +91,7 @@
     "postal-mime": "^2.7.4",
     "qrcode": "^1.5.4",
     "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
