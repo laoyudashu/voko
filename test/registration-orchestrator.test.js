@@ -504,4 +504,20 @@ describe('shared registration orchestrator', () => {
       db.close();
     }
   });
+
+  it('rejects attacker-controlled registration identifiers before session mutation', () => {
+    const { db, service } = createService();
+    try {
+      for (const id of ['__proto__', 'constructor', 'reg_invalid', '']) {
+        assert.throws(
+          () => service.setBasicInfo(id, { agentName: 'Injected' }),
+          (error) => error.code === 'REGISTRATION_SESSION_NOT_FOUND',
+        );
+      }
+      assert.strictEqual(Object.prototype.agentName, undefined);
+      assert.strictEqual(Object.prototype.status, undefined);
+    } finally {
+      db.close();
+    }
+  });
 });

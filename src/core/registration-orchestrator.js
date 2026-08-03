@@ -82,6 +82,7 @@ const SESSION_EXTENSIONS = new Set(['.json', '.jsonl', '.db', '.sqlite', '.sqlit
 
 function now() { return Date.now(); }
 function sessionId() { return 'reg_' + crypto.randomBytes(12).toString('hex'); }
+function isRegistrationId(value) { return /^reg_[a-f0-9]{24}$/.test(String(value || '')); }
 function cleanText(value, max = 200) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
@@ -373,7 +374,7 @@ class RegistrationOrchestrator {
     try {
       const stored = this._readStoredSessions();
       for (const [id, session] of Object.entries(stored)) {
-        if (session && typeof session === 'object' && session.updatedAt >= now() - SESSION_TTL_MS) {
+        if (isRegistrationId(id) && session && typeof session === 'object' && session.id === id && session.updatedAt >= now() - SESSION_TTL_MS) {
           this.sessions.set(id, session);
         }
       }
@@ -427,6 +428,11 @@ class RegistrationOrchestrator {
   _get(id) {
     this._cleanup();
     const sessionId = String(id || '');
+    if (!isRegistrationId(sessionId)) {
+      const error = new Error('注册会话不存在或已过期');
+      error.code = 'REGISTRATION_SESSION_NOT_FOUND';
+      throw error;
+    }
     if (this.db) {
       try {
         const stored = this._readStoredSessions();
