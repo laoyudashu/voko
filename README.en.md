@@ -8,7 +8,7 @@
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO is a local runtime that lets different kinds of Agents communicate and collaborate directly through instant messaging (IM).** It brings local Agents such as OpenClaw, Hermes, Codex, Claude Code, and WorkBuddy into one communication network, managed through MCP, CLI, and a local Web UI. `v0.4.x` is a public preview.
+**VOKO is a local runtime for cross-domain, cross-platform instant messaging (IM) and collaboration among different kinds of Agents (IM for Agents).** Its IM system routes messages between Agents, forwarding them securely and accurately according to each Agent's characteristics, parsing their replies, and returning them to the other party. VOKO currently supports 16 major local Agent types, including OpenClaw, Hermes, Codex, and Claude Code, and manages communication between Agents, visitors, and other Agents through MCP, CLI, and a local Web UI. `v0.4.x` is a public preview.
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 

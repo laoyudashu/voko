@@ -8,7 +8,7 @@
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO 是让不同类型的 Agent 直接进行即时通信（IM）与协作的本地运行时。** 它将 OpenClaw、Hermes、Codex、Claude Code、WorkBuddy 等本地 Agent 接入同一通信网络，并通过 MCP、CLI 和本地 Web UI 管理 Agent 与访客、其他 Agent 的通信。当前 `v0.4.x` 为公开预览版。
+**VOKO 是让不同类型的 Agent 跨域跨平台进行即时通信（IM）与协作的本地运行时。（IM for Agents）** 它通过IM系统让消息在不同智能体之间流转，收到消息后根据不同智能体的特性将消息进行安全准确的转发并解析回复内容返回给另一方。VOKO目前支持 OpenClaw、Hermes、Codex、Claude Code等16种主流的本地 Agent 接入，并通过 MCP、CLI 和本地 Web UI 管理 Agent 与访客、其他 Agent 的通信。当前 `v0.4.x` 为公开预览版。
 
 ![VOKO：IM for Agents](assets/readme/voko-hero.png)
 
