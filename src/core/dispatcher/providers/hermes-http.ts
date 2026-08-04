@@ -134,6 +134,8 @@ class HermesHttpProvider extends PushProvider {
    */
   async healthCheck(): Promise<void> {
     if (!this.client) return;
+    const previousConnected = this.connected;
+    const previousAgents = this.connectedAgents ? new Set(this.connectedAgents) : null;
     this.connectedAgents = new Set();
     const profilePorts = Object.keys(this.options.profiles || {});
     let anyOk = false;
@@ -157,6 +159,20 @@ class HermesHttpProvider extends PushProvider {
       this.connected = anyOk;
       const agentCount = this.connectedAgents ? this.connectedAgents.size : (anyOk ? 1 : 0);
       this.addLog(anyOk ? `🟢 健康检查通过 (${agentCount} 个 Agent 在线)` : '🔴 健康检查失败（所有 Gateway 离线）');
+    }
+    if (profilePorts.length > 0) {
+      const currentAgents = this.connectedAgents || new Set<string>();
+      for (const profileId of new Set([...(previousAgents || []), ...currentAgents])) {
+        const before = previousAgents?.has(profileId) || false;
+        const available = currentAgents.has(profileId);
+        if (before !== available) {
+          for (const agentId of this._agentsForProfile(profileId)) {
+            this.notifyAvailability({ backendType: 'hermes', mode: 'http', agentId, available, reason: available ? 'profile-ready' : 'profile-unavailable' });
+          }
+        }
+      }
+    } else if (previousConnected !== anyOk) {
+      this.notifyAvailability({ backendType: 'hermes', mode: 'http', available: anyOk, reason: anyOk ? 'gateway-ready' : 'gateway-unavailable' });
     }
   }
 
@@ -381,6 +397,21 @@ class HermesHttpProvider extends PushProvider {
     }
   }
 
+  _agentsForProfile(profileId: string): string[] {
+    try {
+      const rows = this.db?.prepare(
+        "SELECT agent_id, backend_instance_id FROM agents WHERE backend_type='hermes'"
+      ).all() as Array<{ agent_id?: string; backend_instance_id?: string }> | undefined;
+      const matches = (rows || [])
+        .filter(row => String(row.backend_instance_id || row.agent_id || '').trim() === profileId)
+        .map(row => String(row.agent_id || '').trim())
+        .filter(Boolean);
+      return matches.length ? matches : [profileId];
+    } catch (_) {
+      return [profileId];
+    }
+  }
+
   /**
    * 发送访客消息到 Hermes agent（走 API Server）
    * sessionKey 格式: hermes:{agentId}:{visitorId}
@@ -555,6 +586,16 @@ class HermesHttpProvider extends PushProvider {
    * 清理资源
    */
   async destroy(): Promise<void> {
+    const affectedAgents = this.connectedAgents ? [...this.connectedAgents] : [];
+    if (affectedAgents.length) {
+      for (const profileId of affectedAgents) {
+        for (const agentId of this._agentsForProfile(profileId)) {
+          this.notifyAvailability({ backendType: 'hermes', mode: 'http', agentId, available: false, reason: 'provider-stopped' });
+        }
+      }
+    } else {
+      this.notifyAvailability({ backendType: 'hermes', mode: 'http', available: false, reason: 'provider-stopped' });
+    }
     this._destroyed = true;
     this.enabled = false;
     this.connected = false;

@@ -43,10 +43,10 @@ class GooseCliProvider extends PushProvider {
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     const bt = meta?.backend_type;
-    return bt === 'goose' || bt === 'goose-ai' || bt === 'goose-acp';
+    return bt === 'goose' || bt === 'goose-ai' || bt === 'goose-acp' || bt === 'acp-goose';
   }
 
-  isAvailable(_agentId: string): boolean {
+  isAvailable(agentId: string): boolean {
     if (this._available !== null) return this._available;
     this._available = checkCliAvailable(this._binPath);
     return this._available;
@@ -61,14 +61,14 @@ class GooseCliProvider extends PushProvider {
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     const activeBinding = payload.providerBinding?.providerType === 'goose'
       ? payload.providerBinding
-      : this._bindingStore?.getByAdapter(agentId, channelId, channelType, 'goose')
+      : this._bindingStore?.getByAdapter(agentId, channelId, channelType, 'goose-cli')
         || this._bindingStore?.importLegacy({
           agentId,
           channelId,
           channelType,
           providerType: 'goose',
           deliveryMode: 'cli',
-          adapterType: 'goose',
+          adapterType: 'goose-cli',
           legacyVisitorId: fromUid,
         });
 
@@ -103,7 +103,7 @@ class GooseCliProvider extends PushProvider {
           providerInstanceId: activeBinding?.providerInstanceId || null,
           nativeSessionId: activeBinding?.nativeSessionId || sessionName,
           deliveryMode: 'cli',
-          adapterType: 'goose',
+          adapterType: 'goose-cli',
           expectedVersion: activeBinding?.bindingVersion ?? 0,
         });
       }
@@ -122,6 +122,11 @@ class GooseCliProvider extends PushProvider {
       }
     } catch (err) {
       console.error(`[GooseCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
+        this._available = false;
+        (err as any).deliveryOutcome = 'not_delivered';
+        this.notifyAvailability({ backendType: 'goose', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
+      }
       throw err;
     }
   }
@@ -131,9 +136,19 @@ class GooseCliProvider extends PushProvider {
     return this.push({ agentId, fromUid: visitorId, content, messageId, turnId: messageId, timestamp: Date.now() });
   }
 
-  start() { this._available = null; }
-  stop() {}
-  healthCheck() { this._available = null; }
+  start() { this._refreshAvailability(); }
+  stop() {
+    if (this._available === true) {
+      this.notifyAvailability({ backendType: 'goose', mode: 'cli', available: false, reason: 'provider stopped' });
+    }
+    this._available = false;
+  }
+  healthCheck() { this._refreshAvailability(); }
+  _refreshAvailability() {
+    const previous = this._available;
+    this._available = checkCliAvailable(this._binPath);
+    if (previous !== this._available) this.notifyAvailability({ backendType: 'goose', mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
+  }
 }
 
 function _extractReply(stdout: string): string | null {

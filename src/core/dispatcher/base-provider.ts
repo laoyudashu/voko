@@ -20,6 +20,13 @@ const { EventEmitter } = require('events');
 import type { AgentMeta, ProviderHealth, PushPayload, SessionMode } from './types';
 
 class PushProvider extends EventEmitter {
+  private readonly _availabilityGenerations = new Map<string, number>();
+  private _availabilityProviderId?: string;
+
+  setAvailabilityProviderId(providerId: string): void {
+    this._availabilityProviderId = providerId;
+  }
+
   /** 路由优先级（数大优先）。子类按通道覆盖：长连接高、CLI 兜底低。默认 0。 */
   get priority() { return 0; }
 
@@ -42,6 +49,25 @@ class PushProvider extends EventEmitter {
 
   /** 就绪判断：该 agent 的 push 通道是否就绪（看连接/配置）。子类必须实现。 */
   isAvailable(_agentId: string): boolean { return false; }
+
+  protected notifyAvailability(input: {
+    backendType?: string;
+    mode?: string;
+    agentId?: string;
+    operations?: Array<'push' | 'steer'>;
+    available: boolean;
+    reason?: string;
+  }): void {
+    const key = input.agentId || '*';
+    const generation = (this._availabilityGenerations.get(key) || 0) + 1;
+    this._availabilityGenerations.set(key, generation);
+    this.emit('availability', {
+      providerId: this._availabilityProviderId,
+      operations: input.operations || ['push', 'steer'],
+      ...input,
+      generation,
+    });
+  }
 
   /** 建立连接（含 spawn gateway）。幂等。 */
   async start(): Promise<void> {}

@@ -210,6 +210,7 @@ class AcpAdapter extends PushProvider {
 
   async start() {
     this._started = true;
+    this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', available: this.isAvailable(''), reason: 'provider-started' });
     // ACP SDK 推迟到第一次 push 时 lazy-load（ESM 动态 import）
   }
 
@@ -240,11 +241,9 @@ class AcpAdapter extends PushProvider {
         console.error(`[${this._logPrefix}] push via ACP 失败 agent=${agentId}: ${errorMessage(err)}`);
         // 有降级配置 → 继续走 CLI fallback
         if (!this._cliFallback) {
-          this._emitError(
-            payload,
-            err instanceof Error ? err : new Error(String(err)),
-          );
-          return;
+          const deliveryError = err instanceof Error ? err : new Error(String(err));
+          this._emitError(payload, deliveryError);
+          throw deliveryError;
         }
         console.error(`[${this._logPrefix}] 降级到 CLI stdout 模式 agent=${agentId}`);
       }
@@ -258,6 +257,9 @@ class AcpAdapter extends PushProvider {
 
     // 无 ACP 无 CLI fallback → 报错
     this._emitError(payload, new Error(`ACP agent CLI 未找到（agentId=${agentId}）`));
+    const unavailable = new Error(`ACP provider unavailable for agentId=${agentId}`);
+    (unavailable as any).deliveryOutcome = 'not_delivered';
+    throw unavailable;
   }
 
   async healthCheck(): Promise<{
@@ -296,6 +298,7 @@ class AcpAdapter extends PushProvider {
       console.error(`[${this._logPrefix}:${agentId}] session 已就绪`);
     } catch (err) {
       console.error(`[${this._logPrefix}:${agentId}] session/new 失败: ${errorMessage(err)}`);
+      if (!(err as any)?.deliveryOutcome) (err as any).deliveryOutcome = 'not_delivered';
       throw err;
     }
 
@@ -367,6 +370,7 @@ class AcpAdapter extends PushProvider {
     } catch (err) {
       state.sessions.delete(cacheKey);
       this._deleteSessionHandle(agentId, fromUid);
+      if (!(err as any)?.deliveryOutcome) (err as any).deliveryOutcome = 'outcome_unknown';
       throw err;
     }
 
@@ -581,6 +585,7 @@ class AcpAdapter extends PushProvider {
 
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         state.transportAlive = false;
+        this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `process-exit:${code ?? signal ?? 'unknown'}` });
         console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
         state.sessions.clear();
         if (this._agents.get(stateKey) === state) {
@@ -589,6 +594,7 @@ class AcpAdapter extends PushProvider {
       });
 
       child.on('error', (err: Error) => {
+        this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `process-error:${err.message}` });
         console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
       });
 
@@ -613,6 +619,7 @@ class AcpAdapter extends PushProvider {
     }).connectWith(stream, async (agentCtx: AcpAgentContext) => {
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
+      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: true, reason: 'connected' });
       if (state._readyResolve) {
         state._readyResolve();
         state._readyResolve = null;
@@ -620,6 +627,7 @@ class AcpAdapter extends PushProvider {
       await keepAlivePromise;
     }).catch((err: unknown) => {
       state.transportAlive = false;
+      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `connection-error:${errorMessage(err)}` });
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
       if (state._readyResolve) {
         state._readyResolve();
@@ -788,6 +796,7 @@ class AcpAdapter extends PushProvider {
   /** 断开 agent 连接，清理资源 */
   _disconnectAgent(agentId: string, state: AcpAgentState): void {
     try {
+      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: 'disconnected' });
       // 1. 信号 keepAlive 结束 → connectWith callback 退出 → SDK 清理连接
       if (state._shutdownResolve) {
         state._shutdownResolve();

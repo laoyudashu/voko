@@ -8,7 +8,6 @@ class CursorAcpProvider extends AcpAdapter {
   constructor(options: CliProviderOptions = {}) {
     const runtime = resolveCursorRuntime();
     const command = runtime.command;
-    const fallbackBase = [...runtime.prefixArgs, '-p', '{prompt}', '--output-format', 'stream-json', '--mode', 'plan', '--trust', '--workspace', '.'];
     super({
       name: 'CURSOR ACP',
       matchType: 'cursor',
@@ -18,25 +17,6 @@ class CursorAcpProvider extends AcpAdapter {
       db: options.db,
       cwd: options.cwd || os.tmpdir(),
       contextWindow: options.contextWindow,
-      cliFallback: {
-        cmd: command,
-        args: fallbackBase,
-        argsForPayload: (payload: any) => [
-          ...fallbackBase,
-          ...(payload.providerBinding?.providerType === 'cursor'
-            ? ['--resume', payload.providerBinding.nativeSessionId]
-            : []),
-        ],
-        sessionIdFromLine: (line: string) => {
-          try {
-            const event = JSON.parse(line.replace(/^(?:stdout|stderr):/, ''));
-            return String(event.session_id || event.sessionId || '').trim() || null;
-          } catch (_) { return null; }
-        },
-        adapterType: 'cursor-cli',
-        parser: 'cursor-stream-json',
-        timeout: 300000,
-      },
     });
   }
 

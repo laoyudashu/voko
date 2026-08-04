@@ -55,6 +55,7 @@ class OpenClawWsProvider {
       ? new ProviderConversationBindingStore(database as any)
       : null;
     this.mainWindow = mainWindow;
+    this._availabilityGeneration = 0;
 
     // Gateway 配置
     this.gatewayUrl = 'ws://127.0.0.1:18789';
@@ -530,6 +531,19 @@ class OpenClawWsProvider {
     this.eventListeners.get(event).forEach((handler: EventHandler) => handler(msg));
   }
 
+  _notifyAvailability(available: boolean, reason: string): void {
+    this._availabilityGeneration += 1;
+    this.emit('availability', {
+      providerId: 'openclaw-ws',
+      backendType: 'openclaw',
+      mode: 'websocket',
+      operations: ['push', 'steer'],
+      available,
+      reason,
+      generation: this._availabilityGeneration,
+    });
+  }
+
   // ============ 设备身份 ============
 
   /**
@@ -626,6 +640,7 @@ class OpenClawWsProvider {
       // 连接超时处理
       const connectionTimeout = setTimeout(() => {
         if (!this.connected) {
+          this._notifyAvailability(false, 'connect-timeout');
           this.addLog('❌ 连接超时');
           this.connecting = false;
           this.ws?.close();
@@ -669,6 +684,7 @@ class OpenClawWsProvider {
       });
 
       this.ws.on('error', (err: Error) => {
+        this._notifyAvailability(false, `socket-error:${err.message}`);
         console.error('[OpenClaw WS] ❌ 连接错误:', err.message);
         this.connecting = false;
         clearTimeout(connectionTimeout);
@@ -680,6 +696,7 @@ class OpenClawWsProvider {
         console.log(`[OpenClaw WS] 🔌 连接关闭 (code: ${code}, reason: ${reason || '无'})`);
       this.addLog(`🔌 连接关闭 (code: ${code}, reason: ${reason || '无'})`);
         this.connected = false;
+        this._notifyAvailability(false, `socket-close:${code}`);
         this.connecting = false;
         this.ws = null;
         // 断线后订阅状态失效；不清除会导致新消息永远卡在「订阅中」
@@ -772,6 +789,7 @@ class OpenClawWsProvider {
       this.connected = true;
       this.connecting = false;
       this.emit('connected');
+      this._notifyAvailability(true, 'authenticated');
       this._gatewayMethods = msg.payload?.features?.methods || [];
       this._gatewayEvents = msg.payload?.features?.events || [];
       const gatewayEvents = this._gatewayEvents.map((event: unknown) => String(event).toLowerCase());
@@ -967,6 +985,7 @@ class OpenClawWsProvider {
    * 断开连接
    */
   disconnect(): void {
+    const wasAvailable = this.connected || this.connecting;
     // 取消重连定时器
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -983,6 +1002,7 @@ class OpenClawWsProvider {
     this.connected = false;
     this.connecting = false;
     this.reconnectAttempts = 0;
+    if (wasAvailable) this._notifyAvailability(false, 'provider-disconnected');
 
     // 清理订阅状态
     this.subscribedSessions.clear();
