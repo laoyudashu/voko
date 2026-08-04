@@ -349,6 +349,22 @@ test('sensitive Web endpoints accept instance tokens or HttpOnly local sessions'
   });
   assert.equal(browser.status, 200);
   assert.equal(db.prepare('SELECT owner_email FROM local_web_sessions').get().owner_email, 'owner@example.com');
+
+  const deniedCsrf = await fetch(`${base}/api/console?json=1`, {
+    method: 'POST', headers: { Cookie: `voko_session=${created.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ json: '{}' }),
+  });
+  assert.equal(deniedCsrf.status, 403);
+  const allowedCsrf = await fetch(`${base}/api/console?json=1`, {
+    method: 'POST',
+    headers: {
+      Cookie: `voko_session=${created.token}; voko_csrf=${created.csrfToken}`,
+      'X-VOKO-CSRF': created.csrfToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ json: '{}' }),
+  });
+  assert.equal(allowedCsrf.status, 422);
 });
 
 test('guest mode exposes the bug-report page and JSON API without login', async (t) => {

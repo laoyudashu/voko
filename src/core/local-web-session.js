@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 
 const COOKIE_NAME = 'voko_session';
+const CSRF_COOKIE_NAME = 'voko_csrf';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function digest(value) {
@@ -63,15 +64,34 @@ function createLocalWebSessionStore(db, options = {}) {
     if (token) db.prepare('DELETE FROM local_web_sessions WHERE token_hash=?').run(digest(token));
   }
 
-  function setCookie(res, token) {
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(ttlMs / 1000)}`);
+  function setCookie(res, session) {
+    res.setHeader('Set-Cookie', [
+      `${COOKIE_NAME}=${encodeURIComponent(session.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(ttlMs / 1000)}`,
+      `${CSRF_COOKIE_NAME}=${encodeURIComponent(session.csrfToken)}; SameSite=Strict; Path=/; Max-Age=${Math.floor(ttlMs / 1000)}`,
+    ]);
   }
 
   function clearCookie(res) {
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+    res.setHeader('Set-Cookie', [
+      `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
+      `${CSRF_COOKIE_NAME}=; SameSite=Strict; Path=/; Max-Age=0`,
+    ]);
   }
 
-  return { create, resolveRequest, destroyRequest, setCookie, clearCookie, digest };
+  function verifyCsrf(req, session) {
+    if (!session?.csrfHash) return false;
+    const cookies = parseCookies(req?.headers?.cookie);
+    const cookieToken = cookies[CSRF_COOKIE_NAME];
+    const supplied = req?.headers?.['x-voko-csrf'] || req?.body?._csrf;
+    if (!cookieToken || !supplied || cookieToken !== supplied) return false;
+    return digest(supplied) === session.csrfHash;
+  }
+
+  function requestCsrfToken(req) {
+    return parseCookies(req?.headers?.cookie)[CSRF_COOKIE_NAME] || '';
+  }
+
+  return { create, resolveRequest, destroyRequest, setCookie, clearCookie, verifyCsrf, requestCsrfToken, digest };
 }
 
-module.exports = { COOKIE_NAME, SESSION_TTL_MS, createLocalWebSessionStore, parseCookies };
+module.exports = { COOKIE_NAME, CSRF_COOKIE_NAME, SESSION_TTL_MS, createLocalWebSessionStore, parseCookies };
