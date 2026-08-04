@@ -511,14 +511,17 @@ class RegistrationOrchestrator {
     const dbApi = this.db ? dbConfigAdapter(this.db) : null;
     const hasCommand = this.options.commandAvailable || commandAvailable;
     const openclaw = openclawInstances();
-    const zeroclaw = zeroclawInstances();
+    const zeroclawCommand = resolveZeroClawCommand();
+    const zeroclawInstalled = hasCommand('zeroclaw')
+      || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
+    const zeroclaw = zeroclawInstalled ? zeroclawInstances() : [];
     const hermesInstalled = hasCommand('hermes');
     const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
     const hermesGateway = gatewaySetup.checkGateway('hermes', dbApi);
     const detected = [];
 
-    if (openclaw.length || commandAvailable('openclaw')) {
+    if (openclaw.length || hasCommand('openclaw')) {
       detected.push({
         type: 'openclaw',
         label: 'OpenClaw',
@@ -527,9 +530,6 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
       });
     }
-    const zeroclawCommand = resolveZeroClawCommand();
-    const zeroclawInstalled = hasCommand('zeroclaw')
-      || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
     if (zeroclaw.length || zeroclawInstalled) {
       const instanceId = zeroclaw.length === 1 ? zeroclaw[0].id : null;
       detected.push({

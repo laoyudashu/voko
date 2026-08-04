@@ -6,6 +6,7 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AgentWorkerManager } = require('../build/core/worker-manager');
+const { VokoIMClient } = require('../build/im-sdk/client');
 
 class FakeClient extends EventEmitter {
   constructor(options) {
@@ -135,4 +136,26 @@ test('keeps the public start_worker and stop_worker tool names without duplicate
   assert.match(source, /'voko_stop_worker'/);
   assert.doesNotMatch(source, /'voko_start_im'/);
   assert.doesNotMatch(source, /'voko_stop_im'/);
+});
+
+test('initial WebSocket code 1006 schedules reconnect instead of permanently failing authentication', async () => {
+  const client = new VokoIMClient({
+    uid: 'uid-a', token: 'token-a', serverUrl: 'wss://im.test',
+    reconnectMinDelay: 1, reconnectMaxDelay: 1, reconnectJitter: 0,
+    maxInitialConnectAttempts: 2,
+  });
+  let rejected = false;
+  let opened = 0;
+  client._connectReject = () => { rejected = true; };
+  client._connectResolve = () => {};
+  client.ws = {};
+  client._open = () => { opened += 1; };
+
+  client._onClose(1006, 'abnormal closure');
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  assert.equal(rejected, false);
+  assert.equal(opened, 1);
+  assert.equal(client.stats.reconnects, 1);
+  client.disconnect();
 });
