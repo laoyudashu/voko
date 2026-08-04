@@ -47,6 +47,7 @@ interface AgentManagerLike {
     status?: string;
     uid?: string;
   };
+  waitForConnection?(agentId: string, timeoutMs?: number): Promise<UnknownRecord>;
   sendSystemMessage?(...args: unknown[]): unknown;
 }
 
@@ -55,6 +56,18 @@ interface RuntimeAgent {
   agentName?: string;
   imConnected?: boolean;
   backendConnected?: boolean;
+  availableModes?: string[];
+  activeMode?: string | null;
+  deliveryStatus?: AgentDeliveryStatusLike;
+}
+
+interface AgentDeliveryStatusLike {
+  backendType?: string | null;
+  configuredModes?: string[];
+  availableModes?: string[];
+  activeMode?: string | null;
+  methods?: UnknownRecord[];
+  backendAvailable?: boolean;
 }
 
 interface ConfigRow {
@@ -69,6 +82,7 @@ interface DispatcherLike {
   resolveProvider?(agentId: string): {
     isAvailable(agentId: string): boolean;
   } | null;
+  getAgentDeliveryStatus?(agentId: string): AgentDeliveryStatusLike;
 }
 
 interface ContextDependencies {
@@ -186,12 +200,40 @@ function createContext({
       return agentManager.start(agentId, config, appPaths);
     },
 
+    waitForAgentConnection: (agentId: string, timeoutMs?: number) => {
+      return agentManager?.waitForConnection?.(agentId, timeoutMs);
+    },
+
     stopAgentWorker: async (agentId: string) => {
       if (!agentManager) return;
       await agentManager.stop(agentId);
     },
 
     getAgentStatus: (agentId: string) => {
+      let agentRow: any = null;
+      try {
+        agentRow = db.prepare("SELECT imUid, backend_type, agent_name FROM agents WHERE agent_id = ?").get(agentId);
+      } catch (_: unknown) {}
+      if (agentManager) {
+        const live = agentManager.getStatus(agentId);
+        if (live.status !== 'unknown' || live.uid) {
+          const deliveryStatus = global.__dispatcher?.getAgentDeliveryStatus?.(agentId);
+          const providerConnected = !!deliveryStatus?.backendAvailable;
+          return {
+            imConnected: !!live.connected,
+            imStatus: live.status || 'unknown',
+            providerConnected,
+            backendConnected: providerConnected,
+            uid: live.uid || agentRow?.imUid || null,
+            agentName: agentRow?.agent_name || null,
+            availableModes: deliveryStatus?.availableModes || [],
+            activeMode: deliveryStatus?.activeMode || null,
+            deliveryStatus: deliveryStatus || null,
+            source: 'live_worker',
+            updatedAt: Date.now(),
+          };
+        }
+      }
       // 优先从 runtime 标记读取（支持 UI-only 模式）
       try {
         const row = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get<ConfigRow>();
@@ -200,7 +242,7 @@ function createContext({
           if (rt.agents) {
             const a = rt.agents.find((agent) => agent.agentId === agentId);
             if (a) {
-              return { imConnected: a.imConnected, imStatus: a.imConnected ? 'connected' : 'disconnected', backendConnected: !!a.backendConnected, uid: '', agentName: a.agentName };
+              return { imConnected: a.imConnected, imStatus: a.imConnected ? 'connected' : 'disconnected', providerConnected: !!a.backendConnected, backendConnected: !!a.backendConnected, uid: agentRow?.imUid || null, agentName: a.agentName || agentRow?.agent_name || null, availableModes: a.availableModes || [], activeMode: a.activeMode || null, deliveryStatus: a.deliveryStatus || null, source: 'runtime_snapshot', updatedAt: Date.now() };
             }
           }
         }
@@ -209,20 +251,16 @@ function createContext({
       // 兜底：实时查询该 Agent 的 IM Hub 客户端
       if (!agentManager) return { imConnected: false, imStatus: 'unknown', backendConnected: false };
       const status = agentManager.getStatus(agentId);
-      // 实时查 DB 获取 backend_type，决定后端状态（不依赖 runtime）
-      let backendConnected = false;
-      try {
-        const row = db.prepare("SELECT backend_type FROM agents WHERE agent_id = ?").get<BackendTypeRow>(agentId);
-        if (row && row.backend_type === 'openclaw') {
-          backendConnected = !!global.__openclawHandler?.getStatus?.()?.connected;
-        } else if (row && row.backend_type === 'hermes') {
-          backendConnected = !!global.__hermesHandler?.connectedAgents?.has(agentId);
-        }
-      } catch (_: unknown) {}
+      const deliveryStatus = global.__dispatcher?.getAgentDeliveryStatus?.(agentId);
+      const backendConnected = !!deliveryStatus?.backendAvailable;
       return {
         imConnected: status.connected,
         imStatus: status.status || 'unknown',
         backendConnected,
+        providerConnected: backendConnected,
+        availableModes: deliveryStatus?.availableModes || [],
+        activeMode: deliveryStatus?.activeMode || null,
+        deliveryStatus: deliveryStatus || null,
         uid: status.uid,
       };
     },

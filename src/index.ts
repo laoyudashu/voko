@@ -1577,7 +1577,7 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 启动心跳（带处理器引用，支持健康检查 + 网关恢复） ──
   await taskManager.start('heartbeat', () => startHeartbeat(
     db, agentManager, openclawHandler, hermesHandler,
-    { port: litePort, agentCount: publishedAgentCount },
+    { port: litePort, agentCount: publishedAgentCount, dispatcher },
   ));
 
   // ── 启动休眠唤醒检测（定时器偏差检测，不依赖 Electron powerMonitor） ──
@@ -2058,6 +2058,7 @@ async function createLiteApp(options: any = {}) {
     const hbOpts = options.heartbeat || {};
     stopHeartbeat = startHeartbeat(db, agentManager, openclawHandler, hermesHandler, {
       onWarnings: hbOpts.onWarnings || undefined,
+      dispatcher,
     });
   }
 
@@ -2237,6 +2238,7 @@ function getCurrentUserEmail(db?: any) {
  */
 function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, hermesHandler?: any, options: any = {}) {
   const { onWarnings, port, agentCount } = options;
+  const dispatcher = options.dispatcher || (global as any).__dispatcher;
   const ENDPOINTS = require('./endpoints.json');
   const BASE_URL = ENDPOINTS.im.baseUrl;
 
@@ -2265,10 +2267,16 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         try { await hermesHandler.healthCheck(); } catch (_: any) {}
         try {
           const sql = userEmail
-            ? `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
-            : `SELECT agent_id FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
+            ? `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
+            : `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
           const hermesAgents = userEmail ? db.prepare(sql).all(userEmail) : db.prepare(sql).all();
-          for (const { agent_id } of hermesAgents) {
+          for (const { agent_id, delivery_modes } of hermesAgents) {
+            let selectedModes: string[] | null = null;
+            try {
+              const parsed = typeof delivery_modes === 'string' ? JSON.parse(delivery_modes) : delivery_modes;
+              if (Array.isArray(parsed)) selectedModes = parsed.map(String);
+            } catch (_) {}
+            if (selectedModes && !selectedModes.includes('http')) continue;
             if (hermesHandler.isProfileReady?.(agent_id)) continue;
             try { await hermesHandler._ensureGatewayRunning(agent_id); }
             catch (e: any) { console.error('[Lite] Hermes gateway 恢复失败:', agent_id, e.message); }
@@ -2283,24 +2291,43 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         : "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published'";
       const rows = userEmail ? db.prepare(agentSql).all(userEmail) : db.prepare(agentSql).all();
       let imOnline = 0, backendOnline = 0, posted = 0;
+      const deliveryStatuses = new Map<string, any>();
 
       for (const agent of rows) {
         // IM 状态
         let imOk = agentManager?.getStatus(agent.agent_id)?.connected || false;
 
-        // Hermes 需同时具备 profile key 且最近未发生鉴权失败；其他 CLI 后端按可用处理。
-        const backendOk = agent.backend_type === 'hermes'
-          ? !!hermesHandler?.isProfileReady?.(agent.agent_id)
-          : true;
+        let deliveryStatus: any;
+        try {
+          deliveryStatus = dispatcher?.getAgentDeliveryStatus?.(agent.agent_id) || {
+            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
+            activeMode: null, methods: [], backendAvailable: false,
+          };
+        } catch (_) {
+          deliveryStatus = {
+            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
+            activeMode: null, methods: [], backendAvailable: false,
+          };
+        }
+        deliveryStatuses.set(agent.agent_id, deliveryStatus);
+        const backendOk = !!deliveryStatus.backendAvailable;
 
         if (imOk) imOnline++;
         if (backendOk) backendOnline++;
 
         const agentName = agent.agent_name || agent.agent_id;
         if (!imOk) warnings.push({ type: 'agent-im-offline', message: `⚠️ ${agentName} IM 连接断开`, action: 'agent-detail', agentId: agent.agent_id });
-        if (!backendOk) warnings.push({ type: 'agent-backend-offline', message: `⚠️ ${agentName} 后端连接断开`, action: 'agent-detail', agentId: agent.agent_id });
+        if (!backendOk) {
+          warnings.push({ type: 'agent-backend-offline', message: `⚠️ ${agentName} 当前没有可用的消息接收方式`, action: 'agent-detail', agentId: agent.agent_id });
+        } else {
+          const failedConfigured = deliveryStatus.methods?.find((method: any) => method.configured && !method.available && method.status !== 'unknown');
+          if (failedConfigured) {
+            const activeLabel = deliveryStatus.activeMode === 'pull' ? 'MCP Pull（按需）' : deliveryStatus.activeMode;
+            warnings.push({ type: 'agent-backend-degraded', message: `⚠️ ${agentName} ${failedConfigured.mode} 不可用，当前使用 ${activeLabel}`, action: 'agent-detail', agentId: agent.agent_id });
+          }
+        }
 
-        if (imOk && backendOk) {
+        if (imOk) {
           try {
             const ownerEmail = String(agent.owner_email || userEmail || '').trim();
             const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
@@ -2328,24 +2355,10 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         }
       }
 
-      // ── 收集网关级警告 ──
-      if (openclawHandler?.getStatus) {
-        const s = openclawHandler.getStatus();
-        if (!s?.hasToken) warnings.push({ type: 'ws-no-token', message: '⚠️ OpenClaw Gateway 未配置 Token', action: 'settings-ws' });
-        else if (!s?.connected && !s?.connecting) warnings.push({ type: 'ws-disconnected', message: '⚠️ OpenClaw Gateway 未连接', action: null });
-        else if (s?.connecting) warnings.push({ type: 'ws-connecting', message: '⏳ OpenClaw Gateway 连接中', action: null });
-      }
-      if (hermesHandler && rows.some((a: any) => a.backend_type === 'hermes' && !hermesHandler.isProfileReady?.(a.agent_id))) {
-        const hasHermesAgent = rows.some((a: any) => a.backend_type === 'hermes');
-        if (hasHermesAgent) {
-          warnings.push({ type: 'hermes-disconnected', message: '⚠️ Hermes Gateway 异常', action: 'settings-hermes' });
-        }
-      }
-
       // ── 上报 ──
       const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       const hubCount = agentManager?.getHubSummary?.()?.hubCount || 0;
-      console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 后端=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
+      console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 接收能力=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
       if (warnings.length > 0) {
         console.error(`[${ts}][心跳] 发现 ${warnings.length} 个异常:\n${warnings.map((w: any) => `  ${w.message}`).join('\n')}`);
       }
@@ -2355,14 +2368,21 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       try {
         const prev = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
         const prevData = prev ? JSON.parse(prev.data) : {};
-        const agentList = rows.map((a: any) => ({
-          agentId: a.agent_id,
-          agentName: a.agent_name || a.agent_id,
-          imConnected: agentManager?.getStatus(a.agent_id)?.connected || false,
-          backendConnected: (a.backend_type === 'hermes')
-            ? !!hermesHandler?.isProfileReady?.(a.agent_id)
-            : (openclawHandler?.getStatus?.()?.connected || false),
-        }));
+        const agentList = rows.map((a: any) => {
+          const deliveryStatus = deliveryStatuses.get(a.agent_id) || {
+            backendType: a.backend_type || null, configuredModes: [], availableModes: [],
+            activeMode: null, methods: [], backendAvailable: false,
+          };
+          return {
+            agentId: a.agent_id,
+            agentName: a.agent_name || a.agent_id,
+            imConnected: agentManager?.getStatus(a.agent_id)?.connected || false,
+            backendConnected: !!deliveryStatus.backendAvailable,
+            availableModes: deliveryStatus.availableModes || [],
+            activeMode: deliveryStatus.activeMode || null,
+            deliveryStatus,
+          };
+        });
         db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
           .run(JSON.stringify({
             instanceId: __instanceLock?.metadata?.instanceId,

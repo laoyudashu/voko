@@ -59,6 +59,58 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('delivery diagnostics reports HTTP failure and CLI fallback without invoking delivery', () => {
+  const dispatcher = createDispatcher({
+    db: dbFor(['http', 'cli', 'pull']),
+    providers: {
+      'hermes-http': { ...provider('http', 100, []), isAvailable: () => false },
+      'hermes-cli': provider('cli', 1, []),
+    },
+  });
+
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+  assert.equal(status.backendAvailable, true);
+  assert.equal(status.activeMode, 'cli');
+  assert.deepEqual(status.availableModes, ['cli', 'pull']);
+  assert.equal(status.methods.find(method => method.mode === 'http').status, 'unavailable');
+  assert.equal(status.methods.find(method => method.mode === 'pull').status, 'on-demand');
+});
+
+test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {
+  const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+
+  assert.equal(status.backendAvailable, true);
+  assert.equal(status.activeMode, 'pull');
+  assert.deepEqual(status.availableModes, ['pull']);
+  assert.equal(status.methods[0].status, 'on-demand');
+});
+
+test('delivery diagnostics preserves pull fallback for legacy rows without delivery modes', () => {
+  const dispatcher = createDispatcher({ db: dbFor(null), providers: {} });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+
+  assert.equal(status.backendAvailable, true);
+  assert.equal(status.activeMode, 'pull');
+  assert.equal(status.methods[0].configured, false);
+  assert.equal(status.methods[0].status, 'fallback');
+});
+
+test('delivery diagnostics isolates provider probe failures and unknown configured modes', () => {
+  const throwing = provider('http', 100, []);
+  throwing.isAvailable = () => { throw new Error('probe failed'); };
+  const dispatcher = createDispatcher({
+    db: dbFor(['http', 'future-mode']),
+    providers: { 'hermes-http': throwing },
+  });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+
+  assert.equal(status.backendAvailable, false);
+  assert.equal(status.activeMode, null);
+  assert.equal(status.methods.find(method => method.mode === 'http').status, 'unknown');
+  assert.equal(status.methods.find(method => method.mode === 'future-mode').status, 'unknown');
+});
+
 test('dispatcher falls back to the next selected channel when primary push fails', async () => {
   const calls = [];
   const dispatcher = createDispatcher({
