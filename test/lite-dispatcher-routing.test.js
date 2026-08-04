@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 
 const { createDispatcher } = require('../build/core/dispatcher');
 
@@ -30,6 +31,16 @@ function provider(name, priority, calls, failure = null) {
       if (failure) throw failure;
     },
   };
+}
+
+function eventProvider(name, priority, calls, available = true) {
+  const value = new EventEmitter();
+  value.priority = priority;
+  value.available = available;
+  value.match = () => true;
+  value.isAvailable = () => value.available;
+  value.push = async () => { calls.push(name); };
+  return value;
 }
 
 function dispatchOnce(dispatcher) {
@@ -134,7 +145,11 @@ test('dispatcher remembers the successful provider and only redetects after it f
   primary.match = () => { matches.primary++; return true; };
   primary.push = async () => {
     calls.push('primary');
-    if (primaryFails) throw new Error('primary failed');
+    if (primaryFails) {
+      const error = new Error('primary failed');
+      error.deliveryOutcome = 'not_delivered';
+      throw error;
+    }
   };
   const fallback = provider('fallback', 10, calls);
   fallback.match = () => { matches.fallback++; return true; };
@@ -185,4 +200,165 @@ test('dispatcher start selects the highest-priority available provider for each 
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, ['primary']);
   assert.equal(primaryMatches, matchesAfterStart);
+});
+
+test('availability recovery invalidates the fallback route and upgrades on the next message', async () => {
+  const calls = [];
+  const websocket = eventProvider('websocket', 100, calls, false);
+  const cli = eventProvider('cli', 10, calls, true);
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: { 'openclaw-ws': websocket, 'openclaw-cli': cli },
+  });
+
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  websocket.available = true;
+  websocket.emit('availability', {
+    providerId: 'openclaw-ws', agentId: 'agent-1', operations: ['push'], available: true, generation: 1,
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(calls, ['cli', 'websocket']);
+});
+
+test('provider recovery cannot override explicit delivery_modes order', async () => {
+  const calls = [];
+  const websocket = eventProvider('websocket', 100, calls, false);
+  const cli = eventProvider('cli', 10, calls, true);
+  const dispatcher = createDispatcher({
+    db: dbFor(['cli', 'websocket']),
+    providers: { 'openclaw-ws': websocket, 'openclaw-cli': cli },
+  });
+
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  websocket.available = true;
+  websocket.emit('availability', {
+    providerId: 'openclaw-ws', agentId: 'agent-1', operations: ['push'], available: true, generation: 1,
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(calls, ['cli', 'cli']);
+});
+
+test('outcome_unknown is not retried through another provider', async () => {
+  const calls = [];
+  const unknown = new Error('request timed out after write');
+  unknown.deliveryOutcome = 'outcome_unknown';
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: {
+      'openclaw-ws': provider('websocket', 100, calls, unknown),
+      'openclaw-cli': provider('cli', 10, calls),
+    },
+  });
+
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['websocket']);
+});
+
+test('confirmed failure uses at most one fallback provider', async () => {
+  const calls = [];
+  const unavailable = () => {
+    const error = new Error('channel unavailable');
+    error.deliveryOutcome = 'not_delivered';
+    return error;
+  };
+  const dispatcher = createDispatcher({
+    db: dbFor(null),
+    providers: {
+      first: provider('first', 30, calls, unavailable()),
+      second: provider('second', 20, calls, unavailable()),
+      third: provider('third', 10, calls),
+    },
+  });
+
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['first', 'second']);
+});
+
+test('stop and restart restores exactly one availability listener', async () => {
+  const calls = [];
+  const websocket = eventProvider('websocket', 100, calls, true);
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket']),
+    providers: { 'openclaw-ws': websocket },
+  });
+
+  assert.equal(websocket.listenerCount('availability'), 1);
+  await dispatcher.stop();
+  assert.equal(websocket.listenerCount('availability'), 0);
+  await dispatcher.start();
+  await dispatcher.start();
+  assert.equal(websocket.listenerCount('availability'), 1);
+});
+
+test('an older availability generation cannot revive a stale route', async () => {
+  const calls = [];
+  const websocket = eventProvider('websocket', 100, calls, true);
+  const cli = eventProvider('cli', 10, calls, true);
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: { 'openclaw-ws': websocket, 'openclaw-cli': cli },
+  });
+
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  websocket.available = false;
+  websocket.emit('availability', {
+    agentId: 'agent-1', operations: ['push'], available: false, generation: 2,
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  websocket.available = true;
+  websocket.emit('availability', {
+    agentId: 'agent-1', operations: ['push'], available: true, generation: 1,
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(calls, ['websocket', 'cli', 'cli']);
+});
+
+test('availability invalidation keeps push and steer caches independent', async () => {
+  const calls = [];
+  const websocket = eventProvider('websocket-push', 100, calls, false);
+  websocket.steer = async () => { calls.push('websocket-steer'); };
+  const cli = eventProvider('cli-push', 10, calls, true);
+  cli.steer = async () => { calls.push('cli-steer'); };
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: { 'openclaw-ws': websocket, 'openclaw-cli': cli },
+  });
+
+  dispatchOnce(dispatcher);
+  await dispatcher.steer('agent-1', 'visitor-1', 'owner message');
+  await new Promise(resolve => setImmediate(resolve));
+  websocket.available = true;
+  websocket.emit('availability', {
+    agentId: 'agent-1', operations: ['push'], available: true, generation: 1,
+  });
+  dispatchOnce(dispatcher);
+  await dispatcher.steer('agent-1', 'visitor-1', 'owner message 2');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(calls, ['cli-push', 'cli-steer', 'websocket-push', 'cli-steer']);
+});
+
+test('empty and pull-only delivery modes never select a push provider', async () => {
+  for (const modes of [[], ['pull']]) {
+    const calls = [];
+    const dispatcher = createDispatcher({
+      db: dbFor(modes),
+      providers: { 'openclaw-ws': provider('websocket', 100, calls) },
+    });
+    dispatchOnce(dispatcher);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, []);
+  }
 });

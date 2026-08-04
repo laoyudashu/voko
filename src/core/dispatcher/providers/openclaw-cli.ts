@@ -52,7 +52,7 @@ class OpenClawCliProvider extends PushProvider {
     return meta?.backend_type === 'openclaw';
   }
 
-  isAvailable(_agentId: string): boolean {
+  isAvailable(agentId: string): boolean {
     if (this._available !== null) return this._available;
     this._available = checkCliAvailable('openclaw');
     return this._available;
@@ -121,6 +121,11 @@ class OpenClawCliProvider extends PushProvider {
       }
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
+      if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
+        this._available = false;
+        (err as any).deliveryOutcome = 'not_delivered';
+        this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
+      }
       throw err;
     }
   }
@@ -159,13 +164,29 @@ class OpenClawCliProvider extends PushProvider {
       }
     } catch (err) {
       console.error(`[OpenClawCli] steer 失败 agent=${agentId}: ${errorMessage(err)}`);
+      if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
+        this._available = false;
+        (err as any).deliveryOutcome = 'not_delivered';
+        this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
+      }
+      throw err;
     }
     return null;
   }
 
-  start() {}
-  stop() {}
-  healthCheck() { this._available = null; }
+  start() { this._refreshAvailability(); }
+  stop() {
+    if (this._available === true) {
+      this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', available: false, reason: 'provider stopped' });
+    }
+    this._available = false;
+  }
+  healthCheck() { this._refreshAvailability(); }
+  _refreshAvailability() {
+    const previous = this._available;
+    this._available = checkCliAvailable('openclaw');
+    if (previous !== this._available) this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
+  }
 }
 
 /**

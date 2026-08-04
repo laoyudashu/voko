@@ -104,26 +104,21 @@ test('attach reads the latest assistant text from its authenticated session only
   }
 });
 
-test('OpenCode delivery falls back ACP to attach to CLI', async () => {
+test('OpenCode ACP reports failure to Dispatcher instead of switching adapters internally', async () => {
   const provider = new OpenCodeAcpProvider();
   const calls = [];
   provider._pushViaAcp = async () => {
     calls.push('acp');
-    throw new Error('acp unavailable');
+    const error = new Error('acp unavailable');
+    error.deliveryOutcome = 'not_delivered';
+    throw error;
   };
-  provider._attach.push = async () => {
-    calls.push('attach');
-    throw new Error('attach unavailable');
-  };
-  provider._cli.push = async () => {
-    calls.push('cli');
-  };
-  await provider.push({
+  await assert.rejects(() => provider.push({
     agentId: 'agent-a',
     fromUid: 'visitor-a',
     content: 'hello',
     messageId: 'message-a',
     timestamp: Date.now(),
-  });
-  assert.deepEqual(calls, ['acp', 'attach', 'cli']);
+  }), /acp unavailable/);
+  assert.deepEqual(calls, ['acp']);
 });

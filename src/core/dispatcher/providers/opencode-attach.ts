@@ -97,6 +97,7 @@ class OpenCodeAttachProvider extends PushProvider {
       }) as ChildProcessWithoutNullStreams;
       this._server = child;
       child.on('exit', () => {
+        this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: false, reason: 'serve-exit' });
         if (this._server === child) {
           this._server = null;
           this._port = 0;
@@ -111,7 +112,10 @@ class OpenCodeAttachProvider extends PushProvider {
           const response = await fetch(`http://127.0.0.1:${this._port}/global/health`, {
             headers: { Authorization: `Basic ${auth}` },
           });
-          if (response.ok) return;
+          if (response.ok) {
+            this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: true, reason: 'serve-ready' });
+            return;
+          }
         } catch {}
         await new Promise(resolve => setTimeout(resolve, 200));
       }
@@ -261,6 +265,7 @@ class OpenCodeAttachProvider extends PushProvider {
   }
 
   async stop(): Promise<void> {
+    this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: false, reason: 'provider-stopped' });
     if (this._server?.pid) killTree(this._server.pid);
     this._server = null;
     this._port = 0;

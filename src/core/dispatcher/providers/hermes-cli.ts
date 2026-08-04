@@ -89,10 +89,11 @@ class HermesCliProvider extends PushProvider {
     else await Promise.all(Array.from(this._queues.values()));
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<{ accepted: true; queued: true }> {
     const profileId = this._instanceForAgent(payload.agentId);
     this._enqueue(profileId, () => this._runPush(payload));
     console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
+    return { accepted: true, queued: true };
   }
 
   async _runPush(payload: PushPayload): Promise<void> {
@@ -156,6 +157,10 @@ class HermesCliProvider extends PushProvider {
         throw new Error(`Hermes exited with code ${result.code}`);
       }
     } catch (err) {
+      if (/ENOENT|not found/i.test(errorMessage(err))) {
+        this._available = false;
+        this.notifyAvailability({ backendType: 'hermes', mode: 'cli', agentId, available: false, reason: 'cli-not-found' });
+      }
       if (approvalPending) throw new Error('Hermes pending approval');
       throw err;
     }
@@ -236,9 +241,18 @@ class HermesCliProvider extends PushProvider {
     };
   }
 
-  start() {}
-  stop() {}
-  healthCheck() { this._available = null; }
+  start() { this._refreshAvailability(); }
+  stop() {
+    if (this._available === true) this.notifyAvailability({ backendType: 'hermes', mode: 'cli', available: false, reason: 'provider-stopped' });
+    this._available = false;
+  }
+  healthCheck() { this._refreshAvailability(); }
+
+  _refreshAvailability() {
+    const previous = this._available;
+    this._available = checkCliAvailable('hermes');
+    if (previous !== this._available) this.notifyAvailability({ backendType: 'hermes', mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
+  }
 }
 
 /**

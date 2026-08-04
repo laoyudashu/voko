@@ -1807,7 +1807,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
     { backend: ['openclaw'], key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
     { backend: ['hermes'], key: 'hermes-cli', mod: './core/dispatcher/providers/hermes-cli', args: { db, contextWindow: 20 } },
-    { backend: ['goose', 'goose-ai', 'goose-acp'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
+    { backend: ['goose', 'goose-ai', 'goose-acp', 'acp-goose'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
     // Goose ACP（stdio JSON-RPC，priority=10 与 WS/HTTP 同级；backend_type='acp-goose'）
     { backend: ['acp-goose'], key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
     // 各 CLI runtime（priority=1，本地装了对应 CLI 才 isAvailable）

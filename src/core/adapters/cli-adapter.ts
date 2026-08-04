@@ -226,9 +226,17 @@ class CliAdapter extends PushProvider {
 
       if (exitCode !== 0) {
         error = new Error(`${this._name} 退出 code=${exitCode}`);
+        (error as any).deliveryOutcome = 'rejected';
       }
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
+      if (/ENOENT|not found/i.test(error.message)) {
+        (error as any).deliveryOutcome = 'not_delivered';
+        if (this._available !== false) {
+          this._available = false;
+          this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId, available: false, reason: 'cli-not-found' });
+        }
+      }
       console.error(`[${this._name}] push 失败: ${errorMessage(err)}`);
     }
 
@@ -279,9 +287,20 @@ class CliAdapter extends PushProvider {
     return this.push({ agentId, fromUid: visitorId, content, messageId, turnId: messageId, timestamp: Date.now() });
   }
 
-  start() { this._available = null; }
-  stop() {}
-  healthCheck() { this._available = null; }
+  start() { this._refreshAvailability(); }
+  stop() {
+    if (this._available === true) this.notifyAvailability({ backendType: this._matchType, mode: 'cli', available: false, reason: 'provider-stopped' });
+    this._available = false;
+  }
+  healthCheck() { this._refreshAvailability(); }
+
+  _refreshAvailability() {
+    const previous = this._available;
+    this._available = checkCliAvailable(this._cmd);
+    if (previous !== this._available) {
+      this.notifyAvailability({ backendType: this._matchType, mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
+    }
+  }
 }
 
 function _buildContextPrompt(

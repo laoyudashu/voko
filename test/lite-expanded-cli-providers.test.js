@@ -184,20 +184,14 @@ test('Hermes CLI does not publish an upstream authentication error as an Agent r
   assert.equal(errors[0].kind, 'execution_failed');
 });
 
-test('Cursor prefers ACP with a restricted CLI fallback', () => {
+test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {
   const acp = new CursorAcpProvider();
   const cli = new CursorCliProvider();
   assert.equal(acp._adapterType, 'cursor-acp');
   assert.equal(acp._cliArgs.at(-1), 'acp');
   assert.equal(acp._matchType, 'cursor');
-  assert.equal(acp._cliFallback.cmd, cli._cmd);
-  assert.match(acp._cliFallback.args.join(' '), /--mode plan/);
-  assert.equal(acp._cliFallback.parser, 'cursor-stream-json');
-  assert.deepEqual(
-    acp._cliFallback.argsForPayload({ providerBinding: { providerType: 'cursor', nativeSessionId: 'cursor-session' } }).slice(-2),
-    ['--resume', 'cursor-session'],
-  );
-  assert.equal(acp._cliFallback.sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
+  assert.equal(acp._cliFallback, null);
+  assert.equal(cli._adapterType, 'cursor-cli');
   assert.deepEqual(cli._argsForSession('cursor-session', false).slice(-2), ['--resume', 'cursor-session']);
   assert.equal(cli._sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
 });

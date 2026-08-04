@@ -187,3 +187,80 @@ test('messages queued before a rebind keep their original binding snapshot', asy
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(received, ['thread-a', 'thread-b']);
 });
+
+test('cross-adapter routing never reuses an incompatible managed binding', async (t) => {
+  const { db, store } = fixture(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id, agent_id, imUid, imToken, im_server_url, publish_status, created_at, updated_at,
+     backend_type, backend_instance_id, delivery_modes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('row-switch', 'agent-switch', 'agent-im-switch', 'token', 'ws://local', 'published', now, now,
+      'hermes', 'profile-switch', JSON.stringify(['cli', 'pull']));
+  const binding = store.saveManaged({
+    agentId: 'agent-switch', channelId: 'visitor-1', providerType: 'hermes',
+    providerInstanceId: 'profile-switch', nativeSessionId: 'http-session',
+    deliveryMode: 'http', adapterType: 'hermes-http', expectedVersion: 0,
+  });
+  const received = [];
+  const dispatcher = createDispatcher({
+    db,
+    providers: {
+      'hermes-cli': {
+        priority: 1,
+        match: () => true,
+        isAvailable: () => true,
+        _instanceForAgent: () => 'profile-switch',
+        async push(payload) { received.push(payload.providerBinding); },
+      },
+    },
+  });
+
+  dispatcher.dispatch('agent-switch', {
+    agentId: 'agent-switch', fromUid: 'visitor-1', channelId: 'visitor-1',
+    content: 'hello', messageId: 'switch-message',
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(received, [null]);
+  assert.equal(db.prepare('SELECT status FROM provider_conversation_bindings WHERE id=?').get(binding.id).status, 'stale');
+});
+
+test('caller-origin binding is not mutated when the selected adapter differs', async (t) => {
+  const { db, store } = fixture(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id, agent_id, imUid, imToken, im_server_url, publish_status, created_at, updated_at,
+     backend_type, backend_instance_id, delivery_modes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('row-caller', 'agent-caller', 'agent-im-caller', 'token', 'ws://local', 'published', now, now,
+      'hermes', 'profile-caller', JSON.stringify(['cli', 'pull']));
+  const pendingBinding = store.beginCallerBinding({
+    agentId: 'agent-caller', channelId: 'visitor-1', channelType: 1,
+    providerType: 'hermes', providerInstanceId: 'profile-caller', nativeSessionId: 'caller-http-session',
+    pendingMessageId: 'caller-pending', deliveryMode: 'http', adapterType: 'hermes-http',
+  });
+  const binding = store.activatePending(pendingBinding.id);
+  const received = [];
+  const dispatcher = createDispatcher({
+    db,
+    providers: {
+      'hermes-cli': {
+        priority: 1,
+        match: () => true,
+        isAvailable: () => true,
+        _instanceForAgent: () => 'profile-caller',
+        async push(payload) { received.push(payload.providerBinding); },
+      },
+    },
+  });
+
+  dispatcher.dispatch('agent-caller', {
+    agentId: 'agent-caller', fromUid: 'visitor-1', channelId: 'visitor-1',
+    content: 'hello', messageId: 'caller-message',
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(received, [null]);
+  assert.equal(db.prepare('SELECT status FROM provider_conversation_bindings WHERE id=?').get(binding.id).status, 'active');
+});

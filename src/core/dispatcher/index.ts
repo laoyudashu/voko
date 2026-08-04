@@ -27,7 +27,39 @@ interface DispatcherProvider {
   start?(): unknown;
   stop?(): unknown;
   healthCheck?(): unknown;
-  on?(event: string, handler: (reply: ProviderReply) => void): unknown;
+  setAvailabilityProviderId?(providerId: string): void;
+  on?(event: string, handler: (payload: any) => void): unknown;
+  off?(event: string, handler: (payload: any) => void): unknown;
+  removeListener?(event: string, handler: (payload: any) => void): unknown;
+}
+
+type RouteOperation = 'push' | 'steer';
+type DeliveryOutcome = 'not_delivered' | 'outcome_unknown' | 'rejected';
+
+interface AvailabilityEvent {
+  providerId?: string;
+  backendType?: string;
+  mode?: string;
+  agentId?: string;
+  operations?: RouteOperation[];
+  available?: boolean;
+  reason?: string;
+  generation?: number;
+}
+
+interface RouteCacheEntry {
+  providerId: string;
+  provider: DispatcherProvider;
+  generation: string;
+  selectedAt: number;
+}
+
+interface RouteInvalidation {
+  providerId?: string;
+  agentId?: string;
+  operation?: RouteOperation;
+  available?: boolean;
+  reason?: string;
 }
 
 interface ProviderReply {
@@ -93,6 +125,17 @@ interface PreparedA2A {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function deliveryOutcome(error: unknown): DeliveryOutcome {
+  const explicit = (error as any)?.deliveryOutcome;
+  if (explicit === 'rejected' && (error as any)?.channelUnavailable === true) return 'not_delivered';
+  if (explicit === 'not_delivered' || explicit === 'outcome_unknown' || explicit === 'rejected') return explicit;
+  const message = errorMessage(error);
+  if (/unavailable|not connected|disconnected|not running|not found|enoent|authentication|authorization|\b401\b|\b403\b/i.test(message)) {
+    return 'not_delivered';
+  }
+  return 'outcome_unknown';
 }
 
 // ── A2A（agent-to-agent）对话收敛配置 ──
@@ -250,8 +293,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // backend_type 内存缓存：避免每条访客消息都查一次 DB（match/isAvailable 已是同步纯判断，
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
+  const ROUTE_CACHE_TTL = Number(process.env.VOKO_ROUTE_CACHE_TTL_MS) || 30000;
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
-  const _routeCache = new Map<string, DispatcherProvider>();
+  const _routeCache = new Map<string, RouteCacheEntry>();
+  const _providerIds = new Map<DispatcherProvider, string>();
+  const _providerGenerations = new Map<string, number>();
+  const _scopedGenerations = new Map<string, number>();
+  const _availabilityEventGenerations = new Map<string, number>();
+  const _availabilityListeners = new Map<DispatcherProvider, (event: AvailabilityEvent) => void>();
+  for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
   const _convergedMap = new Map<string, number>();   // scopeKey -> markedAt
@@ -292,15 +342,98 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     } catch (_) {}
     return _isAgentByApi(imUid);
   }
+
+  function _providerIdOf(provider: DispatcherProvider): string | null {
+    return _providerIds.get(provider) || null;
+  }
+
+  function _generationKey(providerId: string, agentId: string, operation: RouteOperation): string {
+    return `${providerId}:${agentId}:${operation}`;
+  }
+
+  function _generationOf(providerId: string, agentId: string, operation: RouteOperation): string {
+    return `${_providerGenerations.get(providerId) || 0}:${_scopedGenerations.get(_generationKey(providerId, agentId, operation)) || 0}`;
+  }
+
+  function _bumpScoped(providerId: string, agentId: string, operation: RouteOperation): void {
+    const key = _generationKey(providerId, agentId, operation);
+    _scopedGenerations.set(key, (_scopedGenerations.get(key) || 0) + 1);
+  }
+
+  function _providerEligible(providerId: string, agentId: string): boolean {
+    const provider = providers[providerId];
+    if (!provider) return false;
+    const meta = _metaOf(agentId);
+    const mode = _providerMode(providerId);
+    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(mode)) return false;
+    try { return typeof provider.match === 'function' && provider.match(agentId, meta); }
+    catch (_) { return false; }
+  }
+
+  function invalidateRoutes(input: RouteInvalidation = {}): void {
+    const operations: RouteOperation[] = input.operation ? [input.operation] : ['push', 'steer'];
+    if (input.providerId && !input.agentId) {
+      _providerGenerations.set(input.providerId, (_providerGenerations.get(input.providerId) || 0) + 1);
+    } else if (input.providerId && input.agentId) {
+      for (const operation of operations) _bumpScoped(input.providerId, input.agentId, operation);
+    }
+
+    for (const [cacheKey, entry] of _routeCache) {
+      const separator = cacheKey.indexOf(':');
+      const operation = cacheKey.slice(0, separator) as RouteOperation;
+      const agentId = cacheKey.slice(separator + 1);
+      if (!operations.includes(operation)) continue;
+      if (input.agentId && input.agentId !== agentId) continue;
+      let affected = !input.providerId;
+      if (input.providerId) {
+        affected = input.available === true
+          ? _providerEligible(input.providerId, agentId)
+          : entry.providerId === input.providerId;
+      }
+      if (!affected) continue;
+      _bumpScoped(entry.providerId, agentId, operation);
+      _routeCache.delete(cacheKey);
+    }
+  }
+
+  function attachAvailabilityProvider(providerId: string, provider: DispatcherProvider): void {
+    _providerIds.set(provider, providerId);
+    provider.setAvailabilityProviderId?.(providerId);
+    if (_availabilityListeners.has(provider) || typeof provider.on !== 'function') return;
+    const listener = (event: AvailabilityEvent = {}) => {
+      const eventKey = `${providerId}:${event.agentId || '*'}`;
+      if (Number.isFinite(event.generation)) {
+        const previous = _availabilityEventGenerations.get(eventKey) || 0;
+        if (Number(event.generation) <= previous) return;
+        _availabilityEventGenerations.set(eventKey, Number(event.generation));
+      }
+      const operations: RouteOperation[] = event.operations?.length ? event.operations : ['push', 'steer'];
+      for (const operation of operations) {
+        invalidateRoutes({ providerId, agentId: event.agentId, operation, available: event.available, reason: event.reason });
+      }
+    };
+    _availabilityListeners.set(provider, listener);
+    provider.on('availability', listener);
+  }
+
+  function detachAvailabilityProvider(provider: DispatcherProvider): void {
+    const listener = _availabilityListeners.get(provider);
+    if (!listener) return;
+    if (typeof provider.off === 'function') provider.off('availability', listener);
+    else provider.removeListener?.('availability', listener);
+    _availabilityListeners.delete(provider);
+  }
+
+  for (const [providerId, provider] of Object.entries(providers)) attachAvailabilityProvider(providerId, provider);
+
   /** 主动失效 backend_type 缓存。传 agentId 失效单个，不传清空全部。TTL 已能兜底，调用为可选。 */
   function invalidateMeta(agentId?: string): void {
     if (agentId) {
       _metaCache.delete(agentId);
-      _routeCache.delete(`push:${agentId}`);
-      _routeCache.delete(`steer:${agentId}`);
+      invalidateRoutes({ agentId });
     } else {
       _metaCache.clear();
-      _routeCache.clear();
+      invalidateRoutes();
     }
   }
 
@@ -317,6 +450,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     if (key.endsWith('-acp')) return 'acp';
     if (key.endsWith('-cli')) return 'cli';
     return key;
+  }
+
+  function _providerFamily(providerId: string): string {
+    return providerId.replace(/-(?:http|websocket|ws|cli|acp|attach)$/, '');
   }
 
   function resolveProviders(agentId: string): DispatcherProvider[] {
@@ -406,29 +543,63 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     };
   }
 
-  function _routeProvider(
+  function _routeProviderEntry(
     agentId: string,
-    operation: 'push' | 'steer',
+    operation: RouteOperation,
     excluded: Set<DispatcherProvider> = new Set(),
-  ): DispatcherProvider | null {
+  ): RouteCacheEntry | null {
     const cacheKey = `${operation}:${agentId}`;
     const cached = _routeCache.get(cacheKey);
-    if (cached && !excluded.has(cached)) {
+    if (cached && !excluded.has(cached.provider) && Date.now() - cached.selectedAt < ROUTE_CACHE_TTL) {
       try {
-        if (typeof cached[operation] === 'function' && cached.isAvailable?.(agentId)) return cached;
+        if (cached.generation === _generationOf(cached.providerId, agentId, operation)
+          && cached.provider.isAvailable?.(agentId)
+          && typeof cached.provider[operation] === 'function') return cached;
       } catch (_) {}
+      _bumpScoped(cached.providerId, agentId, operation);
+      _routeCache.delete(cacheKey);
+    } else if (cached) {
+      _bumpScoped(cached.providerId, agentId, operation);
       _routeCache.delete(cacheKey);
     }
-    const selected = resolveProviders(agentId).find(provider => (
-      !excluded.has(provider) && typeof provider[operation] === 'function'
+
+    const provider = resolveProviders(agentId).find(candidate => (
+      !excluded.has(candidate) && typeof candidate[operation] === 'function'
     )) || null;
-    if (selected) _routeCache.set(cacheKey, selected);
+    if (!provider) return null;
+    const providerId = _providerIdOf(provider);
+    if (!providerId) return null;
+    const selected: RouteCacheEntry = {
+      providerId,
+      provider,
+      generation: _generationOf(providerId, agentId, operation),
+      selectedAt: Date.now(),
+    };
+    _routeCache.set(cacheKey, selected);
     return selected;
   }
 
-  function _forgetRoute(agentId: string, operation: 'push' | 'steer', provider: DispatcherProvider): void {
+  function _routeProvider(
+    agentId: string,
+    operation: RouteOperation,
+    excluded: Set<DispatcherProvider> = new Set(),
+  ): DispatcherProvider | null {
+    return _routeProviderEntry(agentId, operation, excluded)?.provider || null;
+  }
+
+  function _cacheRouteIfCurrent(agentId: string, operation: RouteOperation, entry: RouteCacheEntry): void {
+    if (entry.generation !== _generationOf(entry.providerId, agentId, operation)) return;
+    try {
+      if (!entry.provider.isAvailable?.(agentId)) return;
+    } catch (_) { return; }
+    _routeCache.set(`${operation}:${agentId}`, { ...entry, selectedAt: Date.now() });
+  }
+
+  function _forgetRoute(agentId: string, operation: RouteOperation, provider: DispatcherProvider): void {
     const cacheKey = `${operation}:${agentId}`;
-    if (_routeCache.get(cacheKey) === provider) _routeCache.delete(cacheKey);
+    const providerId = _providerIdOf(provider);
+    if (providerId) _bumpScoped(providerId, agentId, operation);
+    if (_routeCache.get(cacheKey)?.provider === provider) _routeCache.delete(cacheKey);
   }
 
   function resolveProvider(agentId: string): DispatcherProvider | null {
@@ -637,13 +808,33 @@ ${body}
     };
   }
 
+  function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
+    if (!binding) return null;
+    const mode = _providerMode(route.providerId);
+    let compatible = binding.providerType === _providerFamily(route.providerId)
+      && binding.adapterType === route.providerId
+      && binding.deliveryMode === mode;
+    const resolveInstance = (route.provider as any).getInstanceId
+      || (route.provider as any)._instanceForAgent
+      || (route.provider as any)._profileForAgent;
+    if (compatible && binding.providerInstanceId && typeof resolveInstance === 'function') {
+      try { compatible = String(resolveInstance.call(route.provider, agentId) || '') === String(binding.providerInstanceId); }
+      catch (_) { compatible = false; }
+    }
+    if (compatible) return binding;
+    if (binding.sessionOrigin !== 'caller') {
+      try { _bindingStore.markStale(binding.id); } catch (_) {}
+    }
+    return null;
+  }
+
   async function _doRoute(
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
   ): Promise<void> {
-    let provider = _routeProvider(agentId, 'push');
-    if (!provider) {
+    let route = _routeProviderEntry(agentId, 'push');
+    if (!route) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
@@ -652,7 +843,7 @@ ${body}
         ? { ...payload, turnId: payload.turnId || payload.messageId, senderUid: payload.senderUid || payload.fromUid, fromUid: payload.sessionTarget || `group:${payload.channelId}` }
         : { ...payload, turnId: payload.turnId || payload.messageId };
       const sourceType = a2aContext?.a2aManaged ? 'agent_peer' : 'visitor';
-      const providerPayload = {
+      const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
         content: wrapPushContent(routedPayload.content, sourceType),
@@ -661,28 +852,41 @@ ${body}
       };
       const replyContext = {
         agentId,
-        turnId: providerPayload.turnId,
+        turnId: baseProviderPayload.turnId,
         channelType: payload.channelType || 1,
-        channelId: payload.channelId || providerPayload.fromUid,
+        channelId: payload.channelId || baseProviderPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,
         ...(a2aContext || {})
       };
-      _rememberReplyContext(agentId, providerPayload.fromUid, replyContext);
+      _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const failed = new Set<DispatcherProvider>();
-      while (provider) {
+      let fallbackUsed = false;
+      while (route) {
+        const provider = route.provider;
+        const providerPayload = {
+          ...baseProviderPayload,
+          providerBinding: _bindingForRoute(agentId, baseProviderPayload.providerBinding, route),
+        };
         try {
           await provider.push!(providerPayload);
-          _routeCache.set(`push:${agentId}`, provider);
+          _cacheRouteIfCurrent(agentId, 'push', route);
           return;
         } catch (err) {
+          const outcome = deliveryOutcome(err);
           failed.add(provider);
           _forgetRoute(agentId, 'push', provider);
-          if (providerPayload.providerBinding?.id) {
+          if (outcome === 'not_delivered' && providerPayload.providerBinding?.id && providerPayload.providerBinding.sessionOrigin !== 'caller') {
             try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
-            providerPayload.providerBinding = null;
           }
-          console.error(`[Dispatcher] push 通道失败，尝试备选 agent=${agentId}:`, errorMessage(err));
-          provider = _routeProvider(agentId, 'push', failed);
+          if (outcome !== 'not_delivered') {
+            _removeReplyContext(replyContext);
+            console.error(`[Dispatcher] push 结果=${outcome}，不跨通道重投 agent=${agentId}:`, errorMessage(err));
+            return;
+          }
+          console.error(`[Dispatcher] push 通道确认未投递，尝试备选 agent=${agentId}:`, errorMessage(err));
+          if (fallbackUsed) break;
+          fallbackUsed = true;
+          route = _routeProviderEntry(agentId, 'push', failed);
         }
       }
       _removeReplyContext(replyContext);
@@ -776,24 +980,33 @@ ${body}
     content: string,
     replyContext: ReplyContext | null = null,
   ): Promise<unknown> {
-    let provider = _routeProvider(agentId, 'steer');
-    if (!provider) return null;
+    let route = _routeProviderEntry(agentId, 'steer');
+    if (!route) return null;
     try {
       const turnId = String(replyContext?.turnId || replyContext?.interventionId || `steer-${Date.now()}`);
       if (replyContext) {
         _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
       }
       const failed = new Set<DispatcherProvider>();
-      while (provider) {
+      let fallbackUsed = false;
+      while (route) {
+        const provider = route.provider;
         try {
           const result = await provider.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId });
-          _routeCache.set(`steer:${agentId}`, provider);
+          _cacheRouteIfCurrent(agentId, 'steer', route);
           return result;
         } catch (error) {
+          const outcome = deliveryOutcome(error);
           failed.add(provider);
           _forgetRoute(agentId, 'steer', provider);
-          console.error(`[Dispatcher] steer 通道失败，尝试备选 agent=${agentId}:`, errorMessage(error));
-          provider = _routeProvider(agentId, 'steer', failed);
+          if (outcome !== 'not_delivered') {
+            console.error(`[Dispatcher] steer 结果=${outcome}，不跨通道重投 agent=${agentId}:`, errorMessage(error));
+            break;
+          }
+          console.error(`[Dispatcher] steer 通道确认未投递，尝试备选 agent=${agentId}:`, errorMessage(error));
+          if (fallbackUsed) break;
+          fallbackUsed = true;
+          route = _routeProviderEntry(agentId, 'steer', failed);
         }
       }
       if (replyContext) {
@@ -811,7 +1024,8 @@ ${body}
   let started = false;
   async function start() {
     started = true;
-    for (const p of Object.values(providers)) {
+    for (const [providerId, p] of Object.entries(providers)) {
+      attachAvailabilityProvider(providerId, p);
       try { await p.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     }
     try {
@@ -830,14 +1044,19 @@ ${body}
     for (const [key, provider] of Object.entries(additions)) {
       if (providers[key]) continue;
       providers[key] = provider;
+      _providerIds.set(provider, key);
       attachReplyProvider(provider);
+      attachAvailabilityProvider(key, provider);
       if (started) {
         try { await provider.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
       }
+      invalidateRoutes({ providerId: key, available: true, reason: 'provider-added' });
     }
   }
   async function stop() {
+    started = false;
     for (const p of Object.values(providers)) {
+      detachAvailabilityProvider(p);
       try { await p.stop?.(); } catch (e) { console.error('[Dispatcher] provider.stop 失败:', errorMessage(e)); }
     }
   }
@@ -848,7 +1067,7 @@ ${body}
     }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
 }
 
 module.exports = { createDispatcher };
