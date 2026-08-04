@@ -375,6 +375,14 @@ function createWebRouter(handlers, db, opts={}){
       return Object.entries(tokenMap).sort((a,b)=>(b[1]?.updated_at||0)-(a[1]?.updated_at||0))[0]?.[0]?.trim().toLowerCase()||'';
     }catch(_){return ''}
   };
+  const requireSensitiveLocalAuth=(req,res,next)=>{
+    const supplied=String(req.get('x-voko-token')||req.get('authorization')||'').replace(/^Bearer\s+/i,'');
+    if(opts.localAuthToken&&supplied===opts.localAuthToken){req.localAuth={type:'instance'};return next()}
+    const session=opts.webSessions&&opts.webSessions.resolveRequest(req);
+    if(session){req.localAuth={type:'web',...session};return next()}
+    if((req.get('accept')||'').includes('application/json')||req.query.json==='1')return res.status(401).json({success:false,error:'Unauthorized'});
+    return res.redirect('/login');
+  };
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -651,7 +659,7 @@ function createWebRouter(handlers, db, opts={}){
   });
 
   // ────────── 注册 ──────────
-  R.use(createRegisterRouter(handlers, db));
+  R.use(createRegisterRouter(handlers, db, { webSessions: opts.webSessions }));
 
   // ────────── 银行卡管理 ──────────
   R.use(createPaymentAuthRouter(handlers, db));
@@ -661,6 +669,7 @@ function createWebRouter(handlers, db, opts={}){
 
   // ────────── 切换账号（不清 token，新登录时覆盖） ──────────
   R.get('/api/logout', (req, res) => {
+    if(opts.webSessions){opts.webSessions.destroyRequest(req);opts.webSessions.clearCookie(res)}
     res.redirect('/login?mode=switch');
   });
 
@@ -1725,7 +1734,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
 
 
   // ── JSON 指令控制台 ──
-  R.get('/api/console',async(req,res,next)=>{
+  R.get('/api/console',requireSensitiveLocalAuth,async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
       const examples=[
@@ -1749,7 +1758,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       +'<p><a href="/">← '+L('common.btn.home')+'</a></p>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/api/console">'+L('web.console.title')+'</a>'}))
     }catch(e){next(e)}
   });
-  R.post('/api/console',async(req,res,next)=>{
+  R.post('/api/console',requireSensitiveLocalAuth,async(req,res,next)=>{
     const T=req.t,L=k=>esc(T(k));
     const wantJson=(req.get('accept')||'').includes('application/json')||req.query.json==='1';
     const jfail=(status,payload)=>{res.type('application/json');return res.status(status).json(Object.assign({success:false},payload))};
@@ -1898,7 +1907,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
   });  // ────────── Agent 发现 ──────────
 
   // 系统日志 — 返回最近 2000 行（约 500KB）
-  R.get('/voko-im.log',(req,res)=>{
+  R.get('/voko-im.log',requireSensitiveLocalAuth,(req,res)=>{
     try{
       const logPath = require('path').join(process.env.APPDATA||'', 'voko', 'voko-im.log');
       const fs = require('fs');

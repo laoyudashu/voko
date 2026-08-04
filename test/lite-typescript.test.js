@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const os = require('node:os');
+const { DatabaseSync } = require('node:sqlite');
 
 require('./lite-opencode-provider.test');
 const express = require('express');
@@ -20,6 +22,7 @@ const { RuntimeState } = require('../build/core/runtime-state');
 const liteEvents = require('../build/core/lite-events');
 const smoke = require('../build/testing/smoke-all');
 const { createWebRouter } = require('../build/web');
+const { createLocalWebSessionStore } = require('../build/core/local-web-session');
 const { requiresLocalToken, isAllowedBridgeConfigType } = require('../build/core/local-http-security');
 const { updateLite } = require('../build/cli');
 const { version: packageVersion } = require('../package.json');
@@ -315,6 +318,37 @@ test('privileged local bridge APIs require the instance token and accept only sa
   assert.equal(isAllowedBridgeConfigType('llm_config'), true);
   assert.equal(isAllowedBridgeConfigType('user_access_token'), false);
   assert.equal(isAllowedBridgeConfigType('runtime'), false);
+});
+
+test('sensitive Web endpoints accept instance tokens or HttpOnly local sessions', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-web-session-'));
+  const db = new DatabaseSync(path.join(dir, 'voko.db'));
+  t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  db.exec('CREATE TABLE agents (agent_id TEXT, owner_email TEXT)');
+  const sessions = createLocalWebSessionStore(db);
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+  app.use(createWebRouter({}, db, { webSessions: sessions, localAuthToken: 'instance-secret' }));
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const denied = await fetch(`${base}/api/console?json=1`, { headers: { Accept: 'application/json' } });
+  assert.equal(denied.status, 401);
+  const agent = await fetch(`${base}/api/console`, {
+    headers: { 'X-VOKO-Token': 'instance-secret' }, redirect: 'manual',
+  });
+  assert.equal(agent.status, 200);
+
+  const created = sessions.create('owner@example.com');
+  const browser = await fetch(`${base}/api/console`, {
+    headers: { Cookie: `voko_session=${created.token}` }, redirect: 'manual',
+  });
+  assert.equal(browser.status, 200);
+  assert.equal(db.prepare('SELECT owner_email FROM local_web_sessions').get().owner_email, 'owner@example.com');
 });
 
 test('guest mode exposes the bug-report page and JSON API without login', async (t) => {
