@@ -99,6 +99,12 @@ interface AcpAgentState {
   _shutdownResolve: (() => void) | null;
 }
 
+interface AcpAgentHealth {
+  available: boolean;
+  reason: string;
+  changedAt: number;
+}
+
 interface AcpSdk {
   ndJsonStream(output: unknown, input: unknown): unknown;
   client(options?: { name?: string }): {
@@ -136,6 +142,9 @@ class AcpAdapter extends PushProvider {
   _acpSdk: AcpSdk | null;
   _adapterType: string;
   _recoveryNeededSessions: Set<string>;
+  _agentHealth: Map<string, AcpAgentHealth>;
+  _recoveryPromises: Map<string, Promise<boolean>>;
+  _providerStopped: boolean;
 
   /**
    * @param {object} [options]
@@ -156,6 +165,9 @@ class AcpAdapter extends PushProvider {
 
     // agentId → { child, agentCtx, sessions, sessionKeys, _readyResolve, _shutdownResolve }
     this._agents = new Map<string, AcpAgentState>();
+    this._agentHealth = new Map<string, AcpAgentHealth>();
+    this._recoveryPromises = new Map<string, Promise<boolean>>();
+    this._providerStopped = false;
 
     // DB 引用（session 句柄持久化）
     this._db = options.db || null;
@@ -207,7 +219,8 @@ class AcpAdapter extends PushProvider {
     return bt === 'acp' || (typeof bt === 'string' && bt.startsWith('acp-'));
   }
 
-  isAvailable(_agentId: string): boolean {
+  isAvailable(agentId: string): boolean {
+    if (agentId && this._agentHealth.get(agentId)?.available === false) return false;
     if (this.options.streamFactory) return true;
     if (this._runtimeRequest) return this._resolveRuntime().available;
     if (!this._cliPath) return false;
@@ -226,17 +239,69 @@ class AcpAdapter extends PushProvider {
     this._resolvedRuntime = null;
   }
 
+  _markAgentHealth(agentId: string, available: boolean, reason: string): void {
+    if (!agentId) return;
+    const previous = this._agentHealth.get(agentId);
+    this._agentHealth.set(agentId, { available, reason, changedAt: Date.now() });
+    if (!previous || previous.available !== available) {
+      this.notifyAvailability({
+        backendType: this._matchType || 'acp',
+        mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
+        agentId,
+        available,
+        reason,
+      });
+    }
+  }
+
+  _agentStateAlive(state: AcpAgentState | undefined): boolean {
+    return !!state?.agentCtx
+      && state.transportAlive
+      && (!state.child || (!state.child.killed && state.child.exitCode === null));
+  }
+
+  async recover(agentId: string): Promise<boolean> {
+    if (!agentId || !this._started || this._providerStopped) return false;
+    const existing = this._recoveryPromises.get(agentId);
+    if (existing) return existing;
+
+    const recovery = (async () => {
+      try {
+        await this._ensureAgent(agentId, true);
+        const state = this._agents.get(agentId);
+        if (!this._agentStateAlive(state)) throw new Error('ACP recovery did not produce a live process');
+        this._markAgentHealth(agentId, true, 'recovered');
+        return true;
+      } catch (error) {
+        this._markAgentHealth(agentId, false, `recovery-failed:${errorMessage(error)}`);
+        return false;
+      }
+    })();
+    this._recoveryPromises.set(agentId, recovery);
+    try {
+      return await recovery;
+    } finally {
+      if (this._recoveryPromises.get(agentId) === recovery) this._recoveryPromises.delete(agentId);
+    }
+  }
+
   async start() {
+    if (this._providerStopped) this._agentHealth.clear();
+    this._providerStopped = false;
     this._started = true;
     this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', available: this.isAvailable(''), reason: 'provider-started' });
     // ACP SDK 推迟到第一次 push 时 lazy-load（ESM 动态 import）
   }
 
   async stop() {
-    for (const [agentId, state] of this._agents) {
-      this._disconnectAgent(agentId, state);
+    this._providerStopped = true;
+    for (const [agentId, state] of [...this._agents]) {
+      this._disconnectAgent(agentId, state, 'provider-stopped');
     }
     this._agents.clear();
+    for (const agentId of this._agentHealth.keys()) {
+      this._markAgentHealth(agentId, false, 'provider-stopped');
+    }
     this._started = false;
   }
 
@@ -288,14 +353,19 @@ class AcpAdapter extends PushProvider {
       ok: boolean;
       agents: Record<string, { ok: boolean; status: string }>;
     } = { ok: true, agents: {} };
-    for (const [agentId, state] of this._agents) {
-      const alive = state.transportAlive
-        && (!state.child || (!state.child.killed && state.child.exitCode === null));
+    const agentIds = new Set([...this._agents.keys(), ...this._agentHealth.keys()]);
+    for (const agentId of agentIds) {
+      const state = this._agents.get(agentId);
+      const alive = this._agentStateAlive(state);
       if (!alive) {
-        this._disconnectAgent(agentId, state);
-        result.agents[agentId] = { ok: false, status: 'process_dead' };
-        result.ok = false;
+        if (state) this._disconnectAgent(agentId, state, 'process-dead');
+        const recovered = await this.recover(agentId);
+        result.agents[agentId] = recovered
+          ? { ok: true, status: 'recovered' }
+          : { ok: false, status: 'process_dead' };
+        if (!recovered) result.ok = false;
       } else {
+        this._markAgentHealth(agentId, true, 'connected');
         result.agents[agentId] = { ok: true, status: 'connected' };
       }
     }
@@ -536,7 +606,7 @@ class AcpAdapter extends PushProvider {
   }
 
   /** 确保 agent 子进程运行 + ACP 连接就绪。返回状态对象。 */
-  async _ensureAgent(agentId: string): Promise<AcpAgentState> {
+  async _ensureAgent(agentId: string, allowRecovery = false): Promise<AcpAgentState> {
     const stateKey = this.options.connectionKey?.(agentId) || agentId;
     const existing = this._agents.get(stateKey);
     const childAlive = !!existing?.child && !existing.child.killed && existing.child.exitCode === null;
@@ -544,7 +614,13 @@ class AcpAdapter extends PushProvider {
       return existing;
     }
     // 清理僵死状态
-    if (existing) this._disconnectAgent(agentId, existing);
+    if (existing) this._disconnectAgent(agentId, existing, 'reconnecting');
+
+    if (!allowRecovery && this._agentHealth.get(agentId)?.available === false) {
+      const unavailable = new Error(`[${this._logPrefix}] ACP process is unavailable for agentId=${agentId}`);
+      (unavailable as any).deliveryOutcome = 'not_delivered';
+      throw unavailable;
+    }
 
     if (!this._cliPath && !this._runtimeRequest && !this.options.streamFactory) {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
@@ -609,7 +685,7 @@ class AcpAdapter extends PushProvider {
 
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         state.transportAlive = false;
-        this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `process-exit:${code ?? signal ?? 'unknown'}` });
+        this._markAgentHealth(agentId, false, `process-exit:${code ?? signal ?? 'unknown'}`);
         console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
         state.sessions.clear();
         if (this._agents.get(stateKey) === state) {
@@ -619,7 +695,7 @@ class AcpAdapter extends PushProvider {
 
       child.on('error', (err: Error) => {
         if (/ENOENT|EACCES/i.test(String((err as any).code || err.message))) this._invalidateRuntime();
-        this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `process-error:${err.message}` });
+        this._markAgentHealth(agentId, false, `process-error:${err.message}`);
         console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
       });
 
@@ -644,7 +720,7 @@ class AcpAdapter extends PushProvider {
     }).connectWith(stream, async (agentCtx: AcpAgentContext) => {
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
-      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: true, reason: 'connected' });
+      this._markAgentHealth(agentId, true, 'connected');
       if (state._readyResolve) {
         state._readyResolve();
         state._readyResolve = null;
@@ -652,7 +728,7 @@ class AcpAdapter extends PushProvider {
       await keepAlivePromise;
     }).catch((err: unknown) => {
       state.transportAlive = false;
-      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `connection-error:${errorMessage(err)}` });
+      this._markAgentHealth(agentId, false, `connection-error:${errorMessage(err)}`);
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
       if (state._readyResolve) {
         state._readyResolve();
@@ -819,9 +895,9 @@ class AcpAdapter extends PushProvider {
   }
 
   /** 断开 agent 连接，清理资源 */
-  _disconnectAgent(agentId: string, state: AcpAgentState): void {
+  _disconnectAgent(agentId: string, state: AcpAgentState, reason = 'disconnected'): void {
     try {
-      this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: 'disconnected' });
+      this._markAgentHealth(agentId, false, reason);
       // 1. 信号 keepAlive 结束 → connectWith callback 退出 → SDK 清理连接
       if (state._shutdownResolve) {
         state._shutdownResolve();
