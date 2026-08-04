@@ -220,7 +220,7 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
       } else {
         console.log(`[${logTag}] -> 无可用连接，跳过转发`);
       }
-      console.log(`[${logTag}] -> 已转发主人回复, sessionKey=${sessionKeyForForward}`);
+      console.log(`[${logTag}] -> 已转发主人回复`);
     } else if (sessionKeyForForward && !updateResult.contentChanged) {
       console.log(`[${logTag}] -> 回复内容无变化，跳过通知 agent`);
     } else if (sessionKeyForForward) {

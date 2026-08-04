@@ -1187,7 +1187,7 @@ class OpenClawWsProvider {
         } else {
           // 处理简单消息
           const reply = await this.sendMessage(item.message);
-          console.log('[OpenClaw WS] 队列消息处理完成:', reply?.substring(0, 50));
+          console.log('[OpenClaw WS] 队列消息处理完成, replyLength=', reply?.length || 0);
         }
       } catch (err) {
         console.error('[OpenClaw WS] 队列消息处理失败:', errorMessage(err));
