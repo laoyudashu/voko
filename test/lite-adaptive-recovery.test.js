@@ -224,3 +224,145 @@ test('ACP runtime availability is separate from per-agent process health', async
   assert.equal(events.some((event) => event.agentId === 'agent-a' && event.available === false), true);
   assert.equal(events.some((event) => event.agentId === 'agent-a' && event.available === true), true);
 });
+
+test('ACP health gate blocks a still-live process until explicit recovery', async () => {
+  const adapter = new AcpAdapter();
+  const state = {
+    child: null,
+    transportAlive: true,
+    transportClose: null,
+    agentCtx: {},
+    agentIds: new Set(['agent-a']),
+    sessions: new Map(),
+    ready: Promise.resolve(),
+    _readyResolve: null,
+    _shutdownResolve: null,
+  };
+  adapter._agents.set('agent-a', state);
+  adapter._markAgentHealth('agent-a', false, 'process-error:transport');
+
+  await assert.rejects(
+    adapter._ensureAgent('agent-a'),
+    (error) => error.deliveryOutcome === 'not_delivered',
+  );
+  assert.equal(await adapter._ensureAgent('agent-a', true), state);
+});
+
+test('shared ACP recovery is single-flight across agents using one connection key', async () => {
+  let calls = 0;
+  const adapter = new AcpAdapter({ connectionKey: () => 'shared-profile' });
+  adapter._started = true;
+  const state = {
+    child: null,
+    transportAlive: true,
+    transportClose: null,
+    agentCtx: {},
+    agentIds: new Set(['agent-a', 'agent-b']),
+    sessions: new Map(),
+    ready: Promise.resolve(),
+    _readyResolve: null,
+    _shutdownResolve: null,
+  };
+  adapter._ensureAgent = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    adapter._agents.set('shared-profile', state);
+    return state;
+  };
+
+  const [first, second] = await Promise.all([
+    adapter.recover('agent-a'),
+    adapter.recover('agent-b'),
+  ]);
+  assert.deepEqual([first, second], [true, true]);
+  assert.equal(calls, 1);
+});
+
+test('recovery started before stop cannot restore availability afterwards', async () => {
+  const adapter = new AcpAdapter();
+  adapter._started = true;
+  let release;
+  adapter._ensureAgent = () => new Promise((resolve) => { release = resolve; });
+  const recovery = adapter.recover('agent-a');
+  await new Promise((resolve) => setImmediate(resolve));
+  await adapter.stop();
+  release({
+    child: null,
+    transportAlive: true,
+    transportClose: null,
+    agentCtx: {},
+    agentIds: new Set(['agent-a']),
+    sessions: new Map(),
+    ready: Promise.resolve(),
+    _readyResolve: null,
+    _shutdownResolve: null,
+  });
+  assert.equal(await recovery, false);
+  assert.equal(adapter.isAvailable('agent-a'), false);
+});
+
+test('stop cancels a pending ACP streamFactory connection and closes its transport', async () => {
+  let closeCalls = 0;
+  const adapter = new AcpAdapter({
+    streamFactory: async () => ({
+      stream: {},
+      close: async () => { closeCalls += 1; },
+    }),
+  });
+  adapter._loadSdk = async () => ({
+    methods: { agent: { session: { resume: 'resume' } }, client: { session: { requestPermission: 'permission' } } },
+    client: () => ({
+      onRequest: () => ({
+        connectWith: () => new Promise(() => {}),
+      }),
+    }),
+  });
+  await adapter.start();
+  const connecting = adapter._ensureAgent('agent-a');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(adapter._agents.has('agent-a'), true);
+
+  await adapter.stop();
+  await assert.rejects(connecting, (error) => error.deliveryOutcome === 'not_delivered');
+  assert.equal(closeCalls, 1);
+  assert.equal(adapter._agents.size, 0);
+});
+
+test('healthCheck recovers a shared dead ACP state once for all bound agents', async () => {
+  let recoverCalls = 0;
+  const adapter = new AcpAdapter({ connectionKey: () => 'shared-profile' });
+  adapter._started = true;
+  const deadState = {
+    child: null,
+    transportAlive: false,
+    transportClose: null,
+    agentCtx: null,
+    agentIds: new Set(['agent-a', 'agent-b']),
+    sessions: new Map(),
+    ready: Promise.resolve(),
+    _readyResolve: null,
+    _shutdownResolve: null,
+  };
+  adapter._agents.set('shared-profile', deadState);
+  adapter._markAgentHealth('agent-a', false, 'process-exit:1');
+  adapter._markAgentHealth('agent-b', false, 'process-exit:1');
+  const liveState = {
+    ...deadState,
+    transportAlive: true,
+    agentCtx: {},
+    agentIds: new Set(['agent-a', 'agent-b']),
+  };
+  adapter._ensureAgent = async () => {
+    recoverCalls += 1;
+    adapter._agents.set('shared-profile', liveState);
+    return liveState;
+  };
+
+  const result = await adapter.healthCheck();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.agents, {
+    'agent-a': { ok: true, status: 'recovered' },
+    'agent-b': { ok: true, status: 'recovered' },
+  });
+  assert.equal(recoverCalls, 1);
+});

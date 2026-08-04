@@ -93,6 +93,8 @@ interface AcpAgentState {
   transportAlive: boolean;
   transportClose: (() => void | Promise<void>) | null;
   agentCtx: AcpAgentContext | null;
+  agentIds: Set<string>;
+  lifecycleEpoch: number;
   sessions: Map<string, AcpSession>;
   ready: Promise<void>;
   _readyResolve: (() => void) | null;
@@ -144,6 +146,7 @@ class AcpAdapter extends PushProvider {
   _recoveryNeededSessions: Set<string>;
   _agentHealth: Map<string, AcpAgentHealth>;
   _recoveryPromises: Map<string, Promise<boolean>>;
+  _recoveryEpoch: number;
   _providerStopped: boolean;
 
   /**
@@ -167,6 +170,7 @@ class AcpAdapter extends PushProvider {
     this._agents = new Map<string, AcpAgentState>();
     this._agentHealth = new Map<string, AcpAgentHealth>();
     this._recoveryPromises = new Map<string, Promise<boolean>>();
+    this._recoveryEpoch = 0;
     this._providerStopped = false;
 
     // DB 引用（session 句柄持久化）
@@ -260,28 +264,56 @@ class AcpAdapter extends PushProvider {
       && (!state.child || (!state.child.killed && state.child.exitCode === null));
   }
 
+  _stateForAgent(agentId: string): AcpAgentState | undefined {
+    const direct = this._agents.get(agentId);
+    if (direct) return direct;
+    for (const state of this._agents.values()) {
+      if (state.agentIds?.has(agentId)) return state;
+    }
+    return undefined;
+  }
+
+  _connectionKey(agentId: string): string {
+    return this.options.connectionKey?.(agentId) || agentId;
+  }
+
+  _stateKey(state: AcpAgentState): string | null {
+    for (const [key, value] of this._agents) if (value === state) return key;
+    return null;
+  }
+
+  _markStateHealth(state: AcpAgentState, fallbackAgentId: string, available: boolean, reason: string): void {
+    const agentIds = new Set<string>([fallbackAgentId]);
+    for (const agentId of state.agentIds || []) agentIds.add(agentId);
+    for (const agentId of agentIds) this._markAgentHealth(agentId, available, reason);
+  }
+
   async recover(agentId: string): Promise<boolean> {
     if (!agentId || !this._started || this._providerStopped) return false;
-    const existing = this._recoveryPromises.get(agentId);
+    const recoveryKey = this._connectionKey(agentId);
+    const existing = this._recoveryPromises.get(recoveryKey);
     if (existing) return existing;
+    const recoveryEpoch = this._recoveryEpoch;
 
     const recovery = (async () => {
       try {
         await this._ensureAgent(agentId, true);
-        const state = this._agents.get(agentId);
-        if (!this._agentStateAlive(state)) throw new Error('ACP recovery did not produce a live process');
-        this._markAgentHealth(agentId, true, 'recovered');
+        if (this._providerStopped || recoveryEpoch !== this._recoveryEpoch) return false;
+        const state = this._stateForAgent(agentId);
+        if (!state || !this._agentStateAlive(state)) throw new Error('ACP recovery did not produce a live process');
+        this._markStateHealth(state, agentId, true, 'recovered');
         return true;
       } catch (error) {
+        if (this._providerStopped || recoveryEpoch !== this._recoveryEpoch) return false;
         this._markAgentHealth(agentId, false, `recovery-failed:${errorMessage(error)}`);
         return false;
       }
     })();
-    this._recoveryPromises.set(agentId, recovery);
+    this._recoveryPromises.set(recoveryKey, recovery);
     try {
       return await recovery;
     } finally {
-      if (this._recoveryPromises.get(agentId) === recovery) this._recoveryPromises.delete(agentId);
+      if (this._recoveryPromises.get(recoveryKey) === recovery) this._recoveryPromises.delete(recoveryKey);
     }
   }
 
@@ -294,6 +326,8 @@ class AcpAdapter extends PushProvider {
   }
 
   async stop() {
+    this._recoveryEpoch += 1;
+    this._recoveryPromises.clear();
     this._providerStopped = true;
     for (const [agentId, state] of [...this._agents]) {
       this._disconnectAgent(agentId, state, 'provider-stopped');
@@ -353,20 +387,36 @@ class AcpAdapter extends PushProvider {
       ok: boolean;
       agents: Record<string, { ok: boolean; status: string }>;
     } = { ok: true, agents: {} };
-    const agentIds = new Set([...this._agents.keys(), ...this._agentHealth.keys()]);
+    const agentIds = new Set<string>(this._agentHealth.keys());
+    for (const [stateKey, state] of this._agents) {
+      if (state.agentIds?.size) {
+        for (const agentId of state.agentIds) agentIds.add(agentId);
+      } else {
+        agentIds.add(stateKey);
+      }
+    }
+    const handledStateKeys = new Set<string>();
     for (const agentId of agentIds) {
-      const state = this._agents.get(agentId);
+      const state = this._stateForAgent(agentId);
+      const stateKey = state ? this._stateKey(state) : null;
+      if (stateKey && handledStateKeys.has(stateKey)) continue;
+      if (stateKey) handledStateKeys.add(stateKey);
+      const affectedAgentIds = new Set<string>(state?.agentIds || []);
+      affectedAgentIds.add(agentId);
       const alive = this._agentStateAlive(state);
       if (!alive) {
         if (state) this._disconnectAgent(agentId, state, 'process-dead');
         const recovered = await this.recover(agentId);
-        result.agents[agentId] = recovered
+        const status = recovered
           ? { ok: true, status: 'recovered' }
           : { ok: false, status: 'process_dead' };
+        for (const affectedAgentId of affectedAgentIds) result.agents[affectedAgentId] = status;
         if (!recovered) result.ok = false;
       } else {
-        this._markAgentHealth(agentId, true, 'connected');
-        result.agents[agentId] = { ok: true, status: 'connected' };
+        for (const affectedAgentId of affectedAgentIds) {
+          this._markAgentHealth(affectedAgentId, true, 'connected');
+          result.agents[affectedAgentId] = { ok: true, status: 'connected' };
+        }
       }
     }
     return result;
@@ -607,10 +657,53 @@ class AcpAdapter extends PushProvider {
 
   /** 确保 agent 子进程运行 + ACP 连接就绪。返回状态对象。 */
   async _ensureAgent(agentId: string, allowRecovery = false): Promise<AcpAgentState> {
-    const stateKey = this.options.connectionKey?.(agentId) || agentId;
+    const stateKey = this._connectionKey(agentId);
+    const lifecycleEpoch = this._recoveryEpoch;
+    if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+      const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled before startup`);
+      (cancelled as any).deliveryOutcome = 'not_delivered';
+      throw cancelled;
+    }
     const existing = this._agents.get(stateKey);
     const childAlive = !!existing?.child && !existing.child.killed && existing.child.exitCode === null;
+    const associatedAgentIds = new Set<string>(existing?.agentIds || []);
+    associatedAgentIds.add(agentId);
+    if (existing && !existing.agentIds) existing.agentIds = new Set<string>();
+    if (existing) existing.agentIds.add(agentId);
+    if (existing && !existing.agentCtx && existing.transportAlive) {
+      const timeout = this.options.connectTimeout || 15000;
+      let timer: NodeJS.Timeout | null = null;
+      await Promise.race([
+        existing.ready,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeout);
+          timer.unref?.();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+        const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled while waiting for connection`);
+        (cancelled as any).deliveryOutcome = 'not_delivered';
+        throw cancelled;
+      }
+      const existingEpochIsCurrent = existing.lifecycleEpoch == null
+        || existing.lifecycleEpoch === this._recoveryEpoch;
+      if (existing.agentCtx && existing.transportAlive && existingEpochIsCurrent
+        && !this._providerStopped) {
+        if (!allowRecovery && this._agentHealth.get(agentId)?.available === false) {
+          const unavailable = new Error('[' + this._logPrefix + '] ACP process is unavailable for agentId=' + agentId);
+          (unavailable as any).deliveryOutcome = 'not_delivered';
+          throw unavailable;
+        }
+        return existing;
+      }
+    }
     if (existing && existing.agentCtx && (childAlive || existing.transportAlive)) {
+      if (!allowRecovery && this._agentHealth.get(agentId)?.available === false) {
+        const unavailable = new Error('[' + this._logPrefix + '] ACP process is unavailable for agentId=' + agentId);
+        (unavailable as any).deliveryOutcome = 'not_delivered';
+        throw unavailable;
+      }
       return existing;
     }
     // 清理僵死状态
@@ -628,6 +721,11 @@ class AcpAdapter extends PushProvider {
 
     console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
     const sdk = await this._loadSdk();
+    if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+      const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled during startup`);
+      (cancelled as any).deliveryOutcome = 'not_delivered';
+      throw cancelled;
+    }
     console.error(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
 
     // ── 状态容器 ──
@@ -638,6 +736,8 @@ class AcpAdapter extends PushProvider {
       transportAlive: true,
       transportClose: null,
       agentCtx: null,
+      agentIds: associatedAgentIds,
+      lifecycleEpoch,
       sessions: new Map(),       // sessionKey → ActiveSession
       ready: new Promise<void>(resolve => { readyResolve = resolve; }),
       _readyResolve: readyResolve,
@@ -649,6 +749,12 @@ class AcpAdapter extends PushProvider {
     let stream: unknown;
     if (this.options.streamFactory) {
       const transport = await this.options.streamFactory(agentId);
+      if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+        try { await transport.close?.(); } catch {}
+        const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled before connection`);
+        (cancelled as any).deliveryOutcome = 'not_delivered';
+        throw cancelled;
+      }
       stream = transport.stream;
       state.transportClose = transport.close || null;
     } else {
@@ -675,6 +781,12 @@ class AcpAdapter extends PushProvider {
         },
       });
       state.child = child;
+      if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+        try { child.kill(); } catch {}
+        const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled after spawn`);
+        (cancelled as any).deliveryOutcome = 'not_delivered';
+        throw cancelled;
+      }
       console.error(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
 
       // stderr → console（agent 诊断日志走 stderr，不影响 ACP stdout 流）
@@ -685,7 +797,11 @@ class AcpAdapter extends PushProvider {
 
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         state.transportAlive = false;
-        this._markAgentHealth(agentId, false, `process-exit:${code ?? signal ?? 'unknown'}`);
+        const currentState = this._agents.get(stateKey);
+        if (!this._providerStopped && state.lifecycleEpoch === this._recoveryEpoch
+          && (!currentState || currentState === state)) {
+          this._markStateHealth(state, agentId, false, 'process-exit:' + (code ?? signal ?? 'unknown'));
+        }
         console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
         state.sessions.clear();
         if (this._agents.get(stateKey) === state) {
@@ -694,8 +810,11 @@ class AcpAdapter extends PushProvider {
       });
 
       child.on('error', (err: Error) => {
+        const currentState = this._agents.get(stateKey);
+        if (this._providerStopped || state.lifecycleEpoch !== this._recoveryEpoch
+          || (currentState && currentState !== state)) return;
+        this._markStateHealth(state, agentId, false, 'process-error:' + err.message);
         if (/ENOENT|EACCES/i.test(String((err as any).code || err.message))) this._invalidateRuntime();
-        this._markAgentHealth(agentId, false, `process-error:${err.message}`);
         console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
       });
 
@@ -705,6 +824,11 @@ class AcpAdapter extends PushProvider {
         Readable.toWeb(child.stdout),
       );
     }
+
+    // Make a pending state visible before the handshake starts. This lets stop()
+    // cancel streamFactory and ACP handshakes instead of leaving an untracked
+    // transport/process behind.
+    this._agents.set(stateKey, state);
 
     // ── 客户端连接（用 connectWith 确保 initialize 握手完成） ──
     console.error(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
@@ -718,9 +842,11 @@ class AcpAdapter extends PushProvider {
       console.warn(`[${this._logPrefix}:${agentId}] ACP tool permission denied by default`);
       return { outcome: { outcome: 'cancelled' } };
     }).connectWith(stream, async (agentCtx: AcpAgentContext) => {
+      const currentState = this._agents.get(stateKey);
+      if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch || this._providerStopped) return;
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
-      this._markAgentHealth(agentId, true, 'connected');
+      this._markStateHealth(state, agentId, true, 'connected');
       if (state._readyResolve) {
         state._readyResolve();
         state._readyResolve = null;
@@ -728,7 +854,9 @@ class AcpAdapter extends PushProvider {
       await keepAlivePromise;
     }).catch((err: unknown) => {
       state.transportAlive = false;
-      this._markAgentHealth(agentId, false, `connection-error:${errorMessage(err)}`);
+      const currentState = this._agents.get(stateKey);
+      if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch) return;
+      this._markStateHealth(state, agentId, false, 'connection-error:' + errorMessage(err));
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
       if (state._readyResolve) {
         state._readyResolve();
@@ -740,18 +868,36 @@ class AcpAdapter extends PushProvider {
     // ── 等待连接就绪（超时保护） ──
     const timeout = this.options.connectTimeout || 15000;
     console.error(`[${this._logPrefix}:${agentId}] 等待 ACP 连接就绪（超时 ${timeout}ms）...`);
-    await Promise.race([
-      state.ready,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`[${this._logPrefix}] ${agentId} 连接超时 (${timeout}ms)`)), timeout)
-      ),
-    ]);
+    let readyTimer: NodeJS.Timeout | null = null;
+    try {
+      await Promise.race([
+        state.ready,
+        new Promise<never>((_, reject) =>
+          readyTimer = setTimeout(
+            () => reject(new Error(`[${this._logPrefix}] ${agentId} 连接超时 (${timeout}ms)`)),
+            timeout,
+          )
+        ),
+      ]);
+    } catch (error) {
+      if (this._agents.get(stateKey) === state) this._agents.delete(stateKey);
+      this._disconnectAgent(agentId, state, 'connection-failed');
+      throw error;
+    } finally {
+      if (readyTimer) clearTimeout(readyTimer);
+    }
 
+    if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+      if (this._agents.get(stateKey) === state) this._agents.delete(stateKey);
+      this._disconnectAgent(agentId, state, 'recovery-cancelled');
+      const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled before ready`);
+      (cancelled as any).deliveryOutcome = 'not_delivered';
+      throw cancelled;
+    }
     if (!state.agentCtx) {
       throw new Error(`[${this._logPrefix}] ${agentId} 连接初始化失败（agentCtx 未就绪）`);
     }
-
-    this._agents.set(stateKey, state);
+    if (this._agents.get(stateKey) !== state) this._agents.set(stateKey, state);
     console.error(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
     return state;
   }
@@ -897,7 +1043,11 @@ class AcpAdapter extends PushProvider {
   /** 断开 agent 连接，清理资源 */
   _disconnectAgent(agentId: string, state: AcpAgentState, reason = 'disconnected'): void {
     try {
-      this._markAgentHealth(agentId, false, reason);
+      this._markStateHealth(state, agentId, false, reason);
+      if (state._readyResolve) {
+        state._readyResolve();
+        state._readyResolve = null;
+      }
       // 1. 信号 keepAlive 结束 → connectWith callback 退出 → SDK 清理连接
       if (state._shutdownResolve) {
         state._shutdownResolve();

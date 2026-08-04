@@ -34,11 +34,12 @@ class GitHubCopilotAcpProvider extends AcpAdapter {
     this._runtime = runtime;
   }
 
-  isAvailable(): boolean {
+  isAvailable(agentId: string): boolean {
     if (!this._runtime) return false;
+    if (!super.isAvailable(agentId)) return false;
     return this._runtime.command === process.execPath
       ? fs.existsSync(this._runtime.prefixArgs[0])
-      : super.isAvailable('');
+      : true;
   }
 
   _runtime: { command: string; prefixArgs: string[] } | null;
