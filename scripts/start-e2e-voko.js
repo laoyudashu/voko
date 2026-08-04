@@ -45,6 +45,9 @@ async function main() {
     VOKO_E2E_IM_WS_URL: services.imWsUrl,
     VOKO_E2E_OSS_BASE_URL: services.ossBaseUrl,
     VOKO_E2E_PROVIDER_BASE_URL: services.providerBaseUrl,
+    // The isolated browser uses the instance token so mutation routes do not
+    // open the production owner re-auth dialog during deterministic tests.
+    VOKO_MCP_TOKEN: 'e2e-test-local-auth',
   };
 
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
@@ -73,7 +76,7 @@ async function main() {
       created_at, updated_at, backend_type, agent_name, category, description, access_mode, delivery_modes
     ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run('e2e-agent', 'e2e-im-uid', 'e2e-im-token', services.imWsUrl, ownerEmail,
-        Date.now(), Date.now(), 'mock', 'E2E Test Agent', 'general', 'Playwright isolated Agent', 'private', JSON.stringify(['push', 'pull']));
+        Date.now(), Date.now(), 'mock', 'E2E Test Agent', 'general', 'Playwright isolated Agent', 'public', null);
     db.close();
   } finally {
     console.log = originalLog;

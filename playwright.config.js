@@ -28,13 +28,14 @@ module.exports = defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    extraHTTPHeaders: { 'x-voko-token': 'e2e-test-local-auth' },
   },
   webServer: {
     command: 'node scripts/start-e2e-voko.js',
     url: `http://127.0.0.1:${port}/health`,
     timeout: 45_000,
     reuseExistingServer: false,
-    env: { VOKO_E2E_PORT: String(port) },
+    env: { VOKO_E2E_PORT: String(port), VOKO_MCP_TOKEN: 'e2e-test-local-auth' },
   },
   projects: [{
     name: process.env.VOKO_E2E_BROWSER || 'chromium',

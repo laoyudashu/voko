@@ -979,6 +979,24 @@ function createWebRouter(handlers, db, opts={}){
           if(all||uids.length)mentions={all,uids};
         }catch(_){}
       }
+      // @all is a group-management operation. Enforce the same owner/admin
+      // rule as MCP on the Web route instead of trusting browser payloads.
+      if(Number(channelType)===2&&mentions&&mentions.all===true){
+        try{
+          const group=await handlers.get_group_context({agentId,toUid,limit:1,offset:0});
+          const myUid=db.prepare('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1').get(agentId)?.imUid;
+          const me=(group?.members||[]).find(m=>String(m.uid)===String(myUid));
+          if(!me||!['owner','admin'].includes(String(me.role||''))){
+            const error=req.t('web.group.mention.all_forbidden');
+            if(req.is('json'))return res.status(403).json({success:false,error,code:'MENTION_ALL_FORBIDDEN'});
+            return res.status(403).send(renderPage(req,'Error','<p class="error">'+esc(error)+'</p>'));
+          }
+        }catch(e){
+          const error=e?.message||req.t('common.action.failed');
+          if(req.is('json'))return res.status(502).json({success:false,error,code:'GROUP_CONTEXT_UNAVAILABLE'});
+          return res.status(502).send(renderPage(req,'Error','<p class="error">'+esc(error)+'</p>'));
+        }
+      }
       if(!agentId||!toUid||!content){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
         return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
