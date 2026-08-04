@@ -5,9 +5,9 @@ VOKO uses pull requests for code and version changes. Do not commit directly to
 
 ## CI layers
 
-- During the aggregate-gate migration, pull requests run Node.js 22 and 24 on
-  Ubuntu, Windows, and macOS. After branch protection requires `ci-gate`, pull
-  requests may use Node.js 22 while pushes to `main` retain both versions.
+- Pull requests run Node.js 22 on Ubuntu, Windows, and macOS, plus dependency,
+  secret, audit, and CodeQL checks.
+- Pushes to `main` retain the full Node.js 22 and 24 platform matrix.
 - Branch protection should require only `ci-gate` and CodeQL `analyze`. The
   aggregate gate remains stable when the internal test matrix changes.
 
