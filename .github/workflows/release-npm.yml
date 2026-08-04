@@ -7,6 +7,11 @@ on:
         description: Exact package version to publish
         required: true
         type: string
+      prerelease:
+        description: Mark the GitHub Release as a pre-release
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -99,3 +104,40 @@ jobs:
           done
           echo "npm registry did not report @voko/lite@$EXPECTED_VERSION after publication" >&2
           exit 1
+
+  github-release:
+    needs: publish
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      TAG_NAME: v${{ inputs.version }}
+      TARGET_SHA: ${{ github.sha }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - name: Verify the GitHub tag and release are new
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "${TAG_NAME} already exists and will not be overwritten" >&2
+            exit 1
+          fi
+          if gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG_NAME} already exists and will not be overwritten" >&2
+            exit 1
+          fi
+      - name: Create the matching GitHub tag and release
+        run: |
+          release_args=(
+            "${TAG_NAME}"
+            --repo "${GITHUB_REPOSITORY}"
+            --target "${TARGET_SHA}"
+            --title "VOKO v${VERSION}"
+            --generate-notes
+          )
+          if [ "${PRERELEASE}" = "true" ]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "${release_args[@]}"
