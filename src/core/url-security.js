@@ -59,6 +59,11 @@ function normalizeOfficialImServerUrl(value) {
   if (!trimmed || LEGACY_IM_WS_URLS.has(trimmed)) return OFFICIAL_IM_WS_URL;
   const normalized = assertSecureEndpoint(trimmed, 'websocket');
   const parsed = new URL(normalized);
+  // The E2E runner uses a loopback Fake IM server.  Keep this escape hatch
+  // process-local and explicit; normal users still require the official host.
+  if (process.env.VOKO_E2E === '1' && isPrivateNetworkHost(parsed.hostname)) {
+    return normalized;
+  }
   if (parsed.protocol !== 'wss:' || normalizeHostname(parsed.hostname) !== 'wukongim.vokovoko.com') {
     throw new Error(t('errors.security.invalid_endpoint'));
   }

@@ -1,6 +1,18 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('node:fs');
 
+function isAgentConnected(dbPath) {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT data FROM config WHERE type='runtime'").get();
+    const runtime = row?.data ? JSON.parse(row.data) : null;
+    return Boolean(runtime?.agents?.find((agent) => agent.agentId === 'e2e-agent' && agent.imConnected));
+  } finally {
+    db.close();
+  }
+}
+
 test('E2E runtime starts isolated Fake API, IM, OSS and Provider services', async ({ request }) => {
   const manifestPath = process.env.VOKO_E2E_SERVICES_FILE;
   expect(manifestPath).toBeTruthy();
@@ -18,6 +30,7 @@ test('E2E runtime starts isolated Fake API, IM, OSS and Provider services', asyn
   const provider = await request.post(`${manifest.services.provider}/chat`, { data: {} });
   expect(provider.ok()).toBeTruthy();
   await expect(provider.json()).resolves.toMatchObject({ success: true });
+  await expect.poll(() => isAgentConnected(manifest.dbPath), { timeout: 10_000 }).toBe(true);
 });
 
 test('isolated runtime exposes health without browser errors', async ({ page }) => {

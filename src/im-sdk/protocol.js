@@ -77,6 +77,16 @@ class BinaryProtocol {
       return { ...packet, serverVersion: this.serverVersion, timeDiff: r.int64(), reasonCode: r.byte(), serverKey: r.string(), salt: r.string(), nodeId: this.serverVersion >= 4 ? r.int64() : null };
     }
     if (type === PacketType.SENDACK) return { ...packet, messageId: r.int64(), clientSeq: r.int32(), messageSeq: r.int32(), reasonCode: r.byte() };
+    if (type === PacketType.SEND) {
+      const setting = r.byte();
+      const clientSeq = r.int32();
+      const clientMsgNo = r.string();
+      const channelId = r.string();
+      const channelType = r.byte();
+      const expire = this.serverVersion >= 3 ? r.int32() : 0;
+      const msgKey = r.string();
+      return { ...packet, setting, clientSeq, clientMsgNo, channelId, channelType, expire, msgKey, encryptedPayload: r.remaining() };
+    }
     if (type === PacketType.RECV) {
       const setting = r.byte();
       const result = { ...packet, setting, msgKey: r.string(), fromUid: r.string(), channelId: r.string(), channelType: r.byte() };

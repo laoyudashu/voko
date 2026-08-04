@@ -1,6 +1,12 @@
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const { FaultController } = require('./fault-controller');
+const { generateKeyPair, sharedKey } = require('curve25519-js');
+const { Md5 } = require('md5-typescript');
+const { BinaryProtocol, PacketType, Writer, Reader, frame } = require('../../src/im-sdk/protocol');
+const { CryptoContext } = require('../../src/im-sdk/crypto-context');
+const { ContentType, encodeContent, decodeContent } = require('../../src/im-sdk/messages');
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -48,6 +54,167 @@ function parseJsonBody(body) {
   } catch {
     return null;
   }
+}
+
+function parseConnectPacket(data) {
+  const r = new Reader(data);
+  const first = r.byte();
+  if ((first >> 4) !== PacketType.CONNECT) return null;
+  const remaining = r.variable();
+  if (r.offset + remaining !== data.length) throw new Error('Malformed CONNECT packet');
+  return {
+    version: r.byte(),
+    deviceFlag: r.byte(),
+    deviceId: r.string(),
+    uid: r.string(),
+    token: r.string(),
+    clientTimestamp: r.int64(),
+    clientKey: r.string(),
+  };
+}
+
+function encodeConnack(serverKey, salt, serverVersion = 4) {
+  const w = new Writer();
+  w.byte(serverVersion);
+  w.int64(0);
+  w.byte(1);
+  w.string(Buffer.from(serverKey).toString('base64'));
+  w.string(salt);
+  w.int64(1);
+  return frame(PacketType.CONNACK, w.result(), { noPersist: true });
+}
+
+function encodeSendack(messageId, clientSeq, messageSeq, reasonCode = 1) {
+  const w = new Writer();
+  w.int64(messageId);
+  w.int32(clientSeq);
+  w.int32(messageSeq);
+  w.byte(reasonCode);
+  return frame(PacketType.SENDACK, w.result());
+}
+
+function encodeRecv(state, message) {
+  const messageId = BigInt(message.messageId);
+  const messageSeq = Number(message.messageSeq || 1);
+  const timestamp = Number(message.timestamp || Math.floor(Date.now() / 1000));
+  const clientMsgNo = String(message.clientMsgNo || `e2e-${messageId}`);
+  const payload = encodeContent(Number(message.contentType || ContentType.Text), message.fields || { content: String(message.content || '') }, message.mention);
+  const encryptedText = state.crypto.encryptBytes(payload);
+  const encrypted = Uint8Array.from(Buffer.from(encryptedText, 'utf8'));
+  const fromUid = String(message.fromUid || 'e2e-visitor');
+  const channelId = String(message.channelId || fromUid);
+  const channelType = Number(message.channelType || 1);
+  const verify = `${messageId}${messageSeq}${clientMsgNo}${timestamp}${fromUid}${channelId}${channelType}${encryptedText}`;
+  const msgKey = Md5.init(state.crypto.encryptString(verify));
+  const w = new Writer();
+  w.byte(Number(message.setting || 0));
+  w.string(msgKey);
+  w.string(fromUid);
+  w.string(channelId);
+  w.byte(channelType);
+  w.int32(Number(message.expire || 0));
+  w.string(clientMsgNo);
+  w.int64(messageId);
+  w.int32(messageSeq);
+  w.int32(timestamp);
+  if (Number(message.setting || 0) & 8) w.string(message.topic || '');
+  w.raw(encrypted);
+  return frame(PacketType.RECV, w.result(), {
+    noPersist: !!message.noPersist,
+    reddot: message.redDot !== false,
+    syncOnce: !!message.syncOnce,
+  });
+}
+
+function createProtocolConnection(ws, req, { faults, events, connections, nextMessageId }) {
+  const state = { ws, req, protocol: null, crypto: null, uid: null, authenticated: false, messageSeq: 0 };
+  let legacyReorderPending = null;
+  const onClose = () => {
+    if (state.uid && connections.get(state.uid) === state) connections.delete(state.uid);
+  };
+  ws.once('close', onClose);
+  ws.on('message', async (raw) => {
+    const data = Buffer.from(raw);
+    const packetType = data.length ? data[0] >> 4 : 0;
+    // Keep the legacy text echo used by the low-level fault tests.  Real VOKO
+    // clients always begin with a binary CONNECT packet (0x10).
+    if (packetType !== PacketType.CONNECT && !state.authenticated) {
+      const rule = faults.consume('im');
+      if (rule?.delayMs) await new Promise(resolve => setTimeout(resolve, rule.delayMs));
+      if (rule?.mode === '1006') return ws.terminate();
+      if (rule?.mode === 'sendack-lost') return;
+      const message = data.toString();
+      events.push({ target: 'im', message });
+      const replies = rule?.mode === 'duplicate' ? 2 : 1;
+      if (rule?.mode === 'reorder') {
+        if (legacyReorderPending === null) { legacyReorderPending = message; return; }
+        ws.send(message);
+        ws.send(legacyReorderPending);
+        legacyReorderPending = null;
+        return;
+      }
+      for (let index = 0; index < replies; index += 1) ws.send(message);
+      return;
+    }
+
+    if (packetType === PacketType.CONNECT) {
+      let connect;
+      try { connect = parseConnectPacket(data); } catch (error) { ws.close(1002, error.message); return; }
+      if (!connect?.clientKey) return ws.close(1002, 'Missing client key');
+      const serverPair = generateKeyPair(Uint8Array.from(crypto.randomBytes(32)));
+      const secret = sharedKey(serverPair.private, Uint8Array.from(Buffer.from(connect.clientKey, 'base64')));
+      const aesKey = Md5.init(Buffer.from(secret).toString('base64')).slice(0, 16);
+      const salt = crypto.randomBytes(16).toString('hex').slice(0, 16);
+      const cryptoContext = new CryptoContext();
+      cryptoContext.configure(aesKey, salt);
+      state.crypto = cryptoContext;
+      state.protocol = new BinaryProtocol(cryptoContext);
+      state.protocol.serverVersion = 4;
+      state.uid = connect.uid;
+      state.authenticated = true;
+      connections.set(state.uid, state);
+      events.push({ target: 'im', direction: 'connect', uid: state.uid, token: connect.token });
+      ws.send(encodeConnack(serverPair.public, salt));
+      return;
+    }
+    if (!state.authenticated || !state.protocol) return;
+    if (packetType === PacketType.PING) { ws.send(frame(PacketType.PONG, [])); return; }
+    if (packetType === PacketType.SEND) {
+      let packet;
+      try { packet = state.protocol.decode(data); } catch (error) { ws.close(1002, error.message); return; }
+      let content = null;
+      try { content = decodeContent(state.crypto.decryptBytes(packet.encryptedPayload)); } catch (_) {}
+      events.push({ target: 'im', direction: 'send', uid: state.uid, packet, content });
+      const rule = faults.consume('im');
+      if (rule?.delayMs) await new Promise(resolve => setTimeout(resolve, rule.delayMs));
+      if (rule?.mode === '1006') return ws.terminate();
+      if (rule?.mode === 'sendack-lost') return;
+      const id = nextMessageId();
+      state.messageSeq += 1;
+      ws.send(encodeSendack(id, packet.clientSeq, state.messageSeq));
+    }
+  });
+  return state;
+}
+
+function createIncomingInjector(connections, nextMessageId) {
+  return (input = {}) => {
+    const targetUid = String(input.toUid || input.uid || '');
+    const state = connections.get(targetUid);
+    if (!state?.authenticated) return { delivered: false, error: 'IM agent is not connected' };
+    const items = Array.isArray(input.messages) ? input.messages : [input];
+    const expanded = input.duplicate ? [...items, ...items] : items;
+    const ordered = input.reorder ? [...expanded].reverse() : expanded;
+    for (const item of ordered) {
+      const message = {
+        ...item,
+        messageId: String(item.messageId || nextMessageId()),
+        messageSeq: Number(item.messageSeq || nextMessageId()),
+      };
+      state.ws.send(encodeRecv(state, message));
+    }
+    return { delivered: true, count: ordered.length, uid: targetUid };
+  };
 }
 
 function handleFaultControl(req, res, body, faults) {
@@ -173,14 +340,52 @@ async function startSeparateFakeServices(options = {}) {
   const faults = options.faults || new FaultController();
   const events = [];
   const ports = options.ports || {};
+  const connections = new Map();
+  let nextMessageIdValue = 1000n;
+  const nextMessageId = () => { nextMessageIdValue += 1n; return nextMessageIdValue; };
+  let injectIncoming = () => ({ delivered: false, error: 'IM is not ready' });
+  const groupState = {
+    role: 'owner',
+    name: 'E2E Test Group',
+    channelId: 'e2e-group',
+    members: [
+      { uid: 'e2e-im-uid', role: 'owner', nickname: 'E2E Test Agent' },
+      { uid: 'e2e-visitor', role: 'member', nickname: 'E2E Visitor' },
+      { uid: 'e2e-member', role: 'member', nickname: 'E2E Member' },
+    ],
+  };
 
   let apiBaseUrl = '';
   const apiServer = createSeparateHttpServer('voko-api', faults, events, (req, res, body) => {
     // The control plane is only exposed by the in-process fake API used by E2E.
     // It never exists on the VOKO production server.
     if (handleFaultControl(req, res, body, faults)) return;
+    if (req.url === '/__test__/im/message' && req.method === 'POST') {
+      return json(res, 200, { success: true, ...injectIncoming(parseJsonBody(body) || {}) });
+    }
+    if (req.url === '/__test__/group-role' && req.method === 'POST') {
+      const input = parseJsonBody(body) || {};
+      if (input.role) groupState.role = String(input.role);
+      return json(res, 200, { success: true, role: groupState.role });
+    }
     if (req.url === '/health' || req.url === '/api/heartbeat') return json(res, 200, { success: true, status: 'ok' });
     if (req.url === '/api/login') return json(res, 200, { success: true, token: 'fake-token' });
+    if (req.url === '/api/group/v1/info' && req.method === 'POST') {
+      return json(res, 200, {
+        success: true,
+        data: {
+          channel_id: groupState.channelId,
+          name: groupState.name,
+          status: 'active',
+          owner_uid: 'e2e-im-uid',
+          members: groupState.members.map(member => member.uid === 'e2e-im-uid' ? { ...member, role: groupState.role } : member),
+        },
+      });
+    }
+    if (req.url === '/api/group/v1/list' && req.method === 'POST') {
+      return json(res, 200, { success: true, data: { groups: [{ channel_id: groupState.channelId, name: groupState.name, status: 'active', member_count: groupState.members.length }], total: 1 } });
+    }
+    if (req.url.startsWith('/api/group/v1/')) return json(res, 200, { success: true, data: {} });
     return json(res, 200, { success: true, data: [] });
   });
   const apiAddress = await listenServer(apiServer, ports.api || 0);
@@ -207,26 +412,10 @@ async function startSeparateFakeServices(options = {}) {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
   wss.on('connection', (ws) => {
-    let reorderPending = null;
-    ws.on('message', async (raw) => {
-      const rule = faults.consume('im');
-      if (rule?.delayMs) await new Promise((resolve) => setTimeout(resolve, rule.delayMs));
-      if (rule?.mode === '1006') return ws.terminate();
-      if (rule?.mode === 'sendack-lost') return;
-      const message = raw.toString();
-      events.push({ target: 'im', message });
-      if (rule?.mode === 'reorder') {
-        if (reorderPending === null) { reorderPending = message; return; }
-        ws.send(message);
-        ws.send(reorderPending);
-        reorderPending = null;
-        return;
-      }
-      const replies = rule?.mode === 'duplicate' ? 2 : 1;
-      for (let index = 0; index < replies; index += 1) ws.send(message);
-    });
+    createProtocolConnection(ws, null, { faults, events, connections, nextMessageId });
   });
   const imAddress = await listenServer(imServer, ports.im || 0);
+  injectIncoming = createIncomingInjector(connections, nextMessageId);
 
   return {
     baseUrl: apiBaseUrl,
@@ -235,6 +424,8 @@ async function startSeparateFakeServices(options = {}) {
     imWsUrl: `ws://127.0.0.1:${imAddress.port}`,
     ossBaseUrl,
     providerBaseUrl: providerAddress.baseUrl,
+    injectIncoming,
+    connections,
     faults,
     events,
     services: {
