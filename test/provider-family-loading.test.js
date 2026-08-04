@@ -27,7 +27,7 @@ test('provider loading includes all main and fallback channels in a family', asy
   const handlers = createHandlers({
     db,
     databaseAPI: createDatabaseAPI(db),
-    backendTypes: ['opencode', 'cursor'],
+    backendTypes: ['opencode', 'cursor', 'cline'],
     startProviders: false,
   });
   t.after(async () => {
@@ -40,6 +40,8 @@ test('provider loading includes all main and fallback channels in a family', asy
   assert.ok(handlers.dispatcher.providers['opencode-cli']);
   assert.ok(handlers.dispatcher.providers['cursor-acp']);
   assert.ok(handlers.dispatcher.providers['cursor-cli']);
+  assert.ok(handlers.dispatcher.providers['cline-acp']);
+  assert.ok(handlers.dispatcher.providers['cline-cli']);
   assert.equal(handlers.dispatcher.providers['openclaw-ws'], undefined);
 });
 

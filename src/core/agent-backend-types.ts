@@ -48,6 +48,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'github-copilot', label: 'GitHub Copilot CLI' },
   { value: 'openhands', label: 'OpenHands' },
   { value: 'aider', label: 'Aider' },
+  { value: 'cline', label: 'Cline' },
   { value: 'amazon-q', label: 'Amazon Q Developer CLI' },
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
@@ -59,7 +60,7 @@ const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
     'zeroclaw',
     'qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
-    'zcode', 'workbuddy', 'doubao',
+    'zcode', 'workbuddy', 'doubao', 'cline',
   ].includes(type.value),
 );
 
@@ -90,6 +91,7 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'github-copilot-cli': 'github-copilot',
   'openhands-cli': 'openhands',
   'aider-cli': 'aider',
+  'cline-cli': 'cline',
   'amazon-q-cli': 'amazon-q',
 };
 

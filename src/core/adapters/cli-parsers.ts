@@ -9,6 +9,7 @@
  *   - gemini-stream-json : gemini --output-format stream-json
  *   - codex-jsonl        : codex exec --json（OpenAI NDJSON）
  *   - grok-stream-json   : grok --output-format streaming-json
+ *   - cline-jsonl         : cline --json（Cline say/run_result JSONL）
  *   - jsonl              : 通用 JSONL（opencode --format json 等）
  *   - raw                : 纯文本，逐行累积
  *   - silent             : 不解析 stdout（fire-and-forget 通知模式）
@@ -42,6 +43,8 @@ interface ParserContext {
   _aiderReplyStarted?: boolean;
   _aiderThinking?: boolean;
   _zeroclawReplyStarted?: boolean;
+  _clineStreamed?: boolean;
+  _clineFinalEmitted?: boolean;
 }
 
 interface ParserOptions {
@@ -406,6 +409,38 @@ function kiroOutputParser(line: string, ctx: ParserContext) {
   ctx.onText(plain + '\n');
 }
 
+function clineJsonlParser(line: string, ctx: ParserContext) {
+  let obj;
+  try { obj = JSON.parse(line); } catch { return; }
+  if (!obj || typeof obj !== 'object') return;
+
+  // Cline's documented --json schema emits say/ask messages.
+  if (obj.type === 'say' && typeof obj.text === 'string') {
+    if (obj.say && obj.say !== 'text') return;
+    if (!obj.text) return;
+    if (obj.partial === true) {
+      ctx._clineStreamed = true;
+      ctx.onText(obj.text);
+      return;
+    }
+    if (!ctx._clineStreamed && !ctx._clineFinalEmitted) {
+      ctx._clineFinalEmitted = true;
+      ctx.onText(obj.text);
+    }
+    return;
+  }
+
+  // Recent Cline CLI builds wrap lifecycle events and publish the final
+  // assistant text on run_result. Ignore agent_event/tool status chatter and
+  // use the final aggregate once, avoiding duplication with streamed output.
+  if (obj.type === 'run_result' && obj.finishReason !== 'error' && typeof obj.text === 'string' && obj.text) {
+    if (!ctx._clineStreamed && !ctx._clineFinalEmitted) {
+      ctx._clineFinalEmitted = true;
+      ctx.onText(obj.text);
+    }
+  }
+}
+
 // ── silent 解析器（fire-and-forget 通知模式） ─────────────────────────
 
 /**
@@ -447,6 +482,7 @@ function createParser({
     'zeroclaw-interactive': zeroclawInteractiveParser,
     'aider-output': aiderOutputParser,
     'kiro-output': kiroOutputParser,
+    'cline-jsonl': clineJsonlParser,
     silent: silentParser,
   };
   const parser = parsers[format] || rawParser;
@@ -489,6 +525,7 @@ module.exports = {
   zeroclawInteractiveParser,
   aiderOutputParser,
   kiroOutputParser,
+  clineJsonlParser,
   silentParser,
   createParser,
 };

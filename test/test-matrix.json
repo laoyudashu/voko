@@ -1,0 +1,33 @@
+{
+  "unit": [
+    "agent-file-security.test.js",
+    "checkpoint-store.test.js",
+    "heartbeat-delivery-status.test.js",
+    "language-switcher.test.js",
+    "lite-adaptive-recovery.test.js",
+    "lite-auto-updater-security.test.js",
+    "lite-channel-registry.test.js",
+    "lite-cli-output-limit.test.js",
+    "lite-cross-platform-command.test.js",
+    "lite-database-boundaries.test.js",
+    "lite-dispatcher-reply-id.test.js",
+    "lite-dispatcher-routing.test.js",
+    "lite-messenger-type-safety.test.js",
+    "lite-notification-ui-contract.test.js",
+    "lite-same-owner-trust.test.js",
+    "lite-typescript.test.js",
+    "mcp-checkpoint-cursors.test.js",
+    "provider-conversation-bindings.test.js",
+    "task-manager.test.js"
+  ],
+  "component": "all remaining *.test.js files",
+  "business": {
+    "registration": ["agent-register-fields.test.js", "registration-orchestrator.test.js", "cli-register.test.js", "web-register.test.js"],
+    "messaging": ["lite-messenger-contract.test.js", "lite-reply-idempotency-e2e.test.js", "offline-sync.test.js", "group-message.test.js"],
+    "im": ["lite-im-hub.test.js", "heartbeat-delivery-status.test.js"],
+    "providers": ["lite-dispatcher-routing.test.js", "provider-family-loading.test.js", "provider-conversation-bindings.test.js"],
+    "mcp": ["lite-mcp-contract.test.js", "group-mcp-tools.test.js", "mcp-agent-profile.test.js"],
+    "web": ["web-register.test.js", "web-group.test.js", "web-attachment-send.test.js", "web-security-regressions.test.js"],
+    "security": ["agent-file-security.test.js", "lite-package-secret-scan.test.js", "web-security-regressions.test.js"]
+  }
+}

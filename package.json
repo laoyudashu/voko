@@ -64,6 +64,21 @@
     "package:build": "npm run build:ts",
     "prepack": "npm run package:build",
     "test": "npm run release:gate:code",
+    "test:unit": "npm run build:ts && npm run test:unit:build",
+    "test:unit:build": "node scripts/run-test-layer.js unit",
+    "test:component": "npm run build:ts && npm run test:component:build",
+    "test:component:build": "node scripts/run-test-layer.js component",
+    "test:coverage": "npm run build:ts && npm run test:coverage:build",
+    "test:coverage:build": "c8 --reporter=text --reporter=html --reporter=lcov --reporter=json-summary node scripts/run-test-layer.js all",
+    "test:coverage:gate": "npm run test:coverage && node scripts/check-core-coverage.js",
+    "test:coverage:target": "npm run test:coverage && node scripts/check-core-coverage.js --target",
+    "test:e2e": "npm run build:ts && playwright test",
+    "test:ci": "npm run typecheck && npm run build:ts && npm run i18n:check && npm run test:coverage:build && node scripts/check-core-coverage.js",
+    "test:ci:repeat": "node scripts/repeat-test.js",
+    "test:real:smoke": "npm run build:ts && node scripts/real-test.js smoke",
+    "test:real:recovery": "npm run build:ts && node scripts/real-test.js recovery",
+    "test:real:stability": "npm run build:ts && node scripts/real-test.js stability",
+    "test:real:all": "npm run build:ts && node scripts/real-test.js all",
     "test:targeted": "npm run build:ts && node scripts/run-targeted-tests.js && node test/group-mcp-tools.test.js",
     "test:channels": "npm run build:ts && node --test test/lite-channel-registry.test.js test/lite-mcp-contract.test.js test/lite-owner-intervention-context.test.js test/lite-owner-intervention-reliability.test.js test/owner-intervention-group-resume.test.js",
     "test:agent-files": "npm run build:ts && node --test test/lite-agent-files-contract.test.js test/agent-file-security.test.js",
@@ -103,7 +118,9 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.0.0",
+    "c8": "^12.0.0",
     "typescript": "^5.4.3"
   }
 }

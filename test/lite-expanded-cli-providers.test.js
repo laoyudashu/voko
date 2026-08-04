@@ -7,6 +7,8 @@ const path = require('node:path');
 const { QwenCliProvider } = require('../build/core/dispatcher/providers/qwen-cli');
 const { KiroCliProvider } = require('../build/core/dispatcher/providers/kiro-cli');
 const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-cli');
+const { ClineCliProvider } = require('../build/core/dispatcher/providers/cline-cli');
+const { ClineAcpProvider } = require('../build/core/dispatcher/providers/cline-acp');
 const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
 const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
@@ -50,6 +52,39 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.equal(provider._parserName, 'kiro-output');
   assert.match(provider._args.join(' '), /--wrap never/);
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
+});
+
+test('Cline unattended delivery is plan-only and denies shell commands', () => {
+  const provider = new ClineCliProvider();
+  assert.equal(provider._cmd, 'cline');
+  assert.equal(provider._parserName, 'cline-jsonl');
+  assert.equal(provider._args.at(-1), '{prompt}');
+  assert.ok(provider._args.includes('--plan'));
+  assert.deepEqual(provider._args.slice(provider._args.indexOf('--auto-approve'), provider._args.indexOf('--auto-approve') + 2), ['--auto-approve', 'false']);
+  assert.equal(JSON.parse(provider._env.CLINE_COMMAND_PERMISSIONS).deny[0], '*');
+});
+
+test('Cline exposes ACP as the primary isolated delivery and CLI as fallback', () => {
+  const provider = new ClineAcpProvider();
+  assert.equal(provider._cliPath, 'cline');
+  assert.deepEqual(provider._cliArgs, ['--acp']);
+  assert.equal(provider._adapterType, 'cline-acp');
+});
+
+test('Cline JSONL parser emits partial text once and ignores tool questions', () => {
+  const chunks = [];
+  const parser = createParser({ format: 'cline-jsonl', onText: (chunk) => chunks.push(chunk) });
+  parser.handleLine(JSON.stringify({ type: 'ask', ask: 'tool', text: 'approval?' }));
+  parser.handleLine(JSON.stringify({ type: 'say', say: 'text', text: 'Hel', partial: true }));
+  parser.handleLine(JSON.stringify({ type: 'say', say: 'text', text: 'Hello', partial: false }));
+  assert.deepEqual(chunks, ['Hel']);
+
+  const currentChunks = [];
+  const currentParser = createParser({ format: 'cline-jsonl', onText: (chunk) => currentChunks.push(chunk) });
+  currentParser.handleLine(JSON.stringify({ type: 'agent_event', event: { type: 'iteration_start' } }));
+  currentParser.handleLine(JSON.stringify({ type: 'agent_event', event: { type: 'done', text: 'final' } }));
+  currentParser.handleLine(JSON.stringify({ type: 'run_result', finishReason: 'completed', text: 'final' }));
+  assert.deepEqual(currentChunks, ['final']);
 });
 
 test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted alias', (t) => {
@@ -416,18 +451,19 @@ test('ZeroClaw interactive parser emits only the Agent reply', () => {
 });
 
 test('registration detects all added CLIs but only exposes safe automatic delivery', () => {
-  const commands = new Set(['qwen', 'kiro-cli', 'copilot', 'openhands', 'aider', 'q', 'cursor-agent', 'grok', 'zeroclaw']);
+  const commands = new Set(['qwen', 'kiro-cli', 'copilot', 'openhands', 'aider', 'cline', 'q', 'cursor-agent', 'grok', 'zeroclaw']);
   const service = new RegistrationOrchestrator({
     commandAvailable: (command) => commands.has(command),
   });
   const environment = service.inspectEnvironment();
 
-  for (const type of ['qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q', 'cursor', 'grok', 'zeroclaw']) {
+  for (const type of ['qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'cline', 'amazon-q', 'cursor', 'grok', 'zeroclaw']) {
     assert.ok(environment.detected.some((provider) => provider.type === type), type);
   }
   for (const type of ['qwen-code', 'kiro', 'aider', 'grok']) {
     assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['cli', 'pull']);
   }
+  assert.deepEqual(service.deliveryCapabilities('cline').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   for (const type of ['openhands', 'amazon-q']) {
@@ -440,12 +476,27 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   assert.equal(zeroModes[1].status, 'configuration_required');
 });
 
+test('Cline registration preflight accepts ACP and CLI delivery', async () => {
+  const service = new RegistrationOrchestrator({
+    getLoggedEmail: async () => 'owner@example.com',
+    detectCurrentAgentType: () => null,
+    commandAvailable: (command) => command === 'cline',
+  });
+  const started = await service.start({ email: 'owner@example.com' });
+  service.setBasicInfo(started.registrationId, { agentName: 'Cline smoke' });
+  const selected = service.selectProvider(started.registrationId, { providerType: 'cline' });
+  assert.equal(selected.success, true);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'acp' }).ready, true);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
+});
+
 test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['qwen.exe --prompt']), 'qwen-code');
   assert.equal(currentAgentTypeFromProcessRows(['kiro-cli.exe chat']), 'kiro');
   assert.equal(currentAgentTypeFromProcessRows(['copilot.exe -p hello']), 'github-copilot');
   assert.equal(currentAgentTypeFromProcessRows(['openhands --headless']), 'openhands');
   assert.equal(currentAgentTypeFromProcessRows(['aider --message hello']), 'aider');
+  assert.equal(currentAgentTypeFromProcessRows(['cline --plan --json']), 'cline');
   assert.equal(currentAgentTypeFromProcessRows(['q.exe chat']), 'amazon-q');
   assert.equal(currentAgentTypeFromProcessRows(['zeroclaw.exe agent --agent voko_test']), 'zeroclaw');
 });

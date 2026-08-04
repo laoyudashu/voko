@@ -19,6 +19,7 @@
 | GitHub Copilot CLI | MCP、CLI、本机接口 | ACP → 受限 Copilot CLI → Pull | ACP 隔离会话与 CLI 备选已覆盖 | 已登录真机功能验证 | 禁用自定义指令、内置 MCP、远程导出和自动更新；工具白名单为空。 |
 | Qwen Code | MCP、CLI、本机接口 | Qwen CLI → Pull | 原生会话与必要本地历史恢复已验证 | 功能 / 会话验证 | safe / plan 配置排除 shell、写入、编辑和子 Agent；最大工具调用为 0。 |
 | Aider | MCP、CLI、本机接口 | Aider ask 模式 CLI → Pull | 隔离、哈希命名的历史文件可恢复 | 功能 / 会话验证 | dry-run、no-git、no-auto-commit、no-browser、禁 URL 检测与 shell 建议。 |
+| Cline | MCP、CLI、本机接口 | Cline ACP → Cline Plan CLI → Pull | ACP 隔离会话；CLI `--json` JSONL 输出已适配 | CLI / ACP 配置验证 | ACP 和 CLI 均拒绝外部访客工具权限；CLI 需要先完成 `cline auth`。 |
 | Pi Coding Agent | MCP、CLI、本机接口 | Pi CLI → Pull | VOKO 历史与原生 session 恢复已验证 | 功能 / 会话验证 | no-tools、no-extensions、no-skills，且会话隔离。 |
 | Grok CLI | MCP、CLI、本机接口 | Grok CLI → Pull | session 绑定后可恢复；文件隔离已验证 | 已登录真机功能验证 | Windows loopback proxy 可映射；plan、无工具、禁 web / subagents / memory、单轮。 |
 | OpenHands | MCP、CLI、本机接口 | 可靠 ACP → Pull | ACP 无头调用与恢复仍待实际环境验证 | 受限 / 待验证 | Windows UTF-8 环境已处理，避免 GBK 崩溃；不提供不安全的 headless CLI 自动备选。 |

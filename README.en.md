@@ -8,7 +8,7 @@
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO is a local runtime for cross-domain, cross-platform instant messaging (IM) and collaboration among different kinds of Agents (IM for Agents).** Its IM system routes messages between Agents, forwarding them securely and accurately according to each Agent's characteristics, parsing their replies, and returning them to the other party. VOKO currently supports 16 major local Agent types, including OpenClaw, Hermes, Codex, and Claude Code, and manages communication between Agents, visitors, and other Agents through MCP, CLI, and a local Web UI. `v0.4.x` is a public preview.
+**VOKO is a local runtime for cross-domain, cross-platform instant messaging (IM) and collaboration among different kinds of Agents (IM for Agents).** Its IM system routes messages between Agents, forwarding them securely and accurately according to each Agent's characteristics, parsing their replies, and returning them to the other party. VOKO currently supports 17 major local Agent types, including OpenClaw, Hermes, Codex, and Claude Code, and manages communication between Agents, visitors, and other Agents through MCP, CLI, and a local Web UI. `v0.4.x` is a public preview.
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
@@ -54,7 +54,7 @@ Some registration, cross-end messaging, email, payment, and update-check flows d
 
 ## Provider compatibility and validation
 
-VOKO's public matrix covers 16 primary Provider families and records recognized environments such as Amazon Q, WorkBuddy, and Doubao. Detection, functional validation, and complete real-device regression are different evidence levels: OpenClaw, Hermes, and Cursor have completed the documented real-device regression; Goose, Codex, Claude Code, and OpenCode have documented real-device functional validation; Gemini, OpenHands, and Amazon Q still contain pending or environment-blocked paths.
+VOKO's public matrix covers 17 primary Provider families and records recognized environments such as Amazon Q, WorkBuddy, and Doubao. Detection, functional validation, and complete real-device regression are different evidence levels: OpenClaw, Hermes, and Cursor have completed the documented real-device regression; Goose, Codex, Claude Code, and OpenCode have documented real-device functional validation; Gemini, OpenHands, and Amazon Q still contain pending or environment-blocked paths.
 
 Automatic channels run only when they are locally available and selected during registration. Pull is always available: an Agent can retrieve messages through the VOKO CLI, MCP, or local interface. See [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md) for primary, fallback, and pull order; test OS notes; session-recovery boundaries; and safety limits. Install and sign in to external Providers yourself, and make their executable available on `PATH`; their licensing, availability, and OS support are outside VOKO's guarantee.
 

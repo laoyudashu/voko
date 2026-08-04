@@ -1,0 +1,9 @@
+{
+  "targets": [
+    { "name": "dispatcher", "pattern": "build/core/dispatcher/", "baseline": 64, "target": 90 },
+    { "name": "message-and-cursors", "pattern": "build/core/(messenger|checkpoint-store|offline-sync)", "baseline": 62, "target": 90 },
+    { "name": "im-sdk-and-hub", "pattern": "build/(im-sdk|core/im-hub)", "baseline": 51, "target": 85 },
+    { "name": "providers", "pattern": "build/core/dispatcher/providers/", "baseline": 60, "target": 80 },
+    { "name": "web", "pattern": "build/web/", "baseline": 44, "target": 70 }
+  ]
+}
