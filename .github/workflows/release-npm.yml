@@ -1,0 +1,99 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-production
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Validate requested version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          const lock = require('./package-lock.json');
+          const requested = process.env.REQUESTED_VERSION;
+          if (requested !== pkg.version) throw new Error(`Requested ${requested}, package.json contains ${pkg.version}`);
+          if (lock.version !== requested || lock.packages?.['']?.version !== requested) {
+            throw new Error('package.json and package-lock.json versions do not match');
+          }
+          NODE
+          if npm view "@voko/lite@${REQUESTED_VERSION}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "@voko/lite@${REQUESTED_VERSION} already exists and cannot be overwritten" >&2
+            exit 1
+          fi
+      - run: npm run release:gate
+      - name: Build the release tarball once
+        run: |
+          npm pack --json > npm-pack.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync('npm-pack.json', 'utf8'));
+          if (!Array.isArray(result) || result.length !== 1 || !result[0].filename) {
+            throw new Error('npm pack did not produce exactly one tarball');
+          }
+          fs.writeFileSync('release-tarball.txt', result[0].filename);
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-release-${{ inputs.version }}
+          path: |
+            *.tgz
+            npm-pack.json
+            release-tarball.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-release-${{ inputs.version }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Publish the verified tarball
+        run: npm publish "$(cat release-tarball.txt)" --access public --provenance
+      - name: Verify registry version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            published="$(npm view @voko/lite version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            if [ "$published" = "$EXPECTED_VERSION" ]; then
+              echo "Verified @voko/lite@$EXPECTED_VERSION"
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "npm registry did not report @voko/lite@$EXPECTED_VERSION after publication" >&2
+          exit 1

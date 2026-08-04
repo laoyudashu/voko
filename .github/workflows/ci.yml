@@ -9,9 +9,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: [22, 24]
@@ -56,3 +61,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+
+  ci-gate:
+    if: always()
+    needs: [test, security, dependency-review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required CI jobs
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+        run: |
+          node - <<'NODE'
+          const required = {
+            test: process.env.TEST_RESULT,
+            security: process.env.SECURITY_RESULT,
+          };
+          const dependencyReview = process.env.DEPENDENCY_REVIEW_RESULT;
+          const failed = Object.entries(required).filter(([, result]) => result !== 'success');
+          if (!['success', 'skipped'].includes(dependencyReview)) {
+            failed.push(['dependency-review', dependencyReview]);
+          }
+          if (failed.length > 0) {
+            console.error(`Required CI jobs did not pass: ${failed.map(([name, result]) => `${name}=${result}`).join(', ')}`);
+            process.exit(1);
+          }
+          console.log('All required CI jobs passed.');
+          NODE
