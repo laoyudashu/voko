@@ -116,16 +116,16 @@ function page(title, body, tFn, locale, db) {
 
 const LOGIN_JS = null; // 兼容占位，实际用 loginJs(t)
 
-function loginJs(t) {
+function loginJs(t, popup) {
   const sent = JSON.stringify(t('register.login.sent'));
   const resend = JSON.stringify(t('register.login.resend'));
   const sendFailed = JSON.stringify(t('register.login.send_failed'));
   const oauthWaiting = JSON.stringify(t('register.login.oauth_waiting'));
   const oauthFailed = JSON.stringify(t('register.login.oauth_failed'));
-  return '<script>var I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ',I18N_OAUTH_WAITING=' + oauthWaiting + ',I18N_OAUTH_FAILED=' + oauthFailed + ';setTimeout(function(){if(document.querySelector(".alert-error")){var m=document.getElementById("sent-msg");if(m)m.remove()}},0);async function sendCode(){var e=document.getElementById("email").value.trim();if(!e)return;var b=document.getElementById("send-btn");var s=document.getElementById("sent-msg");var se=document.getElementById("sent-email");if(b)b.disabled=true;try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.style.display="block";se.textContent=e;var c=60;var timer=setInterval(function(){b.textContent=I18N_RESEND+"("+c+"s)";c--;if(c<0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);var cd=document.getElementById("code");if(cd)cd.focus()}catch(err){if(b)b.disabled=false;window.alert(err.message||I18N_SEND_FAILED)}}async function oauthLogin(provider){var buttons=document.querySelectorAll(".oauth-btn"),status=document.getElementById("oauth-status");buttons.forEach(function(b){b.disabled=true});status.className="oauth-status active";status.textContent=I18N_OAUTH_WAITING;try{var r=await fetch("/api/login/oauth/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:provider})}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_OAUTH_FAILED);var popup=window.open(d.authorizeUrl,"_blank");if(!popup)throw new Error(I18N_OAUTH_FAILED);try{popup.opener=null}catch(e){}var delay=Math.max(2,d.pollIntervalSeconds||2)*1000,deadline=Date.parse(d.expiresAt)||Date.now()+600000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,delay)});var sr=await fetch("/api/login/oauth/status/"+encodeURIComponent(d.sessionId)),sd=await sr.json();if(sr.status===410)throw new Error(sd.error||I18N_OAUTH_FAILED);if(!sr.ok||!sd.success)throw new Error(sd.error||I18N_OAUTH_FAILED);if(sd.status==="failed")throw new Error((sd.error&&sd.error.message)||I18N_OAUTH_FAILED);if(sd.status==="authorized"){var er=await fetch("/api/login/oauth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:d.sessionId,exchangeCode:sd.exchangeCode})}),ed=await er.json();if(!er.ok||!ed.success)throw new Error(ed.error||I18N_OAUTH_FAILED);location.href="/login/oauth/complete";return}}throw new Error(I18N_OAUTH_FAILED)}catch(err){status.className="oauth-status error";status.textContent=err.message||I18N_OAUTH_FAILED;buttons.forEach(function(b){b.disabled=false})}}fetch("/api/login/oauth/providers").then(function(r){return r.json()}).then(function(d){if(!d.success)return;(d.providers||[]).forEach(function(p){var b=document.querySelector("[data-oauth-provider="+p.id+"]");if(b)b.hidden=false})}).catch(function(){})</'+'script>';
+  return '<script>var LOGIN_POPUP=' + JSON.stringify(!!popup) + ',I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ',I18N_OAUTH_WAITING=' + oauthWaiting + ',I18N_OAUTH_FAILED=' + oauthFailed + ';setTimeout(function(){if(document.querySelector(".alert-error")){var m=document.getElementById("sent-msg");if(m)m.remove()}},0);async function sendCode(){var e=document.getElementById("email").value.trim();if(!e)return;var b=document.getElementById("send-btn");var s=document.getElementById("sent-msg");var se=document.getElementById("sent-email");if(b)b.disabled=true;try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.style.display="block";se.textContent=e;var c=60;var timer=setInterval(function(){b.textContent=I18N_RESEND+"("+c+"s)";c--;if(c<0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);var cd=document.getElementById("code");if(cd)cd.focus()}catch(err){if(b)b.disabled=false;window.alert(err.message||I18N_SEND_FAILED)}}async function oauthLogin(provider){var buttons=document.querySelectorAll(".oauth-btn"),status=document.getElementById("oauth-status");buttons.forEach(function(b){b.disabled=true});status.className="oauth-status active";status.textContent=I18N_OAUTH_WAITING;try{var r=await fetch("/api/login/oauth/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:provider})}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_OAUTH_FAILED);var popup=window.open(d.authorizeUrl,"_blank");if(!popup)throw new Error(I18N_OAUTH_FAILED);try{popup.opener=null}catch(e){}var delay=Math.max(2,d.pollIntervalSeconds||2)*1000,deadline=Date.parse(d.expiresAt)||Date.now()+600000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,delay)});var sr=await fetch("/api/login/oauth/status/"+encodeURIComponent(d.sessionId)),sd=await sr.json();if(sr.status===410)throw new Error(sd.error||I18N_OAUTH_FAILED);if(!sr.ok||!sd.success)throw new Error(sd.error||I18N_OAUTH_FAILED);if(sd.status==="failed")throw new Error((sd.error&&sd.error.message)||I18N_OAUTH_FAILED);if(sd.status==="authorized"){var er=await fetch("/api/login/oauth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:d.sessionId,exchangeCode:sd.exchangeCode})}),ed=await er.json();if(!er.ok||!ed.success)throw new Error(ed.error||I18N_OAUTH_FAILED);location.href="/login/oauth/complete"+(LOGIN_POPUP?"?popup=1":"");return}}throw new Error(I18N_OAUTH_FAILED)}catch(err){status.className="oauth-status error";status.textContent=err.message||I18N_OAUTH_FAILED;buttons.forEach(function(b){b.disabled=false})}}fetch("/api/login/oauth/providers").then(function(r){return r.json()}).then(function(d){if(!d.success)return;(d.providers||[]).forEach(function(p){var b=document.querySelector("[data-oauth-provider="+p.id+"]");if(b)b.hidden=false})}).catch(function(){})</'+'script>';
 }
 
-function loginBody(email, err, tFn) {
+function loginBody(email, err, tFn, popup) {
   const t = tFn || (k => k);
   var alertHtml = err ? '<div class="alert alert-error">' + esc(err) + '</div>' : '';
   alertHtml += '<div class="alert alert-success" id="sent-msg" style="display:none">' + esc(t('register.login.sent')) + ' <span id="sent-email"></span></div>';
@@ -137,6 +137,7 @@ function loginBody(email, err, tFn) {
     + '<p class="desc">' + esc(t('register.login.desc')) + '</p>'
     + alertHtml
     + '<form method="POST" action="/login" id="login-form">'
+    + (popup ? '<input type="hidden" name="popup" value="1">' : '')
     + '<label for="email">' + esc(t('register.login.email')) + '</label>'
     + '<input type="email" id="email" name="email" value="' + esc(email) + '" required autocomplete="email" autofocus placeholder="you@example.com">'
     + '<div class="code-row" style="margin-top:8px">'
@@ -742,8 +743,9 @@ function createRegisterRouter(handlers, db, options = {}) {
       const row = db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();
       if (row) {
         const d = JSON.parse(row.data);
-        const keys = Object.keys(d);
-        return keys.length > 0 ? keys[0] : null;
+        return Object.entries(d)
+          .filter(([, value]) => typeof value === 'string' || value?.user_access_token)
+          .sort((a, b) => Number(b[1]?.updated_at || 0) - Number(a[1]?.updated_at || 0))[0]?.[0] || null;
       }
     } catch (_) {}
     return null;
@@ -871,8 +873,27 @@ function createRegisterRouter(handlers, db, options = {}) {
     res.set('Cache-Control', 'no-store');
     const email = req.query.email || '';
     const err = req.query.err || '';
-    let body = loginBody(email, err, req.t);
-    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db) + loginJs(req.t));
+    const popup = req.query.popup === '1';
+    let body = loginBody(email, err, req.t, popup);
+    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db) + loginJs(req.t, popup));
+  });
+
+  R.post('/reauth', async (req, res, next) => {
+    try{
+      const action=String(req.body?.action||'');
+      const email=String(req.body?.email||'').trim();
+      if(action==='sendCode'){
+        const result=await handlers.request_login_code({email});
+        return res.status(result.success?200:(result.status||400)).json({success:!!result.success,error:result.error});
+      }
+      if(action==='verify'){
+        const result=await handlers.login_by_code({email,code:req.body?.code});
+        if(!result.success)return res.status(result.status||400).json({success:false,error:result.error||req.t('register.login.code_invalid')});
+        if(options.webSessions)options.webSessions.setCookie(res,options.webSessions.create(email));
+        return res.json({success:true});
+      }
+      return res.status(400).json({success:false,error:req.t('register.login.unknown_action')});
+    }catch(e){next(e)}
   });
 
   R.get('/api/login/oauth/providers', async (_req, res) => {
@@ -921,7 +942,8 @@ function createRegisterRouter(handlers, db, options = {}) {
       agentCount = row ? row.c : 0;
     } catch (_) {}
     const dest = agentCount === 0 ? '/agent/add' : '/';
-    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><body><p id="switch-error" style="color:#d93025"></p><script>(async function(){var s=document.getElementById("switch-error");try{var r=await fetch("/api/agents/restart",{method:"POST"}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Worker restart failed");location.href=' + JSON.stringify(dest) + '}catch(e){s.textContent=e.message||"Worker restart failed"}})()</'+'script></body>');
+    const popup = req.query.popup === '1';
+    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><body><p id="switch-error" style="color:#d93025"></p><script>(async function(){var s=document.getElementById("switch-error"),m=document.cookie.match(/(?:^|;\\s*)voko_csrf=([^;]+)/),c=m?decodeURIComponent(m[1]):"";try{var r=await fetch("/api/web/agents/restart",{method:"POST",headers:{"Accept":"application/json","X-VOKO-CSRF":c}}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Worker restart failed");if(' + JSON.stringify(popup) + '&&window.opener){window.opener.postMessage({type:"voko-login-complete"},location.origin);window.close();return}location.href=' + JSON.stringify(dest) + '}catch(e){s.textContent=e.message||"Worker restart failed"}})()</'+'script></body>');
   });
 
   R.post('/login', async (req, res, next) => {
@@ -950,6 +972,7 @@ function createRegisterRouter(handlers, db, options = {}) {
             }
           } catch (_) {}
 
+          const popup = req.body.popup === '1';
           const dest = agentCount === 0 ? '/agent/add' : '/';
           // 返回过渡页：自动重启运行环境后跳转
           const _lang = req.locale === 'en' ? 'en' : 'zh-CN';
@@ -958,14 +981,14 @@ function createRegisterRouter(handlers, db, options = {}) {
             .replace('</div>\n<script>', '<p id="switch-error" style="display:none;font-size:13px;color:#d93025"></p></div>\n<script>')
             .replace(
               'try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=d',
-              'var s=document.getElementById("switch-error");try{var r=await fetch("/api/agents/restart",{method:"POST"}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||"Worker restart failed");location.href=d}catch(e){s.textContent=e.message||"Worker restart failed";s.style.display="block"}',
+              'var s=document.getElementById("switch-error"),m=document.cookie.match(/(?:^|;\\s*)voko_csrf=([^;]+)/),c=m?decodeURIComponent(m[1]):"";try{var r=await fetch("/api/web/agents/restart",{method:"POST",headers:{"Accept":"application/json","X-VOKO-CSRF":c}}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||"Worker restart failed");if(' + JSON.stringify(popup) + '&&window.opener){window.opener.postMessage({type:"voko-login-complete"},location.origin);window.close();return}location.href=d}catch(e){s.textContent=e.message||"Worker restart failed";s.style.display="block"}',
             );
           return res.send(checkedTransitionPage);
         }
-        return res.redirect('/login?email=' + encodeURIComponent(email) + '&err=' + encodeURIComponent(r.error || req.t('register.login.code_invalid')));
+        return res.redirect('/login?email=' + encodeURIComponent(email) + '&err=' + encodeURIComponent(r.error || req.t('register.login.code_invalid')) + (req.body.popup === '1' ? '&popup=1' : ''));
       }
 
-      res.redirect('/login?err=' + encodeURIComponent(req.t('register.login.unknown_action')));
+      res.redirect('/login?err=' + encodeURIComponent(req.t('register.login.unknown_action')) + (req.body.popup === '1' ? '&popup=1' : ''));
     } catch (e) { next(e); }
   });
 
