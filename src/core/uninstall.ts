@@ -44,8 +44,9 @@ function safeConfigMatch(filePath: string, entryName: string, kind = 'mcp') {
 
 function inspectJsonMcp(filePath: string): any[] {
   try {
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).size > 2 * 1024 * 1024) return [];
-    const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > 2 * 1024 * 1024) return [];
+    const value = JSON.parse(raw);
     const servers = value?.mcpServers || value?.mcp?.servers;
     if (!servers || typeof servers !== 'object') return [];
     return Object.entries(servers).flatMap(([name, config]: [string, any]) => {

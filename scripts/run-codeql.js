@@ -10,16 +10,31 @@ const resultsDir = path.join(root, '.codeql-results');
 const sarifFile = path.join(resultsDir, 'javascript-typescript.sarif');
 const allowlistFile = path.join(root, '.github', 'codeql-allowlist.json');
 
-const locator = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', ['codeql'], {
-  encoding: 'utf8',
-});
-if (locator.status !== 0) {
+function findCodeql() {
+  const locator = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', ['codeql'], {
+    encoding: 'utf8',
+  });
+  if (locator.status === 0) return 'codeql';
+  if (process.platform === 'win32') {
+    const userProfile = process.env.USERPROFILE || '';
+    const candidates = [
+      path.join(userProfile, '.local', 'share', 'codeql', 'codeql.exe'),
+      path.join(userProfile, '.local', 'bin', 'codeql.exe'),
+    ];
+    const installed = candidates.find((candidate) => fs.existsSync(candidate));
+    if (installed) return installed;
+  }
+  return null;
+}
+
+const codeqlCommand = findCodeql();
+if (!codeqlCommand) {
   console.error('[security:codeql] 未找到 CodeQL CLI。请手动安装并确保 codeql 在 PATH 中。');
   process.exit(1);
 }
 
 function run(args) {
-  const result = spawnSync('codeql', args, {
+  const result = spawnSync(codeqlCommand, args, {
     cwd: root,
     encoding: 'utf8',
     stdio: 'inherit',
