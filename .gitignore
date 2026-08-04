@@ -4,6 +4,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+test-reports/
 artifacts/real-tests/
 .build-stage-*/
 .cache/

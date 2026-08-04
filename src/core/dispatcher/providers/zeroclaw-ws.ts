@@ -93,7 +93,10 @@ class ZeroClawWsProvider extends AcpAdapter {
   }
 
   isAvailable(agentId: string): boolean {
-    return !!configuredUrl() && !!configuredToken() && !!this._instanceAlias(agentId);
+    return super.isAvailable(agentId)
+      && !!configuredUrl()
+      && !!configuredToken()
+      && !!this._instanceAlias(agentId);
   }
 }
 

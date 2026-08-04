@@ -9,6 +9,21 @@
 - `npm run test:ci`: the local equivalent of the code CI gate.
 - `npm run test:real:*`: explicit local-only checks using `.env.real-test.local`.
 
+The test runners use four-way cross-file concurrency by default. Build-mutating
+and process-identity tests run in isolated serial groups so concurrent tests do
+not replace `build/` or race Windows process inspection. Override the worker
+count with `VOKO_TEST_CONCURRENCY=1` when diagnosing a flaky test.
+
+Repeat a layer and write a machine-readable stability report:
+
+```powershell
+node scripts/repeat-test.js --count=10 --suite=unit
+node scripts/repeat-test.js --count=10 --suite=targeted
+```
+
+Supported suites are `unit`, `component`, `targeted` and `ci`. Reports are
+written under `test-reports/` and are intentionally ignored by Git.
+
 The source of truth for file classification and business mapping is `test/test-matrix.json`. New test files default to the component layer until explicitly reviewed as deterministic unit tests.
 
 ## Isolation contract

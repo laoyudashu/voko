@@ -8,6 +8,13 @@ const root = path.join(__dirname, '..');
 const testDir = path.join(root, 'test');
 const matrix = JSON.parse(fs.readFileSync(path.join(testDir, 'test-matrix.json'), 'utf8'));
 const inProcessTests = new Set(['lite-core-services.test.js']);
+const buildMutatingTests = new Set(['lite-build-atomic.test.js']);
+const processSensitiveTests = new Set([
+  'dynamic-port.test.js',
+  'lite-fatal-lifecycle.test.js',
+  'lite-process-lifecycle.test.js',
+]);
+const testConcurrency = Math.max(1, Number(process.env.VOKO_TEST_CONCURRENCY) || 4);
 const layer = process.argv[2] || 'all';
 const allFiles = fs.readdirSync(testDir).filter((name) => name.endsWith('.test.js')).sort();
 const unit = new Set(matrix.unit);
@@ -28,8 +35,16 @@ function run(args) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
-const isolated = selected.filter((name) => !inProcessTests.has(name));
-if (isolated.length) run(['--test', '--test-concurrency=1', ...isolated.map((name) => path.join('test', name))]);
+const buildMutating = selected.filter((name) => buildMutatingTests.has(name));
+const processSensitive = selected.filter((name) => processSensitiveTests.has(name));
+const isolated = selected.filter((name) => !inProcessTests.has(name) && !buildMutatingTests.has(name) && !processSensitiveTests.has(name));
+if (buildMutating.length) {
+  run(['--test', '--test-concurrency=1', ...buildMutating.map((name) => path.join('test', name))]);
+}
+if (processSensitive.length) {
+  run(['--test', '--test-concurrency=1', ...processSensitive.map((name) => path.join('test', name))]);
+}
+if (isolated.length) run(['--test', `--test-concurrency=${testConcurrency}`, ...isolated.map((name) => path.join('test', name))]);
 for (const name of selected.filter((file) => inProcessTests.has(file))) {
   run(['--test', '--experimental-test-isolation=none', path.join('test', name)]);
 }

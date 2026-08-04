@@ -3,7 +3,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { AcpAdapter } = require('../../adapters/acp-adapter');
-const { checkCliAvailable } = require('../../adapters/cli-spawner');
 const { resolveZeroClawCommand } = require('../zeroclaw-command');
 import type { AgentMeta } from '../types';
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
@@ -84,11 +83,7 @@ class ZeroClawAcpProvider extends AcpAdapter {
   }
 
   isAvailable(agentId: string): boolean {
-    const command = this._cliPath;
-    const commandReady = path.isAbsolute(command)
-      ? fs.existsSync(command)
-      : checkCliAvailable(command);
-    return commandReady && !!this._instanceAlias(agentId);
+    return super.isAvailable(agentId) && !!this._instanceAlias(agentId);
   }
 
   _instanceAlias: (agentId: string) => string | null;
