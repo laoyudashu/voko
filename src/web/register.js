@@ -309,6 +309,7 @@ function wizardJs(t) {
     configure: t('register.flow.configure'), test: t('register.flow.test'),
     configuring: t('register.flow.configuring'), configured: t('register.flow.configured'),
     testing: t('register.flow.testing'), testOk: t('register.flow.test_ok'), testFailed: t('register.flow.test_failed'),
+    loopback: t('register.flow.loopback'), loopbackConfirm: t('register.flow.loopback_confirm'),
     configureDesc: t('register.flow.configure.desc'), configureConfirm: t('register.flow.configure.confirm'),
     create: t('register.add.create_btn'), creating: t('register.add.creating'),
     created: t('register.flow.done.created'), deliveryOrder: t('register.flow.delivery.order'),
@@ -403,7 +404,7 @@ function wizardJs(t) {
   function renderAccess(){document.getElementById('wf-step4-title').textContent=I.accessTitle;document.getElementById('wf-access-desc').textContent=I.accessDesc;document.getElementById('wf-result').innerHTML='<div class="provider-list"><label class="provider-card'+(selectedAccessMode==='private'?' selected':'')+'"><input type="radio" name="wf-access" value="private"'+(selectedAccessMode==='private'?' checked':'')+'><span><span class="card-title">'+escHtml(I.privateMode)+'</span><span class="card-desc">'+escHtml(I.privateDesc)+'</span></span></label><label class="provider-card'+(selectedAccessMode==='public'?' selected':'')+'"><input type="radio" name="wf-access" value="public"'+(selectedAccessMode==='public'?' checked':'')+'><span><span class="card-title">'+escHtml(I.publicMode)+'</span><span class="card-desc">'+escHtml(I.publicDesc)+'</span></span></label></div>'}
   document.getElementById('wf-result').addEventListener('change',function(e){if(e.target.name==='wf-access'){selectedAccessMode=e.target.value;renderAccess();saveDraft()}});
   var configApprovalToken='';
-  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;b.disabled=true;api('configure_delivery',{mode:configMode}).then(function(r){configApprovalToken=r.approvalToken||'';document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=(r.changePlan&&r.changePlan.message)||I.configureDesc;document.getElementById('wf-config').classList.add('show');b.disabled=false}).catch(function(e2){b.disabled=false;fail(e2)})}else{b.disabled=true;b.textContent=I.testing;api('test_delivery',{mode:b.dataset.mode}).then(function(r){b.disabled=false;b.textContent=r.ready?I.testOk:I.testFailed}).catch(fail)}});
+  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;b.disabled=true;api('configure_delivery',{mode:configMode}).then(function(r){configApprovalToken=r.approvalToken||'';document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=(r.changePlan&&r.changePlan.message)||I.configureDesc;document.getElementById('wf-config').classList.add('show');b.disabled=false}).catch(function(e2){b.disabled=false;fail(e2)})}else{b.disabled=true;b.textContent=I.testing;api('preflight_delivery',{mode:b.dataset.mode}).then(function(r){b.disabled=false;b.textContent=r.ready?I.testOk:I.testFailed}).catch(fail)}});
   document.getElementById('wf-config-back').onclick=function(){document.getElementById('wf-config').classList.remove('show')};
   document.getElementById('wf-config-confirm').onclick=function(){var b=this;b.disabled=true;b.textContent=I.configuring;api('configure_delivery',{mode:configMode,approved:true,approvalToken:configApprovalToken}).then(function(r){configApprovalToken='';poll(r.taskId,b)}).catch(function(e){b.disabled=false;b.textContent=I.configureConfirm;fail(e)})};
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
@@ -422,6 +423,18 @@ function wizardJs(t) {
   root.addEventListener('change',saveDraft);
   window.addEventListener('pagehide',saveDraft);
   function renderResult(d){var r=d.result||{},p=r.provider||{},rows=(r.deliveryOrder||[]).map(function(m){var role=m.role==='primary'?I.priority:m.role==='fallback'?I.backup:m.role==='only'?I.only:I.finalFallback;return '<div>'+m.priority+'. '+escHtml(m.label)+' <span class="tag">'+escHtml(role)+'</span></div>'}).join('');document.getElementById('wf-step4-title').textContent=I.created;document.getElementById('wf-access-desc').textContent='';document.getElementById('wf-result').innerHTML='<div class="result-card"><h3>✓ '+escHtml(I.created)+'</h3><dl class="result-grid"><dt>'+escHtml(I.name)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.description)+'</dt><dd>'+escHtml(r.description||'-')+'</dd><dt>'+escHtml(I.category)+'</dt><dd>'+escHtml(r.category)+'</dd><dt>'+escHtml(I.provider)+'</dt><dd>'+escHtml(p.type||'others')+'</dd><dt>'+escHtml(I.instanceLabel)+'</dt><dd>'+escHtml(p.instanceName||'-')+'</dd><dt>'+escHtml(I.accessMode)+'</dt><dd>'+escHtml(r.accessMode==='public'?I.publicMode:I.privateMode)+'</dd><dt>'+escHtml(I.deliveryOrder)+'</dt><dd>'+rows+'</dd></dl><h4>'+escHtml(I.searchableBy)+'</h4><dl class="result-grid"><dt>'+escHtml(I.searchName)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.searchEmail)+'</dt><dd>'+escHtml(r.ownerEmail||root.dataset.email)+'</dd><dt>'+escHtml(I.exactId)+'</dt><dd>'+escHtml(r.agentId)+'</dd></dl><div class="security-notice"><strong>'+escHtml(I.securityTitle)+'</strong><br>'+escHtml(I.security)+'</div></div>'}
+  var renderResultBase=renderResult;
+  renderResult=function(d){
+    renderResultBase(d);
+    var r=d.result||{},target=document.querySelector('#wf-result .result-card');
+    var readiness=(r.deliveryReadiness||[]).filter(function(item){return item.mode!=='pull'});
+    if(target&&readiness.length){
+      var section=document.createElement('div');section.className='loopback-tests';
+      section.innerHTML=readiness.map(function(item){return '<div><span>'+escHtml(item.label||item.mode)+'</span> <span class="tag">'+escHtml(item.status||'unavailable')+'</span> <button type="button" class="result-loopback" data-mode="'+escHtml(item.mode)+'">'+escHtml(I.loopback)+'</button></div>'}).join('');
+      target.insertBefore(section,target.querySelector('.security-notice'));
+    }
+  };
+  document.getElementById('wf-result').addEventListener('click',function(e){var b=e.target.closest('.result-loopback');if(!b)return;if(!window.confirm(I.loopbackConfirm))return;b.disabled=true;b.textContent=I.testing;api('loopback_test',{mode:b.dataset.mode,acknowledgeCost:true}).then(function(r){b.textContent=r.success?I.testOk:I.testFailed;b.disabled=false}).catch(function(err){b.textContent=I.testFailed;b.disabled=false;fail(err)})});
   start();
 })();
 </script>`;
@@ -738,7 +751,7 @@ function createRegisterRouter(handlers, db) {
 
   const registrationOrchestrator = createRegistrationOrchestrator({
     db,
-    sendCode: (params) => handlers.register_agent(params),
+    sendCode: (params) => handlers.request_login_code(params),
     loginByCode: (params) => handlers.login_by_code(params),
     completeAgent: (params) => handlers.create_agent_by_token(params),
     getLoggedEmail,
@@ -913,7 +926,7 @@ function createRegisterRouter(handlers, db) {
 
       // Explicit login-state dispatch; register_agent enforces server-side OTP rate limits.
       if (action === 'sendCode') {
-        const r = await handlers.register_agent({ email });
+        const r = await handlers.request_login_code({ email });
         if (r.success) return res.json({ success: true });
         return res.status(r.status || 400).json({ success: false, error: r.error || req.t('register.login.send_failed') });
       }

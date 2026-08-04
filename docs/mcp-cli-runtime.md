@@ -8,8 +8,17 @@ VOKO requires Node.js `>=22.5.0` and npm.
 
 ```bash
 npm install --global @voko/lite
+voko setup
 voko start
 ```
+
+`voko setup` is a read-only, browser-free diagnosis command. It checks the Node runtime, database, authentication, local instance and stable executable paths, then returns JSON with a `nextAction`. It does not edit `PATH`, shell files, Provider configuration, or start a model. The PATH-independent equivalent is:
+
+```bash
+npm exec --yes --package=@voko/lite -- voko setup
+```
+
+It is safe to use over SSH and in WSL, containers, systemd preparation, and other machines without a graphical session.
 
 The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent on a graphical desktop.
 
@@ -44,6 +53,10 @@ voko mcp
 Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI use the same registration and runtime state; they are not separate accounts or separate Agent inventories.
 
 The registration workflow is stateful. An Agent should begin a registration session, retain its returned registration ID, and follow the next action from each response. When owner email verification or an approval is required, it must pause for the owner rather than guessing data or changing local Provider configuration.
+
+Registration performs a side-effect-free delivery preflight by default. It checks only local commands, processes, ports, authentication/configuration readiness, resumable-session support, and required safety flags. A real loopback test is separate and optional: it requires explicit acknowledgement because it may invoke the configured model and create a local test session. Agent creation succeeds even when every automatic channel is unavailable; Pull remains the final fallback.
+
+Do not confuse the two directions: an Agent uses VOKO MCP/CLI to operate VOKO, while VOKO uses Provider HTTP, WebSocket, ACP, or restricted CLI adapters to deliver visitor messages to the Agent.
 
 The MCP tool remains non-interactive and machine-readable. Start with:
 

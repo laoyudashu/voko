@@ -972,9 +972,10 @@ class RegistrationOrchestrator {
     const session = this._get(id);
     delete session.pendingApproval;
     const requested = Array.isArray(input.deliveryModes) ? input.deliveryModes.map(String) : [];
+    const selectableStatuses = new Set(['ready', 'preflight_passed', 'loopback_verified']);
     session.deliveryModes = session.deliveryModes.map((mode) => ({
       ...mode,
-      selected: mode.mode === 'pull' || (requested.includes(mode.mode) && mode.status === 'ready'),
+      selected: mode.mode === 'pull' || (requested.includes(mode.mode) && selectableStatuses.has(mode.status)),
     }));
     session.status = 'ready_to_create';
     return this._save(session);
@@ -1068,7 +1069,7 @@ class RegistrationOrchestrator {
     return { success: true, logs: task.logs, done: task.done, ok: task.ok, error: task.error || null };
   }
 
-  testDelivery(id, input = {}) {
+  preflightDelivery(id, input = {}) {
     const session = this._get(id);
     const mode = cleanText(input.mode, 40);
     const provider = session.provider?.type || 'others';
@@ -1108,10 +1109,67 @@ class RegistrationOrchestrator {
     } else {
       return { success: false, error: '该 Provider 不支持此消息通道' };
     }
+    const readinessStatus = mode === 'pull'
+      ? 'ready'
+      : ready
+        ? 'preflight_passed'
+        : (session.deliveryModes.find((item) => item.mode === mode)?.status === 'configuration_required'
+          ? 'configuration_required'
+          : 'unavailable');
     session.deliveryModes = session.deliveryModes.map((item) =>
-      item.mode === mode ? { ...item, status: ready ? 'ready' : item.status, lastTest: { ok: ready, detail, at: now() } } : item);
+      item.mode === mode ? { ...item, status: readinessStatus, lastPreflight: { ok: ready, detail, at: now() } } : item);
     this._save(session);
-    return { success: true, registrationId: session.id, mode, ready, detail };
+    return { success: true, registrationId: session.id, mode, ready, status: readinessStatus, detail, sideEffects: false };
+  }
+
+  async loopbackTest(id, input = {}) {
+    const session = this._get(id);
+    if (input.acknowledgeCost !== true) {
+      return {
+        success: false,
+        code: 'LOOPBACK_CONFIRMATION_REQUIRED',
+        error: '真实闭环测试可能产生模型费用和本地测试会话，必须明确 acknowledgeCost=true',
+        nextAction: { type: 'confirm_loopback_test', required: ['registrationId', 'mode', 'acknowledgeCost'] },
+      };
+    }
+    if (typeof this.options.runLoopbackTest !== 'function') {
+      return { success: false, code: 'LOOPBACK_UNAVAILABLE', error: '当前 Provider 尚未提供安全的真实闭环测试' };
+    }
+    const mode = cleanText(input.mode, 40);
+    const challenge = `voko-${crypto.randomBytes(12).toString('hex')}`;
+    const tested = await this.options.runLoopbackTest({
+      agentId: session.result?.agentId || null,
+      provider: session.provider,
+      mode,
+      challenge,
+      acknowledgeCost: true,
+    });
+    const verified = tested?.success === true && tested?.challengeMatched === true;
+    session.deliveryModes = session.deliveryModes.map((item) => item.mode === mode
+      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: { ok: verified, at: now() } }
+      : item);
+    this._save(session);
+    return {
+      success: verified,
+      registrationId: session.id,
+      mode,
+      status: verified ? 'loopback_verified' : 'failed',
+      detail: cleanText(tested?.detail, 500),
+      mayCreateModelCost: true,
+    };
+  }
+
+  async cleanupLoopback(id, input = {}) {
+    const session = this._get(id);
+    if (typeof this.options.cleanupLoopbackSession !== 'function') {
+      return { success: true, registrationId: session.id, cleaned: false };
+    }
+    const cleaned = await this.options.cleanupLoopbackSession({
+      agentId: session.result?.agentId || null,
+      provider: session.provider,
+      mode: cleanText(input.mode, 40),
+    });
+    return { success: cleaned?.success !== false, registrationId: session.id, cleaned: cleaned?.cleaned === true };
   }
 
   async complete(id, input = {}) {
@@ -1134,6 +1192,7 @@ class RegistrationOrchestrator {
     if (!result?.success) return result || { success: false, error: '创建 Agent 失败' };
     const selected = session.deliveryModes.filter((mode) => mode.selected);
     session.result = {
+      creationStatus: 'created',
       agentId: result.agentId,
       agentName: result.agentName || session.basicInfo.agentName,
       description: session.basicInfo.description,
@@ -1147,6 +1206,16 @@ class RegistrationOrchestrator {
         priority: index + 1,
         role: mode.mode === 'pull' ? (selected.length === 1 ? 'only' : 'final_fallback') : (index === 0 ? 'primary' : 'fallback'),
       })),
+      deliveryReadiness: session.deliveryModes.map((mode) => ({
+        mode: mode.mode,
+        label: mode.label,
+        selected: !!mode.selected,
+        status: mode.status || 'unavailable',
+        detail: mode.lastPreflight?.detail || null,
+      })),
+      unresolvedConfiguration: session.deliveryModes
+        .filter((mode) => mode.mode !== 'pull' && ['configuration_required', 'unavailable', 'failed'].includes(mode.status))
+        .map((mode) => ({ mode: mode.mode, status: mode.status || 'unavailable' })),
     };
     session.warnings = [{
       code: 'EXTERNAL_CHAT_SECURITY',
@@ -1175,7 +1244,9 @@ class RegistrationOrchestrator {
       if (action === 'select_delivery') return this.selectDelivery(input.registrationId, input);
       if (action === 'configure_delivery') return this.configureDelivery(input.registrationId, input);
       if (action === 'configuration_status') return this.configurationStatus(input.registrationId, input.taskId);
-      if (action === 'test_delivery') return this.testDelivery(input.registrationId, input);
+      if (action === 'preflight_delivery' || action === 'test_delivery') return this.preflightDelivery(input.registrationId, input);
+      if (action === 'loopback_test') return await this.loopbackTest(input.registrationId, input);
+      if (action === 'cleanup_loopback') return await this.cleanupLoopback(input.registrationId, input);
       if (action === 'complete') return await this.complete(input.registrationId, input);
       if (action === 'status') return this.view(input.registrationId);
       return { success: false, error: '不支持的注册 action' };

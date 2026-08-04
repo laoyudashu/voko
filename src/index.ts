@@ -386,6 +386,61 @@ function resolveDbPath(args?: any, options: any = {}) {
   return defaultDb;
 }
 
+function inspectSetup(args?: any) {
+  const fs = require('fs');
+  const dbPath = resolveDbPath(args, { silent: true });
+  const entryPath = path.resolve(process.argv[1]);
+  const nodeVersion = process.versions.node;
+  const [major, minor] = nodeVersion.split('.').map(Number);
+  const nodeSupported = major > 22 || (major === 22 && minor >= 5);
+  const instance = readInstanceMetadata(dbPath);
+  const running = Boolean(instance && isInstanceAlive(instance));
+  let database = { exists: fs.existsSync(dbPath), readable: false, schemaVersion: null as number | null };
+  let authenticated = false;
+  let agentCount = 0;
+
+  if (database.exists) {
+    const { DatabaseSync: Database } = require('node:sqlite');
+    let db: any = null;
+    try {
+      db = new Database(dbPath, { readOnly: true });
+      database.readable = true;
+      const schema = db.prepare("SELECT data FROM config WHERE type = 'schema_version'").get();
+      database.schemaVersion = Number(schema?.data) || null;
+      authenticated = Boolean(db.prepare("SELECT 1 FROM config WHERE type IN ('user_access_token', 'current_user_email') LIMIT 1").get());
+      agentCount = Number(db.prepare('SELECT COUNT(*) AS count FROM agents').get()?.count || 0);
+    } catch (_) {
+      database.readable = false;
+    } finally {
+      try { if (db?.open) db.close(); } catch (_) {}
+    }
+  }
+
+  let nextAction: any;
+  if (!nodeSupported) nextAction = { type: 'upgrade_node', minimumVersion: '22.5.0' };
+  else if (!database.exists || !authenticated) nextAction = { type: 'login', command: ['voko', 'login'] };
+  else if (agentCount === 0) nextAction = { type: 'start_registration', command: ['voko', 'manage_agent_registration', '--action', 'start', '--registration-mode', 'agent'] };
+  else if (!running) nextAction = { type: 'start_lite', command: ['voko', 'start', '--no-open', '--no-interactive'] };
+  else nextAction = { type: 'ready' };
+
+  return {
+    success: nodeSupported,
+    headlessCompatible: true,
+    browserOpened: false,
+    version: pkg.version,
+    node: { version: nodeVersion, supported: nodeSupported, minimumVersion: '22.5.0' },
+    database,
+    authentication: { configured: authenticated },
+    agents: { count: agentCount },
+    runtime: { running, port: running ? (instance?.port || null) : null },
+    stableCommands: {
+      mcp: { command: process.execPath, args: [entryPath, 'mcp'] },
+      start: { command: process.execPath, args: [entryPath, 'start', '--no-open', '--no-interactive'] },
+    },
+    nextAction,
+  };
+}
+
 function initCore(args?: any, options: any = {}) {
   const dbPath = resolveDbPath(args, options);
   const db = initDatabase(dbPath, { silent: options.silent });
@@ -2535,6 +2590,7 @@ function printUsage() {
     t('cli.usage.usage_header') + '\n' +
     '  voko                       ' + t('cli.usage.start_default') + '\n' +
     '  voko start [--port PORT]   ' + t('cli.usage.start') + '\n' +
+    '  voko setup                 Headless installation and readiness diagnosis (JSON)\n' +
     '  voko login                 ' + t('cli.usage.login') + '\n' +
     '  voko manage_agent_registration --interactive\n' +
     '                             ' + t('cli.usage.register_interactive') + '\n' +
@@ -2563,7 +2619,7 @@ function printUsage() {
     '  voko --tools\n' +
     '\n' +
     t('cli.usage.tools_header') + '\n' +
-    '  register_agent  verify_agent_email  manage_agent_registration\n' +
+    '  manage_agent_registration\n' +
     '  update_agent_profile  set_agent_status  get_status  get_agent_profile\n' +
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
@@ -2611,7 +2667,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'mcp', 'stop', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'mcp', 'stop', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2621,6 +2677,14 @@ async function main() {
   // update
   if (subcommand === 'update') {
     await cli.updateLite();
+    return;
+  }
+
+  // Read-only, browser-free installation diagnosis for shells, SSH and containers.
+  if (subcommand === 'setup') {
+    const result = inspectSetup(args);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.success) process.exitCode = 1;
     return;
   }
 

@@ -54,38 +54,12 @@ async function runCli(toolName, rawParams) {
 }
 
 describe('CLI verify_agent_email 参数桥接', () => {
-  it('kebab-case 参数 --backend-type 正确转为 backendType', async () => {
-    const { core } = await runCli('verify_agent_email', {
-      email: 'a@b.com', code: '123456', agentName: 'X',
-      'backend-type': 'codex',       // kebab-case
-      'category': 'technology',
-      'description': '测试描述',
-    });
-    const reg = core._calls.registerAgentInDb;
-    assert.ok(reg, '应调用 registerAgentInDb');
-    assert.strictEqual(reg.backendType, 'codex', 'backend-type → backendType');
-    assert.strictEqual(reg.category, 'technology');
-    assert.strictEqual(reg.description, '测试描述');
-  });
-
-  it('camelCase 参数直接透传', async () => {
-    const { core } = await runCli('verify_agent_email', {
-      email: 'a@b.com', code: '123456', agentName: 'X',
-      backendType: 'gemini', category: 'education', description: 'd',
-    });
-    const reg = core._calls.registerAgentInDb;
-    assert.strictEqual(reg.backendType, 'gemini');
-    assert.strictEqual(reg.category, 'education');
-  });
-
-  it('缺 backendType → handler 校验报错，不调后端', async () => {
-    const { out, core } = await runCli('verify_agent_email', {
-      email: 'a@b.com', code: '123456', agentName: 'X', category: 'technology',
-    });
+  it('旧入口仅返回迁移提示且不调用注册后端', async () => {
+    const { out, core } = await runCli('verify_agent_email', { email: 'a@b.com', code: '123456' });
     const result = JSON.parse(out);
     assert.strictEqual(result.success, false);
-    assert.match(result.error, /backendType/);
-    assert.ok(!core._calls.verifyCode, '缺字段不应调后端 verifyCode');
+    assert.strictEqual(result.code, 'REGISTRATION_API_REMOVED');
+    assert.ok(!core._calls.verifyCode);
   });
 });
 

@@ -14,6 +14,8 @@
 voko start
 ```
 
+无浏览器环境可先运行 `voko setup`。它只读检查 Node、数据库、登录、运行实例和稳定启动路径，以 JSON 返回 `nextAction`；不会打开页面，也不会修改 PATH、shell 或 Provider 配置。若 `voko` 不在 PATH，可运行 `npm exec --yes --package=@voko/lite -- voko setup`。
+
 然后由客户端启动以下 stdio MCP 命令：
 
 ```bash

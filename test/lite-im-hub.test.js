@@ -96,6 +96,18 @@ test('public compatibility methods start and stop only the selected Agent', asyn
   await transport.stopAll();
 });
 
+test('waitForConnection reports the actual terminal connection state', async () => {
+  const transport = manager();
+  let state = 'connecting';
+  transport.adapter.getStatus = () => ({ connected: state === 'connected', uid: 'uid-a', status: state });
+  const pending = transport.waitForConnection('agent-a', 1000);
+  setImmediate(() => { state = 'connected'; transport.adapter.emit('worker.status', { agentId: 'agent-a', status: 'connected' }); });
+  const status = await pending;
+  assert.equal(status.status, 'connected');
+  assert.equal(status.connected, true);
+  await transport.stopAll();
+});
+
 test('buffers manual-ACK messages until the VOKO persistence handler is attached', async () => {
   const transport = manager();
   await transport.start('agent-a', config('uid-a'));

@@ -95,6 +95,8 @@
   "register.flow.testing": "Testing…",
   "register.flow.test_ok": "Test passed",
   "register.flow.test_failed": "Test failed",
+  "register.flow.loopback": "Run real loopback test",
+  "register.flow.loopback_confirm": "This test may incur model cost and create a local test session. Continue?",
   "register.flow.configuring": "Configuring…",
   "register.flow.configured": "Configured",
   "register.flow.configure.desc": "The original file is backed up before writing. Changes occur only after confirmation and are restored on failure.",

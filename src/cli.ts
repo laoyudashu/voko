@@ -104,9 +104,7 @@ async function updateLite(options: { installDir?: string; spawn?: any; exit?: (c
  * @type {Object<string, Object<string, string>>}
  */
 const TOOL_PARAM_SCHEMAS = {
-  register_agent:          { email: 'string' },
-  verify_agent_email:      { email: 'string', code: 'string', agentId: 'string', agentName: 'string', backendType: 'string', category: 'string', description: 'string' },
-  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', registrationMode: 'string' },
+  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', acknowledgeCost: 'boolean', registrationMode: 'string' },
   bug_report: { action: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string', ownerEmail: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
@@ -228,6 +226,15 @@ function convertParam(value?: any, expectedType?: any) {
  * @returns {Promise<Object|null>} null 表示工具不存在
  */
 async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCtx: any = {}) {
+  if (toolName === 'register_agent' || toolName === 'verify_agent_email') {
+    console.log(JSON.stringify({
+      success: false,
+      code: 'REGISTRATION_API_REMOVED',
+      error: `${toolName} has been removed; use manage_agent_registration and keep the same registrationId`,
+      nextAction: { type: 'start_registration', command: ['voko', 'manage_agent_registration', '--action', 'start', '--registration-mode', 'agent'] },
+    }, null, 2));
+    return { success: false };
+  }
   const { db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage } = core;
   const cx = createContext({ db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage });
 
@@ -255,10 +262,8 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
 
   // 参数名标准化 + 类型转换
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
-  // verify_agent_email 的 agentId 是“绑定已有 Agent”可选项；新注册时本来就没有身份，
-  // 不能因为 Schema 中存在该可选字段而提前拦截。
   const hasAgentIdParam = Object.prototype.hasOwnProperty.call(schema, 'agentId');
-  const optionalAgentId = toolName === 'verify_agent_email' || toolName === 'bug_report';
+  const optionalAgentId = toolName === 'bug_report';
   const needsAgentId = hasAgentIdParam && !optionalAgentId;
   try {
     const params: Record<string, any> = {};
