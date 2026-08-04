@@ -67,3 +67,20 @@ export interface ProviderStatus {
   error?: string;
   [key: string]: unknown;
 }
+
+export interface AgentDeliveryMethodStatus {
+  mode: string;
+  provider: string | null;
+  configured: boolean;
+  available: boolean;
+  status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
+}
+
+export interface AgentDeliveryStatus {
+  backendType: string | null;
+  configuredModes: string[];
+  availableModes: string[];
+  activeMode: string | null;
+  methods: AgentDeliveryMethodStatus[];
+  backendAvailable: boolean;
+}

@@ -14,7 +14,7 @@
  * lite 其他模块只通过 dispatcher 调度，不再直接 spawn / 配置 agent。
  */
 import type { DatabaseLike } from '../../types/database';
-import type { AgentMeta, PushPayload } from './types';
+import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 
@@ -340,6 +340,70 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       try { return typeof provider.isAvailable === 'function' && provider.isAvailable(agentId); }
       catch (_) { return false; }
     });
+  }
+
+  /**
+   * Read-only delivery diagnostics. This must never start a gateway, invoke a model,
+   * or mutate provider configuration; it only evaluates persisted selection and
+   * each matching provider's synchronous readiness probe.
+   */
+  function getAgentDeliveryStatus(agentId: string): AgentDeliveryStatus {
+    const meta = _metaOf(agentId);
+    const explicitModes = Array.isArray(meta.delivery_modes) ? [...new Set(meta.delivery_modes.map(String))] : null;
+    const methods: AgentDeliveryStatus['methods'] = [];
+
+    for (const [key, provider] of Object.entries(providers)) {
+      const mode = _providerMode(key);
+      try {
+        if (typeof provider.match !== 'function' || !provider.match(agentId, meta)) continue;
+      } catch (_) {
+        continue;
+      }
+      if (explicitModes && !explicitModes.includes(mode)) continue;
+      let available = false;
+      let status: AgentDeliveryStatus['methods'][number]['status'] = 'unavailable';
+      try {
+        available = typeof provider.isAvailable === 'function' && !!provider.isAvailable(agentId);
+        status = available ? 'available' : 'unavailable';
+      } catch (_) {
+        status = 'unknown';
+      }
+      methods.push({ mode, provider: key, configured: true, available, status });
+    }
+
+    if (!explicitModes) {
+      methods.sort((a, b) => (providers[b.provider || '']?.priority || 0) - (providers[a.provider || '']?.priority || 0));
+    }
+    const configuredModes = explicitModes || [...new Set(methods.map(method => method.mode)), 'pull'];
+    for (const mode of configuredModes) {
+      if (mode === 'pull') {
+        methods.push({
+          mode: 'pull',
+          provider: null,
+          configured: !!explicitModes,
+          available: true,
+          status: explicitModes ? 'on-demand' : 'fallback',
+        });
+      } else if (!methods.some(method => method.mode === mode)) {
+        methods.push({ mode, provider: null, configured: true, available: false, status: 'unknown' });
+      }
+    }
+
+    methods.sort((a, b) => {
+      const aMode = configuredModes.indexOf(a.mode);
+      const bMode = configuredModes.indexOf(b.mode);
+      if (aMode !== bMode) return aMode - bMode;
+      return (providers[b.provider || '']?.priority || 0) - (providers[a.provider || '']?.priority || 0);
+    });
+    const availableModes = [...new Set(methods.filter(method => method.available).map(method => method.mode))];
+    return {
+      backendType: meta.backend_type || null,
+      configuredModes,
+      availableModes,
+      activeMode: methods.find(method => method.available)?.mode || null,
+      methods,
+      backendAvailable: availableModes.length > 0,
+    };
   }
 
   function _routeProvider(
@@ -784,7 +848,7 @@ ${body}
     }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, steer, start, stop, addProviders, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
 }
 
 module.exports = { createDispatcher };
