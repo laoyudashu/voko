@@ -41,6 +41,44 @@ async function applyHttpFault(rule, res) {
   return false;
 }
 
+function parseJsonBody(body) {
+  try {
+    const parsed = JSON.parse(Buffer.isBuffer(body) ? body.toString('utf8') : String(body || ''));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function handleFaultControl(req, res, body, faults) {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/__test__/fault' && req.method === 'POST') {
+    const input = parseJsonBody(body);
+    if (!input?.target || !input?.mode) {
+      json(res, 400, { success: false, error: 'target and mode are required' });
+      return true;
+    }
+    faults.set({
+      target: String(input.target),
+      mode: String(input.mode),
+      delayMs: Number(input.delayMs) || 0,
+      count: input.count === undefined ? 1 : Number(input.count),
+    });
+    json(res, 200, { success: true, target: input.target, mode: input.mode, faults: faults.snapshot() });
+    return true;
+  }
+  if (url.pathname === '/__test__/fault' && req.method === 'DELETE') {
+    faults.clear(url.searchParams.get('target') || undefined);
+    json(res, 200, { success: true, faults: faults.snapshot() });
+    return true;
+  }
+  if (url.pathname === '/__test__/faults' && req.method === 'GET') {
+    json(res, 200, { success: true, faults: faults.snapshot() });
+    return true;
+  }
+  return false;
+}
+
 async function startFakeServices(options = {}) {
   if (options.separate) return startSeparateFakeServices(options);
   const faults = options.faults || new FaultController();
@@ -50,6 +88,7 @@ async function startFakeServices(options = {}) {
     if (await applyHttpFault(faults.consume(target), res)) return;
     const body = await readBody(req);
     events.push({ target, method: req.method, url: req.url, body });
+    if (target === 'voko-api' && handleFaultControl(req, res, body, faults)) return;
     if (target === 'oss') return json(res, 200, { success: true, url: `${baseUrl}/files/test.bin` });
     if (target === 'provider') return json(res, 200, { success: true, reply: 'fake provider reply', turnId: req.headers['x-turn-id'] || null });
     if (req.url === '/api/heartbeat') return json(res, 200, { success: true });
@@ -136,7 +175,10 @@ async function startSeparateFakeServices(options = {}) {
   const ports = options.ports || {};
 
   let apiBaseUrl = '';
-  const apiServer = createSeparateHttpServer('voko-api', faults, events, (req, res) => {
+  const apiServer = createSeparateHttpServer('voko-api', faults, events, (req, res, body) => {
+    // The control plane is only exposed by the in-process fake API used by E2E.
+    // It never exists on the VOKO production server.
+    if (handleFaultControl(req, res, body, faults)) return;
     if (req.url === '/health' || req.url === '/api/heartbeat') return json(res, 200, { success: true, status: 'ok' });
     if (req.url === '/api/login') return json(res, 200, { success: true, token: 'fake-token' });
     return json(res, 200, { success: true, data: [] });

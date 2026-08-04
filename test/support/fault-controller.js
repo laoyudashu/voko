@@ -16,6 +16,14 @@ class FaultController {
     return rule ? { mode: rule.mode, delayMs: rule.delayMs, remaining: rule.remaining } : null;
   }
 
+  snapshot() {
+    return Object.fromEntries([...this.rules.entries()].map(([target, rule]) => [target, {
+      mode: rule.mode,
+      delayMs: rule.delayMs,
+      remaining: rule.remaining,
+    }]));
+  }
+
   consume(target) {
     const rule = this.rules.get(target);
     if (!rule || rule.remaining <= 0) return null;
