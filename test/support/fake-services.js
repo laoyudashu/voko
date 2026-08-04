@@ -202,16 +202,22 @@ function createIncomingInjector(connections, nextMessageId) {
     const targetUid = String(input.toUid || input.uid || '');
     const state = connections.get(targetUid);
     if (!state?.authenticated) return { delivered: false, error: 'IM agent is not connected' };
-    const items = Array.isArray(input.messages) ? input.messages : [input];
-    const expanded = input.duplicate ? [...items, ...items] : items;
+    const base = { ...input };
+    delete base.messages;
+    delete base.duplicate;
+    delete base.reorder;
+    const items = Array.isArray(input.messages)
+      ? input.messages.map(item => ({ ...base, ...item }))
+      : [input];
+    const normalized = items.map(item => ({
+      ...item,
+      messageId: String(item.messageId || nextMessageId()),
+      messageSeq: Number(item.messageSeq || nextMessageId()),
+    }));
+    const expanded = input.duplicate ? [...normalized, ...normalized] : normalized;
     const ordered = input.reorder ? [...expanded].reverse() : expanded;
     for (const item of ordered) {
-      const message = {
-        ...item,
-        messageId: String(item.messageId || nextMessageId()),
-        messageSeq: Number(item.messageSeq || nextMessageId()),
-      };
-      state.ws.send(encodeRecv(state, message));
+      state.ws.send(encodeRecv(state, item));
     }
     return { delivered: true, count: ordered.length, uid: targetUid };
   };

@@ -603,6 +603,18 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // Agent Web 页面 — 用可变引用，支持热更新
+  // Test-only provider control must be registered before the catch-all web
+  // router, otherwise the browser router turns the endpoint into a 404.
+  if (process.env.VOKO_E2E === '1') {
+    app.post('/__test__/provider', (req?: any, res?: any) => {
+      const provider = (global as any).__dispatcher?.providers?.['mock-echo'];
+      if (!provider?.setAvailable) return res.status(404).json({ success: false, error: 'mock provider unavailable' });
+      provider.setAvailable(req.body?.available !== false);
+      (global as any).__dispatcher?.invalidateRoutes?.({ providerId: 'mock-echo', reason: 'e2e-provider-control', available: provider.isAvailable?.() });
+      return res.json({ success: true, available: !!provider.isAvailable?.() });
+    });
+  }
+
   let currentWebRouter = webRouter;
   if (currentWebRouter) {
     app.use('/', (req?: any, res?: any, next?: any) => currentWebRouter(req, res, next));

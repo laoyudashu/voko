@@ -14,6 +14,7 @@ class MockEchoProvider extends PushProvider {
   constructor() {
     super();
     this._delay = parseInt(process.env.VOKO_SMOKE_ECHO_DELAY || '50', 10);
+    this._available = true;
   }
 
   get priority() { return 99; }
@@ -24,7 +25,11 @@ class MockEchoProvider extends PushProvider {
   }
 
   isAvailable() {
-    return true;
+    return this._available;
+  }
+
+  setAvailable(available: boolean) {
+    this._available = !!available;
   }
 
   async push(payload: PushPayload): Promise<void> {
