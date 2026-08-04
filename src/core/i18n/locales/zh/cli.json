@@ -1,4 +1,5 @@
 {
+  "cli.usage.uninstall": "安全停止 VOKO 并准备通过 npm 卸载",
   "cli.index.headless_onboarding": "检测到无图形终端且尚未登录，开始 VOKO 首次登录。",
   "cli.index.headless_register": "当前邮箱尚未注册 Agent，继续完成交互式 Agent 注册。",
   "cli.usage.no_interactive": "禁用无图形终端的首次启动交互向导",

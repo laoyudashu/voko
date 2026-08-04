@@ -1,4 +1,5 @@
 {
+  "cli.usage.uninstall": "Safely prepare VOKO for npm removal",
   "cli.index.headless_onboarding": "A headless terminal was detected and VOKO is not signed in. Starting first-time login.",
   "cli.index.headless_register": "No Agent is registered for this email. Continuing with interactive Agent registration.",
   "cli.usage.no_interactive": "Disable the first-run interactive wizard in headless terminals",

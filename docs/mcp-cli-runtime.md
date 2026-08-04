@@ -42,6 +42,18 @@ voko start --no-open
 
 `--no-open` only disables browser opening. `--no-interactive` disables the headless first-run terminal wizard. Neither option changes the MCP protocol.
 
+## Stop and uninstall
+
+Use `voko stop` to stop the runtime without preparing package removal. Before uninstalling the npm package, use:
+
+```bash
+voko uninstall
+```
+
+The uninstall assistant uses the same identity-validated shutdown path as `voko stop`, checks for remaining VOKO workers, preserves local data, inventories MCP and Provider configuration for manual review, and prints the appropriate npm removal command. It does not invoke npm or edit third-party configuration itself.
+
+Use `voko uninstall --dry-run` for a side-effect-free preview and `voko uninstall --json` for automation. Permanent deletion of the default local data directory requires `voko uninstall --purge` plus the interactive confirmation, or the explicit non-interactive form `voko uninstall --purge --yes`. Custom `--db` and `VOKO_DB_PATH` locations are never removed automatically. See [Safe uninstall](uninstall.en.md) for data and cloud boundaries.
+
 ## MCP first
 
 Run the stdio MCP entry point with:
