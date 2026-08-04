@@ -34,6 +34,18 @@ test('fake IM can duplicate a frame and then return to normal', async (t) => {
   assert.deepEqual(received, ['message-1', 'message-1']);
 });
 
+test('separate fake API, IM, OSS and Provider services expose isolated endpoints', async (t) => {
+  const service = await startFakeServices({ separate: true });
+  t.after(() => service.close());
+
+  assert.notEqual(service.apiBaseUrl, service.ossBaseUrl);
+  assert.notEqual(service.apiBaseUrl, service.providerBaseUrl);
+  assert.match(service.imWsUrl, /^ws:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal((await fetch(`${service.apiBaseUrl}/api/heartbeat`, { method: 'POST' })).status, 200);
+  assert.equal((await fetch(`${service.ossBaseUrl}/upload`, { method: 'POST', body: 'file' })).status, 200);
+  assert.equal((await fetch(`${service.providerBaseUrl}/chat`, { method: 'POST', body: '{}' })).status, 200);
+});
+
 test('fake clock releases only elapsed waits', async () => {
   const clock = new FakeClock(100);
   let done = false;

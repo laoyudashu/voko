@@ -1,5 +1,7 @@
 const { defineConfig } = require('@playwright/test');
 const { execFileSync } = require('node:child_process');
+const os = require('node:os');
+const path = require('node:path');
 
 function freePort() {
   const script = "const n=require('net'),s=n.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})";
@@ -8,6 +10,8 @@ function freePort() {
 
 const port = Number(process.env.VOKO_E2E_PORT || freePort());
 process.env.VOKO_E2E_PORT = String(port);
+process.env.VOKO_E2E_SERVICES_FILE = process.env.VOKO_E2E_SERVICES_FILE
+  || path.join(os.tmpdir(), `voko-e2e-services-${process.pid}.json`);
 
 module.exports = defineConfig({
   testDir: './e2e',

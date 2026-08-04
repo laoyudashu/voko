@@ -42,6 +42,7 @@ async function applyHttpFault(rule, res) {
 }
 
 async function startFakeServices(options = {}) {
+  if (options.separate) return startSeparateFakeServices(options);
   const faults = options.faults || new FaultController();
   const events = [];
   const server = http.createServer(async (req, res) => {
@@ -99,6 +100,117 @@ async function startFakeServices(options = {}) {
       for (const client of wss.clients) client.terminate();
       wss.close(() => server.close(resolve));
     }),
+  };
+}
+
+function listenServer(server, port = 0) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address();
+      resolve({ port: address.port, baseUrl: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+function closeHttpServer(server) {
+  return new Promise((resolve) => {
+    try { server.closeAllConnections?.(); } catch {}
+    if (!server.listening) return resolve();
+    server.close(() => resolve());
+  });
+}
+
+function createSeparateHttpServer(target, faults, events, responseFor) {
+  return http.createServer(async (req, res) => {
+    if (await applyHttpFault(faults.consume(target), res)) return;
+    const body = await readBody(req);
+    events.push({ target, method: req.method, url: req.url, body });
+    return responseFor(req, res, body);
+  });
+}
+
+async function startSeparateFakeServices(options = {}) {
+  const faults = options.faults || new FaultController();
+  const events = [];
+  const ports = options.ports || {};
+
+  let apiBaseUrl = '';
+  const apiServer = createSeparateHttpServer('voko-api', faults, events, (req, res) => {
+    if (req.url === '/health' || req.url === '/api/heartbeat') return json(res, 200, { success: true, status: 'ok' });
+    if (req.url === '/api/login') return json(res, 200, { success: true, token: 'fake-token' });
+    return json(res, 200, { success: true, data: [] });
+  });
+  const apiAddress = await listenServer(apiServer, ports.api || 0);
+  apiBaseUrl = apiAddress.baseUrl;
+
+  let ossBaseUrl = '';
+  const ossServer = createSeparateHttpServer('oss', faults, events, (_req, res) =>
+    json(res, 200, { success: true, url: `${ossBaseUrl}/files/test.bin` }));
+  const ossAddress = await listenServer(ossServer, ports.oss || 0);
+  ossBaseUrl = ossAddress.baseUrl;
+
+  const providerServer = createSeparateHttpServer('provider', faults, events, (req, res) =>
+    json(res, 200, { success: true, reply: 'fake provider reply', turnId: req.headers['x-turn-id'] || null }));
+  const providerAddress = await listenServer(providerServer, ports.provider || 0);
+
+  const imServer = http.createServer((_req, res) => json(res, 404, { success: false, error: 'IM websocket only' }));
+  const wss = new WebSocketServer({ noServer: true });
+  imServer.on('upgrade', (req, socket, head) => {
+    const rule = faults.peek('im');
+    if (rule?.mode === 'auth-failure') {
+      faults.consume('im');
+      return socket.destroy();
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+  wss.on('connection', (ws) => {
+    let reorderPending = null;
+    ws.on('message', async (raw) => {
+      const rule = faults.consume('im');
+      if (rule?.delayMs) await new Promise((resolve) => setTimeout(resolve, rule.delayMs));
+      if (rule?.mode === '1006') return ws.terminate();
+      if (rule?.mode === 'sendack-lost') return;
+      const message = raw.toString();
+      events.push({ target: 'im', message });
+      if (rule?.mode === 'reorder') {
+        if (reorderPending === null) { reorderPending = message; return; }
+        ws.send(message);
+        ws.send(reorderPending);
+        reorderPending = null;
+        return;
+      }
+      const replies = rule?.mode === 'duplicate' ? 2 : 1;
+      for (let index = 0; index < replies; index += 1) ws.send(message);
+    });
+  });
+  const imAddress = await listenServer(imServer, ports.im || 0);
+
+  return {
+    baseUrl: apiBaseUrl,
+    apiBaseUrl,
+    wsUrl: `ws://127.0.0.1:${imAddress.port}`,
+    imWsUrl: `ws://127.0.0.1:${imAddress.port}`,
+    ossBaseUrl,
+    providerBaseUrl: providerAddress.baseUrl,
+    faults,
+    events,
+    services: {
+      api: apiBaseUrl,
+      im: `ws://127.0.0.1:${imAddress.port}`,
+      oss: ossBaseUrl,
+      provider: providerAddress.baseUrl,
+    },
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve) => wss.close(() => resolve()));
+      await Promise.all([
+        closeHttpServer(apiServer),
+        closeHttpServer(ossServer),
+        closeHttpServer(providerServer),
+        closeHttpServer(imServer),
+      ]);
+    },
   };
 }
 
