@@ -504,7 +504,7 @@ let __runtimePort: any = null;
 /**
  * 启动 MCP 传输层（stdio 或 HTTP）
  */
-async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any, taskManager?: any) {
+async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any, taskManager?: any, webRouterOptions?: any) {
   const port = parseInt(args.port, 10) || 3100;
   const app = express();
   app.use((req?: any, res?: any, next?: any) => {
@@ -574,12 +574,12 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // 文件上传端点 — 需要 raw body 解析 multipart
-  app.post('/api/agents/:agentId/send-file', (req?: any, res?: any, next?: any) => {
+  app.post(['/api/agents/:agentId/send-file', '/api/agents/:agentId/icon'], (req?: any, res?: any, next?: any) => {
     if (req.is('multipart/form-data')) {
       let chunks: Buffer[] = [];
       let total = 0;
       let tooLarge = false;
-      const maxBytes = 25 * 1024 * 1024;
+      const maxBytes = String(req.path || '').endsWith('/icon') ? 500 * 1024 + 64 * 1024 : 25 * 1024 * 1024;
       req.on('data', (c: any) => {
         if (tooLarge) return;
         total += c.length;
@@ -614,7 +614,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       delete require.cache[require.resolve('./web')];
       delete require.cache[require.resolve('./web/register')];
       const { createWebRouter: reloaded } = require('./web');
-      currentWebRouter = reloaded(handlers, db, { getToolList: () => getToolList(mcpServer) });
+      currentWebRouter = reloaded(handlers, db, webRouterOptions || { getToolList: () => getToolList(mcpServer) });
       console.error('[Lite] 网页已热更新');
       res.json({ success: true, message: '网页已热更新' });
     } catch (e: any) {
@@ -1052,36 +1052,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── 重启 Agent 运行环境（切换用户后）──
   app.post('/api/agents/restart', async (req?: any, res?: any) => {
     try {
-      const email = getCurrentUserEmail(db);
-      if (!email) return res.json({ success: false, error: '未登录' });
-      // 1. 停止所有 worker
-      await agentManager.stopAll();
-      // 2. 查当前用户已发布 agent
-      const agents = db.prepare(
-        "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
-      ).all(email);
-      // 3. 逐个启动
-      await agentManager.startMany(agents.map((a: any) => ({
-        agentId: a.agent_id,
-        config: { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url },
-      })));
-      // 4. 立刻写 runtime
-      const agentList = agents.map((a: any) => ({
-        agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
-        imConnected: false, backendConnected: false,
-      }));
-      db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
-        .run(JSON.stringify({
-          instanceId: __instanceLock?.metadata?.instanceId,
-          pid: process.pid,
-          ts: Date.now(),
-          port: __runtimePort || 3100,
-          userEmail: email,
-          agents: agentList,
-        }), Date.now());
-      // 通知 desktop 等监听方：用户已切换，刷新各自的数据过滤范围
-      try { require('./core/lite-bus').emit('user:switched', { email }); } catch (_: any) {}
-      res.json({ success: true, count: agents.length });
+      res.json(await handlers.restart_agent_runtime());
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1684,15 +1655,43 @@ async function startMcpServer(args?: any, core?: any) {
     },
   });
   const handlers = createToolHandlers(cx);
+  handlers.restart_agent_runtime = async () => {
+    const email = getCurrentUserEmail(db);
+    if (!email) return { success: false, error: '未登录' };
+    await agentManager.stopAll();
+    const agents = db.prepare(
+      "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
+    ).all(email);
+    await agentManager.startMany(agents.map((a: any) => ({
+      agentId: a.agent_id,
+      config: { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url },
+    })));
+    const agentList = agents.map((a: any) => ({
+      agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
+      imConnected: false, backendConnected: false,
+    }));
+    db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
+      .run(JSON.stringify({
+        instanceId: __instanceLock?.metadata?.instanceId,
+        pid: process.pid,
+        ts: Date.now(),
+        port: __runtimePort || 3100,
+        userEmail: email,
+        agents: agentList,
+      }), Date.now());
+    try { require('./core/lite-bus').emit('user:switched', { email }); } catch (_: any) {}
+    return { success: true, count: agents.length };
+  };
   const mcpServer = createMcpServer(handlers, { version: pkg.version });
 
   // Agent 网页版
   const webSessions = createLocalWebSessionStore(db);
-  const webRouter = createWebRouter(handlers, db, {
+  const webRouterOptions = {
     getToolList: () => getToolList(mcpServer),
     webSessions,
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
-  });
+  };
+  const webRouter = createWebRouter(handlers, db, webRouterOptions);
 
 const { RuntimeState } = require('./core/runtime-state');
   const runtimeState = new RuntimeState();
@@ -1728,6 +1727,7 @@ const { RuntimeState } = require('./core/runtime-state');
     runtimeState,
     wukongimSender,
     taskManager,
+    webRouterOptions,
   );
 }
 

@@ -32,13 +32,48 @@ const { createRegistrationOrchestrator } = require('../core/registration-orchest
 
 const CSS = `@charset "UTF-8";*{box-sizing:border-box}body{font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC','Hiragino Sans GB',sans-serif;background:#f5f7fa;color:#1a1a2e;margin:0;padding:20px;font-size:18px;line-height:1.7;max-width:1100px;margin-left:auto;margin-right:auto;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}a{color:#1a73e8;font-weight:600;padding:4px 2px;display:inline-block}h1{font-size:24px;border-bottom:3px solid #1a73e8;padding-bottom:8px;margin:0 0 10px 0}h2{font-size:20px;margin:18px 0 8px 0;color:#1a1a2e}h3{font-size:17px;margin:0 0 4px 0;color:#1a73e8}nav{font-size:14px;color:#666;margin-bottom:10px;padding:6px 0;border-bottom:1px solid #ddd}.table-wrap{width:100%;overflow-x:auto;margin:6px 0 12px 0}table{width:100%;min-width:500px;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.06)}th,td{padding:10px 12px;text-align:left;border:1px solid #e0e0e0;font-size:15px;white-space:nowrap}th{background:#e8f0fe;font-weight:700;font-size:14px}tr:nth-child(even){background:#fafbfc}label{display:block;margin-top:10px;font-weight:700;font-size:15px;color:#1a1a2e}input,select,textarea{width:100%;max-width:460px;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;outline:none}input:focus,select:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12)}button,.btn{display:inline-block;margin-top:10px;padding:10px 22px;min-width:100px;font-size:16px;font-weight:700;cursor:pointer;text-align:center;font-family:inherit;background:#1a73e8;color:#fff;border:2px solid #1557b0;border-radius:6px;text-decoration:none}button:hover{background:#1557b0}.btn-success{background:#0f9d58;border-color:#0b8043}.btn-success:hover{background:#0b8043}.btn-danger{background:#d93025;border-color:#b71c1c}.btn-danger:hover{background:#b71c1c}.online{color:#0f9d58;font-weight:700}.offline{color:#d93025;font-weight:700}.unknown{color:#888}.pending{color:#e37400;font-weight:600}.success{color:#0f9d58;font-weight:700;font-size:17px}.error{color:#d93025;font-weight:600}.meta{color:#888;font-size:14px}.card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,0.04)}.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:13px;font-weight:700;border:1px solid}.badge-online{background:#e6f4ea;color:#0f9d58;border-color:#0f9d58}.badge-offline{background:#fce8e6;color:#d93025;border-color:#d93025}.badge-pending{background:#fef7e0;color:#e37400;border-color:#e37400}.info-bar{display:flex;flex-wrap:wrap;gap:6px 14px;background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:8px 12px;margin:0 0 10px 0;font-size:15px}.info-bar span{white-space:nowrap}.ops{display:grid;gap:8px;margin:6px 0 0 0;grid-template-columns:repeat(6,1fr)}@media(max-width:900px){.ops{grid-template-columns:repeat(4,1fr)}}@media(max-width:600px){.ops{grid-template-columns:repeat(3,1fr)}}@media(max-width:400px){.ops{grid-template-columns:repeat(2,1fr)}}.op-card{display:block;background:#fff;border:2px solid #e0e0e0;border-radius:8px;padding:10px 8px;text-align:center;text-decoration:none;color:#1a1a2e;font-weight:600;font-size:14px}.op-card:hover{border-color:#1a73e8;background:#e8f0fe}button.op-card{margin:0;min-width:0;width:100%}code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:14px}.info-line{margin:4px 0;font-size:15px}.info-line strong{display:inline-block;min-width:70px}.btn-sm{padding:8px 14px;min-width:auto;min-height:36px;font-size:14px;display:inline-block;margin:0;line-height:1.4}.btn-xs{padding:8px 14px;min-width:auto;min-height:36px;font-size:14px;font-weight:700;display:inline-block;margin:0;line-height:1.4;border-radius:4px;text-decoration:none}.btn-outline{background:#fff;color:#1a73e8;border-color:#1a73e8;text-decoration:none}.btn-outline:hover{background:#e8f0fe}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}.form-grid .full{grid-column:1/-1}@media(max-width:700px){.form-grid{grid-template-columns:1fr}}.voko-select{position:relative;width:100%;max-width:460px}.voko-select-trigger{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;cursor:pointer;user-select:none}.voko-select-trigger:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12);outline:none}.voko-select-arrow{font-size:11px;color:#888;margin-left:8px}.voko-select-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:100;margin-top:4px;background:#fff;border:2px solid #b0b0b0;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden}.voko-select-search{width:100%;padding:10px 12px;margin:0;background:#fff;color:#1a1a2e;border:none;border-bottom:1px solid #e0e0e0;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box}.voko-select-options{max-height:220px;overflow-y:auto;padding:4px 0}.voko-option{padding:9px 14px;font-size:15px;color:#1a1a2e;cursor:pointer}.voko-option:hover{background:#e8f0fe}.voko-option-empty{color:#999!important;cursor:default}`;
 
-const EXTRA_CSS = `.audit-message{padding:10px 12px;margin:5px 0;border:1px solid #f0c7c3;border-left:4px solid #d93025;border-radius:7px;background:#fff8f7;font-size:14px}.audit-message-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.audit-message-result{padding:1px 7px;border-radius:9px;background:#fce8e6;color:#b3261e;font-size:12px;font-weight:700}.audit-message-row{margin-top:6px;color:#4d5156;word-break:break-word}.audit-message-row span{display:inline-block;min-width:72px;color:#7a828a}button:disabled{cursor:not-allowed;opacity:.55}.voko-spinner{display:inline-block;width:14px;height:14px;margin-right:7px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;animation:voko-spin .75s linear infinite}@keyframes voko-spin{to{transform:rotate(360deg)}}.edit-section-title{margin:8px 0 0;padding:0 0 7px;border-bottom:1px solid #e4e7ec;font-size:16px;font-weight:700;color:#344054}.voko-option-group{padding:7px 14px 4px;color:#667085;font-size:12px;font-weight:700;background:#f8fafc;cursor:default}`+MESSAGE_CONTENT_CSS;
+const EXTRA_CSS = `.audit-message{padding:10px 12px;margin:5px 0;border:1px solid #f0c7c3;border-left:4px solid #d93025;border-radius:7px;background:#fff8f7;font-size:14px}.audit-message-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.audit-message-result{padding:1px 7px;border-radius:9px;background:#fce8e6;color:#b3261e;font-size:12px;font-weight:700}.audit-message-row{margin-top:6px;color:#4d5156;word-break:break-word}.audit-message-row span{display:inline-block;min-width:72px;color:#7a828a}button:disabled{cursor:not-allowed;opacity:.55}.voko-spinner{display:inline-block;width:14px;height:14px;margin-right:7px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;animation:voko-spin .75s linear infinite}@keyframes voko-spin{to{transform:rotate(360deg)}}.edit-section-title{margin:8px 0 0;padding:0 0 7px;border-bottom:1px solid #e4e7ec;font-size:16px;font-weight:700;color:#344054}.voko-option-group{padding:7px 14px 4px;color:#667085;font-size:12px;font-weight:700;background:#f8fafc;cursor:default}.agent-icon-field{display:flex;align-items:center;gap:12px;margin-top:4px}.agent-icon-button{position:relative;width:84px;height:84px;min-width:84px;margin:0;padding:0;border:2px solid #d0d5dd;border-radius:16px;overflow:hidden;background:#f2f4f7}.agent-icon-button:hover,.agent-icon-button:focus{border-color:#1a73e8;background:#f2f4f7}.agent-icon-preview{display:block;width:100%;height:100%;object-fit:cover}.agent-icon-overlay{position:absolute;inset:auto 0 0;padding:3px 2px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;line-height:1.4}.agent-icon-help{margin:0;max-width:350px}.agent-icon-status{display:block;margin-top:3px;font-size:13px}.agent-icon-status.success{font-size:13px}.agent-reauth-dialog{width:min(440px,calc(100% - 32px));padding:0;border:0;border-radius:14px;box-shadow:0 22px 70px rgba(15,23,42,.28)}.agent-reauth-dialog::backdrop{background:rgba(15,23,42,.48)}.agent-reauth-box{padding:24px}.agent-reauth-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.agent-reauth-head h2{margin:0;font-size:20px}.agent-reauth-close{min-width:0;margin:0;padding:3px 10px;background:#fff;color:#667085;border:0;font-size:22px}.agent-reauth-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}.agent-reauth-actions button{margin:0;min-width:0}.agent-reauth-message{margin-top:12px;padding:9px 11px;border-radius:8px;font-size:14px}.agent-reauth-message.error{background:#fce8e6}.agent-reauth-message.success{background:#e6f4ea}`+MESSAGE_CONTENT_CSS;
 
 // ═══════════════════════════════════════════════════════════════
 //  工具函数
 // ═══════════════════════════════════════════════════════════════
 
 function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+
+function parseMultipartFile(req){
+  const buf=req.rawBody;
+  if(!Buffer.isBuffer(buf))return null;
+  const contentType=String(req.headers['content-type']||'');
+  const boundaryMatch=contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  const boundary=boundaryMatch&&(boundaryMatch[1]||boundaryMatch[2]);
+  if(!boundary)return null;
+  const marker=Buffer.from('--'+boundary);
+  let start=buf.indexOf(marker);
+  while(start!==-1){
+    const headerStart=start+marker.length+2;
+    const headerEnd=buf.indexOf(Buffer.from('\r\n\r\n'),headerStart);
+    if(headerEnd===-1)break;
+    const headers=buf.subarray(headerStart,headerEnd).toString('utf8');
+    if(/content-disposition:\s*form-data;/i.test(headers)&&/filename=/i.test(headers)){
+      const bodyStart=headerEnd+4;
+      const next=buf.indexOf(Buffer.from('\r\n--'+boundary),bodyStart);
+      if(next===-1)return null;
+      const nameMatch=headers.match(/filename="([^"]*)"/i);
+      return{filename:nameMatch?nameMatch[1]:'upload',data:buf.subarray(bodyStart,next)};
+    }
+    start=buf.indexOf(marker,headerEnd+4);
+  }
+  return null;
+}
+
+function detectAgentIconType(data){
+  if(!Buffer.isBuffer(data))return null;
+  if(data.length>=8&&data.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')))return{mime:'image/png',ext:'png'};
+  if(data.length>=3&&data[0]===0xff&&data[1]===0xd8&&data[2]===0xff)return{mime:'image/jpeg',ext:'jpg'};
+  if(data.length>=6&&['GIF87a','GIF89a'].includes(data.subarray(0,6).toString('ascii')))return{mime:'image/gif',ext:'gif'};
+  if(data.length>=12&&data.subarray(0,4).toString('ascii')==='RIFF'&&data.subarray(8,12).toString('ascii')==='WEBP')return{mime:'image/webp',ext:'webp'};
+  return null;
+}
 
 function h(s){return s||'-'}
 
@@ -409,6 +444,42 @@ function createWebRouter(handlers, db, opts={}){
   R.use((req, res, next) => {
     req.locale = detectWebLocale(req, res);
     req.t = makeT(req.locale);
+    next();
+  });
+
+  const publicMutationPath=(pathname)=>pathname==='/login'||pathname==='/reauth'||pathname==='/bug-report'||pathname==='/api/bug-report'||pathname==='/register'||pathname.startsWith('/api/login/')||pathname.startsWith('/api/agent-registration')||pathname.startsWith('/join/');
+  const sensitiveMutation=(req)=>!['GET','HEAD','OPTIONS'].includes(String(req.method||'GET').toUpperCase())&&!publicMutationPath(String(req.path||''));
+  const webAuthFailure=(res,status,error)=>res.status(status).json({success:false,code:'WEB_AUTH_REQUIRED',error});
+
+  // 所有 Web 写操作共用本地会话和 CSRF 边界；实例令牌仍供 CLI/MCP 使用。
+  R.use((req,res,next)=>{
+    if(!sensitiveMutation(req)||!opts.webSessions)return next();
+    const supplied=String(req.get('x-voko-token')||req.get('authorization')||'').replace(/^Bearer\s+/i,'');
+    if(opts.localAuthToken&&supplied===opts.localAuthToken){req.localAuth={type:'instance'};return next()}
+    const session=opts.webSessions.resolveRequest(req);
+    if(!session)return webAuthFailure(res,401,req.t('web.reauth.required'));
+    req.localAuth={type:'web',...session};
+    if(!opts.webSessions.verifyCsrf(req,req.localAuth))return webAuthFailure(res,403,req.t('web.reauth.required'));
+    next();
+  });
+
+  function webAuthorizationUi(req){
+    if(['/login','/bug-report'].includes(String(req.path||'')))return'';
+    const T=req.t,L=k=>esc(T(k));
+    const email=currentOwnerEmail();
+    const css='<style>.voko-auth-dialog{width:min(440px,calc(100% - 32px));padding:0;border:0;border-radius:14px;box-shadow:0 22px 70px rgba(15,23,42,.28)}.voko-auth-dialog::backdrop{background:rgba(15,23,42,.48)}.voko-auth-box{padding:24px}.voko-auth-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.voko-auth-head h2{margin:0;font-size:20px;border:0}.voko-auth-close{min-width:0;margin:0;padding:3px 10px;background:#fff;color:#667085;border:0;font-size:22px}.voko-auth-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}.voko-auth-actions button{margin:0;min-width:0}.voko-auth-message{margin-top:12px;padding:9px 11px;border-radius:8px;font-size:14px}.voko-auth-message.error{background:#fce8e6;color:#b42318}.voko-auth-message.success{background:#e6f4ea;color:#0f7b45}</style>';
+    const html='<dialog id="voko-auth-dialog" class="voko-auth-dialog"><div class="voko-auth-box"><div class="voko-auth-head"><h2>'+L('web.reauth.title')+'</h2><button type="button" id="voko-auth-close" class="voko-auth-close" aria-label="'+L('common.btn.close')+'">×</button></div><p class="meta" style="margin:5px 0 12px">'+L('web.reauth.desc')+'</p><div id="voko-auth-fields"><label for="voko-auth-email">'+L('register.login.email')+'</label><input type="email" id="voko-auth-email" value="'+esc(email)+'" autocomplete="email"><label for="voko-auth-code">'+L('register.login.code')+'</label><input type="text" id="voko-auth-code" maxlength="6" autocomplete="one-time-code" placeholder="'+L('register.login.code_ph')+'"><div class="voko-auth-actions"><button type="button" class="btn-outline" id="voko-auth-send">'+L('register.login.send_code')+'</button><button type="button" class="btn-success" id="voko-auth-verify">'+L('web.reauth.verify')+'</button></div></div><div id="voko-auth-message" class="voko-auth-message" hidden aria-live="polite"></div></div></dialog>';
+    const script='<script>(function(){var nativeFetch=window.fetch.bind(window),dlg=document.getElementById("voko-auth-dialog"),email=document.getElementById("voko-auth-email"),code=document.getElementById("voko-auth-code"),send=document.getElementById("voko-auth-send"),verify=document.getElementById("voko-auth-verify"),close=document.getElementById("voko-auth-close"),message=document.getElementById("voko-auth-message"),fields=document.getElementById("voko-auth-fields"),pending=null;function cookie(name){var p=name+"=",x=document.cookie.split(";").map(function(v){return v.trim()}).find(function(v){return v.indexOf(p)===0});return x?decodeURIComponent(x.slice(p.length)):""}function publicPath(path){return path==="/login"||path==="/reauth"||path==="/bug-report"||path==="/api/bug-report"||path==="/register"||path.indexOf("/api/login/")===0||path.indexOf("/api/agent-registration")===0||path.indexOf("/join/")===0}function isSensitive(url,init){var u=new URL(url,location.href),method=String((init&&init.method)||"GET").toUpperCase();return u.origin===location.origin&&["GET","HEAD","OPTIONS"].indexOf(method)===-1&&!publicPath(u.pathname)}function showMessage(text,kind){message.hidden=false;message.textContent=text;message.className="voko-auth-message "+kind}function authorize(){if(pending)return pending;fields.hidden=false;message.hidden=true;code.value="";dlg.showModal();code.focus();pending=new Promise(function(resolve,reject){dlg._resolve=resolve;dlg._reject=reject});return pending}async function authPost(action){var r=await nativeFetch("/reauth",{method:"POST",headers:{"Accept":"application/json","Content-Type":"application/json"},body:JSON.stringify({action:action,email:email.value.trim(),code:code.value.trim()})}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||'+JSON.stringify(T('common.action.failed'))+');return j}close.addEventListener("click",function(){dlg.close();if(dlg._reject)dlg._reject(new Error('+JSON.stringify(T('web.reauth.cancelled'))+'));pending=null});send.addEventListener("click",async function(){send.disabled=true;try{await authPost("sendCode");showMessage('+JSON.stringify(T('web.reauth.code_sent'))+',"success");code.focus()}catch(e){showMessage(e.message,"error")}finally{send.disabled=false}});verify.addEventListener("click",async function(){verify.disabled=true;try{await authPost("verify");fields.hidden=true;showMessage("✓ "+'+JSON.stringify(T('web.reauth.success'))+',"success");setTimeout(function(){dlg.close();var done=dlg._resolve;pending=null;if(done)done()},700)}catch(e){showMessage(e.message,"error")}finally{verify.disabled=false}});code.addEventListener("keydown",function(e){if(e.key==="Enter")verify.click()});window.fetch=async function(input,init){var requestUrl=typeof input==="string"?input:input.url,options=Object.assign({},init||{});if(!isSensitive(requestUrl,options))return nativeFetch(input,options);options.headers=new Headers(options.headers||{});options.headers.set("X-VOKO-CSRF",cookie("voko_csrf"));options.headers.set("Accept",options.headers.get("Accept")||"application/json");var response=await nativeFetch(input,options);if((response.status===401||response.status===403)&&((await response.clone().json().catch(function(){return{}})).code==="WEB_AUTH_REQUIRED")){await authorize();options.headers.set("X-VOKO-CSRF",cookie("voko_csrf"));response=await nativeFetch(input,options)}return response};document.addEventListener("submit",async function(event){var form=event.target;if(!(form instanceof HTMLFormElement)||event.defaultPrevented||String(form.method).toUpperCase()!=="POST"||form.method==="dialog")return;var url=new URL(form.action||location.href,location.href);if(url.origin!==location.origin||publicPath(url.pathname))return;event.preventDefault();var data=new FormData(form);if(event.submitter&&event.submitter.name)data.append(event.submitter.name,event.submitter.value);var body=form.enctype==="multipart/form-data"?data:new URLSearchParams(Array.from(data.entries()).map(function(x){return[x[0],String(x[1])] }));try{var response=await window.fetch(url.href,{method:"POST",body:body});if(response.redirected){location.assign(response.url);return}var type=response.headers.get("content-type")||"";if(type.indexOf("text/html")!==-1){document.open();document.write(await response.text());document.close();return}var result=await response.json().catch(function(){return{}});if(result.success)location.reload();else throw new Error(result.error||'+JSON.stringify(T('common.action.failed'))+')}catch(e){if(e&&e.message!=='+JSON.stringify(T('web.reauth.cancelled'))+')window.alert(e.message||'+JSON.stringify(T('common.action.failed'))+')}})})();</'+'script>';
+    return css+html+script;
+  }
+
+  // 把公共授权 UI 注入所有 VOKO HTML 页面，包括子路由渲染的群聊和支付页面。
+  R.use((req,res,next)=>{
+    const send=res.send.bind(res);
+    res.send=(body)=>{
+      if(typeof body==='string'&&body.includes('</body>'))body=body.replace('</body>',webAuthorizationUi(req)+'</body>');
+      return send(body);
+    };
     next();
   });
 
@@ -961,6 +1032,14 @@ function createWebRouter(handlers, db, opts={}){
         +'<div class="voko-select-options" id="bt-options"><div class="voko-option voko-option-empty">'+L('web.agent.edit.types_load_on_open')+'</div></div></div>'
         +'<input type="hidden" id="bt" name="backendType" value="'+esc(btInitValue)+'">'
         +'</div></div>';
+      const iconUrl=p.iconUrl||'/favicon.png';
+      const iconField='<div><label>'+L('web.agent.edit.icon_url')+'</label>'
+        +'<div class="agent-icon-field"><button type="button" class="agent-icon-button" id="agent-icon-button" data-agent-action="agent.icon.upload" aria-label="'+L('web.agent.edit.icon_change')+'">'
+        +'<img class="agent-icon-preview" id="agent-icon-preview" src="'+esc(iconUrl)+'" alt="'+L('web.agent.edit.icon_url')+'" onerror="this.onerror=null;this.src=\'/favicon.png\'">'
+        +'<span class="agent-icon-overlay">'+L('web.agent.edit.icon_change')+'</span></button>'
+        +'<div><p class="meta agent-icon-help">'+L('web.agent.edit.icon_hint')+'</p><span id="agent-icon-status" class="agent-icon-status" aria-live="polite"></span></div></div>'
+        +'<input type="file" id="agent-icon-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>'
+        +'<input type="hidden" id="iconUrl" name="iconUrl" value="'+esc(p.iconUrl||'')+'"></div>';
       // 构建 2 列表单，字段紧凑排列
       const f=function(l,id,v,attr){return '<div><label for="'+id+'">'+esc(l)+'</label><input type="text" id="'+id+'" name="'+id+'" value="'+esc(v||'')+'" '+(attr||'')+'></div>'};
       res.send(renderAgentFormPage(T('web.agent.edit.title'),agentId,aname,
@@ -975,7 +1054,7 @@ function createWebRouter(handlers, db, opts={}){
         +backendField
         +f(T('web.agent.edit.short_desc'),'short_description',p.shortDescription)
         +f(T('web.agent.edit.tags'),'tags',Array.isArray(p.tags)?p.tags.join(', '):(p.tags||''),'placeholder="'+esc(T('web.agent.edit.tags_ph'))+'"')
-        +f(T('web.agent.edit.icon_url'),'iconUrl',p.iconUrl)
+        +iconField
         +f(T('web.agent.edit.phone'),'contact_phone',p.contactPhone)
         +f(T('web.agent.edit.address'),'address',p.address)
         +'<div class="full"><label for="desc">'+T('web.agent.edit.description')+'</label><textarea id="desc" name="description" rows="3">'+esc(p.description||'')+'</textarea></div>'
@@ -995,7 +1074,7 @@ function createWebRouter(handlers, db, opts={}){
         +'if(bs){bs.addEventListener("keydown",function(e){if(e.key==="Escape"){close();tr.focus();}});}'
         +'if(tr){tr.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}});}'
         +'document.addEventListener("click",function(e){if(w&&!w.contains(e.target))close();});'
-        +'})();</script>'
+        +'})();(function(){var b=document.getElementById("agent-icon-button"),f=document.getElementById("agent-icon-file"),img=document.getElementById("agent-icon-preview"),hidden=document.getElementById("iconUrl"),status=document.getElementById("agent-icon-status");if(!b||!f)return;var aid='+JSON.stringify(agentId)+',fallback="/favicon.png";function setStatus(text,kind){status.textContent=text||"";status.className="agent-icon-status"+(kind?" "+kind:"")}b.addEventListener("click",function(){if(!b.disabled)f.click()});f.addEventListener("change",function(){var file=f.files&&f.files[0];if(file)upload(file)});async function upload(file){var allowed=["image/png","image/jpeg","image/webp","image/gif"];if(allowed.indexOf(file.type)===-1){setStatus('+JSON.stringify(T('web.agent.edit.icon_invalid'))+',"error");f.value="";return}if(file.size>500*1024){setStatus('+JSON.stringify(T('web.agent.edit.icon_too_large'))+',"error");f.value="";return}var previous=hidden.value||fallback,preview=URL.createObjectURL(file);img.src=preview;b.disabled=true;setStatus('+JSON.stringify(T('web.agent.edit.icon_uploading'))+',"pending");var fd=new FormData();fd.append("file",file,file.name);try{var r=await fetch("/api/agents/"+encodeURIComponent(aid)+"/icon",{method:"POST",body:fd});var j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||'+JSON.stringify(T('web.agent.edit.icon_upload_failed'))+');hidden.value=j.iconUrl;var u=new URL(j.iconUrl,location.href);u.searchParams.set("_v",Date.now());img.src=u.href;setStatus('+JSON.stringify(T('web.agent.edit.icon_updated'))+',"success")}catch(e){img.src=previous;setStatus(e.message||'+JSON.stringify(T('web.agent.edit.icon_upload_failed'))+',"error")}finally{URL.revokeObjectURL(preview);b.disabled=false;f.value=""}}})();</script>'
       ,req.t,req.locale))
     }catch(e){next(e)}
   });
@@ -1264,6 +1343,30 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     } catch (e) {
       res.json({ success: false, error: e.message });
     }
+  });
+
+  R.post('/api/agents/:agentId/icon',async(req,res)=>{
+    try{
+      const file=parseMultipartFile(req);
+      if(!file)return res.status(400).json({success:false,error:req.t('web.agent.edit.icon_upload_invalid')});
+      if(file.data.length>500*1024)return res.status(413).json({success:false,error:req.t('web.agent.edit.icon_too_large')});
+      const type=detectAgentIconType(file.data);
+      if(!type)return res.status(400).json({success:false,error:req.t('web.agent.edit.icon_invalid')});
+      const objectName='agent-icons/'+require('crypto').randomUUID()+'.'+type.ext;
+      const uploader=typeof opts.uploadAgentIcon==='function'?opts.uploadAgentIcon:async(data,name,mime)=>require('../server/oss').uploadToOSS(name,data,mime);
+      const iconUrl=await uploader(file.data,objectName,type.mime);
+      const updated=await handlers.update_agent_profile({agentId:req.params.agentId,iconUrl});
+      if(updated?.success===false||updated?.error)return res.status(502).json({success:false,error:updated.error||req.t('web.agent.edit.icon_upload_failed')});
+      return res.json({success:true,iconUrl});
+    }catch(e){return res.status(500).json({success:false,error:e.message||req.t('web.agent.edit.icon_upload_failed')})}
+  });
+
+  R.post('/api/web/agents/restart',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res)=>{
+    try{
+      if(typeof handlers.restart_agent_runtime!=='function')return res.status(503).json({success:false,error:'Agent runtime restart is unavailable'});
+      const result=await handlers.restart_agent_runtime();
+      return res.status(result?.success===false?500:200).json(result);
+    }catch(e){return res.status(500).json({success:false,error:e.message})}
   });
 
   // ══════════════════════════════════════════════════════════
