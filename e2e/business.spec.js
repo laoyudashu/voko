@@ -30,6 +30,24 @@ async function inject(request, input) {
   return response.json();
 }
 
+async function runtime(request, agentId = 'e2e-agent') {
+  const response = await request.get(`/__test__/runtime?agentId=${encodeURIComponent(agentId)}`);
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
+async function callMcp(request, name, args, id = Date.now()) {
+  const response = await request.post('/mcp', {
+    data: { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } },
+  });
+  expect(response.ok()).toBeTruthy();
+  const envelope = await response.json();
+  expect(envelope.error).toBeUndefined();
+  const text = envelope.result?.content?.find(item => item.type === 'text')?.text;
+  expect(text).toBeTruthy();
+  return JSON.parse(text);
+}
+
 test('single chat sends and receives text through the real worker and Mock Provider', async ({ page, request }) => {
   await page.goto('/agents/e2e-agent/c/e2e-visitor');
   await expect(page.locator('#c')).toBeVisible();
@@ -59,6 +77,12 @@ test('single chat sends and receives text through the real worker and Mock Provi
   expect(uniqueIds.size).toBe(rows.length);
   expect(rows.filter(row => row.is_me === 1).every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
   expect(rows.every(row => row.channel_id === 'e2e-visitor' && row.channel_type === 1)).toBeTruthy();
+  const state = await runtime(request);
+  const direct = state.messageStats.find(item => item.channelId === 'e2e-visitor');
+  expect(Number(direct.replies)).toBe(2);
+  expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
+  expect(Number(direct.uniqueTurns)).toBe(Number(direct.total));
+  expect(state.deliveryStatus.activeMode).toBe('mock-echo');
 });
 
 test('group chat renders text, supports @all, and enforces mention permission', async ({ page, request }) => {
@@ -103,11 +127,15 @@ test('group chat renders text, supports @all, and enforces mention permission', 
   await expect(page.locator('#reply-send-err')).toContainText(/所有人|权限|owner|admin|管理员/i);
   const afterDenied = readMessages('e2e-group');
   expect(afterDenied.some(row => row.content === 'permission denied e2e')).toBeFalsy();
+  const state = await runtime(request);
+  const group = state.messageStats.find(item => item.channelId === 'e2e-group');
+  expect(Number(group.total)).toBeGreaterThanOrEqual(4);
+  expect(Number(group.uniqueIds)).toBe(Number(group.total));
 
   await request.post(`${manifest().services.api}/__test__/group-role`, { data: { role: 'owner' } });
 });
 
-test('single-chat attachment upload sends note then file and returns to the conversation', async ({ page }) => {
+test('single-chat attachment upload sends note then file and returns to the conversation', async ({ page, request }) => {
   await page.goto('/agents/e2e-agent/upload?toUid=e2e-visitor&channelType=1');
   await page.locator('#upload-file').setInputFiles({
     name: 'e2e-attachment.txt',
@@ -126,6 +154,12 @@ test('single-chat attachment upload sends note then file and returns to the conv
   expect(fileRows).toHaveLength(1);
   expect(fileRows[0].status).toBe('sent');
   expect(fileRows[0].client_msg_no).toBeTruthy();
+  const note = rows.find(row => row.content === 'attachment note e2e');
+  expect(note.client_msg_no).toBeTruthy();
+  expect(note.timestamp).toBeLessThanOrEqual(fileRows[0].timestamp);
+  const state = await runtime(request);
+  const direct = state.messageStats.find(item => item.channelId === 'e2e-visitor');
+  expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
 });
 
 test('duplicate and reordered inbound frames remain idempotent in SQLite', async ({ page, request }) => {
@@ -159,6 +193,12 @@ test('duplicate and reordered inbound frames remain idempotent in SQLite', async
   await expect(page.locator('#msg-box')).toContainText('duplicate inbound e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered first e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered second e2e');
+  const state = await runtime(request);
+  const dedupe = state.messageStats.find(item => item.channelId === 'e2e-dedupe');
+  expect(Number(dedupe.total)).toBe(6);
+  expect(Number(dedupe.replies)).toBe(3);
+  expect(Number(dedupe.uniqueIds)).toBe(6);
+  expect(Number(dedupe.uniqueTurns)).toBe(6);
 });
 
 test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }) => {
@@ -177,6 +217,21 @@ test('provider failure leaves the message available for Pull and recovery restor
   const pullRows = await waitForMessages('e2e-pull', rows => rows.some(row => row.id === '1401'));
   expect(pullRows.some(row => row.is_me === 1 && row.content.includes('[echo] pull fallback e2e'))).toBeFalsy();
   await expect(page.locator('#msg-box')).toContainText('pull fallback e2e');
+  const beforePull = await runtime(request);
+  expect(beforePull.deliveryStatus.activeMode).toBe('pull');
+  expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === 'e2e-pull')).toBeFalsy();
+
+  const pulled = await callMcp(request, 'voko_fetch_new_messages', {
+    agentId: 'e2e-agent', visitorId: 'e2e-pull', onlyReplies: true, limit: 10,
+  });
+  expect(pulled.success).toBe(true);
+  expect(pulled.messages).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: '1401', content: 'pull fallback e2e' }),
+  ]));
+  const afterPull = await runtime(request);
+  const cursor = afterPull.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === 'e2e-pull');
+  expect(cursor).toBeTruthy();
+  expect(Number(cursor.committed_value)).toBe(50);
 
   const recovery = await request.post('/__test__/provider', { data: { available: true } });
   expect(recovery.ok()).toBeTruthy();
@@ -191,6 +246,11 @@ test('provider failure leaves the message available for Pull and recovery restor
   });
   await waitForMessages('e2e-pull', rows => rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('push recovered e2e')));
   await expect(page.locator('#msg-box')).toContainText('push recovered e2e');
+  const recovered = await runtime(request);
+  expect(recovered.deliveryStatus.activeMode).toBe('mock-echo');
+  const pullStats = recovered.messageStats.find(item => item.channelId === 'e2e-pull');
+  expect(Number(pullStats.replies)).toBe(1);
+  expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
 });
 
 test.afterEach(async ({ request }) => {

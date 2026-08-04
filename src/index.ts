@@ -613,6 +613,30 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       (global as any).__dispatcher?.invalidateRoutes?.({ providerId: 'mock-echo', reason: 'e2e-provider-control', available: provider.isAvailable?.() });
       return res.json({ success: true, available: !!provider.isAvailable?.() });
     });
+    app.get('/__test__/runtime', (req?: any, res?: any) => {
+      const agentId = String(req.query?.agentId || '').trim();
+      if (!agentId) return res.status(400).json({ success: false, error: 'agentId is required' });
+      try {
+        const agent = db.prepare('SELECT agent_id, imUid, delivery_modes, backend_type FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+        const deliveryStatus = (global as any).__dispatcher?.getAgentDeliveryStatus?.(agentId) || null;
+        const checkpoints = db.prepare(`
+          SELECT namespace, scope_key, cursor_kind, committed_value, pending_value, revision
+          FROM sync_checkpoints WHERE namespace LIKE 'mcp.%' OR namespace='offline_messages'
+          ORDER BY namespace, scope_key
+        `).all();
+        const messageStats = db.prepare(`
+          SELECT channel_id AS channelId, channel_type AS channelType,
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN is_me=1 THEN 1 ELSE 0 END) AS replies,
+                 COUNT(DISTINCT id) AS uniqueIds,
+                 COUNT(DISTINCT COALESCE(client_msg_no, id)) AS uniqueTurns
+          FROM messages WHERE agent_id=? GROUP BY channel_id, channel_type
+        `).all(agentId);
+        return res.json({ success: true, agent, deliveryStatus, checkpoints, messageStats });
+      } catch (e: any) {
+        return res.status(500).json({ success: false, error: e?.message || 'runtime snapshot failed' });
+      }
+    });
   }
 
   let currentWebRouter = webRouter;
