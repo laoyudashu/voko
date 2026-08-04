@@ -45,9 +45,11 @@ jobs:
             exit 1
           fi
       - run: npm run release:gate
-      - name: Build the release tarball once
+      - name: Create the release tarball from the verified build
         run: |
-          npm pack --json > npm-pack.json
+          # release:gate already built the package. Disable lifecycle scripts here
+          # so their diagnostic output cannot corrupt npm's machine-readable JSON.
+          npm pack --json --ignore-scripts > npm-pack.json
           node - <<'NODE'
           const fs = require('node:fs');
           const result = JSON.parse(fs.readFileSync('npm-pack.json', 'utf8'));
