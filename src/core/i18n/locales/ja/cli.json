@@ -1,4 +1,5 @@
 {
+  "cli.usage.uninstall": "VOKO を安全に停止し npm 削除の準備を行う",
   "cli.index.headless_onboarding": "グラフィカル環境のないターミナルで未ログインのため、初回ログインを開始します。",
   "cli.index.headless_register": "このメールアドレスには Agent がないため、対話式 Agent 登録を続行します。",
   "cli.usage.no_interactive": "ヘッドレスターミナルの初回対話ウィザードを無効化",

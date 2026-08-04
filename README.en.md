@@ -64,6 +64,8 @@ VOKO is a Node.js package with local support for paths, processes, and browser o
 
 The default database lives in VOKO's application-data directory for the current system. It contains local application data and must not be committed, shared, or uploaded. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md) for the runtime model and local-port boundary.
 
+Before removing the package, run `voko uninstall`. It fully stops the local runtime, identifies MCP / Provider configuration that may need manual review, and prints the correct npm removal command while preserving `voko.db` by default. Permanent local-data deletion requires an explicit `voko uninstall --purge`; see [Safe uninstall](docs/uninstall.en.md).
+
 ## Help and contributions
 
 1. Prefer the local Web UI's [Report a bug page](http://localhost:3100/bug-report) for sanitized product issues. Never include passwords, tokens, private keys, verification codes, or private conversations.

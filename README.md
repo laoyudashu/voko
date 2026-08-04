@@ -64,6 +64,8 @@ VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路�
 
 默认数据库位于当前系统的 VOKO 应用数据目录。数据库包含本地应用数据，不应提交、共享或上传。更多运行模型与本地端口边界见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
+卸载前运行 `voko uninstall`，它会彻底停止本机运行时、检查需要手动处理的 MCP / Provider 配置，并给出正确的 npm 卸载命令；默认保留 `voko.db`。永久清除本机数据需显式使用 `voko uninstall --purge`。详见[安全卸载说明](docs/uninstall.md)。
+
 ## 获取帮助与参与贡献
 
 1. 优先在本地 Web UI 的[错误上报页](http://localhost:3100/bug-report)提交已脱敏的产品问题；请勿提交密码、令牌、私钥、验证码或私密对话。

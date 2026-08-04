@@ -83,10 +83,8 @@ const {
   cleanupOrphanedWorkers,
   isInstanceAlive,
   readInstanceMetadata,
-  removeInstanceLock,
-  terminateInstance,
-  waitForProcessExit,
 } = require('./core/process-lifecycle');
+const { stopVoko } = require('./core/stop-voko');
 
 // ── Lite 模块 ──
 const { createContext } = require('./context');
@@ -101,7 +99,7 @@ const { createHttpTransport } = require('./mcp/transport/http');
 const { createWebRouter } = require('./web');
 
 // ── i18n（进程级 locale：CLI 文案与默认 locale 由 main() 启动时设定）──
-const { setLocale, detectCliLocale, t } = require('./core/i18n');
+const { setLocale, getLocale, detectCliLocale, t } = require('./core/i18n');
 
 let __instanceLock: any = null;
 let __httpServer: any = null;
@@ -382,7 +380,9 @@ function resolveDbPath(args?: any, options: any = {}) {
     return process.env.VOKO_DB_PATH;
   }
   const defaultDb = getDefaultDbPath();
-  try { require('fs').mkdirSync(path.dirname(defaultDb), { recursive: true }); } catch (_: any) {}
+  if (!options.noCreate) {
+    try { require('fs').mkdirSync(path.dirname(defaultDb), { recursive: true }); } catch (_: any) {}
+  }
   return defaultDb;
 }
 
@@ -2599,6 +2599,7 @@ function printUsage() {
     '  voko <tool-name> --help    ' + t('cli.usage.tool_help') + '\n' +
     '  voko --tools               ' + t('cli.usage.tools_list') + '\n' +
     '  voko stop                  ' + t('cli.usage.stop') + '\n' +
+    '  voko uninstall [--purge]   ' + t('cli.usage.uninstall') + '\n' +
     '  voko mcp                   ' + t('cli.usage.mcp') + '\n' +
     '  voko status                ' + t('cli.usage.status') + '\n' +
     '  voko update                ' + t('cli.usage.update') + '\n' +
@@ -2667,7 +2668,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'setup', 'mcp', 'stop', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2684,6 +2685,26 @@ async function main() {
   if (subcommand === 'setup') {
     const result = inspectSetup(args);
     console.log(JSON.stringify(result, null, 2));
+    if (!result.success) process.exitCode = 1;
+    return;
+  }
+
+  if (subcommand === 'uninstall') {
+    const dbPath = resolveDbPath(args, { silent: true, noCreate: true });
+    const uninstall = require('./core/uninstall');
+    const result = await uninstall.runUninstall({
+      dbPath,
+      dataPath: path.dirname(getDefaultDbPath()),
+      defaultDataPath: path.dirname(getDefaultDbPath()),
+      entryPath: process.argv[1],
+      purge: !!args.purge,
+      yes: !!args.yes,
+      dryRun: !!args.dryRun || !!args['dry-run'],
+      json: !!args.json,
+      onGraceful: (port: number) => { if (!args.json) console.error(t('cli.index.stopping', { port })); },
+    });
+    if (args.json) console.log(JSON.stringify(result, null, 2));
+    else console.log(uninstall.formatUninstall(result, getLocale()));
     if (!result.success) process.exitCode = 1;
     return;
   }
@@ -2740,73 +2761,15 @@ async function main() {
 
   // stop — 先 HTTP 优雅关闭，再强杀兜底
   if (subcommand === 'stop') {
-    const http = require('http');
     const dbPath = resolveDbPath(args, { silent: true });
-    const instance = readInstanceMetadata(dbPath);
-    if (!instance || !isInstanceAlive(instance)) {
-      cleanupOrphanedWorkers(dbPath);
+    const result = await stopVoko(dbPath, (port: number) => console.error(t('cli.index.stopping', { port })));
+    if (!result.wasRunning) {
       console.error(t('cli.index.no_instance'));
       process.exit(1);
     }
-
-    let gracefulRequested = false;
-    if (instance.port) {
-      try {
-        const health = await new Promise<any>((resolve, reject) => {
-          const req = http.get({
-            hostname: '127.0.0.1',
-            port: instance.port,
-            path: '/health',
-            timeout: 2000,
-          }, (res: any) => {
-            let body = '';
-            res.setEncoding('utf8');
-            res.on('data', (chunk: string) => { body += chunk; });
-            res.on('end', () => {
-              try { resolve(JSON.parse(body)); } catch (error) { reject(error); }
-            });
-          });
-          req.on('error', reject);
-          req.on('timeout', () => req.destroy(new Error('timeout')));
-        });
-        if (health?.instanceId === instance.instanceId) {
-          await new Promise<void>((resolve, reject) => {
-            const req = http.request({
-              hostname: '127.0.0.1',
-              port: instance.port,
-              path: '/api/quit',
-              method: 'POST',
-              timeout: 3000,
-              headers: { 'X-VOKO-Instance-ID': instance.instanceId, 'X-VOKO-Token': instance.mcpToken },
-            }, (res: any) => {
-              res.resume();
-              res.on('end', () => res.statusCode === 200
-                ? resolve()
-                : reject(new Error(`HTTP ${res.statusCode}`)));
-            });
-            req.on('error', reject);
-            req.on('timeout', () => req.destroy(new Error('timeout')));
-            req.end();
-          });
-          gracefulRequested = true;
-          console.error(t('cli.index.stopping', { port: instance.port }));
-        }
-      } catch (_: any) {}
-    }
-
-    let stopped = gracefulRequested
-      ? await waitForProcessExit(instance.pid, 7000)
-      : false;
-    if (!stopped) {
-      stopped = await terminateInstance(instance);
-      if (!stopped) stopped = await waitForProcessExit(instance.pid, 2000);
-    }
-    const orphanResult = cleanupOrphanedWorkers(dbPath);
-    if (stopped) removeInstanceLock(dbPath, instance.instanceId);
-    const remaining = orphanResult.skipped.filter((pid: number) => pid > 0);
-    if (!stopped || remaining.length > 0) {
+    if (!result.stopped) {
       console.error(t('cli.index.stop_incomplete', {
-        pids: [!stopped ? instance.pid : null, ...remaining].filter(Boolean).join(', '),
+        pids: result.remainingPids.join(', '),
       }));
       process.exit(1);
     }
