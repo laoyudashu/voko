@@ -383,6 +383,11 @@ function createWebRouter(handlers, db, opts={}){
     if((req.get('accept')||'').includes('application/json')||req.query.json==='1')return res.status(401).json({success:false,error:'Unauthorized'});
     return res.redirect('/login');
   };
+  const requireSensitiveCsrf=(req,res,next)=>{
+    if(req.localAuth?.type==='instance')return next();
+    if(opts.webSessions&&opts.webSessions.verifyCsrf(req,req.localAuth))return next();
+    return res.status(403).json({success:false,error:'Invalid CSRF token'});
+  };
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -1737,6 +1742,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
   R.get('/api/console',requireSensitiveLocalAuth,async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
+      const csrf=opts.webSessions?.requestCsrfToken(req)||'';
       const examples=[
         {label:T('web.console.ex.whoami'),json:'{"action":"whoami","params":{}}'},
         {label:T('web.console.ex.history'),json:'{"action":"get_chat_history","params":{"agentId":"gym","channelId":"test_user"}}'},
@@ -1750,7 +1756,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
 
       res.send(renderPage(req,T('web.console.title'),'<div class="card"><h3>'+L('web.console.heading')+'</h3><p style="font-size:14px;color:#555;line-height:1.8">'+T('web.console.intro')+'</p><p style="font-size:13px;color:#1a73e8;line-height:1.7">'+T('web.console.hint')+'</p><table style="font-size:14px;width:auto;min-width:auto"><tr><th style="padding:4px 8px">'+L('web.console.col.field')+'</th><th style="padding:4px 8px">'+L('web.console.col.desc')+'</th></tr><tr><td style="padding:4px 8px"><code>action</code></td><td style="padding:4px 8px">'+T('web.console.action_desc')+'</td></tr><tr><td style="padding:4px 8px"><code>params</code></td><td style="padding:4px 8px">'+T('web.console.params_desc')+'</td></tr></table></div>'
       +'<div class="card"><h3>'+L('web.console.examples')+'</h3>'+examplesText+'</div>'
-      +'<div class="card"><h3>'+L('web.console.json_cmd')+'</h3><form method="POST" action="/api/console" data-agent="json_form">'
+      +'<div class="card"><h3>'+L('web.console.json_cmd')+'</h3><form method="POST" action="/api/console" data-agent="json_form"><input type="hidden" name="_csrf" value="'+esc(csrf)+'">'
       +'<textarea id="json-input" name="json" rows="10" style="width:100%;font-family:monospace;font-size:14px;padding:10px" spellcheck="false" data-agent="json_input" placeholder=\'{"action":"send_message","params":{"agentId":"gym","toUid":"user_xxx","content":"hello"}}\'>{\n  "action": "",\n  "params": {}\n}</textarea>'
       +'<br><br><button type="submit" data-agent="json_submit">'+L('web.console.submit')+'</button> '
       +'<a href="/api/console" class="btn" data-agent="json_reset">'+L('web.console.reset')+'</a></form></div>'
@@ -1758,7 +1764,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       +'<p><a href="/">← '+L('common.btn.home')+'</a></p>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/api/console">'+L('web.console.title')+'</a>'}))
     }catch(e){next(e)}
   });
-  R.post('/api/console',requireSensitiveLocalAuth,async(req,res,next)=>{
+  R.post('/api/console',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res,next)=>{
     const T=req.t,L=k=>esc(T(k));
     const wantJson=(req.get('accept')||'').includes('application/json')||req.query.json==='1';
     const jfail=(status,payload)=>{res.type('application/json');return res.status(status).json(Object.assign({success:false},payload))};
@@ -1796,7 +1802,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       if(wantJson)return res.type('application/json').json({success,action,params,result,elapsed});
       res.send(renderPage(req,T('web.console.result_title'),'<div class="card"><p class="'+(success?'success':'error')+'">'+(success?'✅ '+T('web.console.exec_success'):'❌ '+T('web.console.exec_fail'))+'</p><p style="font-size:14px;color:#888">'+T('web.console.op')+': '+esc(action)+' | '+T('web.console.elapsed')+': '+elapsed+'s</p></div>'
       +'<div class="card"><h3>'+L('web.console.result_json')+'</h3><pre style="background:#f5f5f5;padding:10px;border-radius:4px;font-size:13px;line-height:1.5;overflow-x:auto;white-space:pre-wrap">'+esc(JSON.stringify(result,null,2))+'</pre></div>'
-      +'<div class="card"><h3>'+L('web.console.continue_title')+'</h3><form method="POST" action="/api/console"><textarea name="json" rows="6" style="width:100%;font-family:monospace;font-size:14px" spellcheck="false">'+esc(JSON.stringify(input,null,2))+'</textarea><br><br><button type="submit">'+L('web.console.rerun')+'</button> <a href="/api/console" class="btn">'+L('web.console.new_cmd')+'</a></form></div>'
+      +'<div class="card"><h3>'+L('web.console.continue_title')+'</h3><form method="POST" action="/api/console"><input type="hidden" name="_csrf" value="'+esc(opts.webSessions?.requestCsrfToken(req)||'')+'"><textarea name="json" rows="6" style="width:100%;font-family:monospace;font-size:14px" spellcheck="false">'+esc(JSON.stringify(input,null,2))+'</textarea><br><br><button type="submit">'+L('web.console.rerun')+'</button> <a href="/api/console" class="btn">'+L('web.console.new_cmd')+'</a></form></div>'
       +'<script type="application/ld+json">'+jsonForInlineScript({actionStatus:success?'CompletedSuccessfully':'Failed',action,params,result,elapsed})+'</script>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/api/console">'+L('web.console.title')+'</a> › '+L('web.console.result_crumb')}))
     }catch(e){
       if(wantJson)return res.type('application/json').status(500).json({success:false,error:e.message,action});

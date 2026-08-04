@@ -906,7 +906,7 @@ function createRegisterRouter(handlers, db, options = {}) {
     const r = await handlers.oauth_exchange(req.body || {});
     if (r.success && options.webSessions) {
       const email = getLoggedEmail();
-      if (email) options.webSessions.setCookie(res, options.webSessions.create(email).token);
+      if (email) options.webSessions.setCookie(res, options.webSessions.create(email));
     }
     res.status(r.success ? 200 : (r.status || 400)).json({
       success: !!r.success,
@@ -941,7 +941,7 @@ function createRegisterRouter(handlers, db, options = {}) {
         const code = req.body.code;
         const r = await handlers.login_by_code({ email, code });
         if (r.success) {
-          if (options.webSessions) options.webSessions.setCookie(res, options.webSessions.create(email).token);
+          if (options.webSessions) options.webSessions.setCookie(res, options.webSessions.create(email));
           let agentCount = 0;
           try {
             if (db) {
