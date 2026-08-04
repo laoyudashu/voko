@@ -520,23 +520,6 @@ function extractFileNameFromUrl(url?: string) {
  * 通过 HEAD 请求探测远程文件的 size 和 MIME type。
  * 失败时返回 { size: 0, type: '' }，不影响发送。
  */
-async function probeFileMetadata(url?: string) {
-  if (!url) return { size: 0, type: '' };
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
-    clearTimeout(timeout);
-    if (!res.ok) return { size: 0, type: '' };
-    const length = res.headers.get('content-length');
-    const contentType = res.headers.get('content-type') || '';
-    const size = length ? parseInt(length, 10) : 0;
-    return { size: Number.isFinite(size) ? size : 0, type: contentType.split(';')[0].trim() };
-  } catch (_: any) {
-    return { size: 0, type: '' };
-  }
-}
-
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const ATTACHMENT_MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
@@ -1248,20 +1231,7 @@ function createToolHandlers(cx: McpContext) {
       let content = p.content;
       if (messageType === 'file') {
         content = normalizeFileContent(content);
-        // 如果 size 为 0，尝试 HEAD 探测远程文件大小和 MIME type
-        try {
-          const payload = JSON.parse(content);
-          if (!payload.size && payload.url) {
-            const meta = await probeFileMetadata(payload.url);
-            if (meta.size) {
-              payload.size = meta.size;
-              if (meta.type) payload.type = meta.type;
-              content = JSON.stringify(payload);
-            }
-          }
-        } catch (_: any) {
-          // 非 JSON 时不处理，直接发送
-        }
+        // 不对调用方提供的 URL 发起元数据请求；远程大小和类型由调用方显式提供。
       }
 
       const mentions = channelType === 2 ? (p.mentions || null) : null;
@@ -1375,16 +1345,17 @@ function createToolHandlers(cx: McpContext) {
 
     async get_visitor_profile(p: McpToolParams = {}) {
       const { visitorId, agentId } = p;
+      if (!agentId) return { success: false, error: 'agentId is required' };
+      const ownershipError = _agentOwnershipError(agentId);
+      if (ownershipError) return { success: false, error: ownershipError };
       const msgLimit = p.limit || 10;
       const msgOffset = p.offset || 0;
       const cache = cx.query(`SELECT uid, nickname, avatar_url FROM user_cache WHERE uid=? LIMIT 1`, [visitorId]);
       const profile = cache && cache[0] ? cache[0] : { uid: visitorId };
 
       // 消息统计
-      const statsSql = agentId
-        ? `SELECT COUNT(*) as total, MIN(timestamp) as firstAt, MAX(timestamp) as lastAt FROM messages WHERE from_uid=? AND agent_id=?`
-        : `SELECT COUNT(*) as total, MIN(timestamp) as firstAt, MAX(timestamp) as lastAt FROM messages WHERE from_uid=?`;
-      const msgStats = cx.query(statsSql, agentId ? [visitorId, agentId] : [visitorId]);
+      const statsSql = `SELECT COUNT(*) as total, MIN(timestamp) as firstAt, MAX(timestamp) as lastAt FROM messages WHERE from_uid=? AND agent_id=?`;
+      const msgStats = cx.query(statsSql, [visitorId, agentId]);
       const totalMessages = msgStats[0]?.total || 0;
       const firstMessageAt = msgStats[0]?.firstAt || null;
       const lastMessageAt = msgStats[0]?.lastAt || null;
@@ -1397,11 +1368,9 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 最近对话（可配置条数、可翻页）
-      const recentSql = agentId
-        ? `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`
-        : `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+      const recentSql = `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
       const recentMulti = msgLimit + 1; // 多取 1 条用来算 hasMore
-      const recentParams = agentId ? [visitorId, agentId, recentMulti, msgOffset] : [visitorId, recentMulti, msgOffset];
+      const recentParams = [visitorId, agentId, recentMulti, msgOffset];
       const recentRows = cx.query<MessageDbRow>(recentSql, recentParams);
       const hasMore = recentRows.length > msgLimit;
       if (hasMore) recentRows.pop();
@@ -1412,10 +1381,8 @@ function createToolHandlers(cx: McpContext) {
       }));
 
       // 入站审核统计（只算访客触发的拦截，按 agent 隔离）
-      const auditSql = agentId
-        ? `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND agent_id=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`
-        : `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`;
-      const auditParams = agentId ? [visitorId, agentId] : [visitorId];
+      const auditSql = `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND agent_id=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`;
+      const auditParams = [visitorId, agentId];
       const auditRows = cx.query(auditSql, auditParams);
       let audit = { totalHits: 0, hardDenyCount: 0, softDenyCount: 0, lastHitAt: null, lastKeyword: null };
       for (const r of auditRows) {
@@ -1433,10 +1400,8 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 支付记录
-      const paidSql = agentId
-        ? `SELECT 1 FROM payment_orders WHERE visitor_id=? AND agent_id=? AND status='paid' LIMIT 1`
-        : `SELECT 1 FROM payment_orders WHERE visitor_id=? AND status='paid' LIMIT 1`;
-      const paidRows = cx.query(paidSql, agentId ? [visitorId, agentId] : [visitorId]);
+      const paidSql = `SELECT 1 FROM payment_orders WHERE visitor_id=? AND agent_id=? AND status='paid' LIMIT 1`;
+      const paidRows = cx.query(paidSql, [visitorId, agentId]);
       const hasPaid = paidRows.length > 0;
 
       return {

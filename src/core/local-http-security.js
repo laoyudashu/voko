@@ -11,6 +11,7 @@ const TOKEN_PROTECTED_API_PATHS = new Set([
   '/api/agent/register-capabilities', '/api/agent/update-binding', '/api/agent/publish',
   '/api/agent/unpublish', '/api/agents/restart', '/api/simulate-message',
   '/api/message/send', '/api/messages/insert-system',
+  '/api/agent/files', '/api/agent/file', '/api/oss-signature',
 ]);
 
 function parseLoopbackAuthority(value, asOrigin = false) {
