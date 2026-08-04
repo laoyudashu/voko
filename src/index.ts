@@ -66,6 +66,7 @@ const {
   SCHEMA_VERSION,
 } = require('./core/database');
 const { createAgentRegistration } = require('./core/agent-registration');
+const { createLocalWebSessionStore } = require('./core/local-web-session');
 const { assertSecureEndpoint } = require('./core/url-security');
 const {
   isAllowedLocalHost,
@@ -1677,7 +1678,12 @@ async function startMcpServer(args?: any, core?: any) {
   const mcpServer = createMcpServer(handlers, { version: pkg.version });
 
   // Agent 网页版
-  const webRouter = createWebRouter(handlers, db, { getToolList: () => getToolList(mcpServer) });
+  const webSessions = createLocalWebSessionStore(db);
+  const webRouter = createWebRouter(handlers, db, {
+    getToolList: () => getToolList(mcpServer),
+    webSessions,
+    localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
+  });
 
 const { RuntimeState } = require('./core/runtime-state');
   const runtimeState = new RuntimeState();

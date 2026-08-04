@@ -904,6 +904,10 @@ function createRegisterRouter(handlers, db, options = {}) {
 
   R.post('/api/login/oauth/exchange', async (req, res) => {
     const r = await handlers.oauth_exchange(req.body || {});
+    if (r.success && options.webSessions) {
+      const email = getLoggedEmail();
+      if (email) options.webSessions.setCookie(res, options.webSessions.create(email).token);
+    }
     res.status(r.success ? 200 : (r.status || 400)).json({
       success: !!r.success,
       error: r.error,
@@ -937,6 +941,7 @@ function createRegisterRouter(handlers, db, options = {}) {
         const code = req.body.code;
         const r = await handlers.login_by_code({ email, code });
         if (r.success) {
+          if (options.webSessions) options.webSessions.setCookie(res, options.webSessions.create(email).token);
           let agentCount = 0;
           try {
             if (db) {
