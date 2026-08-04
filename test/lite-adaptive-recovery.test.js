@@ -178,3 +178,49 @@ test('ACP CLI fallback failures remain unhandled so dispatcher can leave the mes
   await assert.rejects(adapter._pushViaCli(basePayload), /code 7/);
   assert.equal(replies.length, 0);
 });
+
+test('ACP runtime availability is separate from per-agent process health', async () => {
+  const adapter = new AcpAdapter({
+    runtimeRequest: {
+      providerId: 'test-acp',
+      mode: 'acp',
+      candidates: [],
+    },
+    runtimeResolver: {
+      resolve: () => ({ available: true, executable: process.execPath, argvPrefix: [], resolvedAt: Date.now() }),
+      invalidate() {},
+    },
+  });
+  const events = [];
+  adapter.on('availability', (event) => events.push(event));
+  adapter._started = true;
+
+  adapter._markAgentHealth('agent-a', false, 'process-exit:1');
+  assert.equal(adapter.isAvailable('agent-a'), false);
+  assert.equal(adapter.isAvailable('agent-b'), true);
+
+  const state = {
+    child: null,
+    transportAlive: true,
+    transportClose: null,
+    agentCtx: {},
+    sessions: new Map(),
+    ready: Promise.resolve(),
+    _readyResolve: null,
+    _shutdownResolve: null,
+  };
+  let allowedRecovery = false;
+  adapter._ensureAgent = async (agentId, allowRecovery) => {
+    allowedRecovery = allowRecovery;
+    adapter._agents.set(agentId, state);
+    return state;
+  };
+
+  const result = await adapter.healthCheck();
+  assert.equal(result.ok, true);
+  assert.equal(result.agents['agent-a'].status, 'recovered');
+  assert.equal(allowedRecovery, true);
+  assert.equal(adapter.isAvailable('agent-a'), true);
+  assert.equal(events.some((event) => event.agentId === 'agent-a' && event.available === false), true);
+  assert.equal(events.some((event) => event.agentId === 'agent-a' && event.available === true), true);
+});

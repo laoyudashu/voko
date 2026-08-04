@@ -46,13 +46,15 @@ test('Lite runtime contains no developer-machine Goose path', () => {
   }
 });
 
-test('ACP JavaScript launch uses the current Node executable on every platform', () => {
+test('ACP launch uses the resolved runtime and current Node executable for scripts', () => {
   const source = fs.readFileSync(
     path.join(LITE_SRC, 'core', 'adapters', 'acp-adapter.ts'),
     'utf8',
   );
 
-  assert.match(source, /const cmd = isNodeScript \? process\.execPath : cliPath/);
+  assert.match(source, /const cmd = runtime\?\.executable \|\|/);
+  assert.match(source, /runtime\.argvPrefix/);
+  assert.match(source, /process\.execPath/);
   assert.doesNotMatch(source, /process\.platform === 'win32' \? process\.execPath : 'node'/);
 });
 
