@@ -19,10 +19,15 @@ VOKO uses pull requests for code and version changes. Do not commit directly to
 3. Run the **Publish npm** workflow from `main` and enter the exact version.
 4. Approve the protected `npm-production` environment after reviewing the
    prepared tarball and successful release gate.
-5. Verify the published package before creating the matching Git tag and GitHub
-   release.
+5. The workflow verifies the published package, then creates the matching
+   `vX.Y.Z` Git tag and GitHub Release at the exact `main` commit. It refuses
+   to overwrite an existing tag or release.
 
 The npm package must configure this repository's `release-npm.yml` workflow as
 an npm Trusted Publisher. The workflow uses short-lived OIDC credentials and
 publishes the exact tarball produced by the preparation job with provenance.
 No long-lived npm token is required in GitHub secrets.
+
+The release job uses a separate `contents: write` permission only after the
+npm publish job succeeds. The npm production environment approval remains the
+manual approval point; the GitHub tag/release creation itself is automated.

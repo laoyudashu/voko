@@ -84,6 +84,11 @@ npm run release:publish:update-source
 gh release create vX.Y.Z --repo laoyudashu/voko --target main --title "VOKO vX.Y.Z" --generate-notes
 ```
 
+使用 GitHub 的 **Publish npm** workflow 时，上述 Tag/Release 会在 npm
+发布成功后由后置 job 自动创建，并固定到本次 workflow 的 `main` 提交；若
+Tag 或 Release 已存在，workflow 会失败且不会覆盖已有发布。手动命令仅作为
+故障恢复或历史版本补建入口。
+
 预发布版本使用 SemVer 后缀（如 `0.5.0-rc.1`）、npm dist-tag（如 `--tag next`）和 `gh release create --prerelease`，不得覆盖正式版的 `latest`。
 
 ## 5. 发布后验证
