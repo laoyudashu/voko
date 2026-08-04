@@ -243,7 +243,7 @@ class WechatHandler {
         let data = '';
         res.on('data', (chunk: Buffer | string) => data += chunk.toString());
         res.on('end', async () => {
-          console.log('[Wechat] getupdates response length:', data.length, 'content:', data.substring(0, 300));
+          console.log('[Wechat] getupdates response length:', data.length);
           try {
             const json = parseResponse(data);
             // 如果没有 ret 字段，检查是否有 msgs 或 sync_buf（iLink 成功响应）
@@ -327,7 +327,12 @@ class WechatHandler {
     const text = this.extractText(msg);
     const contextToken = msg.context_token;
 
-    console.log('[Wechat] 收到消息, context_token:', contextToken, 'messageId:', messageId, 'fromUserId:', fromUserId, 'text:', text);
+    console.log('[Wechat] 收到消息', {
+      hasContextToken: !!contextToken,
+      hasMessageId: !!messageId,
+      senderIsOwner: fromUserId === this.ownerUserId,
+      textLength: text.length,
+    });
 
     // 只处理来自主人的消息
     if (fromUserId !== this.ownerUserId) {

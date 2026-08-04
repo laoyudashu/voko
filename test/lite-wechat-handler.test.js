@@ -165,6 +165,9 @@ test('畸形微信消息不会被静默丢弃并推进游标', async () => {
 test('只处理主人消息并等待主人回复回调完成', async () => {
   const WechatHandler = loadHandler();
   const replies = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.map((value) => typeof value === 'string' ? value : JSON.stringify(value)).join(' '));
   let callbackFinished = false;
   const handler = new WechatHandler({
     botToken: 'token',
@@ -180,27 +183,32 @@ test('只处理主人消息并等待主人回复回调完成', async () => {
     },
   });
 
-  await handler.processUpdates([
-    {
-      message_type: 1,
-      from_user_id: 'other',
-      message_id: 10,
-      context_token: 'context-1',
-      item_list: [{ type: 1, text_item: { text: '其他用户' } }],
-    },
-    {
-      message_type: 1,
-      from_user_id: 'owner',
-      message_id: 11,
-      context_token: 'context-1',
-      item_list: [{ type: 1, text_item: { text: '主人回复' } }],
-    },
-  ]);
+  try {
+    await handler.processUpdates([
+      {
+        message_type: 1,
+        from_user_id: 'other',
+        message_id: 10,
+        context_token: 'context-1',
+        item_list: [{ type: 1, text_item: { text: '其他用户' } }],
+      },
+      {
+        message_type: 1,
+        from_user_id: 'owner',
+        message_id: 11,
+        context_token: 'context-1',
+        item_list: [{ type: 1, text_item: { text: '主人回复' } }],
+      },
+    ]);
+  } finally {
+    console.log = originalLog;
+  }
 
   assert.equal(callbackFinished, true);
   assert.equal(replies.length, 1);
   assert.equal(replies[0][1], '主人回复');
   assert.equal(replies[0][2], '11');
+  assert.doesNotMatch(logs.join('\n'), /context-1|其他用户|主人回复|fromUserId|messageId.*(?:10|11)/);
 });
 
 test('sendMessageToOwnerWithTracking 保持微信消息 ID 返回契约', async () => {

@@ -771,7 +771,13 @@ test('Lite registration preview classifies external API response failures', asyn
 
 test('Lite send-code and login bootstrap requests do not expose HMAC credentials', async (t) => {
   const originalFetch = global.fetch;
-  t.after(() => { global.fetch = originalFetch; });
+  const originalLog = console.log;
+  const logs = [];
+  console.log = (...args) => logs.push(args.map(String).join(' '));
+  t.after(() => {
+    global.fetch = originalFetch;
+    console.log = originalLog;
+  });
   const requests = [];
   global.fetch = async (url, options) => {
     requests.push({ url, options });
@@ -795,6 +801,8 @@ test('Lite send-code and login bootstrap requests do not expose HMAC credentials
   for (const request of requests) {
     assert.deepEqual(request.options.headers, { 'Content-Type': 'application/json' });
   }
+  const output = logs.join('\n');
+  assert.doesNotMatch(output, /owner@example\.com|123456|ut_test/);
 });
 
 test('Lite OAuth login follows the server session contract and persists only the VOKO token', async (t) => {

@@ -61,13 +61,9 @@ function createDeliver({ transportManager }: {
 }): Deliver {
   return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null) {
     const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
-    const preview = String(content ?? '').replace(/\s+/g, ' ').trim();
-    const safePreview = messageType === 'text'
-      ? (preview.length > 80 ? `${preview.slice(0, 80)}…` : preview)
-      : `[${messageType}]`;
     console.log(
       `[IM 发送] agent=${agentId} channel=${channelId} channelType=${channelType}`
-      + ` type=${messageType} messageId=${lmId} content="${safePreview}"`,
+      + ` type=${messageType} messageId=${lmId} contentLength=${String(content ?? '').length}`,
     );
     try {
       const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId);

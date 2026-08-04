@@ -371,7 +371,7 @@ class MessageHandler extends EventEmitter {
     }
 
     // 通知 UI + 系统通知（含提示音）
-    if (!isMe) { console.log('[通知] 收到访客消息, from=' + fromUid + ' agent=' + agentId + ' content="' + (typeof content === 'string' ? content.substring(0, 30) : '') + '"'); }
+    if (!isMe) { console.log('[通知] 收到访客消息, agent=' + agentId + ' contentLength=' + String(content || '').length); }
     logEvent('message.received', { agentId, visitorId: fromUid, id: messageId, messageId });
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid, channelId,
@@ -541,9 +541,9 @@ class MessageHandler extends EventEmitter {
         } else if (inner && typeof inner.type === 'number' && inner.type >= 1001 && inner.type <= 2000) {
           isTip = true;
           tipText = inner.content || '';
-          console.log(`[群聊Tip] 系统消息 agentId=${agentId} channelId=${channelId} type=${inner.type} text="${tipText.substring(0,60)}"`);
+          console.log(`[群聊Tip] 系统消息 agentId=${agentId} channelId=${channelId} type=${inner.type} textLength=${tipText.length}`);
         }
-      } catch { console.log(`[群聊Tip] 非JSON agentId=${agentId} channelId=${channelId} content="${String(content||'').substring(0,50)}"`); }
+      } catch { console.log(`[群聊Tip] 非JSON agentId=${agentId} channelId=${channelId} contentLength=${String(content || '').length}`); }
     }
     // 落库用纯文本
     const dbContent = tipText || (typeof content === 'string' ? content : String(content));
@@ -584,7 +584,7 @@ class MessageHandler extends EventEmitter {
     }
 
     // UI 通知（带 mention，供渲染进程识别邀请/高亮 @）
-    console.log('[群聊通知] agent=' + agentId + ' from=' + fromUid + ' roomId=' + channelId + ' text="' + dbContent.substring(0, 60) + '"');
+    console.log('[群聊通知] agent=' + agentId + ' roomId=' + channelId + ' textLength=' + dbContent.length);
     const mentioned = !!(mention?.all || (mention?.uids && selfImUid && mention.uids.includes(selfImUid)));
 
     this._notifyUI('agent-wukongim:message', {

@@ -148,7 +148,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     const normalizedEmail = normalizeUserEmail(verifyJson.email || email);
     if (!normalizedEmail || !verifyJson.userAccessToken) return null;
     await saveUserAccessToken(normalizedEmail, verifyJson.userAccessToken);
-    console.log('[AgentRegistration] saved userAccessToken for', normalizedEmail);
+    console.log('[AgentRegistration] saved userAccessToken');
     return verifyJson.userAccessToken;
   }
 
@@ -159,7 +159,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       const body = { email };
       if (agentName) body.agentName = agentName;
 
-      console.log('[AgentRegistration] sendCode:', `${VOKO_API_URL}${path}`, 'email:', email);
+      console.log('[AgentRegistration] sendCode request started');
 
       const res = await fetch(`${VOKO_API_URL}${path}`, {
         method: 'POST',
@@ -225,7 +225,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       const path = '/api/external/v1/login';
       const body = { email, code };
 
-      console.log('[AgentRegistration] loginByCode:', `${VOKO_API_URL}${path}`, 'email:', email);
+      console.log('[AgentRegistration] loginByCode request started');
 
       const res = await fetch(`${VOKO_API_URL}${path}`, {
         method: 'POST',
@@ -264,7 +264,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
         : undefined;
       if (userAccessToken) {
         await saveUserAccessToken(email, userAccessToken);
-        console.log('[AgentRegistration] loginByCode: saved userAccessToken for', email);
+        console.log('[AgentRegistration] loginByCode: saved userAccessToken');
       }
 
       return {
@@ -348,7 +348,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       if (agentName) body.agentName = agentName;
       if (agentId) body.agentId = agentId;
       if (agentCategory) body.agentCategory = agentCategory;
-      console.log('[AgentRegistration] verifyCode:', `${VOKO_API_URL}${path}`, 'email:', email);
+      console.log('[AgentRegistration] verifyCode request started');
 
       const res = await fetch(`${VOKO_API_URL}${path}`, {
         method: 'POST',
