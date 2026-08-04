@@ -24,6 +24,8 @@ const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
+import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
 
 interface CliFallbackOptions {
@@ -42,6 +44,8 @@ export interface AcpAdapterOptions {
   name?: string;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cliPath?: string | null;
+  runtimeRequest?: RuntimeRequest;
+  runtimeResolver?: AgentRuntimeResolver;
   args?: string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
@@ -172,6 +176,9 @@ class AcpAdapter extends PushProvider {
 
     // ACP 可执行文件必须由具体 provider 显式提供，不再自动探测 Claude Agent ACP。
     this._cliPath = options.cliPath || null;
+    this._runtimeRequest = options.runtimeRequest || null;
+    this._runtimeResolver = options.runtimeResolver || defaultAgentRuntimeResolver;
+    this._resolvedRuntime = null;
 
     // 额外参数（如 goose acp、codex acp 等）
     this._cliArgs = options.args || [];
@@ -202,10 +209,21 @@ class AcpAdapter extends PushProvider {
 
   isAvailable(_agentId: string): boolean {
     if (this.options.streamFactory) return true;
+    if (this._runtimeRequest) return this._resolveRuntime().available;
     if (!this._cliPath) return false;
     return path.isAbsolute(this._cliPath) || this._cliPath.includes(path.sep)
       ? fs.existsSync(this._cliPath)
       : checkCliAvailable(this._cliPath);
+  }
+
+  _resolveRuntime(): ResolvedRuntime {
+    this._resolvedRuntime = this._runtimeResolver.resolve(this._runtimeRequest);
+    return this._resolvedRuntime;
+  }
+
+  _invalidateRuntime(): void {
+    if (this._runtimeRequest) this._runtimeResolver.invalidate(this._runtimeRequest);
+    this._resolvedRuntime = null;
   }
 
   async start() {
@@ -233,7 +251,7 @@ class AcpAdapter extends PushProvider {
     }
 
     // ── 尝试 ACP 路径 ──
-    if (this._cliPath || this.options.streamFactory) {
+    if (this._cliPath || this._runtimeRequest || this.options.streamFactory) {
       try {
         await this._pushViaAcp(payload);
         return;
@@ -528,11 +546,11 @@ class AcpAdapter extends PushProvider {
     // 清理僵死状态
     if (existing) this._disconnectAgent(agentId, existing);
 
-    if (!this._cliPath && !this.options.streamFactory) {
+    if (!this._cliPath && !this._runtimeRequest && !this.options.streamFactory) {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
     }
 
-    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : '-'})`);
+    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
     const sdk = await this._loadSdk();
     console.error(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
 
@@ -558,10 +576,16 @@ class AcpAdapter extends PushProvider {
       stream = transport.stream;
       state.transportClose = transport.close || null;
     } else {
+      const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
+      if (runtime && (!runtime.available || !runtime.executable)) {
+        const unavailable = new Error(`[${this._logPrefix}] ACP runtime not found`);
+        (unavailable as any).deliveryOutcome = 'not_delivered';
+        throw unavailable;
+      }
       const cliPath = this._cliPath as string;
-      const isNodeScript = cliPath.endsWith('.js');
-      const cmd = isNodeScript ? process.execPath : cliPath;
-      const cmdArgs = isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs];
+      const isNodeScript = !runtime && cliPath.endsWith('.js');
+      const cmd = runtime?.executable || (isNodeScript ? process.execPath : cliPath);
+      const cmdArgs = runtime ? [...runtime.argvPrefix, ...this._cliArgs] : (isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs]);
       console.error(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -594,6 +618,7 @@ class AcpAdapter extends PushProvider {
       });
 
       child.on('error', (err: Error) => {
+        if (/ENOENT|EACCES/i.test(String((err as any).code || err.message))) this._invalidateRuntime();
         this.notifyAvailability({ backendType: this._matchType || 'acp', mode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp', agentId, available: false, reason: `process-error:${err.message}` });
         console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
       });

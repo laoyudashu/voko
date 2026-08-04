@@ -33,6 +33,7 @@ const CLI_COMMANDS = {
   'qwen-code': 'qwen',
   kiro: 'kiro-cli',
   aider: 'aider',
+  cline: 'cline',
   'github-copilot': 'copilot',
   grok: 'grok',
 };
@@ -56,6 +57,7 @@ const CLI_SESSION_ROOTS = {
   'github-copilot': () => [path.join(os.homedir(), '.copilot')],
   openhands: () => [path.join(os.homedir(), '.openhands', 'conversations')],
   aider: () => [path.join(os.homedir(), '.aider')],
+  cline: () => [path.join(os.homedir(), '.cline')],
   zeroclaw: () => [path.join(os.homedir(), '.zeroclaw', 'data')],
   'amazon-q': () => [path.join(os.homedir(), '.aws', 'amazonq')],
 };
@@ -71,6 +73,10 @@ const CLI_DELIVERY_METADATA = {
   aider: {
     label: 'Aider 只读问答',
     description: 'VOKO 以 ask、dry-run、no-git 模式调用 Aider，不允许编辑或提交文件。',
+  },
+  cline: {
+    label: 'Cline Plan CLI',
+    description: 'VOKO 以 Plan 模式调用 Cline CLI，关闭工具自动批准并禁止 Shell 命令。',
   },
 };
 const DESKTOP_APPLICATIONS = [
@@ -101,6 +107,7 @@ function currentAgentTypeFromText(value) {
     ['github-copilot', /(?:^|[\\/\s])copilot(?:\.exe)?(?:\s|$)|github-copilot/],
     ['openhands', /(?:^|[\\/\s])openhands(?:\.exe)?(?:\s|$)/],
     ['aider', /(?:^|[\\/\s])aider(?:\.exe)?(?:\s|$)/],
+    ['cline', /(?:^|[\\/\s])cline(?:\.exe)?(?:\s|$)/],
     ['amazon-q', /(?:^|[\\/\s])q(?:\.exe)?\s+(?:chat|agent)|amazon-q/],
     ['opencode', /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/],
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
@@ -774,6 +781,24 @@ class RegistrationOrchestrator {
         pull,
       ];
     }
+    if (type === 'cline') {
+      const available = hasCommand('cline');
+      const status = available ? 'ready' : 'unavailable';
+      const action = available ? 'test' : null;
+      return [
+        {
+          mode: 'acp', label: 'ACP 实时会话', role: 'primary',
+          status, selected: available, recommended: true, action,
+          description: 'VOKO 通过 Cline ACP 创建隔离会话，并拒绝外部访客触发工具操作。',
+        },
+        {
+          mode: 'cli', label: 'Cline Plan CLI', role: 'fallback',
+          status, selected: available, action,
+          description: 'ACP 不可用时，使用只读 Plan 模式调用 Cline CLI。',
+        },
+        pull,
+      ];
+    }
     if (type === 'cursor') {
       const available = this.options.commandAvailable
         ? hasCommand('cursor-agent') || hasCommand('agent')
@@ -1073,6 +1098,7 @@ class RegistrationOrchestrator {
     const session = this._get(id);
     const mode = cleanText(input.mode, 40);
     const provider = session.provider?.type || 'others';
+    const hasCommand = this.options.commandAvailable || commandAvailable;
     let ready = false;
     let detail = '';
     if (mode === 'pull') {
@@ -1081,6 +1107,7 @@ class RegistrationOrchestrator {
     } else if (mode === 'cli'
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
       || ((provider === 'github-copilot' || provider === 'cursor') && mode === 'acp')
+      || (provider === 'cline' && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
@@ -1098,7 +1125,7 @@ class RegistrationOrchestrator {
         ready = status.ready;
         detail = status.detail;
       } else {
-        ready = path.isAbsolute(command) ? fs.existsSync(command) : commandAvailable(command);
+        ready = path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
       }
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {

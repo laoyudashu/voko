@@ -28,9 +28,41 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: npm run test:ci
       - run: npm run package:build
       - run: npm pack --dry-run
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
+          path: coverage/
+          if-no-files-found: ignore
+
+  web-e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: ${{ fromJSON(github.event_name == 'pull_request' && '["chromium"]' || '["chromium","firefox","webkit"]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run test:e2e
+        env:
+          VOKO_E2E_BROWSER: ${{ matrix.browser }}
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: failure()
+        with:
+          name: playwright-${{ matrix.browser }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
 
   security:
     runs-on: ubuntu-latest
@@ -64,18 +96,15 @@ jobs:
 
   ci-gate:
     if: always()
-    needs: [test, security, dependency-review]
+    needs: [test, web-e2e, security, dependency-review]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required CI jobs
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          SECURITY_RESULT: ${{ needs.security.result }}
-          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
         run: |
           node - <<'NODE'
           const required = {
             test: process.env.TEST_RESULT,
+            webE2e: process.env.WEB_E2E_RESULT,
             security: process.env.SECURITY_RESULT,
           };
           const dependencyReview = process.env.DEPENDENCY_REVIEW_RESULT;
@@ -89,3 +118,8 @@ jobs:
           }
           console.log('All required CI jobs passed.');
           NODE
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          WEB_E2E_RESULT: ${{ needs.web-e2e.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}

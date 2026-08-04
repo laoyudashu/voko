@@ -1841,6 +1841,8 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { backend: ['qwen-code'], key: 'qwen-cli', mod: './core/dispatcher/providers/qwen-cli', named: 'QwenCliProvider', args: { db, contextWindow: 20 } },
     { backend: ['kiro'], key: 'kiro-cli', mod: './core/dispatcher/providers/kiro-cli', named: 'KiroCliProvider', args: { db, contextWindow: 20 } },
     { backend: ['aider'], key: 'aider-cli', mod: './core/dispatcher/providers/aider-cli', named: 'AiderCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['cline'], key: 'cline-acp', mod: './core/dispatcher/providers/cline-acp', named: 'ClineAcpProvider', args: { db, contextWindow: 20 } },
+    { backend: ['cline'], key: 'cline-cli', mod: './core/dispatcher/providers/cline-cli', named: 'ClineCliProvider', args: { db, contextWindow: 20 } },
     { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
   ];
   for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {

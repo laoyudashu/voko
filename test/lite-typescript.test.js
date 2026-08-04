@@ -733,10 +733,17 @@ test('account switching waits for old IM clients to stop before starting the sha
     entrySource.indexOf("app.post('/api/agents/restart'"),
     entrySource.indexOf("app.post('/api/payment/write-auth'"),
   );
-  assert.match(restartRoute, /await agentManager\.stopAll\(\)/);
+  const restartHandler = entrySource.slice(
+    entrySource.indexOf('handlers.restart_agent_runtime = async'),
+    entrySource.indexOf('const mcpServer = createMcpServer', entrySource.indexOf('handlers.restart_agent_runtime = async')),
+  );
+  const implementation = /await handlers\.restart_agent_runtime\(\)/.test(restartRoute)
+    ? restartHandler
+    : restartRoute;
+  assert.match(implementation, /await agentManager\.stopAll\(\)/);
   assert.ok(
-    restartRoute.indexOf('await agentManager.stopAll()')
-      < restartRoute.indexOf('await agentManager.startMany('),
+    implementation.indexOf('await agentManager.stopAll()')
+      < implementation.indexOf('await agentManager.startMany('),
   );
 });
 

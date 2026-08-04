@@ -96,7 +96,7 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
           const allowedProviders = new Set([
             'openclaw', 'zeroclaw', 'hermes', 'goose', 'claude-code', 'codex',
             'gemini', 'opencode', 'zcode', 'workbuddy', 'doubao',
-            'cursor', 'grok', 'pi',
+            'cursor', 'grok', 'pi', 'cline',
           ]);
           const caller = {
             source: 'mcp',

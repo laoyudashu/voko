@@ -9,6 +9,7 @@ export type AgentBackend =
   | 'grok'
   | 'opencode'
   | 'pi'
+  | 'cline'
   | 'others';
 
 export interface AgentRecord {

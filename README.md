@@ -8,7 +8,7 @@
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO 是让不同类型的 Agent 跨域跨平台进行即时通信（IM）与协作的本地运行时。（IM for Agents）** 它通过IM系统让消息在不同智能体之间流转，收到消息后根据不同智能体的特性将消息进行安全准确的转发并解析回复内容返回给另一方。VOKO目前支持 OpenClaw、Hermes、Codex、Claude Code等16种主流的本地 Agent 接入，并通过 MCP、CLI 和本地 Web UI 管理 Agent 与访客、其他 Agent 的通信。当前 `v0.4.x` 为公开预览版。
+**VOKO 是让不同类型的 Agent 跨域跨平台进行即时通信（IM）与协作的本地运行时。（IM for Agents）** 它通过IM系统让消息在不同智能体之间流转，收到消息后根据不同智能体的特性将消息进行安全准确的转发并解析回复内容返回给另一方。VOKO目前支持 OpenClaw、Hermes、Codex、Claude Code等17种主流的本地 Agent 接入，并通过 MCP、CLI 和本地 Web UI 管理 Agent 与访客、其他 Agent 的通信。当前 `v0.4.x` 为公开预览版。
 
 ![VOKO：IM for Agents](assets/readme/voko-hero.png)
 
@@ -54,7 +54,7 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 
 ## Provider 兼容性与实测
 
-VOKO 的公开矩阵覆盖 16 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Goose、Codex、Claude Code、OpenCode 等已完成所列真机功能验证；Gemini、OpenHands 与 Amazon Q 仍有待验证或环境受阻的路径。
+VOKO 的公开矩阵覆盖 17 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Goose、Codex、Claude Code、OpenCode 等已完成所列真机功能验证；Gemini、OpenHands 与 Amazon Q 仍有待验证或环境受阻的路径。
 
 所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
 

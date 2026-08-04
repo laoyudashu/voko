@@ -25,6 +25,8 @@ const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, PushPayload } from '../dispatcher/types';
+import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
 export interface CliAdapterOptions {
   name: string;
@@ -41,6 +43,8 @@ export interface CliAdapterOptions {
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cwd?: string;
   adapterType?: string;
+  runtimeRequest?: RuntimeRequest;
+  runtimeResolver?: AgentRuntimeResolver;
   argsForSession?: (sessionId: string | null, isNew: boolean) => string[];
   createManagedSessionId?: () => string | null;
   sessionIdFromLine?: (line: string) => string | null;
@@ -97,6 +101,8 @@ class CliAdapter extends PushProvider {
     this._db = opts.db || null;
     this._cwd = opts.cwd || null;
     this._adapterType = String(opts.adapterType || opts.matchType || opts.name || 'cli').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+    this._runtimeRequest = opts.runtimeRequest || null;
+    this._runtimeResolver = opts.runtimeResolver || defaultAgentRuntimeResolver;
     this._argsForSession = opts.argsForSession || null;
     this._createManagedSessionId = opts.createManagedSessionId || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
@@ -116,8 +122,12 @@ class CliAdapter extends PushProvider {
 
   isAvailable(_agentId: string): boolean {
     if (this._available !== null) return this._available;
-    this._available = checkCliAvailable(this._cmd);
+    this._available = this._runtimeRequest ? this._resolveRuntime().available : checkCliAvailable(this._cmd);
     return this._available;
+  }
+
+  _resolveRuntime(): ResolvedRuntime {
+    return this._runtimeResolver.resolve(this._runtimeRequest);
   }
 
   async push(payload: PushPayload): Promise<void> {
@@ -162,7 +172,14 @@ class CliAdapter extends PushProvider {
     const args = useStdin
       ? [...configuredArgs]
       : configuredArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
-    const cmd = this._cmd;
+    const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
+    if (runtime && (!runtime.available || !runtime.executable)) {
+      const unavailable = new Error(`${this._name} runtime not found`);
+      (unavailable as any).deliveryOutcome = 'not_delivered';
+      throw unavailable;
+    }
+    const cmd = runtime?.available && runtime.executable ? runtime.executable : this._cmd;
+    if (runtime?.available) args.unshift(...runtime.argvPrefix);
 
     let fullContent = '';
     let error: Error | null = null;
@@ -230,7 +247,8 @@ class CliAdapter extends PushProvider {
       }
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
-      if (/ENOENT|not found/i.test(error.message)) {
+      if (/ENOENT|EACCES|not found|permission denied/i.test(String((error as any).code || error.message))) {
+        if (this._runtimeRequest) this._runtimeResolver.invalidate(this._runtimeRequest);
         (error as any).deliveryOutcome = 'not_delivered';
         if (this._available !== false) {
           this._available = false;
@@ -296,7 +314,7 @@ class CliAdapter extends PushProvider {
 
   _refreshAvailability() {
     const previous = this._available;
-    this._available = checkCliAvailable(this._cmd);
+    this._available = this._runtimeRequest ? this._resolveRuntime().available : checkCliAvailable(this._cmd);
     if (previous !== this._available) {
       this.notifyAvailability({ backendType: this._matchType, mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
     }
