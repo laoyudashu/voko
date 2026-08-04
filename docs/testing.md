@@ -26,6 +26,24 @@ written under `test-reports/` and are intentionally ignored by Git.
 
 The source of truth for file classification and business mapping is `test/test-matrix.json`. New test files default to the component layer until explicitly reviewed as deterministic unit tests.
 
+## Cline acceptance
+
+The deterministic Cline coverage includes runtime resolution, ACP/CLI provider wiring,
+plan-only CLI restrictions, JSONL parsing, Dispatcher fallback, per-Agent ACP health,
+shared-connection recovery, stop races and Windows npm-package entry resolution:
+
+```powershell
+node --test test/agent-runtime-resolver.test.js test/lite-adaptive-recovery.test.js test/lite-expanded-cli-providers.test.js test/lite-dispatcher-routing.test.js
+```
+
+Real Cline acceptance requires an explicitly installed and authenticated Cline
+(`cline auth`). Use a temporary VOKO database and a safe, tool-free prompt. The
+minimum release sequence is: ACP first reply, ACP session continuation, terminate
+the ACP process, verify exactly one CLI reply, run health recovery, verify the next
+reply returns to ACP, and scan captured logs for tokens, full prompts and user
+configuration paths. The current real result covers Windows; Linux/macOS, long-running
+stability and multi-Agent concurrency remain separate acceptance work.
+
 ## Isolation contract
 
 Deterministic tests must not contact public VOKO, WuKongIM or OSS endpoints, inspect a user's Provider configuration, or reuse the normal VOKO database. Use `test/support/runtime.js` and injected dependencies. Every server, socket, timer, worker and database must be registered for cleanup.
