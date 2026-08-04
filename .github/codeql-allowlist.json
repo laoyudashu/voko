@@ -12,7 +12,7 @@
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@114", "reason": "同一 challenge 分派的数据流；nonce 的类型和长度已在敏感操作前验证。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/local-http-security.js", "fingerprint": "b4e8ced11edb3ec9:1@8", "reason": "该函数本身就是 Host allowlist：仅接受 localhost、127.0.0.1、::1，并拒绝凭据和额外 URL 部分。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/registration-orchestrator.js", "fingerprint": "b8d50ca1cabe6688:1@4", "reason": "这是注册状态机 action 分派；verifyEmail 仍校验服务端签发的 registrationId、验证码和状态。" },
-    { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "2f31028c27c648ef:1@4", "reason": "这是登录 POST 的 sendCode action 分派；服务端 register_agent 执行邮箱校验和 OTP 限流。" },
+    { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "cf44aa2498d85cbf:1@4", "reason": "这是登录 POST 的 sendCode action 分派；服务端 register_agent 执行邮箱校验和 OTP 限流。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "3fc902d8d6684c3e:1@4", "reason": "这是登录 POST 的 verify action 分派；login_by_code 在服务端权威校验邮箱验证码。" }
   ]
 }
