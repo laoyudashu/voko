@@ -520,4 +520,47 @@ describe('shared registration orchestrator', () => {
       db.close();
     }
   });
+
+  it('keeps preflight side-effect free and reports Pull as the creation fallback', async () => {
+    const { db, service } = createService();
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      service.setBasicInfo(started.registrationId, { agentName: 'Pull Agent' });
+      service.selectProvider(started.registrationId, { providerType: 'others' });
+      const preflight = service.preflightDelivery(started.registrationId, { mode: 'pull' });
+      assert.strictEqual(preflight.success, true);
+      assert.strictEqual(preflight.status, 'ready');
+      assert.strictEqual(preflight.sideEffects, false);
+      service.selectDelivery(started.registrationId, { deliveryModes: ['pull'] });
+      const completed = await service.complete(started.registrationId, { accessMode: 'private' });
+      assert.strictEqual(completed.result.creationStatus, 'created');
+      assert.deepStrictEqual(completed.result.deliveryOrder.map((item) => item.mode), ['pull']);
+      assert.deepStrictEqual(completed.result.deliveryReadiness.map((item) => item.status), ['ready']);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('never runs a model-backed loopback without explicit cost acknowledgement', async () => {
+    let calls = 0;
+    const { db, service } = createService({
+      runLoopbackTest: async ({ challenge }) => {
+        calls++;
+        return { success: true, challengeMatched: true, detail: challenge };
+      },
+    });
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      service.setBasicInfo(started.registrationId, { agentName: 'Loopback Agent' });
+      service.selectProvider(started.registrationId, { providerType: 'others' });
+      const denied = await service.loopbackTest(started.registrationId, { mode: 'pull' });
+      assert.strictEqual(denied.code, 'LOOPBACK_CONFIRMATION_REQUIRED');
+      assert.strictEqual(calls, 0);
+      const allowed = await service.loopbackTest(started.registrationId, { mode: 'pull', acknowledgeCost: true });
+      assert.strictEqual(allowed.status, 'loopback_verified');
+      assert.strictEqual(calls, 1);
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -44,6 +44,7 @@ interface SearchResult {
   data: unknown;
   page: number | undefined;
   count: number | undefined;
+  onlineStatus: { source: 'agentdid_search'; checkedAt: number };
 }
 
 function isSearchApiResult(value: unknown): value is SearchApiResult {
@@ -157,7 +158,10 @@ async function searchCapabilitiesByDid({ db, agentId, keyword = '', page = 1, li
 
   const json = await readSearchApiResult(res);
   if (!json.success) throw new Error(json.message || '搜索失败');
-  return { success: true, data: json.data, page: json.page, count: json.count };
+  return {
+    success: true, data: json.data, page: json.page, count: json.count,
+    onlineStatus: { source: 'agentdid_search', checkedAt: Date.now() },
+  };
 }
 
 async function searchCapabilitiesByUserToken({
@@ -178,7 +182,10 @@ async function searchCapabilitiesByUserToken({
   });
   const json = await readSearchApiResult(res);
   if (!json.success) throw new Error(json.message || '搜索失败');
-  return { success: true, data: json.data, page: json.page, count: json.count };
+  return {
+    success: true, data: json.data, page: json.page, count: json.count,
+    onlineStatus: { source: 'agentdid_search', checkedAt: Date.now() },
+  };
 }
 
 module.exports = {

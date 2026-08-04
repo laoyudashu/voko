@@ -95,6 +95,8 @@
   "register.flow.testing": "检测中…",
   "register.flow.test_ok": "检测通过",
   "register.flow.test_failed": "检测失败",
+  "register.flow.loopback": "真实闭环测试",
+  "register.flow.loopback_confirm": "真实闭环测试可能产生模型费用和本地测试会话，是否继续？",
   "register.flow.configuring": "配置中…",
   "register.flow.configured": "已配置",
   "register.flow.configure.desc": "配置前会自动备份原文件；只有确认后才会写入，失败时恢复原设置。",

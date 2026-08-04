@@ -247,6 +247,27 @@ class AgentWorkerManager extends EventEmitter {
     };
   }
 
+  waitForConnection(agentId: string, timeoutMs = 5000): Promise<ReturnType<AgentWorkerManager['getStatus']>> {
+    const current = this.getStatus(agentId);
+    if (current.status !== 'connecting') return Promise.resolve(current);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.off('status', onStatus);
+        resolve(this.getStatus(agentId));
+      };
+      const onStatus = (event: { agentId?: string; status?: string }) => {
+        if (event.agentId === agentId && event.status !== 'connecting') finish();
+      };
+      const timer = setTimeout(finish, Math.max(0, timeoutMs));
+      timer.unref?.();
+      this.on('status', onStatus);
+    });
+  }
+
   getHubSummary() { return this.adapter.pool.summary(); }
 
   deliver(

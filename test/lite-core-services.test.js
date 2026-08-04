@@ -557,7 +557,10 @@ test('Lite user-token capability search preserves pagination and response shape'
   t.after(() => { global.fetch = originalFetch; });
 
   const result = await searchCapabilitiesByUserToken({ token: 'ut_test', keyword: 'legal', page: '2', limit: '500' });
-  assert.deepEqual(result, { success: true, data: [{ id: 'agent-2' }], page: 2, count: 1 });
+  assert.deepEqual(
+    { ...result, onlineStatus: { ...result.onlineStatus, checkedAt: typeof result.onlineStatus.checkedAt } },
+    { success: true, data: [{ id: 'agent-2' }], page: 2, count: 1, onlineStatus: { source: 'agentdid_search', checkedAt: 'number' } },
+  );
   assert.match(request.url, /\/api\/external\/v1\/agents\/search$/);
   assert.equal(JSON.parse(request.options.body).limit, 100);
   assert.equal(request.options.headers.Authorization, 'Bearer ut_test');

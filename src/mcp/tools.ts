@@ -228,7 +228,7 @@ interface CreatedRegistrationData extends Record<string, unknown> {
 
 type McpContext = Omit<LiteContext,
   | 'db' | 'query' | 'exec' | 'agentRegistration'
-  | 'getAgentStatus' | 'startAgentWorker' | 'stopAgentWorker'
+  | 'getAgentStatus' | 'startAgentWorker' | 'waitForAgentConnection' | 'stopAgentWorker'
   | 'registerCapabilities' | 'sendMessage' | 'checkReceiveChannel'
   | 'uploadFileToOSS' | 'getPaymentAuth' | 'getAgentImUid'
   | 'savePaymentOrder' | 'toggleWhitelistMode' | 'wukongim'
@@ -239,6 +239,7 @@ type McpContext = Omit<LiteContext,
   agentRegistration: AgentRegistrationLike;
   getAgentStatus?(agentId?: string): DynamicRow | null;
   startAgentWorker?(agentId?: string, config?: unknown, appPaths?: unknown): unknown;
+  waitForAgentConnection?(agentId?: string, timeoutMs?: number): Promise<DynamicRow | undefined>;
   stopAgentWorker?(agentId?: string): Promise<unknown> | unknown;
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
   sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string): Promise<DynamicRow>;
@@ -725,7 +726,7 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 1 & 2. 注册 ───
 
-    async register_agent(p: McpToolParams = {}) {
+    async request_login_code(p: McpToolParams = {}) {
       // Step 1：调后端发送邮箱验证码
       const r = await cx.agentRegistration.sendCode({ email: p.email });
       if (!r.success) {
@@ -733,6 +734,15 @@ function createToolHandlers(cx: McpContext) {
         return { success: false, error: r.error || optionalString(responseData?.message) || '发送验证码失败' };
       }
       return { success: true, message: '验证码已发送到邮箱' };
+    },
+
+    async register_agent() {
+      return {
+        success: false,
+        code: 'REGISTRATION_API_REMOVED',
+        error: 'register_agent 已移除，请使用 manage_agent_registration --action=start',
+        nextAction: { type: 'start_registration', tool: 'voko_manage_agent_registration', action: 'start' },
+      };
     },
 
     async login_by_code(p: McpToolParams = {}) {
@@ -1063,16 +1073,24 @@ function createToolHandlers(cx: McpContext) {
       if (!agent || !agent.imUid || !agent.imToken) {
         return { success: false, error: 'Agent IM 身份或凭证缺失' };
       }
-      const status = await cx.startAgentWorker(p.agentId, {
+      let status = await cx.startAgentWorker(p.agentId, {
         uid: agent.imUid,
         token: agent.imToken,
         serverUrl: agent.im_server_url || ENDPOINTS.im.wsUrl,
         backendType: agent.backend_type || 'openclaw',
-      }) as { error?: string; status?: string } | undefined;
+      }) as { error?: string; status?: string; connected?: boolean } | undefined;
       if (status?.error || status?.status === 'connect_fail') {
         return { success: false, error: status.error || 'Agent IM 连接失败' };
       }
-      return { success: true, status };
+      if (status?.status === 'connecting' && cx.waitForAgentConnection) {
+        status = await cx.waitForAgentConnection(p.agentId, 5000);
+      }
+      return {
+        success: true,
+        connected: status?.status === 'connected' || status?.connected === true,
+        state: status?.status || 'unknown',
+        status,
+      };
     },
 
     async stop_worker(p: McpToolParams = {}) {
@@ -1300,10 +1318,16 @@ function createToolHandlers(cx: McpContext) {
       // 检测收消息通道是否畅通
       if (cx.checkReceiveChannel) {
         const ch = cx.checkReceiveChannel(p.agentId);
-        if (ch && !ch.ok) {
-          result.receiveChannel = { ok: false, channel: ch.channel, suggest: 'voko_fetch_new_messages' };
-        }
+        result.receiveReadiness = {
+          status: ch?.ok ? 'ready' : 'pull_only',
+          automaticDelivery: !!ch?.ok,
+          fallback: 'voko_fetch_new_messages',
+        };
       }
+      result.messageAccepted = result?.success !== false;
+      result.recipientDelivery = result.messageAccepted
+        ? { status: result?.connected === false ? 'queued' : 'accepted', message: result?.connected === false ? '发送成功，等待对方上线' : '消息已接受' }
+        : { status: 'failed' };
       return result;
     },
 
@@ -2743,6 +2767,35 @@ function createToolHandlers(cx: McpContext) {
     completeAgent: (params: unknown) => handlers.create_agent_by_token(params),
     getLoggedEmail: () => {
       return _currentOwnerEmail();
+    },
+    runLoopbackTest: async (request: DynamicRow) => {
+      const agentId = String(request.agentId || '');
+      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
+      if (!agentId || candidates.length === 0) {
+        return { success: false, detail: 'No safe loopback adapter is available' };
+      }
+      for (const provider of candidates) {
+        if (!provider?.runLoopbackTest) continue;
+        const result = await provider.runLoopbackTest(agentId, request);
+        if (result?.code === 'LOOPBACK_UNSUPPORTED') continue;
+        return {
+          success: result?.ok === true,
+          challengeMatched: result?.challengeMatched === true,
+          detail: result?.detail || null,
+        };
+      }
+      return { success: false, detail: 'No safe loopback adapter is available' };
+    },
+    cleanupLoopbackSession: async (request: DynamicRow) => {
+      const agentId = String(request.agentId || '');
+      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
+      let cleaned = false;
+      for (const provider of candidates) {
+        if (!provider?.cleanupLoopbackSession) continue;
+        const result = await provider.cleanupLoopbackSession(agentId);
+        cleaned = cleaned || result?.cleaned === true;
+      }
+      return { success: true, cleaned };
     },
   });
   handlers.manage_agent_registration = async (params: McpToolParams = {}) =>

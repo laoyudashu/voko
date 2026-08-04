@@ -3,7 +3,7 @@ export {};
 /**
  * VOKO MCP — McpServer 工厂
  *
- * 使用 @modelcontextprotocol/sdk 的 McpServer 注册 37 个工具。
+ * 使用 @modelcontextprotocol/sdk 的 McpServer 注册当前版本工具。
  * 不自用 server.connect()——HTTP transport 直接处理 JSON-RPC 路由。
  */
 
@@ -50,41 +50,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     version: options.version || pkg.version,
   });
 
-  // ─── 1. register_agent ───
-  server.tool(
-    'voko_register_agent',
-    T('mcp.tool.register_agent.desc'),
-    {
-      email: z.string().email().describe(T('mcp.tool.register_agent.p.email')),
-    },
-    async (params: unknown) => {
-      const r = await toolHandlers.register_agent(params);
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
-    },
-    { destructiveHint: true }
-  );
-
-  // ─── 2. verify_agent_email ───
-  server.tool(
-    'voko_verify_agent_email',
-    T('mcp.tool.verify_agent_email.desc'),
-    {
-      email: z.string().email().describe(T('mcp.tool.verify_agent_email.p.email')),
-      code: z.string().length(6).describe(T('mcp.tool.verify_agent_email.p.code')),
-      agentId: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.agentId')),
-      agentName: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.agentName')),
-      backendType: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.backendType')),
-      category: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.category')),
-      description: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.description')),
-    },
-    async (params: unknown) => {
-      const r = await toolHandlers.verify_agent_email(params);
-      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
-    },
-    { destructiveHint: true }
-  );
-
-  // ─── 2b. 统一注册编排（Web / MCP / CLI 共用状态机）───
+  // ─── 统一注册编排（Web / MCP / CLI 共用状态机）───
   server.tool(
     'voko_manage_agent_registration',
     T('mcp.tool.manage_agent_registration.desc'),
@@ -92,7 +58,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       action: z.enum([
         'start', 'verify_email', 'set_basic_info', 'inspect_environment',
         'select_provider', 'select_delivery', 'configure_delivery',
-        'configuration_status', 'test_delivery', 'complete', 'status',
+        'configuration_status', 'preflight_delivery', 'test_delivery',
+        'loopback_test', 'cleanup_loopback', 'complete', 'status',
       ]).describe(T('mcp.tool.manage_agent_registration.p.action')),
       registrationId: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.registrationId')),
       email: z.string().email().optional().describe(T('mcp.tool.register_agent.p.email')),
@@ -107,6 +74,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       taskId: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.taskId')),
       approved: z.boolean().optional().describe(T('mcp.tool.manage_agent_registration.p.approved')),
       approvalToken: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.approvalToken')),
+      acknowledgeCost: z.boolean().optional().describe('Confirm that a loopback test may call the Provider model and create a local test session'),
       registrationMode: z.enum(['human', 'agent']).optional().describe(T('mcp.tool.manage_agent_registration.p.registrationMode')),
     },
     async (params: unknown) => {

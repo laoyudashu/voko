@@ -210,6 +210,32 @@ class HermesCliProvider extends PushProvider {
     }
   }
 
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    }
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
+    }
+    const profileId = this._instanceForAgent(agentId);
+    const result = await this._runCli({
+      cmd: 'hermes',
+      args: ['--profile', profileId, '-z', `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`],
+      tag: 'hermes-cli-loopback',
+      timeout: 120000,
+      logOutput: false,
+    });
+    const reply = _extractReply(result.stdout) || '';
+    const matched = result.code === 0 && reply.includes(challenge);
+    return {
+      ok: matched,
+      status: matched ? 'loopback_verified' : 'failed',
+      challengeMatched: matched,
+      detail: matched ? 'Hermes CLI loopback verified' : 'Hermes did not return the expected challenge',
+    };
+  }
+
   start() {}
   stop() {}
   healthCheck() { this._available = null; }

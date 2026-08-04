@@ -69,6 +69,29 @@ class PushProvider extends EventEmitter {
    *   返回 {ok, status} 对象表示健康信息；返回 undefined 表示不做自检。
    */
   async healthCheck(): Promise<ProviderHealth | void> {}
+
+  /** Read-only readiness probe. Implementations must not invoke a model or change Provider configuration. */
+  async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
+    const ready = this.isAvailable(agentId);
+    return {
+      ok: ready,
+      status: ready ? 'preflight_passed' : 'unavailable',
+      sideEffects: false,
+    };
+  }
+
+  async getDeliveryReadiness(agentId: string): Promise<Record<string, unknown>> {
+    return this.preflightDelivery(agentId);
+  }
+
+  /** Optional model-backed test. Providers must require an explicit caller acknowledgement. */
+  async runLoopbackTest(_agentId: string, _options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    return { ok: false, status: 'unavailable', code: 'LOOPBACK_UNSUPPORTED' };
+  }
+
+  async cleanupLoopbackSession(_agentId: string, _sessionId?: string): Promise<Record<string, unknown>> {
+    return { ok: true, cleaned: false };
+  }
 }
 
 module.exports = { PushProvider };
