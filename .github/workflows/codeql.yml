@@ -12,6 +12,10 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
