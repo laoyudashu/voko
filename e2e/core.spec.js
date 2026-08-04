@@ -1,4 +1,24 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+
+test('E2E runtime starts isolated Fake API, IM, OSS and Provider services', async ({ request }) => {
+  const manifestPath = process.env.VOKO_E2E_SERVICES_FILE;
+  expect(manifestPath).toBeTruthy();
+  expect(fs.existsSync(manifestPath)).toBeTruthy();
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  expect(manifest.runId).toMatch(/^voko-e2e-/);
+  expect(manifest.services.api).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  expect(manifest.services.im).toMatch(/^ws:\/\/127\.0\.0\.1:\d+$/);
+  expect(manifest.services.oss).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  expect(manifest.services.provider).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+
+  const heartbeat = await request.post(`${manifest.services.api}/api/heartbeat`);
+  expect(heartbeat.ok()).toBeTruthy();
+  await expect(heartbeat.json()).resolves.toMatchObject({ success: true });
+  const provider = await request.post(`${manifest.services.provider}/chat`, { data: {} });
+  expect(provider.ok()).toBeTruthy();
+  await expect(provider.json()).resolves.toMatchObject({ success: true });
+});
 
 test('isolated runtime exposes health without browser errors', async ({ page }) => {
   const errors = [];
