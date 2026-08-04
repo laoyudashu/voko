@@ -23,7 +23,7 @@ class VokoIMClient extends EventEmitter {
       protocolVersion: 5, deviceFlag: 1, heartbeatInterval: 60_000,
       heartbeatTimeout: 15_000, connectTimeout: 10_000, autoReconnect: true,
       reconnectMinDelay: 1_000, reconnectMaxDelay: 30_000, reconnectJitter: 0.2,
-      maxReconnectAttempts: Infinity, maxPacketBytes: 25 * 1024 * 1024,
+      maxReconnectAttempts: Infinity, maxInitialConnectAttempts: 3, maxPacketBytes: 25 * 1024 * 1024,
       maxBufferedBytes: 30 * 1024 * 1024, maxOutgoingBufferedBytes: 5 * 1024 * 1024,
       maxPendingSends: 1_000, maxReceivedIds: 10_000, ackMode: 'auto',
       maxPendingReceives: 1_000, manualAckTimeout: 30_000, maxPoisonAttempts: 3, maxPoisonIds: 1_000, poisonMessagePolicy: 'quarantine',
@@ -347,12 +347,15 @@ class VokoIMClient extends EventEmitter {
 
   _failConnect(error) {
     clearTimeout(this.connectTimeoutTimer);
-    this._connectReject?.(error);
-    this._connectResolve = null;
-    this._connectReject = null;
     this._onError(error);
-    this.manualClose = true;
-    this.ws?.close();
+    if (error?.retryable === false) {
+      this.manualClose = true;
+      this._rejectConnect(error);
+      this.ws?.close();
+      return;
+    }
+    if (typeof this.ws?.terminate === 'function') this.ws.terminate();
+    else this.ws?.close();
   }
 
   _onError(error) {
@@ -376,11 +379,11 @@ class VokoIMClient extends EventEmitter {
     for (const pending of this.pendingReceives.values()) clearTimeout(pending.timer);
     this.pendingReceives.clear();
     if (this._connectReject) {
-      const reject = this._connectReject;
-      this._connectResolve = null;
-      this._connectReject = null;
-      this.manualClose = true;
-      reject(new Error(`Connection closed before authentication, code=${code}`));
+      if (!this.manualClose && this.options.autoReconnect) {
+        this._scheduleReconnect();
+        return;
+      }
+      this._rejectConnect(new Error(`Connection closed before authentication, code=${code}`));
       return;
     }
     if (!this.manualClose && this.options.autoReconnect) this._scheduleReconnect();
@@ -389,10 +392,14 @@ class VokoIMClient extends EventEmitter {
   _scheduleReconnect() {
     clearTimeout(this.reconnectTimer);
     this.reconnectAttempt += 1;
-    if (this.reconnectAttempt > this.options.maxReconnectAttempts) {
+    const attemptLimit = this._connectReject
+      ? this.options.maxInitialConnectAttempts
+      : this.options.maxReconnectAttempts;
+    if (this.reconnectAttempt > attemptLimit) {
       this.manualClose = true;
       this._setState(ConnectionState.Failed);
       this.emit('reconnectExhausted', { attempts: this.reconnectAttempt - 1 });
+      this._rejectConnect(new Error(`Connection failed after ${this.reconnectAttempt - 1} attempts`));
       return;
     }
     this.stats.reconnects += 1;
@@ -407,6 +414,13 @@ class VokoIMClient extends EventEmitter {
     if (this.state === state) return;
     this.state = state;
     this.emit('state', state);
+  }
+
+  _rejectConnect(error) {
+    const reject = this._connectReject;
+    this._connectResolve = null;
+    this._connectReject = null;
+    reject?.(error);
   }
 
   disconnect() {

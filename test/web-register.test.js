@@ -42,7 +42,13 @@ function startServer(handlers, db) {
     req.t = makeT(req.locale);
     next();
   });
-  app.use(createRegisterRouter(handlers, db));
+  app.use(createRegisterRouter(handlers, db, {
+    registrationOrchestrator: {
+      commandAvailable: () => false,
+      installedApplications: () => [],
+      gatewaySetup: { checkGateway: () => ({ ready: false }) },
+    },
+  }));
   return new Promise((resolve, reject) => {
     const server = app.listen(0, () => {
       server.off('error', reject);

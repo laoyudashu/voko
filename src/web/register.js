@@ -733,7 +733,7 @@ var I = ${JSON.stringify(i18nObj)};
 //  Router
 // ═══════════════════════════════════════════════════════════════
 
-function createRegisterRouter(handlers, db) {
+function createRegisterRouter(handlers, db, options = {}) {
   const R = Router();
 
   function getLoggedEmail() {
@@ -750,6 +750,7 @@ function createRegisterRouter(handlers, db) {
   }
 
   const registrationOrchestrator = createRegistrationOrchestrator({
+    ...(options.registrationOrchestrator || {}),
     db,
     sendCode: (params) => handlers.request_login_code(params),
     loginByCode: (params) => handlers.login_by_code(params),
@@ -1015,37 +1016,39 @@ function createRegisterRouter(handlers, db) {
 
       // 创建 Agent（用 access-token，无需验证码）
       if (action === 'createAgent') {
-        const agentName = req.body.agentName || undefined;
-        const description = req.body.description || undefined;
-        const category = req.body.category;
-        const backendType = req.body.backendType;
+        return await runWithRegistrationCaller({ source: 'web' }, async () => {
+          const agentName = req.body.agentName || undefined;
+          const description = req.body.description || undefined;
+          const category = req.body.category;
+          const backendType = req.body.backendType;
 
-        const started = await registrationOrchestrator.start({ email });
-        if (!started.success) throw new Error(started.error || '无法启动注册流程');
-        const basic = registrationOrchestrator.setBasicInfo(started.registrationId, { agentName, category, description });
-        if (!basic.success) throw new Error(basic.error || '基本信息无效');
-        const selectedProvider = registrationOrchestrator.selectProvider(started.registrationId, {
-          providerType: backendType,
-          instanceId: req.body.openclawAgent || req.body.hermesProfile || undefined,
+          const started = await registrationOrchestrator.start({ email });
+          if (!started.success) throw new Error(started.error || '无法启动注册流程');
+          const basic = registrationOrchestrator.setBasicInfo(started.registrationId, { agentName, category, description });
+          if (!basic.success) throw new Error(basic.error || '基本信息无效');
+          const selectedProvider = registrationOrchestrator.selectProvider(started.registrationId, {
+            providerType: backendType,
+            instanceId: req.body.openclawAgent || req.body.hermesProfile || undefined,
+          });
+          if (!selectedProvider.success) throw new Error(selectedProvider.error || 'Agent 类型无效');
+          const defaultModes = selectedProvider.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
+          const selectedDelivery = registrationOrchestrator.selectDelivery(started.registrationId, { deliveryModes: defaultModes });
+          if (!selectedDelivery.success) throw new Error(selectedDelivery.error || '消息接收方式无效');
+          const completed = await registrationOrchestrator.complete(started.registrationId);
+          const r = completed.success
+            ? { success: true, agentId: completed.result?.agentId, agentName: completed.result?.agentName }
+            : completed;
+          if (r.success) {
+            return res.redirect('/agent/add?done=' + encodeURIComponent(agentName || r.agentId));
+          }
+          // token 失效 → 重新登录
+          if (r.noToken) return res.redirect('/login?err=' + encodeURIComponent(req.t('register.err_token_expired')));
+          // 名称被占用特殊提示
+          if (r.error && r.error.includes('名称')) {
+            return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.rename_btn')) + '</a></div>', req.t, req.locale, db));
+          }
+          return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error || req.t('register.create_failed_default')) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.retry_btn')) + '</a></div>', req.t, req.locale, db));
         });
-        if (!selectedProvider.success) throw new Error(selectedProvider.error || 'Agent 类型无效');
-        const defaultModes = selectedProvider.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
-        const selectedDelivery = registrationOrchestrator.selectDelivery(started.registrationId, { deliveryModes: defaultModes });
-        if (!selectedDelivery.success) throw new Error(selectedDelivery.error || '消息接收方式无效');
-        const completed = await registrationOrchestrator.complete(started.registrationId);
-        const r = completed.success
-          ? { success: true, agentId: completed.result?.agentId, agentName: completed.result?.agentName }
-          : completed;
-        if (r.success) {
-          return res.redirect('/agent/add?done=' + encodeURIComponent(agentName || r.agentId));
-        }
-        // token 失效 → 重新登录
-        if (r.noToken) return res.redirect('/login?err=' + encodeURIComponent(req.t('register.err_token_expired')));
-        // 名称被占用特殊提示
-        if (r.error && r.error.includes('名称')) {
-          return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.rename_btn')) + '</a></div>', req.t, req.locale, db));
-        }
-        return res.send(page(req.t('register.create_failed_title'), '<div class="card"><p class="error">' + esc(r.error || req.t('register.create_failed_default')) + '</p><a href="/agent/add" class="btn">' + esc(req.t('register.retry_btn')) + '</a></div>', req.t, req.locale, db));
       }
 
       res.redirect('/agent/add');

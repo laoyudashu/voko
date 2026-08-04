@@ -473,7 +473,7 @@ test('PowerManager recovery restarts only published agents for the active owner'
   const manager = {
     workers: new Map([['old-1', {}], ['old-2', {}]]),
     async stop(id) { stopped.push(id); },
-    start(id, config) { started.push({ id, config }); },
+    async start(id, config) { started.push({ id, config }); return { connected: true }; },
   };
   const db = {
     prepare(sql) {
@@ -488,25 +488,141 @@ test('PowerManager recovery restarts only published agents for the active owner'
             agent_id: 'agent-1',
             imUid: 'uid-1',
             imToken: 'token-1',
-            im_server_url: 'ws://im.test',
+            im_server_url: 'wss://wukongim.vokovoko.com',
           }];
         },
       };
     },
   };
-  const power = new PowerManager(manager, db, { checkInterval: 10, driftThreshold: 20 });
+  const power = new PowerManager(manager, db, {
+    checkInterval: 10,
+    driftThreshold: 20,
+    networkProbe: async () => true,
+    delay: async () => {},
+  });
   await power._recover();
 
   assert.deepEqual(stopped, ['old-1', 'old-2']);
   assert.deepEqual(started, [{
     id: 'agent-1',
-    config: { uid: 'uid-1', token: 'token-1', serverUrl: 'ws://im.test' },
+    config: { uid: 'uid-1', token: 'token-1', serverUrl: 'wss://wukongim.vokovoko.com' },
   }]);
   power.start();
   power.start();
   assert.ok(power._timer);
   power.stop();
   assert.equal(power._timer, null);
+});
+
+test('PowerManager retries only failed IM connections and awaits the real result', async () => {
+  const rounds = [];
+  const manager = {
+    workers: new Map([['old-1', {}]]),
+    async stop() {},
+    async start() { throw new Error('start fallback should not be used'); },
+    async startMany(entries, options) {
+      rounds.push({ ids: entries.map(entry => entry.agentId), options });
+      return entries.map(entry => ({
+        agentId: entry.agentId,
+        connected: entry.agentId === 'agent-ok' || rounds.length > 1,
+      }));
+    },
+  };
+  const db = {
+    prepare(sql) {
+      return {
+        get: () => ({ data: '{}' }),
+        all: () => [
+          { agent_id: 'agent-ok', imUid: 'uid-ok', imToken: 'token-ok', im_server_url: 'wss://wukongim.vokovoko.com' },
+          { agent_id: 'agent-retry', imUid: 'uid-retry', imToken: 'token-retry', im_server_url: 'wss://wukongim.vokovoko.com' },
+        ],
+      };
+    },
+  };
+  const delays = [];
+  const power = new PowerManager(manager, db, {
+    recoveryAttempts: 3,
+    recoveryBackoffMs: 10,
+    recoveryConcurrency: 2,
+    recoveryStaggerMs: 25,
+    networkProbe: async () => true,
+    delay: async ms => { delays.push(ms); },
+  });
+
+  await power._recover();
+
+  assert.deepEqual(rounds, [
+    { ids: ['agent-ok', 'agent-retry'], options: { concurrency: 2, staggerMs: 25 } },
+    { ids: ['agent-retry'], options: { concurrency: 2, staggerMs: 25 } },
+  ]);
+  assert.deepEqual(delays, [10]);
+});
+
+test('PowerManager coalesces overlapping resume recovery tasks', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let starts = 0;
+  let stops = 0;
+  const manager = {
+    workers: new Map([['old-1', {}]]),
+    async stop() { stops += 1; },
+    async start() { return { connected: true }; },
+    async startMany(entries) {
+      starts += 1;
+      await gate;
+      return entries.map(entry => ({ agentId: entry.agentId, connected: true }));
+    },
+  };
+  const db = {
+    prepare() {
+      return {
+        get: () => ({ data: '{}' }),
+        all: () => [{ agent_id: 'agent-1', imUid: 'uid-1', imToken: 'token-1', im_server_url: 'wss://wukongim.vokovoko.com' }],
+      };
+    },
+  };
+  const power = new PowerManager(manager, db, { networkProbe: async () => true });
+  const first = power._recover();
+  const second = power._recover();
+  release();
+  await Promise.all([first, second]);
+
+  assert.equal(stops, 1);
+  assert.equal(starts, 1);
+});
+
+test('PowerManager keeps retrying failed IM connections in the background', async () => {
+  let rounds = 0;
+  const manager = {
+    workers: new Map(),
+    async stop() {},
+    async start() { return { connected: false }; },
+    getStatus() { return { connected: false }; },
+    async startMany(entries) {
+      rounds += 1;
+      return entries.map(entry => ({ agentId: entry.agentId, connected: rounds > 1 }));
+    },
+  };
+  const db = {
+    prepare() {
+      return {
+        get: () => ({ data: '{}' }),
+        all: () => [{ agent_id: 'agent-1', imUid: 'uid-1', imToken: 'token-1', im_server_url: 'wss://wukongim.vokovoko.com' }],
+      };
+    },
+  };
+  const power = new PowerManager(manager, db, {
+    checkInterval: 60000,
+    recoveryAttempts: 1,
+    failedRetryDelayMs: 1,
+    networkProbe: async () => true,
+  });
+  power.start();
+  await power._recover();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  power.stop();
+
+  assert.equal(rounds, 2);
 });
 
 test('Lite profile update sends signed fields and persists the server category label', async (t) => {
