@@ -41,6 +41,7 @@ async function main() {
     VOKO_E2E: '1',
     VOKO_E2E_SERVICES_FILE: manifestPath,
     VOKO_E2E_API_BASE_URL: services.apiBaseUrl,
+    VOKO_GROUP_API_BASE: services.apiBaseUrl,
     VOKO_E2E_IM_WS_URL: services.imWsUrl,
     VOKO_E2E_OSS_BASE_URL: services.ossBaseUrl,
     VOKO_E2E_PROVIDER_BASE_URL: services.providerBaseUrl,
@@ -69,10 +70,10 @@ async function main() {
     saveUserAccessToken(db, ownerEmail, 'e2e-local-token');
     db.prepare(`INSERT INTO agents (
       agent_id, imUid, imToken, im_server_url, owner_email, publish_status,
-      created_at, updated_at, backend_type, agent_name, category, description, access_mode
-    ) VALUES (?, ?, ?, ?, ?, 'unpublished', ?, ?, ?, ?, ?, ?, ?)`)
+      created_at, updated_at, backend_type, agent_name, category, description, access_mode, delivery_modes
+    ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run('e2e-agent', 'e2e-im-uid', 'e2e-im-token', services.imWsUrl, ownerEmail,
-        Date.now(), Date.now(), 'others', 'E2E Test Agent', 'general', 'Playwright isolated Agent', 'private');
+        Date.now(), Date.now(), 'mock', 'E2E Test Agent', 'general', 'Playwright isolated Agent', 'private', JSON.stringify(['push', 'pull']));
     db.close();
   } finally {
     console.log = originalLog;

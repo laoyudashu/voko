@@ -2312,7 +2312,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   const { onWarnings, port, agentCount } = options;
   const dispatcher = options.dispatcher || (global as any).__dispatcher;
   const ENDPOINTS = require('./endpoints.json');
-  const BASE_URL = ENDPOINTS.im.baseUrl;
+  const BASE_URL = process.env.VOKO_E2E_API_BASE_URL || ENDPOINTS.im.baseUrl;
 
   // 写入初始 runtime 标记（含端口号）
   try {

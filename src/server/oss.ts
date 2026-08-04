@@ -14,7 +14,10 @@ let OSS_BUCKET = process.env.OSS_BUCKET || ENDPOINTS.oss.bucket;
 let OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || '';
 let OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || '';
 let OSS_ENDPOINT = assertSecureEndpoint(process.env.OSS_ENDPOINT || ENDPOINTS.oss.endpoint, 'http');
-let OSS_PUBLIC_URL = assertSecureEndpoint(process.env.OSS_PUBLIC_URL || ENDPOINTS.oss.publicUrl, 'http');
+let OSS_PUBLIC_URL = assertSecureEndpoint(
+  process.env.VOKO_E2E_OSS_BASE_URL || process.env.OSS_PUBLIC_URL || ENDPOINTS.oss.publicUrl,
+  'http',
+);
 
 /**
  * 从配置对象加载 OSS 配置（支持 DB / JSON 来源）
@@ -150,6 +153,19 @@ async function uploadToOSS(objectName?: any, content?: any, contentType?: any, o
 async function uploadToOSSWithProgress(objectName?: any, content?: any, contentType?: any, onProgress?: any) { return _uploadToOSS(objectName, content, contentType, onProgress); }
 
 async function _uploadToOSS(objectName?: any, content?: any, contentType?: any, onProgress?: any) {
+  // The E2E harness exposes a local OSS-compatible PUT endpoint.  It is
+  // deliberately opt-in and avoids requiring production credentials in CI.
+  if (process.env.VOKO_E2E === '1' && process.env.VOKO_E2E_OSS_BASE_URL) {
+    const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
+    const url = `${String(process.env.VOKO_E2E_OSS_BASE_URL).replace(/\/$/, '')}/${objectName}`;
+    const resp = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType || 'application/octet-stream', 'Content-Length': String(buffer?.length || 0) },
+      body: buffer,
+    });
+    if (!resp.ok) throw new Error(`OSS 上传失败 (${resp.status}): ${await resp.text()}`);
+    return url;
+  }
   if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
     throw new Error('OSS AccessKey 未配置');
   }
