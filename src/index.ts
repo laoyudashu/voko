@@ -1150,6 +1150,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   app.get('/api/agent/files', (req?: any, res?: any) => {
     const { agentId } = req.query;
     if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
+    const row = db.prepare('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+    if (!row || !currentOwnsAgent(agentId) || row.backend_type !== 'openclaw') return res.status(403).json({ success: false, error: 'Forbidden' });
     try {
       res.json({ success: true, data: agentFiles.getAgentFiles(agentId) });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -1157,6 +1159,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   app.get('/api/agent/file', (req?: any, res?: any) => {
     const { agentId, filename } = req.query;
     if (!agentId || !filename) return res.json({ success: false, error: '缺少参数' });
+    const row = db.prepare('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+    if (!row || !currentOwnsAgent(agentId) || row.backend_type !== 'openclaw') return res.status(403).json({ success: false, error: 'Forbidden' });
     try {
       res.json({ success: true, data: agentFiles.readFile(agentId, filename) });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -1164,6 +1168,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   app.post('/api/agent/file', (req?: any, res?: any) => {
     const { agentId, filename, content } = req.body || {};
     if (!agentId || !filename || content === undefined) return res.json({ success: false, error: '缺少参数' });
+    const row = db.prepare('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1').get(agentId);
+    if (!row || !currentOwnsAgent(agentId) || row.backend_type !== 'openclaw') return res.status(403).json({ success: false, error: 'Forbidden' });
     try {
       agentFiles.writeFile(agentId, filename, content);
       res.json({ success: true });
@@ -1237,9 +1243,12 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── OSS 签名（前端直传 OSS，对应 renderer 的 uploadAndSendFile） ──
   app.post('/api/oss-signature', (req?: any, res?: any) => {
     try {
-      const { filename, dir, contentType } = req.body || {};
+      const { filename, agentId, contentType } = req.body || {};
       if (!filename) return res.json({ success: true }); // CLI 连通性测试（空 body）
-      const objectName = `${dir || 'chat/files'}/${filename}`;
+      if (!agentId || !currentOwnsAgent(agentId)) return res.status(403).json({ success: false, error: 'Forbidden' });
+      const safeName = path.basename(String(filename)).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-160);
+      if (!safeName || safeName === '.' || safeName === '..') return res.status(400).json({ success: false, error: 'Invalid filename' });
+      const objectName = `chat/files/${encodeURIComponent(agentId)}/${Date.now()}-${safeName}`;
       res.json({ success: true, data: generateOSSSignature(objectName, contentType) });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });

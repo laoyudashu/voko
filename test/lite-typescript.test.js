@@ -314,6 +314,9 @@ test('privileged local bridge APIs require the instance token and accept only sa
   assert.equal(requiresLocalToken('/api/agent/register-in-db'), true);
   assert.equal(requiresLocalToken('/api/message/send'), true);
   assert.equal(requiresLocalToken('/api/simulate-message'), true);
+  assert.equal(requiresLocalToken('/api/agent/files'), true);
+  assert.equal(requiresLocalToken('/api/agent/file'), true);
+  assert.equal(requiresLocalToken('/api/oss-signature'), true);
   assert.equal(isAllowedBridgeConfigType('channel_config'), true);
   assert.equal(isAllowedBridgeConfigType('llm_config'), true);
   assert.equal(isAllowedBridgeConfigType('user_access_token'), false);

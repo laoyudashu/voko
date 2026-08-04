@@ -231,7 +231,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     T('mcp.tool.get_visitor_profile.desc'),
     {
       visitorId: z.string().describe(T('mcp.tool.get_visitor_profile.p.visitorId')),
-      agentId: z.string().optional().describe(T('mcp.tool.get_visitor_profile.p.agentId')),
+      agentId: z.string().min(1).describe(T('mcp.tool.get_visitor_profile.p.agentId')),
       limit: z.number().int().min(1).max(50).optional().default(10).describe(T('mcp.tool.get_visitor_profile.p.limit')),
       offset: z.number().int().min(0).optional().default(0).describe(T('mcp.tool.get_visitor_profile.p.offset')),
     },
