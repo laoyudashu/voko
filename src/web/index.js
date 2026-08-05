@@ -1037,7 +1037,7 @@ function createWebRouter(handlers, db, opts={}){
       let catList=[];
       try{const resp=await fetch(VOKO_API_URL+'/api/agent-categories');const d=await resp.json();if(d.success&&Array.isArray(d.data))catList=d.data;}catch(_){}
       if(!catList.length)catList=[{code:'general'},{code:'other'}];
-      const catOpts=catList.map(c=>{const key='db.agent.category.'+c.code;const lbl=T(key);const label=lbl!==key?lbl:(c.label||c.code);return '<option value="'+c.code+'"'+(p.category===c.code?' selected':'')+'>'+esc(label)+'</option>';}).join('');
+      const catOpts=catList.map(c=>{const key='db.agent.category.'+c.code;const lbl=T(key);const label=lbl!==key?lbl:(c.label||c.code);return '<option value="'+esc(c.code)+'"'+(p.category===c.code?' selected':'')+'>'+esc(label)+'</option>';}).join('');
       const btTypes=getBackendTypes(db);const knownVals=getBackendTypeValues(db);
       var btInitValue='',btInitText=T('web.agent.edit.select_backend_type');
       if(p.backendType&&knownVals.includes(p.backendType)){var tm=btTypes.find(function(x){return x.value===p.backendType});btInitValue=p.backendType;btInitText=tm?(tm.value==='others'?T('db.backend_type.others'):tm.label):p.backendType;}
