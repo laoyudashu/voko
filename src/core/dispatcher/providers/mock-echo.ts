@@ -15,6 +15,7 @@ class MockEchoProvider extends PushProvider {
     super();
     this._delay = parseInt(process.env.VOKO_SMOKE_ECHO_DELAY || '50', 10);
     this._available = true;
+    this._agentAvailability = new Map();
     this._fault = null;
     this._testStats = { pushCalls: 0, faultedPushes: 0, replies: 0 };
   }
@@ -26,12 +27,23 @@ class MockEchoProvider extends PushProvider {
     return meta?.backend_type === 'mock';
   }
 
-  isAvailable() {
+  isAvailable(agentId?: string) {
+    if (agentId && this._agentAvailability.has(agentId)) return this._agentAvailability.get(agentId);
     return this._available;
   }
 
   setAvailable(available: boolean) {
     this._available = !!available;
+  }
+
+  setAgentAvailable(agentId: string, available: boolean) {
+    if (!agentId) return;
+    this._agentAvailability.set(String(agentId), !!available);
+  }
+
+  clearAgentAvailability(agentId?: string) {
+    if (agentId) this._agentAvailability.delete(String(agentId));
+    else this._agentAvailability.clear();
   }
 
   setFault(mode: string, count = 1, disable = false) {
@@ -53,6 +65,7 @@ class MockEchoProvider extends PushProvider {
   getTestState() {
     return {
       available: this._available,
+      agentAvailability: Object.fromEntries(this._agentAvailability.entries()),
       fault: this._fault ? { ...this._fault } : null,
       stats: { ...this._testStats },
     };
