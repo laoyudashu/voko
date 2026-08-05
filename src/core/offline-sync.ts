@@ -9,7 +9,7 @@
 
 const {
   enqueueDbWrite,
-  getPrimaryOwnerEmail,
+  getCurrentUserEmail,
   getUserAccessToken,
   waitForDbQueue,
 } = require('./database');
@@ -95,8 +95,15 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     return 0;
   }
   try {
-    const agents = db.prepare(`SELECT agent_id, imUid, imToken, im_server_url, owner_email FROM agents WHERE publish_status = 'published'`).all<AgentRow>();
-    const primaryOwnerEmail = getPrimaryOwnerEmail(db);
+    // 离线同步必须绑定当前登录用户。没有当前用户时，不能按 agents 表的
+    // “最近 owner”或全表回退，否则会把其他用户/其他电脑的 Agent 消息拉到本机。
+    const currentOwnerEmail = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+    if (!currentOwnerEmail) return 0;
+    const agents = db.prepare(`
+      SELECT agent_id, imUid, imToken, im_server_url, owner_email
+      FROM agents
+      WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?
+    `).all<AgentRow>(currentOwnerEmail);
     const cursorMap = loadCursorMap(db);
     const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string; messageSeq?: number }> = [];
 
@@ -104,7 +111,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
         continue;
       }
-      const ownerEmail = String(agent.owner_email || primaryOwnerEmail || '').trim();
+      const ownerEmail = String(agent.owner_email || '').trim().toLowerCase();
       const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const httpBase = String(ENDPOINTS.im.apiBaseUrl || '').replace(/\/$/, '');
       const convs = db.prepare(`SELECT DISTINCT channel_id FROM conversations WHERE agent_id = ?`).all<ConversationRow>(agent.agent_id);
