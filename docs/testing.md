@@ -6,6 +6,9 @@
 - `npm run test:component`: SQLite, HTTP, WebSocket, child-process and Web route tests.
 - `npm run test:coverage`: coverage report in `coverage/`.
 - `npm run test:e2e`: isolated Chromium Web checks.
+- `npm run test:smoke`: fast main-path smoke check (build, i18n, core contracts
+  and selected Chromium journeys); it excludes dedicated timeout/disconnect
+  fault suites.
 - `npm run test:ci`: the local equivalent of the code CI gate.
 - `npm run test:real:*`: explicit local-only checks using `.env.real-test.local`.
 - `npm run release:gate:code`: the release code gate (typecheck, build, i18n,
