@@ -15,6 +15,8 @@ class MockEchoProvider extends PushProvider {
     super();
     this._delay = parseInt(process.env.VOKO_SMOKE_ECHO_DELAY || '50', 10);
     this._available = true;
+    this._fault = null;
+    this._testStats = { pushCalls: 0, faultedPushes: 0, replies: 0 };
   }
 
   get priority() { return 99; }
@@ -32,11 +34,47 @@ class MockEchoProvider extends PushProvider {
     this._available = !!available;
   }
 
+  setFault(mode: string, count = 1, disable = false) {
+    const normalized = String(mode || '').trim();
+    if (!['not_delivered', 'outcome_unknown'].includes(normalized)) {
+      throw new Error(`Unsupported mock provider fault: ${normalized}`);
+    }
+    this._fault = {
+      mode: normalized,
+      remaining: Math.max(1, Number(count) || 1),
+      disable: !!disable,
+    };
+  }
+
+  clearFault() {
+    this._fault = null;
+  }
+
+  getTestState() {
+    return {
+      available: this._available,
+      fault: this._fault ? { ...this._fault } : null,
+      stats: { ...this._testStats },
+    };
+  }
+
   async push(payload: PushPayload): Promise<void> {
+    this._testStats.pushCalls += 1;
+    if (this._fault && this._fault.remaining > 0) {
+      const fault = this._fault;
+      fault.remaining -= 1;
+      this._testStats.faultedPushes += 1;
+      if (fault.remaining <= 0) this._fault = null;
+      if (fault.disable) this._available = false;
+      const error: any = new Error(`Mock provider ${fault.mode}`);
+      error.deliveryOutcome = fault.mode;
+      throw error;
+    }
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `mock-${Date.now()}`);
     const reply = `[echo] ${content}`;
     setTimeout(() => {
+      this._testStats.replies += 1;
       this.emit('agent.reply', {
         agentId,
         visitorId: fromUid,

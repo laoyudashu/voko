@@ -609,9 +609,21 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     app.post('/__test__/provider', (req?: any, res?: any) => {
       const provider = (global as any).__dispatcher?.providers?.['mock-echo'];
       if (!provider?.setAvailable) return res.status(404).json({ success: false, error: 'mock provider unavailable' });
-      provider.setAvailable(req.body?.available !== false);
+      try {
+        provider.clearFault?.();
+        if (Object.prototype.hasOwnProperty.call(req.body || {}, 'available')) {
+          provider.setAvailable(req.body?.available !== false);
+        }
+        const fault = req.body?.fault;
+        if (fault) {
+          const mode = typeof fault === 'string' ? fault : fault.mode;
+          provider.setFault(mode, typeof fault === 'object' ? fault.count : 1, typeof fault === 'object' ? fault.disable !== false : false);
+        }
+      } catch (e: any) {
+        return res.status(400).json({ success: false, error: e?.message || 'invalid provider fault' });
+      }
       (global as any).__dispatcher?.invalidateRoutes?.({ providerId: 'mock-echo', reason: 'e2e-provider-control', available: provider.isAvailable?.() });
-      return res.json({ success: true, available: !!provider.isAvailable?.() });
+      return res.json({ success: true, ...provider.getTestState?.(), available: !!provider.isAvailable?.() });
     });
     app.get('/__test__/runtime', (req?: any, res?: any) => {
       const agentId = String(req.query?.agentId || '').trim();
@@ -645,6 +657,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           imStatus: agentManager?.getStatus?.(agentId) || null,
           agentStatuses,
           hubSummary: agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0, hubs: [] },
+          providerState: (global as any).__dispatcher?.providers?.['mock-echo']?.getTestState?.() || null,
         });
       } catch (e: any) {
         return res.status(500).json({ success: false, error: e?.message || 'runtime snapshot failed' });
