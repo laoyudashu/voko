@@ -46,6 +46,8 @@ interface PublishResult {
   success: boolean;
   publishStatus?: 'published' | 'unpublished';
   accessMode?: 'public' | 'private';
+  imConnection?: { connected: boolean; status: string };
+  warning?: string;
   error?: string;
 }
 
@@ -61,6 +63,7 @@ interface PublishOptions {
   db?: DatabaseLike;
   agentId?: string;
   startAgentWorker?: AsyncOperation;
+  waitForAgentConnection?: AsyncOperation;
   stopAgentWorker?: AsyncOperation;
   registerCapabilities?: AsyncOperation;
   updateAgentProfile?: AsyncOperation;
@@ -73,7 +76,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
-  const { db, agentId, startAgentWorker, stopAgentWorker, registerCapabilities, updateAgentProfile, setAgentStatus, endpoints } = opts || {};
+  const { db, agentId, startAgentWorker, waitForAgentConnection, stopAgentWorker, registerCapabilities, updateAgentProfile, setAgentStatus, endpoints } = opts || {};
 
   if (!db) return { success: false, error: 'db is required' };
   if (!agentId) return { success: false, error: 'agentId is required' };
@@ -94,11 +97,28 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
       return { success: false, error: `WuKongIM 账号(${uid})已被 agent「${existing.agent_id}」占用，请先下架该 agent 或更换绑定` };
     }
 
+    let connectionResult: { imConnection: { connected: boolean; status: string }; warning?: string } | undefined;
     // 启动指定 Agent 的共享 Hub IM 客户端（公开回调名保持兼容）
     if (startAgentWorker) {
-      const imStatus = await startAgentWorker(agentId, { uid, token, serverUrl }) as { error?: string; status?: string } | undefined;
+      let imStatus = await startAgentWorker(agentId, { uid, token, serverUrl }) as { connected?: boolean; error?: string; status?: string } | undefined;
+      if (imStatus && typeof imStatus === 'object' && imStatus.status === 'connecting' && waitForAgentConnection) {
+        const waited = await waitForAgentConnection(agentId, 5000) as { connected?: boolean; error?: string; status?: string } | undefined;
+        if (waited) imStatus = waited;
+      }
       if (imStatus?.error || imStatus?.status === 'connect_fail') {
         return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+      }
+      if (imStatus && typeof imStatus === 'object') {
+        const connected = imStatus.connected === true || imStatus.status === 'connected';
+        const imConnection = { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') };
+        connectionResult = connected ? { imConnection } : {
+          imConnection,
+          warning: 'Agent 已发布，IM 连接仍在建立，可稍后通过 start_worker 重试',
+        };
+        // The Agent is already persisted as published below; report its actual
+        // connection snapshot without turning a transient connection delay into
+        // a failed publish operation.
+        // Keep the snapshot for the success response after local persistence.
       }
     }
 
@@ -158,7 +178,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
       await setAgentStatus({ agentId, status: 1, visibility }).catch(() => {});
     }
 
-    return { success: true, publishStatus: 'published', accessMode };
+    return { success: true, publishStatus: 'published', accessMode, ...(connectionResult || {}) };
   } catch (e: unknown) {
     console.error('[publishAgent] Agent error:', agentId, e);
     return { success: false, error: errorMessage(e) };

@@ -78,7 +78,7 @@
   "mcp.tool.send_message.p.contentType": "Content type: 1=text, 2=image, 8=file",
 
   "mcp.tool.get_chat_history.desc": "View the complete chat history with a specific visitor (messages from both sides). Supports keyword search and pagination. hasMore=true means there are more messages. Scroll with offset+limit.",
-  "mcp.tool.get_chat_history.p.channelId": "Channel ID (usually the visitor UID)",
+  "mcp.tool.get_chat_history.p.channelId": "Channel ID (visitor UID for direct chat, group channel ID for group chat)",
   "mcp.tool.get_chat_history.p.keyword": "Search keyword within message content",
   "mcp.tool.get_chat_history.p.limit": "Maximum number of messages to return (max 200)",
   "mcp.tool.get_chat_history.p.offset": "Pagination offset",

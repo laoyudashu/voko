@@ -16,7 +16,7 @@ function createPrompt(options: InteractiveOptions = {}) {
   const input = options.input || process.stdin;
   const output = options.output || process.stdout;
   if (!options.question && (!input.isTTY || !output.isTTY)) {
-    throw new Error('Interactive registration requires a TTY');
+    throw new Error('Interactive login requires a TTY; use voko manage_agent_registration --action start --registration-mode agent for headless login');
   }
   if (options.question) return { question: options.question, close() {} };
   return readline.createInterface({ input, output });

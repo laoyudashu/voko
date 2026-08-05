@@ -446,6 +446,38 @@ test('Lite publish and unpublish preserve access mode and worker lifecycle', asy
   assert.deepEqual(statuses[1], { agentId: 'agent-1', status: 0, visibility: 1 });
 });
 
+test('Lite publish waits for the real IM connection status without blocking publication', async () => {
+  const db = createAgentDb({
+    agent_id: 'agent-1',
+    imUid: 'uid-1',
+    imToken: 'token-1',
+    im_server_url: 'ws://im.test',
+    publish_status: 'unpublished',
+    access_mode: 'private',
+    backend_type: 'openclaw',
+  });
+  const originalPrepare = db.prepare;
+  db.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    const originalGet = statement.get;
+    statement.get = (...args) => sql.includes('agent_id !=') ? undefined : originalGet(...args);
+    return statement;
+  };
+  let waited = 0;
+  const result = await publishAgent({
+    db,
+    agentId: 'agent-1',
+    startAgentWorker: async () => ({ connected: false, status: 'connecting' }),
+    waitForAgentConnection: async () => {
+      waited++;
+      return { connected: true, status: 'connected' };
+    },
+  });
+  assert.equal(result.success, true);
+  assert.equal(waited, 1);
+  assert.deepEqual(result.imConnection, { connected: true, status: 'connected' });
+});
+
 test('Lite publish rejects missing IM binding and duplicate IM identity', async () => {
   const missing = createAgentDb({ agent_id: 'agent-1' });
   assert.equal((await publishAgent({ db: missing, agentId: 'agent-1' })).success, false);
@@ -1223,7 +1255,7 @@ test('Lite send-message normalizes content, persists it and passes the local id 
     db,
     deliver: async (...args) => {
       deliveries.push(args);
-      return { success: true, messageId: args[6], messageSeq: 9 };
+      return { success: true, messageId: args[6], messageSeq: 9, clientMsgNo: 'client-9' };
     },
   });
   const result = await send('agent-1', 'visitor-1', 'line1\\nline2', 'agent-uid', 'text', 1);
@@ -1233,6 +1265,7 @@ test('Lite send-message normalizes content, persists it and passes the local id 
   assert.match(deliveries[0][6], /^msg-agent-1-visitor-1-/);
   assert.ok(writes.some((entry) => entry.sql.includes('INSERT INTO messages')));
   assert.ok(writes.some((entry) => entry.sql.includes('INSERT INTO conversations')));
+  assert.ok(writes.some((entry) => entry.sql.includes('message_seq=COALESCE') && entry.sql.includes('client_msg_no=COALESCE')));
 });
 
 test('Lite payment processing claims once, creates a remote order and sends its link', async (t) => {

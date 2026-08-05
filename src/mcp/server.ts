@@ -196,7 +196,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       toUid: z.string().describe(T('mcp.tool.send_message.p.toUid')),
       content: z.string().describe(T('mcp.tool.send_message.p.content')),
       contentType: z.number().optional().default(1).describe(T('mcp.tool.send_message.p.contentType')),
-      channelType: z.number().optional().default(1).describe('频道类型：1=单聊（默认），2=群聊（toUid 为 channelId）'),
+      channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时会按群频道 ID 自动判断）'),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe('群聊 @提及（channelType=2 时生效）'),
     },
     async (params: unknown) => {
@@ -212,8 +212,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     T('mcp.tool.get_chat_history.desc'),
     {
       agentId: z.string().describe(T('mcp.param.agentId')),
-      channelId: z.string().describe(T('mcp.tool.get_chat_history.p.channelId')),
-      channelType: z.number().optional().default(1).describe('频道类型：1=单聊（默认，按 agent_id 过滤），2=群聊（按 channel_id 查全量）'),
+      channelId: z.string().optional().describe(T('mcp.tool.get_chat_history.p.channelId')),
+      channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时按频道 ID 和本地记录判断）'),
       keyword: z.string().optional().describe(T('mcp.tool.get_chat_history.p.keyword')),
       limit: z.number().optional().default(20).describe(T('mcp.tool.get_chat_history.p.limit')),
       offset: z.number().optional().default(0).describe(T('mcp.tool.get_chat_history.p.offset')),
@@ -285,7 +285,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       filePath: z.string().describe(T('mcp.tool.upload_and_send_file.p.filePath')),
       fileName: z.string().optional().describe(T('mcp.tool.upload_and_send_file.p.fileName')),
       message: z.string().max(8000).optional().describe(T('mcp.tool.upload_and_send_file.p.message')),
-      channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.upload_and_send_file.p.channelType')),
+      channelType: z.number().int().min(1).max(2).optional().describe(T('mcp.tool.upload_and_send_file.p.channelType')),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe(T('mcp.tool.upload_and_send_file.p.mentions')),
     },
     async (params: unknown) => {

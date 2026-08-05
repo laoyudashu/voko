@@ -21,7 +21,11 @@ const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   ],
   codex: [{ kind: 'native', command: 'codex' }],
   gemini: [{ kind: 'native', command: 'gemini' }],
-  cursor: [{ kind: 'native', command: 'cursor' }],
+  cursor: [
+    { kind: 'native', command: 'cursor-agent' },
+    { kind: 'native', command: 'agent' },
+    { kind: 'native', command: 'cursor' },
+  ],
   opencode: [{ kind: 'native', command: 'opencode' }],
   'github-copilot': [{ kind: 'native', command: 'copilot' }],
   zeroclaw: [{ kind: 'native', command: 'zeroclaw' }],

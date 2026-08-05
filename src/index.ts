@@ -1028,24 +1028,37 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   });
 
   // ── Agent 注册写入 agents 表（Desktop 只读 DB 经此写入）──
-  app.post('/api/agent/register-in-db', (req?: any, res?: any) => {
+  app.post('/api/agent/register-in-db', async (req?: any, res?: any) => {
     try {
       const { registerAgentInDbOnDb } = require('./core/agent-registration');
       const body = req.body || {};
       const result = registerAgentInDbOnDb(db, body);
-      res.json(result);
-
-      // 注册成功后异步启动 Worker（与 MCP Step 4 一致）
+      let imConnection: any = null;
+      let warning: string | null = null;
+      // 注册成功后启动 Worker，并等待短暂的真实连接结果；连接瞬时失败不
+      // 回滚已完成的注册，只把状态明确返回给调用方，稍后可用 start_worker 重试。
       if (result.success !== false && body.agentId && body.uid && body.token) {
         const { agentId, uid, token, serverUrl, backendType } = body;
-        setImmediate(() => {
-          try {
-            agentManager.start(agentId, { uid, token, serverUrl, backendType: normalizeBackendType(backendType) });
-          } catch (e: any) {
-            console.error('[Lite] 注册后启动 Worker 失败:', agentId, e.message);
+        try {
+          let status = await agentManager.start(agentId, { uid, token, serverUrl, backendType: normalizeBackendType(backendType) });
+          if (status && typeof status === 'object' && status.status === 'connecting' && agentManager.waitForConnection) {
+            const waited = await agentManager.waitForConnection(agentId, 5000);
+            if (waited) status = waited;
           }
-        });
+          if (status && typeof status === 'object') {
+            const connected = status.connected === true || status.status === 'connected';
+            imConnection = { connected, status: status.status || (connected ? 'connected' : 'unknown') };
+            if (!connected) warning = 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试';
+            if (status.error || status.status === 'connect_fail') {
+              warning = status.error || 'Agent 已创建，但 IM 连接失败，可稍后通过 start_worker 重试';
+            }
+          }
+        } catch (e: any) {
+          warning = 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试';
+          console.error('[Lite] 注册后启动 Worker 失败:', body.agentId, e.message);
+        }
       }
+      res.json({ ...result, ...(imConnection ? { imConnection } : {}), ...(warning ? { warning } : {}) });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1118,6 +1131,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const result = await publishAgent({
         db, agentId,
         startAgentWorker: (id?: any, cfg?: any) => agentManager.start(id, cfg),
+        waitForAgentConnection: (id?: any, timeoutMs?: any) => agentManager.waitForConnection(id, timeoutMs),
         stopAgentWorker: (id?: any) => agentManager.stop(id),
         registerCapabilities: (id?: any) => registerCapabilitiesForAgent({ db, agentId: id }),
         updateAgentProfile: (params?: any) => updateAgentProfile({ db, ...params }),
@@ -2781,6 +2795,15 @@ async function main() {
 
   // 解析参数
   const args = parseArgs(argv);
+
+  // login is interactive by design, but --help must remain usable in CI,
+  // SSH and other non-TTY environments without initializing the runtime.
+  if (subcommand === 'login' && (args.help || args.h)) {
+    console.log('Usage: voko login');
+    console.log('Interactive login requires a TTY.');
+    console.log('Headless login: voko manage_agent_registration --action start --registration-mode agent');
+    return;
+  }
 
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;

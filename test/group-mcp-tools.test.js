@@ -121,6 +121,14 @@ await test('send_message 透传群聊 @全体和成员 UID', async () => {
     assert.deepStrictEqual(sentMessages[1].mentions, memberMentions);
   } finally { cleanup(); }
 });
+await test('send_message 省略 channelType 时按群频道 ID 自动识别', async () => {
+  const { handlers, sentMessages, cleanup } = setup();
+  try {
+    const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '省略类型的群消息' });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(sentMessages[0].channelType, 2);
+  } finally { cleanup(); }
+});
 await test('send_message 拒绝普通成员 @全体', async () => {
   const { handlers, sentMessages, cleanup } = setup({ activeOwner: 'b@b.com' });
   try {
@@ -199,6 +207,15 @@ await test('get_chat_history 单聊（channelType=1）排除群聊消息，按 a
     assert.strictEqual(r.messages[0].channelType, 1);
   } finally { cleanup(); }
 });
+await test('get_chat_history 缺少 channelId 返回可操作错误', async () => {
+  const { handlers, cleanup } = setup();
+  try {
+    const r = await handlers.get_chat_history({ agentId: 'agentA' });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'CHANNEL_ID_REQUIRED');
+    assert.match(r.error, /channelId/);
+  } finally { cleanup(); }
+});
 
 await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () => {
   const { db, handlers, cleanup } = setup();
@@ -241,6 +258,18 @@ await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () 
     assert.strictEqual(blocked.messages.length, 2, '阻塞轮询也应按指定群过滤');
     assert.ok(blocked.messages.every(m => m.channelId === 'room1' && m.channelType === 2), '阻塞轮询不能混入其他频道');
     assert.strictEqual(blocked.securityContext.policyId, 'voko-external-message-v1');
+  } finally { delete global.__dispatcher; cleanup(); }
+});
+await test('单聊与群聊同名频道不会共享游标或串入消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare(`UPDATE messages SET message_seq=? WHERE id=?`).run(1, 'm2');
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-direct-collision', 'visitor1', 'room1', '同名单聊消息', 'room1', 1, 'agentA', Date.now() + 4, 0, 'received', 1, 1);
+    const group = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'room1', channelType: 2, onlyReplies: false });
+    assert.ok(group.messages.every(m => m.channelType === 2), '群聊不应读到同名单聊');
+    const direct = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'room1', channelType: 1, onlyReplies: false });
+    assert.deepStrictEqual(direct.messages.map(m => m.id), ['m-direct-collision'], '单聊应使用独立游标并过滤群聊');
   } finally { delete global.__dispatcher; cleanup(); }
 });
 
@@ -323,6 +352,15 @@ await test('invite_to_group 通过群服务邀请成员', async () => {
     assert.strictEqual(body.channel_id, 'room1');
     assert.strictEqual(body.operator_uid, 'imuidB');
     assert.deepStrictEqual(body.members, ['visitor1']);
+  } finally { cleanup(); }
+});
+await test('invite_to_group 缺少 members 时不请求服务端并返回明确错误', async () => {
+  const { handlers, fetchCalls, cleanup } = setup();
+  try {
+    const r = await handlers.invite_to_group({ agentId: 'agentA', channelId: 'room1' });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'MEMBERS_REQUIRED');
+    assert.strictEqual(fetchCalls.length, 0);
   } finally { cleanup(); }
 });
 

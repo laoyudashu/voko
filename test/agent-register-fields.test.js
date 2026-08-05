@@ -196,6 +196,25 @@ describe('manage_agent_registration shared flow', () => {
 });
 
 describe('verify_agent_email 必填校验', () => {
+  it('注册后等待真实 IM 连接状态并返回连接快照', async () => {
+    const cx = createMockCx();
+    let waited = 0;
+    cx.startAgentWorker = async () => ({ connected: false, status: 'connecting' });
+    cx.waitForAgentConnection = async () => {
+      waited++;
+      return { connected: true, status: 'connected' };
+    };
+    const result = await createToolHandlers(cx).verify_agent_email({
+      email: 'a@b.com',
+      code: '123456',
+      agentName: 'Waited',
+      backendType: 'codex',
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(waited, 1);
+    assert.deepStrictEqual(result.imConnection, { connected: true, status: 'connected' });
+  });
+
   it('完整注册缺 backendType → 报错且不调用后端', async () => {
     const cx = createMockCx();
     const h = createToolHandlers(cx);
