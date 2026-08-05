@@ -609,9 +609,13 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     app.post('/__test__/provider', (req?: any, res?: any) => {
       const provider = (global as any).__dispatcher?.providers?.['mock-echo'];
       if (!provider?.setAvailable) return res.status(404).json({ success: false, error: 'mock provider unavailable' });
+      const scopedAgentId = String(req.body?.agentId || '').trim();
       try {
         provider.clearFault?.();
-        if (Object.prototype.hasOwnProperty.call(req.body || {}, 'available')) {
+        if (scopedAgentId && typeof provider.setAgentAvailable === 'function'
+          && Object.prototype.hasOwnProperty.call(req.body || {}, 'available')) {
+          provider.setAgentAvailable(scopedAgentId, req.body?.available !== false);
+        } else if (Object.prototype.hasOwnProperty.call(req.body || {}, 'available')) {
           provider.setAvailable(req.body?.available !== false);
         }
         const fault = req.body?.fault;
@@ -622,8 +626,27 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       } catch (e: any) {
         return res.status(400).json({ success: false, error: e?.message || 'invalid provider fault' });
       }
-      (global as any).__dispatcher?.invalidateRoutes?.({ providerId: 'mock-echo', reason: 'e2e-provider-control', available: provider.isAvailable?.() });
+      (global as any).__dispatcher?.invalidateRoutes?.({
+        providerId: 'mock-echo',
+        agentId: scopedAgentId || undefined,
+        reason: 'e2e-provider-control',
+        available: scopedAgentId ? provider.isAvailable?.(scopedAgentId) : provider.isAvailable?.(),
+      });
       return res.json({ success: true, ...provider.getTestState?.(), available: !!provider.isAvailable?.() });
+    });
+    app.post('/__test__/delivery-modes', (req?: any, res?: any) => {
+      const agentId = String(req.body?.agentId || '').trim();
+      if (!agentId || !Object.prototype.hasOwnProperty.call(req.body || {}, 'modes')) {
+        return res.status(400).json({ success: false, error: 'agentId and modes are required' });
+      }
+      try {
+        const modes = req.body.modes === null ? null : (Array.isArray(req.body.modes) ? req.body.modes.map(String) : null);
+        db.prepare('UPDATE agents SET delivery_modes=? WHERE agent_id=?').run(modes === null ? null : JSON.stringify(modes), agentId);
+        (global as any).__dispatcher?.invalidateMeta?.(agentId);
+        return res.json({ success: true, agentId, modes });
+      } catch (e: any) {
+        return res.status(500).json({ success: false, error: e?.message || 'delivery mode update failed' });
+      }
     });
     app.get('/__test__/runtime', (req?: any, res?: any) => {
       const agentId = String(req.query?.agentId || '').trim();
