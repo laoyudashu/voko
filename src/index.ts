@@ -632,7 +632,20 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
                  COUNT(DISTINCT COALESCE(client_msg_no, id)) AS uniqueTurns
           FROM messages WHERE agent_id=? GROUP BY channel_id, channel_type
         `).all(agentId);
-        return res.json({ success: true, agent, deliveryStatus, checkpoints, messageStats });
+        const agentStatuses: Record<string, any> = {};
+        for (const id of Array.from(agentManager?.workers?.keys?.() || [])) {
+          agentStatuses[String(id)] = agentManager.getStatus(String(id));
+        }
+        return res.json({
+          success: true,
+          agent,
+          deliveryStatus,
+          checkpoints,
+          messageStats,
+          imStatus: agentManager?.getStatus?.(agentId) || null,
+          agentStatuses,
+          hubSummary: agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0, hubs: [] },
+        });
       } catch (e: any) {
         return res.status(500).json({ success: false, error: e?.message || 'runtime snapshot failed' });
       }

@@ -127,9 +127,15 @@ function encodeRecv(state, message) {
 }
 
 function createProtocolConnection(ws, req, { faults, events, connections, nextMessageId }) {
-  const state = { ws, req, protocol: null, crypto: null, uid: null, authenticated: false, messageSeq: 0 };
+  const state = {
+    ws, req, protocol: null, crypto: null, uid: null, authenticated: false, messageSeq: 0,
+    sendCount: 0, sendAckCount: 0, sendAckLostCount: 0,
+  };
   let legacyReorderPending = null;
-  const onClose = () => {
+  const onClose = (code) => {
+    if (state.authenticated) {
+      events.push({ target: 'im', direction: 'disconnect', uid: state.uid, code: Number(code || 0) });
+    }
     if (state.uid && connections.get(state.uid) === state) connections.delete(state.uid);
   };
   ws.once('close', onClose);
@@ -184,13 +190,20 @@ function createProtocolConnection(ws, req, { faults, events, connections, nextMe
       try { packet = state.protocol.decode(data); } catch (error) { ws.close(1002, error.message); return; }
       let content = null;
       try { content = decodeContent(state.crypto.decryptBytes(packet.encryptedPayload)); } catch (_) {}
+      state.sendCount += 1;
       events.push({ target: 'im', direction: 'send', uid: state.uid, packet, content });
       const rule = faults.consume('im');
       if (rule?.delayMs) await new Promise(resolve => setTimeout(resolve, rule.delayMs));
       if (rule?.mode === '1006') return ws.terminate();
-      if (rule?.mode === 'sendack-lost') return;
+      if (rule?.mode === 'sendack-lost') {
+        state.sendAckLostCount += 1;
+        events.push({ target: 'im', direction: 'sendack-lost', uid: state.uid, clientSeq: packet.clientSeq });
+        return;
+      }
       const id = nextMessageId();
       state.messageSeq += 1;
+      state.sendAckCount += 1;
+      events.push({ target: 'im', direction: 'sendack', uid: state.uid, clientSeq: packet.clientSeq });
       ws.send(encodeSendack(id, packet.clientSeq, state.messageSeq));
     }
   });
@@ -366,6 +379,40 @@ async function startSeparateFakeServices(options = {}) {
     // The control plane is only exposed by the in-process fake API used by E2E.
     // It never exists on the VOKO production server.
     if (handleFaultControl(req, res, body, faults)) return;
+    if (req.url === '/__test__/im/state' && req.method === 'GET') {
+      const imEvents = events.filter((event) => event.target === 'im');
+      return json(res, 200, {
+        success: true,
+        connections: [...connections.values()].map((state) => ({
+          uid: state.uid,
+          authenticated: state.authenticated,
+          readyState: state.ws.readyState,
+          messageSeq: state.messageSeq,
+          sendCount: state.sendCount,
+          sendAckCount: state.sendAckCount,
+          sendAckLostCount: state.sendAckLostCount,
+        })),
+        stats: {
+          connects: imEvents.filter((event) => event.direction === 'connect').length,
+          disconnects: imEvents.filter((event) => event.direction === 'disconnect').length,
+          sends: imEvents.filter((event) => event.direction === 'send').length,
+          sendAcks: imEvents.filter((event) => event.direction === 'sendack').length,
+          sendAckLost: imEvents.filter((event) => event.direction === 'sendack-lost').length,
+        },
+      });
+    }
+    if (req.url === '/__test__/im/control' && req.method === 'POST') {
+      const input = parseJsonBody(body) || {};
+      if (input.action !== 'disconnect') return json(res, 400, { success: false, error: 'unsupported IM control action' });
+      const targetUid = input.uid ? String(input.uid) : null;
+      let closed = 0;
+      for (const state of [...connections.values()]) {
+        if (targetUid && state.uid !== targetUid) continue;
+        closed += 1;
+        state.ws.terminate();
+      }
+      return json(res, 200, { success: true, action: 'disconnect', uid: targetUid, closed, code: 1006 });
+    }
     if (req.url === '/__test__/im/message' && req.method === 'POST') {
       return json(res, 200, { success: true, ...injectIncoming(parseJsonBody(body) || {}) });
     }

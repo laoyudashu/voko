@@ -34,6 +34,20 @@ async function main() {
   const port = Number(process.env.VOKO_E2E_PORT) || await findFreePort();
   const output = fs.openSync(logPath, 'a');
   const services = await startFakeServices({ separate: true });
+  const seedAgents = [
+    {
+      agentId: 'e2e-agent',
+      imUid: 'e2e-im-uid',
+      name: 'E2E Test Agent',
+      description: 'Playwright isolated Agent',
+    },
+    {
+      agentId: 'e2e-agent-2',
+      imUid: 'e2e-im-uid-2',
+      name: 'E2E Shared Hub Agent',
+      description: 'Second Agent sharing the E2E Hub',
+    },
+  ];
   const env = {
     ...process.env,
     VOKO_DB_PATH: dbPath,
@@ -60,6 +74,7 @@ async function main() {
     logPath,
     vokoPort: port,
     services: services.services,
+    agents: seedAgents.map(({ agentId, imUid }) => ({ agentId, imUid })),
   }, null, 2));
 
   const { initDatabase, saveUserAccessToken } = require('../build/core/database');
@@ -71,12 +86,14 @@ async function main() {
     console.error = () => {};
     const db = initDatabase(dbPath);
     saveUserAccessToken(db, ownerEmail, 'e2e-local-token');
-    db.prepare(`INSERT INTO agents (
+    const insertAgent = db.prepare(`INSERT INTO agents (
       agent_id, imUid, imToken, im_server_url, owner_email, publish_status,
       created_at, updated_at, backend_type, agent_name, category, description, access_mode, delivery_modes
-    ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run('e2e-agent', 'e2e-im-uid', 'e2e-im-token', services.imWsUrl, ownerEmail,
-        Date.now(), Date.now(), 'mock', 'E2E Test Agent', 'general', 'Playwright isolated Agent', 'public', null);
+    ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const agent of seedAgents) {
+      insertAgent.run(agent.agentId, agent.imUid, 'e2e-im-token', services.imWsUrl, ownerEmail,
+        Date.now(), Date.now(), 'mock', agent.name, 'general', agent.description, 'public', null);
+    }
     db.close();
   } finally {
     console.log = originalLog;
