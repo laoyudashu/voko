@@ -27,7 +27,7 @@ const { t, getLocale } = require('../core/i18n');
 
 class OwnerInterventionNotifier {
   [key: string]: any;
-  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, getOpenclawHandler, getHermesHandler, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention }: any) {
+  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, getOpenclawHandler, getHermesHandler, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention, autoApproveWhitelistIfFriendRequest }: any) {
     this.databaseAPI = databaseAPI;
     this.registry = registry;
     this.db = db;
@@ -38,6 +38,7 @@ class OwnerInterventionNotifier {
     this.buildOwnerReplyPrompt = buildOwnerReplyPrompt || (() => '');
     this.sendSystemMessage = sendSystemMessage || (() => {});
     this.resumeOwnerIntervention = resumeOwnerIntervention || null;
+    this.autoApproveWhitelistIfFriendRequest = autoApproveWhitelistIfFriendRequest || null;
 
     /** 重试队列: { [id]: { record, retryCount, timer } } */
     this._retryQueue = {};
@@ -399,6 +400,16 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
 
           // 转发回复给 agent（和渠道回复一致）
           if ((updateResult?.contentChanged || Number(row.agent_notified) !== 1) && row.session_key && row.agent_id) {
+            // 好友申请自动审批：主人回复"同意"时自动加入白名单（与 IM 渠道一致）
+            if (this.autoApproveWhitelistIfFriendRequest) {
+              this.autoApproveWhitelistIfFriendRequest(
+                {
+                  id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
+                  sessionKey: row.session_key, problem: row.problem,
+                },
+                reply.raw_text
+              );
+            }
             const forwardMsg = this.buildOwnerReplyPrompt(
               { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id },
               reply.raw_text

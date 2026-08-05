@@ -1067,7 +1067,19 @@ ${body}
     }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, providers };
+  /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
+  function invalidateBindingsForConfigChange(input: {
+    agentId: string;
+    prevProviderType: string;
+    prevInstanceId: string | null;
+    nextProviderType: string;
+    nextInstanceId: string | null;
+  }): number {
+    try { return _bindingStore.invalidateForAgentConfigChange(input); }
+    catch (e) { console.error('[Dispatcher] invalidateBindingsForConfigChange 失败:', errorMessage(e)); return 0; }
+  }
+
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers };
 }
 
 module.exports = { createDispatcher };
