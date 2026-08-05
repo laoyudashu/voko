@@ -16,6 +16,8 @@ voko start
 
 For a browser-free installation diagnosis, run `voko setup`. It returns JSON and never opens a page or modifies PATH, shell files, or Provider configuration. If `voko` is not on PATH, use `npm exec --yes --package=@voko/lite -- voko setup`.
 
+For an existing installation, run `voko doctor` when you need to troubleshoot runtime health. It reads the database, Agent, IM/delivery capability, and local health state without starting a Provider or model. Use `--json` for scripts and `--deep` to probe configured API, IM, OSS, and local CLI/ACP paths. Exit code `0` means all checks passed, `1` means warnings, and `2` means a required check failed.
+
 Every configuration below launches this stdio command:
 
 ```bash

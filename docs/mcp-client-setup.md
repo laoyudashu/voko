@@ -16,6 +16,8 @@ voko start
 
 无浏览器环境可先运行 `voko setup`。它只读检查 Node、数据库、登录、运行实例和稳定启动路径，以 JSON 返回 `nextAction`；不会打开页面，也不会修改 PATH、shell 或 Provider 配置。若 `voko` 不在 PATH，可运行 `npm exec --yes --package=@voko/lite -- voko setup`。
 
+已有安装需要排查运行状态时，运行 `voko doctor`。它只读检查数据库、Agent、IM/接收能力和本地健康状态；`--json` 适合脚本，`--deep` 会额外探测已配置的 API、IM、OSS 和本地 CLI/ACP 路径，但不会启动 Provider 或模型。退出码 `0` 表示通过，`1` 表示有诊断警告，`2` 表示关键检查失败。
+
 然后由客户端启动以下 stdio MCP 命令：
 
 ```bash
