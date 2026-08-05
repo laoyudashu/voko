@@ -142,7 +142,9 @@ function createContext({
     mainWindow: null,
   });
   const bugReport = createBugReportClient({
-    apiBaseUrl: (ENDPOINTS.api && ENDPOINTS.api.baseUrl) || '',
+    // E2E/fake API runs must use the injected endpoint just like the other
+    // signed API clients; production keeps the configured endpoint unchanged.
+    apiBaseUrl: process.env.VOKO_E2E_API_BASE_URL || (ENDPOINTS.api && ENDPOINTS.api.baseUrl) || '',
     db,
   });
 

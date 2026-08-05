@@ -40,12 +40,16 @@ async function main() {
       imUid: 'e2e-im-uid',
       name: 'E2E Test Agent',
       description: 'Playwright isolated Agent',
+      did: 'did:voko:e2e-agent',
+      privateKey: '11'.repeat(32),
     },
     {
       agentId: 'e2e-agent-2',
       imUid: 'e2e-im-uid-2',
       name: 'E2E Shared Hub Agent',
       description: 'Second Agent sharing the E2E Hub',
+      did: 'did:voko:e2e-agent-2',
+      privateKey: '22'.repeat(32),
     },
   ];
   const env = {
@@ -91,10 +95,12 @@ async function main() {
     const insertAgent = db.prepare(`INSERT INTO agents (
       agent_id, imUid, imToken, im_server_url, owner_email, publish_status,
       created_at, updated_at, backend_type, agent_name, category, description, access_mode, delivery_modes
-    ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?)`);
+      , did, private_key
+    ) VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const agent of seedAgents) {
       insertAgent.run(agent.agentId, agent.imUid, 'e2e-im-token', services.imWsUrl, ownerEmail,
-        Date.now(), Date.now(), 'mock', agent.name, 'general', agent.description, 'public', null);
+        Date.now(), Date.now(), 'mock', agent.name, 'general', agent.description, 'public', null,
+        agent.did, agent.privateKey);
     }
     db.close();
   } finally {
