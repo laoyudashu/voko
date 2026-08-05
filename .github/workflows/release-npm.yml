@@ -50,6 +50,10 @@ jobs:
             exit 1
           fi
       - run: npm run release:gate
+      - name: Run release Chromium E2E gate
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
       - name: Create the release tarball from the verified build
         run: |
           # release:gate already built the package. Disable lifecycle scripts here

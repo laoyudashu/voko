@@ -8,6 +8,10 @@
 - `npm run test:e2e`: isolated Chromium Web checks.
 - `npm run test:ci`: the local equivalent of the code CI gate.
 - `npm run test:real:*`: explicit local-only checks using `.env.real-test.local`.
+- `npm run release:gate:code`: the release code gate (typecheck, build, i18n,
+  full baseline coverage, all deterministic tests and package-secret scan).
+- The npm release workflow additionally runs Chromium E2E before creating the
+  verified tarball; real IM checks remain manual and are never run in CI.
 
 The test runners use four-way cross-file concurrency by default. Build-mutating
 and process-identity tests run in isolated serial groups so concurrent tests do
