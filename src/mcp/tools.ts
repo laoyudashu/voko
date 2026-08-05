@@ -1200,6 +1200,8 @@ function createToolHandlers(cx: McpContext) {
     // ─── 8. 消息 ───
 
     async send_message(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const fromUid = cx.wukongim?.getCurrentUid?.(p.agentId);
       if (!fromUid) return { success: false, error: 'Agent IM 身份缺失' };
       const channelType = typeof p.channelType === 'number' ? p.channelType : 1;
@@ -1304,6 +1306,8 @@ function createToolHandlers(cx: McpContext) {
     // ─── 9. 聊天历史 ───
 
     async get_chat_history(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const limit = Math.min(p.limit || 20, 200);
       const offset = p.offset || 0;
       const channelType = p.channelType || 1;
@@ -1502,6 +1506,8 @@ function createToolHandlers(cx: McpContext) {
     // ─── 13. 上传并发送附件 ───
 
     async upload_and_send_file(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const uploaded = await uploadAttachment(cx, p);
       if (!uploaded.success) return uploaded;
 
@@ -2186,6 +2192,8 @@ function createToolHandlers(cx: McpContext) {
     },
 
     async fetch_new_messages(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const blockTimeout = p.blockTimeout || 0;
       const limit = Math.min(p.limit || 50, 200);
       const onlyReplies = p.onlyReplies !== false;
