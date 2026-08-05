@@ -1217,6 +1217,72 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   assert.equal(handled, 1);
 });
 
+test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ messages: [] }) };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    exec() {},
+    prepare(sql) {
+      return {
+        all(arg) {
+          if (sql.includes('FROM agents')) {
+            return [
+              { agent_id: 'local-agent', imUid: 'local-uid', imToken: 'local-token', im_server_url: 'ws://im.test:5200', owner_email: 'owner@example.test' },
+              { agent_id: 'remote-agent', imUid: 'remote-uid', imToken: 'remote-token', im_server_url: 'ws://im.test:5200', owner_email: 'other@example.test' },
+            ].filter((agent) => !sql.includes('LOWER(TRIM(owner_email))') || agent.owner_email === arg);
+          }
+          if (sql.includes('FROM conversations')) return [{ channel_id: `visitor-${arg}` }];
+          return [];
+        },
+        get(key) {
+          if (sql.includes('FROM config') && key === 'user_access_token') {
+            return { data: JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }) };
+          }
+          if (sql.includes('FROM config') && key === 'current_user_email') {
+            return { data: JSON.stringify('owner@example.test') };
+          }
+          if (sql.includes('SELECT MAX(message_seq)')) return { m: 0 };
+          return undefined;
+        },
+        run() {},
+      };
+    },
+  };
+  const handler = { handleAgentMessage() { return undefined; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.login_uid, 'local-uid');
+  assert.equal(requests[0].body.channel_id, 'visitor-local-agent');
+});
+
+test('Lite offline sync does nothing when no local user is authenticated', async (t) => {
+  const originalFetch = global.fetch;
+  let fetchCalls = 0;
+  global.fetch = async () => { fetchCalls += 1; throw new Error('must not fetch'); };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    prepare(sql) {
+      return {
+        all() { assert.fail(`agents must not be queried: ${sql}`); },
+        get() { return undefined; },
+        run() {},
+      };
+    },
+  };
+  const handler = { handleAgentMessage() { return undefined; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.equal(fetchCalls, 0);
+});
+
 test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () => {
   const calls = [];
   const deliver = createDeliver({
