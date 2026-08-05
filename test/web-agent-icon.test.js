@@ -79,6 +79,36 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   assert.deepEqual(updated, { agentId: 'gym', iconUrl: 'https://files.example/new.png' });
 });
 
+test('agent edit page escapes remote category values before rendering HTML', async (t) => {
+  const handlers = {
+    get_agent_profile: async () => ({ success: true, data: { agentId: 'gym', agentName: 'Gym' } }),
+  };
+  const db = { prepare: () => ({ get: () => null, all: () => [] }) };
+  const app = express();
+  app.use(createWebRouter(handlers, db));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const previousFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith(`http://127.0.0.1:${server.address().port}`)) return previousFetch(url, options);
+    if (String(url).endsWith('/api/agent-categories')) {
+      return { json: async () => ({ success: true, data: [{ code: 'general" onfocus="alert(1)', label: 'General' }] }) };
+    }
+    return { json: async () => ({ success: false }) };
+  };
+  t.after(() => { global.fetch = previousFetch; });
+
+  const response = await previousFetch(`http://127.0.0.1:${server.address().port}/agents/gym/edit`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /value="general&quot; onfocus=&quot;alert\(1\)"/);
+  assert.doesNotMatch(html, /value="general" onfocus="alert\(1\)"/);
+});
+
 test('agent icon upload rejects content that is not a supported image', async (t) => {
   let uploaded = false;
   const app = express();

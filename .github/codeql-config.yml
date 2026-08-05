@@ -3,5 +3,13 @@ name: VOKO CodeQL configuration
 paths-ignore:
   - build/**
   - test/**
+  - e2e/**
+  - coverage/**
+  - playwright-report/**
+  - test-results/**
+  - artifacts/**
+  - scripts/start-e2e-voko.js
+  - .codeql-db/**
+  - .codeql-results/**
   - .cache/**
   - node_modules/**

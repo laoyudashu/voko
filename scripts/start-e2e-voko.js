@@ -81,7 +81,7 @@ async function main() {
     vokoPort: port,
     services: services.services,
     agents: seedAgents.map(({ agentId, imUid }) => ({ agentId, imUid })),
-  }, null, 2));
+  }, null, 2), { mode: 0o600 });
 
   const { initDatabase, saveUserAccessToken } = require('../build/core/database');
   const originalLog = console.log;
