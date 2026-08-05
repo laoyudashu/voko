@@ -2,6 +2,7 @@
   "unit": [
     "agent-file-security.test.js",
     "checkpoint-store.test.js",
+    "doctor.test.js",
     "heartbeat-delivery-status.test.js",
     "language-switcher.test.js",
     "lite-adaptive-recovery.test.js",

@@ -6,7 +6,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 
 ## Start here
 
-- [MCP, CLI, and the local Agent IM runtime](mcp-cli-runtime.md): install, local Web UI, MCP stdio, local database, headless use, and how Agent messages share one runtime.
+- [MCP, CLI, and the local Agent IM runtime](mcp-cli-runtime.md): install, `voko setup`/`voko doctor`, local Web UI, MCP stdio, local database, headless use, and how Agent messages share one runtime.
 - [Connect MCP clients](mcp-client-setup.md): copy-ready WorkBuddy and Qwen Code configuration, generic stdio MCP configuration, and troubleshooting.
 - [Provider compatibility matrix](provider-compatibility.md): the 17 Provider families, connection types, validation status, and how to report results.
 - [Safe uninstall](uninstall.en.md) · [中文](uninstall.md) · [日本語](uninstall.ja.md): stop the runtime, preserve or purge local data, and review remaining MCP / Provider configuration.

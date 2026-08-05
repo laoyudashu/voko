@@ -9,6 +9,8 @@
 - `npm run test:smoke`: fast main-path smoke check (build, i18n, core contracts
   and selected Chromium journeys); it excludes dedicated timeout/disconnect
   fault suites.
+- `npm run test:doctor`: focused read-only CLI diagnosis tests; it uses a
+  temporary SQLite database and never contacts production services.
 - `npm run test:ci`: the local equivalent of the code CI gate.
 - `npm run test:real:*`: explicit local-only checks using `.env.real-test.local`.
 - `npm run release:gate:code`: the release code gate (typecheck, build, i18n,

@@ -20,6 +20,22 @@ npm exec --yes --package=@voko/lite -- voko setup
 
 It is safe to use over SSH and in WSL, containers, systemd preparation, and other machines without a graphical session.
 
+For an existing installation, use the read-only runtime diagnosis command:
+
+```bash
+voko doctor
+```
+
+`voko doctor` checks the local Node.js version, database readability and schema, SQLite integrity, authentication presence, registered Agents, delivery modes, runtime/IM status, and (when the runtime is running) its local health endpoint. It never starts a Worker, Provider, model, or message delivery, and it opens the database read-only. Use `--json` for support tooling and `--deep` to additionally probe configured API/IM/OSS endpoints and resolve local CLI/ACP runtimes without launching them:
+
+```bash
+voko doctor --json
+voko doctor --deep
+voko doctor --db /path/to/voko.db
+```
+
+The exit status is `0` when all checks pass, `1` when checks pass with warnings (for example, the runtime is stopped or a legacy cursor is detected), and `2` when a required check fails (for example, an unreadable or newer-than-supported database). A warning is diagnostic only; it does not change the runtime or migrate data. `voko setup` remains the first-run onboarding/readiness JSON command, while `voko doctor` is the ongoing health and troubleshooting command.
+
 The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent on a graphical desktop.
 
 On a headless host, `voko start` automatically enters terminal sign-in and Agent registration when stdin/stdout are an interactive TTY. After onboarding, the same command continues starting the runtime and registered Agent IM connections. This automatic wizard never runs under systemd, Docker, CI, redirected input, or when `--no-interactive` is set.

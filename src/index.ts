@@ -2707,6 +2707,7 @@ function printUsage() {
     '  voko                       ' + t('cli.usage.start_default') + '\n' +
     '  voko start [--port PORT]   ' + t('cli.usage.start') + '\n' +
     '  voko setup                 Headless installation and readiness diagnosis (JSON)\n' +
+    '  voko doctor [--json]       Read-only runtime and configuration diagnosis\n' +
     '  voko login                 ' + t('cli.usage.login') + '\n' +
     '  voko manage_agent_registration --interactive\n' +
     '                             ' + t('cli.usage.register_interactive') + '\n' +
@@ -2784,7 +2785,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'setup', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'doctor', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2802,6 +2803,24 @@ async function main() {
     const result = inspectSetup(args);
     console.log(JSON.stringify(result, null, 2));
     if (!result.success) process.exitCode = 1;
+    return;
+  }
+
+  // doctor — read-only local/runtime diagnosis; never initializes Core or workers.
+  if (subcommand === 'doctor') {
+    if (args.help || args.h) {
+      console.log('Usage: voko doctor [--json] [--deep] [--db PATH]');
+      console.log('Read-only diagnosis of Node.js, database, Agents, runtime, MCP/IM configuration and provider runtimes.');
+      return;
+    }
+    const { runDoctor, formatDoctor } = require('./core/doctor');
+    const result = await runDoctor({
+      dbPath: resolveDbPath(args, { silent: true, noCreate: true }),
+      deep: !!args.deep,
+    });
+    if (args.json) console.log(JSON.stringify(result, null, 2));
+    else console.log(formatDoctor(result));
+    process.exitCode = result.exitCode;
     return;
   }
 
