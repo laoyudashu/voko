@@ -35,7 +35,10 @@ jobs:
         if: always()
         with:
           name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
-          path: coverage/
+          path: |
+            coverage/
+            test-reports/
+            test-results/
           if-no-files-found: ignore
 
   web-e2e:
@@ -59,7 +62,7 @@ jobs:
         if: always()
         run: node scripts/collect-e2e-artifacts.js playwright-report/e2e-runtime
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        if: failure()
+        if: always()
         with:
           name: playwright-${{ matrix.browser }}
           path: |

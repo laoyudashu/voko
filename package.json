@@ -99,7 +99,7 @@
     "security:codeql": "node scripts/run-codeql.js",
     "security:local": "npm run security:gitleaks && npm run security:codeql",
     "sbom": "npm sbom --package-lock-only --sbom-format cyclonedx",
-    "release:gate:code": "npm run test:targeted && npm run i18n:check && npm run scan:package-secrets",
+    "release:gate:code": "npm run test:ci && npm run scan:package-secrets",
     "release:gate": "npm run release:gate:code && npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org/"
   },
   "dependencies": {
