@@ -54,12 +54,13 @@ async function _post(cx, path, body, agentId) {
   }
   let resp;
   try {
+    const timeoutMs = Math.max(250, Number(process.env.VOKO_GROUP_API_TIMEOUT_MS) || 10000);
     resp = await fetch(GROUP_API_BASE + path, {
       method: 'POST',
       redirect: 'error',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw new Error('群服务不可达: ' + e.message);
