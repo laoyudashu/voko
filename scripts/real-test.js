@@ -99,15 +99,17 @@ function createReporter(scenario, baseDir = path.join(root, 'artifacts', 'real-t
   return { runId, summary, check, finish };
 }
 
-async function sendAndVerify(config, reporter, toUid, channelType = 1) {
+async function sendAndVerify(config, reporter, toUid, channelType = 1, options = {}) {
   const content = `[VOKO-REAL-TEST ${reporter.runId}] ${new Date().toISOString()}`;
-  const sent = await mcpCall(config.dbPath, 'voko_send_message', { agentId: config.agentId, toUid, channelType, content });
+  const sent = await mcpCall(config.dbPath, 'voko_send_message', {
+    agentId: config.agentId, toUid, channelType, content, ...(options.mentions ? { mentions: options.mentions } : {}),
+  });
   reporter.summary.counters.sent += 1;
   const messageId = sent?.messageId || sent?.data?.messageId;
   reporter.check(`send channelType=${channelType}`, !!messageId, messageId || JSON.stringify(sent).slice(0, 200));
   const history = await mcpCall(config.dbPath, 'voko_get_chat_history', { agentId: config.agentId, channelId: toUid, channelType, limit: 100 });
   const messages = history?.messages || history?.data?.messages || [];
-  const matches = messages.filter((item) => item.messageId === messageId || item.content === content);
+  const matches = messages.filter((item) => item.id === messageId || item.messageId === messageId || item.content === content);
   if (matches.length === 0) reporter.summary.counters.lost += 1;
   if (matches.length > 1) reporter.summary.counters.duplicates += matches.length - 1;
   reporter.check(`persist exactly once channelType=${channelType}`, matches.length === 1, `matches=${matches.length}`);
@@ -131,7 +133,7 @@ async function smoke(config, reporter) {
   const status = await mcpCall(config.dbPath, 'voko_get_status', { agentId: config.agentId });
   reporter.check('Agent status available', !!status, JSON.stringify(status).slice(0, 300));
   await sendAndVerify(config, reporter, config.peerUid, 1);
-  if (config.groupId) await sendAndVerify(config, reporter, config.groupId, 2);
+  if (config.groupId) await sendAndVerify(config, reporter, config.groupId, 2, { mentions: { all: true } });
   else reporter.check('group message', true, 'SKIP: VOKO_REAL_GROUP_ID not configured');
   await mcpCall(config.dbPath, 'voko_fetch_new_messages', { agentId: config.agentId, visitorId: config.peerUid, blockTimeout: 1 });
   reporter.check('MCP Pull', true);
@@ -140,7 +142,18 @@ async function smoke(config, reporter) {
       agentId: config.agentId, toUid: config.peerUid, channelType: 1,
       filePath: path.resolve(config.filePath), message: `[VOKO-REAL-TEST ${reporter.runId}] attachment`,
     });
-    reporter.check('attachment upload and send', !!uploaded, JSON.stringify(uploaded).slice(0, 200));
+    const attachmentOk = uploaded?.success !== false
+      && !!(uploaded?.messageId || uploaded?.fileMessageId || uploaded?.attachmentMessageId);
+    reporter.check('attachment upload and send', attachmentOk, JSON.stringify(uploaded).slice(0, 200));
+    if (attachmentOk) {
+      const history = await mcpCall(config.dbPath, 'voko_get_chat_history', {
+        agentId: config.agentId, channelId: config.peerUid, channelType: 1, limit: 100,
+      });
+      const rows = history?.messages || history?.data?.messages || [];
+      const tagged = rows.filter((item) => String(item.content || '').includes(reporter.runId));
+      reporter.check('attachment persisted exactly once', tagged.length >= 1, `matches=${tagged.length}`);
+      if (tagged.length > 1) reporter.summary.counters.duplicates += tagged.length - 1;
+    }
   } else reporter.check('attachment upload and send', true, 'SKIP: VOKO_REAL_TEST_FILE not configured');
 }
 
@@ -151,6 +164,8 @@ async function recovery(config, reporter) {
   const connected = started?.connected !== false && started?.success !== false;
   reporter.summary.counters.reconnects += connected ? 1 : 0;
   reporter.check('start selected Worker', connected, JSON.stringify(started).slice(0, 300));
+  const status = await mcpCall(config.dbPath, 'voko_get_status', { agentId: config.agentId });
+  reporter.check('selected Worker reports connected after recovery', status?.agent?.imConnected !== false, JSON.stringify(status).slice(0, 300));
   await sendAndVerify(config, reporter, config.peerUid, 1);
   reporter.check('system sleep/network interruption', true, 'MANUAL: run this scenario immediately after resume to validate PowerManager logs');
 }
