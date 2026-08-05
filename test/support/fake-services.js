@@ -200,6 +200,10 @@ function createProtocolConnection(ws, req, { faults, events, connections, nextMe
         events.push({ target: 'im', direction: 'sendack-lost', uid: state.uid, clientSeq: packet.clientSeq });
         return;
       }
+      // A delayed ACK can race with an injected 1006 close.  Treat a closed
+      // socket as an undeliverable ACK instead of throwing from the fake
+      // server's asynchronous handler.
+      if (ws.readyState !== 1) return;
       const id = nextMessageId();
       state.messageSeq += 1;
       state.sendAckCount += 1;

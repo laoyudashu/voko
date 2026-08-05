@@ -141,3 +141,54 @@ test('real SENDACK loss fails exactly one outbound message and the next send rec
   expect(finalFake.stats.sendAcks).toBeGreaterThanOrEqual(1);
   expect(readMessages(channelId).filter(row => row.content.includes('sendack '))).toHaveLength(2);
 });
+
+test('concurrent sends interleaved with one Agent disconnect stay isolated and non-duplicated', async ({ request }) => {
+  test.setTimeout(30_000);
+  const messages = [
+    { agentId: 'e2e-agent', toUid: 'e2e-concurrent-a1', content: 'concurrent agent one A' },
+    { agentId: 'e2e-agent', toUid: 'e2e-concurrent-a2', content: 'concurrent agent one B' },
+    { agentId: 'e2e-agent-2', toUid: 'e2e-concurrent-b1', content: 'concurrent agent two A' },
+    { agentId: 'e2e-agent-2', toUid: 'e2e-concurrent-b2', content: 'concurrent agent two B' },
+  ];
+  const fault = await request.post(`${manifest().services.api}/__test__/fault`, {
+    data: { target: 'im', mode: 'delay', delayMs: 800, count: messages.length },
+  });
+  expect(fault.ok()).toBeTruthy();
+
+  const sends = messages.map((message, index) => callMcp(request, 'voko_send_message', message, 1600 + index));
+  await expect.poll(async () => (await imState(request)).stats.sends, { timeout: 5_000 }).toBeGreaterThanOrEqual(messages.length);
+
+  const disconnect = await request.post(`${manifest().services.api}/__test__/im/control`, {
+    data: { action: 'disconnect', uid: 'e2e-im-uid' },
+  });
+  expect(disconnect.ok()).toBeTruthy();
+  expect(await disconnect.json()).toMatchObject({ success: true, closed: 1, code: 1006 });
+
+  const results = await Promise.all(sends);
+  expect(results[0].success).toBe(false);
+  expect(results[1].success).toBe(false);
+  expect(results[2].success).toBe(true);
+  expect(results[3].success).toBe(true);
+
+  await expect.poll(() => messages.every(({ agentId, toUid, content }) => {
+    const rows = readMessages(toUid, agentId).filter(row => row.content === content);
+    return rows.length === 1;
+  }), { timeout: 5_000 }).toBe(true);
+
+  const firstRows = messages.slice(0, 2).flatMap(({ agentId, toUid, content }) => readMessages(toUid, agentId).filter(row => row.content === content));
+  const secondRows = messages.slice(2).flatMap(({ agentId, toUid, content }) => readMessages(toUid, agentId).filter(row => row.content === content));
+  expect(firstRows).toHaveLength(2);
+  expect(firstRows.every(row => row.status === 'failed')).toBe(true);
+  expect(secondRows).toHaveLength(2);
+  expect(secondRows.every(row => row.status === 'sent' && row.client_msg_no)).toBe(true);
+  expect(new Set([...firstRows, ...secondRows].map(row => row.id)).size).toBe(messages.length);
+  expect(readMessages('e2e-concurrent-a1', 'e2e-agent-2')).toHaveLength(0);
+  expect(readMessages('e2e-concurrent-b1', 'e2e-agent')).toHaveLength(0);
+
+  await expect.poll(async () => (await runtime(request, 'e2e-agent')).imStatus?.connected === true, {
+    timeout: 10_000,
+  }).toBe(true);
+  const finalFake = await imState(request);
+  expect(finalFake.stats.sends).toBeGreaterThanOrEqual(messages.length);
+  expect(finalFake.stats.sendAcks).toBeGreaterThanOrEqual(2);
+});
