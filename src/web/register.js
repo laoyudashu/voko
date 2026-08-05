@@ -76,7 +76,8 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .wizard-head{padding:26px 34px 22px;border-bottom:1px solid #e3e7ee}
 .wizard-head h2{text-align:left;margin:0 0 5px;font-size:24px}.wizard-head p{margin:0;color:#667085}
 .wizard-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:22px}
-.wizard-step{border-top:3px solid #e4e7ec;padding-top:8px;color:#8b95a5;font-weight:600}
+.wizard-step{border-top:3px solid #e4e7ec;padding-top:8px;color:#8b95a5;font-weight:600;cursor:pointer;text-align:left}
+.wizard-step:focus-visible{outline:2px solid #1a73e8;outline-offset:3px;border-radius:4px}
 .wizard-step.active{border-color:#1a73e8;color:#1a73e8}.wizard-step.done{border-color:#9bbcf7;color:#50617d}
 .wizard-step b{display:inline-grid;place-items:center;width:21px;height:21px;border-radius:50%;background:#edf0f4;margin-right:5px;font-size:12px}
 .wizard-step.active b{background:#1a73e8;color:#fff}
@@ -268,10 +269,10 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<div class="registration-pane" id="registration-human-pane">'
     + '<header class="wizard-head"><h2>' + esc(t('register.add.title')) + '</h2><p>' + esc(t('register.flow.subtitle')) + '</p>'
     + '<div class="wizard-steps">'
-    + '<div class="wizard-step active"><b>1</b>' + esc(t('register.flow.step.basic')) + '</div>'
-    + '<div class="wizard-step"><b>2</b>' + esc(t('register.flow.step.provider')) + '</div>'
-    + '<div class="wizard-step"><b>3</b>' + esc(t('register.flow.step.delivery')) + '</div>'
-    + '<div class="wizard-step"><b>4</b>' + esc(t('register.flow.step.done')) + '</div>'
+    + '<div class="wizard-step active" data-wizard-step="1" role="button" tabindex="0"><b>1</b>' + esc(t('register.flow.step.basic')) + '</div>'
+    + '<div class="wizard-step" data-wizard-step="2" role="button" tabindex="0"><b>2</b>' + esc(t('register.flow.step.provider')) + '</div>'
+    + '<div class="wizard-step" data-wizard-step="3" role="button" tabindex="0"><b>3</b>' + esc(t('register.flow.step.delivery')) + '</div>'
+    + '<div class="wizard-step" data-wizard-step="4" role="button" tabindex="0"><b>4</b>' + esc(t('register.flow.step.done')) + '</div>'
     + '</div></header>'
     + '<div class="wizard-body">'
     + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
@@ -333,10 +334,11 @@ function wizardJs(t) {
 (function(){
   var I=${JSON.stringify(I)}, root=document.getElementById('registration-wizard');
   if(!root)return;
-  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false;
+  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null;
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
   var panels=Array.from(document.querySelectorAll('.wizard-panel')), steps=Array.from(document.querySelectorAll('.wizard-step'));
   var next=document.getElementById('wf-next'), prev=document.getElementById('wf-prev');
+  next.disabled=true;
   var nameInput=document.getElementById('wf-name'),nameStatus=document.getElementById('wf-name-status'),nameCheckedValue='',nameBlocked=false;
   var tabs=Array.from(document.querySelectorAll('[data-registration-tab]')),humanPane=document.getElementById('registration-human-pane'),agentPane=document.getElementById('registration-agent-pane'),tabModeKey='voko.agentRegistrationMode';
   function activateRegistrationTab(mode){var agent=mode==='agent';tabs.forEach(function(item){item.classList.toggle('active',item.dataset.registrationTab===mode)});humanPane.hidden=agent;agentPane.hidden=!agent;try{sessionStorage.setItem(tabModeKey,mode)}catch(_){}}
@@ -345,6 +347,25 @@ function wizardJs(t) {
   document.getElementById('copy-agent-registration').addEventListener('click',async function(){var prompt=document.getElementById('agent-registration-prompt').value,status=document.getElementById('copy-agent-registration-status');try{await navigator.clipboard.writeText(prompt)}catch(_){var area=document.getElementById('agent-registration-prompt');area.focus();area.select();document.execCommand('copy')}status.textContent=I.copied});
   function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
+  function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}
+  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value}}
+  function beginDetection(){
+    if(state&&state.environment){renderProviders(state.environment);return Promise.resolve(state)}
+    setDetectionPending();
+    if(!regId)return Promise.resolve(null);
+    if(detectionPromise)return detectionPromise;
+    detectionPromise=checkName().then(function(ok){if(!ok){show(1);return null}return api('set_basic_info',basicInfoPayload())}).then(function(d){if(d){state=d;if(d.environment)renderProviders(d.environment)}return d}).catch(function(e){document.getElementById('wf-detect').textContent=e.message||I.error;document.getElementById('wf-providers').innerHTML='';throw e}).finally(function(){detectionPromise=null});
+    return detectionPromise;
+  }
+  function openProviderStep(notifyError){
+    if(state&&state.status==='created')return;
+    show(2);
+    if(state&&state.environment){renderProviders(state.environment);next.disabled=false;return}
+    next.disabled=true;
+    if(!regId){setDetectionPending();return}
+    beginDetection().then(function(){if(step===2)next.disabled=false}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
+  }
+  steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){show(1)}else if(target===2){openProviderStep(false)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
   function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
   function readDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||'null');return d&&d.email===root.dataset.email?d:null}catch(_){return null}}
   function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
@@ -360,7 +381,7 @@ function wizardJs(t) {
     else show(1);
     next.disabled=false;
   }
-  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft()}).catch(fail)}
+  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)}
   function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
   function checkName(){
     var name=nameInput.value.trim();
@@ -378,7 +399,7 @@ function wizardJs(t) {
   function renderProviders(env){
     var detected=env.detected||[];if(!selectedProvider)selectedProvider=detected[0]?detected[0].type:'others';
     var html='<div class="group-label">'+escHtml(I.local)+'</div><div class="provider-list">';
-    detected.forEach(function(p){html+=providerCard(p,true);if(selectedProvider===p.type&&p.instances&&p.instances.length>1){html+='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> '+escHtml(ins.name)+'</label>'});html+='</div>'}});
+    detected.forEach(function(p){html+=providerCard(p,true);if(selectedProvider===p.type&&p.instances&&p.instances.length){html+='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> '+escHtml(ins.name)+'</label>'});html+='</div>'}});
     html+='</div><details id="wf-more-providers"'+(moreProvidersExpanded?' open':'')+'><summary class="group-label">'+escHtml(I.more)+'</summary><div class="provider-list">';
     (env.more||[]).forEach(function(p){html+=providerCard(p,false)});
     html+=providerCard({type:'others',label:I.others,instances:[]},false)+'</div></details>';
@@ -411,7 +432,7 @@ function wizardJs(t) {
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
   next.onclick=function(){
     next.disabled=true;
-    if(step===1){checkName().then(function(ok){if(!ok){next.disabled=true;return}return api('set_basic_info',{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value}).then(function(d){state=d;renderProviders(d.environment);show(2);next.disabled=false})}).catch(fail);return}
+    if(step===1){openProviderStep(true);return}
     if(step===2){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){renderDeliveries(d);show(3);next.disabled=false}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
     if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}

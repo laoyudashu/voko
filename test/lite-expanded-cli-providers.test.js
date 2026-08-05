@@ -135,6 +135,24 @@ test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', 
   assert.equal(new HermesCliProvider({ db })._instanceForAgent('voko-agent'), 'hermes-profile');
 });
 
+test('Hermes CLI does not use an Agent UUID when backend instance is missing', async () => {
+  const agentId = 'f08d57a7-6af4-4b5f-a543-7d143e64dc53';
+  let invoked = false;
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: null }) }) },
+    runCli: async () => { invoked = true; return { stdout: '', stderr: '', code: 0, signal: null }; },
+  });
+  provider._available = true;
+
+  assert.equal(provider._instanceForAgent(agentId), null);
+  assert.equal(provider.isAvailable(agentId), false);
+  await assert.rejects(
+    provider.push({ agentId, fromUid: 'visitor', content: 'hello', messageId: 'missing-profile' }),
+    /Hermes CLI unavailable: agent is not bound to a Hermes profile/,
+  );
+  assert.equal(invoked, false);
+});
+
 test('OpenClaw rejects a failed CLI process and Hermes reports a background delivery error', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

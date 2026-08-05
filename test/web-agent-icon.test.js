@@ -63,6 +63,14 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   assert.doesNotMatch(html, /window\.open\("\/reauth"/);
   assert.match(html, /dlg\.showModal\(\);code\.focus\(\)/);
   assert.match(html, /file\.size>500\*1024/);
+  assert.match(html, /id="bt-instance-field"/);
+  assert.match(html, /id="bt-instance"/);
+  assert.match(html, /INITIAL_TYPE=/);
+  assert.match(html, /ivalue\.value="";bt\.value=opt\.getAttribute/);
+  const backendScript = html.match(/<script>\(function\(\)\{var w=document\.getElementById\("bt-wrapper"\)[\s\S]*?<\/script>/)?.[0]
+    .replace(/^<script>/, '').replace(/<\/script>$/, '');
+  assert.ok(backendScript);
+  assert.doesNotThrow(() => new Function(backendScript));
 
   const boundary = '----voko-icon-test';
   const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('test-image')]);

@@ -48,6 +48,7 @@
   "mcp.tool.update_agent_profile.p.address": "Agent address",
   "mcp.tool.update_agent_profile.p.contact_phone": "Agent contact phone number",
   "mcp.tool.update_agent_profile.p.backendType": "Agent type (local update only, not synced to server. Choose a predefined type or any custom string)",
+  "mcp.tool.update_agent_profile.p.backendInstanceId": "Local instance ID for OpenClaw, Hermes, or ZeroClaw",
 
   "mcp.tool.set_agent_status.desc": "Set the Agent's publish/unpublish status, or toggle public/private independently. status=1 publishes; status=0 unpublishes. When only visibility is provided, only public(1)/private(0) is changed without affecting the publish status. When publishing, you may also pass visibility to set the initial access mode.",
   "mcp.tool.set_agent_status.p.status": "Publish status: 1=publish, 0=unpublish",

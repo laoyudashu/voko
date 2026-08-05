@@ -187,6 +187,11 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /所有者邮箱/);
     assert.match(html, /<details id="wf-more-providers"/);
     assert.doesNotMatch(html, /<details id="wf-more-providers" open/);
+    assert.match(html, /data-wizard-step="2" role="button" tabindex="0"/);
+    assert.match(html, /function setDetectionPending\(\)/);
+    assert.match(html, /function openProviderStep\(/);
+    assert.match(html, /s\.addEventListener\('click',activate\)/);
+    assert.match(html, /beginDetection\(\)\.then\(function\(\)\{if\(step===2\)next\.disabled=false\}/);
     assert.match(html, /web的Agent-[0-9a-f]{4}/);
     assert.match(html, /\/api\/agent-registration/);
     assert.match(html, /addEventListener\('blur'/);

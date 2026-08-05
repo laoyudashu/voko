@@ -38,4 +38,17 @@ describe('MCP update_agent_profile delivery safety', () => {
     assert.strictEqual(result.success, true);
     assert.doesNotMatch(writes[0].sql, /backend_instance_id|delivery_modes/);
   });
+
+  it('rejects an incompatible instance before changing the provider', async () => {
+    const { handlers, writes } = makeHandlers('openclaw');
+    const result = await handlers.update_agent_profile({
+      agentId: 'agent-1',
+      backendType: 'others',
+      backendInstanceId: 'old-profile',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.match(result.error, /OpenClaw|Hermes|ZeroClaw/);
+    assert.strictEqual(writes.length, 0);
+  });
 });

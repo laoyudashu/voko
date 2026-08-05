@@ -275,6 +275,7 @@ class HermesHttpProvider extends PushProvider {
 
   isProfileReady(agentId: string): boolean {
     const profileId = this._profileForAgent(agentId);
+    if (!profileId) return false;
     const profile = this.options.profiles?.[profileId];
     const reachable = this.connectedAgents === null || this.connectedAgents.has(profileId);
     return reachable && !!(profile?.apiKey || this.options.apiKey) && this._authStates.get(profileId) !== false;
@@ -283,8 +284,19 @@ class HermesHttpProvider extends PushProvider {
   /**
    * 确保 Hermes gateway 在运行，如未运行则自动启动
    */
-  async _ensureGatewayRunning(agentId: string): Promise<boolean> {
-    const profileId = this._profileForAgent(agentId);
+  async _ensureGatewayRunning(profileId?: string): Promise<boolean> {
+    if (!profileId) {
+      this.addLog('Hermes HTTP 不可用：未绑定 profile，跳过 gateway 启动');
+      return false;
+    }
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(profileId)) {
+      this.addLog('Hermes HTTP 不可用：拒绝将 Agent UUID 当作 profile');
+      return false;
+    }
+    if (!this.options.profiles?.[profileId]) {
+      this.addLog(`Hermes HTTP 不可用：未找到已配置 profile=${profileId}`);
+      return false;
+    }
     // 检查 API Key 是否已配置
     if (!this.options.profiles?.[profileId]?.apiKey && !this.options?.apiKey) {
       this.addLog(`❌ API Key 未配置，请先到「设置 → 网关连接管理 → Hermes 连接管理」中点击「一键配置」`);
@@ -347,8 +359,8 @@ class HermesHttpProvider extends PushProvider {
    * 强制重启 gateway（--replace 替换旧实例），用于 401 后重载 config.yaml 里的 key。
    * 与 _ensureGatewayRunning 不同：跳过 ping 早返回，无条件 spawn。
    */
-  async _restartGateway(agentId: string): Promise<boolean> {
-    const profileId = this._profileForAgent(agentId);
+  async _restartGateway(profileId: string): Promise<boolean> {
+    if (!profileId) return false;
     const client = this.client;
     if (!client) return false;
     this.addLog(`🔄 401: 强制重启 gateway ${profileId}（重载 config.yaml 的 key）`);
@@ -362,7 +374,7 @@ class HermesHttpProvider extends PushProvider {
       if (!this._gatewayChildren) this._gatewayChildren = new Map<string, ChildProcess>();
       this._gatewayChildren.set(profileId, child);
     } catch (e) {
-      this.addLog(`❌ 重启 spawn 异常 (${agentId}): ${errorMessage(e)}`);
+      this.addLog(`❌ 重启 spawn 异常 (${profileId}): ${errorMessage(e)}`);
       return false;
     }
     for (let i = 0; i < 15; i++) {
@@ -386,14 +398,16 @@ class HermesHttpProvider extends PushProvider {
     return true;
   }
 
-  _profileForAgent(agentId: string): string {
+  _profileForAgent(agentId: string): string | null {
+    if (!agentId) return null;
     try {
       const row = this.db?.prepare(
         'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
       ).get(agentId, 'hermes');
-      return String(row?.backend_instance_id || agentId).trim() || agentId;
+      const profileId = String(row?.backend_instance_id || '').trim();
+      return profileId || null;
     } catch (_) {
-      return agentId;
+      return null;
     }
   }
 
@@ -403,12 +417,12 @@ class HermesHttpProvider extends PushProvider {
         "SELECT agent_id, backend_instance_id FROM agents WHERE backend_type='hermes'"
       ).all() as Array<{ agent_id?: string; backend_instance_id?: string }> | undefined;
       const matches = (rows || [])
-        .filter(row => String(row.backend_instance_id || row.agent_id || '').trim() === profileId)
+        .filter(row => String(row.backend_instance_id || '').trim() === profileId)
         .map(row => String(row.agent_id || '').trim())
         .filter(Boolean);
-      return matches.length ? matches : [profileId];
+      return matches;
     } catch (_) {
-      return [profileId];
+      return [];
     }
   }
 
@@ -428,6 +442,11 @@ class HermesHttpProvider extends PushProvider {
     const agentId = parts[1]!;
     const visitorId = parts.slice(2).join(':');
     const profileId = this._profileForAgent(agentId);
+    if (!profileId) {
+      const error = new Error('Hermes HTTP unavailable: agent is not bound to a Hermes profile');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     const turnId = String(extraData?.turnId || extraData?.messageId || `hermes-${Date.now()}`);
 
     this.addLog(`📤 转发消息 ${agentId} (visitor=${visitorId.substring(0, 12)}...)`);
@@ -446,8 +465,8 @@ class HermesHttpProvider extends PushProvider {
 
     // 自动启动 gateway
     const justStarted = !this.connected;
-    await this._ensureGatewayRunning(profileId);
-    if (!this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
+    const gatewayReady = await this._ensureGatewayRunning(profileId);
+    if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     try {
       const result = await this.client.chat(profileId, visitorId, structuredMsg);
@@ -521,13 +540,18 @@ class HermesHttpProvider extends PushProvider {
   ): Promise<HermesSteerResult | null | undefined> {
     const sessionKey = `hermes:${agentId}:${visitorId}`;
     const profileId = this._profileForAgent(agentId);
+    if (!profileId) {
+      const error = new Error('Hermes HTTP unavailable: agent is not bound to a Hermes profile');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     const turnId = String(metadata?.turnId || `hermes-steer-${Date.now()}`);
     this.addLog(`📝 注入系统消息 ${agentId}`);
 
     // 自动启动 gateway
     const justStarted = !this.connected;
-    await this._ensureGatewayRunning(profileId);
-    if (!this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
+    const gatewayReady = await this._ensureGatewayRunning(profileId);
+    if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     // hermes steer 本身不 emit agent.reply（其 chat 才 emit），手动补偿以走 onAgentReply → handleAgentReply
     const emitReply = (result: HermesSteerResult): void => {
@@ -659,7 +683,7 @@ class HermesHttpProvider extends PushProvider {
     const profileId = this._profileForAgent(agentId);
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
-    if (!canResumeBinding && this._bindingStore) {
+    if (!canResumeBinding && profileId && this._bindingStore) {
       this._bindingStore.saveManaged({
         agentId, channelId: bindingChannelId, channelType: bindingChannelType,
         providerType: 'hermes', providerInstanceId: profileId,

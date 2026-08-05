@@ -93,6 +93,24 @@ test('Hermes HTTP readiness is isolated per profile', () => {
   assert.equal(provider.isProfileReady('offline'), false);
 });
 
+test('Hermes never treats a missing backend instance or Agent UUID as a profile', async () => {
+  const agentId = 'f08d57a7-6af4-4b5f-a543-7d143e64dc53';
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: null }) }),
+  }, null, {
+    apiKey: 'legacy-key',
+    profiles: { [agentId]: { port: 8642, apiKey: 'legacy-key' } },
+  });
+
+  assert.equal(provider._profileForAgent(agentId), null);
+  assert.equal(provider.isProfileReady(agentId), false);
+  assert.equal(await provider._ensureGatewayRunning(agentId), false);
+  await assert.rejects(
+    provider.sendToSession(`hermes:${agentId}:visitor`, 'hello'),
+    /Hermes HTTP unavailable: agent is not bound to a Hermes profile/,
+  );
+});
+
 test('Hermes HTTP provider selects the first candidate that passes authenticated readiness', async () => {
   let savedConfig = JSON.stringify({ profiles: {} });
   const db = {

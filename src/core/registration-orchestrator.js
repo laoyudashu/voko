@@ -521,7 +521,8 @@ class RegistrationOrchestrator {
     const zeroclawCommand = resolveZeroClawCommand();
     const zeroclawInstalled = hasCommand('zeroclaw')
       || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
-    const zeroclaw = zeroclawInstalled ? zeroclawInstances() : [];
+    const discoverZeroClawInstances = this.options.zeroclawInstances || zeroclawInstances;
+    const zeroclaw = zeroclawInstalled ? discoverZeroClawInstances() : [];
     const hermesInstalled = hasCommand('hermes');
     const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);

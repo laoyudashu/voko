@@ -47,20 +47,23 @@ class HermesCliProvider extends PushProvider {
     return meta?.backend_type === 'hermes';
   }
 
-  isAvailable(_agentId: string): boolean {
+  isAvailable(agentId: string): boolean {
+    if (!this._instanceForAgent(agentId)) return false;
     if (this._available !== null) return this._available;
     this._available = checkCliAvailable('hermes');
     return this._available;
   }
 
-  _instanceForAgent(agentId: string): string {
+  _instanceForAgent(agentId: string): string | null {
+    if (!agentId) return null;
     try {
       const row = this._db?.prepare(
         'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
       ).get(agentId, 'hermes');
-      return String(row?.backend_instance_id || agentId).trim() || agentId;
+      const profileId = String(row?.backend_instance_id || '').trim();
+      return profileId || null;
     } catch (_) {
-      return agentId;
+      return null;
     }
   }
 
@@ -91,6 +94,11 @@ class HermesCliProvider extends PushProvider {
 
   async push(payload: PushPayload): Promise<{ accepted: true; queued: true }> {
     const profileId = this._instanceForAgent(payload.agentId);
+    if (!profileId) {
+      const error = new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     this._enqueue(profileId, () => this._runPush(payload));
     console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
     return { accepted: true, queued: true };
@@ -105,6 +113,7 @@ class HermesCliProvider extends PushProvider {
       ? payload.providerBinding!.nativeSessionId
       : `hermes:${agentId}:${fromUid}`;
     const profileId = this._instanceForAgent(agentId);
+    if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
     const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
@@ -168,6 +177,11 @@ class HermesCliProvider extends PushProvider {
 
   async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<{ queued: true }> {
     const profileId = this._instanceForAgent(agentId);
+    if (!profileId) {
+      const error = new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     this._enqueue(profileId, () => this._runSteer(agentId, visitorId, content, metadata));
     console.error(`[HermesCli] steer 已进入后台队列 agent=${agentId} profile=${profileId}`);
     return { queued: true };
@@ -176,6 +190,7 @@ class HermesCliProvider extends PushProvider {
   async _runSteer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<void> {
     const sessionKey = `hermes:${agentId}:${visitorId}`;
     const profileId = this._instanceForAgent(agentId);
+    if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
     const turnId = String(metadata?.turnId || `hermes-cli-steer-${Date.now()}`);
     console.error(`[HermesCli] steer agent=${agentId} visitor=${visitorId}`);
     const notification = JSON.stringify({
@@ -224,6 +239,9 @@ class HermesCliProvider extends PushProvider {
       return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
     }
     const profileId = this._instanceForAgent(agentId);
+    if (!profileId) {
+      return { ok: false, status: 'configuration_required', code: 'HERMES_PROFILE_REQUIRED' };
+    }
     const result = await this._runCli({
       cmd: 'hermes',
       args: ['--profile', profileId, '-z', `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`],
