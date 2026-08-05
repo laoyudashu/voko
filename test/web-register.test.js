@@ -125,6 +125,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /\.oauth-btn\{[^}]*font-size:13px;white-space:nowrap/);
     assert.match(html, /api\/login\/oauth\/providers/);
     assert.doesNotMatch(html, /ut_/);
+    // 登录页不渲染系统 footer（“错误上报”/IM 状态等运行时信息不应在未登录页暴露）
+    assert.doesNotMatch(html, /data-voko-system-footer/);
 
     const switchLogin = await fetch(server.baseUrl + '/login?mode=switch');
     const switchHtml = await switchLogin.text();
@@ -136,6 +138,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.ok(switchHtml.indexOf('</form>') < switchHtml.indexOf('class="oauth-buttons"'));
     assert.match(switchHtml, /grid-template-columns:1fr 1fr/);
     assert.match(switchHtml, /api\/login\/oauth\/providers/);
+    // 切换用户页同样不渲染系统 footer
+    assert.doesNotMatch(switchHtml, /data-voko-system-footer/);
 
     const oauthCompleteHtml = await (await fetch(server.baseUrl + '/login/oauth/complete')).text();
     assert.match(oauthCompleteHtml, /if\(!r\.ok\|\|!d\.success\)/);
