@@ -36,8 +36,11 @@ async function callMcp(request, name, args, id = Date.now()) {
 }
 
 test('MCP pull cursor pages messages, survives Web reload, and resumes exactly once', async ({ page, request }, testInfo) => {
-  const base = 2100 + (testInfo.repeatEachIndex || 0) * 10;
-  const channelId = `e2e-cursor-recovery-${testInfo.repeatEachIndex || 0}`;
+  const repeatIndex = testInfo.repeatEachIndex || 0;
+  const retryIndex = testInfo.retry || 0;
+  const base = 2100 + repeatIndex * 100 + retryIndex * 10;
+  const channelId = `e2e-cursor-recovery-${repeatIndex}-${retryIndex}`;
+  const checkpointScope = `1:${channelId}`;
   await setProvider(request, { available: false });
   await page.goto(`/agents/e2e-agent/c/${channelId}`);
 
@@ -59,7 +62,7 @@ test('MCP pull cursor pages messages, survives Web reload, and resumes exactly o
   expect(first.success).toBe(true);
   expect(first.messages.map(message => message.id)).toEqual([String(base + 1), String(base + 2)]);
   let state = await runtime(request);
-  let checkpoint = state.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId);
+  let checkpoint = state.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === checkpointScope);
   expect(checkpoint).toBeTruthy();
   expect(Number(checkpoint.committed_value)).toBe(base + 2);
 
@@ -69,7 +72,7 @@ test('MCP pull cursor pages messages, survives Web reload, and resumes exactly o
   expect(second.success).toBe(true);
   expect(second.messages.map(message => message.id)).toEqual([String(base + 3)]);
   state = await runtime(request);
-  checkpoint = state.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId);
+  checkpoint = state.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === checkpointScope);
   expect(Number(checkpoint.committed_value)).toBe(base + 3);
 
   // Reloading the Web layer must not reset the durable MCP checkpoint.
@@ -77,7 +80,7 @@ test('MCP pull cursor pages messages, survives Web reload, and resumes exactly o
   expect(reloaded.ok()).toBeTruthy();
   await expect.poll(async () => {
     const snapshot = await runtime(request);
-    return Number(snapshot.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId)?.committed_value || 0);
+    return Number(snapshot.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === checkpointScope)?.committed_value || 0);
   }).toBe(base + 3);
 
   const empty = await callMcp(request, 'voko_fetch_new_messages', {
@@ -101,7 +104,7 @@ test('MCP pull cursor pages messages, survives Web reload, and resumes exactly o
   expect(resumed.success).toBe(true);
   expect(resumed.messages.map(message => message.id)).toEqual([String(base + 7)]);
   const finalState = await runtime(request);
-  const finalCheckpoint = finalState.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId);
+  const finalCheckpoint = finalState.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === checkpointScope);
   expect(Number(finalCheckpoint.committed_value)).toBe(base + 7);
   const stats = finalState.messageStats.find(row => row.channelId === channelId);
   expect(Number(stats.total)).toBe(4);

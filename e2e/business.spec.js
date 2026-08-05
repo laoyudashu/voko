@@ -201,54 +201,61 @@ test('duplicate and reordered inbound frames remain idempotent in SQLite', async
   expect(Number(dedupe.uniqueTurns)).toBe(6);
 });
 
-test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }) => {
+test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }, testInfo) => {
+  const repeatIndex = testInfo.repeatEachIndex || 0;
+  const retryIndex = testInfo.retry || 0;
+  const runOffset = repeatIndex * 100 + retryIndex * 10;
+  const channelId = `e2e-pull-${repeatIndex}-${retryIndex}`;
+  const firstMessageId = String(1401 + runOffset);
+  const recoveredMessageId = String(1402 + runOffset);
+  const firstMessageSeq = 50 + runOffset;
   const response = await request.post('/__test__/provider', { data: { available: false } });
   expect(response.ok()).toBeTruthy();
-  await page.goto('/agents/e2e-agent/c/e2e-pull');
+  await page.goto(`/agents/e2e-agent/c/${channelId}`);
   await inject(request, {
     toUid: 'e2e-im-uid',
     fromUid: 'e2e-visitor',
-    channelId: 'e2e-pull',
+    channelId,
     channelType: 1,
-    messageId: '1401',
-    messageSeq: 50,
+    messageId: firstMessageId,
+    messageSeq: firstMessageSeq,
     content: 'pull fallback e2e',
   });
-  const pullRows = await waitForMessages('e2e-pull', rows => rows.some(row => row.id === '1401'));
+  const pullRows = await waitForMessages(channelId, rows => rows.some(row => row.id === firstMessageId));
   expect(pullRows.some(row => row.is_me === 1 && row.content.includes('[echo] pull fallback e2e'))).toBeFalsy();
   await expect(page.locator('#msg-box')).toContainText('pull fallback e2e');
   const beforePull = await runtime(request);
   expect(beforePull.deliveryStatus.activeMode).toBe('pull');
-  expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === 'e2e-pull')).toBeFalsy();
+  expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === `1:${channelId}`)).toBeFalsy();
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
-    agentId: 'e2e-agent', visitorId: 'e2e-pull', onlyReplies: true, limit: 10,
+    agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,
   });
   expect(pulled.success).toBe(true);
   expect(pulled.messages).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: '1401', content: 'pull fallback e2e' }),
+    expect.objectContaining({ id: firstMessageId, content: 'pull fallback e2e' }),
   ]));
   const afterPull = await runtime(request);
-  const cursor = afterPull.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === 'e2e-pull');
+  const cursor = afterPull.checkpoints.find(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === `1:${channelId}`);
   expect(cursor).toBeTruthy();
-  expect(Number(cursor.committed_value)).toBe(50);
+  expect(Number(cursor.committed_value)).toBe(firstMessageSeq);
 
   const recovery = await request.post('/__test__/provider', { data: { available: true } });
   expect(recovery.ok()).toBeTruthy();
   await inject(request, {
     toUid: 'e2e-im-uid',
     fromUid: 'e2e-visitor',
-    channelId: 'e2e-pull',
+    channelId,
     channelType: 1,
-    messageId: '1402',
-    messageSeq: 51,
+    messageId: recoveredMessageId,
+    messageSeq: firstMessageSeq + 1,
     content: 'push recovered e2e',
   });
-  await waitForMessages('e2e-pull', rows => rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('push recovered e2e')));
+  await waitForMessages(channelId, rows => rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('push recovered e2e')));
   await expect(page.locator('#msg-box')).toContainText('push recovered e2e');
   const recovered = await runtime(request);
   expect(recovered.deliveryStatus.activeMode).toBe('mock-echo');
-  const pullStats = recovered.messageStats.find(item => item.channelId === 'e2e-pull');
+  const pullStats = recovered.messageStats.find(item => item.channelId === channelId);
   expect(Number(pullStats.replies)).toBe(1);
   expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
 });
