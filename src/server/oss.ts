@@ -158,10 +158,13 @@ async function _uploadToOSS(objectName?: any, content?: any, contentType?: any, 
   if (process.env.VOKO_E2E === '1' && process.env.VOKO_E2E_OSS_BASE_URL) {
     const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
     const url = `${String(process.env.VOKO_E2E_OSS_BASE_URL).replace(/\/$/, '')}/${objectName}`;
+    const configuredTimeout = Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS || 30000);
+    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 30000;
     const resp = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': contentType || 'application/octet-stream', 'Content-Length': String(buffer?.length || 0) },
       body: buffer,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!resp.ok) throw new Error(`OSS 上传失败 (${resp.status}): ${await resp.text()}`);
     return url;
@@ -180,6 +183,8 @@ async function _uploadToOSS(objectName?: any, content?: any, contentType?: any, 
     .digest('base64');
 
   const url = `https://${OSS_BUCKET}.${OSS_REGION}.aliyuncs.com/${objectName}`;
+  const configuredTimeout = Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS || 30000);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 30000;
 
   const resp = await fetch(url, {
     method: 'PUT',
@@ -190,7 +195,8 @@ async function _uploadToOSS(objectName?: any, content?: any, contentType?: any, 
       'Content-Length': String(buffer.length),
       'x-oss-object-acl': 'public-read'
     },
-    body: buffer
+    body: buffer,
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!resp.ok) {
