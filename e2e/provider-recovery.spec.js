@@ -48,8 +48,14 @@ async function callMcp(request, name, args, id = Date.now()) {
   return JSON.parse(text);
 }
 
-test('cached Provider push failure falls back to Pull and recovery restores Push', async ({ request }) => {
-  const channelId = 'e2e-provider-failure';
+test('cached Provider push failure falls back to Pull and recovery restores Push', async ({ request }, testInfo) => {
+  const repeatIndex = testInfo.repeatEachIndex || 0;
+  const retryIndex = testInfo.retry || 0;
+  const runOffset = repeatIndex * 100 + retryIndex * 10;
+  const channelId = `e2e-provider-failure-${repeatIndex}-${retryIndex}`;
+  const failedMessageId = String(1701 + runOffset);
+  const recoveredMessageId = String(1703 + runOffset);
+  const checkpointScope = `1:${channelId}`;
   const before = await runtime(request);
   const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
   expect(before.deliveryStatus.activeMode).toBe('mock-echo');
@@ -62,12 +68,12 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
 
   await inject(request, {
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
-    messageId: '1701', messageSeq: 1701, content: 'provider failure e2e',
+    messageId: failedMessageId, messageSeq: 1701 + runOffset, content: 'provider failure e2e',
   });
   await expect.poll(async () => Number((await runtime(request)).providerState?.stats?.faultedPushes || 0), {
     timeout: 5_000,
   }).toBe(faultedBefore + 1);
-  await expect.poll(() => readMessages(channelId).some(row => row.id === '1701'), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => readMessages(channelId).some(row => row.id === failedMessageId), { timeout: 5_000 }).toBe(true);
   await expect.poll(async () => (await runtime(request)).deliveryStatus.activeMode, { timeout: 5_000 }).toBe('pull');
 
   const failedRows = readMessages(channelId);
@@ -77,13 +83,13 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
     agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,
-  }, 1702);
+  }, 1702 + runOffset);
   expect(pulled.success).toBe(true);
   expect(pulled.messages).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: '1701', content: 'provider failure e2e' }),
+    expect.objectContaining({ id: failedMessageId, content: 'provider failure e2e' }),
   ]));
   const afterPull = await runtime(request);
-  expect(afterPull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId)).toBe(true);
+  expect(afterPull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === checkpointScope)).toBe(true);
 
   const recovered = await setProvider(request, { available: true });
   expect(recovered).toMatchObject({ success: true, available: true, fault: null });
@@ -91,7 +97,7 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
 
   await inject(request, {
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
-    messageId: '1703', messageSeq: 1703, content: 'provider recovered e2e',
+    messageId: recoveredMessageId, messageSeq: 1703 + runOffset, content: 'provider recovered e2e',
   });
   await expect.poll(() => readMessages(channelId).some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('provider recovered e2e')), {
     timeout: 5_000,
