@@ -99,6 +99,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       address: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.address')),
       contact_phone: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.contact_phone')),
       backendType: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.backendType')),
+      backendInstanceId: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.backendInstanceId')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.update_agent_profile(params);

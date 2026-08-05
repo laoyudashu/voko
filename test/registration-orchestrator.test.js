@@ -114,6 +114,37 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('detects ZeroClaw aliases and binds the selected instance during registration', () => {
+    const service = new RegistrationOrchestrator({
+      getLoggedEmail: () => 'owner@example.com',
+      commandAvailable: (command) => command === 'zeroclaw',
+      zeroclawInstances: () => [
+        { id: 'voko_test', name: 'VOKO Linux test', isDefault: false },
+        { id: 'research', name: 'Research', isDefault: false },
+      ],
+    });
+    const environment = service.inspectEnvironment();
+    const provider = environment.detected.find((item) => item.type === 'zeroclaw');
+    assert.ok(provider);
+    assert.deepStrictEqual(provider.instances.map((item) => item.id), ['voko_test', 'research']);
+    assert.strictEqual(provider.supportsMultipleInstances, true);
+
+    const selected = runWithRegistrationCaller(
+      { source: 'web' },
+      () => service.start({ email: 'owner@example.com' }),
+    );
+    return Promise.resolve(selected).then((started) => {
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'ZeroClaw test' });
+      const chosen = service.selectProvider(started.registrationId, {
+        providerType: 'zeroclaw',
+        instanceId: 'voko_test',
+      });
+      assert.strictEqual(basic.status, 'provider_selection_required');
+      assert.strictEqual(chosen.provider.instanceId, 'voko_test');
+      assert.strictEqual(chosen.provider.instanceName, 'VOKO Linux test');
+    });
+  });
+
   it('detects installed desktop-only Agents and exposes pull delivery only', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,

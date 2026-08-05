@@ -106,7 +106,7 @@ async function updateLite(options: { installDir?: string; spawn?: any; exit?: (c
 const TOOL_PARAM_SCHEMAS = {
   manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', acknowledgeCost: 'boolean', registrationMode: 'string' },
   bug_report: { action: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string', ownerEmail: 'string' },
-  update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string' },
+  update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string', backendInstanceId: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
   get_status:              { agentId: 'string' },
   get_agent_profile:       { agentId: 'string' },

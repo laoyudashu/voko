@@ -26,6 +26,8 @@ const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 
+const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
+
 // ═══════════════════════════════════════════════════════════════
 //  CSS — 浅色 OCR 友好主题
 // ═══════════════════════════════════════════════════════════════
@@ -1020,8 +1022,17 @@ function createWebRouter(handlers, db, opts={}){
       const T=req.t;
       const types=getBackendTypes(db);
       let detected=new Set();
-      try{detected=new Set(createRegistrationOrchestrator({db}).inspectEnvironment().detected.map(x=>x.type));}catch(_){}
-      res.json({success:true,types:types.map(t=>({value:t.value,label:t.value==='others'?T('db.backend_type.others'):t.label,detected:detected.has(t.value)}))});
+      let environment={detected:[]};
+      try{environment=createRegistrationOrchestrator({db}).inspectEnvironment();detected=new Set(environment.detected.map(x=>x.type));}catch(_){}
+      let currentType='',currentInstanceId='';
+      if(req.query.agentId){
+        try{const row=db.prepare('SELECT backend_type, backend_instance_id FROM agents WHERE agent_id=?').get(String(req.query.agentId));currentType=String(row?.backend_type||'');currentInstanceId=String(row?.backend_instance_id||'');}catch(_){}
+      }
+      res.json({success:true,types:types.map(t=>{
+        const provider=environment.detected.find(x=>x.type===t.value);
+        const instanceCapable=INSTANCE_BOUND_PROVIDER_TYPES.has(t.value);
+        return {value:t.value,label:t.value==='others'?T('db.backend_type.others'):t.label,detected:detected.has(t.value),instanceCapable,instances:instanceCapable?(provider?.instances||[]):[],currentInstanceId:currentType===t.value?currentInstanceId:null};
+      })});
     }catch(e){res.status(500).json({success:false,error:e.message})}
   });
 
@@ -1032,7 +1043,8 @@ function createWebRouter(handlers, db, opts={}){
       let p={};
       try{const r=await handlers.get_agent_profile({agentId});if(r.success)p=r.data||{};else p={}}catch{}
       // 回退：从 whoami 获取基本数据（agent 可能不在本地 DB）
-      if(!p.agentId){try{const w=await handlers.whoami({});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
+      if(!p.agentId){try{const w=await handlers.whoami({});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,backendInstanceId:a.backendInstanceId,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
+      if(p.backendInstanceId===undefined){try{const row=db.prepare('SELECT backend_instance_id FROM agents WHERE agent_id=?').get(agentId);p.backendInstanceId=row?.backend_instance_id||null}catch{}}
       const aname=p.agentName||agentId;
       let catList=[];
       try{const resp=await fetch(VOKO_API_URL+'/api/agent-categories');const d=await resp.json();if(d.success&&Array.isArray(d.data))catList=d.data;}catch(_){}
@@ -1051,6 +1063,12 @@ function createWebRouter(handlers, db, opts={}){
         +'<div class="voko-select-options" id="bt-options"><div class="voko-option voko-option-empty">'+L('web.agent.edit.types_load_on_open')+'</div></div></div>'
         +'<input type="hidden" id="bt" name="backendType" value="'+esc(btInitValue)+'">'
         +'</div></div>';
+      const instanceField='<div id="bt-instance-field" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid #dfe4ec;border-left:3px solid #a7c0f4;border-radius:8px;background:#fafcff;max-width:460px">'
+        +'<label for="bt-instance">'+L('web.agent.edit.instance')+'</label>'
+        +'<p class="meta" id="bt-instance-hint" style="margin:2px 0 5px">'+L('web.agent.edit.instance_hint')+'</p>'
+        +'<select id="bt-instance" disabled><option value="">'+L('web.agent.edit.instances_loading')+'</option></select>'
+        +'<input type="hidden" id="bt-instance-value" name="backendInstanceId" value="'+esc(p.backendInstanceId||'')+'">'
+        +'</div>';
       const iconUrl=p.iconUrl||'/favicon.png';
       const iconField='<div><label>'+L('web.agent.edit.icon_url')+'</label>'
         +'<div class="agent-icon-field"><button type="button" class="agent-icon-button" id="agent-icon-button" data-agent-action="agent.icon.upload" aria-label="'+L('web.agent.edit.icon_change')+'">'
@@ -1071,6 +1089,7 @@ function createWebRouter(handlers, db, opts={}){
         +catOpts
         +'</select></div>'
         +backendField
+        +instanceField
         +f(T('web.agent.edit.short_desc'),'short_description',p.shortDescription)
         +f(T('web.agent.edit.tags'),'tags',Array.isArray(p.tags)?p.tags.join(', '):(p.tags||''),'placeholder="'+esc(T('web.agent.edit.tags_ph'))+'"')
         +iconField
@@ -1081,18 +1100,22 @@ function createWebRouter(handlers, db, opts={}){
         +'<span class="meta">'+T('web.agent.edit.sync_hint')+'</span></div>'
         +'</form>'
         +'<script>(function(){'
-        +'var w=document.getElementById("bt-wrapper"),tr=document.getElementById("bt-trigger"),dd=document.getElementById("bt-dropdown"),bs=document.getElementById("bt-search"),bt=document.getElementById("bt"),tx=document.getElementById("bt-text"),oc=document.getElementById("bt-options");'
-        +'var all=[],loaded=false,loading=false,TXT_NO_MATCH='+JSON.stringify(T('web.agent.edit.no_match'))+',TXT_LOADING='+JSON.stringify(T('web.agent.edit.types_loading'))+',TXT_FAILED='+JSON.stringify(T('web.agent.edit.types_load_failed'))+',TXT_LOCAL='+JSON.stringify(T('register.flow.provider.local'))+',TXT_MORE='+JSON.stringify(T('register.flow.provider.more'))+';'
+        +'var w=document.getElementById("bt-wrapper"),tr=document.getElementById("bt-trigger"),dd=document.getElementById("bt-dropdown"),bs=document.getElementById("bt-search"),bt=document.getElementById("bt"),tx=document.getElementById("bt-text"),oc=document.getElementById("bt-options"),ifield=document.getElementById("bt-instance-field"),isel=document.getElementById("bt-instance"),ivalue=document.getElementById("bt-instance-value");'
+        +'var all=[],loaded=false,loading=false,backendTypes=[],INSTANCE_TYPES={openclaw:true,hermes:true,zeroclaw:true},TXT_NO_MATCH='+JSON.stringify(T('web.agent.edit.no_match'))+',TXT_LOADING='+JSON.stringify(T('web.agent.edit.types_loading'))+',TXT_FAILED='+JSON.stringify(T('web.agent.edit.types_load_failed'))+',TXT_LOCAL='+JSON.stringify(T('register.flow.provider.local'))+',TXT_MORE='+JSON.stringify(T('register.flow.provider.more'))+',TXT_INSTANCE_HINT='+JSON.stringify(T('web.agent.edit.instance_hint'))+',TXT_INSTANCE_LOADING='+JSON.stringify(T('web.agent.edit.instances_loading'))+',TXT_INSTANCE_NONE='+JSON.stringify(T('web.agent.edit.instances_none'))+',TXT_INSTANCE_STALE='+JSON.stringify(T('web.agent.edit.instance_stale'))+',AGENT_ID='+JSON.stringify(agentId)+',INITIAL_TYPE='+JSON.stringify(p.backendType||'')+',INITIAL_INSTANCE='+JSON.stringify(p.backendInstanceId||'')+';'
         +'function esc3(s){return String(s==null?"":s).replace(/[&<>"\']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]})}'
+        +'function renderInstance(){if(!ifield||!isel||!ivalue)return;if(!backendTypes.length){if(!INSTANCE_TYPES[bt.value]){ifield.style.display="none";isel.disabled=true;ivalue.value="";}return;}var item=backendTypes.find(function(x){return x.value===bt.value}),capable=!!(item&&INSTANCE_TYPES[item.value]);if(!capable){ifield.style.display="none";isel.disabled=true;isel.innerHTML="";ivalue.value="";return}var instances=(item.instances||[]).slice(),current=item.currentInstanceId||(bt.value===INITIAL_TYPE?INITIAL_INSTANCE:"");if(current&&!instances.some(function(x){return String(x.id)===String(current)}))instances.push({id:current,name:current,stale:true});if(!instances.length){ifield.style.display="none";isel.disabled=true;isel.innerHTML=\'<option value="">\'+esc3(TXT_INSTANCE_NONE)+"</option>";return}ifield.style.display="block";isel.disabled=false;isel.innerHTML=instances.map(function(x){var id=String(x.id||""),label=String(x.name||id)+(x.stale?" ("+TXT_INSTANCE_STALE+")":"");return \'<option value="\'+esc3(id)+\'">\'+esc3(label)+"</option>"}).join("");if(current)isel.value=current;if(!isel.value)isel.selectedIndex=0;ivalue.value=isel.value||"";var hint=document.getElementById("bt-instance-hint");if(hint)hint.textContent=TXT_INSTANCE_HINT}'
+        +'function loadInstanceTypes(){fetch("/api/agent-backend-types?agentId="+encodeURIComponent(AGENT_ID),{headers:{Accept:"application/json"}}).then(function(r){return r.ok?r.json():null}).then(function(j){if(j&&j.success){backendTypes=j.types||[];renderInstance()}}).catch(function(){})}'
         +'function loadTypes(){if(loaded||loading)return;loading=true;oc.innerHTML=\'<div class="voko-option voko-option-empty">\'+esc3(TXT_LOADING)+"</div>";fetch("/api/agent-backend-types",{headers:{Accept:"application/json"}}).then(function(r){if(!r.ok)throw new Error("load failed");return r.json()}).then(function(j){if(!j.success)throw new Error(j.error||"load failed");var local=j.types.filter(function(x){return x.detected}),more=j.types.filter(function(x){return !x.detected});function opts(xs){return xs.map(function(x){return \'<div class="voko-option" data-value="\'+esc3(x.value)+\'">\'+esc3(x.label)+"</div>"}).join("")}oc.innerHTML=(local.length?\'<div class="voko-option-group">\'+esc3(TXT_LOCAL)+"</div>"+opts(local):"")+\'<div class="voko-option-group">\'+esc3(TXT_MORE)+"</div>"+opts(more);all=Array.from(oc.querySelectorAll(".voko-option:not(.voko-option-empty)"));loaded=true}).catch(function(){oc.innerHTML=\'<div class="voko-option voko-option-empty">\'+esc3(TXT_FAILED)+"</div>"}).finally(function(){loading=false})}'
         +'function open(){dd.style.display="block";loadTypes();bs.focus();}'
         +'function close(){dd.style.display="none";bs.value="";all.forEach(function(o){o.style.display="";});var h=oc.querySelector(".voko-option-empty");if(h)h.remove();}'
         +'if(tr&&dd){tr.addEventListener("click",function(e){e.stopPropagation();if(dd.style.display==="block")close();else open();});}'
         +'if(bs&&oc){bs.addEventListener("input",function(){var q=bs.value.toLowerCase(),hm=false;all.forEach(function(o){if(!q||o.textContent.toLowerCase().indexOf(q)!==-1){o.style.display="";hm=true;}else{o.style.display="none";}});var h=oc.querySelector(".voko-option-empty");if(!hm&&q){if(!h){h=document.createElement("div");h.className="voko-option voko-option-empty";h.textContent=TXT_NO_MATCH;oc.appendChild(h);}}else if(h){h.remove();}});bs.addEventListener("click",function(e){e.stopPropagation();});}'
-        +'if(oc){oc.addEventListener("click",function(e){var opt=e.target.closest(".voko-option");if(!opt||opt.classList.contains("voko-option-empty"))return;bt.value=opt.getAttribute("data-value");tx.textContent=opt.textContent;close();});}'
+        +'if(oc){oc.addEventListener("click",function(e){var opt=e.target.closest(".voko-option");if(!opt||opt.classList.contains("voko-option-empty"))return;ivalue.value="";bt.value=opt.getAttribute("data-value");tx.textContent=opt.textContent;renderInstance();close();});}'
+        +'if(isel){isel.addEventListener("change",function(){ivalue.value=isel.value||"";});}'
         +'if(bs){bs.addEventListener("keydown",function(e){if(e.key==="Escape"){close();tr.focus();}});}'
         +'if(tr){tr.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}});}'
         +'document.addEventListener("click",function(e){if(w&&!w.contains(e.target))close();});'
+        +'loadInstanceTypes();renderInstance();'
         +'})();(function(){var b=document.getElementById("agent-icon-button"),f=document.getElementById("agent-icon-file"),img=document.getElementById("agent-icon-preview"),hidden=document.getElementById("iconUrl"),status=document.getElementById("agent-icon-status");if(!b||!f)return;var aid='+JSON.stringify(agentId)+',fallback="/favicon.png";function setStatus(text,kind){status.textContent=text||"";status.className="agent-icon-status"+(kind?" "+kind:"")}b.addEventListener("click",function(){if(!b.disabled)f.click()});f.addEventListener("change",function(){var file=f.files&&f.files[0];if(file)upload(file)});async function upload(file){var allowed=["image/png","image/jpeg","image/webp","image/gif"];if(allowed.indexOf(file.type)===-1){setStatus('+JSON.stringify(T('web.agent.edit.icon_invalid'))+',"error");f.value="";return}if(file.size>500*1024){setStatus('+JSON.stringify(T('web.agent.edit.icon_too_large'))+',"error");f.value="";return}var previous=hidden.value||fallback,preview=URL.createObjectURL(file);img.src=preview;b.disabled=true;setStatus('+JSON.stringify(T('web.agent.edit.icon_uploading'))+',"pending");var fd=new FormData();fd.append("file",file,file.name);try{var r=await fetch("/api/agents/"+encodeURIComponent(aid)+"/icon",{method:"POST",body:fd});var j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||'+JSON.stringify(T('web.agent.edit.icon_upload_failed'))+');hidden.value=j.iconUrl;var u=new URL(j.iconUrl,location.href);u.searchParams.set("_v",Date.now());img.src=u.href;setStatus('+JSON.stringify(T('web.agent.edit.icon_updated'))+',"success")}catch(e){img.src=previous;setStatus(e.message||'+JSON.stringify(T('web.agent.edit.icon_upload_failed'))+',"error")}finally{URL.revokeObjectURL(preview);b.disabled=false;f.value=""}}})();</script>'
       ,req.t,req.locale))
     }catch(e){next(e)}
@@ -1402,7 +1425,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
             short_description:req.body.short_description||undefined,category:req.body.category||undefined,
             tags:req.body.tags?JSON.stringify(req.body.tags.replace(/，/g,',').split(',').map(t=>t.trim()).filter(Boolean)):undefined,iconUrl:req.body.iconUrl||undefined,
             address:req.body.address||undefined,contact_phone:req.body.contact_phone||undefined,
-            backendType:req.body.backendType||undefined
+            backendType:req.body.backendType||undefined,backendInstanceId:req.body.backendInstanceId
           }),'common.action.profile_updated');break;
           case'set_status':await handleAction(req,res,handlers.set_agent_status({agentId,status:parseInt(req.body.status,10)}),'common.action.status_updated');break;
           case'add_whitelist':await handleAction(req,res,handlers.manage_whitelist({agentId,action:'add',visitorId:req.body.visitorId,reason:req.body.reason||''}),'common.action.whitelist_added');break;
@@ -1489,7 +1512,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
             short_description: params.short_description, category: params.category,
             tags: params.tags, iconUrl: params.iconUrl,
             address: params.address, contact_phone: params.contact_phone,
-            backendType: params.backendType });
+            backendType: params.backendType, backendInstanceId: params.backendInstanceId });
           break;
         case 'add_whitelist':
           r = await handlers.manage_whitelist({ agentId, action: 'add', visitorId: params.visitorId, reason: params.reason || '' });

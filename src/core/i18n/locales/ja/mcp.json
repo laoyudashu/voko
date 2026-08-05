@@ -46,6 +46,7 @@
   "mcp.tool.update_agent_profile.p.address": "Agent 地址",
   "mcp.tool.update_agent_profile.p.contact_phone": "Agent 联系电话",
   "mcp.tool.update_agent_profile.p.backendType": "Agent 类型（仅本地更新，不同步服务端。可选预定义类型或自定义字符串）",
+  "mcp.tool.update_agent_profile.p.backendInstanceId": "OpenClaw、Hermes、ZeroClaw のローカルインスタンス ID",
 
   "mcp.tool.set_agent_status.desc": "设置 Agent 的上下架状态，或单独切换公有/私有。status=1 上架；status=0 下架；仅传 visibility 时只改公有(1)/私有(0)，不改变上下架。上架时也可同时传 visibility 指定初始访问模式。",
   "mcp.tool.set_agent_status.p.status": "上下架状态：1=上架，0=下架",
