@@ -205,7 +205,17 @@ function createSendMessage({ db, deliver }: {
       return { success: false, error: sendResult.error, messageId: sendResult.messageId || msgId };
     }
 
-    try { db.prepare(`UPDATE messages SET status='sent' WHERE id=?`).run(msgId); } catch (_) {}
+    try {
+      const messageSeq = Number.isFinite(Number(sendResult.messageSeq)) ? Number(sendResult.messageSeq) : null;
+      const clientMsgNo = sendResult.clientMsgNo ? String(sendResult.clientMsgNo) : null;
+      db.prepare(`
+        UPDATE messages
+        SET status='sent',
+            message_seq=COALESCE(?, message_seq),
+            client_msg_no=COALESCE(?, client_msg_no)
+        WHERE id=?
+      `).run(messageSeq, clientMsgNo, msgId);
+    } catch (_) {}
 
     return { success: true, messageId: sendResult.messageId || msgId, clientMsgNo: sendResult.clientMsgNo, messageSeq: sendResult.messageSeq };
   };

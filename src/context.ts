@@ -294,6 +294,7 @@ function createContext({
       updateAgentProfile: (profile: AgentOperationParams) => updateAgentProfile({ db, ...profile }),
       setAgentStatus: (status: AgentOperationParams) => setAgentStatus({ db, ...status }),
       startAgentWorker: (aid: string, config?: unknown) => agentManager?.start(aid, config),
+      waitForAgentConnection: (aid: string, timeoutMs?: number) => agentManager?.waitForConnection?.(aid, timeoutMs),
       stopAgentWorker: (aid: string) => agentManager?.stop(aid),
     }),
 

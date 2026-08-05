@@ -270,6 +270,25 @@ function toolErrorHasNoToken(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as { noToken?: unknown }).noToken === true;
 }
 
+type WorkerConnectionStatus = {
+  connected?: boolean;
+  status?: string;
+  error?: string;
+  [key: string]: unknown;
+};
+
+async function waitForStartedAgentConnection(
+  cx: Pick<McpContext, 'waitForAgentConnection'>,
+  agentId: string,
+  status: WorkerConnectionStatus | undefined,
+): Promise<WorkerConnectionStatus | undefined> {
+  if (status?.status === 'connecting' && cx.waitForAgentConnection) {
+    const waited = await cx.waitForAgentConnection(agentId, 5000) as WorkerConnectionStatus | undefined;
+    return waited || status;
+  }
+  return status;
+}
+
 function isGroupSummary(value: unknown): value is GroupSummary {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -579,6 +598,19 @@ function createToolHandlers(cx: McpContext) {
       );
     } catch (_) { /* Auditing must not turn a completed user action into a failure. */ }
   };
+  const inferChannelType = (params: McpToolParams): number => {
+    if (params.channelType !== undefined && params.channelType !== null) {
+      return Number(params.channelType) === 2 ? 2 : 1;
+    }
+    const channelId = String(params.toUid || params.channelId || '').trim();
+    if (!channelId) return 1;
+    if (/^group[_-]/i.test(channelId)) return 2;
+    try {
+      if (cx.query("SELECT 1 AS found FROM conversations WHERE channel_id=? AND channel_type=2 LIMIT 1", [channelId]).length > 0) return 2;
+      if (cx.query("SELECT 1 AS found FROM messages WHERE channel_id=? AND channel_type=2 LIMIT 1", [channelId]).length > 0) return 2;
+    } catch (_) { /* inference is best-effort; direct chat remains the safe fallback */ }
+    return 1;
+  };
   // cx: { db, query, exec, sendMessage, sendSystemMessage, startAgentWorker, stopAgentWorker,
   //        getAgentStatus, registerCapabilities, searchCapabilities, updateAgentProfile, setAgentStatus,
   //        publishAgent, unpublishAgent,
@@ -864,8 +896,20 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        const imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as { error?: string; status?: string } | undefined;
+        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
         if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        if (imStatus && typeof imStatus === 'object') {
+          const connected = imStatus.connected === true || imStatus.status === 'connected';
+          return {
+            success: true,
+            message: '注册成功',
+            agentId,
+            agentName: data.agentName,
+            imConnection: { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') },
+            ...(connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+          };
+        }
       }
 
       return { success: true, message: '注册成功', agentId, agentName: data.agentName };
@@ -942,8 +986,24 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        const imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as { error?: string; status?: string } | undefined;
+        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
         if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        const imConnection = imStatus && typeof imStatus === 'object'
+          ? { connected: imStatus.connected === true || imStatus.status === 'connected', status: imStatus.status || 'unknown' }
+          : undefined;
+        return {
+          success: true,
+          message: '创建成功',
+          agentId,
+          agentName: data.name || p.agentName,
+          accessMode,
+          accessModeSynced,
+          ...(imConnection ? {
+            imConnection,
+            ...(imConnection.connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+          } : {}),
+        };
       }
 
       return {
@@ -1204,7 +1264,7 @@ function createToolHandlers(cx: McpContext) {
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const fromUid = cx.wukongim?.getCurrentUid?.(p.agentId);
       if (!fromUid) return { success: false, error: 'Agent IM 身份缺失' };
-      const channelType = typeof p.channelType === 'number' ? p.channelType : 1;
+      const channelType = inferChannelType(p);
       if (channelType === 2) {
         try {
           const group = await groupClient.getInfo(cx, { agentId: p.agentId, channelId: p.toUid });
@@ -1310,12 +1370,16 @@ function createToolHandlers(cx: McpContext) {
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const limit = Math.min(p.limit || 20, 200);
       const offset = p.offset || 0;
-      const channelType = p.channelType || 1;
+      const channelType = inferChannelType(p);
+      const channelId = String(p.channelId || (channelType === 1 ? p.visitorId || '' : '')).trim();
+      if (!channelId) {
+        return { success: false, error: channelType === 2 ? '群聊查询必须提供 channelId' : '必须提供 channelId', code: 'CHANNEL_ID_REQUIRED' };
+      }
 
       if (channelType === 2) {
         // 群聊：共享消息表按 message id 只存一份；兼容历史重复数据，仍先去重再分页
         let gsql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2`;
-        const gparams = [p.channelId];
+        const gparams = [channelId];
         if (p.keyword) { gsql += ` AND content LIKE ?`; gparams.push(`%${p.keyword}%`); }
         gsql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC`;
         const all = cx.query<MessageDbRow>(gsql, gparams);
@@ -1335,7 +1399,7 @@ function createToolHandlers(cx: McpContext) {
 
       // 单聊：保留 agent_id 过滤，排除群聊消息防 channel_id 碰撞串数据
       let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2`;
-      const params: unknown[] = [p.channelId, p.agentId];
+      const params: unknown[] = [channelId, p.agentId];
       if (p.keyword) { sql += ` AND content LIKE ?`; params.push(`%${p.keyword}%`); }
       sql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC LIMIT ? OFFSET ?`;
       params.push(limit + 1, offset);
@@ -1511,7 +1575,7 @@ function createToolHandlers(cx: McpContext) {
       const uploaded = await uploadAttachment(cx, p);
       if (!uploaded.success) return uploaded;
 
-      const channelType = Number(p.channelType) === 2 ? 2 : 1;
+      const channelType = inferChannelType(p);
       const message = String(p.message || '').trim();
       let textMessageId: string | undefined;
       if (message) {
@@ -2178,17 +2242,26 @@ function createToolHandlers(cx: McpContext) {
 
     _fetchBlocks: new Map<string, PollController>(),
 
-    _channelCursorKey(agentId?: string, channelId?: string) {
+    _channelCursorKey(agentId?: string, channelId?: string, channelType = 1) {
+      return `${agentId}:${channelType}:${channelId}`;
+    },
+
+    _legacyChannelCursorKey(agentId?: string, channelId?: string) {
       return `${agentId}:${channelId}`;
     },
 
-    _getChannelCursor(agentId?: string, channelId?: string) {
-      return _getCursorDb(cx.db, this._channelCursorKey(agentId, channelId));
+    _getChannelCursor(agentId?: string, channelId?: string, channelType = 1) {
+      const current = _getCursorDb(cx.db, this._channelCursorKey(agentId, channelId, channelType));
+      // Direct-chat cursors written by older Lite versions remain readable.
+      // Never apply that legacy key to groups: the old key did not encode type
+      // and could otherwise skip the first group messages after an upgrade.
+      if (current > 0 || channelType === 2) return current;
+      return _getCursorDb(cx.db, this._legacyChannelCursorKey(agentId, channelId));
     },
 
-    _setChannelCursor(agentId: string | undefined, channelId: string, seq: number) {
-      const key = this._channelCursorKey(agentId, channelId);
-      if (seq > this._getChannelCursor(agentId, channelId)) _setCursorDb(cx.db, key, seq);
+    _setChannelCursor(agentId: string | undefined, channelId: string, seq: number, channelType = 1) {
+      const key = this._channelCursorKey(agentId, channelId, channelType);
+      if (seq > this._getChannelCursor(agentId, channelId, channelType)) _setCursorDb(cx.db, key, seq);
     },
 
     async fetch_new_messages(p: McpToolParams = {}) {
@@ -2201,10 +2274,13 @@ function createToolHandlers(cx: McpContext) {
       // 指定频道模式：channelId 优先；visitorId 保持原有单聊兼容。
       // 只有两者都未传时才进入下面的全量模式。
       const targetChannelId = p.channelId || p.visitorId;
+      if (p.channelType !== undefined && Number(p.channelType) === 2 && !p.channelId) {
+        return { success: false, error: '群聊查询必须提供 channelId', code: 'CHANNEL_ID_REQUIRED' };
+      }
       if (targetChannelId) {
-        const targetChannelType = p.channelId && Number(p.channelType) === 2 ? 2 : 1;
-        const key = this._channelCursorKey(p.agentId, targetChannelId);
-        const seq = p.messageSeq ?? _getCursorDb(cx.db, key) ?? 0;
+        const targetChannelType = inferChannelType({ ...p, toUid: targetChannelId });
+        const key = this._channelCursorKey(p.agentId, targetChannelId, targetChannelType);
+        const seq = p.messageSeq ?? this._getChannelCursor(p.agentId, targetChannelId, targetChannelType);
 
         if (blockTimeout > 0) {
           const prev = this._fetchBlocks.get(key);
@@ -2217,7 +2293,7 @@ function createToolHandlers(cx: McpContext) {
             );
             if (rows.length > 0) {
               const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
-              this._setChannelCursor(p.agentId, targetChannelId, maxSeq);
+              this._setChannelCursor(p.agentId, targetChannelId, maxSeq, targetChannelType);
             }
             const hasMore = rows.length > limit;
             if (hasMore) rows.pop();
@@ -2235,7 +2311,7 @@ function createToolHandlers(cx: McpContext) {
         if (hasMore) rows.pop();
         if (rows.length > 0) {
           const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
-          this._setChannelCursor(p.agentId, targetChannelId, maxSeq);
+          this._setChannelCursor(p.agentId, targetChannelId, maxSeq, targetChannelType);
         }
         const filtered = this._a2aPreparePull(p.agentId, rows);
         return fmtPullResult(filtered, hasMore);
@@ -2258,7 +2334,7 @@ function createToolHandlers(cx: McpContext) {
       for (const ch of channels) {
         const channelId = ch.channel_id;
         const isGroup = ch.channel_type === 2;
-        const autoCursor = this._getChannelCursor(p.agentId, channelId);
+        const autoCursor = this._getChannelCursor(p.agentId, channelId, isGroup ? 2 : 1);
         let seq = autoCursor;
         // 该 channel 首次拉取且用户传了全局 messageSeq 时：
         // 仅当该 channel 的最大 seq 大于全局阈值，才把 messageSeq 作为起始点；
@@ -2287,7 +2363,7 @@ function createToolHandlers(cx: McpContext) {
 
       // 更新各 channel 自动游标
       for (const row of allRows) {
-        this._setChannelCursor(p.agentId, row.channel_id, row.message_seq || 0);
+        this._setChannelCursor(p.agentId, row.channel_id, row.message_seq || 0, row.channel_type === 2 ? 2 : 1);
       }
 
       const filtered = this._a2aPreparePull(p.agentId, allRows);
@@ -2308,7 +2384,7 @@ function createToolHandlers(cx: McpContext) {
         sql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2 AND message_seq > ?`;
         params = [channelId, seq];
       } else {
-        sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND message_seq > ?`;
+        sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND channel_type!=2 AND message_seq > ?`;
         params = [agentId, channelId, seq];
       }
       if (onlyReplies) sql += ` AND is_me!=1`;
@@ -2435,6 +2511,9 @@ function createToolHandlers(cx: McpContext) {
     },
 
     async invite_to_group(p: McpToolParams = {}) {
+      if (!Array.isArray(p.members) || p.members.length === 0) {
+        return { success: false, error: 'members 为必填数组，例如 ["visitorUid"]', code: 'MEMBERS_REQUIRED', failed: [] };
+      }
       // actor = operator_uid；服务端按 invite_confirm 决定直加/审批，并发系统消息
       try {
         await groupClient.invite(cx, { agentId: p.agentId, channelId: p.channelId, members: p.members || [] });
