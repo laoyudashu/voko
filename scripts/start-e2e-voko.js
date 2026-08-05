@@ -58,6 +58,7 @@ async function main() {
     VOKO_GROUP_API_BASE: services.apiBaseUrl,
     VOKO_E2E_IM_WS_URL: services.imWsUrl,
     VOKO_E2E_OSS_BASE_URL: services.ossBaseUrl,
+    VOKO_OSS_UPLOAD_TIMEOUT_MS: '500',
     VOKO_E2E_PROVIDER_BASE_URL: services.providerBaseUrl,
     // The isolated browser uses the instance token so mutation routes do not
     // open the production owner re-auth dialog during deterministic tests.
