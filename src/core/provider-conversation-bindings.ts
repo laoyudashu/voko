@@ -370,6 +370,48 @@ export class ProviderConversationBindingStore {
       .run(Date.now(), id);
   }
 
+  /**
+   * 按 Agent 配置变更失效绑定（不删除历史记录，保留审计）。
+   * - 类型变化：该 Agent 全部 active/pending → stale
+   * - 仅实例变化：仅匹配 (agent, type, prevInstance) 的 active/pending → stale
+   * - 都没变：返回 0
+   * 返回受影响行数。
+   */
+  invalidateForAgentConfigChange(input: {
+    agentId: string;
+    prevProviderType: string;
+    prevInstanceId: string | null;
+    nextProviderType: string;
+    nextInstanceId: string | null;
+  }): number {
+    if (!this.available) return 0;
+    const agentId = clean(input.agentId, 128);
+    if (!agentId) return 0;
+    const typeChanged = String(input.prevProviderType || '') !== String(input.nextProviderType || '');
+    const instanceChanged = String(input.prevInstanceId || '') !== String(input.nextInstanceId || '');
+    if (!typeChanged && !instanceChanged) return 0;
+    const now = Date.now();
+    let result: { changes?: number } | undefined;
+    if (typeChanged) {
+      // 类型变了：该 agent 全部 active/pending 绑定失效（新类型会走全新会话）
+      result = this.db.prepare(`
+        UPDATE provider_conversation_bindings SET status='stale', updated_at=?
+        WHERE agent_id=? AND status IN ('active','pending')
+      `).run(now, agentId) as { changes?: number } | undefined;
+    } else {
+      // 仅实例变了：只失效旧实例相关绑定（同类型其他实例/会话不受影响）
+      const prevType = clean(input.prevProviderType, 64);
+      const prevInstance = clean(input.prevInstanceId, 192) || null;
+      result = this.db.prepare(`
+        UPDATE provider_conversation_bindings SET status='stale', updated_at=?
+        WHERE agent_id=? AND provider_type=? AND COALESCE(provider_instance_id,'')=COALESCE(?, '')
+          AND status IN ('active','pending')
+      `).run(now, agentId, prevType, prevInstance) as { changes?: number } | undefined;
+    }
+    return Number(result?.changes || 0);
+  }
+
+
   private getById(id: string): ProviderConversationBinding | null {
     if (!this.available) return null;
     return fromRow(this.db.prepare(`SELECT * FROM provider_conversation_bindings WHERE id=?`).get(id) as BindingRow | undefined);

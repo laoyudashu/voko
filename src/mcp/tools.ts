@@ -20,6 +20,8 @@ const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/che
 import type { LiteContext } from '../context';
 import type { DatabaseLike } from '../types/database';
 
+const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
+
 // tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
 // 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
 type DynamicRow = Record<string, any>;
@@ -415,6 +417,7 @@ interface McpToolParams {
   bankCode?: string;
   bankName?: string;
   backendType?: string;
+  backendInstanceId?: string;
   blockTimeout?: number;
   category?: string;
   channelId?: string;
@@ -1023,6 +1026,60 @@ function createToolHandlers(cx: McpContext) {
         return { success: false, error: '当前环境不支持更新 Agent 资料' };
       }
       // backendType 仅本地更新，不同步服务端
+      const currentRow = cx.query(
+        `SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+        [p.agentId],
+      )[0] || {};
+      // 运行时重绑定：DB 已更新后，统一加载 Provider / 失效旧绑定 / 清缓存 / 必要时重启 IM Worker。
+      // 缺失 rebind（旧环境/测试）时退化为原 invalidateMeta 行为。
+      const rebind = (global as any).__rebindAgentRuntime;
+      const runRebind = async (previousSnap: any) => {
+        if (rebind) {
+          const nextRow = cx.query(
+            `SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+            [p.agentId],
+          )[0] || {};
+          try {
+            return await rebind({
+              db: cx.db, agentId: p.agentId,
+              previous: {
+                backendType: previousSnap.backend_type,
+                backendInstanceId: previousSnap.backend_instance_id ?? null,
+                imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
+              },
+              next: {
+                backendType: nextRow.backend_type,
+                backendInstanceId: nextRow.backend_instance_id ?? null,
+                imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
+              },
+            });
+          } catch (_: any) { /* rebind 内部已 catch，此处兜底 */ }
+        } else {
+          try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_: any) {}
+        }
+        return undefined;
+      };
+      const requestedInstanceId = p.backendInstanceId === undefined
+        ? undefined
+        : String(p.backendInstanceId || '').trim();
+      const targetBackendType = normalizeBackendType(p.backendType || currentRow.backend_type || 'others');
+      // Validate the complete provider/instance pair before changing either field.
+      // This prevents a failed instance selection from leaving a partially changed backend type behind.
+      if (requestedInstanceId !== undefined && requestedInstanceId && !INSTANCE_BOUND_PROVIDER_TYPES.has(targetBackendType)) {
+        return { success: false, error: '仅 OpenClaw、Hermes 和 ZeroClaw 支持实例绑定' };
+      }
+      if (requestedInstanceId && requestedInstanceId !== String(currentRow.backend_instance_id || '').trim()) {
+        let provider = null;
+        try {
+          provider = createRegistrationOrchestrator({ db: cx.db }).inspectEnvironment()
+            .detected.find((item: any) => item.type === targetBackendType) || null;
+        } catch (_) {}
+        const instances = provider?.instances || [];
+        if (!instances.some((item: any) => String(item.id) === requestedInstanceId)) {
+          return { success: false, error: '所选 Agent 实例未在本机检测到，请刷新后重试' };
+        }
+      }
+      const backendRebindResult: any[] = [];
       if (p.backendType) {
         const nextBackendType = normalizeBackendType(p.backendType);
         const current = cx.query(`SELECT backend_type FROM agents WHERE agent_id = ?`, [p.agentId])[0];
@@ -1034,11 +1091,19 @@ function createToolHandlers(cx: McpContext) {
         } else {
           cx.exec(`UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?`, [nextBackendType, Date.now(), p.agentId]);
         }
-        try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_: any) {} // 失效 dispatcher 的 backend_type 缓存
+        backendRebindResult.push(await runRebind(currentRow)); // 失效 dispatcher 缓存 + 加载 Provider + 失效旧绑定
       }
 
       // 检查是否有需要同步服务端的字段
       const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone];
+      if (p.backendInstanceId !== undefined) {
+        cx.exec(
+          `UPDATE agents SET backend_instance_id=?, updated_at=? WHERE agent_id=?`,
+          [requestedInstanceId || null, Date.now(), p.agentId],
+        );
+        backendRebindResult.push(await runRebind(currentRow));
+      }
+
       if (serverFields.some((v?: any) => v !== undefined)) {
         const result = await cx.updateAgentProfile({
           db: cx.db,
@@ -1052,10 +1117,14 @@ function createToolHandlers(cx: McpContext) {
           address: p.address,
           contact_phone: p.contact_phone,
         });
+        // 资料同步不影响运行时绑定；如有 backend/instance 变更已在上文触发 rebind
+        if (backendRebindResult.length) (result as any).runtimeRebind = backendRebindResult[backendRebindResult.length - 1];
         return result;
       }
 
-      return { success: true, message: '本地更新成功' };
+      const okResult: any = { success: true, message: '本地更新成功' };
+      if (backendRebindResult.length) okResult.runtimeRebind = backendRebindResult[backendRebindResult.length - 1];
+      return okResult;
     },
 
     // ─── 4. 设置 Agent 上下架 / 公开私有状态 ───
@@ -1185,6 +1254,7 @@ function createToolHandlers(cx: McpContext) {
           address: a.address,
           contactPhone: a.contact_phone,
           backendType: a.backend_type,
+          backendInstanceId: a.backend_instance_id || null,
           publishStatus: a.publish_status,
           accessMode: a.access_mode,
           did: a.did,

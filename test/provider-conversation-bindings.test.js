@@ -264,3 +264,76 @@ test('caller-origin binding is not mutated when the selected adapter differs', a
   assert.deepEqual(received, [null]);
   assert.equal(db.prepare('SELECT status FROM provider_conversation_bindings WHERE id=?').get(binding.id).status, 'active');
 });
+
+// ── invalidateForAgentConfigChange：按 Agent 配置变更失效绑定 ──
+
+function managedBinding(db, { id, agentId, channelId, providerType, providerInstanceId, nativeSessionId }) {
+  // 直接插一条 active 绑定，避免依赖 caller/pending 流程
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO provider_conversation_bindings
+      (id, agent_id, channel_id, channel_type, provider_type, provider_instance_id,
+       delivery_mode, adapter_type, native_session_id, session_origin, status,
+       binding_version, pending_message_id, created_at, updated_at, last_used_at)
+    VALUES (?, ?, ?, 1, ?, ?, 'push', ?, ?, 'voko_managed', 'active', 1, NULL, ?, ?, ?)
+  `).run(id, agentId, channelId, providerType, providerInstanceId, providerType, nativeSessionId, now, now, now);
+}
+
+test('invalidateForAgentConfigChange: 类型变化时该 Agent 全部 active/pending 绑定失效', (t) => {
+  const { db, store } = fixture(t);
+  managedBinding(db, { id: 'b1', agentId: 'agent-1', channelId: 'v1', providerType: 'hermes', providerInstanceId: 'p-a', nativeSessionId: 'sess-1' });
+  managedBinding(db, { id: 'b2', agentId: 'agent-1', channelId: 'v2', providerType: 'openclaw', providerInstanceId: 'oc-1', nativeSessionId: 'sess-2' });
+
+  const invalidated = store.invalidateForAgentConfigChange({
+    agentId: 'agent-1', prevProviderType: 'hermes', prevInstanceId: 'p-a',
+    nextProviderType: 'codex', nextInstanceId: null,
+  });
+
+  assert.equal(invalidated, 2);
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b1'").get().status, 'stale');
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b2'").get().status, 'stale');
+  // stale 绑定不再被 getActive 返回（路由不会复用旧 session）
+  assert.equal(store.getActive('agent-1', 'v1', 1), null);
+  // 历史记录保留（行未删除，仅状态变化）
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM provider_conversation_bindings WHERE agent_id='agent-1'").get().c, 2);
+});
+
+test('invalidateForAgentConfigChange: 仅实例变化时只失效旧实例绑定', (t) => {
+  const { db, store } = fixture(t);
+  managedBinding(db, { id: 'b1', agentId: 'agent-1', channelId: 'v1', providerType: 'hermes', providerInstanceId: 'p-a', nativeSessionId: 'sess-1' });
+  managedBinding(db, { id: 'b2', agentId: 'agent-1', channelId: 'v2', providerType: 'hermes', providerInstanceId: 'p-b', nativeSessionId: 'sess-2' });
+
+  const invalidated = store.invalidateForAgentConfigChange({
+    agentId: 'agent-1', prevProviderType: 'hermes', prevInstanceId: 'p-a',
+    nextProviderType: 'hermes', nextInstanceId: 'p-b',
+  });
+
+  assert.equal(invalidated, 1);
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b1'").get().status, 'stale');
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b2'").get().status, 'active');
+});
+
+test('invalidateForAgentConfigChange: 不影响其他 Agent 的绑定', (t) => {
+  const { db, store } = fixture(t);
+  managedBinding(db, { id: 'b1', agentId: 'agent-1', channelId: 'v1', providerType: 'hermes', providerInstanceId: 'p-a', nativeSessionId: 'sess-1' });
+  managedBinding(db, { id: 'b2', agentId: 'agent-2', channelId: 'v1', providerType: 'hermes', providerInstanceId: 'p-a', nativeSessionId: 'sess-2' });
+
+  const invalidated = store.invalidateForAgentConfigChange({
+    agentId: 'agent-1', prevProviderType: 'hermes', prevInstanceId: 'p-a',
+    nextProviderType: 'codex', nextInstanceId: null,
+  });
+
+  assert.equal(invalidated, 1);
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b1'").get().status, 'stale');
+  assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='b2'").get().status, 'active');
+});
+
+test('invalidateForAgentConfigChange: 类型与实例都没变时返回 0', (t) => {
+  const { store } = fixture(t);
+  const invalidated = store.invalidateForAgentConfigChange({
+    agentId: 'agent-1', prevProviderType: 'hermes', prevInstanceId: 'p-a',
+    nextProviderType: 'hermes', nextInstanceId: 'p-a',
+  });
+  assert.equal(invalidated, 0);
+});
+

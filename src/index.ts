@@ -1070,13 +1070,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
       const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
       const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
-      if (result.success !== false) try {
-        const backendType = String(safeUpdates.backend_type || db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type || '');
-        await (global as any).__dispatcher?.ensureBackend?.(backendType);
-        (global as any).__dispatcher?.invalidateMeta?.(agentId);
-      } catch (_: any) {}
-      res.json(result);
+      let runtimeRebind: any;
+      if (result.success !== false) runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
+      res.json(runtimeRebind ? { ...result, runtimeRebind } : result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1097,6 +1095,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const d = req.body || {};
       const { agentId } = d;
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
+      let runtimeRebind: any;
       const F = {
         backend_type: d.backendType === undefined ? undefined : normalizeBackendType(d.backendType),
         backend_instance_id: d.instanceId,
@@ -1109,14 +1108,14 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
       }
       if (sets.length) {
+        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+        // 补 updated_at（原实现遗漏，修复一致性）
+        sets.push('updated_at = ?'); vals.push(Date.now());
         vals.push(agentId);
         db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE agent_id = ?`).run(...vals);
-        try {
-          await (global as any).__dispatcher?.ensureBackend?.(F.backend_type || db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type);
-          (global as any).__dispatcher?.invalidateMeta?.(agentId);
-        } catch (_: any) {}
+        runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
       }
-      res.json({ success: true });
+      res.json(runtimeRebind ? { success: true, runtimeRebind } : { success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
   // ── Agent 发布/下架（Desktop connect/disconnect 经此；在 Lite 可写上下文跑 publishAgent，避免只读 DB 写失败）──
@@ -1128,6 +1127,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { registerCapabilitiesForAgent } = require('./core/register-capabilities');
       const { updateAgentProfile } = require('./core/update-agent-profile');
       const { setAgentStatus } = require('./core/set-agent-status');
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = await publishAgent({
         db, agentId,
         startAgentWorker: (id?: any, cfg?: any) => agentManager.start(id, cfg),
@@ -1139,9 +1139,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         endpoints: require('./endpoints.json'),
       });
       if (result?.success !== false) {
-        const backendType = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type;
-        await (global as any).__dispatcher?.ensureBackend?.(backendType);
-        (global as any).__dispatcher?.invalidateMeta?.(agentId);
+        const runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
+        if (runtimeRebind) (result as any).runtimeRebind = runtimeRebind;
       }
       res.json(result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -1489,9 +1488,11 @@ async function startMcpServer(args?: any, core?: any) {
       printHeadlessLoginGuidance(litePort);
     }
   }
+  // 未登录时不启动任何本机 Agent；不能把本地数据库中的其他主人 Agent
+  // 当作当前实例恢复，更不能触发它们的离线消息同步。
   const published = userEmail
-    ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?").all(userEmail)
-    : db.prepare("SELECT * FROM agents WHERE publish_status = 'published'").all();
+    ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?").all(userEmail)
+    : [];
   const publishedAgentCount = published.length;
   const startupResults = await agentManager.startMany(published.map((agent: any) => ({
     agentId: agent.agent_id,
@@ -1654,6 +1655,10 @@ async function startMcpServer(args?: any, core?: any) {
   (global as any).__agentManager = agentManager;
   (global as any).__db = db;
 
+  // ── 构造 rebindAgentRuntime（统一 Agent 配置变更后的运行时重绑定）──
+  //    串行化：同一 agent 的 rebind 排队执行，避免并发竞争；跨 agent 并行。
+  attachRebindAgentRuntime(dispatcher, agentManager, db);
+
   // ── 创建 AgentEmailApi（供渠道和通知器使用） ──
   let _agentEmailApi = null;
   try {
@@ -1694,6 +1699,8 @@ async function startMcpServer(args?: any, core?: any) {
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
+      autoApproveWhitelistIfFriendRequest: (intervention?: any, reply?: any) =>
+        messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply),
     });
     await taskManager.start('owner-intervention', () => {
       ownerInterventionNotifier.startScan();
@@ -1845,9 +1852,72 @@ const { RuntimeState } = require('./core/runtime-state');
 }
 
 // ═══════════════════════════════════════════════
+//  attachRebindAgentRuntime — 构造并挂载 rebindAgentRuntime 到全局
+// ═══════════════════════════════════════════════
+// 统一 Agent 配置变更（backend_type / 实例 / IM 凭证）后的运行时重绑定：
+// 加载目标 Provider → 失效旧会话绑定 → 清缓存 → 必要时重启当前 agent 的 IM Worker。
+// 同一 agent 的 rebind 串行排队，跨 agent 并行；任一失败不外抛。
+function attachRebindAgentRuntime(dispatcher: any, agentManager: any, db: any) {
+  if (!dispatcher) return;
+  const { createRebindAgentRuntime } = require('./core/rebind-agent-runtime');
+  const rebindImpl = createRebindAgentRuntime({
+    ensureBackend: (type: string) => dispatcher.ensureBackend?.(type) || Promise.resolve(),
+    invalidateMeta: (agentId?: string) => dispatcher.invalidateMeta?.(agentId),
+    invalidateBindingsForConfigChange: (input: any) =>
+      dispatcher.invalidateBindingsForConfigChange?.(input) ?? 0,
+    getAgentDeliveryStatus: (agentId: string) => dispatcher.getAgentDeliveryStatus?.(agentId),
+    restartAgentWorker: (agentId: string) => agentManager?.restart(agentId),
+    forceDeliveryModesPull: (database: any, agentId: string) =>
+      database.prepare('UPDATE agents SET delivery_modes=?, updated_at=? WHERE agent_id=?')
+        .run(JSON.stringify(['pull']), Date.now(), agentId),
+  });
+  const rebindLocks = new Map<string, Promise<any>>();
+  (global as any).__rebindAgentRuntime = async (input: any) => {
+    const prev = rebindLocks.get(input.agentId) || Promise.resolve();
+    const next = prev.then(() => rebindImpl(input));
+    // 失败不阻塞同 agent 后续 rebind
+    rebindLocks.set(input.agentId, next.catch(() => undefined));
+    return next;
+  };
+}
+
+/**
+ * HTTP 路由用的 rebind 触发器：在 DB 更新前读 prev 快照，更新后用 prev+当前行(next) 调 rebind。
+ * 缺失 rebind（旧环境）时退化为 ensureBackend + invalidateMeta（保持原行为）。
+ * 返回 rebind 结果（或 undefined）。
+ */
+async function runRebindForRoute(db: any, agentId: string, previousSnap: any): Promise<any> {
+  const rebind = (global as any).__rebindAgentRuntime;
+  if (rebind) {
+    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
+    try {
+      return await rebind({
+        db, agentId,
+        previous: {
+          backendType: previousSnap.backend_type,
+          backendInstanceId: previousSnap.backend_instance_id ?? null,
+          imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
+        },
+        next: {
+          backendType: nextRow.backend_type,
+          backendInstanceId: nextRow.backend_instance_id ?? null,
+          imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
+        },
+      });
+    } catch (_: any) { return undefined; }
+  }
+  // 退化路径
+  try {
+    const cur = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId)?.backend_type;
+    await (global as any).__dispatcher?.ensureBackend?.(cur);
+    (global as any).__dispatcher?.invalidateMeta?.(agentId);
+  } catch (_: any) {}
+  return undefined;
+}
+
+// ═══════════════════════════════════════════════
 //  createHandlers — 创建后端处理器（OpenClaw + Hermes）
 // ═══════════════════════════════════════════════
-
 /**
  * 创建后端处理器实例，供 Desktop 调用。
  * OpenClawWSHandler / HermesHandler 的 mainWindow 参数传 null，
@@ -2135,10 +2205,9 @@ async function createLiteApp(options: any = {}) {
 
   // ── 自动恢复 IM 连接（仅启动当前用户名下 agent） ──
   if (options.autoStartWorkers !== false) {
-    const sql = currentUserEmail
-      ? "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
-      : "SELECT * FROM agents WHERE publish_status = 'published'";
-    const published = currentUserEmail ? db.prepare(sql).all(currentUserEmail) : db.prepare(sql).all();
+    const published = currentUserEmail
+      ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?").all(currentUserEmail)
+      : [];
     const startupResults = await agentManager.startMany(published.map((agent: any) => ({
       agentId: agent.agent_id,
       config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
@@ -2235,6 +2304,7 @@ async function createLiteApp(options: any = {}) {
     dispatcher = result.dispatcher;
     (global as any).__dispatcher = dispatcher;
     messageHandler?.setDispatcher(dispatcher);
+    attachRebindAgentRuntime(dispatcher, agentManager, db);
   }
 
   // ── 启动心跳（可选） ──
@@ -2342,6 +2412,8 @@ async function createLiteApp(options: any = {}) {
         buildOwnerReplyPrompt: oiOpts.buildOwnerReplyPrompt || registry.buildOwnerReplyPrompt,
         sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
         resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
+        autoApproveWhitelistIfFriendRequest: oiOpts.autoApproveWhitelistIfFriendRequest
+          || ((intervention?: any, reply?: any) => messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply)),
       });
       // 启动恢复扫描（延迟执行，确保依赖就绪）
       ownerInterventionNotifier.startScan();
@@ -2443,7 +2515,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
 
   let isBeating = false;
   const heartbeatFn = async () => {
-    if (isBeating) { console.error('[心跳] 上一轮未结束，跳过本次（慢操作堆积）'); return; }
+    if (isBeating) { console.error('[心跳] 上一轮未结束，跳过本次'); return; }
     isBeating = true;
     try {
       const userEmail = getCurrentUserEmail(db);
@@ -2463,7 +2535,9 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             } catch (_) {}
             if (selectedModes && !selectedModes.includes('http')) continue;
             if (hermesHandler.isProfileReady?.(agent_id)) continue;
-            try { await hermesHandler._ensureGatewayRunning(agent_id); }
+            const profileId = hermesHandler._profileForAgent?.(agent_id);
+            if (!profileId) continue;
+            try { await hermesHandler._ensureGatewayRunning(profileId); }
             catch (e: any) { console.error('[Lite] Hermes gateway 恢复失败:', agent_id, e.message); }
           }
         } catch (_: any) {}
