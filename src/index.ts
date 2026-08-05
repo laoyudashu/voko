@@ -648,6 +648,20 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         return res.status(500).json({ success: false, error: e?.message || 'delivery mode update failed' });
       }
     });
+    app.post('/__test__/agent-owner', (req?: any, res?: any) => {
+      const agentId = String(req.body?.agentId || '').trim();
+      if (!agentId || !Object.prototype.hasOwnProperty.call(req.body || {}, 'ownerEmail')) {
+        return res.status(400).json({ success: false, error: 'agentId and ownerEmail are required' });
+      }
+      try {
+        const ownerEmail = req.body.ownerEmail === null ? null : String(req.body.ownerEmail || '').trim();
+        db.prepare('UPDATE agents SET owner_email=?, updated_at=? WHERE agent_id=?').run(ownerEmail, Date.now(), agentId);
+        (global as any).__dispatcher?.invalidateMeta?.(agentId);
+        return res.json({ success: true, agentId, ownerEmail });
+      } catch (e: any) {
+        return res.status(500).json({ success: false, error: e?.message || 'agent owner update failed' });
+      }
+    });
     app.get('/__test__/runtime', (req?: any, res?: any) => {
       const agentId = String(req.query?.agentId || '').trim();
       if (!agentId) return res.status(400).json({ success: false, error: 'agentId is required' });
