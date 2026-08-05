@@ -1,0 +1,149 @@
+const { test, expect } = require('./fixtures');
+const fs = require('node:fs');
+
+function manifest() {
+  return JSON.parse(fs.readFileSync(process.env.VOKO_E2E_SERVICES_FILE, 'utf8'));
+}
+
+function readMessages(channelId, agentId = 'e2e-agent') {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(manifest().dbPath, { readOnly: true });
+  try {
+    return db.prepare(`
+      SELECT id, content, is_me, status, client_msg_no
+      FROM messages WHERE agent_id=? AND channel_id=? ORDER BY rowid ASC
+    `).all(agentId, channelId);
+  } finally {
+    db.close();
+  }
+}
+
+async function runtime(request, agentId = 'e2e-agent') {
+  const response = await request.get(`/__test__/runtime?agentId=${encodeURIComponent(agentId)}`);
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
+async function inject(request, input) {
+  const response = await request.post(`${manifest().services.api}/__test__/im/message`, { data: input });
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
+async function setProvider(request, input) {
+  const response = await request.post('/__test__/provider', { data: input });
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
+async function callMcp(request, name, args, id = Date.now()) {
+  const response = await request.post('/mcp', {
+    data: { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } },
+  });
+  expect(response.ok()).toBeTruthy();
+  const envelope = await response.json();
+  expect(envelope.error).toBeUndefined();
+  const text = envelope.result?.content?.find(item => item.type === 'text')?.text;
+  expect(text).toBeTruthy();
+  return JSON.parse(text);
+}
+
+test('cached Provider push failure falls back to Pull and recovery restores Push', async ({ request }) => {
+  const channelId = 'e2e-provider-failure';
+  const before = await runtime(request);
+  const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
+  expect(before.deliveryStatus.activeMode).toBe('mock-echo');
+
+  const configured = await setProvider(request, {
+    available: true,
+    fault: { mode: 'not_delivered', count: 1, disable: true },
+  });
+  expect(configured).toMatchObject({ success: true, available: true, fault: { mode: 'not_delivered', remaining: 1 } });
+
+  await inject(request, {
+    toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
+    messageId: '1701', messageSeq: 1701, content: 'provider failure e2e',
+  });
+  await expect.poll(async () => Number((await runtime(request)).providerState?.stats?.faultedPushes || 0), {
+    timeout: 5_000,
+  }).toBe(faultedBefore + 1);
+  await expect.poll(() => readMessages(channelId).some(row => row.id === '1701'), { timeout: 5_000 }).toBe(true);
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeMode, { timeout: 5_000 }).toBe('pull');
+
+  const failedRows = readMessages(channelId);
+  expect(failedRows).toHaveLength(1);
+  expect(failedRows[0].is_me).toBe(0);
+  expect(failedRows.some(row => row.content.includes('[echo]'))).toBe(false);
+
+  const pulled = await callMcp(request, 'voko_fetch_new_messages', {
+    agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,
+  }, 1702);
+  expect(pulled.success).toBe(true);
+  expect(pulled.messages).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: '1701', content: 'provider failure e2e' }),
+  ]));
+  const afterPull = await runtime(request);
+  expect(afterPull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === channelId)).toBe(true);
+
+  const recovered = await setProvider(request, { available: true });
+  expect(recovered).toMatchObject({ success: true, available: true, fault: null });
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeMode, { timeout: 5_000 }).toBe('mock-echo');
+
+  await inject(request, {
+    toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
+    messageId: '1703', messageSeq: 1703, content: 'provider recovered e2e',
+  });
+  await expect.poll(() => readMessages(channelId).some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('provider recovered e2e')), {
+    timeout: 5_000,
+  }).toBe(true);
+  const finalRows = readMessages(channelId);
+  expect(finalRows).toHaveLength(3);
+  expect(finalRows.filter(row => row.is_me === 1)).toHaveLength(1);
+  expect(new Set(finalRows.map(row => row.id)).size).toBe(3);
+});
+
+test('outcome-unknown Provider failure is not retried and later messages recover normally', async ({ request }) => {
+  const channelId = 'e2e-provider-unknown';
+  const before = await runtime(request);
+  const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
+  const configured = await setProvider(request, {
+    available: true,
+    fault: { mode: 'outcome_unknown', count: 1, disable: false },
+  });
+  expect(configured).toMatchObject({ success: true, available: true, fault: { mode: 'outcome_unknown', remaining: 1 } });
+
+  await inject(request, {
+    toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
+    messageId: '1801', messageSeq: 1801, content: 'provider unknown outcome e2e',
+  });
+  await expect.poll(async () => Number((await runtime(request)).providerState?.stats?.faultedPushes || 0), {
+    timeout: 5_000,
+  }).toBe(faultedBefore + 1);
+  await expect.poll(() => readMessages(channelId).some(row => row.id === '1801'), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => readMessages(channelId).filter(row => row.is_me === 1), { timeout: 1_500 }).toHaveLength(0);
+
+  const pulled = await callMcp(request, 'voko_fetch_new_messages', {
+    agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,
+  }, 1802);
+  expect(pulled.success).toBe(true);
+  expect(pulled.messages).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: '1801', content: 'provider unknown outcome e2e' }),
+  ]));
+
+  await inject(request, {
+    toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
+    messageId: '1803', messageSeq: 1803, content: 'provider unknown recovered e2e',
+  });
+  await expect.poll(() => readMessages(channelId).some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('provider unknown recovered e2e')), {
+    timeout: 5_000,
+  }).toBe(true);
+  const finalRows = readMessages(channelId);
+  expect(finalRows).toHaveLength(3);
+  expect(finalRows.filter(row => row.content.includes('provider unknown outcome e2e'))).toHaveLength(1);
+  expect(finalRows.filter(row => row.is_me === 1)).toHaveLength(1);
+  expect(new Set(finalRows.map(row => row.id)).size).toBe(3);
+});
+
+test.afterEach(async ({ request }) => {
+  await setProvider(request, { available: true }).catch(() => {});
+});
