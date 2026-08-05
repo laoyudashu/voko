@@ -103,11 +103,13 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
-function page(title, body, tFn, locale, db) {
+function page(title, body, tFn, locale, db, opts) {
   const loc = locale || 'zh';
   const lang = loc === 'en' ? 'en' : (loc === 'ja' ? 'ja' : 'zh-CN');
   const boot = '<script>window.__LOCALE__=' + JSON.stringify(loc) + ';window.__I18N__=' + JSON.stringify(getClientBundle(loc)) + '</script>';
-  const footer = renderSystemFooter(db, tFn, loc);
+  // 登录/切换用户等未登录页面（opts.footer===false）不渲染系统 footer，
+  // 避免暴露运行时状态（IM 连接、PID、端口）与“错误上报”入口。
+  const footer = opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc);
   return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + '\n</body>\n</html>';
 }
 
@@ -896,7 +898,7 @@ function createRegisterRouter(handlers, db, options = {}) {
     const err = req.query.err || '';
     const popup = req.query.popup === '1';
     let body = loginBody(email, err, req.t, popup);
-    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db) + loginJs(req.t, popup));
+    res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db, { footer: false }) + loginJs(req.t, popup));
   });
 
   R.post('/reauth', async (req, res, next) => {
