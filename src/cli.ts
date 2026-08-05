@@ -25,7 +25,7 @@ const crypto = require('crypto');
 /**
  * 检查 OSS 最新版本（统一从 OSS manifest 读取）
  */
-async function checkVersion() {
+async function checkVersion(options: { notify?: boolean } = {}) {
   try {
     const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     const result = spawnSync(npmCommand, ['view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/'], {
@@ -34,7 +34,7 @@ async function checkVersion() {
     const latestVersion = String(result.stdout || '').trim();
     if (result.error || result.status !== 0 || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latestVersion)) return null;
     const updateAvailable = compareVersions(latestVersion, pkg.version) > 0;
-    if (updateAvailable) {
+    if (updateAvailable && options.notify !== false) {
       console.error(t('cli.updater.new_version_available', { version: latestVersion, current: pkg.version }));
     }
     return { currentVersion: pkg.version, latestVersion, updateAvailable };

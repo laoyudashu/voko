@@ -546,6 +546,43 @@ test('PowerManager recovery restarts only published agents for the active owner'
   assert.equal(power._timer, null);
 });
 
+test('PowerManager only logs a visible success message after resume recovery', async () => {
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => logs.push(args.join(' '));
+  try {
+    const manager = {
+      workers: new Map(),
+      async stop() {},
+      async startMany(entries) {
+        return entries.map(entry => ({ agentId: entry.agentId, connected: true }));
+      },
+    };
+    const db = {
+      prepare(sql) {
+        return {
+          get: () => ({ data: '{}' }),
+          all: () => [{
+            agent_id: 'agent-1',
+            imUid: 'uid-1',
+            imToken: 'token-1',
+            im_server_url: 'wss://wukongim.vokovoko.com',
+          }],
+        };
+      },
+    };
+    const power = new PowerManager(manager, db, { networkProbe: async () => true });
+    power.start();
+    power.stop();
+    assert.equal(logs.some(log => log.includes('休眠唤醒检测已启动')), false);
+
+    await power._recover();
+    assert.equal(logs.some(log => log.includes('✅ 系统唤醒恢复成功')), true);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('PowerManager retries only failed IM connections and awaits the real result', async () => {
   const rounds = [];
   const manager = {
@@ -1154,7 +1191,10 @@ test('Lite offline sync decodes, persists and forwards a pulled message', async 
 
 test('Lite offline sync advances past an intentionally skipped empty message', async (t) => {
   const originalFetch = global.fetch;
+  const originalLog = console.log;
   const starts = [];
+  const logs = [];
+  console.log = (...args) => logs.push(args.join(' '));
   global.fetch = async (_url, options) => {
     const request = JSON.parse(options.body);
     starts.push(request.start_message_seq);
@@ -1171,7 +1211,7 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
       }),
     };
   };
-  t.after(() => { global.fetch = originalFetch; });
+  t.after(() => { global.fetch = originalFetch; console.log = originalLog; });
 
   let cursorData;
   const db = {
@@ -1215,6 +1255,9 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 0);
   assert.deepEqual(starts, [1, 2]);
   assert.equal(handled, 1);
+  const emptyBatchLog = logs.find(log => log.includes('共收集 0 条离线消息'));
+  assert.ok(emptyBatchLog);
+  assert.doesNotMatch(emptyBatchLog, /开始处理/);
 });
 
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {

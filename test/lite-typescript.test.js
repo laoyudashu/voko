@@ -25,6 +25,7 @@ const { createWebRouter } = require('../build/web');
 const { createLocalWebSessionStore } = require('../build/core/local-web-session');
 const { requiresLocalToken, isAllowedBridgeConfigType } = require('../build/core/local-http-security');
 const { updateLite } = require('../build/cli');
+const { formatVersionLine } = require('../build/index');
 const { version: packageVersion } = require('../package.json');
 
 test('pluralRule keeps the existing locale behavior', () => {
@@ -687,6 +688,26 @@ test('version checks only notify while voko update uses the official npm registr
   assert.match(entrySource, /function checkVersionAndPersist/);
   assert.match(entrySource, /'update_status'/);
   assert.match(webSource, /common\.footer\.update_available/);
+});
+
+test('ready banner highlights a newer version without changing the plain version line otherwise', () => {
+  const nextVersion = packageVersion.replace(/(\d+)$/, (patch) => String(Number(patch) + 1));
+  const update = { updateAvailable: true, latestVersion: nextVersion };
+  const dbWithUpdate = {
+    prepare: (sql) => ({
+      get: () => sql.includes("type = 'update_status'") ? { data: JSON.stringify(update) } : null,
+    }),
+  };
+  const highlighted = formatVersionLine(dbWithUpdate);
+  assert.match(highlighted, /\x1b\[33m/);
+  assert.match(highlighted, new RegExp(`Version:\\s+${packageVersion}`));
+  assert.match(highlighted, new RegExp(nextVersion.replace(/\./g, '\\.')));
+  assert.match(highlighted, /voko update/);
+
+  const dbWithoutUpdate = {
+    prepare: () => ({ get: () => ({ data: JSON.stringify({ updateAvailable: false }) }) }),
+  };
+  assert.equal(formatVersionLine(dbWithoutUpdate), `  Version:    ${packageVersion}`);
 });
 
 test('voko update installs only from npm registry in a published installation', async () => {

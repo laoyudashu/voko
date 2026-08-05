@@ -90,6 +90,7 @@ const { stopVoko } = require('./core/stop-voko');
 // ── Lite 模块 ──
 const { createContext } = require('./context');
 const cli = require('./cli');
+const { compareVersions } = require('./core/auto-updater');
 
 // ── MCP 模块 ──
 const { createMcpServer, getToolList } = require('./mcp/server');
@@ -317,13 +318,59 @@ function openLocalWebPage(port: number) {
   }
 }
 
+function readStoredUpdateStatus(db: any): { latestVersion: string } | null {
+  try {
+    const row = db?.prepare("SELECT data FROM config WHERE type = 'update_status'").get();
+    const status = row?.data ? JSON.parse(row.data) : null;
+    if (!status?.updateAvailable || typeof status.latestVersion !== 'string') return null;
+    if (compareVersions(status.latestVersion, pkg.version) <= 0) return null;
+    return { latestVersion: status.latestVersion };
+  } catch (_: any) {
+    return null;
+  }
+}
+
+function formatVersionLine(db: any): string {
+  const base = `  Version:    ${pkg.version}`;
+  const update = readStoredUpdateStatus(db);
+  if (!update) return base;
+  const YELLOW = '\x1b[33m';
+  const RESET = '\x1b[0m';
+  const hint = t('cli.updater.new_version_available', {
+    version: update.latestVersion,
+    current: pkg.version,
+  });
+  return `${YELLOW}${base}  ⚠️ ${hint}${RESET}`;
+}
+
+const versionChecksStarted = new WeakSet<object>();
+
+function printVersionUpdateHint(result: any): void {
+  if (!result?.updateAvailable || typeof result.latestVersion !== 'string') return;
+  const YELLOW = '\x1b[33m';
+  const RESET = '\x1b[0m';
+  const hint = t('cli.updater.new_version_available', {
+    version: result.latestVersion,
+    current: pkg.version,
+  });
+  console.error(`${YELLOW}  Version:    ${pkg.version}  ⚠️ ${hint}${RESET}`);
+}
+
 function checkVersionAndPersist(db: any): void {
-  void cli.checkVersion().then((result: any) => {
+  if (db && typeof db === 'object') {
+    if (versionChecksStarted.has(db)) return;
+    versionChecksStarted.add(db);
+  }
+  const previous = readStoredUpdateStatus(db);
+  void cli.checkVersion({ notify: false }).then((result: any) => {
     if (!result) return;
     try {
       db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('update_status', ?, ?)")
         .run(JSON.stringify({ ...result, checkedAt: Date.now() }), Date.now());
     } catch (_: any) {}
+    if (result.updateAvailable && previous?.latestVersion !== result.latestVersion) {
+      printVersionUpdateHint(result);
+    }
   });
 }
 
@@ -466,7 +513,7 @@ function printReadyBanner(db: any, port: number, ownerEmail: string | null, agen
   const summary = agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0 };
   const connected = agentManager?.connectedAgents?.size || 0;
   const details = [
-    '  Version:    ' + pkg.version,
+    formatVersionLine(db),
     '  PID:        ' + process.pid,
     '  Time:       ' + new Date().toLocaleString('zh-CN', { hour12: false }),
     '  Port:       ' + port,
@@ -3100,4 +3147,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

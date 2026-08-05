@@ -199,7 +199,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       }
     }
 
-    console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息，开始处理...`);
+    console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
 
     // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
     // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集
