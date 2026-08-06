@@ -190,7 +190,7 @@ function submitLockScript(){
 /** 判断是否为可被 /api/console 调用的 action（是函数 + 非 _ 前缀内部 helper） */
 function isCallableAction(h,action){return typeof h[action]==='function' && !action.startsWith('_')}
 
-/** 37 个 action 的分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移 */
+/** action 分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移（数量动态计算） */
 const ACTION_GROUPS=[
   {group:'im',actions:['whoami','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
   {group:'manage',actions:['get_agent_profile','update_agent_profile','set_agent_status','set_private_mode','manage_whitelist','manage_blacklist','list_access_lists','declare_capabilities','search_capabilities','start_worker','stop_worker']},
@@ -2102,7 +2102,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
 +'- Manage audit rules -> GET /audit-rules\n'
 +'- View interventions -> GET /interventions\n'
 +'\n'
-+'## All Actions (37, details at /api/handlers)\n'
++'## All Actions ('+ACTION_GROUPS.reduce((s,g)=>s+g.actions.length,0)+', details at /api/handlers)\n'
 +'- Messaging: '+listActions('im').join(', ')+'\n'
 +'- Agent Management: '+listActions('manage').join(', ')+'\n'
 +'- Payment: '+listActions('pay').join(', ')+'\n'

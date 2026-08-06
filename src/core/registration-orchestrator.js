@@ -594,6 +594,28 @@ class RegistrationOrchestrator {
     const more = known
       .filter((item) => item.value !== 'others' && !detectedTypes.has(item.value))
       .map((item) => ({ type: item.value, label: item.label, detected: false }));
+
+    // 当前进程被识别为某桌面应用类（zcode/workbuddy/doubao 等，靠 process_ancestry 命中），
+    // 但 inspectEnvironment 的 instances 扫描（注册表卸载列表）无法枚举这些运行时实例，
+    // 导致 detected:true 与 instances:[] 矛盾，下游按 instance 选择会误判"没有可用实例"。
+    // 这里给被命中的类型注入一个合成 current instance，使 instances 非空、与 detected 一致。
+    try {
+      const detect = this.options.detectCurrentAgentType || detectCurrentAgentType;
+      const currentType = detect();
+      if (currentType) {
+        const item = detected.find((d) => d.type === currentType);
+        if (item && (!item.instances || item.instances.length === 0)) {
+          item.instances = [{
+            id: currentType,
+            name: item.label || currentType,
+            source: 'process_ancestry',
+            isCurrent: true,
+          }];
+          item.detectedAsCurrent = true;
+        }
+      }
+    } catch (_) { /* 检测失败不影响整体环境扫描 */ }
+
     const deliveryCount = new Set(detected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
       detected,
