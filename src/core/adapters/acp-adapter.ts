@@ -215,7 +215,16 @@ class AcpAdapter extends PushProvider {
 
   get priority() { return 10; }
   get capabilities() { return ['acp', 'streaming', 'session_resume']; }
+  get fallbackModes() { return this._cliFallback ? ['cli'] : []; }
   get sessionMode(): SessionMode { return 'agent-issued-id'; }
+
+  isFallbackAvailable(_agentId: string, mode: string): boolean {
+    if (mode !== 'cli' || !this._cliFallback?.cmd) return false;
+    const cmd = this._cliFallback.cmd;
+    return path.isAbsolute(cmd) || cmd.includes(path.sep)
+      ? fs.existsSync(cmd)
+      : checkCliAvailable(cmd);
+  }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     const bt = meta?.backend_type;

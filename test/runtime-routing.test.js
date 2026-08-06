@@ -41,7 +41,10 @@ test('setup advertises the canonical browser-free runtime commands', () => {
     assert.equal(result.status, 0);
     const output = JSON.parse(result.stdout);
     assert.equal(output.browserOpened, false);
-    assert.deepEqual(output.stableCommands.mcp, { command: 'voko', args: ['mcp'] });
+    assert.deepEqual(output.stableCommands.mcp, {
+      command: process.execPath,
+      args: [path.join(__dirname, '..', 'build', 'index.js'), 'mcp'],
+    });
   } finally {
     fs.rmSync(fixture.dir, { recursive: true, force: true });
   }

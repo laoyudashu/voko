@@ -44,6 +44,22 @@ test('ZeroClaw WebSocket provider requires a loopback URL, token and agent alias
   }
 });
 
+test('ZeroClaw WebSocket preflight reports missing configuration without probing the network', async () => {
+  const previousToken = process.env.ZEROCLAW_ACP_TOKEN;
+  try {
+    delete process.env.ZEROCLAW_ACP_TOKEN;
+    const provider = new ZeroClawWsProvider({ db: aliasDb() });
+    const result = await provider.preflightDelivery('agent-voko');
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'configuration_required');
+    assert.deepEqual(result.missing, ['ZEROCLAW_ACP_TOKEN']);
+    assert.equal(result.sideEffects, false);
+  } finally {
+    if (previousToken === undefined) delete process.env.ZEROCLAW_ACP_TOKEN;
+    else process.env.ZEROCLAW_ACP_TOKEN = previousToken;
+  }
+});
+
 test('ACP client denies tool permission requests by default', async () => {
   let permissionHandler;
   const adapter = new AcpAdapter({

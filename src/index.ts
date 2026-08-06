@@ -434,6 +434,14 @@ function resolveDbPath(args?: any, options: any = {}) {
   return defaultDb;
 }
 
+/** Return a PATH-independent command for invoking the compiled Voko CLI. */
+function stableNodeCommand(...args: string[]) {
+  return {
+    command: path.resolve(process.execPath),
+    args: [path.resolve(__dirname, 'index.js'), ...args],
+  };
+}
+
 function inspectSetup(args?: any) {
   const fs = require('fs');
   const { inspectMcpConfigs } = require('./core/mcp-config-diagnostics');
@@ -489,8 +497,8 @@ function inspectSetup(args?: any) {
     },
     mcpClients,
     stableCommands: {
-      mcp: { command: 'voko', args: ['mcp'] },
-      start: { command: 'voko', args: ['start', '--no-open', '--no-interactive'] },
+      mcp: stableNodeCommand('mcp'),
+      start: stableNodeCommand('start', '--no-open', '--no-interactive'),
     },
     nextAction,
   };
