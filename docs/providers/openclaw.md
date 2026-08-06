@@ -1,8 +1,10 @@
 # OpenClaw Provider 专属指南
 
-[文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
+[统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 OpenClaw** 时的安装、实例选择、WebSocket/CLI 投递和排障。OpenClaw 作为 MCP 客户端调用 VOKO 时，请看本文的 MCP 小节；这和 VOKO 向 OpenClaw 推送访客消息是两个方向。
+
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；需要主人输入验证码或批准 Gateway 配置时使用 Web/交互式注册。接收消息优先选择 `WebSocket → CLI → Pull`；Gateway 尚未稳定时先选择 `CLI → Pull`。
 
 ## 1. 安装和 Gateway 检查
 

@@ -115,7 +115,7 @@ voko status --json
 
 Read the top-level `port` from the status output and configure `http://localhost:<port>/mcp`. Port `3100` is the default, not a contract; re-check the status output after restarting the runtime. If an old Desktop entry or HTTP configuration remains, replace it with the `voko mcp` stdio entry when possible, then fully exit and restart the client.
 
-The registration workflow is stateful. An Agent should begin a registration session, retain its returned registration ID, and follow the next action from each response. When owner email verification or an approval is required, it must pause for the owner rather than guessing data or changing local Provider configuration.
+The registration workflow is stateful. An Agent should begin a registration session, retain its returned registration ID, and follow the next action from each response. When owner email verification or an approval is required, it must pause for the owner rather than guessing data or changing local Provider configuration. For the Provider-specific registration mode, recommended delivery order, fallback, and route-refresh rules, read [Provider registration, delivery, and route recovery](provider-delivery-routing.md) before selecting `deliveryModes`.
 
 The former `register_agent` and `verify_agent_email` interfaces have been removed and are not compatibility entry points. Use `manage_agent_registration` as the single registration state machine, and keep the same `registrationId` while following each `nextAction`.
 

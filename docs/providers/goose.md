@@ -1,8 +1,10 @@
 # Goose Provider 专属指南
 
-[文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
+[统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 Goose** 时的安装、注册、会话路由、ACP/CLI 降级和排障。Goose 作为 MCP 客户端调用 VOKO 时，请先看 [MCP 客户端配置](../mcp-client-setup.md) 的 Goose 小节；两种方向不要混用。
+
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或 Goose 配置批准使用 Web/交互式注册。需要 ACP 实时主通道时选择 `acp-goose` 的 `ACP → CLI → Pull`；只使用 Goose CLI 时选择 `goose` 的 `CLI → Pull`。
 
 ## 1. 安装前提
 

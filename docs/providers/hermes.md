@@ -1,8 +1,10 @@
 # Hermes Provider 专属指南
 
-[文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
+[统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 Hermes** 时的安装、profile 选择、HTTP/CLI 投递和排障。Hermes 作为 MCP 客户端调用 VOKO 时，属于另一条方向，需结合 Hermes 自身的 `mcp` 命令配置。
+
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或 profile/Provider 配置批准使用 Web/交互式注册。接收消息优先选择 `HTTP → CLI → Pull`；HTTP Gateway/profile 尚未就绪时先选择 `CLI → Pull`。
 
 ## 1. 安装、模型和 profile
 

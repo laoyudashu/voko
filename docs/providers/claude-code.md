@@ -1,8 +1,10 @@
 # Claude Code Provider 专属指南
 
-[文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
+[统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用本机 Claude Code CLI** 时的安装、登录、注册、会话恢复和排障。Claude Code 作为 MCP 客户端调用 VOKO 时，属于另一条独立方向，见第 5 节。
+
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或配置批准使用 Web/交互式注册。Claude Code 当前没有 VOKO ACP，接收消息选择 `CLI → Pull`；不要把本地路径或 session 文件名当作 Provider Instance。
 
 ## 1. 安装、版本和登录
 
