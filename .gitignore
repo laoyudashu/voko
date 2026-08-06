@@ -61,6 +61,7 @@ Thumbs.db
 .vscode/
 .claude/
 .firecrawl/
+.zcode/
 .aider.chat.history.md
 .aider.input.history
 
