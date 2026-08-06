@@ -51,6 +51,7 @@ export interface AcpAdapterOptions {
   connectTimeout?: number;
   cliFallback?: CliFallbackOptions | null;
   matchType?: string;
+  bindingProviderType?: string;
   adapterType?: string;
   cwd?: string;
   sessionRequest?: (agentId: string) => Record<string, unknown>;
@@ -122,7 +123,7 @@ interface AcpSdk {
     ): Promise<void>;
   };
   methods: {
-    agent: { session: { resume: unknown } };
+    agent: { session: { load?: unknown; resume?: unknown } };
     client: { session: { requestPermission: unknown } };
   };
 }
@@ -143,6 +144,7 @@ const MAX_REPLY_CHARS = 2 * 1024 * 1024; // 2MB
 class AcpAdapter extends PushProvider {
   _acpSdk: AcpSdk | null;
   _adapterType: string;
+  _bindingProviderType: string;
   _recoveryNeededSessions: Set<string>;
   _agentHealth: Map<string, AcpAgentHealth>;
   _recoveryPromises: Map<string, Promise<boolean>>;
@@ -184,6 +186,7 @@ class AcpAdapter extends PushProvider {
 
     // 精确匹配 backend_type（设了就不再匹配 acp-* 通配）
     this._matchType = options.matchType || null;
+    this._bindingProviderType = options.bindingProviderType || this._matchType || 'acp';
     this._adapterType = String(options.adapterType || 'acp').replace(/[^a-z0-9_-]/gi, '').slice(0, 64) || 'acp';
 
     // ACP SDK（ESM — lazy dynamic import）
@@ -530,7 +533,7 @@ class AcpAdapter extends PushProvider {
     let error: Error | null = null;
     let fullContent = '';
     const payloadBinding = payload.providerBinding;
-    let observedSessionId = payloadBinding && payloadBinding.providerType === this._matchType
+    let observedSessionId = payloadBinding && payloadBinding.providerType === this._bindingProviderType
       ? payloadBinding.nativeSessionId
       : null;
     const observeSession = (line: string) => {
@@ -589,7 +592,7 @@ class AcpAdapter extends PushProvider {
 
     if (error) throw error;
     if (observedSessionId && this._bindingStore) {
-      const binding = payload.providerBinding?.providerType === this._matchType
+      const binding = payload.providerBinding?.providerType === this._bindingProviderType
         ? payload.providerBinding
         : null;
       const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
@@ -601,7 +604,7 @@ class AcpAdapter extends PushProvider {
           agentId,
           channelId,
           channelType,
-          providerType: this._matchType || 'acp',
+          providerType: this._bindingProviderType,
           providerInstanceId: binding?.providerInstanceId || null,
           nativeSessionId: observedSessionId,
           deliveryMode: 'cli',
@@ -911,7 +914,7 @@ class AcpAdapter extends PushProvider {
   ): Promise<AcpSession> {
     const channelId = payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
-    let binding = payload.providerBinding?.providerType === this._matchType
+    let binding = payload.providerBinding?.providerType === this._bindingProviderType
       ? payload.providerBinding
       : null;
     if (!binding && this._bindingStore) {
@@ -920,14 +923,14 @@ class AcpAdapter extends PushProvider {
           agentId,
           channelId,
           channelType,
-          providerType: this._matchType || 'acp',
+          providerType: this._bindingProviderType,
           deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
           adapterType: this._adapterType,
           legacyVisitorId: visitorId,
         });
     }
     const handle = binding?.nativeSessionId || null;
-    const sessionKey = `acp:${agentId}:${visitorId}:${handle || 'managed'}`;
+    const sessionKey = `acp:${agentId}:${channelType}:${channelId}:${handle || 'managed'}`;
     // 1. 内存缓存命中
     const existing = state.sessions.get(sessionKey);
     if (existing) return existing;
@@ -938,6 +941,17 @@ class AcpAdapter extends PushProvider {
         const session = await this._resumeSession(state, handle);
         if (session) {
           state.sessions.set(sessionKey, session);
+          this._bindingStore?.saveManaged({
+            agentId,
+            channelId,
+            channelType,
+            providerType: this._bindingProviderType,
+            providerInstanceId: binding?.providerInstanceId || null,
+            nativeSessionId: session.sessionId,
+            deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
+            adapterType: this._adapterType,
+            expectedVersion: binding?.bindingVersion ?? 0,
+          });
           return session;
         }
       } catch (err) {
@@ -962,7 +976,7 @@ class AcpAdapter extends PushProvider {
       agentId,
       channelId,
       channelType,
-      providerType: this._matchType || 'acp',
+      providerType: this._bindingProviderType,
       providerInstanceId: binding?.providerInstanceId || null,
       nativeSessionId: session.sessionId,
       deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
@@ -972,7 +986,7 @@ class AcpAdapter extends PushProvider {
 
     state.sessions.set(sessionKey, session);
     if (saved?.nativeSessionId) {
-      state.sessions.set(`acp:${agentId}:${visitorId}:${saved.nativeSessionId}`, session);
+      state.sessions.set(`acp:${agentId}:${channelType}:${channelId}:${saved.nativeSessionId}`, session);
     }
     this._recoveryNeededSessions.add(sessionKey);
     return session;
@@ -1021,11 +1035,19 @@ class AcpAdapter extends PushProvider {
     const sdk = await this._loadSdk();
     const agentCtx = state.agentCtx;
     if (!agentCtx) throw new Error(`[${this._logPrefix}] ACP agent context 未就绪`);
-    const response = await agentCtx.request(sdk.methods.agent.session.resume, {
-      sessionId,
-      cwd: this._cwd,
-      mcpServers: [],
-    });
+    const params = { sessionId, cwd: this._cwd, mcpServers: [] };
+    let response: unknown;
+    const loadMethod = sdk.methods.agent.session.load;
+    try {
+      if (!loadMethod) throw Object.assign(new Error('standard ACP loadSession unavailable'), { code: -32601 });
+      response = await agentCtx.request(loadMethod, params);
+    } catch (error: any) {
+      const methodMissing = Number(error?.code) === -32601
+        || /method not found|loadSession unavailable/i.test(errorMessage(error));
+      const resumeMethod = sdk.methods.agent.session.resume;
+      if (!methodMissing || !resumeMethod) throw error;
+      response = await agentCtx.request(resumeMethod, params);
+    }
     // attachSession 将 session/resume 响应包装为 ActiveSession
     const responseWithSessionId = response && typeof response === 'object'
       ? { ...(response as Record<string, unknown>), sessionId: (response as any).sessionId || sessionId }
@@ -1035,7 +1057,7 @@ class AcpAdapter extends PushProvider {
     // requested, already-validated ID is supplied above for the SDK router.
     if (!session || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
       try { session?.dispose(); } catch {}
-      throw new Error('ACP session/resume did not return a valid session ID');
+      throw new Error('ACP loadSession did not return a valid session ID');
     }
     return session;
   }

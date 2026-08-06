@@ -16,6 +16,7 @@ const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
+const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -691,6 +692,29 @@ class RegistrationOrchestrator {
       action: null,
       description: '消息始终保存在 VOKO；Agent 可通过 VOKO CLI、MCP 工具或接口主动读取。',
     };
+    if (type === 'goose' || type === 'acp-goose') {
+      const available = this.options.commandAvailable
+        ? hasCommand('goose')
+        : isGooseRuntimeAvailable(type === 'acp-goose' ? 'acp' : 'cli');
+      const cli = {
+        mode: 'cli', label: 'Goose CLI 自动交付', role: type === 'acp-goose' ? 'fallback' : 'primary',
+        status: available ? 'ready' : 'unavailable',
+        selected: available,
+        action: available ? 'test' : null,
+        description: available ? 'VOKO 使用 Goose 原生 session ID 自动投递并续接消息。' : '本机未检测到 Goose CLI。',
+      };
+      if (type === 'goose') return [cli, pull];
+      return [
+        {
+          mode: 'acp', label: 'Goose ACP 实时会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available ? 'VOKO 通过标准 ACP 会话投递，断线时降级到 Goose CLI。' : '本机未检测到 Goose ACP 运行入口。',
+        },
+        cli,
+        pull,
+      ];
+    }
     if (type === 'openclaw') {
       const gateway = gatewayStatus || require('./gateway-setup').checkGateway('openclaw', this.db ? dbConfigAdapter(this.db) : null);
       return [

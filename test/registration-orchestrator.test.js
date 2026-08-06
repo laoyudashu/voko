@@ -53,6 +53,13 @@ function createService(overrides = {}) {
 }
 
 describe('shared registration orchestrator', () => {
+  it('configures Goose CLI Push and ACP-to-CLI fallback in delivery order', () => {
+    const service = new RegistrationOrchestrator({ commandAvailable: (command) => command === 'goose' });
+    assert.deepEqual(service.deliveryCapabilities('goose').map((item) => item.mode), ['cli', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('acp-goose').map((item) => item.mode), ['acp', 'cli', 'pull']);
+    assert.equal(service.deliveryCapabilities('goose')[0].status, 'ready');
+  });
+
   it('uses the nearest recognized Agent in the process ancestry', () => {
     assert.strictEqual(currentAgentTypeFromProcessRows([
       'powershell.exe node build/index.js',

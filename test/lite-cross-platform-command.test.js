@@ -29,7 +29,7 @@ test('Goose visitor content is sent over stdin and never placed in command argum
   );
 
   assert.match(source, /const args = \['run', '-i', '-'/);
-  assert.match(source, /stdinInput: notification/);
+  assert.match(source, /stdinInput: input/);
   assert.doesNotMatch(source, /\['run', '-t', notification/);
 });
 

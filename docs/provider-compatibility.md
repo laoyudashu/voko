@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- | --- |
 | OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | 在非 `main` / `default` 实例验证；WebSocket 不可用可退 CLI / Pull。 |
 | Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | 真机完整回归 | 在非默认 profile 验证。 |
-| Goose | MCP、CLI、本机接口 | Goose CLI → Pull | JSON 会话名与 resume 可用 | 真机功能验证 | Windows Goose 1.38；直接启动 `goose.exe`，提示词经 stdin 传入；Lite 定向测试 30/30。 |
+| Goose | MCP、CLI、本机接口 | `acp-goose`: ACP → CLI → Pull；`goose`: CLI → Pull | Goose 原生 session ID 在 CLI/ACP 间保持；ACP 断开后可降级并恢复 | Windows 实机 ACP→CLI→ACP 与 CLI 会话验证 | Windows Goose 1.38.0；直接启动 `goose.exe`，提示词经 stdin 传入；详见 [Goose 专属指南](providers/goose.md)。 |
 | Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | 真机功能验证 | 托管调用采用只读 sandbox；避免不同访客或群聊串线。 |
 | Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与恢复已验证 | 真机功能验证 | 托管路径禁用工具、Chrome、项目指令和写操作。 |
 | OpenCode | MCP、CLI、本机接口 | ACP / attach（已配置服务时）→ OpenCode CLI → Pull | attach、指定会话、连续对话和重启恢复已验证 | 真机功能验证 | ACP、attach 与 CLI 是独立路径；保留角色隔离与权限约束。 |
@@ -53,7 +53,7 @@ ACP 的运行入口检测与进程健康状态是分开的：Cline 可执行入�
 
 - Provider 会话绑定只保存在本机 `voko.db`，不会上传 AgentDID；Web UI、MCP 响应和日志不会暴露完整原生会话 ID。
 - 每个 VOKO Agent 与每个私聊 / 群聊独立绑定。无法可靠识别原生会话时，VOKO 不猜测“最近会话”，而是创建 VOKO 托管的隔离会话。
-- 原生恢复失败时，VOKO 会标记旧绑定为 stale，在同一 Provider 实例创建新的托管会话并注入必要本地历史；随后尝试其他已启用通道，最终保留 Pull。消息不会因降级而丢失或重复投递。
+- 原生恢复失败时，VOKO 会标记旧绑定为 stale，在当前 Agent 的 Provider 路由范围内创建新的托管会话并注入必要本地历史；随后尝试其他已启用通道，最终保留 Pull。消息不会因降级而丢失或重复投递。
 - “真机完整回归”表示已在说明所列真实本机环境完成收发、连续对话、恢复与降级的组合验证；“真机功能验证”或“功能 / 会话验证”只覆盖所列路径；“待验证 / 环境受阻”与“仅检测”不代表自动推送可用。
 
 ## Contribute a result

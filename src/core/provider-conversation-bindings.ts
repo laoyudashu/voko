@@ -265,8 +265,12 @@ export class ProviderConversationBindingStore {
         return current;
       }
       if (current?.nativeSessionId === nativeSessionId && current.providerType === providerType) {
-        this.db.prepare(`UPDATE provider_conversation_bindings SET updated_at=?, last_used_at=? WHERE id=?`)
-          .run(now, now, current.id);
+        this.db.prepare(`
+          UPDATE provider_conversation_bindings
+          SET provider_instance_id=?, delivery_mode=?, adapter_type=?, updated_at=?, last_used_at=?
+          WHERE id=?
+        `).run(clean(input.providerInstanceId, 192) || null, clean(input.deliveryMode, 64),
+          clean(input.adapterType, 64), now, now, current.id);
         this.db.exec('COMMIT');
         return this.getById(current.id);
       }

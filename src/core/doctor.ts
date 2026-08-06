@@ -16,6 +16,7 @@ const CHECK_TIMEOUT_MS = 2500;
 const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   hermes: [{ kind: 'native', command: 'hermes' }],
   goose: [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
+  'acp-goose': [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
   cline: [
     { kind: 'node-package-bin', command: 'cline', packageName: 'cline' },
     { kind: 'native', command: 'cline' },
@@ -291,6 +292,25 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
   }
 }
 
+function inspectGooseDelivery(agents: any[], checks: any[]): void {
+  const gooseAgents = agents.filter((agent: any) => ['goose', 'acp-goose'].includes(normalizeBackendType(agent.backend_type)));
+  if (gooseAgents.length === 0) return;
+  const resolver = new AgentRuntimeResolver();
+  const runtimeAvailable = !!resolver.resolve({
+    providerId: 'doctor-goose-delivery', mode: 'cli', candidates: CLI_RUNTIME_CANDIDATES.goose,
+  }).available;
+  const rows = gooseAgents.map((agent: any) => {
+    const backend = normalizeBackendType(agent.backend_type);
+    const parsed = parseDeliveryModes(agent.delivery_modes);
+    const configuredModes = parsed.modes || (backend === 'acp-goose' ? ['acp', 'cli', 'pull'] : ['cli', 'pull']);
+    const activePushMode = runtimeAvailable ? configuredModes.find((mode) => mode !== 'pull') || null : null;
+    return { agentId: agent.agent_id, backend, configuredModes, runtimeAvailable, activePushMode };
+  });
+  const ready = rows.filter((row) => row.activePushMode).length;
+  addCheck(checks, 'goose-delivery', 'Goose delivery', ready === rows.length ? 'ok' : 'warn',
+    `${ready}/${rows.length} Goose Agent(s) have configured runtime and active Push`, { agents: rows });
+}
+
 function inspectMcpConfigFiles(options: any, checks: any[]): any {
   const report = inspectMcpConfigs({
     paths: options.mcpConfigPaths,
@@ -344,6 +364,7 @@ async function runDoctor(options: any = {}): Promise<any> {
   if (inspected.db) {
     inspectAuthentication(inspected.config, checks);
     inspectAgents(inspected.agents, inspected.runtime, inspected.config, checks);
+    inspectGooseDelivery(inspected.agents, checks);
     const runtime = inspectRuntime(dbPath, inspected.runtime, checks, deps);
     if (runtime.running && typeof fetchImpl === 'function') await inspectLocalHealth(runtime.port, checks, fetchImpl);
     if (options.deep) {

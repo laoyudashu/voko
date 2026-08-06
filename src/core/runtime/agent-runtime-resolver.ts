@@ -124,7 +124,9 @@ export class AgentRuntimeResolver {
     if (path.isAbsolute(command) || command.includes('/') || command.includes('\\')) return canonicalFile(command);
     const directories = String(this.env.PATH || this.env.Path || '').split(path.delimiter).filter(Boolean);
     const names = this.platform === 'win32'
-      ? (nativeOnly ? ['.exe'] : ['.exe', '.cmd', '']).map(extension => `${command}${extension}`)
+      ? (path.extname(command)
+          ? [command]
+          : (nativeOnly ? ['.exe'] : ['.exe', '.cmd', '']).map(extension => `${command}${extension}`))
       : [command];
     for (const directory of directories) {
       for (const name of names) {

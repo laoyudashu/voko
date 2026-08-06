@@ -31,6 +31,7 @@ interface DispatcherProvider {
   on?(event: string, handler: (payload: any) => void): unknown;
   off?(event: string, handler: (payload: any) => void): unknown;
   removeListener?(event: string, handler: (payload: any) => void): unknown;
+  acceptsBinding?(binding: NonNullable<PushPayload['providerBinding']>, agentId: string): boolean;
 }
 
 type RouteOperation = 'push' | 'steer';
@@ -811,9 +812,11 @@ ${body}
   function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
-    let compatible = binding.providerType === _providerFamily(route.providerId)
-      && binding.adapterType === route.providerId
-      && binding.deliveryMode === mode;
+    let compatible = typeof route.provider.acceptsBinding === 'function'
+      ? !!route.provider.acceptsBinding(binding, agentId)
+      : binding.providerType === _providerFamily(route.providerId)
+        && binding.adapterType === route.providerId
+        && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;

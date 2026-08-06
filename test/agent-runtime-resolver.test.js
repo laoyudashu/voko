@@ -50,6 +50,19 @@ test('Windows native resolution accepts exe but never executes cmd as native', (
   } finally { cleanup(); }
 });
 
+test('Windows native resolution does not append exe to an already suffixed command', () => {
+  const { root, cleanup } = fixture();
+  try {
+    touch(path.join(root, 'goose.exe'));
+    const resolver = new AgentRuntimeResolver({ platform: 'win32', env: { PATH: root } });
+    const result = resolver.resolve({
+      providerId: 'goose', mode: 'acp', candidates: [{ kind: 'native', command: 'goose.exe' }],
+    });
+    assert.equal(result.available, true);
+    assert.equal(path.basename(result.executable), 'goose.exe');
+  } finally { cleanup(); }
+});
+
 test('negative cache is cleared explicitly after runtime installation', () => {
   const { root, cleanup } = fixture();
   try {

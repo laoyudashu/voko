@@ -77,6 +77,8 @@ extensions:
 
 You can also enable it for one session with `goose session --with-extension "voko mcp"`. Do not point `url` at an old Desktop port. After changing the configuration, fully exit and restart Goose, then verify with `tools/list`.
 
+This section configures Goose as an **MCP client** of VOKO. If VOKO should invoke Goose as a Provider, see the [Goose Provider guide](providers/goose.md) for CLI/ACP registration, native session IDs, fallback, and recovery.
+
 ## Qwen Code
 
 ### Fast path: add from the CLI

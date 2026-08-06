@@ -56,7 +56,7 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 
 VOKO 的公开矩阵覆盖 17 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Cline 已完成 Windows 实机 ACP→CLI→ACP 恢复回路验收；Goose、Codex、Claude Code、OpenCode 等已完成所列真机功能验证；Gemini、OpenHands 与 Amazon Q 仍有待验证或环境受阻的路径。
 
-所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
+所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)；Goose 的安装、注册和 ACP/CLI 使用细节见 [Goose Provider 专属指南](docs/providers/goose.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
 
 ## 平台与本地运行
 

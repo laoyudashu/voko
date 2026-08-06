@@ -60,6 +60,24 @@ test('failed caller send leaves the existing binding unchanged', (t) => {
   assert.equal(store.getActive('agent-1', 'visitor-1', 1).nativeSessionId, 'thread-a');
 });
 
+test('reusing one native session updates its delivery adapter without changing identity', (t) => {
+  const { store } = fixture(t);
+  const first = store.saveManaged({
+    agentId: 'goose-agent', channelId: 'visitor', channelType: 1,
+    providerType: 'goose', providerInstanceId: null, nativeSessionId: '20260806_1',
+    deliveryMode: 'acp', adapterType: 'goose-acp', expectedVersion: 0,
+  });
+  const switched = store.saveManaged({
+    agentId: 'goose-agent', channelId: 'visitor', channelType: 1,
+    providerType: 'goose', providerInstanceId: null, nativeSessionId: '20260806_1',
+    deliveryMode: 'cli', adapterType: 'goose-cli', expectedVersion: first.bindingVersion,
+  });
+  assert.equal(switched.id, first.id);
+  assert.equal(switched.bindingVersion, first.bindingVersion);
+  assert.equal(switched.deliveryMode, 'cli');
+  assert.equal(switched.adapterType, 'goose-cli');
+});
+
 test('restart recovery activates sent candidates and discards failed candidates', (t) => {
   const { db, store } = fixture(t);
   const sent = pending(store, 'thread-sent', 'outbound-sent');
@@ -226,6 +244,39 @@ test('cross-adapter routing never reuses an incompatible managed binding', async
   assert.equal(db.prepare('SELECT status FROM provider_conversation_bindings WHERE id=?').get(binding.id).status, 'stale');
 });
 
+test('provider compatibility hook permits a verified native session across adapters', async (t) => {
+  const { db, store } = fixture(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id, agent_id, imUid, imToken, im_server_url, publish_status, created_at, updated_at,
+     backend_type, delivery_modes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('row-goose', 'agent-goose', 'agent-im-goose', 'token', 'ws://local', 'published', now, now,
+      'goose', JSON.stringify(['cli', 'pull']));
+  store.saveManaged({
+    agentId: 'agent-goose', channelId: 'visitor-1', providerType: 'goose',
+    nativeSessionId: '20260806_1', deliveryMode: 'acp', adapterType: 'goose-acp', expectedVersion: 0,
+  });
+  const received = [];
+  const dispatcher = createDispatcher({
+    db,
+    providers: {
+      'goose-cli': {
+        priority: 1, match: () => true, isAvailable: () => true,
+        acceptsBinding: (binding) => binding.providerType === 'goose' && binding.adapterType === 'goose-acp',
+        push: async (payload) => received.push(payload.providerBinding?.nativeSessionId || null),
+      },
+    },
+  });
+  dispatcher.dispatch('agent-goose', {
+    agentId: 'agent-goose', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
+    content: 'hello', messageId: 'message-goose',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(received, ['20260806_1']);
+  assert.equal(store.getActive('agent-goose', 'visitor-1', 1).status, 'active');
+});
+
 test('caller-origin binding is not mutated when the selected adapter differs', async (t) => {
   const { db, store } = fixture(t);
   const now = Date.now();
@@ -336,4 +387,3 @@ test('invalidateForAgentConfigChange: 类型与实例都没变时返回 0', (t) 
   });
   assert.equal(invalidated, 0);
 });
-

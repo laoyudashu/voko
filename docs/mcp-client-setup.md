@@ -80,6 +80,8 @@ extensions:
 
 也可以只对当前会话启用：`goose session --with-extension "voko mcp"`。不要把 `url` 指向旧 Desktop 端口；修改配置后完全退出并重启 Goose，再用 `tools/list` 验证。
 
+本节是 Goose 作为 **MCP 客户端**调用 VOKO 的配置。若要让 VOKO 调用 Goose Provider，请看 [Goose Provider 专属指南](providers/goose.md)，其中包含 CLI/ACP 注册、原生 session ID、降级和恢复规则。
+
 ## Qwen Code
 
 ### 最快方式：命令行添加
