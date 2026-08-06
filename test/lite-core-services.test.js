@@ -1255,9 +1255,11 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 0);
   assert.deepEqual(starts, [1, 2]);
   assert.equal(handled, 1);
-  const emptyBatchLog = logs.find(log => log.includes('共收集 0 条离线消息'));
-  assert.ok(emptyBatchLog);
-  assert.doesNotMatch(emptyBatchLog, /开始处理/);
+  // 降噪后 per-run 的“共收集”走 console.debug；汇总行（console.log）应可见，
+  // 且第二次同步（advance past empty）的汇总反映 0 条新消息。
+  const summaryLogs = logs.filter(log => log.includes('[离线同步] 完成'));
+  assert.ok(summaryLogs.length >= 1, '应有汇总日志');
+  assert.ok(summaryLogs.some(log => /收集 0 条/.test(log)), '第二次同步应汇总 0 条');
 });
 
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {

@@ -371,7 +371,7 @@ class MessageHandler extends EventEmitter {
     }
 
     // 通知 UI + 系统通知（含提示音）
-    if (!isMe) { console.log('[通知] 收到访客消息, agent=' + agentId + ' contentLength=' + String(content || '').length); }
+    if (!isMe) { console.debug('[通知] 收到访客消息, agent=' + agentId + ' contentLength=' + String(content || '').length); }
     logEvent('message.received', { agentId, visitorId: fromUid, id: messageId, messageId });
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid, channelId,
