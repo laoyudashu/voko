@@ -18,11 +18,23 @@ For a browser-free installation diagnosis, run `voko setup`. It returns JSON and
 
 For an existing installation, run `voko doctor` when you need to troubleshoot runtime health. It reads the database, Agent, IM/delivery capability, and local health state without starting a Provider or model. Use `--json` for scripts and `--deep` to probe configured API, IM, OSS, and local CLI/ACP paths. Exit code `0` means all checks passed, `1` means warnings, and `2` means a required check failed.
 
+If a client still has an unambiguous legacy VOKO URL entry, run `voko doctor --fix-mcp` to migrate only that VOKO entry to `command: voko` with `args: [mcp]`. A sibling `.voko-mcp.bak` backup is created before each change; unrelated MCP servers are preserved. Review the report and fully restart the client. The migration is explicit and is not performed during `voko start`.
+
 Every configuration below launches this stdio command:
 
 ```bash
 voko mcp
 ```
+
+### Real delivery probe
+
+To verify one configured Provider through the local gateway and persistence path, run:
+
+```bash
+voko probe --agent-id <agentId> --visitor-id <visitorId> --confirm
+```
+
+This can invoke the model and send a real IM reply to the supplied visitor. The confirmation flag is mandatory. Add `--message "..."` or `--timeout 30` as needed. If the command returns `PROBE_TIMEOUT`, investigate the original delivery before sending another probe.
 
 Do not put a fixed `localhost` port in the client. Prefer the `voko mcp` stdio command: the proxy discovers the active local port and short-lived local authentication information, so the client configuration survives a port change.
 
@@ -78,6 +90,17 @@ extensions:
 You can also enable it for one session with `goose session --with-extension "voko mcp"`. Do not point `url` at an old Desktop port. After changing the configuration, fully exit and restart Goose, then verify with `tools/list`.
 
 This section configures Goose as an **MCP client** of VOKO. If VOKO should invoke Goose as a Provider, see the [Goose Provider guide](providers/goose.md) for CLI/ACP registration, native session IDs, fallback, and recovery.
+
+## Claude Code
+
+When Claude Code is the MCP client, add VOKO with Claude Code's own configuration command:
+
+```powershell
+claude mcp add voko -- voko mcp
+claude mcp list
+```
+
+This configures **Claude Code → VOKO MCP** only. To have VOKO invoke Claude Code, see the [Claude Code Provider guide](providers/claude-code.md) and register `claude-code` with `CLI → Pull`; the two directions have independent login, permission, and session-binding rules.
 
 ## Qwen Code
 

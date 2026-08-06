@@ -176,3 +176,82 @@ test('Hermes HTTP provider reuses an authenticated profile without probing befor
   assert.equal(await provider._ensureGatewayRunning('psychologist'), true);
   assert.equal(authentications, 1);
 });
+
+test('Hermes HTTP coalesces duplicate turns and reports delivery lifecycle states', async () => {
+  const agentId = 'hermes-agent';
+  const provider = new HermesHttpProvider({
+    prepare(sql) {
+      return {
+        get() {
+          if (sql.includes('backend_instance_id')) return { backend_instance_id: 'profile-a' };
+          return null;
+        },
+      };
+    },
+  }, null, {
+    profiles: { 'profile-a': { port: 8642, apiKey: 'valid-key' } },
+  });
+  provider.connected = true;
+  provider.connectedAgents = new Set(['profile-a']);
+  provider._authStates.set('profile-a', true);
+  let chats = 0;
+  provider.client = {
+    connected: true,
+    _agentPort() { return 8642; },
+    destroy() {},
+    async chat() {
+      chats += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { reply: 'ok', runId: 'run-1' };
+    },
+  };
+  const statuses = [];
+  provider.on('delivery.status', (status) => statuses.push(status));
+
+  const extra = { messageId: 'message-1', turnId: 'turn-1', channelId: 'visitor-1', channelType: 1 };
+  const first = provider.sendToSession(`${'hermes'}:${agentId}:visitor-1`, 'hello', extra);
+  const second = provider.sendToSession(`${'hermes'}:${agentId}:visitor-1`, 'hello', extra);
+  await Promise.all([first, second]);
+
+  assert.equal(chats, 1);
+  assert.deepEqual(statuses.map((item) => item.status), ['processing', 'deduplicated', 'completed']);
+  assert.equal(statuses[0].agentId, agentId);
+  assert.equal(statuses[0].channelId, 'visitor-1');
+  await provider.destroy();
+});
+
+test('Hermes HTTP marks a timed-out turn pending without retrying it', async () => {
+  const provider = new HermesHttpProvider({
+    prepare(sql) {
+      return {
+        get() {
+          if (sql.includes('backend_instance_id')) return { backend_instance_id: 'profile-a' };
+          return null;
+        },
+      };
+    },
+  }, null, { profiles: { 'profile-a': { port: 8642, apiKey: 'valid-key' } } });
+  provider.connected = true;
+  provider.connectedAgents = new Set(['profile-a']);
+  provider._authStates.set('profile-a', true);
+  let chats = 0;
+  provider.client = {
+    connected: true,
+    _agentPort() { return 8642; },
+    destroy() {},
+    async chat() {
+      chats += 1;
+      throw new Error('request timed out');
+    },
+  };
+  const statuses = [];
+  provider.on('delivery.status', (status) => statuses.push(status));
+
+  await assert.rejects(
+    provider.sendToSession('hermes:hermes-agent:visitor-1', 'hello', { messageId: 'message-timeout' }),
+    /timed out/,
+  );
+  assert.equal(chats, 1);
+  assert.equal(statuses.at(-1).status, 'pending');
+  await provider.destroy();
+});

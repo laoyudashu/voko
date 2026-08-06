@@ -982,6 +982,24 @@ class MessageHandler extends EventEmitter {
       return;
     }
 
+    // Persist the successful Hub acknowledgement so local status checks and
+    // runtime probes do not leave a delivered reply in the pending state.
+    try {
+      const messageSeq = Number.isFinite(Number((delivery as { messageSeq?: unknown })?.messageSeq))
+        ? Number((delivery as { messageSeq?: unknown })?.messageSeq)
+        : null;
+      const clientMsgNo = (delivery as { clientMsgNo?: unknown })?.clientMsgNo
+        ? String((delivery as { clientMsgNo?: unknown })?.clientMsgNo)
+        : null;
+      this.db.prepare(`
+        UPDATE messages
+        SET status='sent',
+            message_seq=COALESCE(?, message_seq),
+            client_msg_no=COALESCE(?, client_msg_no)
+        WHERE id=?
+      `).run(messageSeq, clientMsgNo, msgId);
+    } catch (_) {}
+
   }
 }
 

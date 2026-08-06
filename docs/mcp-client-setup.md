@@ -24,6 +24,18 @@ voko start
 voko mcp
 ```
 
+Use `voko doctor --fix-mcp` when Doctor identifies a legacy VOKO URL. It creates a `.voko-mcp.bak` backup, preserves unrelated MCP servers, and is not run automatically at startup.
+
+### Real delivery probe
+
+For a real Provider check through the local gateway and persistence path:
+
+```bash
+voko probe --agent-id <agentId> --visitor-id <visitorId> --confirm
+```
+
+This may invoke the model and send a real IM reply to the supplied visitor, so `--confirm` is mandatory. If it times out, investigate the original delivery before sending another probe.
+
 不要把固定的 `localhost` 端口直接填入客户端。推荐配置 `voko mcp`：它会读取当前运行实例的端口和短期本地鉴权信息，端口变化时客户端配置仍可保持不变。
 
 只有客户端不支持 stdio 时才使用 HTTP 回退：先运行 `voko start --no-open` 和 `voko status --json`，读取输出顶层的 `port`，再配置 `http://localhost:<port>/mcp`。`3100` 只是默认端口，不是固定契约；如果发现旧 Desktop 配置或 `localhost:3002` / `localhost:3100` 等历史地址，优先改成 stdio，保存后完全退出并重启客户端。
@@ -81,6 +93,17 @@ extensions:
 也可以只对当前会话启用：`goose session --with-extension "voko mcp"`。不要把 `url` 指向旧 Desktop 端口；修改配置后完全退出并重启 Goose，再用 `tools/list` 验证。
 
 本节是 Goose 作为 **MCP 客户端**调用 VOKO 的配置。若要让 VOKO 调用 Goose Provider，请看 [Goose Provider 专属指南](providers/goose.md)，其中包含 CLI/ACP 注册、原生 session ID、降级和恢复规则。
+
+## Claude Code
+
+Claude Code 作为 MCP 客户端时，可用自己的配置命令添加 VOKO：
+
+```powershell
+claude mcp add voko -- voko mcp
+claude mcp list
+```
+
+这只配置 **Claude Code → VOKO MCP**。若要让 VOKO 调用 Claude Code，请看 [Claude Code Provider 专属指南](providers/claude-code.md)，并在 VOKO 注册 `claude-code` 的 `CLI → Pull` 通道；两条方向的登录、权限和会话绑定相互独立。
 
 ## Qwen Code
 

@@ -34,7 +34,25 @@ voko doctor --deep
 voko doctor --db /path/to/voko.db
 ```
 
-The exit status is `0` when all checks pass, `1` when checks pass with warnings (for example, the runtime is stopped or a legacy cursor is detected), and `2` when a required check fails (for example, an unreadable or newer-than-supported database). A warning is diagnostic only; it does not change the runtime or migrate data. `voko setup` remains the first-run onboarding/readiness JSON command, while `voko doctor` is the ongoing health and troubleshooting command.
+When an MCP client still contains an unambiguous legacy VOKO entry (for example a fixed `localhost:3002/mcp` URL), migrate it explicitly with:
+
+```bash
+voko doctor --fix-mcp
+```
+
+The migration only changes a detected VOKO entry to the local stdio form `command: voko`, `args: [mcp]`. It does not touch unrelated MCP servers, and it creates a sibling `<config>.voko-mcp.bak` before each write. Review the report, then fully restart the MCP client. It is intentionally not run automatically at startup.
+
+The exit status is `0` when all checks pass, `1` when checks pass with warnings (for example, the runtime is stopped or a legacy cursor is detected), and `2` when a required check fails (for example, an unreadable or newer-than-supported database). Without `--fix-mcp`, Doctor is diagnostic only; it does not change the runtime or migrate data. `voko setup` remains the first-run onboarding/readiness JSON command, while `voko doctor` is the ongoing health and troubleshooting command.
+
+### Real delivery probe
+
+For a controlled end-to-end check of the currently configured Provider, use the explicit probe command:
+
+```bash
+voko probe --agent-id <agentId> --visitor-id <visitorId> --confirm
+```
+
+The probe first verifies the active Lite instance, submits one local gateway message, and waits for a persisted outbound reply. It may invoke the model and may send a real IM reply to the supplied visitor, so `--confirm` is mandatory. Use `--message "..."` and `--timeout 30` when needed. A timeout is reported as `PROBE_TIMEOUT`; do not resend automatically until the original delivery is understood.
 
 On a graphical desktop, the local Web UI is the simplest place to complete local sign-in or registration and add an Agent. After `voko start`, run `voko status --json` and use its top-level `port` value to open `http://localhost:<port>`; `3100` is only the default and must not be treated as a permanent port.
 

@@ -126,3 +126,31 @@ test('doctor reports stale MCP configuration without exposing its contents', asy
   assert.match(JSON.stringify(check), /Goose/);
   assert.doesNotMatch(JSON.stringify(result), /do-not-print-this-token/);
 });
+
+test('doctor --fix-mcp migrates an unambiguous legacy VOKO entry and keeps a backup', async (t) => {
+  const fixture = makeFixture();
+  const configPath = path.join(fixture.dir, 'client.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    mcpServers: {
+      voko: { url: 'http://localhost:3002/mcp', headers: { Authorization: 'Bearer secret-that-must-not-leak' } },
+      other: { command: 'other-agent', args: [] },
+    },
+  }, null, 2));
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+
+  const result = await runDoctor({
+    dbPath: fixture.dbPath,
+    mcpConfigPaths: [{ client: 'Test Client', path: configPath }],
+    fixMcp: true,
+  });
+
+  assert.equal(result.mcpMigration.changed, 1);
+  assert.equal(result.mcpMigration.errors, 0);
+  assert.equal(result.mcpMigration.clients[0].status, 'updated');
+  assert.ok(fs.existsSync(`${configPath}.voko-mcp.bak`));
+  const migrated = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.deepEqual(migrated.mcpServers.voko, { command: 'voko', args: ['mcp'] });
+  assert.deepEqual(migrated.mcpServers.other, { command: 'other-agent', args: [] });
+  assert.doesNotMatch(JSON.stringify(result), /secret-that-must-not-leak/);
+  assert.equal(result.checks.find((item) => item.id === 'mcp-config')?.status, 'ok');
+});

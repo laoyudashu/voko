@@ -919,14 +919,14 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── Gateway 转发（desktop gateway:forwardToAgent → 此端点） ──
   app.post('/api/gateway/forward', async (req?: any, res?: any) => {
     try {
-      const { visitorId, message, agentId } = req.body || {};
+      const { visitorId, message, agentId, messageId } = req.body || {};
       if (!agentId || !visitorId || !message) return res.json({ success: false, error: '缺少参数' });
       const dispatcher = (global as any).__dispatcher;
       if (!dispatcher) return res.json({ success: false, error: 'dispatcher 未初始化' });
       // 统一走 dispatcher 决策：连接就绪则 push，否则留库等 agent pull
       dispatcher.dispatch(agentId, {
         agentId, fromUid: visitorId, content: message, channelId: visitorId,
-        channelType: 1, contentType: 1, messageId: '', timestamp: Math.floor(Date.now() / 1000)
+        channelType: 1, contentType: 1, messageId: String(messageId || ''), timestamp: Math.floor(Date.now() / 1000)
       });
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -1440,6 +1440,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // 桥接 lite-bus 事件 → WebSocket
   const bus = require('./core/lite-bus');
   const WS_EVENTS = ['app:quit', 'agent-wukongim:message', 'agent-wukongim:status', 'agent-wukongim:sent',
+    'agent-delivery:status',
     'owner-intervention:new', 'owner-intervention:email-reply',
     'owner-intervention:updated', 'channels:test-success',
     'wechat:session-expired', 'owner-reply', 'voko:notification', 'user:switched'];
@@ -2534,6 +2535,8 @@ function printUsage() {
     '  voko uninstall [--purge]   ' + t('cli.usage.uninstall') + '\n' +
     '  voko mcp                   ' + t('cli.usage.mcp') + '\n' +
     '  voko status                ' + t('cli.usage.status') + '\n' +
+    '  voko probe --agent-id ID --visitor-id UID --confirm\n' +
+    '                             Send one acknowledged real Provider/IM probe\n' +
     '  voko update                ' + t('cli.usage.update') + '\n' +
     '  voko --version             ' + t('cli.usage.version') + '\n' +
     '  voko --help                ' + t('cli.usage.help') + '\n' +
@@ -2609,7 +2612,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'setup', 'doctor', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'doctor', 'probe', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2633,18 +2636,31 @@ async function main() {
   // doctor — read-only local/runtime diagnosis; never initializes Core or workers.
   if (subcommand === 'doctor') {
     if (args.help || args.h) {
-      console.log('Usage: voko doctor [--json] [--deep] [--db PATH]');
-      console.log('Read-only diagnosis of Node.js, database, Agents, runtime, MCP/IM configuration and provider runtimes.');
+      console.log('Usage: voko doctor [--json] [--deep] [--fix-mcp] [--db PATH]');
+      console.log('Diagnosis of Node.js, database, Agents, runtime, MCP/IM configuration and provider runtimes.');
+      console.log('--fix-mcp migrates unambiguous legacy VOKO MCP entries to the voko mcp stdio command and creates backups.');
       return;
     }
     const { runDoctor, formatDoctor } = require('./core/doctor');
     const result = await runDoctor({
       dbPath: resolveDbPath(args, { silent: true, noCreate: true }),
       deep: !!args.deep,
+      fixMcp: !!args['fix-mcp'] || !!args.fixMcp,
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     else console.log(formatDoctor(result));
     process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (subcommand === 'probe') {
+    if (args.help || args.h) {
+      console.log('Usage: voko probe --agent-id ID --visitor-id UID --confirm [--message TEXT] [--timeout SECONDS]');
+      console.log('This invokes the configured Provider and may send one real IM reply.');
+      return;
+    }
+    const result = await cli.runRuntimeProbe(args, resolveDbPath(args, { silent: true, noCreate: true }));
+    if (!result.success) process.exitCode = 1;
     return;
   }
 

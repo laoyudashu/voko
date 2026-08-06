@@ -391,6 +391,22 @@ test('Codex and Claude run safely from a non-project temporary directory', () =>
   assert.doesNotMatch(args, /dangerously-skip-permissions|bypassPermissions/);
 });
 
+test('Claude accepts its persisted claude-code CLI session binding', () => {
+  const claude = new ClaudeCliProvider();
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude-code',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), true);
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), false);
+});
+
 test('Aider parser emits only the model reply', () => {
   let output = '';
   const parser = createParser({

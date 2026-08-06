@@ -43,6 +43,11 @@ id_ed25519
 *.sqlite.pre-schema-v*.bak
 *.sqlite3.pre-schema-v*.bak
 
+# MCP configuration migration backups.
+*.voko-mcp.bak
+*.voko-mcp.bak-*
+*.voko-mcp.tmp-*
+
 # Local runtime state.
 events.jsonl
 *.pid

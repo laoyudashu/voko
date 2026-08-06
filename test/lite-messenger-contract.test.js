@@ -309,6 +309,24 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
+  it('marks a successfully delivered Agent reply as sent', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentReply({
+        agentId: 'agent-1',
+        visitorId: 'visitor-1',
+        content: 'delivered reply',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      const row = fixture.db.prepare(
+        'SELECT status FROM messages WHERE agent_id=? AND is_me=1 ORDER BY rowid DESC LIMIT 1',
+      ).get('agent-1');
+      assert.equal(row.status, 'sent');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('delegates friend-request approval through the configured access-control boundary', () => {
     const calls = [];
     const sendSystemMessage = () => {};

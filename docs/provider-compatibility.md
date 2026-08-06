@@ -8,11 +8,11 @@
 
 | 智能体名称 | Agent 向 VOKO 发消息 | VOKO 向 Agent 收 / 推新消息（主 → 备 → 兜底） | 会话连续性 / 重启恢复 | 实测结论 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | 在非 `main` / `default` 实例验证；WebSocket 不可用可退 CLI / Pull。 |
-| Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | 真机完整回归 | 在非默认 profile 验证。 |
+| OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 选择 `openclaw.json` 中的 Agent ID；Windows OpenClaw 2026.6.1 实测；详见 [OpenClaw 专属指南](providers/openclaw.md)。 |
+| Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 是 Hermes profile；Windows Hermes 0.19.0 实测；详见 [Hermes 专属指南](providers/hermes.md)。 |
 | Goose | MCP、CLI、本机接口 | `acp-goose`: ACP → CLI → Pull；`goose`: CLI → Pull | Goose 原生 session ID 在 CLI/ACP 间保持；ACP 断开后可降级并恢复 | Windows 实机 ACP→CLI→ACP 与 CLI 会话验证 | Windows Goose 1.38.0；直接启动 `goose.exe`，提示词经 stdin 传入；详见 [Goose 专属指南](providers/goose.md)。 |
-| Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | 真机功能验证 | 托管调用采用只读 sandbox；避免不同访客或群聊串线。 |
-| Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与恢复已验证 | 真机功能验证 | 托管路径禁用工具、Chrome、项目指令和写操作。 |
+| Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | Windows 实机 CLI 会话验证 | 使用 `codex exec --json --sandbox read-only`；不需要 Provider Instance；详见 [Codex 专属指南](providers/codex.md)。 |
+| Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与原生 session 恢复已验证 | Windows 实机 CLI 会话验证 | 托管路径禁用工具、Chrome、项目指令和写操作；详见 [Claude Code 专属指南](providers/claude-code.md)。 |
 | OpenCode | MCP、CLI、本机接口 | ACP / attach（已配置服务时）→ OpenCode CLI → Pull | attach、指定会话、连续对话和重启恢复已验证 | 真机功能验证 | ACP、attach 与 CLI 是独立路径；保留角色隔离与权限约束。 |
 | Cursor Agent CLI | MCP、CLI、本机接口 | Cursor ACP → Cursor CLI（`--resume`）→ Pull | ACP 无原生 resume 时创建隔离托管会话并注入必要本地历史；CLI 可原生恢复 | 真机完整回归 | Windows 官方 x64 版本实测；ACP 失败时 CLI 自动接管。ACP 工具默认拒绝，CLI 使用只读 plan 模式。 |
 | Kiro CLI | MCP、CLI、本机接口 | Kiro CLI（Hook session / `--resume-id`）→ Pull | 会话识别与恢复相关测试通过 | 功能 / 会话验证 | 非交互、无预授权工具模式；未宣称完整云端真机回归。 |

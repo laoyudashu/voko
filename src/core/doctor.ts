@@ -7,7 +7,7 @@ const { SCHEMA_VERSION } = require('./database');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle');
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
-const { inspectMcpConfigs } = require('./mcp-config-diagnostics');
+const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
 
 const MIN_NODE_VERSION = '22.5.0';
@@ -359,6 +359,25 @@ async function runDoctor(options: any = {}): Promise<any> {
   const nodeVersion = String(options.nodeVersion || process.versions.node);
 
   addCheck(checks, 'node', 'Node.js', versionAtLeast(nodeVersion, MIN_NODE_VERSION) ? 'ok' : 'error', `${nodeVersion} (minimum ${MIN_NODE_VERSION})`, { version: nodeVersion, minimum: MIN_NODE_VERSION });
+  let mcpMigration: any = null;
+  if (options.fixMcp) {
+    mcpMigration = migrateMcpConfigs({
+      paths: options.mcpConfigPaths,
+      homeDir: options.homeDir,
+      appData: options.appData,
+      platform: options.platform,
+    });
+    addCheck(
+      checks,
+      'mcp-migration',
+      'MCP configuration migration',
+      mcpMigration.errors > 0 ? 'warn' : 'ok',
+      mcpMigration.changed > 0
+        ? `updated ${mcpMigration.changed} configuration file(s); backups were created`
+        : 'no unambiguous legacy VOKO configuration was changed',
+      mcpMigration,
+    );
+  }
   inspectMcpConfigFiles(options, checks);
   const inspected = inspectDatabase(dbPath, checks);
   if (inspected.db) {
@@ -378,6 +397,7 @@ async function runDoctor(options: any = {}): Promise<any> {
   }
   const result = summarize(checks, startedAt, options);
   result.dbPath = dbPath;
+  if (mcpMigration) result.mcpMigration = mcpMigration;
   return result;
 }
 

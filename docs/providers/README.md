@@ -14,17 +14,19 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 ## 已有指南
 
 - [Goose](goose.md)：Goose CLI、ACP、原生 session ID、CLI 降级和恢复。
+- [OpenClaw](openclaw.md)：Gateway、实例选择、WebSocket、CLI 降级和 MCP 配置。
+- [Hermes](hermes.md)：profile、HTTP API、CLI 降级和 Gateway 排障。
+- [Codex](codex.md)：登录、只读 CLI、原生 thread ID 和 MCP 配置。
+- [Claude Code](claude-code.md)：登录、只读 CLI、原生 session ID、Pull 兜底和 MCP 配置。
 
 ## 适合后续拆分的指南
 
 以下 Provider 已有较充分的实现或实机验证资料，适合按同一模板继续拆分：
 
 - Cline：ACP → Plan CLI → Pull、进程健康与恢复。
-- OpenClaw：WebSocket、实例隔离、CLI 降级和配置监控。
-- Hermes：HTTP API、profile 隔离和 CLI 降级。
 - Cursor Agent CLI：ACP、CLI `--resume` 以及 Windows 入口解析。
 - ZeroClaw：ACP-over-WebSocket、ACP、CLI alias 和 state file 隔离。
-- Codex、Claude Code：原生会话恢复、只读托管限制和会话隔离。
+- 其他尚未拆分的 Provider：按同一模板补充安装、注册、会话和降级说明。
 
 尚未完成相应实机验收的 Provider，只应保留在兼容性矩阵的“待验证 / 环境受阻”说明中，不应提前写成可用操作保证。
 
