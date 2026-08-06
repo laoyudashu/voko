@@ -326,6 +326,46 @@ async function waitForStartedAgentConnection(
   return status;
 }
 
+function registrationRuntimeStatus(cx: any, agentId: string, imStatus?: WorkerConnectionStatus): any {
+  const connected = imStatus?.connected === true || imStatus?.status === 'connected';
+  const failed = !!imStatus?.error || imStatus?.status === 'connect_fail' || imStatus?.status === 'failed';
+  const workerStatus = failed ? 'failed' : connected ? 'running' : imStatus ? 'starting' : 'not_started';
+  let providerDelivery: any = null;
+  try {
+    const status = cx.getAgentDeliveryStatus?.(agentId);
+    if (status && typeof status === 'object') {
+      providerDelivery = {
+        activeMode: status.activeMode || null,
+        availableModes: Array.isArray(status.availableModes) ? status.availableModes : [],
+        status: status.status || (status.backendAvailable === false ? 'unavailable' : 'ready'),
+      };
+    }
+  } catch (_) {}
+  if (!providerDelivery) {
+    try {
+      const row = cx.query?.('SELECT backend_type, backend_instance_id, delivery_modes FROM agents WHERE agent_id=? LIMIT 1', [agentId])?.[0] || {};
+      const parsed = typeof row.delivery_modes === 'string' ? JSON.parse(row.delivery_modes) : row.delivery_modes;
+      providerDelivery = {
+        backendType: row.backend_type || 'others',
+        instanceBound: !!row.backend_instance_id,
+        configuredModes: Array.isArray(parsed) ? parsed.map(String) : ['pull'],
+        status: 'configured',
+      };
+    } catch (_) {}
+  }
+  return {
+    creationStatus: 'created',
+    workerStatus,
+    providerDelivery,
+    ...(imStatus ? {
+      imConnection: { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') },
+    } : {}),
+    ...(!connected ? {
+      recoveryAction: { action: 'start_worker', agentId, message: '可稍后通过 start_worker 重试 IM 连接' },
+    } : {}),
+  };
+}
+
 function isGroupSummary(value: unknown): value is GroupSummary {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -974,9 +1014,18 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
-        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
-        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        let imStatus: WorkerConnectionStatus | undefined;
+        try {
+          imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        } catch (_) {
+          imStatus = { status: 'connect_fail' };
+        }
+        try {
+          imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
+        } catch (_) {
+          imStatus = { status: 'failed' };
+        }
+        if (imStatus?.error || imStatus?.status === 'connect_fail') imStatus = { status: 'failed' };
         if (imStatus && typeof imStatus === 'object') {
           const connected = imStatus.connected === true || imStatus.status === 'connected';
           return {
@@ -984,13 +1033,20 @@ function createToolHandlers(cx: McpContext) {
             message: '注册成功',
             agentId,
             agentName: data.agentName,
+            ...registrationRuntimeStatus(cx, agentId, imStatus),
             imConnection: { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') },
-            ...(connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+            ...(connected ? {} : { warning: imStatus.status === 'failed' ? 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试' : 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
           };
         }
       }
 
-      return { success: true, message: '注册成功', agentId, agentName: data.agentName };
+      return {
+        success: true,
+        message: '注册成功',
+        agentId,
+        agentName: data.agentName,
+        ...registrationRuntimeStatus(cx, agentId),
+      };
     },
 
     // ─── 2b. 用 access-token 创建 Agent（已登录用户，无需验证码）───
@@ -1064,9 +1120,18 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
-        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
-        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        let imStatus: WorkerConnectionStatus | undefined;
+        try {
+          imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        } catch (_) {
+          imStatus = { status: 'connect_fail' };
+        }
+        try {
+          imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
+        } catch (_) {
+          imStatus = { status: 'failed' };
+        }
+        if (imStatus?.error || imStatus?.status === 'connect_fail') imStatus = { status: 'failed' };
         const imConnection = imStatus && typeof imStatus === 'object'
           ? { connected: imStatus.connected === true || imStatus.status === 'connected', status: imStatus.status || 'unknown' }
           : undefined;
@@ -1075,11 +1140,12 @@ function createToolHandlers(cx: McpContext) {
           message: '创建成功',
           agentId,
           agentName: data.name || p.agentName,
+          ...registrationRuntimeStatus(cx, agentId, imStatus),
           accessMode,
           accessModeSynced,
           ...(imConnection ? {
             imConnection,
-            ...(imConnection.connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+            ...(imConnection.connected ? {} : { warning: imStatus?.status === 'failed' ? 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试' : 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
           } : {}),
         };
       }
@@ -1089,6 +1155,7 @@ function createToolHandlers(cx: McpContext) {
         message: '创建成功',
         agentId,
         agentName: data.name || p.agentName,
+        ...registrationRuntimeStatus(cx, agentId),
         accessMode,
         accessModeSynced,
       };

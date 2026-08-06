@@ -66,6 +66,8 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
           serverInfo: {
             name: SERVER_NAME,
             version,
+            edition: options.edition || 'lite',
+            ...(options.instanceId ? { instanceId: options.instanceId } : {}),
           },
         },
       });

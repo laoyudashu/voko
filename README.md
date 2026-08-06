@@ -21,7 +21,7 @@ npm install --global @voko/lite
 voko start
 ```
 
-打开 [http://localhost:3100](http://localhost:3100)，完成本地界面的首次登录或注册，然后添加 Agent。
+启动后运行 `voko status --json`，使用输出顶层的 `port` 打开本地 Web UI，完成首次登录或注册，然后添加 Agent。`3100` 只是默认端口；请勿把它当作固定地址。
 
 ![脱敏的本地 VOKO Web UI 示例](assets/readme/local-web-ui-sanitized.png)
 
@@ -68,7 +68,7 @@ VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路�
 
 ## 获取帮助与参与贡献
 
-1. 优先在本地 Web UI 的[错误上报页](http://localhost:3100/bug-report)提交已脱敏的产品问题；请勿提交密码、令牌、私钥、验证码或私密对话。
+1. 优先在本地 Web UI 的错误上报页提交已脱敏的产品问题；先运行 `voko status --json` 获取当前端口。请勿提交密码、令牌、私钥、验证码或私密对话。
 2. 也可以通过 [GitHub Issues](https://github.com/laoyudashu/voko/issues) 讨论可公开的问题与兼容性反馈。
 3. 安全问题请按 [SECURITY.md](SECURITY.md) 的私密报告方式处理，不要公开披露漏洞或凭据。
 

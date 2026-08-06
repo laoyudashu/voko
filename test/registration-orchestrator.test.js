@@ -103,6 +103,7 @@ describe('shared registration orchestrator', () => {
   it('detects installed CLI providers without treating their sessions as selectable instances', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: (command) => ['goose', 'claude', 'codex'].includes(command),
+      detectCurrentAgentType: () => null,
     });
     const environment = service.inspectEnvironment();
     for (const type of ['goose', 'claude-code', 'codex']) {

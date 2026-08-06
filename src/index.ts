@@ -436,8 +436,8 @@ function resolveDbPath(args?: any, options: any = {}) {
 
 function inspectSetup(args?: any) {
   const fs = require('fs');
+  const { inspectMcpConfigs } = require('./core/mcp-config-diagnostics');
   const dbPath = resolveDbPath(args, { silent: true });
-  const entryPath = path.resolve(process.argv[1]);
   const nodeVersion = process.versions.node;
   const [major, minor] = nodeVersion.split('.').map(Number);
   const nodeSupported = major > 22 || (major === 22 && minor >= 5);
@@ -446,6 +446,7 @@ function inspectSetup(args?: any) {
   let database = { exists: fs.existsSync(dbPath), readable: false, schemaVersion: null as number | null };
   let authenticated = false;
   let agentCount = 0;
+  const mcpClients = inspectMcpConfigs();
 
   if (database.exists) {
     const { DatabaseSync: Database } = require('node:sqlite');
@@ -480,10 +481,16 @@ function inspectSetup(args?: any) {
     database,
     authentication: { configured: authenticated },
     agents: { count: agentCount },
-    runtime: { running, port: running ? (instance?.port || null) : null },
+    runtime: {
+      running,
+      port: running ? (instance?.port || null) : null,
+      instanceId: running ? (instance?.instanceId || null) : null,
+      version: running ? pkg.version : null,
+    },
+    mcpClients,
     stableCommands: {
-      mcp: { command: process.execPath, args: [entryPath, 'mcp'] },
-      start: { command: process.execPath, args: [entryPath, 'start', '--no-open', '--no-interactive'] },
+      mcp: { command: 'voko', args: ['mcp'] },
+      start: { command: 'voko', args: ['start', '--no-open', '--no-interactive'] },
     },
     nextAction,
   };
@@ -607,7 +614,20 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     } catch (_) { return res.status(500).json({ success: false, error: '无法验证 Agent 归属', code: 'AGENT_OWNER_CHECK_FAILED' }); }
   });
 
-  const httpTransport = createHttpTransport(mcpServer, { version: pkg.version, db });
+  const expectedRuntimeInstanceId = __instanceLock?.metadata?.instanceId || null;
+  app.use('/mcp', (req?: any, res?: any, next?: any) => {
+    const supplied = String(req.headers['x-voko-instance-id'] || '').trim();
+    if (supplied && expectedRuntimeInstanceId && supplied !== expectedRuntimeInstanceId) {
+      return res.status(409).json({ success: false, code: 'RUNTIME_MISMATCH', error: 'Lite 运行实例身份不匹配' });
+    }
+    next();
+  });
+  const httpTransport = createHttpTransport(mcpServer, {
+    version: pkg.version,
+    db,
+    instanceId: expectedRuntimeInstanceId,
+    edition: 'lite',
+  });
   app.use('/mcp', httpTransport);
 
   // DB 元信息（供 desktop 启动时协商 schema 兼容性；只读，放行无需 token）
@@ -772,6 +792,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     status: __serviceHealth,
     uptime: process.uptime(),
     instanceId: __instanceLock?.metadata?.instanceId || null,
+    pid: process.pid,
+    port: __runtimePort || port,
+    version: pkg.version,
+    edition: 'lite',
     tasks: taskManager?.snapshot?.() || [],
   }));
   app.post('/api/quit', (req?: any, res?: any) => {
@@ -1082,6 +1106,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const result = registerAgentInDbOnDb(db, body);
       let imConnection: any = null;
       let warning: string | null = null;
+      let workerStatus = result.success === false ? 'failed' : 'not_started';
       // 注册成功后启动 Worker，并等待短暂的真实连接结果；连接瞬时失败不
       // 回滚已完成的注册，只把状态明确返回给调用方，稍后可用 start_worker 重试。
       if (result.success !== false && body.agentId && body.uid && body.token) {
@@ -1095,17 +1120,31 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           if (status && typeof status === 'object') {
             const connected = status.connected === true || status.status === 'connected';
             imConnection = { connected, status: status.status || (connected ? 'connected' : 'unknown') };
+            workerStatus = status.error || status.status === 'connect_fail' ? 'failed' : connected ? 'running' : 'starting';
             if (!connected) warning = 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试';
             if (status.error || status.status === 'connect_fail') {
               warning = status.error || 'Agent 已创建，但 IM 连接失败，可稍后通过 start_worker 重试';
             }
           }
         } catch (e: any) {
+          workerStatus = 'failed';
           warning = 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试';
           console.error('[Lite] 注册后启动 Worker 失败:', body.agentId, e.message);
         }
       }
-      res.json({ ...result, ...(imConnection ? { imConnection } : {}), ...(warning ? { warning } : {}) });
+      const providerDelivery = body.agentId
+        ? ((global as any).__dispatcher?.getAgentDeliveryStatus?.(body.agentId) || null)
+        : null;
+      res.json({
+        ...result,
+        ...(result.success !== false ? { creationStatus: 'created', workerStatus } : {}),
+        ...(imConnection ? { imConnection } : {}),
+        ...(providerDelivery ? { providerDelivery } : {}),
+        ...(workerStatus !== 'running' && result.success !== false ? {
+          recoveryAction: { action: 'start_worker', agentId: body.agentId, message: '可稍后通过 start_worker 重试 IM 连接' },
+        } : {}),
+        ...(warning ? { warning } : {}),
+      });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -2676,6 +2715,30 @@ async function main() {
   if (subcommand === 'mcp') {
     const { runMcpProxy } = require('./mcp/stdio-proxy');
     await runMcpProxy(resolveDbPath(args));
+    return;
+  }
+
+  // Registration is stateful and must always run inside the long-lived Lite instance.
+  if (subcommand === 'manage_agent_registration') {
+    const runtimeDbPath = resolveDbPath(args, { silent: true, noCreate: true });
+    const interactive = args.interactive === true || args.interactive === 'true' || args.interactive === '1';
+    if (interactive) {
+      const { runInteractiveRegistration } = require('./cli-interactive');
+      const manage = async (params: any) => {
+        const routed = await cli.runRuntimeToolCommand(
+          'manage_agent_registration', params, runtimeDbPath,
+          { agentId: cliAgent, debug: verbose, print: false },
+        );
+        return routed?.result || routed;
+      };
+      await runInteractiveRegistration(null, { manage });
+      return;
+    }
+    const result = await cli.runRuntimeToolCommand(
+      'manage_agent_registration', args, runtimeDbPath,
+      { agentId: cliAgent, debug: verbose },
+    );
+    if (!result.success) process.exitCode = 1;
     return;
   }
 

@@ -24,7 +24,9 @@ voko start
 voko mcp
 ```
 
-不要把 `http://localhost:3100/mcp` 直接填入客户端。`voko mcp` 会读取当前运行实例的端口和短期本地鉴权信息；这使端口变化时客户端配置仍可保持不变。
+不要把固定的 `localhost` 端口直接填入客户端。推荐配置 `voko mcp`：它会读取当前运行实例的端口和短期本地鉴权信息，端口变化时客户端配置仍可保持不变。
+
+只有客户端不支持 stdio 时才使用 HTTP 回退：先运行 `voko start --no-open` 和 `voko status --json`，读取输出顶层的 `port`，再配置 `http://localhost:<port>/mcp`。`3100` 只是默认端口，不是固定契约；如果发现旧 Desktop 配置或 `localhost:3002` / `localhost:3100` 等历史地址，优先改成 stdio，保存后完全退出并重启客户端。
 
 ## WorkBuddy
 
@@ -58,6 +60,25 @@ WorkBuddy 的部分版本在界面中显示为 **CodeBuddy Settings**。优先�
 在文件中按上面的 JSON 增加 `voko`。配置文件中已有其他 MCP 服务时，只复制 `"voko": { ... }` 这一项，并确保前一项后有逗号；不要用完整示例覆盖已有内容。
 
 本节描述的是 WorkBuddy 作为 MCP 客户端使用 VOKO，不代表 WorkBuddy 已成为 VOKO Provider 兼容性矩阵中的已验证推送运行时。
+
+## Goose
+
+Goose 优先使用 stdio 扩展，让它直接启动当前安装的 `voko mcp`。在 Goose 的 `extensions` 配置节点下加入：
+
+```yaml
+extensions:
+  voko:
+    enabled: true
+    name: voko
+    description: VOKO MCP 工具集
+    display_name: VOKO MCP
+    type: stdio
+    cmd: voko
+    args: [mcp]
+    timeout: 300
+```
+
+也可以只对当前会话启用：`goose session --with-extension "voko mcp"`。不要把 `url` 指向旧 Desktop 端口；修改配置后完全退出并重启 Goose，再用 `tools/list` 验证。
 
 ## Qwen Code
 
@@ -133,11 +154,11 @@ qwen
 
 ## 排错
 
-1. **`voko mcp` 提示没有运行中的 Lite**：先运行 `voko start`。图形桌面会打开 `http://localhost:3100`；无图形的交互式终端会自动进入邮箱登录和 Agent 注册。systemd、Docker、CI 等非 TTY 环境请先在终端运行 `voko login` 和 `voko manage_agent_registration --interactive`，然后以 `voko start --no-open --no-interactive` 启动服务。
-2. **客户端找不到 `voko`**：客户端的环境变量可能没有继承终端的 `PATH`。重启客户端；仍失败时，在该客户端的 MCP 设置中将 `command` 改为 `voko` 的绝对路径。
-3. **配置后没有工具**：检查 JSON 的逗号和括号；确认只存在一个名为 `voko` 的服务；重启客户端后用其 MCP 管理页面重新检测。
-4. **不要复制 Token**：配置中不需要填写 VOKO Token、邮箱验证码、账户密码或 Agent 私钥。若某个界面要求这些内容，停止并检查是否配置了错误的连接方式。
-
-MCP 中的 `voko_manage_agent_registration` 始终是非交互状态机：保留每次返回的 `registrationId`，按 `nextAction` 继续；遇到 `request_owner_email`、`submit_email_code` 或 Provider 配置批准时必须暂停并询问主人。CLI 的自动 headless 向导不会改变 MCP schema，也不会让 `voko mcp` 读取终端输入。
+1. **`voko mcp` 提示没有运行中的 Lite**：先运行 `voko start`。图形桌面启动后运行 `voko status --json` 获取当前 Web UI 端口；3100 只是默认值。无图形的交互式终端会自动进入邮箱登录和 Agent 注册。systemd、Docker、CI 等非 TTY 环境请先在终端运行 `voko login` 和 `voko manage_agent_registration --interactive`，然后以 `voko start --no-open --no-interactive` 启动服务。
+2. **客户端找不到 `voko`**：客户端的环境变量可能没有继承终端的 `PATH`。先在系统终端运行 `voko --version`；必要时重新安装 `@voko/lite` 或使用绝对路径，然后完全退出并重启客户端。
+3. **工具列表为空或来自旧实例**：运行 `voko status --json`，核对 `running`、`instanceId`、顶层 `port` 和 `version`；通过 `voko mcp` 让客户端重新执行 `tools/list`。不要猜测或固定 3002/3100；如果保留了旧 Desktop/HTTP 配置，删除或改成 stdio 后重启客户端。
+4. **注册后无法收发消息**：注册成功不等于 IM Worker 已连接。用 MCP `voko_get_status` 或 CLI `voko get_status --agent-id=<agentId>` 检查 `imConnection.connected/status`；同时区分 Agent → VOKO 的 MCP/CLI 调用与 VOKO → Provider 的投递链路。
+5. **注册接口过时**：`voko_register_agent` 和 `voko_verify_agent_email` 已移除，不要继续调用。统一使用 `voko_manage_agent_registration` 非交互状态机，保留每次返回的 `registrationId`，按 `nextAction` 继续；遇到 `request_owner_email`、`submit_email_code` 或 Provider 配置批准时必须暂停并询问主人。CLI 的自动 headless 向导不会改变 MCP schema，也不会让 `voko mcp` 读取终端输入。不要从 `voko-desktop` 目录运行短命注册进程绕过当前 Lite。
+6. **不要复制 Token**：配置中不需要填写 VOKO Token、邮箱验证码、账户密码或 Agent 私钥。若某个界面要求这些内容，停止并检查是否配置了错误的连接方式。
 
 Qwen Code 的 MCP 配置语法以其[官方文档](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md)为准。WorkBuddy 的界面标签可能会随版本变化；配置文件方式可作为界面入口变化时的备用路径。

@@ -65,4 +65,4 @@ Open a public [GitHub Issue](https://github.com/laoyudashu/voko/issues) for a no
 3. The minimum reproduction steps and the observed result.
 4. Sanitized logs only; never include credentials, tokens, private keys, verification codes, session IDs, or private conversations.
 
-Use the local Web UI's [Report a bug page](http://localhost:3100/bug-report) for product issues that benefit from the built-in report flow. See [Contributing](../CONTRIBUTING.md) for code changes.
+Use the local Web UI's Report a bug page for product issues that benefit from the built-in report flow; run `voko status --json` first to find the active local port. See [Contributing](../CONTRIBUTING.md) for code changes.

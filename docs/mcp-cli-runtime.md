@@ -36,7 +36,11 @@ voko doctor --db /path/to/voko.db
 
 The exit status is `0` when all checks pass, `1` when checks pass with warnings (for example, the runtime is stopped or a legacy cursor is detected), and `2` when a required check fails (for example, an unreadable or newer-than-supported database). A warning is diagnostic only; it does not change the runtime or migrate data. `voko setup` remains the first-run onboarding/readiness JSON command, while `voko doctor` is the ongoing health and troubleshooting command.
 
-The local Web UI is available at `http://localhost:3100`. It is the simplest place to complete local sign-in or registration and add an Agent on a graphical desktop.
+On a graphical desktop, the local Web UI is the simplest place to complete local sign-in or registration and add an Agent. After `voko start`, run `voko status --json` and use its top-level `port` value to open `http://localhost:<port>`; `3100` is only the default and must not be treated as a permanent port.
+
+```bash
+voko status --json
+```
 
 On a headless host, `voko start` automatically enters terminal sign-in and Agent registration when stdin/stdout are an interactive TTY. After onboarding, the same command continues starting the runtime and registered Agent IM connections. This automatic wizard never runs under systemd, Docker, CI, redirected input, or when `--no-interactive` is set.
 
@@ -80,11 +84,28 @@ voko mcp
 
 Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI use the same registration and runtime state; they are not separate accounts or separate Agent inventories.
 
+`voko mcp` is the recommended transport because it discovers the active Lite runtime and forwards stdio traffic without requiring the client to know a fixed local port. Do not hard-code `localhost:3002` or any other historical port in an MCP client.
+
+### HTTP fallback for clients without stdio
+
+Use HTTP only when the client cannot launch a stdio command:
+
+```bash
+voko start --no-open
+voko status --json
+```
+
+Read the top-level `port` from the status output and configure `http://localhost:<port>/mcp`. Port `3100` is the default, not a contract; re-check the status output after restarting the runtime. If an old Desktop entry or HTTP configuration remains, replace it with the `voko mcp` stdio entry when possible, then fully exit and restart the client.
+
 The registration workflow is stateful. An Agent should begin a registration session, retain its returned registration ID, and follow the next action from each response. When owner email verification or an approval is required, it must pause for the owner rather than guessing data or changing local Provider configuration.
+
+The former `register_agent` and `verify_agent_email` interfaces have been removed and are not compatibility entry points. Use `manage_agent_registration` as the single registration state machine, and keep the same `registrationId` while following each `nextAction`.
 
 Registration performs a side-effect-free delivery preflight by default. It checks only local commands, processes, ports, authentication/configuration readiness, resumable-session support, and required safety flags. A real loopback test is separate and optional: it requires explicit acknowledgement because it may invoke the configured model and create a local test session. Agent creation succeeds even when every automatic channel is unavailable; Pull remains the final fallback.
 
 Do not confuse the two directions: an Agent uses VOKO MCP/CLI to operate VOKO, while VOKO uses Provider HTTP, WebSocket, ACP, or restricted CLI adapters to deliver visitor messages to the Agent.
+
+Registration creates or updates an Agent record; it does not prove that the Agent's IM Worker is connected. After registration, inspect `voko_get_status` through MCP (or `voko get_status --agent-id=<agentId>` through the CLI) and confirm `imConnection.connected` and `imConnection.status`.
 
 The MCP tool remains non-interactive and machine-readable. Start with:
 
@@ -108,6 +129,8 @@ If the response contains `nextAction.type: "request_owner_email"`, ask the owner
 Continue using the same `registrationId` and follow `nextAction` through `set_basic_info`, Provider/instance selection, delivery selection, and `complete`. Do not read the owner's inbox, guess an email or code, resend codes automatically, or pass `registrationMode: "human"` to bypass approval. MCP and ordinary CLI calls are always treated as Agent callers; only the local Web flow and an explicitly invoked interactive TTY may perform owner-approved Provider configuration.
 
 The terminal wizard is a human convenience layer over this same state machine. It does not add MCP parameters, change tool names, or make MCP calls wait for terminal input.
+
+Do not run a short-lived `manage_agent_registration` process from a `voko-desktop` checkout to bypass the current Lite runtime. Use the installed Lite runtime's `voko mcp` or CLI commands so registration and Worker status remain tied to the same instance.
 
 ## How Agent IM works
 
@@ -175,7 +198,7 @@ The default SQLite database is named `voko.db` and is stored in VOKO's per-user 
 
 Set `VOKO_DB_PATH` or pass `--db PATH` to use an explicit database path. Treat database files as private local data: do not commit, publish, or send them in support requests.
 
-The default Web and HTTP endpoints bind to the local runtime at port `3100`. Keep loopback traffic out of a system HTTP proxy where applicable; VOKO preserves existing `NO_PROXY` entries and adds `127.0.0.1`, `localhost`, and `::1` for the runtime and child processes.
+The local Web and HTTP endpoints bind to the active runtime port. Port `3100` is the default only; use `voko status --json` and its top-level `port` value instead of assuming a fixed port. Keep loopback traffic out of a system HTTP proxy where applicable; VOKO preserves existing `NO_PROXY` entries and adds `127.0.0.1`, `localhost`, and `::1` for the runtime and child processes.
 
 ## Platform notes
 

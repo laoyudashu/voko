@@ -348,14 +348,23 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
   const { readInstanceMetadata } = require('./core/process-lifecycle');
   const port = getActiveRuntimePort(dbPath);
   const instance = readInstanceMetadata(dbPath);
-  if (!port || !instance?.mcpToken) {
-    const result = { success: false, error: 'VOKO 运行实例未启动，请先运行 voko start' };
-    console.log(JSON.stringify(result, null, 2));
+  const emit = (result: any) => {
+    if (cliCtx.print !== false) console.log(JSON.stringify(result, null, 2));
     return result;
-  }
+  };
+  const { probeRuntimeIdentity } = require('./core/runtime-probe');
+  const probe = port && instance?.mcpToken
+    ? await probeRuntimeIdentity({ port, instance })
+    : instance
+      ? { ok: false, code: 'RUNTIME_MISMATCH', message: '当前 Lite 运行实例身份不匹配' }
+      : { ok: false, code: 'RUNTIME_REQUIRED', message: '请先运行 voko start --no-open --no-interactive' };
+  if (!probe.ok) return emit({ success: false, code: probe.code, error: probe.message });
 
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
-  const reserved = new Set(['agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive']);
+  const reserved = new Set([
+    'agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive',
+    'db', 'port', 'no-open', 'noOpen', 'no-interactive', 'noInteractive',
+  ]);
   const params: Record<string, any> = {};
   for (const [key, value] of Object.entries(rawParams || {})) {
     if (reserved.has(key)) continue;
@@ -371,6 +380,7 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-VOKO-Token': instance.mcpToken,
+    'X-VOKO-Instance-ID': instance.instanceId,
     'X-VOKO-Caller-Connection': crypto.randomUUID(),
   };
   const providerType = detectCurrentAgentType();
@@ -383,20 +393,23 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     headers['X-VOKO-Caller-Evidence'] = 'provider_env';
   }
 
-  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
-      params: { name: `voko_${toolName}`, arguments: params },
-    }),
-    signal: AbortSignal.timeout(120000),
-  });
+  let response: any;
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
+        params: { name: `voko_${toolName}`, arguments: params },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (_) {
+    return emit({ success: false, code: 'RUNTIME_UNAVAILABLE', error: '无法连接当前 Lite 运行实例' });
+  }
   const rpc = await response.json().catch(() => null) as any;
   if (!response.ok || !rpc || rpc.error) {
-    const result = { success: false, error: rpc?.error?.message || `HTTP ${response.status}` };
-    console.log(JSON.stringify(result, null, 2));
-    return result;
+    return emit({ success: false, code: rpc?.error?.data?.code || rpc?.code || 'RUNTIME_UNAVAILABLE', error: rpc?.error?.message || rpc?.error || `HTTP ${response.status}` });
   }
 
   let result: any = rpc.result;
@@ -407,7 +420,7 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     try { result = JSON.parse(textBlock.text); }
     catch { result = { success: result?.isError !== true, message: textBlock.text }; }
   }
-  console.log(JSON.stringify(result, null, 2));
+  if (cliCtx.print !== false) console.log(JSON.stringify(result, null, 2));
   return { success: result?.success !== false && rpc.result?.isError !== true, result };
 }
 

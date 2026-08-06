@@ -42,6 +42,7 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    mcpConfigPaths: [],
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
       isInstanceAlive: () => true,
@@ -73,6 +74,7 @@ test('doctor deep mode probes configured endpoints without starting a provider',
   const calls = [];
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    mcpConfigPaths: [],
     deep: true,
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
@@ -110,4 +112,17 @@ test('doctor CLI supports --json and does not initialize a missing database', ()
 test('doctor uses the current schema version from the database module', () => {
   assert.equal(typeof SCHEMA_VERSION, 'number');
   assert.ok(SCHEMA_VERSION >= 1);
+});
+
+test('doctor reports stale MCP configuration without exposing its contents', async (t) => {
+  const fixture = makeFixture();
+  const configPath = path.join(fixture.dir, 'goose-config.yaml');
+  fs.writeFileSync(configPath, 'extensions:\n  voko:\n    uri: http://localhost:3002/mcp\n    token: do-not-print-this-token\n');
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const result = await runDoctor({ dbPath: fixture.dbPath, mcpConfigPaths: [{ client: 'Goose', path: configPath }] });
+  const check = result.checks.find((item) => item.id === 'mcp-config');
+  assert.equal(check.status, 'warn');
+  assert.match(JSON.stringify(check), /STALE_MCP_PORT/);
+  assert.match(JSON.stringify(check), /Goose/);
+  assert.doesNotMatch(JSON.stringify(result), /do-not-print-this-token/);
 });

@@ -24,7 +24,9 @@ Every configuration below launches this stdio command:
 voko mcp
 ```
 
-Do not configure `http://localhost:3100/mcp` directly. The `voko mcp` proxy discovers the active local port and short-lived local authentication information.
+Do not put a fixed `localhost` port in the client. Prefer the `voko mcp` stdio command: the proxy discovers the active local port and short-lived local authentication information, so the client configuration survives a port change.
+
+Use HTTP only for a client that cannot launch stdio. Run `voko start --no-open` and `voko status --json`, read the top-level `port`, and configure `http://localhost:<port>/mcp`. Port `3100` is the default only, not a fixed contract. If an old Desktop entry or `localhost:3002` / `localhost:3100` URL remains, replace it with stdio when possible, save the change, fully exit, and restart the client.
 
 ## WorkBuddy
 
@@ -55,6 +57,25 @@ If there is no MCP settings page, edit:
 - macOS / Linux: `~/.workbuddy/mcp.json`
 
 When other servers already exist, copy only the `"voko": { ... }` entry rather than overwriting the file. This section makes WorkBuddy an MCP client of VOKO; it does not claim WorkBuddy as a verified VOKO Provider runtime.
+
+## Goose
+
+Prefer a stdio extension so Goose launches the current installed `voko mcp` command. Add this entry under Goose's `extensions` configuration:
+
+```yaml
+extensions:
+  voko:
+    enabled: true
+    name: voko
+    description: VOKO MCP tools
+    display_name: VOKO MCP
+    type: stdio
+    cmd: voko
+    args: [mcp]
+    timeout: 300
+```
+
+You can also enable it for one session with `goose session --with-extension "voko mcp"`. Do not point `url` at an old Desktop port. After changing the configuration, fully exit and restart Goose, then verify with `tools/list`.
 
 ## Qwen Code
 
@@ -122,11 +143,11 @@ Add `"type": "stdio"` if the client requires an explicit transport. If it cannot
 
 ## Troubleshooting
 
-1. **No running Lite instance**: run `voko start`. A graphical desktop opens `http://localhost:3100`; an interactive headless terminal automatically starts email sign-in and Agent registration. For systemd, Docker, CI, or another non-TTY environment, first run `voko login` and `voko manage_agent_registration --interactive` in a terminal, then start the service with `voko start --no-open --no-interactive`.
-2. **Client cannot find `voko`**: restart the client so it inherits `PATH`, or use the absolute path to `voko` in its MCP setting.
-3. **No tools after configuration**: check JSON commas and braces, keep only one `voko` server, then restart and recheck the MCP manager.
-
-`voko_manage_agent_registration` is always a non-interactive MCP state machine. Retain its `registrationId`, follow each `nextAction`, and pause for the owner when email, a verification code, or Provider-configuration approval is required. The automatic headless CLI wizard does not change the MCP schema and never makes `voko mcp` read terminal input.
-4. **Never copy a Token**: this configuration does not need a VOKO Token, email code, password, or Agent private key.
+1. **No running Lite instance**: run `voko start`. On a graphical desktop, run `voko status --json` after startup to get the current Web UI port; 3100 is only the default. An interactive headless terminal automatically starts email sign-in and Agent registration. For systemd, Docker, CI, or another non-TTY environment, first run `voko login` and `voko manage_agent_registration --interactive` in a terminal, then start the service with `voko start --no-open --no-interactive`.
+2. **Client cannot find `voko`**: run `voko --version` in a system terminal. Reinstall `@voko/lite` or use the absolute path to `voko` in the MCP setting, then fully exit and restart the client so it inherits `PATH`.
+3. **Tools are empty or come from an old instance**: run `voko status --json` and check `running`, `instanceId`, top-level `port`, and `version`; use `voko mcp` and have the client repeat `tools/list`. Do not guess or hard-code 3002/3100. Remove stale Desktop/HTTP entries, switch to stdio, and restart the client.
+4. **Registration succeeded but messages do not arrive**: registration does not prove that the IM Worker is connected. Use the MCP tool `voko_get_status` or CLI `voko get_status --agent-id=<agentId>` and inspect `imConnection.connected/status`. Keep the Agent → VOKO MCP/CLI direction separate from the VOKO → Provider delivery direction.
+5. **Obsolete registration interface**: `voko_register_agent` and `voko_verify_agent_email` have been removed. Use the non-interactive `voko_manage_agent_registration` state machine, retain its `registrationId`, and follow each `nextAction`. Pause for the owner when email, a verification code, or Provider-configuration approval is required. The automatic headless CLI wizard does not change the MCP schema and never makes `voko mcp` read terminal input. Do not run a short-lived registration process from a `voko-desktop` checkout to bypass the current Lite runtime.
+6. **Never copy a Token**: this configuration does not need a VOKO Token, email code, password, or Agent private key.
 
 For Qwen Code syntax, refer to the [official Qwen Code MCP documentation](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md). WorkBuddy UI labels can vary by version; the configuration-file path is a fallback.

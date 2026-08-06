@@ -21,7 +21,7 @@ npm install --global @voko/lite
 voko start
 ```
 
-Open [http://localhost:3100](http://localhost:3100), finish the first local sign-in or registration, then add an Agent.
+After startup, run `voko status --json` and use its top-level `port` to open the local Web UI, finish the first local sign-in or registration, then add an Agent. `3100` is only the default port; do not treat it as a fixed address.
 
 ![Sanitized local VOKO Web UI example](assets/readme/local-web-ui-sanitized.png)
 
@@ -68,7 +68,7 @@ Before removing the package, run `voko uninstall`. It fully stops the local runt
 
 ## Help and contributions
 
-1. Prefer the local Web UI's [Report a bug page](http://localhost:3100/bug-report) for sanitized product issues. Never include passwords, tokens, private keys, verification codes, or private conversations.
+1. Prefer the local Web UI's Report a bug page for sanitized product issues; run `voko status --json` first to get the current port. Never include passwords, tokens, private keys, verification codes, or private conversations.
 2. Use [GitHub Issues](https://github.com/laoyudashu/voko/issues) for public discussions and compatibility feedback.
 3. Handle security issues through the private process in [SECURITY.md](SECURITY.md), never through a public issue.
 
