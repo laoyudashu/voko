@@ -77,3 +77,11 @@ voko status --json
 ```
 
 若 `/login` 返回 403，检查当前账号、Provider 和网络策略，不要把错误中的 Token 复制到日志或工单。修改认证、PATH 或模型配置后重启 VOKO。日志不应包含 API key、完整访客消息、session ID 或私人配置路径。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Pi Coding Agent 0.83.0。
+- 使用同一用户的 `auth.json` 和 provider/model 配置完成注册、CLI 首条消息及同一访客续接。
+- 推荐接收通道：`CLI → Pull`；Pi 的外部 provider 参数要在 Voko 启动环境中可见，必要时显式指定 `--provider`。
+- `/login` 或 provider 返回 403 时先检查账号、网络和模型配额，不要复制 Token 到 Voko 日志或消息。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

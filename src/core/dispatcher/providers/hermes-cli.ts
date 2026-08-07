@@ -1,5 +1,6 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { resolveHermesCommand } = require('../hermes-command');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
@@ -13,6 +14,24 @@ interface HermesCliOptions {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// Hermes resolves credentials from its selected profile.  Voko may itself be
+// started with keys for other CLI Providers; passing those through can make
+// Hermes silently override the profile and return an upstream 401.  Keep
+// transport/runtime settings, but isolate generic model credentials.
+const HERMES_GENERIC_CREDENTIAL_ENV = [
+  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'DEEPSEEK_API_KEY',
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+  'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENROUTER_API_KEY',
+  'GROQ_API_KEY', 'MISTRAL_API_KEY', 'MOONSHOT_API_KEY', 'XAI_API_KEY',
+  'COHERE_API_KEY', 'AZURE_OPENAI_API_KEY',
+];
+
+function hermesChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of HERMES_GENERIC_CREDENTIAL_ENV) delete env[key];
+  return env;
 }
 
 /**
@@ -37,6 +56,7 @@ class HermesCliProvider extends PushProvider {
       ? new ProviderConversationBindingStore(options.db as any)
       : null;
     this._available = null;
+    this._command = resolveHermesCommand();
     this._runCli = options.runCli || runCli;
     this._queues = new Map();
   }
@@ -50,7 +70,7 @@ class HermesCliProvider extends PushProvider {
   isAvailable(agentId: string): boolean {
     if (!this._instanceForAgent(agentId)) return false;
     if (this._available !== null) return this._available;
-    this._available = checkCliAvailable('hermes');
+    this._available = checkCliAvailable(this._command);
     return this._available;
   }
 
@@ -136,10 +156,12 @@ class HermesCliProvider extends PushProvider {
     const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
     try {
       const result = await this._runCli({
-        cmd: 'hermes',
+        cmd: this._command,
         args: ['--profile', profileId, '-z', safeNotification],
         tag: 'hermes-cli',
         timeout: 120000,
+        env: hermesChildEnv(),
+        envUnset: HERMES_GENERIC_CREDENTIAL_ENV,
         logOutput: false,
         onStdoutLine: observe,
         onStderrLine: observe,
@@ -204,10 +226,12 @@ class HermesCliProvider extends PushProvider {
     const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
     try {
       const result = await this._runCli({
-        cmd: 'hermes',
+        cmd: this._command,
         args: ['--profile', profileId, '-z', notification],
         tag: 'hermes-cli',
         timeout: 120000,
+        env: hermesChildEnv(),
+        envUnset: HERMES_GENERIC_CREDENTIAL_ENV,
         logOutput: false,
         onStdoutLine: observe,
         onStderrLine: observe,
@@ -243,10 +267,12 @@ class HermesCliProvider extends PushProvider {
       return { ok: false, status: 'configuration_required', code: 'HERMES_PROFILE_REQUIRED' };
     }
     const result = await this._runCli({
-      cmd: 'hermes',
+      cmd: this._command,
       args: ['--profile', profileId, '-z', `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`],
       tag: 'hermes-cli-loopback',
       timeout: 120000,
+      env: hermesChildEnv(),
+      envUnset: HERMES_GENERIC_CREDENTIAL_ENV,
       logOutput: false,
     });
     const reply = _extractReply(result.stdout) || '';
@@ -268,7 +294,7 @@ class HermesCliProvider extends PushProvider {
 
   _refreshAvailability() {
     const previous = this._available;
-    this._available = checkCliAvailable('hermes');
+    this._available = checkCliAvailable(this._command);
     if (previous !== this._available) this.notifyAvailability({ backendType: 'hermes', mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
   }
 }

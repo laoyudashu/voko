@@ -144,3 +144,11 @@ voko probe --agent-id <agent-id> --visitor-id zeroclaw-smoke-<date> --confirm `
 - 回复超时：ZeroClaw 首次模型调用可能较慢，等待明确结果后再决定；不要自动重发同一条消息。
 
 ZeroClaw 的配置、凭据、pairing token、state file、原生 session ID 和访客原文都必须脱敏处理。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 ZeroClaw 0.8.3。
+- alias、登录/配置、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → CLI → Pull`；本轮验证的是标准 ACP，ACP-WebSocket 需要另外配置 endpoint/token 后再做专项验收。
+- alias 和 state file 必须按 Agent/访客隔离；不要把 token 放入 `backend_instance_id`，也不要复用其他会话的 state file。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

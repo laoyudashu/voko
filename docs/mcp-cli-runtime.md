@@ -224,6 +224,8 @@ Windows, Ubuntu Linux, and macOS are supported by the package's local path and p
 
 External Provider programs are separate installations. Their executable must be available on `PATH`, and their own authentication, license, service availability, and platform requirements continue to apply.
 
+For the Ubuntu 24.04.4 LTS real-test results and Provider-specific Linux installation/registration notes, see the [Ubuntu Linux real-test matrix](providers/linux-real-test-2026-08.md) and the [Provider-specific guide index](providers/README.md). VOKO 0.4.3 also resolves common per-user Unix locations such as `~/.local/bin` and nvm Node `bin` directories when a non-interactive service does not inherit the interactive shell's PATH; authentication and model configuration still must be completed in the same user environment.
+
 ## Cloud-backed features
 
 The local MCP/CLI process and local database can run without VOKO-operated services. Registration, cloud messaging, payment, email, and update-related features may not. See [Cloud dependencies](../CLOUD_DEPENDENCIES.md) before enabling them.

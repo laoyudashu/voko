@@ -128,3 +128,11 @@ voko probe --agent-id <agent-id> --visitor-id claude-smoke-<date> --confirm --me
 - **Claude Code 能调用 VOKO，但 VOKO 推不进 Claude**：这是两个方向，分别检查 `claude mcp list` 与 VOKO Agent 的 CLI 预检、登录状态和投递模式。
 
 问题报告只提交脱敏信息：VOKO 版本、操作系统、Claude Code 版本、Provider 模式、耗时和错误类别。不要提交认证输出、Token、原生 session ID、完整访客消息或 `.claude` 私密配置。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Claude Code 2.1.220。
+- 使用同一 Linux 用户完成登录、Voko 注册、首条消息和同一访客续接；结果均通过。
+- 推荐接收通道：`CLI → Pull`。启动 Voko 的 shell 必须能读取与交互式 `claude` 相同的登录状态。
+- Linux 排障优先运行 `claude auth status`、`voko doctor --deep`，修复 PATH/认证后重启 Voko 刷新路由。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

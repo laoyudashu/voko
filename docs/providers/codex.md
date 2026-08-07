@@ -196,3 +196,11 @@ codex mcp list
 - MCP tools missing: remove only the obsolete VOKO MCP entry, add the stdio entry above, and restart Codex. Do not paste tokens or private config values into an issue or log.
 
 Logs and documents must contain only provider type, delivery mode, status, elapsed time, and redacted IDs. Never record access tokens, verification codes, full visitor prompts, native thread IDs, or private Codex configuration contents.
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 `codex-cli` 0.145.0。
+- 使用 `codex login` 完成认证后，Voko 注册、只读 CLI 首条消息和同一访客续接均通过。
+- 推荐接收通道：`CLI → Pull`；保持无交互、只读调用，不要把 Codex thread ID 写入文档或日志。
+- 无图形 Linux 先在终端完成 `codex login`，再启动 Voko；若 PATH 或账号变化，重启 Voko 并重新运行 doctor。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

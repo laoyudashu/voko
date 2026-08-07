@@ -99,3 +99,11 @@ voko probe --agent-id <agent-id> --visitor-id copilot-smoke-<date> --confirm `
 - 新 Agent 只有 Pull：确认登录和预检后重启 VOKO，刷新 Dispatcher 路由缓存。
 
 Copilot 凭据、配置文件、Token、原生 session ID 和访客原文都是敏感数据；问题反馈只提交脱敏后的版本、通道、状态和耗时。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 GitHub Copilot CLI 1.0.76。
+- OAuth 登录、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → CLI → Pull`。访客的精确 Token/高风险请求会被安全策略拒绝，普通自然语言回复正常。
+- 无图形设备先在终端完成官方 OAuth；不要把 Token 环境变量写进 Voko 注册参数或问题日志。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

@@ -17,6 +17,7 @@ const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
 const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
+const { isHermesRuntimeAvailable } = require('./dispatcher/hermes-command');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -529,7 +530,7 @@ class RegistrationOrchestrator {
       || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
     const discoverZeroClawInstances = this.options.zeroclawInstances || zeroclawInstances;
     const zeroclaw = zeroclawInstalled ? discoverZeroClawInstances() : [];
-    const hermesInstalled = hasCommand('hermes');
+    const hermesInstalled = isHermesRuntimeAvailable();
     const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
     const hermesGateway = gatewaySetup.checkGateway('hermes', dbApi);
@@ -752,9 +753,9 @@ class RegistrationOrchestrator {
         },
         {
           mode: 'cli', label: 'CLI 唤起', role: 'fallback',
-          status: commandAvailable('hermes') ? 'ready' : 'unavailable',
-          selected: commandAvailable('hermes'),
-          action: commandAvailable('hermes') ? 'test' : null,
+          status: isHermesRuntimeAvailable() ? 'ready' : 'unavailable',
+          selected: isHermesRuntimeAvailable(),
+          action: isHermesRuntimeAvailable() ? 'test' : null,
           description: 'VOKO 为每条消息调用一次 Hermes CLI。',
         },
         pull,

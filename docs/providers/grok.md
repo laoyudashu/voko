@@ -102,3 +102,11 @@ voko probe --agent-id <agent-id> --visitor-id grok-smoke-<date> --confirm `
 - 回复被过滤：避免要求仅输出 `GROK_OK` 这类大写下划线标记，改用正常句子。
 
 Grok 配置、凭据、原生 session ID、代理认证信息和访客原文均不得写入公共日志或文档。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Grok CLI 0.2.118。
+- 登录/模型配置、Voko 注册、无工具 Plan CLI 首条消息和同一访客续接均通过。
+- 推荐接收通道：`CLI → Pull`；让 Voko 自动维护会话绑定，不要手工复制原生 session ID。
+- 认证失败或 PATH 改动后先运行 Provider 自身 doctor/inspect，再重启 Voko；结果不明确时不要立即重发。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

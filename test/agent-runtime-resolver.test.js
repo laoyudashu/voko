@@ -90,3 +90,18 @@ test('package bin cannot escape its package root', () => {
     assert.equal(result.available, false);
   } finally { cleanup(); }
 });
+
+test('Unix resolution includes the user-local bin directory when PATH is minimal', () => {
+  const { root, cleanup } = fixture();
+  try {
+    const home = path.join(root, 'home');
+    const tool = path.join(home, '.local', 'bin', 'hermes');
+    touch(tool, '#!/usr/bin/env sh\n');
+    const resolver = new AgentRuntimeResolver({ platform: 'linux', env: { HOME: home, PATH: '/usr/bin' } });
+    const result = resolver.resolve({
+      providerId: 'hermes', mode: 'cli', candidates: [{ kind: 'native', command: 'hermes' }],
+    });
+    assert.equal(result.available, true);
+    assert.equal(result.canonicalPath, fs.realpathSync(tool));
+  } finally { cleanup(); }
+});

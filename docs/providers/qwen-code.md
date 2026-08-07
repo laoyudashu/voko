@@ -87,3 +87,11 @@ voko status --json
 ```
 
 若 VOKO 报入口不可用，先在同一用户、同一环境变量下直接运行 `qwen`；修改认证或 PATH 后必须重启 VOKO。日志只保留错误类别和退出状态，不应包含 Token、完整访客提示词、原生 session ID 或配置文件绝对路径。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Qwen Code 0.21.1。
+- Linux 命令为 `qwen`（不是 `qwen-code`）；注册、CLI 首条消息和同一访客续接均通过。
+- 推荐接收通道：`CLI → Pull`。非交互 shell 不加载 alias 时，使用 `qwen --auth-type openai` 并确认模型/key 环境已继承。
+- 变更 alias、PATH 或认证后必须重启 Voko；不要把完整提示词、Token 或配置绝对路径写入日志。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

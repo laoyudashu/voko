@@ -95,3 +95,11 @@ voko probe --agent-id <agent-id> --visitor-id cursor-smoke-<date> --confirm `
 - 需要测试写操作：不要通过 VOKO 访客消息放开权限；单独在 Cursor 交互终端测试，并与 VOKO 的只读 Provider 隔离。
 
 Cursor 的登录存储、配置、原生 session ID 和访客原文不要提交到仓库或问题单。反馈只保留已脱敏的版本、通道、状态和耗时。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Cursor Agent 2026.07.23-e383d2b。
+- 官方用户安装目录被 Runtime Resolver 发现；登录、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → CLI → Pull`。普通问候消息通过；要求外部高风险操作时，Cursor 的访客安全策略可能拒绝。
+- 若非交互 shell 找不到 `cursor-agent`，先确认官方安装目录和 `cursor-agent status`，再重启 Voko 刷新路径缓存。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

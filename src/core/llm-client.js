@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { getHermesDir, getHermesProfilesDir, getHermesEnvPath, getHermesConfigPath } = require('./hermes-paths');
+const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const http = require('http');
 const { execSync, spawnSync } = require('child_process');
 const { assertSecureEndpoint } = require('./url-security');
@@ -853,7 +854,7 @@ class LLMClient {
 
     // 方案1: hermes profile list CLI（用 spawnSync 避免 Windows cmd.exe 乱码）
     try {
-      const result = spawnSync('hermes', ['profile', 'list'], {
+    const result = spawnSync(resolveHermesCommand(), ['profile', 'list'], {
         encoding: 'utf-8',
         timeout: 3000,
         windowsHide: true,

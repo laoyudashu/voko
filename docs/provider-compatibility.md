@@ -11,7 +11,7 @@
 | 智能体名称 | Agent 向 VOKO 发消息 | VOKO 向 Agent 收 / 推新消息（主 → 备 → 兜底） | 会话连续性 / 重启恢复 | 实测结论 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 选择 `openclaw.json` 中的 Agent ID；Windows OpenClaw 2026.6.1 实测；详见 [OpenClaw 专属指南](providers/openclaw.md)。 |
-| Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 是 Hermes profile；Windows Hermes 0.19.0 实测；详见 [Hermes 专属指南](providers/hermes.md)。 |
+| Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | Windows + Ubuntu 真机完整回归 | `backend_instance_id` 是 Hermes profile；Ubuntu Hermes 0.19.1、Windows 0.19.0；Linux 可自动发现官方 venv 入口；详见 [Hermes 专属指南](providers/hermes.md)。 |
 | Goose | MCP、CLI、本机接口 | `acp-goose`: ACP → CLI → Pull；`goose`: CLI → Pull | Goose 原生 session ID 在 CLI/ACP 间保持；ACP 断开后可降级并恢复 | Windows 实机 ACP→CLI→ACP 与 CLI 会话验证 | Windows Goose 1.38.0；直接启动 `goose.exe`，提示词经 stdin 传入；详见 [Goose 专属指南](providers/goose.md)。 |
 | Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | Windows 实机 CLI 会话验证 | 使用 `codex exec --json --sandbox read-only`；不需要 Provider Instance；详见 [Codex 专属指南](providers/codex.md)。 |
 | Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与原生 session 恢复已验证 | Windows 实机 CLI 会话验证 | 托管路径禁用工具、Chrome、项目指令和写操作；详见 [Claude Code 专属指南](providers/claude-code.md)。 |
@@ -27,7 +27,9 @@
 | Grok CLI | MCP、CLI、本机接口 | Grok CLI → Pull | 原生 session 绑定、连续对话和恢复已验证 | Windows 真机 CLI 会话验证 | Windows loopback proxy 可映射；plan、无工具、禁 web / subagents / memory、单轮；详见 [Grok 专属指南](providers/grok.md)。 |
 | OpenHands | MCP、CLI、本机接口 | ACP → 受限 headless JSON CLI → Pull | CLI 首次/续接、ACP → CLI → ACP 往返和原生 session 保持已验证 | Windows 真机 ACP/CLI 回路验证 | OpenHands CLI 1.16.0，启动时显示 SDK 1.21.0；CLI 禁用终端、文件、浏览器、MCP、网络和子代理工具；详见 [OpenHands 专属指南](providers/openhands.md)。 |
 | ZeroClaw | MCP、CLI、本机接口 | ACP-over-WebSocket → ACP → CLI（alias + 独立 state file）→ Pull | ACP WebSocket 原生 session、连续对话和恢复已验证；CLI fallback 配置预检通过 | Windows ZeroClaw 0.8.3 真机 ACP-WebSocket 回路验证 | 网关使用本机回环 `/acp`、配对 Bearer token 和 `zeroclaw.acp.v1`；角色隔离与会话别名受保护；详见 [ZeroClaw 专属指南](providers/zeroclaw.md)。 |
-| Gemini CLI | MCP、CLI、本机接口（能力设计） | 安全沙箱 CLI（需 Docker）→ Pull | 尚未完成生产级沙箱真机验证 | 待验证 / 环境受阻 | 当前 Windows Docker daemon 未运行，不应视为自动推送已通过。 |
+| Gemini CLI | MCP、CLI、本机接口 | 安全沙箱 CLI（需 Docker）→ Pull | Ubuntu Docker sandbox 首条消息和同一访客续接已验证；当前使用 VOKO context window，不保存原生 binding | Ubuntu 24.04.4 真机完整回归 | Gemini CLI 0.53.1；headless 使用 `--skip-trust`，首次 Docker/上游高负载可能较慢；详见 [Gemini 专属指南](providers/gemini.md)。 |
+
+Ubuntu 24.04.4 LTS 的 18 个 Provider 版本、注册结果、推荐通道和限制见 [Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)。矩阵是当前 Linux 实机证据的集中记录；Windows 版本和路径说明仍保留在各 Provider 条目与专属指南中。
 
 ## Cline 支持说明
 

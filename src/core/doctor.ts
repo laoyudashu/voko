@@ -7,6 +7,7 @@ const { SCHEMA_VERSION } = require('./database');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle');
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
+const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
 
@@ -14,7 +15,7 @@ const MIN_NODE_VERSION = '22.5.0';
 const CHECK_TIMEOUT_MS = 2500;
 
 const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
-  hermes: [{ kind: 'native', command: 'hermes' }],
+  hermes: [{ kind: 'native', command: resolveHermesCommand() }],
   goose: [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
   'acp-goose': [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
   cline: [

@@ -78,3 +78,11 @@ voko status --json
 ```
 
 如果看到 `--permission-mode plan requires an interactive session`，说明用了不适合无头模式的权限档位；改用 `dontAsk`。如果 Reasonix 回复内容像固定的 `-`，检查调用方是否错误地把 `-` 放在参数末尾。日志不得包含 Token、完整访客提示词、原生 session ID 或 Reasonix 私有配置路径。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Reasonix 1.21.0。
+- Reasonix 安装在 nvm 用户目录；Voko Runtime Resolver 可自动发现该路径。注册、CLI 首条消息和同一访客续接均通过。
+- 推荐接收通道：`CLI → Pull`；无图形模式使用 `dontAsk`，不要使用要求 interactive session 的 plan 权限模式。
+- 旧版 doctor 在最小 PATH 下可能误报缺少 Linux 包；升级 Voko 0.4.3 后重新运行 `voko doctor --deep`。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

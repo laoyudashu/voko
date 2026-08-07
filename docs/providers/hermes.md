@@ -126,3 +126,12 @@ hermes mcp test <server-name>
 - HTTP/CLI 降级和恢复已有兼容性回归覆盖。
 
 其他 Hermes 版本、模型 Provider、profile 组合和工具授权策略仍需单独验证。不要提交 API Key、`.env` 内容、完整 profile 配置、私密会话或完整访客提示词。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Hermes 0.19.1（2026-07-30）。
+- 使用 Hermes profile 完成注册、CLI 首条消息和同一访客续接；结果均通过，推荐接收通道为 `CLI → Pull`。
+- Linux 官方安装可能只提供 `~/.hermes/hermes-agent/.venv/bin/hermes`；Voko 现已自动解析该路径，非交互 PATH 不必手工复制到注册参数。
+- 注册时 `backend_instance_id` 只填 profile 名称（如 `voko-linux-test`），不要把 profile 与 model 拼成一个字符串；Voko 会隔离宿主通用 API key，让 profile 认证生效。
+- Hermes HTTP 只有在 Voko 配置了 profile gateway 时才会成为活动通道；本轮 HTTP handler 健康但无 profile，因此实际验证为 CLI。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

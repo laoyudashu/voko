@@ -125,3 +125,11 @@ OpenHands CLI 是 VOKO 的受限访客投递通道：VOKO 会禁用终端、文�
 - **ACP 没有重新升级**：检查健康状态和恢复事件；只有握手成功后下一条消息才会重新选择 ACP。
 
 提交问题时只提供脱敏后的 VOKO 版本、OpenHands CLI/SDK 版本、操作系统、通道和最小复现步骤；不要提供 Token、原生 session ID、私密配置路径或完整访客提示词。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 OpenHands CLI 1.14.0 / SDK 1.16.1。
+- headless 登录/模型配置、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → CLI → Pull`；ACP 进程异常时只让下一条消息降级一次 CLI，恢复事件后再升级 ACP。
+- CLI/ACP 均在无图形终端验证；不要将持久化目录、Token、原生 session ID 或访客原文贴入日志。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

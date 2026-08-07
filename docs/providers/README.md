@@ -42,7 +42,7 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 
 ## 暂不提供专属指南的 Provider
 
-Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
+Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
 
 ## 新增指南时的固定结构
 
@@ -53,3 +53,9 @@ Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录�
 5. 会话/实例标识的真实语义，以及不可手动伪造的字段。
 6. 主通道、降级通道、Pull 兜底、健康事件和恢复条件。
 7. 最小排障命令、已验证边界和凭证/日志脱敏要求。
+
+## 2026-08 Ubuntu Linux 实机验收补充
+
+Gemini 已完成 Ubuntu 真实注册、首条消息和同一访客续接，并新增 [Gemini 专属指南](gemini.md)。原有“暂不提供专属指南”段落是历史快照，以本条和新指南为准；其他未列入“已验收并提供指南”的 Provider 仍不要按此矩阵推断其 Push 可用性。
+
+18 个已验证 Provider 的版本、注册结果、推荐接收通道、降级与路由缓存说明集中在 [Ubuntu Linux 实机验收矩阵](linux-real-test-2026-08.md)。

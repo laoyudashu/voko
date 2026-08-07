@@ -145,3 +145,11 @@ openclaw mcp probe voko
 - CLI 降级、恢复和实例隔离已有兼容性回归覆盖。
 
 其他 OpenClaw 版本、认证方式、第三方频道和自定义插件仍需单独验收。报告问题时只提供版本、实例 ID 的脱敏形式、通道和最小复现步骤，不要提交 Token、完整配置、workspace 路径或访客原文。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 OpenClaw 2026.6.1。
+- Gateway 自动启动并完成 WebSocket 认证；Voko 注册、CLI 首条消息和同一访客续接均通过。
+- 本轮 Agent 注册为 `CLI → Pull`，所以 Dispatcher 实际使用 OpenClaw CLI；Gateway WS 在线不等于该 Agent 已选择 WS。
+- 若要使用 WS，注册时显式保留对应 WebSocket 模式，并以 `voko doctor --deep` 的 active mode 检查；WS 异常时路由缓存会降级 CLI。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

@@ -117,3 +117,11 @@ Windows 终端编码不一致可能导致中文显示乱码；先统一终端为
 - ACP、CLI 切换期间保持同一原生 session ID。
 
 这不等于所有 Goose 版本、模型、Provider 配置或操作系统都已完整回归。提交问题时只提供脱敏后的 VOKO 版本、Goose 版本、操作系统、通道和最小复现步骤；不要提供 Token、私密配置路径、原生 session ID 或完整访客提示词。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Goose 1.45.0。
+- 同一 Linux 用户完成 Goose 登录和 Voko 注册；CLI 首条消息与同一访客续接均通过，并保持同一原生 session binding。
+- 推荐接收通道：`CLI → Pull`；本轮没有把 `backend_instance_id` 当作 Goose Instance，也没有设置 `GOOSE_PATH_ROOT`。
+- 非交互 shell 必须继承 Goose 的模型/API 环境；profile 或 model 配置应在 Goose 自身配置中维护。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

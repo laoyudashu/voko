@@ -97,3 +97,11 @@ ACP 和 CLI 都不可用时，消息保留在 VOKO。Cline 或其 MCP 客户端�
 - **ACP 连接后立即退出**：先单独运行 Cline 的 ACP/认证检查，确认模型凭据和用户配置，再让 VOKO 重试；不要通过放开工具权限绕过问题。
 - **CLI 有回复但 ACP 没有升级**：检查 `activeMode`、ACP 进程健康和恢复事件；路由缓存会在事件到达时刷新，必要时完全重启 VOKO。
 - **Cline 能调用 VOKO MCP，但 VOKO 推不进 Cline**：这是两个方向，分别检查 Cline 的 MCP 配置和 VOKO Agent 的 ACP/CLI 预检。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Cline 3.0.51。
+- `cline` 登录态、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → CLI → Pull`。ACP 进程异常时下一条消息只降级一次 CLI；健康恢复后再升级 ACP。
+- 访客消息仍受 Cline 安全边界约束；测试中要求精确外部 Token 的提示会被拒绝，普通自然语言消息正常。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

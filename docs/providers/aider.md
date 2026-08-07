@@ -80,3 +80,10 @@ voko status --json
 ```
 
 先在启动 VOKO 的同一环境中确认模型 API 可用，再检查 `AIDER_MODEL` 和 API key 是否被继承。不要把 key 放在 `--message`、进程列表、提交记录或日志中；日志也不应包含完整访客提示词、历史文件内容或绝对配置路径。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Aider 0.86.2。
+- 注册、首条消息和同一访客的续接均通过，推荐通道为 `CLI → Pull`。
+- Linux 使用非交互 CLI 前先确认模型与凭据在 VOKO 启动环境可见；不要把 key 放入消息、参数或日志。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

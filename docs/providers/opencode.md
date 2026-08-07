@@ -107,3 +107,11 @@ voko probe --agent-id <agent-id> --visitor-id opencode-smoke-<date> --confirm `
 - 想启用 Attach：先由 OpenCode 自己启动受保护的 server，再在 VOKO 预检中确认端口和凭据，不要把服务地址或认证信息写入公共文档。
 
 OpenCode 的配置、缓存、`auth.json`、原生 session ID 和访客原文都属于本地敏感数据；问题反馈只提交脱敏后的 Provider、通道、耗时和错误类型。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 OpenCode 1.18.9。
+- 登录/模型配置、Voko 注册、ACP 首条消息和同一访客续接均通过。
+- 推荐接收通道：`ACP → Attach → CLI → Pull`；本轮 ACP 为活动通道，Attach 仍需先启动受保护的 OpenCode server。
+- 非交互 shell 找不到命令时先确认用户安装目录；不要将 auth.json、server 地址或原生 session ID 写入公共文档。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 export type RuntimeMode = 'acp' | 'cli';
 export type RuntimeKind = 'native' | 'node-script';
@@ -122,7 +123,7 @@ export class AgentRuntimeResolver {
 
   private findOnPath(command: string, nativeOnly: boolean): string | null {
     if (path.isAbsolute(command) || command.includes('/') || command.includes('\\')) return canonicalFile(command);
-    const directories = String(this.env.PATH || this.env.Path || '').split(path.delimiter).filter(Boolean);
+    const directories = this.searchDirectories();
     const names = this.platform === 'win32'
       ? (path.extname(command)
           ? [command]
@@ -135,6 +136,30 @@ export class AgentRuntimeResolver {
       }
     }
     return null;
+  }
+
+  /**
+   * Non-interactive services often do not inherit shell exports.  Include the
+   * conventional per-user Unix binary directories as a bounded fallback while
+   * preserving the explicit PATH order above.
+   */
+  private searchDirectories(): string[] {
+    const configured = String(this.env.PATH || this.env.Path || '').split(path.delimiter).filter(Boolean);
+    if (this.platform === 'win32') return [...new Set(configured)];
+    const home = String(this.env.HOME || this.env.USERPROFILE || os.homedir() || '').trim();
+    if (!home) return [...new Set(configured)];
+    const extra = [
+      path.join(home, '.local', 'bin'),
+      path.join(home, 'bin'),
+      path.join(home, '.cargo', 'bin'),
+      path.join(home, '.local', 'share', 'pnpm'),
+    ];
+    const nvmRoot = path.join(home, '.nvm', 'versions', 'node');
+    try {
+      const versions = fs.readdirSync(nvmRoot).sort().reverse();
+      for (const version of versions) extra.push(path.join(nvmRoot, version, 'bin'));
+    } catch (_) {}
+    return [...new Set([...configured, ...extra])];
   }
 
   private result(executable: string, argvPrefix: string[], runtimeKind: RuntimeKind, canonicalPath: string): ResolvedRuntime {

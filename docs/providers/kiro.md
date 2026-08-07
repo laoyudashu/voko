@@ -97,3 +97,11 @@ voko probe --agent-id <agent-id> --visitor-id kiro-smoke-<date> --confirm `
 - 终端出现 `--trust-tools` 警告：这是当前 Kiro CLI 版本对空权限参数的提示，不要以放开工具权限作为修复。
 
 Kiro 登录缓存、配置、原生 session ID、访客原文和 CLI 日志不要提交到仓库或问题单。
+
+## Ubuntu Linux 实机验收（2026-08-07）
+
+- 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 Kiro CLI 2.16.0。
+- 登录状态检查、Voko 注册、CLI 首条消息和同一访客续接均通过。
+- 推荐接收通道：`CLI → Pull`；不要通过访客消息授予工具、文件写入或 MCP 权限。
+- 无图形 Linux 先在终端完成 Kiro 登录/`whoami`，确保 Voko 使用相同用户和 PATH；出现权限提示时不要直接打开全权限。
+- [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

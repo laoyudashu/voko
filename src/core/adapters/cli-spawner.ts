@@ -17,6 +17,8 @@ export interface RunCliOptions {
   args?: string[];
   timeout?: number;
   env?: NodeJS.ProcessEnv;
+  /** Environment variable names to remove after merging the parent env. */
+  envUnset?: string[];
   onStdoutLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
   tag?: string;
@@ -87,8 +89,9 @@ function windowsUserPath(): string {
   } catch (_) { return ''; }
 }
 
-function childEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function childEnv(extra?: NodeJS.ProcessEnv, unset: string[] = []): NodeJS.ProcessEnv {
   const merged = { ...process.env, ...(extra || {}) };
+  for (const key of unset) delete merged[key];
   const userPath = windowsUserPath();
   if (userPath) {
     const current = String(merged.PATH || merged.Path || '');
@@ -121,6 +124,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     args = [],
     timeout = 120000,
     env,
+    envUnset = [],
     onStdoutLine,
     onStderrLine,
     tag = 'cli',
@@ -143,7 +147,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       windowsHide,
       detached: !isWin,
       cwd: cwd || undefined,
-      env: childEnv(env),
+      env: childEnv(env, envUnset),
     };
 
     // .js/.exe 等直接 spawn；无扩展名的命令名交给系统 PATH

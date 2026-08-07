@@ -2,6 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
+const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
@@ -327,7 +328,7 @@ class HermesHttpProvider extends PushProvider {
     this.addLog(`🔧 gateway 未运行，启动 profile=${profileId} port=${port}...`);
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn('hermes', ['--profile', profileId, 'gateway', 'run', '--replace'], {
+      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
         stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
       });
       child.on('error', (err: Error) => {
@@ -369,7 +370,7 @@ class HermesHttpProvider extends PushProvider {
     this.addLog(`🔄 401: 强制重启 gateway ${profileId}（重载 config.yaml 的 key）`);
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn('hermes', ['--profile', profileId, 'gateway', 'run', '--replace'], {
+      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
         stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
       });
       child.on('error', (err: Error) => this.addLog(`❌ 重启 spawn 失败 (${profileId}): ${err.message}`));
