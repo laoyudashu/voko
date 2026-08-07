@@ -87,6 +87,21 @@ test('delivery diagnostics reports HTTP failure and CLI fallback without invokin
   assert.equal(status.methods.find(method => method.mode === 'pull').status, 'on-demand');
 });
 
+test('delivery diagnostics reports an ACP provider owned CLI fallback', () => {
+  const acp = provider('acp', 10, []);
+  acp.fallbackModes = ['cli'];
+  acp.isFallbackAvailable = (_agentId, mode) => mode === 'cli';
+  const dispatcher = createDispatcher({
+    db: dbFor(['acp', 'cli', 'pull']),
+    providers: { 'github-copilot-acp': acp },
+  });
+
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+  assert.deepEqual(status.availableModes, ['acp', 'cli', 'pull']);
+  assert.equal(status.methods.find(method => method.mode === 'cli').provider, 'github-copilot-acp');
+  assert.equal(status.methods.find(method => method.mode === 'cli').status, 'available');
+});
+
 test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {
   const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');

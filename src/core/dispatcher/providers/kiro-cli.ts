@@ -14,10 +14,10 @@ class KiroCliProvider extends CliAdapter {
     super({
       name: 'KIRO CLI',
       cmd: 'kiro-cli',
-      args: ['chat', '--no-interactive', '--trust-tools=', '--wrap', 'never', '{prompt}'],
+      args: ['chat', '--no-interactive', '--wrap', 'never', '{prompt}'],
       adapterType: 'kiro-cli',
       argsForSession: (sessionId: string | null) => [
-        'chat', '--no-interactive', '--trust-tools=', '--wrap', 'never',
+        'chat', '--no-interactive', '--wrap', 'never',
         ...(sessionId ? ['--resume-id', sessionId] : []),
         '{prompt}',
       ],

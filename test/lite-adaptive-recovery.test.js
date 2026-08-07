@@ -135,6 +135,22 @@ test('ACP attaches the requested session ID when resume returns an empty result'
   assert.equal(attachedResponse.sessionId, 'existing-session');
 });
 
+test('ACP prefers the standard loadSession method when the SDK exposes it', async () => {
+  const adapter = new AcpAdapter();
+  adapter._loadSdk = async () => ({ methods: { agent: { session: { load: 'session/load', resume: 'session/resume' } } } });
+  const requested = [];
+  const state = {
+    agentCtx: {
+      request: async (method, params) => { requested.push({ method, params }); return {}; },
+      attachSession: (response) => ({ sessionId: response.sessionId, dispose() {} }),
+    },
+  };
+  const session = await adapter._resumeSession(state, 'standard-session');
+  assert.equal(session.sessionId, 'standard-session');
+  assert.equal(requested.length, 1);
+  assert.equal(requested[0].method, 'session/load');
+});
+
 test('ACP propagates a rejected resume request', async () => {
   const adapter = new AcpAdapter();
   adapter._loadSdk = async () => ({ methods: { agent: { session: { resume: 'resume' } } } });

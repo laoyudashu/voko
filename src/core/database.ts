@@ -226,7 +226,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 
 // DB schema 版本号（lite/desktop 版本脱钩后，靠此数字感知对方写入的库结构）
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -286,6 +286,29 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
   } catch (e: any) {
     console.error('[DB] agent_backend_types seed 失败:', e.message);
   }
+}
+
+function migrateGoosePushDeliveryModes(db: DatabaseSync): void {
+  const hasAgents = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents'",
+  ).get();
+  if (!hasAgents) return;
+  db.prepare(`
+    UPDATE agents
+    SET delivery_modes='["cli","pull"]', updated_at=?
+    WHERE backend_type IN ('goose','goose-ai')
+      AND json_valid(delivery_modes)
+      AND json_array_length(delivery_modes)=1
+      AND json_extract(delivery_modes, '$[0]')='pull'
+  `).run(Date.now());
+  db.prepare(`
+    UPDATE agents
+    SET delivery_modes='["acp","cli","pull"]', updated_at=?
+    WHERE backend_type IN ('acp-goose','goose-acp')
+      AND json_valid(delivery_modes)
+      AND json_array_length(delivery_modes)=1
+      AND json_extract(delivery_modes, '$[0]')='pull'
+  `).run(Date.now());
 }
 
 // ============================================
@@ -1243,6 +1266,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.error(`Initialized ${BANK_HEAD_OFFICES.length} bank head offices`);
   }
 
+  if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);
   runCurrentStartupMaintenance(db);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 

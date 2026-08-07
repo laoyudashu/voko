@@ -51,6 +51,7 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.ok(provider._args.includes('--no-interactive'));
   assert.equal(provider._parserName, 'kiro-output');
   assert.match(provider._args.join(' '), /--wrap never/);
+  assert.doesNotMatch(provider._args.join(' '), /--trust-tools(?:=|\s|$)/);
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
 });
 
@@ -389,6 +390,22 @@ test('Codex and Claude run safely from a non-project temporary directory', () =>
   assert.ok(claude._argsForSession('session-id', false).includes('--resume'));
   assert.match(args, /--permission-mode plan/);
   assert.doesNotMatch(args, /dangerously-skip-permissions|bypassPermissions/);
+});
+
+test('Claude accepts its persisted claude-code CLI session binding', () => {
+  const claude = new ClaudeCliProvider();
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude-code',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), true);
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), false);
 });
 
 test('Aider parser emits only the model reply', () => {

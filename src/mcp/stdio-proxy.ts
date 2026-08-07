@@ -40,10 +40,20 @@ async function fetchWithTimeout(url?: any, opts?: any, ms: any = 120000) {
  */
 async function runMcpProxy(dbPath?: any, options: any = {}) {
   const { getActiveRuntimePort } = require('../core/runtime-port');
+  const { readInstanceMetadata } = require('../core/process-lifecycle');
+  const { probeRuntimeIdentity } = require('../core/runtime-probe');
   let targetPort = options.port || getActiveRuntimePort(dbPath);
+  let instance = readInstanceMetadata(dbPath);
 
   if (!targetPort) {
-    process.stderr.write(t('cli.mcp.no_runtime') + '\n');
+    const code = instance ? 'RUNTIME_UNAVAILABLE' : 'RUNTIME_REQUIRED';
+    process.stderr.write(`[${code}] ${t('cli.mcp.no_runtime')}\n`);
+    process.exit(1);
+  }
+
+  let probe = await probeRuntimeIdentity({ port: targetPort, instance });
+  if (!probe.ok) {
+    process.stderr.write(`[${probe.code}] ${probe.message}\n`);
     process.exit(1);
   }
 
@@ -51,11 +61,12 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
   const mcpUrl = () => `http://localhost:${targetPort}/mcp`;
   // 优先使用显式 token；否则读取当前 Lite 实例生成的随机 token。
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const { readInstanceMetadata } = require('../core/process-lifecycle');
   const refreshRuntimeToken = () => {
-    const runtimeToken = process.env.VOKO_MCP_TOKEN || readInstanceMetadata(dbPath)?.mcpToken;
+    instance = readInstanceMetadata(dbPath) || instance;
+    const runtimeToken = process.env.VOKO_MCP_TOKEN || instance?.mcpToken;
     if (runtimeToken) headers['X-VOKO-Token'] = runtimeToken;
     else delete headers['X-VOKO-Token'];
+    if (instance?.instanceId) headers['X-VOKO-Instance-ID'] = instance.instanceId;
   };
   refreshRuntimeToken();
   const callerProvider = detectCurrentAgentType();
@@ -99,6 +110,14 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
       const retryPort = options.port || getActiveRuntimePort(dbPath);
       if (retryPort && retryPort !== targetPort) {
         targetPort = retryPort;
+        instance = readInstanceMetadata(dbPath) || instance;
+        probe = await probeRuntimeIdentity({ port: targetPort, instance });
+        if (!probe.ok) {
+          if (msg.id !== undefined) {
+            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, data: { code: probe.code }, message: probe.message } }) + '\n');
+          }
+          continue;
+        }
         refreshRuntimeToken();
         process.stderr.write(t('cli.mcp.port_changed', { port: targetPort }) + '\n');
         try {
@@ -124,8 +143,11 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
 
     if (!res.ok) {
       if (msg.id !== undefined) {
-        const text = await res.text().catch(() => '');
-        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: t('cli.mcp.upstream_http', { status: res.status, text }) } }) + '\n');
+        const runtimeCode = res.status === 409 ? 'RUNTIME_MISMATCH' : 'RUNTIME_UNAVAILABLE';
+        process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0', id: msg.id,
+          error: { code: -32603, data: { code: runtimeCode }, message: t('cli.mcp.upstream_http', { status: res.status, text: '' }) },
+        }) + '\n');
       }
       continue;
     }

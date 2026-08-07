@@ -5,6 +5,7 @@ const { getHermesProfilePathCandidates } = require('../../hermes-paths');
 const { PushProvider } = require('../base-provider');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const deliveryBus = require('../../lite-bus');
 import type { ChildProcess } from 'child_process';
 import type {
   HermesApiClientOptions,
@@ -52,6 +53,7 @@ class HermesHttpProvider extends PushProvider {
   client: InstanceType<typeof HermesApiClient> | null;
   connectedAgents: Set<string> | null;
   _gatewayChildren: Map<string, ChildProcess> | null;
+  _inflightTurns: Map<string, Promise<void>>;
 
   constructor(database: unknown, mainWindow: unknown, options: HermesHttpOptions = {}) {
     super();
@@ -73,6 +75,7 @@ class HermesHttpProvider extends PushProvider {
     this._selectedConfigPaths = new Map();
     this.connectedAgents = null;
     this._gatewayChildren = null;
+    this._inflightTurns = new Map();
     for (const profileId of Object.keys(this.options.profiles || {})) {
       this._refreshProfileConnection(profileId);
     }
@@ -430,7 +433,79 @@ class HermesHttpProvider extends PushProvider {
    * 发送访客消息到 Hermes agent（走 API Server）
    * sessionKey 格式: hermes:{agentId}:{visitorId}
    */
+  _deliveryKey(agentId: string, channelType: number, channelId: string, turnId: string): string {
+    return `${agentId}::${channelType === 2 ? 2 : 1}::${channelId}::${turnId}`;
+  }
+
+  _emitDeliveryStatus(input: {
+    agentId: string;
+    visitorId: string;
+    channelId?: string | null;
+    channelType?: number | null;
+    messageId?: string | null;
+    turnId?: string | null;
+    status: 'processing' | 'completed' | 'pending' | 'failed' | 'deduplicated';
+    elapsedMs?: number;
+  }): void {
+    const data = {
+      provider: 'hermes-http',
+      agentId: input.agentId,
+      visitorId: input.visitorId,
+      channelId: input.channelId || input.visitorId,
+      channelType: input.channelType === 2 ? 2 : 1,
+      messageId: input.messageId || null,
+      turnId: input.turnId || null,
+      status: input.status,
+      elapsedMs: Number.isFinite(input.elapsedMs) ? Math.max(0, Number(input.elapsedMs)) : 0,
+      timestamp: Date.now(),
+    };
+    this.emit('delivery.status', data);
+    try { deliveryBus.emit('agent-delivery:status', data); } catch (_) {}
+  }
+
+  /**
+   * Public wrapper that makes the long-running HTTP turn observable and
+   * coalesces duplicate submissions carrying the same inbound message/turn ID.
+   * A timeout is reported as pending; it is intentionally not retried here.
+   */
   async sendToSession(
+    sessionKey: string,
+    message: string,
+    extraData: Partial<PushPayload> | null = null,
+  ): Promise<void> {
+    const parts = sessionKey.split(':');
+    const agentId = parts[1] || '';
+    const visitorId = parts.slice(2).join(':');
+    const channelType = extraData?.channelType === 2 ? 2 : 1;
+    const channelId = String(extraData?.channelId || (channelType === 2 ? visitorId.replace(/^group:/, '') : visitorId));
+    const turnId = String(extraData?.turnId || extraData?.messageId || '');
+    const key = turnId ? this._deliveryKey(agentId, channelType, channelId, turnId) : null;
+    const existing = key ? this._inflightTurns.get(key) : null;
+    if (existing) {
+      this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'deduplicated' });
+      return existing;
+    }
+
+    const startedAt = Date.now();
+    this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'processing' });
+    const run = this._sendToSession(sessionKey, message, extraData)
+      .then(() => {
+        this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'completed', elapsedMs: Date.now() - startedAt });
+      })
+      .catch((error: unknown) => {
+        const detail = errorMessage(error);
+        const pending = /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
+        this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: pending ? 'pending' : 'failed', elapsedMs: Date.now() - startedAt });
+        throw error;
+      })
+      .finally(() => {
+        if (key && this._inflightTurns.get(key) === run) this._inflightTurns.delete(key);
+      });
+    if (key) this._inflightTurns.set(key, run);
+    return run;
+  }
+
+  async _sendToSession(
     sessionKey: string,
     message: string,
     extraData: Partial<PushPayload> | null = null,
@@ -623,6 +698,7 @@ class HermesHttpProvider extends PushProvider {
     this._destroyed = true;
     this.enabled = false;
     this.connected = false;
+    this._inflightTurns.clear();
     // kill detached gateway 子进程，避免直接调 destroy（非经 stop）时泄漏：占端口/读旧 key
     if (this._gatewayChildren) {
       for (const child of this._gatewayChildren.values()) {

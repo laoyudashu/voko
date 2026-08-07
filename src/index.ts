@@ -90,6 +90,7 @@ const { stopVoko } = require('./core/stop-voko');
 // ── Lite 模块 ──
 const { createContext } = require('./context');
 const cli = require('./cli');
+const { compareVersions } = require('./core/auto-updater');
 
 // ── MCP 模块 ──
 const { createMcpServer, getToolList } = require('./mcp/server');
@@ -317,13 +318,59 @@ function openLocalWebPage(port: number) {
   }
 }
 
+function readStoredUpdateStatus(db: any): { latestVersion: string } | null {
+  try {
+    const row = db?.prepare("SELECT data FROM config WHERE type = 'update_status'").get();
+    const status = row?.data ? JSON.parse(row.data) : null;
+    if (!status?.updateAvailable || typeof status.latestVersion !== 'string') return null;
+    if (compareVersions(status.latestVersion, pkg.version) <= 0) return null;
+    return { latestVersion: status.latestVersion };
+  } catch (_: any) {
+    return null;
+  }
+}
+
+function formatVersionLine(db: any): string {
+  const base = `  Version:    ${pkg.version}`;
+  const update = readStoredUpdateStatus(db);
+  if (!update) return base;
+  const YELLOW = '\x1b[33m';
+  const RESET = '\x1b[0m';
+  const hint = t('cli.updater.new_version_available', {
+    version: update.latestVersion,
+    current: pkg.version,
+  });
+  return `${YELLOW}${base}  ⚠️ ${hint}${RESET}`;
+}
+
+const versionChecksStarted = new WeakSet<object>();
+
+function printVersionUpdateHint(result: any): void {
+  if (!result?.updateAvailable || typeof result.latestVersion !== 'string') return;
+  const YELLOW = '\x1b[33m';
+  const RESET = '\x1b[0m';
+  const hint = t('cli.updater.new_version_available', {
+    version: result.latestVersion,
+    current: pkg.version,
+  });
+  console.error(`${YELLOW}  Version:    ${pkg.version}  ⚠️ ${hint}${RESET}`);
+}
+
 function checkVersionAndPersist(db: any): void {
-  void cli.checkVersion().then((result: any) => {
+  if (db && typeof db === 'object') {
+    if (versionChecksStarted.has(db)) return;
+    versionChecksStarted.add(db);
+  }
+  const previous = readStoredUpdateStatus(db);
+  void cli.checkVersion({ notify: false }).then((result: any) => {
     if (!result) return;
     try {
       db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('update_status', ?, ?)")
         .run(JSON.stringify({ ...result, checkedAt: Date.now() }), Date.now());
     } catch (_: any) {}
+    if (result.updateAvailable && previous?.latestVersion !== result.latestVersion) {
+      printVersionUpdateHint(result);
+    }
   });
 }
 
@@ -387,10 +434,18 @@ function resolveDbPath(args?: any, options: any = {}) {
   return defaultDb;
 }
 
+/** Return a PATH-independent command for invoking the compiled Voko CLI. */
+function stableNodeCommand(...args: string[]) {
+  return {
+    command: path.resolve(process.execPath),
+    args: [path.resolve(__dirname, 'index.js'), ...args],
+  };
+}
+
 function inspectSetup(args?: any) {
   const fs = require('fs');
+  const { inspectMcpConfigs } = require('./core/mcp-config-diagnostics');
   const dbPath = resolveDbPath(args, { silent: true });
-  const entryPath = path.resolve(process.argv[1]);
   const nodeVersion = process.versions.node;
   const [major, minor] = nodeVersion.split('.').map(Number);
   const nodeSupported = major > 22 || (major === 22 && minor >= 5);
@@ -399,6 +454,7 @@ function inspectSetup(args?: any) {
   let database = { exists: fs.existsSync(dbPath), readable: false, schemaVersion: null as number | null };
   let authenticated = false;
   let agentCount = 0;
+  const mcpClients = inspectMcpConfigs();
 
   if (database.exists) {
     const { DatabaseSync: Database } = require('node:sqlite');
@@ -433,10 +489,16 @@ function inspectSetup(args?: any) {
     database,
     authentication: { configured: authenticated },
     agents: { count: agentCount },
-    runtime: { running, port: running ? (instance?.port || null) : null },
+    runtime: {
+      running,
+      port: running ? (instance?.port || null) : null,
+      instanceId: running ? (instance?.instanceId || null) : null,
+      version: running ? pkg.version : null,
+    },
+    mcpClients,
     stableCommands: {
-      mcp: { command: process.execPath, args: [entryPath, 'mcp'] },
-      start: { command: process.execPath, args: [entryPath, 'start', '--no-open', '--no-interactive'] },
+      mcp: stableNodeCommand('mcp'),
+      start: stableNodeCommand('start', '--no-open', '--no-interactive'),
     },
     nextAction,
   };
@@ -466,7 +528,7 @@ function printReadyBanner(db: any, port: number, ownerEmail: string | null, agen
   const summary = agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0 };
   const connected = agentManager?.connectedAgents?.size || 0;
   const details = [
-    '  Version:    ' + pkg.version,
+    formatVersionLine(db),
     '  PID:        ' + process.pid,
     '  Time:       ' + new Date().toLocaleString('zh-CN', { hour12: false }),
     '  Port:       ' + port,
@@ -560,7 +622,20 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     } catch (_) { return res.status(500).json({ success: false, error: '无法验证 Agent 归属', code: 'AGENT_OWNER_CHECK_FAILED' }); }
   });
 
-  const httpTransport = createHttpTransport(mcpServer, { version: pkg.version, db });
+  const expectedRuntimeInstanceId = __instanceLock?.metadata?.instanceId || null;
+  app.use('/mcp', (req?: any, res?: any, next?: any) => {
+    const supplied = String(req.headers['x-voko-instance-id'] || '').trim();
+    if (supplied && expectedRuntimeInstanceId && supplied !== expectedRuntimeInstanceId) {
+      return res.status(409).json({ success: false, code: 'RUNTIME_MISMATCH', error: 'Lite 运行实例身份不匹配' });
+    }
+    next();
+  });
+  const httpTransport = createHttpTransport(mcpServer, {
+    version: pkg.version,
+    db,
+    instanceId: expectedRuntimeInstanceId,
+    edition: 'lite',
+  });
   app.use('/mcp', httpTransport);
 
   // DB 元信息（供 desktop 启动时协商 schema 兼容性；只读，放行无需 token）
@@ -725,6 +800,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     status: __serviceHealth,
     uptime: process.uptime(),
     instanceId: __instanceLock?.metadata?.instanceId || null,
+    pid: process.pid,
+    port: __runtimePort || port,
+    version: pkg.version,
+    edition: 'lite',
     tasks: taskManager?.snapshot?.() || [],
   }));
   app.post('/api/quit', (req?: any, res?: any) => {
@@ -848,14 +927,14 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── Gateway 转发（desktop gateway:forwardToAgent → 此端点） ──
   app.post('/api/gateway/forward', async (req?: any, res?: any) => {
     try {
-      const { visitorId, message, agentId } = req.body || {};
+      const { visitorId, message, agentId, messageId } = req.body || {};
       if (!agentId || !visitorId || !message) return res.json({ success: false, error: '缺少参数' });
       const dispatcher = (global as any).__dispatcher;
       if (!dispatcher) return res.json({ success: false, error: 'dispatcher 未初始化' });
       // 统一走 dispatcher 决策：连接就绪则 push，否则留库等 agent pull
       dispatcher.dispatch(agentId, {
         agentId, fromUid: visitorId, content: message, channelId: visitorId,
-        channelType: 1, contentType: 1, messageId: '', timestamp: Math.floor(Date.now() / 1000)
+        channelType: 1, contentType: 1, messageId: String(messageId || ''), timestamp: Math.floor(Date.now() / 1000)
       });
       res.json({ success: true });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
@@ -1035,6 +1114,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const result = registerAgentInDbOnDb(db, body);
       let imConnection: any = null;
       let warning: string | null = null;
+      let workerStatus = result.success === false ? 'failed' : 'not_started';
       // 注册成功后启动 Worker，并等待短暂的真实连接结果；连接瞬时失败不
       // 回滚已完成的注册，只把状态明确返回给调用方，稍后可用 start_worker 重试。
       if (result.success !== false && body.agentId && body.uid && body.token) {
@@ -1048,17 +1128,31 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           if (status && typeof status === 'object') {
             const connected = status.connected === true || status.status === 'connected';
             imConnection = { connected, status: status.status || (connected ? 'connected' : 'unknown') };
+            workerStatus = status.error || status.status === 'connect_fail' ? 'failed' : connected ? 'running' : 'starting';
             if (!connected) warning = 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试';
             if (status.error || status.status === 'connect_fail') {
               warning = status.error || 'Agent 已创建，但 IM 连接失败，可稍后通过 start_worker 重试';
             }
           }
         } catch (e: any) {
+          workerStatus = 'failed';
           warning = 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试';
           console.error('[Lite] 注册后启动 Worker 失败:', body.agentId, e.message);
         }
       }
-      res.json({ ...result, ...(imConnection ? { imConnection } : {}), ...(warning ? { warning } : {}) });
+      const providerDelivery = body.agentId
+        ? ((global as any).__dispatcher?.getAgentDeliveryStatus?.(body.agentId) || null)
+        : null;
+      res.json({
+        ...result,
+        ...(result.success !== false ? { creationStatus: 'created', workerStatus } : {}),
+        ...(imConnection ? { imConnection } : {}),
+        ...(providerDelivery ? { providerDelivery } : {}),
+        ...(workerStatus !== 'running' && result.success !== false ? {
+          recoveryAction: { action: 'start_worker', agentId: body.agentId, message: '可稍后通过 start_worker 重试 IM 连接' },
+        } : {}),
+        ...(warning ? { warning } : {}),
+      });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1354,6 +1448,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // 桥接 lite-bus 事件 → WebSocket
   const bus = require('./core/lite-bus');
   const WS_EVENTS = ['app:quit', 'agent-wukongim:message', 'agent-wukongim:status', 'agent-wukongim:sent',
+    'agent-delivery:status',
     'owner-intervention:new', 'owner-intervention:email-reply',
     'owner-intervention:updated', 'channels:test-success',
     'wechat:session-expired', 'owner-reply', 'voko:notification', 'user:switched'];
@@ -1610,40 +1705,22 @@ async function startMcpServer(args?: any, core?: any) {
     }
   });
 
-  // ── 离线消息同步：Agent 连接后拉取服务端缓存消息 ──
+  // ── 离线消息同步：Agent 连接后拉取服务端缓存消息（突发连接合并为一次全量同步）──
+  const { createOfflineSyncCoordinator } = require('./core/offline-sync');
+  const offlineSync = createOfflineSyncCoordinator(db, messageHandler);
   await taskManager.start('offline-sync', () => {
-    let _offlineSyncTriggered = false;
-    const _syncingAgents = new Set<string>();
-    const _syncAgent = (agentId: string) => {
-      if (!agentId || !messageHandler || _syncingAgents.has(agentId)) return;
-      _syncingAgents.add(agentId);
-      const { syncOfflineMessages: doSync } = require('./core/offline-sync');
-      doSync(db, messageHandler, agentId)
-        .catch((e: any) => console.error('[离线同步] Agent 失败:', agentId, e.message))
-        .finally(() => _syncingAgents.delete(agentId));
-    };
-    const _trySync = () => {
-      if (_offlineSyncTriggered) return;
-      _offlineSyncTriggered = true;
-      console.log('[Lite] 开始离线同步');
-      const { syncOfflineMessages: doSync } = require('./core/offline-sync');
-      doSync(db, messageHandler).catch((e: any) => console.error('[离线同步] 失败:', e.message));
-    };
-    // 每个 Agent 连接时检查是否全部就绪
+    offlineSync.start();
     const onStatus = (msg?: any) => {
-      if (msg.status === 'connected') _syncAgent(msg.agentId);
+      if (msg.status === 'connected') offlineSync.onAgentConnected(msg.agentId);
       if ((msg.status === 'connected' || msg.statusCode === 2) &&
           publishedAgentCount > 0 &&
           agentManager.connectedAgents.size >= publishedAgentCount) {
-        _trySync();
+        offlineSync.onAllReady();
       }
     };
     agentManager.on('status', onStatus);
-    // 兜底：启动 30 秒后仍尝试一次
-    const fallbackTimer = setTimeout(() => { _trySync(); }, 30000);
-    fallbackTimer.unref?.();
     return () => {
-      clearTimeout(fallbackTimer);
+      offlineSync.stop();
       agentManager.off?.('status', onStatus);
     };
   });
@@ -2117,355 +2194,14 @@ function createMessageHandler(db?: any, params?: any) {
 }
 
 // ═══════════════════════════════════════════════
-//  createLiteApp — 程序化入口，供 Desktop 和外部调用
+//  createLiteApp — 已废弃（Desktop/Electron 路径停用）
 // ═══════════════════════════════════════════════
-
-/**
- * 创建 Lite 应用实例（清孤儿 → 初始化 DB → 自动恢复 worker → 按需创建处理器/消息处理/心跳）
- *
- * @param {object} [options]
- * @param {string} [options.dbPath] - 数据库路径，默认自动检测
- * @param {boolean} [options.autoStartWorkers] - 是否自动恢复 worker，默认 true
- * @param {object} [options.appPaths] - Electron 打包路径（isPackaged/resourcesPath/userDataPath），
- *                                      仅 Desktop 传入，纯 Node.js 环境不需要
- * @param {object} [options.handlers] - 后端处理器配置（传入则自动创建 OpenClaw + Hermes）
- * @param {string} [options.handlers.openclawMode='ws']
- * @param {object} [options.handlers.hermesConfig]
- * @param {Function} [options.handlers.onAgentReply] - agent.reply 回调
- * @param {object} [options.messageHandler] - MessageHandler 配置（传入则自动创建）
- * @param {object} [options.messageHandler.callbacks] - notifyUI/enqueueIntervention 等回调
- * @param {object} [options.messageHandler.ac] - access-control 模块
- * @param {object} [options.heartbeat] - 心跳配置（传入则自动启动）
- * @param {Function} [options.heartbeat.onWarnings] - 警告回调
- * @returns {Promise<{
- *   db, databaseAPI, agentManager, agentRegistration,
- *   openclawHandler, hermesHandler, messageHandler,
- *   stopHeartbeat: Function,
- *   dispose: Function
- * }>}
- */
-async function createLiteApp(options: any = {}) {
-  const dbPath = options.dbPath || resolveDbPath({});
-  const { TaskManager } = require('./core/task-manager');
-  const taskManager = new TaskManager();
-
-  // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
-  if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
-
-  // ── 最优先检测：是否有另一个 Lite 在运行 ──
-  const _liteDetected = checkLiteRunning(dbPath);
-
-  const db = initDatabase(dbPath);
-  const databaseAPI = createDatabaseAPI(db);
-  const agentRegistration = createAgentRegistration({ db });
-  const agentManager = new AgentWorkerManager(db, {
-    dbPath,
-    instance: options.instance || null,
-  });
-  // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
-  const wukongimSender = agentManager;
-  const deliver = createDeliver({ transportManager: agentManager });
-  const sendMessage = createSendMessage({ db, deliver, agentWorkers: agentManager.workers, mainWindow: null });
-  agentManager.setDeliver(deliver);
-  agentManager.sendImMessage = sendMessage;
-
-  if (_liteDetected) {
-    console.error(t('cli.index.another_instance'));
-    return {
-      db, databaseAPI, agentManager, agentRegistration,
-      openclawHandler: null, hermesHandler: null, messageHandler: null,
-      currentUserEmail: getCurrentUserEmail(db),
-      _liteDetected: true,
-      stopHeartbeat: () => {},
-      dispose: () => shutdownAll(agentManager, wukongimSender, db, 'dispose'),
-    };
-  }
-
-  cleanupOrphanedWorkers(dbPath);
-
-  // ── 读取当前登录用户邮箱 ──
-  const currentUserEmail = getCurrentUserEmail(db);
-  if (currentUserEmail) {
-    console.error(`[Auth] 当前登录用户: ${currentUserEmail}`);
-  } else {
-    console.error(t('cli.index.login_required', { port: options.port || 3100 }));
-  }
-  let stopAgentAccessSync = () => {};
-  if (options.agentAccessSync !== false) {
-    try {
-      stopAgentAccessSync = require('./core/agent-invitations').startAgentAccessSync({
-        db,
-        apiBaseUrl: require('./endpoints.json').api.baseUrl,
-        intervalMs: options.agentAccessSync?.intervalMs || 60000,
-      });
-    } catch (e: any) {
-      console.error('[AccessSync] 初始化失败:', e.message);
-    }
-  }
-
-  // ── 自动恢复 IM 连接（仅启动当前用户名下 agent） ──
-  if (options.autoStartWorkers !== false) {
-    const published = currentUserEmail
-      ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?").all(currentUserEmail)
-      : [];
-    const startupResults = await agentManager.startMany(published.map((agent: any) => ({
-      agentId: agent.agent_id,
-      config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
-    })));
-    const startupConnected = startupResults.filter((result: any) => result.connected).length;
-    if (published.length > 0) console.error(`[VOKO Lite] 已启动 ${startupConnected}/${published.length} 个 Agent IM 连接`);
-
-    // 消息处理 handler 在 MessageHandler 创建后统一注册（见下方）
-  }
-
-  // ── 创建 MessageHandler（可选） ──
-  let messageHandler: any = null;
-  if (options.messageHandler) {
-    const { MessageHandler } = require('./core/messenger');
-    messageHandler = new MessageHandler(db, {
-      databaseAPI,
-      agentWorkers: agentManager.workers,
-      deliver,  // 统一 VokoIMSDK Hub 投递，供 handleAgentReply 使用
-      ac: options.messageHandler.ac || null,
-      ...options.messageHandler.callbacks,
-    });
-  }
-
-  // ── 独立 createLiteApp 调用也必须完成持久化后 ACK ──
-  agentManager.on('message', (msg?: any) => {
-    const data = msg?.data || msg;
-    try {
-      if (messageHandler) {
-        messageHandler.handleAgentMessage(msg.agentId, data);
-      } else {
-        databaseAPI.saveMessage({
-          id: data.messageId || `wk-${msg.agentId}-${Date.now()}`,
-          channelId: data.channelId, channelType: data.channelType || 1,
-          fromUid: data.fromUid, toUid: data.toUid || msg.agentId, agentId: msg.agentId,
-          content: data.content || '', timestamp: data.timestamp || Math.floor(Date.now() / 1000),
-          isMe: false, status: 'received', messageSeq: data.messageSeq,
-          clientMsgNo: data.clientMsgNo, contentType: data.contentType || 1,
-        });
-      }
-      data?.ack?.();
-    } catch (error: any) {
-      console.error('[VOKO Lite] 消息处理失败，已 NACK:', error.message);
-      data?.nack?.(error);
-    }
-  });
-  if (messageHandler) {
-    const syncingAgents = new Set<string>();
-    const syncAgent = (agentId: string) => {
-      if (!agentId || syncingAgents.has(agentId)) return;
-      syncingAgents.add(agentId);
-      require('./core/offline-sync').syncOfflineMessages(db, messageHandler, agentId)
-        .catch((error: any) => console.error('[离线同步] Agent 失败:', agentId, error.message))
-        .finally(() => syncingAgents.delete(agentId));
-    };
-    agentManager.on('status', (msg?: any) => {
-      if (msg.status === 'connected') syncAgent(msg.agentId);
-    });
-    void require('./core/offline-sync').syncOfflineMessages(db, messageHandler)
-      .catch((error: any) => console.error('[离线同步] 初始同步失败:', error.message));
-  }
-
-  // ── 创建后端处理器（可选） ──
-  let openclawHandler = null;
-  let hermesHandler = null;
-  let dispatcher = null;
-  if (options.handlers) {
-    const h = options.handlers;
-    // 如果未提供 hermesConfig 或 apiKey 为空，从数据库读取 channel_config
-    let hermesConfig = h.hermesConfig || {};
-    if (!hermesConfig.apiKey) {
-      try {
-        const hc = databaseAPI.getConfigFromDb('hermes_config') || {};
-        hermesConfig = {
-          apiHost: hc.apiHost || '127.0.0.1',
-          apiPort: hc.apiPort || 8642,
-          apiKey: hc.apiKey || '',
-          profiles: hc.profiles || {},
-        };
-      } catch (_: any) {}
-    }
-    const result = createHandlers({
-      db,
-      databaseAPI,
-      openclawMode: h.openclawMode || 'ws',
-      backendTypes: h.backendTypes || db.prepare("SELECT DISTINCT backend_type FROM agents WHERE publish_status='published'")
-        .all().map((row: any) => row.backend_type || 'openclaw'),
-      hermesConfig,
-      onAgentReply: h.onAgentReply
-        ? (data?: any) => h.onAgentReply(data, messageHandler)
-        : undefined,
-    });
-    openclawHandler = result.openclawHandler;
-    hermesHandler = result.hermesHandler;
-    dispatcher = result.dispatcher;
-    (global as any).__dispatcher = dispatcher;
-    messageHandler?.setDispatcher(dispatcher);
-    attachRebindAgentRuntime(dispatcher, agentManager, db);
-  }
-
-  // ── 启动心跳（可选） ──
-  let stopHeartbeat = null;
-  if (options.heartbeat !== false) {
-    const hbOpts = options.heartbeat || {};
-    stopHeartbeat = startHeartbeat(db, agentManager, openclawHandler, hermesHandler, {
-      onWarnings: hbOpts.onWarnings || undefined,
-      dispatcher,
-    });
-  }
-
-  // ── 渠道初始化（在核心服务就绪后） ──
-  let channelInstances = {};
-  if (options.channels !== false) {
-    try {
-      const agentEmailApi = new AgentEmailApi({
-        apiBaseUrl: (databaseAPI.getConfigFromDb && databaseAPI.getConfigFromDb('endpoints'))?.im?.baseUrl
-          || (() => { try { return require('./endpoints.json').api.baseUrl; } catch (_: any) { return ''; } })(),
-        getUserAccessToken: () => {
-          const email = currentUserEmail;
-          if (!email) return null;
-          try {
-            const { getUserAccessToken } = require('./core/database');
-            return getUserAccessToken(db, email);
-          } catch (_: any) { return null; }
-        },
-      });
-      const chOpts = options.channels || {};
-      channelInstances = registry.initializeAllChannels({
-        databaseAPI,
-        openclawHandler,
-        buildOwnerReplyPrompt: chOpts.buildOwnerReplyPrompt || registry.buildOwnerReplyPrompt,
-        autoApproveWhitelistIfFriendRequest: chOpts.autoApproveWhitelistIfFriendRequest
-          || ((intervention?: any, reply?: any) => messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply)),
-        agentEmailApi: chOpts.agentEmailApi || agentEmailApi,
-        resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
-        db,
-      });
-    } catch (e: any) {
-      console.error('[Lite] 渠道初始化失败:', e.message);
-    }
-  }
-
-  // ── 支付轮询（处理 created→paid/expired 查单） ──
-  let stopPaymentPolling = null;
-  if (options.paymentPolling !== false) {
-    try {
-      const ENDPOINTS = require('./endpoints.json');
-      stopPaymentPolling = require('./core/payment').startPaymentPolling({
-        db,
-        databaseAPI,
-        agentWorkers: agentManager.workers,
-        deliver,
-        sendMessage,
-        endpoints: ENDPOINTS,
-        hermesHandler,
-        openclawHandler,
-        sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-        payLog: options.paymentPolling?.payLog || (() => {}),
-        ownerInterventionNotifier: null, // 将在下方初始化后更新
-      });
-      // 启动时恢复遗留在 pending 状态的支付订单
-      setTimeout(async () => {
-        try {
-          // 上次进程可能在领取订单后崩溃；仅回收超过两分钟的 processing 租约，
-          // 避免与仍在执行的创建请求并发。
-          const staleBefore = Date.now() - 2 * 60 * 1000;
-          db.prepare(`UPDATE payment_orders SET status = 'pending', updated_at = ? WHERE status = 'processing' AND updated_at < ?`)
-            .run(Date.now(), staleBefore);
-          const pendingOrders = db.prepare(`SELECT * FROM payment_orders WHERE status = 'pending'`).all();
-          for (const order of pendingOrders) {
-            const { processPendingPaymentOrder } = require('./core/payment');
-            processPendingPaymentOrder(order, {
-              db, databaseAPI, agentWorkers: agentManager.workers,
-              deliver, sendMessage,
-              endpoints: ENDPOINTS, payLog: () => {},
-            }).catch((e: any) => console.error('[Payment] 恢复处理订单失败:', order.id, e.message));
-          }
-          if (pendingOrders.length > 0) {
-            console.log('[Payment] 启动恢复：已提交 ' + pendingOrders.length + ' 条待处理订单');
-          }
-        } catch (e: any) {
-          console.error('[Payment] 启动恢复扫描失败:', e.message);
-        }
-      }, 10000);
-    } catch (e: any) {
-      console.error('[Lite] 支付轮询初始化失败:', e.message);
-    }
-  }
-
-  // ── 主人介入通知器（事件驱动，替代轮询） ──
-  let ownerInterventionNotifier: any = null;
-  if (options.ownerInterventionNotifier !== false) {
-    try {
-      const oiOpts = options.ownerInterventionNotifier || {};
-      ownerInterventionNotifier = new OwnerInterventionNotifier({
-        databaseAPI,
-        registry,
-        db,
-        getEnabledChannel: databaseAPI.getEnabledChannel,
-        agentEmailApi: oiOpts.agentEmailApi || undefined,
-        getOpenclawHandler: () => openclawHandler,
-        getHermesHandler: () => hermesHandler,
-        buildOwnerReplyPrompt: oiOpts.buildOwnerReplyPrompt || registry.buildOwnerReplyPrompt,
-        sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-        resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
-        autoApproveWhitelistIfFriendRequest: oiOpts.autoApproveWhitelistIfFriendRequest
-          || ((intervention?: any, reply?: any) => messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply)),
-      });
-      // 启动恢复扫描（延迟执行，确保依赖就绪）
-      ownerInterventionNotifier.startScan();
-
-      // 将 notifier 注入支付轮询（支付成功时推送主人通知）
-      if (stopPaymentPolling) {
-        // 重建支付轮询以注入 notifier（简单方式：重启轮询）
-        try {
-          const ENDPOINTS = require('./endpoints.json');
-          // 停止旧轮询，用新的 notifier 重新启动
-          if (typeof stopPaymentPolling === 'function') stopPaymentPolling();
-          stopPaymentPolling = require('./core/payment').startPaymentPolling({
-            db, databaseAPI,
-            agentWorkers: agentManager.workers,
-            deliver,
-            sendMessage,
-            endpoints: ENDPOINTS,
-            hermesHandler, openclawHandler,
-            sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-            payLog: () => {},
-            ownerInterventionNotifier,
-          });
-        } catch (_: any) {}
-      }
-    } catch (e: any) {
-      console.error('[Lite] 主人介入通知器初始化失败:', e.message);
-    }
-  }
-
-  // ── 版本检查（异步，不阻塞） ──
-  checkVersionAndPersist(db);
-
-  if (typeof stopAgentAccessSync === 'function') await taskManager.start('agent-access-sync', () => stopAgentAccessSync);
-  if (typeof stopHeartbeat === 'function') await taskManager.start('heartbeat', () => stopHeartbeat);
-  if (typeof stopPaymentPolling === 'function') await taskManager.start('payment-polling', () => stopPaymentPolling);
-  if (ownerInterventionNotifier) await taskManager.start('owner-intervention', () => () => ownerInterventionNotifier.stop());
-
-  return {
-    db, databaseAPI, agentManager, agentRegistration,
-    openclawHandler, hermesHandler, messageHandler,
-    channelInstances,
-    ownerInterventionNotifier,
-    taskManager,
-    currentUserEmail,
-    stopHeartbeat: stopHeartbeat || (() => {}),
-    stopPaymentPolling: stopPaymentPolling || (() => {}),
-    stopAgentAccessSync,
-    dispose: async () => {
-      await taskManager.stopAll();
-      await shutdownAll(agentManager, wukongimSender, db, 'dispose');
-    },
-  };
+// 原 Desktop 程序化入口已停用。保留导出仅为向后兼容，调用方会收到明确错误。
+// CLI 运行时请使用 `voko start`（startMcpServer 路径）。
+async function createLiteApp(_options?: any): Promise<{ success: false; error: string }> {
+  const err = 'createLiteApp 已废弃：Desktop/Electron 路径停用，请改用 `voko start`（CLI 路径）。';
+  console.error('[VOKO Lite]', err);
+  return { success: false, error: err };
 }
 
 /**
@@ -2807,6 +2543,8 @@ function printUsage() {
     '  voko uninstall [--purge]   ' + t('cli.usage.uninstall') + '\n' +
     '  voko mcp                   ' + t('cli.usage.mcp') + '\n' +
     '  voko status                ' + t('cli.usage.status') + '\n' +
+    '  voko probe --agent-id ID --visitor-id UID --confirm\n' +
+    '                             Send one acknowledged real Provider/IM probe\n' +
     '  voko update                ' + t('cli.usage.update') + '\n' +
     '  voko --version             ' + t('cli.usage.version') + '\n' +
     '  voko --help                ' + t('cli.usage.help') + '\n' +
@@ -2882,7 +2620,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'setup', 'doctor', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'doctor', 'probe', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -2906,18 +2644,31 @@ async function main() {
   // doctor — read-only local/runtime diagnosis; never initializes Core or workers.
   if (subcommand === 'doctor') {
     if (args.help || args.h) {
-      console.log('Usage: voko doctor [--json] [--deep] [--db PATH]');
-      console.log('Read-only diagnosis of Node.js, database, Agents, runtime, MCP/IM configuration and provider runtimes.');
+      console.log('Usage: voko doctor [--json] [--deep] [--fix-mcp] [--db PATH]');
+      console.log('Diagnosis of Node.js, database, Agents, runtime, MCP/IM configuration and provider runtimes.');
+      console.log('--fix-mcp migrates unambiguous legacy VOKO MCP entries to the voko mcp stdio command and creates backups.');
       return;
     }
     const { runDoctor, formatDoctor } = require('./core/doctor');
     const result = await runDoctor({
       dbPath: resolveDbPath(args, { silent: true, noCreate: true }),
       deep: !!args.deep,
+      fixMcp: !!args['fix-mcp'] || !!args.fixMcp,
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     else console.log(formatDoctor(result));
     process.exitCode = result.exitCode;
+    return;
+  }
+
+  if (subcommand === 'probe') {
+    if (args.help || args.h) {
+      console.log('Usage: voko probe --agent-id ID --visitor-id UID --confirm [--message TEXT] [--timeout SECONDS]');
+      console.log('This invokes the configured Provider and may send one real IM reply.');
+      return;
+    }
+    const result = await cli.runRuntimeProbe(args, resolveDbPath(args, { silent: true, noCreate: true }));
+    if (!result.success) process.exitCode = 1;
     return;
   }
 
@@ -2988,6 +2739,30 @@ async function main() {
   if (subcommand === 'mcp') {
     const { runMcpProxy } = require('./mcp/stdio-proxy');
     await runMcpProxy(resolveDbPath(args));
+    return;
+  }
+
+  // Registration is stateful and must always run inside the long-lived Lite instance.
+  if (subcommand === 'manage_agent_registration') {
+    const runtimeDbPath = resolveDbPath(args, { silent: true, noCreate: true });
+    const interactive = args.interactive === true || args.interactive === 'true' || args.interactive === '1';
+    if (interactive) {
+      const { runInteractiveRegistration } = require('./cli-interactive');
+      const manage = async (params: any) => {
+        const routed = await cli.runRuntimeToolCommand(
+          'manage_agent_registration', params, runtimeDbPath,
+          { agentId: cliAgent, debug: verbose, print: false },
+        );
+        return routed?.result || routed;
+      };
+      await runInteractiveRegistration(null, { manage });
+      return;
+    }
+    const result = await cli.runRuntimeToolCommand(
+      'manage_agent_registration', args, runtimeDbPath,
+      { agentId: cliAgent, debug: verbose },
+    );
+    if (!result.success) process.exitCode = 1;
     return;
   }
 
@@ -3100,4 +2875,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

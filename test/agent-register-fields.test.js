@@ -215,6 +215,20 @@ describe('verify_agent_email 必填校验', () => {
     assert.deepStrictEqual(result.imConnection, { connected: true, status: 'connected' });
   });
 
+  it('IM Worker 首次启动失败时保留已创建 Agent并返回恢复动作', async () => {
+    const cx = createMockCx();
+    cx.startAgentWorker = async () => { throw new Error('worker unavailable'); };
+    const result = await createToolHandlers(cx).verify_agent_email({
+      email: 'a@b.com', code: '123456', agentName: 'Recoverable', backendType: 'codex',
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.creationStatus, 'created');
+    assert.equal(result.workerStatus, 'failed');
+    assert.deepEqual(result.recoveryAction, {
+      action: 'start_worker', agentId: 'new-1', message: '可稍后通过 start_worker 重试 IM 连接',
+    });
+  });
+
   it('完整注册缺 backendType → 报错且不调用后端', async () => {
     const cx = createMockCx();
     const h = createToolHandlers(cx);

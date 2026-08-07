@@ -98,6 +98,24 @@ class ZeroClawWsProvider extends AcpAdapter {
       && !!configuredToken()
       && !!this._instanceAlias(agentId);
   }
+
+  async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
+    const missing: string[] = [];
+    if (!configuredUrl()) missing.push('ZEROCLAW_ACP_URL');
+    if (!configuredToken()) missing.push('ZEROCLAW_ACP_TOKEN');
+    if (!this._instanceAlias(agentId)) missing.push('backend_instance_id');
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        status: 'configuration_required',
+        code: 'ZEROCLAW_ACP_WS_CONFIGURATION_REQUIRED',
+        missing,
+        sideEffects: false,
+      };
+    }
+    const ready = this.isAvailable(agentId);
+    return { ok: ready, status: ready ? 'preflight_passed' : 'unavailable', sideEffects: false };
+  }
 }
 
 module.exports = {

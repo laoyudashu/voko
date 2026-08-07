@@ -68,6 +68,19 @@ class ClaudeCliProvider extends CliAdapter {
       cwd: options.cwd || os.tmpdir(),
     });
   }
+
+  /**
+   * Dispatcher 默认用 provider key 推导 family（claude-cli → claude），
+   * 但 Claude 的真实 backend_type 是 claude-code。显式声明兼容性，
+   * 让已保存的 Claude 原生 session 在后续消息中继续走 --resume。
+   */
+  acceptsBinding(binding: any): boolean {
+    return binding?.providerType === 'claude-code'
+      && binding.adapterType === 'claude-cli'
+      && binding.deliveryMode === 'cli'
+      && typeof binding.nativeSessionId === 'string'
+      && binding.nativeSessionId.length > 0;
+  }
 }
 
 module.exports = { ClaudeCliProvider };

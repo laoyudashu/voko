@@ -104,6 +104,28 @@ test('attach reads the latest assistant text from its authenticated session only
   }
 });
 
+test('attach does not retry an indeterminate timeout with a fresh session', async () => {
+  const provider = new OpenCodeAttachProvider();
+  let attempts = 0;
+  let staleMarks = 0;
+  provider._bindingStore = { markStale: () => { staleMarks++; } };
+  provider._pushOnce = async () => {
+    attempts++;
+    throw new Error('cli timeout (120000ms)');
+  };
+  const binding = { id: 'binding-1', providerType: 'opencode' };
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-a',
+    fromUid: 'visitor-a',
+    content: 'hello',
+    messageId: 'message-a',
+    timestamp: Date.now(),
+    providerBinding: binding,
+  }), /timeout/);
+  assert.equal(attempts, 1);
+  assert.equal(staleMarks, 0);
+});
+
 test('OpenCode ACP reports failure to Dispatcher instead of switching adapters internally', async () => {
   const provider = new OpenCodeAcpProvider();
   const calls = [];

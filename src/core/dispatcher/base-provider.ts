@@ -36,6 +36,13 @@ class PushProvider extends EventEmitter {
    */
   get capabilities(): string[] { return []; }
 
+  /** Delivery modes this provider can execute internally when its primary
+   * protocol falls back (for example ACP -> restricted CLI). */
+  get fallbackModes(): string[] { return []; }
+
+  /** Optional readiness probe for an internal fallback mode. */
+  isFallbackAvailable(_agentId: string, _mode: string): boolean { return false; }
+
   /**
    * session 模式声明。
    *   'deterministic-key'  — sessionKey 由 provider 根据 agentId+visitorId 计算得出，无需持久化

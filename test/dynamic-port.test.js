@@ -106,6 +106,8 @@ describe('voko mcp stdio 桥接', () => {
     // 1. 临时 HTTP server 模拟 Lite /mcp
     const app = express();
     app.use(express.json());
+    let healthIdentity = { instanceId: null, pid: process.pid, port: null, version: '0.4.3', edition: 'lite' };
+    app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: 1, ...healthIdentity }));
     app.post('/mcp', (req, res) => {
       res.json({ jsonrpc: '2.0', id: req.body.id, result: { tools: [{ name: 'voko_get_status' }] } });
     });
@@ -119,6 +121,7 @@ describe('voko mcp stdio 桥接', () => {
     const acquired = await lifecycle.acquireInstanceLock(db._tmpPath, path.resolve(process.argv[1]));
     assert.equal(acquired.acquired, true);
     acquired.lock.updatePort(litePort);
+    healthIdentity = { ...healthIdentity, instanceId: acquired.lock.metadata.instanceId, port: litePort };
     db.prepare("INSERT INTO config (type,data) VALUES ('runtime',?)").run(JSON.stringify({
       instanceId: acquired.lock.metadata.instanceId,
       pid: process.pid,

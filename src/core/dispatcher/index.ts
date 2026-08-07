@@ -20,8 +20,10 @@ const { ProviderConversationBindingStore } = require('../provider-conversation-b
 
 interface DispatcherProvider {
   priority?: number;
+  fallbackModes?: string[];
   match?(agentId: string, meta: AgentMeta): boolean;
   isAvailable?(agentId: string): boolean;
+  isFallbackAvailable?(agentId: string, mode: string): boolean;
   push?(payload: PushPayload): unknown;
   steer?(agentId: string, visitorId: string, content: string, metadata?: { turnId: string }): unknown;
   start?(): unknown;
@@ -31,6 +33,7 @@ interface DispatcherProvider {
   on?(event: string, handler: (payload: any) => void): unknown;
   off?(event: string, handler: (payload: any) => void): unknown;
   removeListener?(event: string, handler: (payload: any) => void): unknown;
+  acceptsBinding?(binding: NonNullable<PushPayload['providerBinding']>, agentId: string): boolean;
 }
 
 type RouteOperation = 'push' | 'steer';
@@ -488,6 +491,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const meta = _metaOf(agentId);
     const explicitModes = Array.isArray(meta.delivery_modes) ? [...new Set(meta.delivery_modes.map(String))] : null;
     const methods: AgentDeliveryStatus['methods'] = [];
+    const fallbackMethods: AgentDeliveryStatus['methods'] = [];
 
     for (const [key, provider] of Object.entries(providers)) {
       const mode = _providerMode(key);
@@ -506,6 +510,42 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         status = 'unknown';
       }
       methods.push({ mode, provider: key, configured: true, available, status });
+
+      // Some ACP providers own a restricted CLI fallback instead of exposing
+      // a second CLI provider. Report that mode in diagnostics as well.
+      const fallbackModes = Array.isArray(provider.fallbackModes)
+        ? provider.fallbackModes.map(String)
+        : [];
+      for (const fallbackMode of fallbackModes) {
+        if (explicitModes && !explicitModes.includes(fallbackMode)) continue;
+        let fallbackAvailable = available;
+        let fallbackStatus: AgentDeliveryStatus['methods'][number]['status'] = status;
+        try {
+          fallbackAvailable = typeof provider.isFallbackAvailable === 'function'
+            ? !!provider.isFallbackAvailable(agentId, fallbackMode)
+            : available;
+          fallbackStatus = fallbackAvailable ? 'available' : 'unavailable';
+        } catch (_) {
+          fallbackStatus = 'unknown';
+        }
+        fallbackMethods.push({
+          mode: fallbackMode,
+          provider: key,
+          configured: true,
+          available: fallbackAvailable,
+          status: fallbackStatus,
+        });
+      }
+    }
+
+    // Prefer a dedicated provider for a mode when one is available. If that
+    // provider is down, retain an available provider-owned fallback instead.
+    for (const fallback of fallbackMethods) {
+      const existingIndex = methods.findIndex(method => method.mode === fallback.mode);
+      if (existingIndex < 0 || (!methods[existingIndex].available && fallback.available)) {
+        if (existingIndex >= 0) methods.splice(existingIndex, 1, fallback);
+        else methods.push(fallback);
+      }
     }
 
     if (!explicitModes) {
@@ -811,9 +851,11 @@ ${body}
   function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
-    let compatible = binding.providerType === _providerFamily(route.providerId)
-      && binding.adapterType === route.providerId
-      && binding.deliveryMode === mode;
+    let compatible = typeof route.provider.acceptsBinding === 'function'
+      ? !!route.provider.acceptsBinding(binding, agentId)
+      : binding.providerType === _providerFamily(route.providerId)
+        && binding.adapterType === route.providerId
+        && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;

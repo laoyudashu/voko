@@ -16,6 +16,7 @@ const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
+const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -594,6 +595,28 @@ class RegistrationOrchestrator {
     const more = known
       .filter((item) => item.value !== 'others' && !detectedTypes.has(item.value))
       .map((item) => ({ type: item.value, label: item.label, detected: false }));
+
+    // 当前进程被识别为某桌面应用类（zcode/workbuddy/doubao 等，靠 process_ancestry 命中），
+    // 但 inspectEnvironment 的 instances 扫描（注册表卸载列表）无法枚举这些运行时实例，
+    // 导致 detected:true 与 instances:[] 矛盾，下游按 instance 选择会误判"没有可用实例"。
+    // 这里给被命中的类型注入一个合成 current instance，使 instances 非空、与 detected 一致。
+    try {
+      const detect = this.options.detectCurrentAgentType || detectCurrentAgentType;
+      const currentType = detect();
+      if (currentType) {
+        const item = detected.find((d) => d.type === currentType);
+        if (item && (!item.instances || item.instances.length === 0)) {
+          item.instances = [{
+            id: currentType,
+            name: item.label || currentType,
+            source: 'process_ancestry',
+            isCurrent: true,
+          }];
+          item.detectedAsCurrent = true;
+        }
+      }
+    } catch (_) { /* 检测失败不影响整体环境扫描 */ }
+
     const deliveryCount = new Set(detected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
       detected,
@@ -669,6 +692,29 @@ class RegistrationOrchestrator {
       action: null,
       description: '消息始终保存在 VOKO；Agent 可通过 VOKO CLI、MCP 工具或接口主动读取。',
     };
+    if (type === 'goose' || type === 'acp-goose') {
+      const available = this.options.commandAvailable
+        ? hasCommand('goose')
+        : isGooseRuntimeAvailable(type === 'acp-goose' ? 'acp' : 'cli');
+      const cli = {
+        mode: 'cli', label: 'Goose CLI 自动交付', role: type === 'acp-goose' ? 'fallback' : 'primary',
+        status: available ? 'ready' : 'unavailable',
+        selected: available,
+        action: available ? 'test' : null,
+        description: available ? 'VOKO 使用 Goose 原生 session ID 自动投递并续接消息。' : '本机未检测到 Goose CLI。',
+      };
+      if (type === 'goose') return [cli, pull];
+      return [
+        {
+          mode: 'acp', label: 'Goose ACP 实时会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available ? 'VOKO 通过标准 ACP 会话投递，断线时降级到 Goose CLI。' : '本机未检测到 Goose ACP 运行入口。',
+        },
+        cli,
+        pull,
+      ];
+    }
     if (type === 'openclaw') {
       const gateway = gatewayStatus || require('./gateway-setup').checkGateway('openclaw', this.db ? dbConfigAdapter(this.db) : null);
       return [

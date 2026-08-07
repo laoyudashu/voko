@@ -1,8 +1,9 @@
 export {};
 
 /**
- * VOKO MCP — 37 个工具处理器
+ * VOKO MCP — 工具处理器集合
  *
+ * 工具数量随版本演进，以 server.ts 的 server.tool() 注册为准（可通过 getToolList() 枚举）。
  * 零 Electron 依赖，所有外部依赖通过 context (cx) 注入。
  * 全部通过 createToolHandlers(cx) 工厂函数创建。
  */
@@ -17,7 +18,41 @@ const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt'
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
+// A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
+// 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
+// 入站包装是 [VOKO A2A CONTROL]+[VOKO AGENT PEER MESSAGE]，出站回复才用 [STATE]/[FINAL]。
 import type { LiteContext } from '../context';
+
+/**
+ * 剥离入站 agent_peer 消息被 dispatcher 注入的协议包装，只保留对端可见正文。
+ *
+ * dispatcher._injectStatePrompt 会把入站 A2A 消息包装成：
+ *   [VOKO A2A CONTROL]...指令...[/VOKO A2A CONTROL]\n\n[VOKO AGENT PEER MESSAGE]\n{body}\n[/VOKO AGENT PEER MESSAGE]
+ * pull 路径要把这层包装剥掉，只暴露 {body}，避免把指令文本泄漏给 MCP 客户端。
+ * 注意：与 extractA2AVisibleReply（出站取 [FINAL]）不同——入站要的是 AGENT PEER MESSAGE body。
+ */
+function _stripInboundControlBlock(content: string): string {
+  if (!content || typeof content !== 'string') return content || '';
+  // 优先提取 [VOKO AGENT PEER MESSAGE]...[/VOKO AGENT PEER MESSAGE] 之间的正文
+  const peerMsg = content.match(/\[VOKO AGENT PEER MESSAGE\]([\s\S]*?)\[\/VOKO AGENT PEER MESSAGE\]/i);
+  if (peerMsg) return peerMsg[1].trim();
+  // 兜底：仅剥掉 [VOKO A2A CONTROL]...[/VOKO A2A CONTROL] 指令块（无 AGENT PEER MESSAGE 包装时）
+  const stripped = content.replace(/\[VOKO A2A CONTROL\][\s\S]*?\[\/VOKO A2A CONTROL\]\s*/gi, '').trim();
+  return stripped;
+}
+
+/** 把存储的时间戳规范化为毫秒，并判断是否疑似 A2A 控制块内容。 */
+function _normalizeTimestamp(ts: number | null | undefined): { timestamp: number | null; timestampMs: number | null } {
+  if (!ts || typeof ts !== 'number') return { timestamp: ts ?? null, timestampMs: null };
+  // < 1e12 视为秒级（毫秒级时间戳至少 13 位），统一换算到毫秒
+  const ms = ts < 1e12 ? ts * 1000 : ts;
+  return { timestamp: ts, timestampMs: ms };
+}
+/** 探测 content 是否含 A2A 协议控制块（[STATE]/[FINAL]/[VOKO A2A CONTROL]）。 */
+function _hasControlBlock(content: string): boolean {
+  if (!content || typeof content !== 'string') return false;
+  return /\[STATE\]|\[\/STATE\]|\[FINAL\]|\[\/FINAL\]|\[VOKO A2A CONTROL\]/i.test(content);
+}
 import type { DatabaseLike } from '../types/database';
 
 const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
@@ -291,6 +326,46 @@ async function waitForStartedAgentConnection(
   return status;
 }
 
+function registrationRuntimeStatus(cx: any, agentId: string, imStatus?: WorkerConnectionStatus): any {
+  const connected = imStatus?.connected === true || imStatus?.status === 'connected';
+  const failed = !!imStatus?.error || imStatus?.status === 'connect_fail' || imStatus?.status === 'failed';
+  const workerStatus = failed ? 'failed' : connected ? 'running' : imStatus ? 'starting' : 'not_started';
+  let providerDelivery: any = null;
+  try {
+    const status = cx.getAgentDeliveryStatus?.(agentId);
+    if (status && typeof status === 'object') {
+      providerDelivery = {
+        activeMode: status.activeMode || null,
+        availableModes: Array.isArray(status.availableModes) ? status.availableModes : [],
+        status: status.status || (status.backendAvailable === false ? 'unavailable' : 'ready'),
+      };
+    }
+  } catch (_) {}
+  if (!providerDelivery) {
+    try {
+      const row = cx.query?.('SELECT backend_type, backend_instance_id, delivery_modes FROM agents WHERE agent_id=? LIMIT 1', [agentId])?.[0] || {};
+      const parsed = typeof row.delivery_modes === 'string' ? JSON.parse(row.delivery_modes) : row.delivery_modes;
+      providerDelivery = {
+        backendType: row.backend_type || 'others',
+        instanceBound: !!row.backend_instance_id,
+        configuredModes: Array.isArray(parsed) ? parsed.map(String) : ['pull'],
+        status: 'configured',
+      };
+    } catch (_) {}
+  }
+  return {
+    creationStatus: 'created',
+    workerStatus,
+    providerDelivery,
+    ...(imStatus ? {
+      imConnection: { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') },
+    } : {}),
+    ...(!connected ? {
+      recoveryAction: { action: 'start_worker', agentId, message: '可稍后通过 start_worker 重试 IM 连接' },
+    } : {}),
+  };
+}
+
 function isGroupSummary(value: unknown): value is GroupSummary {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -422,6 +497,10 @@ interface McpToolParams {
   category?: string;
   channelId?: string;
   channelType?: number | 'all' | 'direct' | 'group';
+  /** MCP 客户端自报身份（如 'zcode'/'codex'/'cursor'），用于游标隔离，避免多客户端互抢消息。 */
+  clientId?: string;
+  /** fetch_new_messages：起始游标（message_seq），覆盖自动游标。与 messageSeq 同义。 */
+  cursor?: number;
   code?: string;
   contact_phone?: string;
   content?: string;
@@ -455,6 +534,10 @@ interface McpToolParams {
   notice?: string;
   offset?: number;
   onlyReplies?: boolean;
+  /** fetch_new_messages：true=首次拉取只设锚点不回吐历史（默认，避免吞历史→后续空等）。 */
+  onlyNew?: boolean;
+  /** get_chat_history：'desc'（默认，最新在前）| 'asc'（最旧在前）。 */
+  order?: 'desc' | 'asc';
   orderId?: string;
   ownerEmail?: string;
   provider?: string;
@@ -691,6 +774,16 @@ function createToolHandlers(cx: McpContext) {
       return Object.entries(data).sort((a: any, b: any) => (b[1]?.updated_at || 0) - (a[1]?.updated_at || 0))[0]?.[0]?.trim().toLowerCase() || '';
     } catch (_) { return ''; }
   }
+  /** 从 provider caller 上下文解析 MCP 客户端身份，用作游标隔离的 clientId。 */
+  function _resolveClientId(): string | undefined {
+    try {
+      const caller = getProviderCaller();
+      // providerType 由 HTTP transport 的 x-voko-caller-provider header 注入（如 'zcode'/'codex'），
+      // 天然标识发起本次 MCP 调用的客户端类型。
+      const id = caller?.providerType || caller?.providerInstanceId;
+      return id ? String(id).slice(0, 64) : undefined;
+    } catch (_: unknown) { return undefined; }
+  }
   function _agentOwnershipError(agentId?: string): string | null {
     if (!agentId) return null;
     const row = cx.query<{ owner_email?: string | null }>(
@@ -708,13 +801,15 @@ function createToolHandlers(cx: McpContext) {
     if (r.mention) {
       try { mention = typeof r.mention === 'string' ? JSON.parse(r.mention) : r.mention; } catch (_: any) { mention = null; }
     }
+    const { timestamp, timestampMs } = _normalizeTimestamp(r.timestamp);
     return {
       id: r.id,
       channelId: r.channel_id,
       fromUid: r.from_uid,
       toUid: r.to_uid,
       content: r.content,
-      timestamp: r.timestamp,
+      timestamp,
+      timestampMs,
       messageSeq: r.message_seq,
       isMe: r.is_me >= 1,
       contentType: r.content_type || 1,
@@ -723,20 +818,40 @@ function createToolHandlers(cx: McpContext) {
       mention,
     };
   }
-  function fmtPullMsg(r: MessageDbRow) {
+  function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean } = {}) {
+    const base = fmtMsg(r);
+    const sourceType = r.sourceType || (r.from_uid === 'system' ? 'system' : 'visitor');
+    // agent_peer 入站消息会被 dispatcher 注入 [VOKO A2A CONTROL] 协议包装，
+    // pull 路径需剥掉这层包装，只暴露对端可见正文；visitor/system 消息不含协议块，原样返回。
+    const stripControl = opts.stripControl !== false;
+    const hasControlBlock = stripControl && sourceType === 'agent_peer' && _hasControlBlock(base.content);
+    let content = base.content;
+    let contentStripped = false;
+    if (hasControlBlock) {
+      const visible = _stripInboundControlBlock(content);
+      if (visible && visible !== content) {
+        content = visible;
+        contentStripped = true;
+      }
+    }
     return {
-      ...fmtMsg(r),
-      sourceType: r.sourceType || (r.from_uid === 'system' ? 'system' : 'visitor'),
+      ...base,
+      content,
+      contentStripped,
+      hasControlBlock,
+      sourceType,
       trustLevel: r.trustLevel || (r.from_uid === 'system' ? 'trusted_system' : 'untrusted'),
     };
   }
-  function fmtPullResult(rows: MessageDbRow[], hasMore: boolean) {
+  function fmtPullResult(rows: MessageDbRow[], hasMore: boolean, extra: Record<string, unknown> = {}) {
     return {
       success: true,
       securityContext: createPullSecurityContext(),
-      messages: rows.map(fmtPullMsg),
+      // 默认剥离 A2A 控制块；调用方可通过 extra.stripControl=false 关闭
+      messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false })),
       hasMore,
       count: rows.length,
+      ...extra,
     };
   }
 
@@ -899,9 +1014,18 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
-        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
-        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        let imStatus: WorkerConnectionStatus | undefined;
+        try {
+          imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        } catch (_) {
+          imStatus = { status: 'connect_fail' };
+        }
+        try {
+          imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
+        } catch (_) {
+          imStatus = { status: 'failed' };
+        }
+        if (imStatus?.error || imStatus?.status === 'connect_fail') imStatus = { status: 'failed' };
         if (imStatus && typeof imStatus === 'object') {
           const connected = imStatus.connected === true || imStatus.status === 'connected';
           return {
@@ -909,13 +1033,20 @@ function createToolHandlers(cx: McpContext) {
             message: '注册成功',
             agentId,
             agentName: data.agentName,
+            ...registrationRuntimeStatus(cx, agentId, imStatus),
             imConnection: { connected, status: imStatus.status || (connected ? 'connected' : 'unknown') },
-            ...(connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+            ...(connected ? {} : { warning: imStatus.status === 'failed' ? 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试' : 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
           };
         }
       }
 
-      return { success: true, message: '注册成功', agentId, agentName: data.agentName };
+      return {
+        success: true,
+        message: '注册成功',
+        agentId,
+        agentName: data.agentName,
+        ...registrationRuntimeStatus(cx, agentId),
+      };
     },
 
     // ─── 2b. 用 access-token 创建 Agent（已登录用户，无需验证码）───
@@ -989,9 +1120,18 @@ function createToolHandlers(cx: McpContext) {
 
       // Step 4：启动 IM 连接（公开回调名保持兼容）
       if (cx.startAgentWorker) {
-        let imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
-        imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
-        if (imStatus?.error || imStatus?.status === 'connect_fail') return { success: false, error: imStatus.error || 'Agent IM 连接失败' };
+        let imStatus: WorkerConnectionStatus | undefined;
+        try {
+          imStatus = await cx.startAgentWorker(agentId, { uid: data.imUid, token: data.imToken, serverUrl, backendType }) as WorkerConnectionStatus | undefined;
+        } catch (_) {
+          imStatus = { status: 'connect_fail' };
+        }
+        try {
+          imStatus = await waitForStartedAgentConnection(cx, agentId, imStatus);
+        } catch (_) {
+          imStatus = { status: 'failed' };
+        }
+        if (imStatus?.error || imStatus?.status === 'connect_fail') imStatus = { status: 'failed' };
         const imConnection = imStatus && typeof imStatus === 'object'
           ? { connected: imStatus.connected === true || imStatus.status === 'connected', status: imStatus.status || 'unknown' }
           : undefined;
@@ -1000,11 +1140,12 @@ function createToolHandlers(cx: McpContext) {
           message: '创建成功',
           agentId,
           agentName: data.name || p.agentName,
+          ...registrationRuntimeStatus(cx, agentId, imStatus),
           accessMode,
           accessModeSynced,
           ...(imConnection ? {
             imConnection,
-            ...(imConnection.connected ? {} : { warning: 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
+            ...(imConnection.connected ? {} : { warning: imStatus?.status === 'failed' ? 'Agent 已创建，但 IM Worker 启动失败，可稍后通过 start_worker 重试' : 'Agent 已创建，IM 连接仍在建立，可稍后通过 start_worker 重试' }),
           } : {}),
         };
       }
@@ -1014,6 +1155,7 @@ function createToolHandlers(cx: McpContext) {
         message: '创建成功',
         agentId,
         agentName: data.name || p.agentName,
+        ...registrationRuntimeStatus(cx, agentId),
         accessMode,
         accessModeSynced,
       };
@@ -1440,6 +1582,8 @@ function createToolHandlers(cx: McpContext) {
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const limit = Math.min(p.limit || 20, 200);
       const offset = p.offset || 0;
+      // order：'desc'（默认，最新在前）| 'asc'（最旧在前，按时间正序阅读）
+      const ascending = p.order === 'asc';
       const channelType = inferChannelType(p);
       const channelId = String(p.channelId || (channelType === 1 ? p.visitorId || '' : '')).trim();
       if (!channelId) {
@@ -1451,7 +1595,9 @@ function createToolHandlers(cx: McpContext) {
         let gsql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2`;
         const gparams = [channelId];
         if (p.keyword) { gsql += ` AND content LIKE ?`; gparams.push(`%${p.keyword}%`); }
-        gsql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC`;
+        gsql += ascending
+          ? ` ORDER BY timestamp ASC, message_seq ASC, id ASC`
+          : ` ORDER BY timestamp DESC, message_seq DESC, id DESC`;
         const all = cx.query<MessageDbRow>(gsql, gparams);
         const seen = new Set();
         const dedup = [];
@@ -1471,7 +1617,9 @@ function createToolHandlers(cx: McpContext) {
       let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2`;
       const params: unknown[] = [channelId, p.agentId];
       if (p.keyword) { sql += ` AND content LIKE ?`; params.push(`%${p.keyword}%`); }
-      sql += ` ORDER BY timestamp DESC, message_seq DESC, id DESC LIMIT ? OFFSET ?`;
+      sql += ascending
+        ? ` ORDER BY timestamp ASC, message_seq ASC, id ASC LIMIT ? OFFSET ?`
+        : ` ORDER BY timestamp DESC, message_seq DESC, id DESC LIMIT ? OFFSET ?`;
       params.push(limit + 1, offset);
       const rows = cx.query<MessageDbRow>(sql, params);
       const hasMore = rows.length > limit;
@@ -2312,16 +2460,25 @@ function createToolHandlers(cx: McpContext) {
 
     _fetchBlocks: new Map<string, PollController>(),
 
-    _channelCursorKey(agentId?: string, channelId?: string, channelType = 1) {
-      return `${agentId}:${channelType}:${channelId}`;
+    /**
+     * 游标 key 构造。
+     * - 基础格式 `${agentId}:${channelType}:${channelId}`（name=agentId, scopeKey=channelType:channelId）。
+     * - 多客户端隔离：传入 clientId 时追加 `@clientId` 后缀到 scopeKey，使不同 MCP 客户端
+     *   （如 zcode / codex / cursor）各自维护独立游标，互不抢消息。无 clientId 则用共享游标（向后兼容）。
+     */
+    _channelCursorKey(agentId?: string, channelId?: string, channelType = 1, clientId?: string) {
+      const base = `${agentId}:${channelType}:${channelId}`;
+      return clientId ? `${base}@${clientId}` : base;
     },
 
     _legacyChannelCursorKey(agentId?: string, channelId?: string) {
       return `${agentId}:${channelId}`;
     },
 
-    _getChannelCursor(agentId?: string, channelId?: string, channelType = 1) {
-      const current = _getCursorDb(cx.db, this._channelCursorKey(agentId, channelId, channelType));
+    _getChannelCursor(agentId?: string, channelId?: string, channelType = 1, clientId?: string) {
+      const current = _getCursorDb(cx.db, this._channelCursorKey(agentId, channelId, channelType, clientId));
+      // 有 clientId 的独立游标空间直接返回（不回退到 legacy/共享 key，否则就失去隔离意义）。
+      if (clientId) return current;
       // Direct-chat cursors written by older Lite versions remain readable.
       // Never apply that legacy key to groups: the old key did not encode type
       // and could otherwise skip the first group messages after an upgrade.
@@ -2329,9 +2486,9 @@ function createToolHandlers(cx: McpContext) {
       return _getCursorDb(cx.db, this._legacyChannelCursorKey(agentId, channelId));
     },
 
-    _setChannelCursor(agentId: string | undefined, channelId: string, seq: number, channelType = 1) {
-      const key = this._channelCursorKey(agentId, channelId, channelType);
-      if (seq > this._getChannelCursor(agentId, channelId, channelType)) _setCursorDb(cx.db, key, seq);
+    _setChannelCursor(agentId: string | undefined, channelId: string, seq: number, channelType = 1, clientId?: string) {
+      const key = this._channelCursorKey(agentId, channelId, channelType, clientId);
+      if (seq > this._getChannelCursor(agentId, channelId, channelType, clientId)) _setCursorDb(cx.db, key, seq);
     },
 
     async fetch_new_messages(p: McpToolParams = {}) {
@@ -2340,6 +2497,13 @@ function createToolHandlers(cx: McpContext) {
       const blockTimeout = p.blockTimeout || 0;
       const limit = Math.min(p.limit || 50, 200);
       const onlyReplies = p.onlyReplies !== false;
+      // onlyNew（默认 false=向后兼容）：首次拉取（自动游标为 0）时是否只设锚点、不回吐历史。
+      // 传 onlyNew:true 可避免"首次吞掉50条历史并推进游标→后续空等→误判对方没回复"，
+      // 适合只关心新消息的轮询客户端；需要首屏回放历史的客户端保持默认 false。
+      const onlyNew = p.onlyNew === true;
+      // clientId：多客户端游标隔离。未传时走共享游标（向后兼容）。
+      // 优先用显式入参，其次从 provider caller 上下文取（如 'zcode'/'codex'）。
+      const clientId = p.clientId || _resolveClientId();
 
       // 指定频道模式：channelId 优先；visitorId 保持原有单聊兼容。
       // 只有两者都未传时才进入下面的全量模式。
@@ -2349,8 +2513,30 @@ function createToolHandlers(cx: McpContext) {
       }
       if (targetChannelId) {
         const targetChannelType = inferChannelType({ ...p, toUid: targetChannelId });
-        const key = this._channelCursorKey(p.agentId, targetChannelId, targetChannelType);
-        const seq = p.messageSeq ?? this._getChannelCursor(p.agentId, targetChannelId, targetChannelType);
+        const key = this._channelCursorKey(p.agentId, targetChannelId, targetChannelType, clientId);
+        const autoCursor = this._getChannelCursor(p.agentId, targetChannelId, targetChannelType, clientId);
+        // messageSeq（旧名）与 cursor（新名）同义，显式传入覆盖自动游标
+        const explicitSeq = p.cursor ?? p.messageSeq;
+        const seq = explicitSeq != null ? explicitSeq : autoCursor;
+        // onlyNew 首次锚定：自动游标为 0、且未显式传起始游标 → 不回吐历史，只把游标设到当前 maxSeq。
+        const isFirstAnchor = onlyNew && autoCursor === 0 && explicitSeq == null;
+        if (isFirstAnchor) {
+          const maxRow = cx.query<MaxSequenceRow>(
+            targetChannelType === 2
+              ? `SELECT MAX(message_seq) as max_seq FROM messages WHERE channel_id=? AND channel_type=2`
+              : `SELECT MAX(message_seq) as max_seq FROM messages WHERE agent_id=? AND channel_id=?`,
+            targetChannelType === 2 ? [targetChannelId] : [p.agentId, targetChannelId]
+          );
+          const currentMax = maxRow[0]?.max_seq || 0;
+          if (currentMax > 0) this._setChannelCursor(p.agentId, targetChannelId, currentMax, targetChannelType, clientId);
+          return fmtPullResult([], false, {
+            cursor: currentMax,
+            nextMessageSeq: currentMax,
+            clientId: clientId || null,
+            anchored: true,
+            message: '首次拉取已设定锚点，未回吐历史消息；后续调用将只返回此锚点之后的新消息。',
+          });
+        }
 
         if (blockTimeout > 0) {
           const prev = this._fetchBlocks.get(key);
@@ -2361,14 +2547,14 @@ function createToolHandlers(cx: McpContext) {
             const rows = await this._pollSingleChannel(
               p.agentId, targetChannelId, seq, limit, onlyReplies, blockTimeout, ctrl, targetChannelType
             );
-            if (rows.length > 0) {
-              const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
-              this._setChannelCursor(p.agentId, targetChannelId, maxSeq, targetChannelType);
-            }
+            // 游标推进基于【全量消息】maxSeq（含 is_me=1），与 onlyReplies 过滤解耦，
+            // 避免只拉回复时游标漏推进自己发的消息导致下次重复。
+            const cursorSeq = this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
+            if (cursorSeq > 0) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
             const hasMore = rows.length > limit;
             if (hasMore) rows.pop();
             const filtered = this._a2aPreparePull(p.agentId, rows);
-            return fmtPullResult(filtered, hasMore);
+            return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
           } finally {
             if (this._fetchBlocks.get(key) === ctrl) this._fetchBlocks.delete(key);
           }
@@ -2377,14 +2563,12 @@ function createToolHandlers(cx: McpContext) {
         const rows = this._queryMessages(
           p.agentId, targetChannelId, seq, onlyReplies, limit, targetChannelType
         );
+        const cursorSeq = this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
+        if (cursorSeq > 0) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
-        if (rows.length > 0) {
-          const maxSeq = Math.max(...rows.map((row: { message_seq?: number }) => row.message_seq || 0));
-          this._setChannelCursor(p.agentId, targetChannelId, maxSeq, targetChannelType);
-        }
         const filtered = this._a2aPreparePull(p.agentId, rows);
-        return fmtPullResult(filtered, hasMore);
+        return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
       }
 
       // ─── 全量模式（不指定 visitorId）：按 channel 分别维护游标 ───
@@ -2401,28 +2585,36 @@ function createToolHandlers(cx: McpContext) {
       );
 
       const allRows: MessageDbRow[] = [];
+      const cursorByChannel: Record<string, number> = {};
       for (const ch of channels) {
         const channelId = ch.channel_id;
         const isGroup = ch.channel_type === 2;
-        const autoCursor = this._getChannelCursor(p.agentId, channelId, isGroup ? 2 : 1);
+        const chType = isGroup ? 2 : 1;
+        const autoCursor = this._getChannelCursor(p.agentId, channelId, chType, clientId);
+        const explicitSeq = p.cursor ?? p.messageSeq;
         let seq = autoCursor;
-        // 该 channel 首次拉取且用户传了全局 messageSeq 时：
-        // 仅当该 channel 的最大 seq 大于全局阈值，才把 messageSeq 作为起始点；
+        // 该 channel 首次拉取且用户传了全局 messageSeq/cursor 时：
+        // 仅当该 channel 的最大 seq 大于全局阈值，才把它作为起始点；
         // 否则从 0 开始，避免低 seq channel 的新消息被全局高 seq 漏掉。
-        if (seq === 0 && p.messageSeq != null) {
-          const maxRow = cx.query<MaxSequenceRow>(
-            isGroup
-              ? `SELECT MAX(message_seq) as max_seq FROM messages WHERE channel_id=? AND channel_type=2`
-              : `SELECT MAX(message_seq) as max_seq FROM messages WHERE agent_id=? AND channel_id=?`,
-            isGroup ? [channelId] : [p.agentId, channelId]
-          );
-          const channelMaxSeq = maxRow[0]?.max_seq || 0;
-          if (channelMaxSeq >= p.messageSeq) {
-            seq = p.messageSeq;
+        if (seq === 0 && explicitSeq != null) {
+          const channelMaxSeq = this._maxSeqAll(p.agentId, channelId, chType);
+          if (channelMaxSeq >= explicitSeq) {
+            seq = explicitSeq;
           }
         }
-        const rows = this._queryMessages(p.agentId, channelId, seq, onlyReplies, limit, isGroup ? 2 : 1);
+        // onlyNew 首次锚定：自动游标为 0 且未显式传游标 → 推进到该 channel maxSeq，不回吐历史
+        if (onlyNew && autoCursor === 0 && explicitSeq == null) {
+          const channelMaxSeq = this._maxSeqAll(p.agentId, channelId, chType);
+          if (channelMaxSeq > 0) this._setChannelCursor(p.agentId, channelId, channelMaxSeq, chType, clientId);
+          cursorByChannel[`${chType}:${channelId}`] = channelMaxSeq;
+          continue;
+        }
+        const rows = this._queryMessages(p.agentId, channelId, seq, onlyReplies, limit, chType);
         allRows.push(...rows);
+        // 游标推进基于全量 maxSeq（解耦 onlyReplies）
+        const channelMaxSeq = this._maxSeqAll(p.agentId, channelId, chType);
+        if (channelMaxSeq > 0) this._setChannelCursor(p.agentId, channelId, channelMaxSeq, chType, clientId);
+        cursorByChannel[`${chType}:${channelId}`] = channelMaxSeq;
       }
 
       // 合并后按 message_seq 升序，保证分页稳定
@@ -2431,13 +2623,25 @@ function createToolHandlers(cx: McpContext) {
       const hasMore = allRows.length > limit;
       if (hasMore) allRows.length = limit;
 
-      // 更新各 channel 自动游标
-      for (const row of allRows) {
-        this._setChannelCursor(p.agentId, row.channel_id, row.message_seq || 0, row.channel_type === 2 ? 2 : 1);
-      }
-
       const filtered = this._a2aPreparePull(p.agentId, allRows);
-      return fmtPullResult(filtered, hasMore);
+      return fmtPullResult(filtered, hasMore, { cursorByChannel, clientId: clientId || null });
+    },
+
+    /**
+     * 取某 channel 全量消息（不分 is_me）的最大 message_seq，用于游标推进。
+     * 与 onlyReplies 过滤解耦：即使本次只返回了回复（is_me!=1），游标也按全量 maxSeq 推进，
+     * 避免自己发出的消息（is_me=1）被漏掉导致下次重复推进。
+     */
+    _maxSeqAll(agentId: string | undefined, channelId: string, channelType: number = 1): number {
+      try {
+        const row = cx.query<MaxSequenceRow>(
+          channelType === 2
+            ? `SELECT MAX(message_seq) as max_seq FROM messages WHERE channel_id=? AND channel_type=2`
+            : `SELECT MAX(message_seq) as max_seq FROM messages WHERE agent_id=? AND channel_id=?`,
+          channelType === 2 ? [channelId] : [agentId, channelId]
+        )[0];
+        return row?.max_seq || 0;
+      } catch (_: unknown) { return 0; }
     },
 
     _queryMessages(

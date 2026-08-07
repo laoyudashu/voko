@@ -21,7 +21,7 @@ npm install --global @voko/lite
 voko start
 ```
 
-Open [http://localhost:3100](http://localhost:3100), finish the first local sign-in or registration, then add an Agent.
+After startup, run `voko status --json` and use its top-level `port` to open the local Web UI, finish the first local sign-in or registration, then add an Agent. `3100` is only the default port; do not treat it as a fixed address.
 
 ![Sanitized local VOKO Web UI example](assets/readme/local-web-ui-sanitized.png)
 
@@ -54,9 +54,9 @@ Some registration, cross-end messaging, email, payment, and update-check flows d
 
 ## Provider compatibility and validation
 
-VOKO's public matrix covers 17 primary Provider families and records recognized environments such as Amazon Q, WorkBuddy, and Doubao. Detection, functional validation, and complete real-device regression are different evidence levels: OpenClaw, Hermes, and Cursor have completed the documented real-device regression; Goose, Codex, Claude Code, and OpenCode have documented real-device functional validation; Gemini, OpenHands, and Amazon Q still contain pending or environment-blocked paths.
+VOKO's public matrix covers 17 primary Provider families and records recognized environments such as Amazon Q, WorkBuddy, and Doubao. Detection, functional validation, and complete real-device regression are different evidence levels: OpenClaw, Hermes, and Cursor have completed the documented real-device regression; Cline has completed the Windows ACP → CLI → ACP recovery loop; Goose, Codex, Claude Code, OpenCode, Kiro, GitHub Copilot, ZeroClaw, and Grok have documented real-device functional validation; Gemini, OpenHands, and Amazon Q still contain pending or environment-blocked paths.
 
-Automatic channels run only when they are locally available and selected during registration. Pull is always available: an Agent can retrieve messages through the VOKO CLI, MCP, or local interface. See [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md) for primary, fallback, and pull order; test OS notes; session-recovery boundaries; and safety limits. Install and sign in to external Providers yourself, and make their executable available on `PATH`; their licensing, availability, and OS support are outside VOKO's guarantee.
+Automatic channels run only when they are locally available and selected during registration. Pull is always available: an Agent can retrieve messages through the VOKO CLI, MCP, or local interface. See [Provider registration, delivery, and route recovery](docs/provider-delivery-routing.md) for registration modes, recommended delivery order, fallback, and route refresh; see [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md) for validation evidence, session-recovery boundaries, and safety limits. Installation, registration, and usage notes for validated Providers are collected in the [Provider-specific guides](docs/providers/README.md). Install and sign in to external Providers yourself, and make their executable available on `PATH`; their licensing, availability, and OS support are outside VOKO's guarantee.
 
 ## Platforms and local runtime
 
@@ -68,7 +68,7 @@ Before removing the package, run `voko uninstall`. It fully stops the local runt
 
 ## Help and contributions
 
-1. Prefer the local Web UI's [Report a bug page](http://localhost:3100/bug-report) for sanitized product issues. Never include passwords, tokens, private keys, verification codes, or private conversations.
+1. Prefer the local Web UI's Report a bug page for sanitized product issues; run `voko status --json` first to get the current port. Never include passwords, tokens, private keys, verification codes, or private conversations.
 2. Use [GitHub Issues](https://github.com/laoyudashu/voko/issues) for public discussions and compatibility feedback.
 3. Handle security issues through the private process in [SECURITY.md](SECURITY.md), never through a public issue.
 

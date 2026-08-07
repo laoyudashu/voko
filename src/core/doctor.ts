@@ -7,6 +7,7 @@ const { SCHEMA_VERSION } = require('./database');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle');
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
+const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
 
 const MIN_NODE_VERSION = '22.5.0';
@@ -15,6 +16,7 @@ const CHECK_TIMEOUT_MS = 2500;
 const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   hermes: [{ kind: 'native', command: 'hermes' }],
   goose: [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
+  'acp-goose': [{ kind: 'native', command: process.platform === 'win32' ? 'goose.exe' : 'goose' }],
   cline: [
     { kind: 'node-package-bin', command: 'cline', packageName: 'cline' },
     { kind: 'native', command: 'cline' },
@@ -216,10 +218,10 @@ function inspectRuntime(dbPath: string, runtime: any, checks: any[], deps: any):
   const port = Number(instance?.port || runtime?.port || 0) || null;
   if (running) {
     addCheck(checks, 'runtime', 'VOKO runtime', port ? 'ok' : 'warn', port ? `running (PID ${instance.pid}, port ${port})` : `running (PID ${instance.pid}), port unknown`, {
-      running: true, pid: instance.pid, port,
+      running: true, pid: instance.pid, port, instanceId: instance.instanceId || null, version: require('../../package.json').version,
     });
   } else {
-    addCheck(checks, 'runtime', 'VOKO runtime', 'warn', 'not running; start with voko start', { running: false, port: null });
+    addCheck(checks, 'runtime', 'VOKO runtime', 'warn', 'not running; start with voko start', { running: false, port: null, instanceId: null, version: null });
   }
   return { running, port };
 }
@@ -290,6 +292,43 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
   }
 }
 
+function inspectGooseDelivery(agents: any[], checks: any[]): void {
+  const gooseAgents = agents.filter((agent: any) => ['goose', 'acp-goose'].includes(normalizeBackendType(agent.backend_type)));
+  if (gooseAgents.length === 0) return;
+  const resolver = new AgentRuntimeResolver();
+  const runtimeAvailable = !!resolver.resolve({
+    providerId: 'doctor-goose-delivery', mode: 'cli', candidates: CLI_RUNTIME_CANDIDATES.goose,
+  }).available;
+  const rows = gooseAgents.map((agent: any) => {
+    const backend = normalizeBackendType(agent.backend_type);
+    const parsed = parseDeliveryModes(agent.delivery_modes);
+    const configuredModes = parsed.modes || (backend === 'acp-goose' ? ['acp', 'cli', 'pull'] : ['cli', 'pull']);
+    const activePushMode = runtimeAvailable ? configuredModes.find((mode) => mode !== 'pull') || null : null;
+    return { agentId: agent.agent_id, backend, configuredModes, runtimeAvailable, activePushMode };
+  });
+  const ready = rows.filter((row) => row.activePushMode).length;
+  addCheck(checks, 'goose-delivery', 'Goose delivery', ready === rows.length ? 'ok' : 'warn',
+    `${ready}/${rows.length} Goose Agent(s) have configured runtime and active Push`, { agents: rows });
+}
+
+function inspectMcpConfigFiles(options: any, checks: any[]): any {
+  const report = inspectMcpConfigs({
+    paths: options.mcpConfigPaths,
+    homeDir: options.homeDir,
+    appData: options.appData,
+    platform: options.platform,
+  });
+  if (report.clients.length === 0) {
+    addCheck(checks, 'mcp-config', 'MCP client configuration', 'skip', 'no known MCP client configuration file was found', report);
+  } else if (report.clients.some((client: any) => client.status === 'warn')) {
+    const affected = report.clients.filter((client: any) => client.status === 'warn').map((client: any) => client.client);
+    addCheck(checks, 'mcp-config', 'MCP client configuration', 'warn', `${affected.join(', ')} has VOKO configuration requiring review`, report);
+  } else {
+    addCheck(checks, 'mcp-config', 'MCP client configuration', 'ok', `${report.clients.length} known MCP configuration file(s) checked`, report);
+  }
+  return report;
+}
+
 function summarize(checks: any[], startedAt: number, options: any): any {
   const counts = checks.reduce((summary: any, check: any) => {
     summary[check.status] = (summary[check.status] || 0) + 1;
@@ -320,10 +359,31 @@ async function runDoctor(options: any = {}): Promise<any> {
   const nodeVersion = String(options.nodeVersion || process.versions.node);
 
   addCheck(checks, 'node', 'Node.js', versionAtLeast(nodeVersion, MIN_NODE_VERSION) ? 'ok' : 'error', `${nodeVersion} (minimum ${MIN_NODE_VERSION})`, { version: nodeVersion, minimum: MIN_NODE_VERSION });
+  let mcpMigration: any = null;
+  if (options.fixMcp) {
+    mcpMigration = migrateMcpConfigs({
+      paths: options.mcpConfigPaths,
+      homeDir: options.homeDir,
+      appData: options.appData,
+      platform: options.platform,
+    });
+    addCheck(
+      checks,
+      'mcp-migration',
+      'MCP configuration migration',
+      mcpMigration.errors > 0 ? 'warn' : 'ok',
+      mcpMigration.changed > 0
+        ? `updated ${mcpMigration.changed} configuration file(s); backups were created`
+        : 'no unambiguous legacy VOKO configuration was changed',
+      mcpMigration,
+    );
+  }
+  inspectMcpConfigFiles(options, checks);
   const inspected = inspectDatabase(dbPath, checks);
   if (inspected.db) {
     inspectAuthentication(inspected.config, checks);
     inspectAgents(inspected.agents, inspected.runtime, inspected.config, checks);
+    inspectGooseDelivery(inspected.agents, checks);
     const runtime = inspectRuntime(dbPath, inspected.runtime, checks, deps);
     if (runtime.running && typeof fetchImpl === 'function') await inspectLocalHealth(runtime.port, checks, fetchImpl);
     if (options.deep) {
@@ -337,6 +397,7 @@ async function runDoctor(options: any = {}): Promise<any> {
   }
   const result = summarize(checks, startedAt, options);
   result.dbPath = dbPath;
+  if (mcpMigration) result.mcpMigration = mcpMigration;
   return result;
 }
 
