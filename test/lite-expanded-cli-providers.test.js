@@ -14,6 +14,7 @@ const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { OpenHandsAcpProvider } = require('../build/core/dispatcher/providers/openhands-acp');
 const { GrokCliProvider } = require('../build/core/dispatcher/providers/grok-cli');
+const { ReasonixCliProvider } = require('../build/core/dispatcher/providers/reasonix-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
 const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor-acp');
@@ -534,4 +535,97 @@ test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['cline --plan --json']), 'cline');
   assert.equal(currentAgentTypeFromProcessRows(['q.exe chat']), 'amazon-q');
   assert.equal(currentAgentTypeFromProcessRows(['zeroclaw.exe agent --agent voko_test']), 'zeroclaw');
+});
+
+test('Reasonix CLI provider spawns headless with stream-json and stdin prompt', () => {
+  const provider = new ReasonixCliProvider();
+  assert.equal(provider._cmd, 'reasonix');
+  assert.equal(provider._matchType, 'reasonix');
+  assert.equal(provider._adapterType, 'reasonix-cli');
+  assert.equal(provider._cwd, os.tmpdir());
+  // headless 无人值守 + stream-json 输出 + stdin prompt（不追加 '-'）
+  assert.ok(provider._args.includes('run'));
+  assert.ok(provider._args.includes('--permission-mode'));
+  assert.ok(provider._args.includes('dontAsk'));
+  assert.ok(provider._args.includes('--output-format'));
+  assert.ok(provider._args.includes('stream-json'));
+  assert.equal(provider._args.includes('-'), false);
+  assert.match(provider._promptTemplate, /不得调用工具/);
+  // parser 指向新增的 reasonix 专用解析器
+  assert.equal(provider._parserName, 'reasonix-stream-json');
+  // session resume：argsForSession 带 --resume
+  const resumeArgs = provider._argsForSession('rx-session-1', false);
+  assert.ok(resumeArgs.includes('--resume'));
+  assert.ok(resumeArgs.includes('rx-session-1'));
+  assert.equal(resumeArgs.includes('-'), false);
+  // 无 session 时不含 --resume
+  const noSessionArgs = provider._argsForSession(null, false);
+  assert.ok(!noSessionArgs.includes('--resume'));
+  // sessionIdFromLine 从 stream-json 事件提取
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'session_created', session_id: 'rx-abc' })), 'rx-abc');
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'run_done', session_id: 'rx-xyz' })), 'rx-xyz');
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'text', data: 'hi' })), null);
+  assert.equal(provider._sessionIdFromLine('not json'), null);
+  // match 只认 backend_type === 'reasonix'
+  assert.equal(provider.match('agent-1', { backend_type: 'reasonix' }), true);
+  assert.equal(provider.match('agent-1', { backend_type: 'codex' }), false);
+});
+
+test('reasonix-stream-json parser extracts run_done result and streaming text', () => {
+  // 累积流式增量
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ type: 'text', data: 'Hello ' }));
+  parser.handleLine(JSON.stringify({ type: 'text', data: 'world' }));
+  parser.handleLine(JSON.stringify({ type: 'run_done', result: 'Hello world', session_id: 's1', is_error: false }));
+  assert.equal(streamed.join(''), 'Hello world');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser matches Reasonix 1.21 stream-json events', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ kind: 'text', text: 'RAW_' }));
+  parser.handleLine(JSON.stringify({ kind: 'text', text: 'OK' }));
+  parser.handleLine(JSON.stringify({ kind: 'message', text: 'RAW_OK' }));
+  parser.handleLine(JSON.stringify({ type: 'result', result: 'RAW_OK', session_id: 's-real' }));
+  assert.equal(streamed.join(''), 'RAW_OK');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser falls back to run_done.result when no streaming', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  // 无 text 增量，直接 run_done
+  parser.handleLine(JSON.stringify({ type: 'run_done', result: '最终回复', session_id: 's2' }));
+  assert.equal(streamed.join(''), '最终回复');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser surfaces error events', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ type: 'error', message: 'api timeout' }));
+  assert.match(streamed.join(''), /reasonix error.*api timeout/);
+  assert.equal(done, true);
 });

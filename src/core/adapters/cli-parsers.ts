@@ -204,6 +204,56 @@ function codexJsonlParser(line: string, ctx: ParserContext) {
   }
 }
 
+// ── reasonix-stream-json 解析器（reasonix run --output-format stream-json） ─
+//
+// Reasonix CLI 的 stream-json 输出为 NDJSON 事件流。1.21.0 的真实事件包括：
+//   {"kind":"text","text":"流式文本块"}                    （流式增量）
+//   {"kind":"message","text":"完整回复"}                  （回合消息）
+//   {"type":"result","result":"最终回复","session_id":"..."}
+// 旧版本/兼容入口可能使用 type=text/data、type=run_done/result 和 type=error/message，
+// 因此解析器同时接受两套字段，且最终结果在已经收到增量时跳过以避免重复。
+
+function reasonixStreamJsonParser(line: string, ctx: ParserContext) {
+  let obj;
+  try { obj = JSON.parse(line); } catch { return; }
+  if (!obj || typeof obj !== 'object') return;
+  const kind = obj.kind || obj.type;
+  if (!kind) return;
+
+  // 流式文本增量
+  if (kind === 'text' && (typeof obj.text === 'string' || typeof obj.data === 'string')) {
+    ctx._streamed = true;
+    ctx.onText(typeof obj.text === 'string' ? obj.text : obj.data);
+    return;
+  }
+
+  // 回合消息是无增量输出时的备用正文；正常情况下增量已经包含同一文本。
+  if (kind === 'message' && !ctx._streamed && typeof obj.text === 'string') {
+    ctx.onText(obj.text);
+    return;
+  }
+
+  // 最终完成：result 字段为完整回复（若已流式累积则跳过避免重复）
+  if (kind === 'run_done' || kind === 'result') {
+    if (!ctx._streamed) {
+      const result = obj.result;
+      if (typeof result === 'string') {
+        ctx.onText(result);
+      } else if (result && typeof result === 'object' && typeof result.text === 'string') {
+        ctx.onText(result.text);
+      }
+    }
+    ctx.onDone();
+    return;
+  }
+
+  // 错误事件
+  if (kind === 'error' && typeof obj.message === 'string') {
+    ctx.onText(`[reasonix error] ${obj.message}`);
+    ctx.onDone();
+  }
+}
+
 // ── grok-stream-json 解析器（grok --output-format streaming-json） ─────
 //
 // Grok CLI 的 streaming-json 输出（参考 Paperclip grok-local parse.ts）：
@@ -474,6 +524,7 @@ function createParser({
     'cursor-stream-json': cursorStreamJsonParser,
     'gemini-stream-json': geminiStreamJsonParser,
     'codex-jsonl': codexJsonlParser,
+    'reasonix-stream-json': reasonixStreamJsonParser,
     'grok-stream-json': grokStreamJsonParser,
     'pi-jsonl': piJsonlParser,
     'opencode-json': opencodeJsonParser,

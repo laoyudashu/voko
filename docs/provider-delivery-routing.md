@@ -64,6 +64,10 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 | Claude Code | `cli → pull` | Claude Code 当前没有 VOKO ACP 主通道。 |
 | Kiro | `cli → pull` | Kiro CLI 登录或 PATH 未就绪时先保留 Pull。 |
 | Grok | `cli → pull` | 代理、认证或模型未就绪时先保留 Pull。 |
+| Qwen Code | `cli → pull` | 使用 safe/plan、零工具预算的文字回复；认证或模型未就绪时先保留 Pull。 |
+| Pi Coding Agent | `cli → pull` | 使用无工具、无扩展、无技能的 JSONL CLI；认证未就绪时先保留 Pull。 |
+| Aider | `cli → pull` | 使用 ask/dry-run/no-git 只读问答；模型 API 未就绪时先保留 Pull。 |
+| Reasonix | `cli → pull` | 使用 stdin、stream-json、dontAsk；不要在参数末尾添加 `-`。 |
 
 不同 Agent、不同访客、私聊和群聊会分别保存会话绑定。不要在注册描述、MCP 参数或日志中填写或传播原生 session ID、Token 或私密配置路径。
 
@@ -114,5 +118,9 @@ VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测�
 - [Claude Code](providers/claude-code.md)
 - [Kiro CLI](providers/kiro.md)
 - [Grok CLI](providers/grok.md)
+- [Qwen Code](providers/qwen-code.md)
+- [Pi Coding Agent](providers/pi.md)
+- [Aider](providers/aider.md)
+- [Reasonix](providers/reasonix.md)
 
-Qwen Code、Aider、Pi、OpenHands、Gemini、Amazon Q、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
+OpenHands、Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。

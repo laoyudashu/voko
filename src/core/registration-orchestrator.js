@@ -37,6 +37,7 @@ const CLI_COMMANDS = {
   cline: 'cline',
   'github-copilot': 'copilot',
   grok: 'grok',
+  reasonix: 'reasonix',
 };
 const PULL_ONLY_CLI_COMMANDS = {
   openhands: 'openhands',
@@ -74,6 +75,10 @@ const CLI_DELIVERY_METADATA = {
   aider: {
     label: 'Aider 只读问答',
     description: 'VOKO 以 ask、dry-run、no-git 模式调用 Aider，不允许编辑或提交文件。',
+  },
+  reasonix: {
+    label: 'Reasonix 受限 CLI',
+    description: 'VOKO 以 stream-json、dontAsk 和 stdin 调用 Reasonix，仅允许无人值守文字回复。',
   },
   cline: {
     label: 'Cline Plan CLI',

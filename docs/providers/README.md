@@ -34,10 +34,14 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 - [Kiro CLI](kiro.md)：无交互 CLI、登录检查、`--resume-id` 和工具权限边界。
 - [ZeroClaw](zeroclaw.md)：Agent alias、ACP、CLI state file 隔离和配置安全。
 - [Grok CLI](grok.md)：OAuth/API 配置、无工具 Plan CLI、原生 session 和代理检查。
+- [Qwen Code](qwen-code.md)：无头 safe/plan CLI、DeepSeek 配置、原生 session 续接和 Pull 兜底。
+- [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
+- [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
+- [Reasonix](reasonix.md)：stdin、stream-json、dontAsk 权限、原生 session 和尾部参数注意事项。
 
 ## 暂不提供专属指南的 Provider
 
-Qwen Code、Aider、Pi、OpenHands、Gemini、Amazon Q、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
+OpenHands、Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
 
 ## 新增指南时的固定结构
 

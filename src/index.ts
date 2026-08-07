@@ -2104,6 +2104,7 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { backend: ['cline'], key: 'cline-acp', mod: './core/dispatcher/providers/cline-acp', named: 'ClineAcpProvider', args: { db, contextWindow: 20 } },
     { backend: ['cline'], key: 'cline-cli', mod: './core/dispatcher/providers/cline-cli', named: 'ClineCliProvider', args: { db, contextWindow: 20 } },
     { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
+    { backend: ['reasonix'], key: 'reasonix-cli', mod: './core/dispatcher/providers/reasonix-cli', named: 'ReasonixCliProvider', args: { db, contextWindow: 20 } },
   ];
   for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
     if (!needsBackend(...backend)) continue;

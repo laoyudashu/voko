@@ -19,10 +19,11 @@
 | Cursor Agent CLI | MCP、CLI、本机接口 | Cursor ACP → Cursor CLI（`--resume`）→ Pull | ACP、CLI 原生恢复和连续对话已验证 | Windows 真机 ACP/CLI 会话验证 | 官方运行入口解析；ACP 工具默认拒绝，CLI 使用只读 plan 模式；详见 [Cursor 专属指南](providers/cursor-agent.md)。 |
 | Kiro CLI | MCP、CLI、本机接口 | Kiro CLI（Hook session / `--resume-id`）→ Pull | 首次会话、精确 session 识别和续接已验证 | Windows 真机 CLI 会话验证 | 非交互、无预授权工具模式；详见 [Kiro 专属指南](providers/kiro.md)。 |
 | GitHub Copilot CLI | MCP、CLI、本机接口 | ACP → 受限 Copilot CLI → Pull | ACP 隔离会话、连续对话和受限 CLI 备选配置已覆盖 | Windows 真机 ACP/续接验证 | 禁用自定义指令、内置 MCP、远程导出和自动更新；工具白名单为空；详见 [Copilot 专属指南](providers/github-copilot.md)。 |
-| Qwen Code | MCP、CLI、本机接口 | Qwen CLI → Pull | 原生会话与必要本地历史恢复已验证 | 功能 / 会话验证 | safe / plan 配置排除 shell、写入、编辑和子 Agent；最大工具调用为 0。 |
-| Aider | MCP、CLI、本机接口 | Aider ask 模式 CLI → Pull | 隔离、哈希命名的历史文件可恢复 | 功能 / 会话验证 | dry-run、no-git、no-auto-commit、no-browser、禁 URL 检测与 shell 建议。 |
+| Qwen Code | MCP、CLI、本机接口 | Qwen CLI → Pull | 原生 session 与 `--resume` 恢复已验证 | Windows 真机 CLI/session 验证 | Qwen Code 0.21.7；safe/plan、零工具预算和受限 stdin；详见 [Qwen Code 专属指南](providers/qwen-code.md)。 |
+| Aider | MCP、CLI、本机接口 | Aider ask 模式 CLI → Pull | 隔离、哈希命名的历史文件可恢复 | Windows 真机 CLI/session 验证 | Aider 0.86.2；ask/dry-run、no-git、无浏览器和无 Shell 建议；详见 [Aider 专属指南](providers/aider.md)。 |
 | Cline | MCP、CLI、本机接口 | Cline ACP → Cline Plan CLI → Pull | ACP 隔离会话；CLI `--json` JSONL 输出已适配；ACP 退出后可健康恢复 | Windows 实机 ACP→CLI→ACP 回路验收 | ACP 使用 `cline --acp`；CLI 使用 plan/JSONL 模式并拒绝外部访客工具权限；CLI 需要先完成 `cline auth`。 |
-| Pi Coding Agent | MCP、CLI、本机接口 | Pi CLI → Pull | VOKO 历史与原生 session 恢复已验证 | 功能 / 会话验证 | no-tools、no-extensions、no-skills，且会话隔离。 |
+| Pi Coding Agent | MCP、CLI、本机接口 | Pi CLI → Pull | `--session-id` 原生 session 恢复已验证 | Windows 真机 CLI/session 验证 | Pi 0.84.0；no-tools、no-extensions、no-skills；详见 [Pi 专属指南](providers/pi.md)。 |
+| Reasonix | MCP、CLI、本机接口 | Reasonix CLI → Pull | `session_id` 与 `--resume` 原生恢复已验证 | Windows 真机 CLI/session 验证 | Reasonix 1.21.0；stdin 必须省略尾部 `-`，使用 `stream-json` + `dontAsk`；详见 [Reasonix 专属指南](providers/reasonix.md)。 |
 | Grok CLI | MCP、CLI、本机接口 | Grok CLI → Pull | 原生 session 绑定、连续对话和恢复已验证 | Windows 真机 CLI 会话验证 | Windows loopback proxy 可映射；plan、无工具、禁 web / subagents / memory、单轮；详见 [Grok 专属指南](providers/grok.md)。 |
 | OpenHands | MCP、CLI、本机接口 | 可靠 ACP → Pull | ACP 无头调用与恢复仍待实际环境验证 | 受限 / 待验证 | Windows UTF-8 环境已处理，避免 GBK 崩溃；不提供不安全的 headless CLI 自动备选。 |
 | ZeroClaw | MCP、CLI、本机接口 | ACP-over-WebSocket → ACP → CLI（alias + 独立 state file）→ Pull | ACP WebSocket 原生 session、连续对话和恢复已验证；CLI fallback 配置预检通过 | Windows ZeroClaw 0.8.3 真机 ACP-WebSocket 回路验证 | 网关使用本机回环 `/acp`、配对 Bearer token 和 `zeroclaw.acp.v1`；角色隔离与会话别名受保护；详见 [ZeroClaw 专属指南](providers/zeroclaw.md)。 |
