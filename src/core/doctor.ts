@@ -35,6 +35,7 @@ const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   'qwen-code': [{ kind: 'native', command: 'qwen' }],
   kiro: [{ kind: 'native', command: 'kiro-cli' }],
   aider: [{ kind: 'native', command: 'aider' }],
+  openhands: [{ kind: 'native', command: process.platform === 'win32' ? 'openhands.exe' : 'openhands' }],
   grok: [{ kind: 'native', command: 'grok' }],
 };
 

@@ -9,7 +9,7 @@ const sourceName = process.argv[2] || 'src';
 const destinationName = process.argv[3] || 'build';
 const SRC = path.join(__dirname, '..', sourceName);
 const DIST = path.join(__dirname, '..', destinationName);
-const ASSET_EXTS = new Set(['.json', '.html', '.txt']);
+const ASSET_EXTS = new Set(['.json', '.html', '.txt', '.py']);
 
 function walk(dir) {
   const out = [];

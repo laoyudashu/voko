@@ -36,6 +36,7 @@ interface ParserContext {
   text: string[];
   onText: (chunk: string) => void;
   onDone: () => void;
+  _error?: string;
   _streamed?: boolean;
   _lastTurnText?: string;
   _aiderPreamble?: boolean;
@@ -65,6 +66,7 @@ interface ParserRunner {
   handleLine: (line: string) => void;
   finish: () => void;
   readonly fullText: string;
+  readonly error?: string;
 }
 
 function streamJsonParser(line: string, ctx: ParserContext) {
@@ -212,6 +214,35 @@ function codexJsonlParser(line: string, ctx: ParserContext) {
 //   {"type":"result","result":"最终回复","session_id":"..."}
 // 旧版本/兼容入口可能使用 type=text/data、type=run_done/result 和 type=error/message，
 // 因此解析器同时接受两套字段，且最终结果在已经收到增量时跳过以避免重复。
+
+// OpenHands mixes Rich status lines with JSONL events. Only an agent
+// MessageEvent is user-facing; user messages, tool calls and protocol errors
+// must not be forwarded as a reply.
+function openHandsJsonlParser(line: string, ctx: ParserContext) {
+  let obj;
+  try { obj = JSON.parse(line); } catch { return; }
+  if (!obj || typeof obj !== 'object') return;
+
+  const kind = String(obj.kind || obj.type || '');
+  if (kind === 'ConversationErrorEvent' || kind === 'conversation_error') {
+    // Keep the error generic: OpenHands details can contain local paths,
+    // provider configuration or request metadata.
+    const code = typeof obj.code === 'string' && obj.code.trim()
+      ? obj.code.trim().slice(0, 96)
+      : 'conversation_error';
+    ctx._error = `OpenHands ${code}`;
+    return;
+  }
+
+  if (kind !== 'MessageEvent' || obj.source !== 'agent') return;
+  const message = obj.llm_message;
+  if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) return;
+  for (const block of message.content) {
+    if ((block?.type === 'text' || block?.type === 'output_text') && typeof block.text === 'string' && block.text) {
+      ctx.onText(block.text);
+    }
+  }
+}
 
 function reasonixStreamJsonParser(line: string, ctx: ParserContext) {
   let obj;
@@ -524,6 +555,7 @@ function createParser({
     'cursor-stream-json': cursorStreamJsonParser,
     'gemini-stream-json': geminiStreamJsonParser,
     'codex-jsonl': codexJsonlParser,
+    'openhands-jsonl': openHandsJsonlParser,
     'reasonix-stream-json': reasonixStreamJsonParser,
     'grok-stream-json': grokStreamJsonParser,
     'pi-jsonl': piJsonlParser,
@@ -560,6 +592,7 @@ function createParser({
     },
     /** 累积的完整文本 */
     get fullText() { return ctx.text.join(''); },
+    get error() { return ctx._error; },
   };
 }
 
@@ -568,6 +601,7 @@ module.exports = {
   cursorStreamJsonParser,
   geminiStreamJsonParser,
   codexJsonlParser,
+  openHandsJsonlParser,
   grokStreamJsonParser,
   piJsonlParser,
   opencodeJsonParser,

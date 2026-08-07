@@ -109,6 +109,7 @@ interface AcpAgentHealth {
 }
 
 interface AcpSdk {
+  PROTOCOL_VERSION?: number;
   ndJsonStream(output: unknown, input: unknown): unknown;
   client(options?: { name?: string }): {
     onRequest(method: unknown, handler: (context: { params: unknown }) => unknown): {
@@ -635,21 +636,21 @@ class AcpAdapter extends PushProvider {
         : null;
       const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
       const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
-      if (binding && observedSessionId === binding.nativeSessionId) {
-        this._bindingStore.touch(binding.id);
-      } else {
-        this._bindingStore.saveManaged({
-          agentId,
-          channelId,
-          channelType,
-          providerType: this._bindingProviderType,
-          providerInstanceId: binding?.providerInstanceId || null,
-          nativeSessionId: observedSessionId,
-          deliveryMode: 'cli',
-          adapterType: fb.adapterType || `${this._adapterType}-cli-fallback`,
-          expectedVersion: binding?.bindingVersion ?? 0,
-        });
-      }
+      // A CLI fallback can resume the same native session as ACP.  Persist
+      // the protocol switch as well as the last-used timestamp; otherwise the
+      // binding remains marked ACP and Dispatcher can route the next message
+      // back to a dead channel.
+      this._bindingStore.saveManaged({
+        agentId,
+        channelId,
+        channelType,
+        providerType: this._bindingProviderType,
+        providerInstanceId: binding?.providerInstanceId || null,
+        nativeSessionId: observedSessionId,
+        deliveryMode: 'cli',
+        adapterType: fb.adapterType || `${this._adapterType}-cli-fallback`,
+        expectedVersion: binding?.bindingVersion ?? 0,
+      });
     }
     if (!fullContent.trim()) throw new Error('CLI fallback produced no reply');
 
@@ -886,6 +887,13 @@ class AcpAdapter extends PushProvider {
       const currentState = this._agents.get(stateKey);
       if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch || this._providerStopped) return;
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
+      // connectWith only opens the JSON-RPC transport; ACP initialization is
+      // an explicit request that must precede session/new (OpenHands enforces
+      // this ordering even though some older ACP servers tolerated omission).
+      await agentCtx.request((sdk.methods as any).agent.initialize, {
+        protocolVersion: sdk.PROTOCOL_VERSION || 1,
+        clientCapabilities: {},
+      });
       state.agentCtx = agentCtx;
       this._markStateHealth(state, agentId, true, 'connected');
       if (state._readyResolve) {

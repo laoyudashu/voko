@@ -62,13 +62,15 @@ test('ZeroClaw WebSocket preflight reports missing configuration without probing
 
 test('ACP client denies tool permission requests by default', async () => {
   let permissionHandler;
+  let initialization;
   const adapter = new AcpAdapter({
     streamFactory: async () => ({ stream: {} }),
     connectionKey: () => 'shared',
   });
   adapter._acpSdk = {
+    PROTOCOL_VERSION: 1,
     methods: {
-      agent: { session: { resume: 'session/resume' } },
+      agent: { initialize: 'initialize', session: { resume: 'session/resume' } },
       client: { session: { requestPermission: 'session/request_permission' } },
     },
     client() {
@@ -78,13 +80,20 @@ test('ACP client denies tool permission requests by default', async () => {
           return this;
         },
         async connectWith(_stream, callback) {
-          await callback({});
+          await callback({ request: async (method, params) => {
+            initialization = { method, params };
+            return {};
+          } });
         },
       };
     },
   };
 
   await adapter._ensureAgent('agent-a');
+  assert.deepEqual(initialization, {
+    method: 'initialize',
+    params: { protocolVersion: 1, clientCapabilities: {} },
+  });
   assert.deepEqual(
     permissionHandler({ params: { sessionId: 's1', options: [{ optionId: 'allow' }] } }),
     { outcome: { outcome: 'cancelled' } },

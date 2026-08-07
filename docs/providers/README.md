@@ -24,6 +24,7 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 
 - [Goose](goose.md)：Goose CLI、ACP、原生 session ID、CLI 降级和恢复。
 - [Cline](cline.md)：Cline ACP、Plan CLI、工具权限边界、降级和恢复。
+- [OpenHands](openhands.md)：OpenHands CLI 1.16.0 / SDK 1.21.0、ACP、受限 headless JSON CLI、session 续接和降级恢复。
 - [OpenClaw](openclaw.md)：Gateway、实例选择、WebSocket、CLI 降级和 MCP 配置。
 - [Hermes](hermes.md)：profile、HTTP API、CLI 降级和 Gateway 排障。
 - [Codex](codex.md)：登录、只读 CLI、原生 thread ID 和 MCP 配置。
@@ -41,7 +42,7 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 
 ## 暂不提供专属指南的 Provider
 
-OpenHands、Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
+Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。它们的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。未完成验收前，不要依据本索引推断其自动 Push 可用。
 
 ## 新增指南时的固定结构
 

@@ -146,6 +146,12 @@ function page(title,body,opt={},tFn,locale){
   return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+submitLockScript()+ajaxPaginationScript()+ajaxListFilterScript()+ajaxAccessListScript()+'\n</body>\n</html>'
 }
 
+function agentIdCopyScript(tFn){
+  const copied=jsonForInlineScript(tFn('web.agent.info.id_copied'));
+  const failed=jsonForInlineScript(tFn('web.agent.info.id_copy_failed'));
+  return '<script>(function(){var target=document.querySelector("[data-copy-agent-id]");if(!target)return;var toast=null,timer=0,copied='+copied+',failed='+failed+';function getToast(){if(toast)return toast;toast=document.createElement("div");toast.className="voko-copy-toast";toast.setAttribute("role","status");toast.setAttribute("aria-live","polite");toast.style.cssText="position:fixed;left:50%;bottom:24px;z-index:2000;max-width:calc(100% - 32px);padding:7px 13px;border-radius:7px;background:#1a1a2e;color:#fff;font-size:14px;line-height:1.4;box-shadow:0 5px 18px rgba(15,23,42,.2);opacity:0;pointer-events:none;transform:translate(-50%,8px);transition:opacity .16s ease,transform .16s ease";document.body.appendChild(toast);return toast}function show(text,isError){var el=getToast();el.textContent=text;el.style.background=isError?"#b3261e":"#1a1a2e";el.style.opacity="1";el.style.transform="translate(-50%,0)";clearTimeout(timer);timer=setTimeout(function(){el.style.opacity="0";el.style.transform="translate(-50%,8px)"},1800)}function fallback(value){var area=document.createElement("textarea");area.value=value;area.setAttribute("readonly","");area.style.position="fixed";area.style.opacity="0";document.body.appendChild(area);area.select();var ok=false;try{ok=document.execCommand("copy")}catch(_){}area.remove();return ok}async function copy(){var value=target.getAttribute("data-copy-value")||target.textContent.trim(),ok=false;if(navigator.clipboard&&navigator.clipboard.writeText){try{await navigator.clipboard.writeText(value);ok=true}catch(_){}}if(!ok)ok=fallback(value);show(ok?copied:failed,!ok)}target.addEventListener("dblclick",function(event){event.preventDefault();copy()});target.addEventListener("keydown",function(event){if((event.key==="Enter"||event.key===" ")&&event.target===target){event.preventDefault();copy()}})})();</script>';
+}
+
 function agentNav(aid,aname,tFn){const home=tFn?tFn('common.nav.home'):'首页';return'<a href="/">'+esc(home)+'</a> › <a href="/agents/'+esc(aid)+'">'+esc(aname||aid)+'</a>'}
 
 /** 生成 POST 到 /agents/{id} 的表单 */
@@ -843,7 +849,7 @@ function createWebRouter(handlers, db, opts={}){
       else if(req.query.err)msg={success:false,text:req.query.err};
 
       // 信息条
-      const infoBar='<div class="info-bar"><span>ID: <code>'+aId+'</code></span><span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
+      const infoBar='<div class="info-bar"><span class="agent-id-copy" data-copy-agent-id data-copy-value="'+aId+'" tabindex="0" role="button" title="'+esc(T('web.agent.info.id_copy_hint'))+'" aria-label="'+esc(T('web.agent.info.id_copy_hint'))+'" style="cursor:copy">ID: <code>'+aId+'</code></span><span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
 
       // 搜索框
       const keywordEsc=esc(keyword);
@@ -1626,7 +1632,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         if(items.length)rowsHtml=items.map(r=>{
           const aname=r.agent_name||nameMap[r.agent_id]||r.agent_id||'';
           const prob=esc((r.problem||'').substring(0,100));
-          const statusCell=r.skip_reply?L('web.interventions.status.no_reply'):(r.owner_reply?L('web.interventions.reply.done'):L('web.interventions.reply.pending'));
+          const statusCell=r.skip_reply?L('web.interventions.status.no_reply'):(r.status==='unknown'?L('web.interventions.status.unknown'):(r.owner_reply?L('web.interventions.reply.done'):L('web.interventions.reply.pending')));
           const vn=intvNickMap[r.visitor_id];const member=vn?esc(vn)+' ('+esc(r.visitor_id)+')':esc(r.visitor_id||'');const vd=Number(r.target_channel_type)===2?esc(r.target_channel_id||'')+' / '+member:member;
           return '<tr><td>'+esc(aname)+'</td><td>'+vd+'</td><td style="max-width:200px;word-break:break-word;white-space:normal">'+prob+'</td><td class="meta" style="white-space:nowrap">'+timeTag(r.ask_time)+'</td><td style="white-space:nowrap;text-align:center">'+statusCell+'</td></tr>'
         }).join('\n')

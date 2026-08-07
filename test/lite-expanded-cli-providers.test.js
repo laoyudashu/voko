@@ -13,6 +13,10 @@ const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zero
 const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { OpenHandsAcpProvider } = require('../build/core/dispatcher/providers/openhands-acp');
+const {
+  OpenHandsCliProvider,
+  normalizeOpenHandsSessionId,
+} = require('../build/core/dispatcher/providers/openhands-cli');
 const { GrokCliProvider } = require('../build/core/dispatcher/providers/grok-cli');
 const { ReasonixCliProvider } = require('../build/core/dispatcher/providers/reasonix-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
@@ -315,11 +319,71 @@ test('Pi unattended delivery has native sessions with no tools, extensions or sk
 test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallback', () => {
   const provider = new OpenHandsAcpProvider();
   assert.equal(provider._adapterType, 'openhands-acp');
-  assert.deepEqual(provider._cliArgs, ['acp']);
+  assert.deepEqual(provider._cliArgs, ['acp', '--override-with-envs']);
   assert.equal(provider.options.env.PYTHONUTF8, '1');
   assert.equal(provider.options.env.PYTHONIOENCODING, 'utf-8');
   assert.equal(provider.options.env.OPENHANDS_SUPPRESS_BANNER, '1');
+  if (process.platform === 'win32') {
+    const pythonHookDir = String(provider.options.env.PYTHONPATH || '').split(path.delimiter)[0];
+    assert.match(pythonHookDir, /openhands-python/);
+    assert.equal(fs.existsSync(path.join(pythonHookDir, 'sitecustomize.py')), true);
+  }
+  assert.equal(provider.options.env.LITELLM_LOCAL_MODEL_COST_MAP, 'True');
+  if (process.platform === 'win32') {
+    assert.equal(provider.options.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(provider.options.env.GCM_INTERACTIVE, 'Never');
+    assert.match(provider.options.env.GIT_DIR, /voko-openhands-git-disabled-/);
+    assert.equal(provider.options.env.GIT_CONFIG_PARAMETERS, "'remote.origin.url'=''");
+    assert.equal(provider.options.env.GIT_CONFIG_COUNT, '2');
+    assert.equal(provider.options.env.GIT_CONFIG_KEY_0, 'http.lowspeedtime');
+    assert.equal(provider.options.env.GIT_CONFIG_VALUE_0, '5');
+    assert.equal(provider.options.env.GIT_CONFIG_KEY_1, 'http.lowspeedlimit');
+    assert.equal(provider.options.env.GIT_CONFIG_VALUE_1, '1');
+  }
   assert.equal(provider._cliFallback, null);
+});
+
+test('OpenHands CLI is a restricted JSON fallback and accepts ACP bindings', () => {
+  const provider = new OpenHandsCliProvider();
+  assert.equal(provider._adapterType, 'openhands-cli');
+  assert.equal(provider._parserName, 'openhands-jsonl');
+  assert.deepEqual(provider._args, ['--headless', '--json', '--override-with-envs', '--file', '{promptFile}']);
+  assert.equal(provider._requireOutput, true);
+  assert.equal(provider._requireSessionId, true);
+  assert.equal(provider._env.VOKO_OPENHANDS_CLI_SAFE, '1');
+  assert.equal(provider._env.OPENHANDS_SUPPRESS_BANNER, '1');
+  assert.equal(provider._env.PYTHONUTF8, '1');
+  assert.equal(provider._cwd, os.tmpdir());
+  assert.deepEqual(provider._argsForSession('native-openhands-id', false).slice(-2), ['--resume', 'native-openhands-id']);
+  assert.equal(
+    normalizeOpenHandsSessionId('0123456789abcdef0123456789abcdef'),
+    '01234567-89ab-cdef-0123-456789abcdef',
+  );
+  assert.equal(normalizeOpenHandsSessionId('01234567-89ab-cdef-0123-456789abcdef'), '01234567-89ab-cdef-0123-456789abcdef');
+  assert.equal(provider._argsForSession(null, true).includes('--resume'), false);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'openhands', adapterType: 'openhands-acp', nativeSessionId: 'native-openhands-id',
+  }), true);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'openhands', adapterType: 'other-cli', nativeSessionId: 'native-openhands-id',
+  }), false);
+  if (process.platform === 'win32') {
+    const pythonHookDir = String(provider._env.PYTHONPATH || '').split(path.delimiter)[0];
+    assert.match(pythonHookDir, /openhands-python/);
+    assert.equal(fs.existsSync(path.join(pythonHookDir, 'sitecustomize.py')), true);
+  }
+});
+
+test('OpenHands JSONL parser keeps only agent text and surfaces generic errors', () => {
+  const chunks = [];
+  const parser = createParser({ format: 'openhands-jsonl', onText: (chunk) => chunks.push(chunk) });
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'user', llm_message: { role: 'user', content: [{ type: 'text', text: 'ignore' }] } }));
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'agent', llm_message: { role: 'assistant', content: [{ type: 'text', text: 'OPENHANDS_' }] } }));
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'agent', llm_message: { role: 'assistant', content: [{ type: 'text', text: 'CLI_OK' }] } }));
+  assert.equal(chunks.join(''), 'OPENHANDS_CLI_OK');
+  const failed = createParser({ format: 'openhands-jsonl' });
+  failed.handleLine(JSON.stringify({ kind: 'ConversationErrorEvent', code: 'LLMBadRequestError', detail: 'secret path should not escape' }));
+  assert.equal(failed.error, 'OpenHands LLMBadRequestError');
 });
 
 test('Grok unattended delivery is tool-free and resumes only its bound session', () => {
@@ -366,6 +430,13 @@ test('DeepSeek environment is mapped without embedding credentials in command ar
     assert.equal(aider._env.PYTHONUTF8, '1');
     assert.equal(aider._env.PYTHONIOENCODING, 'utf-8');
     assert.doesNotMatch(aider._args.join(' '), /test-only-secret/);
+
+    const openhands = new OpenHandsAcpProvider();
+    assert.deepEqual(openhands._cliArgs, ['acp', '--override-with-envs']);
+    assert.equal(openhands.options.env.LLM_API_KEY, 'test-only-secret');
+    assert.equal(openhands.options.env.LLM_BASE_URL, 'https://api.deepseek.test');
+    assert.equal(openhands.options.env.LLM_MODEL, 'deepseek-chat');
+    assert.doesNotMatch(openhands._cliArgs.join(' '), /test-only-secret/);
   } finally {
     if (previous.key === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = previous.key;
@@ -502,9 +573,10 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   assert.deepEqual(service.deliveryCapabilities('cline').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
-  for (const type of ['openhands', 'amazon-q']) {
-    assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
-  }
+  assert.deepEqual(service.deliveryCapabilities('openhands').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
+  assert.equal(service.deliveryCapabilities('openhands')[0].status, 'ready');
+  assert.equal(service.deliveryCapabilities('openhands')[0].selected, true);
+  assert.deepEqual(service.deliveryCapabilities('amazon-q').map((mode) => mode.mode), ['pull']);
   const zeroModes = service.deliveryCapabilities('zeroclaw');
   assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp_ws', 'acp', 'cli', 'pull']);
   assert.equal(zeroModes[0].status, 'configuration_required');
@@ -522,6 +594,21 @@ test('Cline registration preflight accepts ACP and CLI delivery', async () => {
   service.setBasicInfo(started.registrationId, { agentName: 'Cline smoke' });
   const selected = service.selectProvider(started.registrationId, { providerType: 'cline' });
   assert.equal(selected.success, true);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'acp' }).ready, true);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
+});
+
+test('OpenHands registration preflight accepts ACP and CLI fallback', async () => {
+  const service = new RegistrationOrchestrator({
+    getLoggedEmail: async () => 'owner@example.com',
+    detectCurrentAgentType: () => null,
+    commandAvailable: (command) => command === 'openhands',
+  });
+  const started = await service.start({ email: 'owner@example.com' });
+  service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
+  const selected = service.selectProvider(started.registrationId, { providerType: 'openhands' });
+  assert.equal(selected.success, true);
+  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'acp' }).ready, true);
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
 });

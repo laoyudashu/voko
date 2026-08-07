@@ -56,6 +56,7 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 | Hermes | `http → cli → pull` | HTTP Gateway/profile 尚未准备好时先用 `cli → pull`。 |
 | Goose (`acp-goose`) | `acp → cli → pull` | 需要只用 CLI 时选择 `goose` 类型的 `cli → pull`。 |
 | Cline | `acp → cli → pull` | ACP 未登录或无法握手时先用 `cli → pull`，不要放开工具权限。 |
+| OpenHands | `acp → cli → pull` | ACP 不健康时使用受限 headless JSON CLI；OpenHands CLI 1.16.0 / SDK 1.21.0 已完成 Windows ACP→CLI→ACP 验证。 |
 | OpenCode | `acp → attach → cli → pull` | 仅使用已配置 Attach 服务或稳定 CLI 时，按预检结果减少通道。 |
 | Cursor | `acp → cli → pull` | ACP 不可用时先使用 Plan CLI；不要把 workspace 名称当作 Instance。 |
 | GitHub Copilot | `acp → cli → pull` | 优先 ACP；CLI 是受 ACP Provider 管理的受限备用通道。 |
@@ -110,6 +111,7 @@ VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测�
 - [Hermes](providers/hermes.md)
 - [Goose](providers/goose.md)
 - [Cline](providers/cline.md)
+- [OpenHands](providers/openhands.md)
 - [OpenCode](providers/opencode.md)
 - [Cursor Agent CLI](providers/cursor-agent.md)
 - [GitHub Copilot CLI](providers/github-copilot.md)
@@ -123,4 +125,4 @@ VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测�
 - [Aider](providers/aider.md)
 - [Reasonix](providers/reasonix.md)
 
-OpenHands、Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
+Gemini、Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。

@@ -25,7 +25,7 @@
 | Pi Coding Agent | MCP、CLI、本机接口 | Pi CLI → Pull | `--session-id` 原生 session 恢复已验证 | Windows 真机 CLI/session 验证 | Pi 0.84.0；no-tools、no-extensions、no-skills；详见 [Pi 专属指南](providers/pi.md)。 |
 | Reasonix | MCP、CLI、本机接口 | Reasonix CLI → Pull | `session_id` 与 `--resume` 原生恢复已验证 | Windows 真机 CLI/session 验证 | Reasonix 1.21.0；stdin 必须省略尾部 `-`，使用 `stream-json` + `dontAsk`；详见 [Reasonix 专属指南](providers/reasonix.md)。 |
 | Grok CLI | MCP、CLI、本机接口 | Grok CLI → Pull | 原生 session 绑定、连续对话和恢复已验证 | Windows 真机 CLI 会话验证 | Windows loopback proxy 可映射；plan、无工具、禁 web / subagents / memory、单轮；详见 [Grok 专属指南](providers/grok.md)。 |
-| OpenHands | MCP、CLI、本机接口 | 可靠 ACP → Pull | ACP 无头调用与恢复仍待实际环境验证 | 受限 / 待验证 | Windows UTF-8 环境已处理，避免 GBK 崩溃；不提供不安全的 headless CLI 自动备选。 |
+| OpenHands | MCP、CLI、本机接口 | ACP → 受限 headless JSON CLI → Pull | CLI 首次/续接、ACP → CLI → ACP 往返和原生 session 保持已验证 | Windows 真机 ACP/CLI 回路验证 | OpenHands CLI 1.16.0，启动时显示 SDK 1.21.0；CLI 禁用终端、文件、浏览器、MCP、网络和子代理工具；详见 [OpenHands 专属指南](providers/openhands.md)。 |
 | ZeroClaw | MCP、CLI、本机接口 | ACP-over-WebSocket → ACP → CLI（alias + 独立 state file）→ Pull | ACP WebSocket 原生 session、连续对话和恢复已验证；CLI fallback 配置预检通过 | Windows ZeroClaw 0.8.3 真机 ACP-WebSocket 回路验证 | 网关使用本机回环 `/acp`、配对 Bearer token 和 `zeroclaw.acp.v1`；角色隔离与会话别名受保护；详见 [ZeroClaw 专属指南](providers/zeroclaw.md)。 |
 | Gemini CLI | MCP、CLI、本机接口（能力设计） | 安全沙箱 CLI（需 Docker）→ Pull | 尚未完成生产级沙箱真机验证 | 待验证 / 环境受阻 | 当前 Windows Docker daemon 未运行，不应视为自动推送已通过。 |
 

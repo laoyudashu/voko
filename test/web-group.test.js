@@ -24,7 +24,7 @@ function createDb(imUid) {
   };
 }
 
-function startServer(role) {
+function startServer(role, messages = []) {
   const imUid = 'agent-im-uid';
   const handlers = {
     whoami: async () => ({
@@ -38,7 +38,7 @@ function startServer(role) {
         { uid: imUid, nickname: 'Agent One', role },
         { uid: 'visitor-1', nickname: 'Visitor', role: 'member' },
       ],
-      messages: [],
+      messages,
       hasMore: false,
     }),
     list_group_applies: async () => ({ success: true, applies: [] }),
@@ -66,8 +66,8 @@ function startServer(role) {
   });
 }
 
-async function renderGroup(t, role) {
-  const server = await startServer(role);
+async function renderGroup(t, role, messages) {
+  const server = await startServer(role, messages);
   t.after(() => server.close());
   const response = await fetch(`${server.url}/agents/agent-1/g/group-1`, {
     signal: AbortSignal.timeout(3000),
@@ -86,6 +86,21 @@ describe('Web group detail rendering', () => {
   it('injects no manager capability for an ordinary member', async (t) => {
     const html = await renderGroup(t, 'member');
     assert.match(html, /window\.__IS_MANAGER__=false;/);
+  });
+
+  it('collapses long group messages while keeping the full content available', async (t) => {
+    const longText = '群聊完整内容 '.repeat(80);
+    const html = await renderGroup(t, 'member', [{
+      senderName: 'Visitor',
+      fromUid: 'visitor-1',
+      contentType: 1,
+      content: longText,
+      timestamp: 1,
+    }]);
+    assert.match(html, /data-voko-expandable/);
+    assert.match(html, /data-voko-message-preview/);
+    assert.match(html, /data-voko-message-full hidden/);
+    assert.match(html, /展开全文/);
   });
 });
 

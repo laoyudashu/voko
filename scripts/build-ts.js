@@ -9,7 +9,7 @@ const SOURCE_DIR = path.join(PACKAGE_DIR, 'src');
 const BUILD_DIR = path.join(PACKAGE_DIR, 'build');
 const LOCK_DIR = path.join(PACKAGE_DIR, '.build-lock');
 const STAGE_DIR = path.join(PACKAGE_DIR, `.build-stage-${process.pid}-${Date.now()}`);
-const ASSET_EXTS = new Set(['.json', '.html', '.txt']);
+const ASSET_EXTS = new Set(['.json', '.html', '.txt', '.py']);
 const LOCK_TIMEOUT_MS = 120_000;
 
 function sleep(ms) {

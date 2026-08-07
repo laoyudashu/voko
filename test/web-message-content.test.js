@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createMessageRenderer } = require('../src/web/message-content');
+const { createMessageRenderer, messageExpandScript } = require('../src/web/message-content');
 
 const renderer = createMessageRenderer({
   image: '图片',
@@ -40,4 +40,21 @@ test('图片附件 JSON 根据文件名渲染图片预览', () => {
   assert.match(html, /src="https:\/\/files\.example\.com\/screenshot\.png"/);
   assert.match(html, /屏幕截图 2026-02-25 164355\.png/);
   assert.doesNotMatch(html, /class="voko-file-card"/);
+});
+
+test('long text keeps a collapsed preview and exposes an expandable full message', () => {
+  const content = 'a'.repeat(600);
+  const html = renderer.render(1, content);
+
+  assert.match(html, /data-voko-expandable/);
+  assert.match(html, /data-voko-message-preview/);
+  assert.match(html, /data-voko-message-full hidden/);
+  assert.match(html, /data-voko-expand-message/);
+  assert.match(html, new RegExp('a{500}…'));
+  assert.match(html, new RegExp('a{600}'));
+});
+
+test('message expand script is valid inline JavaScript', () => {
+  const script = messageExpandScript((key) => key);
+  assert.doesNotThrow(() => new Function(script.replace(/^<script>|<\/script>$/g, '')));
 });

@@ -851,6 +851,26 @@ class RegistrationOrchestrator {
         pull,
       ];
     }
+    if (type === 'openhands') {
+      const available = hasCommand('openhands');
+      const status = available ? 'ready' : 'unavailable';
+      const action = available ? 'test' : null;
+      return [
+        {
+          mode: 'acp', label: 'OpenHands ACP 瀹炴椂浼氳瘽', role: 'primary',
+          status, selected: available, recommended: true, action,
+          description: available
+            ? 'VOKO 閫氳繃 OpenHands 标准 ACP 鍒涘缓闅旂浼氳瘽锛涙棤宸ュ叿鎺堟潈锛屽悓涓€ Agent/璁垮缁х画浣跨敤鍚屼竴 ACP session銆?'
+            : '鏈満鏈娴嬪埌 OpenHands ACP 杩愯鍏ュ叆銆?',
+        },
+        {
+          mode: 'cli', label: 'OpenHands CLI', role: 'fallback',
+          status, selected: available, action,
+          description: 'ACP unavailable: use restricted headless JSON CLI while preserving the native conversation ID.',
+        },
+        pull,
+      ];
+    }
     if (type === 'cursor') {
       const available = this.options.commandAvailable
         ? hasCommand('cursor-agent') || hasCommand('agent')
@@ -1160,6 +1180,7 @@ class RegistrationOrchestrator {
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
       || ((provider === 'github-copilot' || provider === 'cursor') && mode === 'acp')
       || (provider === 'cline' && mode === 'acp')
+      || (provider === 'openhands' && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
