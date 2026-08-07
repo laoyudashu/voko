@@ -1656,7 +1656,7 @@ function createDatabaseAPI(db: DatabaseSync) {
       try {
         const stmt = db.prepare(`
           SELECT * FROM owner_interventions
-          WHERE status IN ('pending', 'replied')
+          WHERE status IN ('pending', 'replied', 'unknown')
           ORDER BY ask_time DESC
         `);
         return stmt.all().map((row: OwnerInterventionRow) => ({

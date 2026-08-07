@@ -17,6 +17,7 @@ import type { DatabaseLike } from '../../types/database';
 import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { normalizeOwnerForwardOutcome } = require('../owner-intervention-forward');
 
 interface DispatcherProvider {
   priority?: number;
@@ -25,7 +26,12 @@ interface DispatcherProvider {
   isAvailable?(agentId: string): boolean;
   isFallbackAvailable?(agentId: string, mode: string): boolean;
   push?(payload: PushPayload): unknown;
-  steer?(agentId: string, visitorId: string, content: string, metadata?: { turnId: string }): unknown;
+  steer?(agentId: string, visitorId: string, content: string, metadata?: {
+    turnId: string;
+    channelId?: string;
+    channelType?: number;
+    providerBinding?: PushPayload['providerBinding'];
+  }): unknown;
   start?(): unknown;
   stop?(): unknown;
   healthCheck?(): unknown;
@@ -37,7 +43,16 @@ interface DispatcherProvider {
 }
 
 type RouteOperation = 'push' | 'steer';
-type DeliveryOutcome = 'not_delivered' | 'outcome_unknown' | 'rejected';
+type DeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
+type DeliveryFailureOutcome = Exclude<DeliveryOutcome, 'delivered'>;
+
+interface SteerResult {
+  success: boolean;
+  deliveryOutcome: DeliveryOutcome;
+  output?: unknown;
+  result?: unknown;
+  error?: string;
+}
 
 interface AvailabilityEvent {
   providerId?: string;
@@ -130,7 +145,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function deliveryOutcome(error: unknown): DeliveryOutcome {
+function deliveryOutcome(error: unknown): DeliveryFailureOutcome {
   const explicit = (error as any)?.deliveryOutcome;
   if (explicit === 'rejected' && (error as any)?.channelUnavailable === true) return 'not_delivered';
   if (explicit === 'not_delivered' || explicit === 'outcome_unknown' || explicit === 'rejected') return explicit;
@@ -1021,26 +1036,79 @@ ${body}
     visitorId: string,
     content: string,
     replyContext: ReplyContext | null = null,
-  ): Promise<unknown> {
+  ): Promise<SteerResult> {
     let route = _routeProviderEntry(agentId, 'steer');
-    if (!route) return null;
+    if (!route) {
+      return {
+        success: false,
+        deliveryOutcome: 'not_delivered',
+        error: 'no available steer channel',
+      };
+    }
     try {
       const turnId = String(replyContext?.turnId || replyContext?.interventionId || `steer-${Date.now()}`);
+      const channelType = Number(replyContext?.channelType) === 2 || String(visitorId).startsWith('group:') ? 2 : 1;
+      const channelId = String(replyContext?.channelId || String(visitorId).replace(/^group:/, ''));
+      const steerTarget = channelType === 2 ? `group:${channelId}` : visitorId;
+      const capturedBinding = _captureProviderBinding(agentId, {
+        agentId,
+        fromUid: steerTarget,
+        content,
+        channelId,
+        channelType,
+        messageId: turnId,
+      }).providerBinding;
       if (replyContext) {
-        _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
+        _rememberReplyContext(agentId, steerTarget, { ...replyContext, turnId, channelId, channelType });
       }
       const failed = new Set<DispatcherProvider>();
       let fallbackUsed = false;
+      let lastFailure: SteerResult | null = null;
       while (route) {
         const provider = route.provider;
         try {
-          const result = await provider.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId });
+          const result = await provider.steer!(agentId, steerTarget, wrapPushContent(content, 'owner'), {
+            turnId,
+            channelId,
+            channelType,
+            providerBinding: _bindingForRoute(agentId, capturedBinding, route),
+          });
+          const outcome = normalizeOwnerForwardOutcome(result) as DeliveryOutcome;
+          if (outcome !== 'delivered') {
+            failed.add(provider);
+            _forgetRoute(agentId, 'steer', provider);
+            lastFailure = {
+              success: false,
+              deliveryOutcome: outcome,
+              result,
+              error: `provider returned ${outcome}`,
+            };
+            if (outcome !== 'not_delivered') {
+              console.error(`[Dispatcher] steer result=${outcome}; no cross-channel retry agent=${agentId}`);
+              break;
+            }
+            console.error(`[Dispatcher] steer confirmed not delivered; trying fallback agent=${agentId}`);
+            if (fallbackUsed) break;
+            fallbackUsed = true;
+            route = _routeProviderEntry(agentId, 'steer', failed);
+            continue;
+          }
           _cacheRouteIfCurrent(agentId, 'steer', route);
-          return result;
+          return {
+            ...(result && typeof result === 'object' ? result as Record<string, unknown> : {}),
+            success: true,
+            deliveryOutcome: 'delivered',
+            result,
+          };
         } catch (error) {
           const outcome = deliveryOutcome(error);
           failed.add(provider);
           _forgetRoute(agentId, 'steer', provider);
+          lastFailure = {
+            success: false,
+            deliveryOutcome: outcome,
+            error: errorMessage(error),
+          };
           if (outcome !== 'not_delivered') {
             console.error(`[Dispatcher] steer 结果=${outcome}，不跨通道重投 agent=${agentId}:`, errorMessage(error));
             break;
@@ -1052,14 +1120,22 @@ ${body}
         }
       }
       if (replyContext) {
-        const queue = _replyContexts.get(_replyContextKey(agentId, visitorId));
+        const queue = _replyContexts.get(_replyContextKey(agentId, steerTarget));
         const context = queue?.find((item) => item.turnId === turnId);
         if (context) _removeReplyContext(context);
       }
-      return null;
+      return lastFailure || {
+        success: false,
+        deliveryOutcome: 'not_delivered',
+        error: 'no available steer channel',
+      };
     } catch (err) {
       console.error(`[Dispatcher] steer 失败 agent=${agentId}:`, errorMessage(err));
-      return null;
+      return {
+        success: false,
+        deliveryOutcome: 'outcome_unknown',
+        error: errorMessage(err),
+      };
     }
   }
 

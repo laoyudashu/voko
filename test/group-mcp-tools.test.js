@@ -477,7 +477,11 @@ await test('ask_human_for_help persists and emits the original group context', a
     assert.strictEqual(interventions[0].targetChannelType, 2);
     assert.strictEqual(interventions[0].targetChannelId, 'room1');
 
+    db.prepare("UPDATE owner_interventions SET status='unknown', owner_reply=? WHERE id=?")
+      .run('approve', result.interventionId);
     const checked = await handlers.check_human_replies({ agentId: 'agentA', id: result.interventionId });
+    assert.strictEqual(checked.interventions[0].status, 'unknown');
+    assert.strictEqual(checked.interventions[0].ownerReply, 'approve');
     assert.strictEqual(checked.interventions[0].channelType, 2);
     assert.strictEqual(checked.interventions[0].channelId, 'room1');
     assert.strictEqual(checked.interventions[0].sourceSenderUid, 'visitor1');

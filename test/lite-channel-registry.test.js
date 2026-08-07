@@ -88,6 +88,51 @@ test('主人回复通过 resume 回调成功后才标记已通知和 resolved', 
   ]);
 });
 
+test('渠道回调对未知转发结果标记 unknown 并停止自动重投', async () => {
+  const calls = [];
+  const registry = loadFreshRegistry();
+  const databaseAPI = createDatabaseApi({
+    updateOwnerInterventionReply: () => ({ success: true, contentChanged: true }),
+    markAgentNotified: (id) => calls.push(['notified', id]),
+    updateOwnerInterventionStatus: (id, status, resolvedAt) => calls.push(['status', id, status, resolvedAt]),
+  });
+  const onReply = registry.createOnOwnerReply('telegram', {
+    databaseAPI,
+    buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
+    resumeOwnerIntervention: async () => ({ success: false, deliveryOutcome: 'outcome_unknown' }),
+  });
+
+  onReply({ id: 'intervention-unknown', visitorId: 'visitor-1', sessionKey: 'agent:a:visitor-1', problem: 'need owner' }, '稍后处理');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, [
+    ['notified', 'intervention-unknown'],
+    ['status', 'intervention-unknown', 'unknown', null],
+  ]);
+});
+
+test('渠道重复收到同一主人回复时不重复执行好友申请审批', async () => {
+  let replyUpdates = 0;
+  let approvals = 0;
+  const registry = loadFreshRegistry();
+  const databaseAPI = createDatabaseApi({
+    updateOwnerInterventionReply: () => ({ success: true, contentChanged: replyUpdates++ === 0 }),
+    markAgentNotified: () => {},
+    updateOwnerInterventionStatus: () => {},
+  });
+  const onReply = registry.createOnOwnerReply('telegram', {
+    databaseAPI,
+    autoApproveWhitelistIfFriendRequest: () => { approvals += 1; },
+    resumeOwnerIntervention: async () => ({ success: true, deliveryOutcome: 'delivered' }),
+  });
+  const intervention = { id: 'intervention-duplicate', visitorId: 'visitor-1', sessionKey: 'agent:a:visitor-1', problem: 'friend request' };
+
+  onReply(intervention, '同意');
+  onReply(intervention, '同意');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(approvals, 1);
+});
+
 test('voko-email 首次初始化与重新初始化都注入 agentEmailApi 和 db', async () => {
   const callbackSnapshots = [];
   class FakeVokoEmailHandler {

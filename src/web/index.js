@@ -922,7 +922,7 @@ function createWebRouter(handlers, db, opts={}){
 
       const tabScript='<script>(function(){function setTab(t){var c=document.getElementById("tab-conv"),g=document.getElementById("tab-group");if(c)c.style.display=(t==="conv"?"":"none");if(g)g.style.display=(t==="group"?"":"none");document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group")u.searchParams.set("tab","group");else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
 
-      res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript}))
+      res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript+agentIdCopyScript(T)}))
     }catch(e){next(e)}
   });
 

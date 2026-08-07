@@ -276,6 +276,41 @@ test('outcome_unknown is not retried through another provider', async () => {
   assert.deepEqual(calls, ['websocket']);
 });
 
+test('steer returns explicit delivery outcomes and does not retry unknown results', async () => {
+  const calls = [];
+  const unknown = new Error('request timed out after write');
+  unknown.deliveryOutcome = 'outcome_unknown';
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: {
+      'openclaw-ws': {
+        priority: 100,
+        match: () => true,
+        isAvailable: () => true,
+        async steer() { calls.push('websocket'); throw unknown; },
+      },
+      'openclaw-cli': {
+        priority: 10,
+        match: () => true,
+        isAvailable: () => true,
+        async steer() { calls.push('cli'); },
+      },
+    },
+  });
+
+  const result = await dispatcher.steer('agent-1', 'visitor-1', 'owner');
+  assert.equal(result.success, false);
+  assert.equal(result.deliveryOutcome, 'outcome_unknown');
+  assert.deepEqual(calls, ['websocket']);
+});
+
+test('steer without an available provider is confirmed not delivered', async () => {
+  const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
+  const result = await dispatcher.steer('agent-1', 'visitor-1', 'owner');
+  assert.equal(result.success, false);
+  assert.equal(result.deliveryOutcome, 'not_delivered');
+});
+
 test('confirmed failure uses at most one fallback provider', async () => {
   const calls = [];
   const unavailable = () => {

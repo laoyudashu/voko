@@ -6,6 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 const OpenClawWsProvider = require('../build/core/dispatcher/providers/openclaw-ws');
 const HermesHttpProvider = require('../build/core/dispatcher/providers/hermes-http');
 const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
+const { GooseAcpProvider } = require('../build/core/dispatcher/providers/goose-acp');
 
 function dbWithHistory() {
   const db = new DatabaseSync(':memory:');
@@ -32,6 +33,41 @@ const basePayload = {
   content: 'first message',
   channelType: 1,
 };
+
+test('AcpAdapter steer reuses push and preserves the owner turnId', async () => {
+  const sent = [];
+  class TestAcpProvider extends AcpAdapter {
+    async push(payload) {
+      sent.push(payload);
+    }
+  }
+  const provider = new TestAcpProvider({ name: 'TEST ACP' });
+  await provider.steer('agent-a', 'visitor-a', 'owner reply', { turnId: 'turn-owner-1' });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].agentId, 'agent-a');
+  assert.equal(sent[0].fromUid, 'visitor-a');
+  assert.equal(sent[0].content, 'owner reply');
+  assert.equal(sent[0].messageId, 'turn-owner-1');
+  assert.equal(sent[0].turnId, 'turn-owner-1');
+  assert.equal(sent[0].channelId, 'visitor-a');
+  assert.equal(sent[0].channelType, 1);
+  assert.equal(sent[0].providerBinding, null);
+  await provider.steer('agent-a', 'group:group-1', 'group owner reply', {
+    turnId: 'turn-group-1', channelType: 2, channelId: 'group-1',
+  });
+  assert.equal(sent[1].fromUid, 'group:group-1');
+  assert.equal(sent[1].sessionTarget, 'group:group-1');
+  assert.equal(sent[1].channelType, 2);
+});
+
+test('Goose ACP inherits the common owner steer implementation', async () => {
+  const sent = [];
+  const provider = new GooseAcpProvider({ binPath: 'goose' });
+  provider.push = async payload => sent.push(payload);
+  await provider.steer('agent-goose', 'visitor-a', 'owner reply', { turnId: 'goose-turn-1' });
+  assert.equal(sent[0].turnId, 'goose-turn-1');
+  assert.equal(sent[0].fromUid, 'visitor-a');
+});
 
 function binding(providerType, deliveryMode, adapterType, nativeSessionId) {
   return {

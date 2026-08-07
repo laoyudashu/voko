@@ -391,6 +391,35 @@ class AcpAdapter extends PushProvider {
     throw unavailable;
   }
 
+  /** Forward an owner intervention through the same ACP/session path as push. */
+  async steer(
+    agentId: string,
+    visitorId: string,
+    content: string,
+    metadata?: {
+      turnId?: string;
+      channelId?: string;
+      channelType?: number;
+      providerBinding?: PushPayload['providerBinding'];
+    },
+  ): Promise<void> {
+    const turnId = String(metadata?.turnId || `steer-${Date.now()}`);
+    const channelType = metadata?.channelType === 2 || String(visitorId).startsWith('group:') ? 2 : 1;
+    const channelId = String(metadata?.channelId || String(visitorId).replace(/^group:/, ''));
+    await this.push({
+      agentId,
+      fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
+      content,
+      messageId: turnId,
+      turnId,
+      channelId,
+      channelType,
+      sessionTarget: channelType === 2 ? `group:${channelId}` : visitorId,
+      providerBinding: metadata?.providerBinding || null,
+      timestamp: Date.now(),
+    });
+  }
+
   async healthCheck(): Promise<{
     ok: boolean;
     agents: Record<string, { ok: boolean; status: string }>;

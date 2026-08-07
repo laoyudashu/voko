@@ -184,7 +184,9 @@ test('已入库但未通知 Agent 的邮件回复会重试并最终收敛状态'
     resumeOwnerIntervention: async (_intervention, prompt) => {
       resumeAttempts++;
       assert.equal(prompt, 'owner:29日10点');
-      return resumeAttempts === 1 ? { success: false } : { success: true };
+      return resumeAttempts === 1
+        ? { success: false, deliveryOutcome: 'not_delivered' }
+        : { success: true, deliveryOutcome: 'delivered' };
     },
   });
 
@@ -196,6 +198,58 @@ test('已入库但未通知 Agent 的邮件回复会重试并最终收敛状态'
   assert.equal(resumeAttempts, 2);
   assert.equal(remoteQueries, 0);
   assert.equal(row.status, 'resolved');
+  assert.equal(row.agent_notified, 1);
+});
+
+test('自动转发结果未知时只收敛一次并保留 Pull 状态', async () => {
+  const row = {
+    id: 'oi_unknown',
+    email_message_id: 'email_unknown',
+    agent_id: 'agentB',
+    visitor_id: 'uidA',
+    session_key: 'agent:agentB:uidA',
+    problem: '需要确认',
+    status: 'replied',
+    owner_reply: '继续',
+    reply_time: Date.now(),
+    agent_notified: 0,
+  };
+  let attempts = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        run() { return { changes: 1 }; },
+        all() {
+          if (sql.includes('FROM owner_interventions oi')) {
+            return row.agent_notified ? [] : [row];
+          }
+          return [];
+        },
+        get() { return undefined; },
+      };
+    },
+  };
+  const databaseAPI = {
+    updateOwnerInterventionReply() { throw new Error('should not rewrite stored reply'); },
+    markAgentNotified() { row.agent_notified = 1; },
+    updateOwnerInterventionStatus(_id, status) { row.status = status; },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db,
+    databaseAPI,
+    registry: {},
+    agentEmailApi: { async queryReply() { return null; } },
+    buildOwnerReplyPrompt: (_intervention, reply) => `owner:${reply}`,
+    resumeOwnerIntervention: async () => {
+      attempts += 1;
+      return { success: false, deliveryOutcome: 'outcome_unknown' };
+    },
+  });
+
+  await Promise.all([notifier._pollEmailReplies(), notifier._pollEmailReplies()]);
+  await notifier._pollEmailReplies();
+  assert.equal(attempts, 1);
+  assert.equal(row.status, 'unknown');
   assert.equal(row.agent_notified, 1);
 });
 

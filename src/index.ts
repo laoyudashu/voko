@@ -950,7 +950,12 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const enriched = '[Owner Instruction] ' + content;
       // dispatcher.steer 统一构造 sessionKey + hermes 补偿 emit（在 dispatcher 内）
       const r = await dispatcher.steer(agentId, visitorId, enriched);
-      res.json({ success: true, output: r?.output || '' });
+      res.json({
+        success: r?.success !== false,
+        deliveryOutcome: r?.deliveryOutcome || (r?.success === false ? 'outcome_unknown' : 'delivered'),
+        output: r?.output || '',
+        ...(r?.error ? { error: r.error } : {}),
+      });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -2027,7 +2032,14 @@ function createResumeOwnerIntervention(dispatcher?: any) {
       interventionId: intervention.id,
       interventionResume: true,
     });
-    return result === null ? { success: false, error: 'agent unavailable' } : { success: true, result };
+    if (result && typeof result === 'object' && 'deliveryOutcome' in result) return result;
+    if (result === null || result === undefined || result === false) {
+      return { success: false, deliveryOutcome: 'not_delivered', error: 'agent unavailable' };
+    }
+    if (result && typeof result === 'object' && result.success === false) {
+      return { ...result, deliveryOutcome: result.deliveryOutcome || 'outcome_unknown' };
+    }
+    return { success: true, deliveryOutcome: 'delivered', result };
   };
 }
 
@@ -2319,7 +2331,10 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
           const failedConfigured = deliveryStatus.methods?.find((method: any) => method.configured && !method.available && method.status !== 'unknown');
           if (failedConfigured) {
             const activeLabel = deliveryStatus.activeMode === 'pull' ? 'MCP Pull（按需）' : deliveryStatus.activeMode;
-            warnings.push({ type: 'agent-backend-degraded', message: `⚠️ ${agentName} ${failedConfigured.mode} 不可用，当前使用 ${activeLabel}`, action: 'agent-detail', agentId: agent.agent_id });
+            const fallbackLabel = deliveryStatus.activeMode && deliveryStatus.activeMode !== failedConfigured.mode
+              ? `已降级到 ${activeLabel}`
+              : `当前使用 ${activeLabel}`;
+            warnings.push({ type: 'agent-backend-degraded', message: `⚠️ ${agentName} ${failedConfigured.mode} 不可用，${fallbackLabel}`, action: 'agent-detail', agentId: agent.agent_id });
           }
         }
 
