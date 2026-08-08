@@ -13,6 +13,7 @@ const TSC = require.resolve('typescript/bin/tsc');
 const BUILD_INFO = path.join(BUILD_DIR, '.dev.tsbuildinfo');
 const ASSET_EXTENSIONS = new Set(['.json', '.html', '.txt']);
 const CODE_EXTENSIONS = new Set(['.js', '.ts']);
+const WATCHED_EXTENSIONS = new Set([...ASSET_EXTENSIONS, ...CODE_EXTENSIONS]);
 const DEBOUNCE_MS = 200;
 
 let runtime = null;
@@ -106,7 +107,7 @@ function removeDeletedOutput(relative) {
 async function applyChanges(files) {
   let needsCompile = false;
   for (const relative of files) {
-    const extension = path.extname(relative);
+    const extension = path.extname(relative).toLowerCase();
     if (ASSET_EXTENSIONS.has(extension)) syncAsset(relative);
     if (CODE_EXTENSIONS.has(extension) || relative.endsWith('.d.ts')) {
       removeDeletedOutput(relative);
@@ -219,7 +220,9 @@ async function rebuildAndRestart() {
 
 function scheduleRebuild(_eventType, filename) {
   if (closing || !filename) return;
-  changedFiles.add(String(filename));
+  const relative = String(filename);
+  if (!WATCHED_EXTENSIONS.has(path.extname(relative).toLowerCase())) return;
+  changedFiles.add(relative);
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     void rebuildAndRestart();
