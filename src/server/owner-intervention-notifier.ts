@@ -391,6 +391,10 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
         const reply = row.status === 'replied' && row.owner_reply
           ? { has_reply: true, raw_text: row.owner_reply, replied_at: row.reply_time, stored: true }
           : await this.agentEmailApi.queryReply({ message_id: row.email_message_id });
+        if (reply?.terminal === 'not_found') {
+          this.databaseAPI.markOwnerInterventionEmailUnavailable(row.id, now);
+          continue;
+        }
         if (reply?.has_reply && reply.raw_text) {
           const replyTime = Date.parse(reply.replied_at) || Number(reply.replied_at) || Date.now();
           const updateResult = reply.stored

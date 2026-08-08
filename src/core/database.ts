@@ -1653,6 +1653,21 @@ function createDatabaseAPI(db: DatabaseSync) {
       }
     },
 
+    markOwnerInterventionEmailUnavailable: (id: string, resolvedAt: number | null) => {
+      try {
+        const stmt = db.prepare(`
+          UPDATE owner_interventions
+          SET skip_reply = 1, status = 'expired', resolved_at = ?, updated_at = ?
+          WHERE id = ?
+        `);
+        stmt.run(resolvedAt || null, Date.now(), id);
+        return { success: true };
+      } catch (e: any) {
+        console.error('markOwnerInterventionEmailUnavailable error:', e);
+        return { success: false, error: e.message };
+      }
+    },
+
     getUnresolvedOwnerInterventions: () => {
       try {
         const stmt = db.prepare(`

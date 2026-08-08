@@ -201,6 +201,62 @@ test('已入库但未通知 Agent 的邮件回复会重试并最终收敛状态'
   assert.equal(row.agent_notified, 1);
 });
 
+test('邮件记录明确 404 时标记失效并停止后续轮询', async () => {
+  const row = {
+    id: 'oi_email_not_found',
+    email_message_id: 'stale-email',
+    agent_id: 'agentB',
+    visitor_id: 'uidA',
+    session_key: 'agent:agentB:uidA',
+    problem: '需要确认',
+    status: 'pending',
+    owner_reply: null,
+    agent_notified: 0,
+    skip_reply: 0,
+  };
+  let queryCount = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        run() { return { changes: 1 }; },
+        all() {
+          if (sql.includes('FROM owner_interventions oi')) {
+            return row.skip_reply ? [] : [row];
+          }
+          return [];
+        },
+        get() { return undefined; },
+      };
+    },
+  };
+  const databaseAPI = {
+    markOwnerInterventionEmailUnavailable(_id, resolvedAt) {
+      row.skip_reply = 1;
+      row.status = 'expired';
+      row.resolved_at = resolvedAt;
+    },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db,
+    databaseAPI,
+    registry: {},
+    agentEmailApi: {
+      async queryReply() {
+        queryCount += 1;
+        return { has_reply: false, terminal: 'not_found' };
+      },
+    },
+  });
+
+  await notifier._pollEmailReplies();
+  assert.equal(queryCount, 1);
+  assert.equal(row.status, 'expired');
+  assert.equal(row.skip_reply, 1);
+
+  await notifier._pollEmailReplies();
+  assert.equal(queryCount, 1);
+});
+
 test('自动转发结果未知时只收敛一次并保留 Pull 状态', async () => {
   const row = {
     id: 'oi_unknown',

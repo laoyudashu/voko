@@ -78,6 +78,22 @@ test('queryReply 对损坏 data 返回 null', async () => {
   });
 });
 
+test('queryReply 将 404 标记为终态，供轮询器停止重试', async () => {
+  const api = new AgentEmailApi({
+    apiBaseUrl: 'https://api.example.test',
+    getUserAccessToken: () => 'user-token',
+  });
+
+  await withFetch(async () => new Response(JSON.stringify({
+    success: false,
+    message: '邮件记录不存在或无权访问',
+  }), { status: 404 }), async () => {
+    const result = await api.queryReply({ message_id: 'stale-message' });
+    assert.equal(result?.terminal, 'not_found');
+    assert.equal(result?.has_reply, false);
+  });
+});
+
 test('queryReply 对重复的非 JSON 网关响应只告警一次', async () => {
   const api = new AgentEmailApi({
     apiBaseUrl: 'https://api.example.test',
