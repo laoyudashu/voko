@@ -43,6 +43,13 @@ export interface PushPayload {
   [key: string]: unknown;
 }
 
+export interface ProviderSteerMetadata {
+  turnId?: string;
+  channelId?: string;
+  channelType?: number;
+  providerBinding?: PushPayload['providerBinding'];
+}
+
 export interface ProviderHealth {
   ok: boolean;
   status?: string;
@@ -79,8 +86,10 @@ export interface AgentDeliveryMethodStatus {
 export interface AgentDeliveryStatus {
   backendType: string | null;
   configuredModes: string[];
-  availableModes: string[];
-  activeMode: string | null;
+  automaticDeliveryReady: boolean;
+  automaticReadyModes: string[];
+  activeAutomaticMode: string | null;
+  pullReady: boolean;
+  lastDeliveredMode: string | null;
   methods: AgentDeliveryMethodStatus[];
-  backendAvailable: boolean;
 }

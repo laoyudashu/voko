@@ -34,7 +34,7 @@ describe('Dispatcher final reply idempotency', () => {
     const replies = [];
     const dispatcher = createDispatcher({
       db: createDb(),
-      providers: { provider },
+      providers: { 'mock-echo': provider },
       onAgentReply: (reply) => replies.push(reply),
     });
 
@@ -113,7 +113,7 @@ describe('Dispatcher final reply idempotency', () => {
     const replies = [];
     createDispatcher({
       db: createDb(),
-      providers: { provider },
+      providers: { 'mock-echo': provider },
       onAgentReply: (reply) => replies.push(reply),
     });
 

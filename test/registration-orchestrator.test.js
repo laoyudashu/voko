@@ -53,6 +53,13 @@ function createService(overrides = {}) {
 }
 
 describe('shared registration orchestrator', () => {
+  it('configures Goose CLI Push and ACP-to-CLI fallback in delivery order', () => {
+    const service = new RegistrationOrchestrator({ commandAvailable: (command) => command === 'goose' });
+    assert.deepEqual(service.deliveryCapabilities('goose').map((item) => item.mode), ['cli', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('acp-goose').map((item) => item.mode), ['acp', 'cli', 'pull']);
+    assert.equal(service.deliveryCapabilities('goose')[0].status, 'ready');
+  });
+
   it('uses the nearest recognized Agent in the process ancestry', () => {
     assert.strictEqual(currentAgentTypeFromProcessRows([
       'powershell.exe node build/index.js',
@@ -103,6 +110,7 @@ describe('shared registration orchestrator', () => {
   it('detects installed CLI providers without treating their sessions as selectable instances', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: (command) => ['goose', 'claude', 'codex'].includes(command),
+      detectCurrentAgentType: () => null,
     });
     const environment = service.inspectEnvironment();
     for (const type of ['goose', 'claude-code', 'codex']) {
@@ -149,6 +157,8 @@ describe('shared registration orchestrator', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       installedApplications: () => ['ZCode 3.5.3', 'WorkBuddy 5.2.6', '豆包 2.19.9'],
+      // 隔离真实运行环境：明确声明当前进程不是任何已知 agent，验证 instances 为空的基线行为
+      detectCurrentAgentType: () => null,
     });
     const environment = service.inspectEnvironment();
     for (const type of ['zcode', 'workbuddy', 'doubao']) {
@@ -159,6 +169,23 @@ describe('shared registration orchestrator', () => {
       assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
       assert.strictEqual(provider.deliveryModes[0].required, true);
     }
+  });
+
+  it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: () => false,
+      installedApplications: () => ['ZCode 3.5.3'],
+      // 模拟在 zcode 内运行：process_ancestry 命中 zcode
+      detectCurrentAgentType: () => 'zcode',
+    });
+    const environment = service.inspectEnvironment();
+    const provider = environment.detected.find((item) => item.type === 'zcode');
+    assert.ok(provider, 'zcode should be detected');
+    assert.ok(provider.instances.length > 0, '应在命中当前 agent 时注入合成 instance，避免 instances:[] 与 detected:true 矛盾');
+    assert.strictEqual(provider.instances[0].id, 'zcode');
+    assert.strictEqual(provider.instances[0].source, 'process_ancestry');
+    assert.strictEqual(provider.instances[0].isCurrent, true);
+    assert.strictEqual(provider.detectedAsCurrent, true);
   });
 
   it('exposes OpenCode delivery in ACP, attach, CLI, pull order', () => {
@@ -311,7 +338,7 @@ describe('shared registration orchestrator', () => {
     const { db, service } = createService();
     try {
       service.inspectEnvironment = () => ({
-        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [], deliveryModes: [] }],
+        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [{ id: 'openclaw-test', name: 'OpenClaw Test' }], deliveryModes: [] }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },

@@ -165,6 +165,12 @@ class OpenCodeAttachProvider extends PushProvider {
     } catch (error) {
       const binding = payload.providerBinding?.providerType === 'opencode' ? payload.providerBinding : null;
       if (!binding || (payload as any).__vokoManagedRetry) throw error;
+      const message = String((error as any)?.message || error || '');
+      const outcome = (error as any)?.deliveryOutcome
+        || (/timeout|timed out|超时/i.test(message) ? 'outcome_unknown' : 'not_delivered');
+      // A timeout or an incomplete response may have reached OpenCode. Do not
+      // create a second session and risk sending the visitor's message twice.
+      if (outcome !== 'not_delivered') throw error;
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}
       await this._pushOnce({ ...payload, providerBinding: null, __vokoManagedRetry: true });
     }
@@ -215,7 +221,7 @@ class OpenCodeAttachProvider extends PushProvider {
       cmd: this._cmd,
       args,
       cwd: this._cwd,
-      timeout: 300000,
+      timeout: 120000,
       tag: 'OPENCODE ATTACH',
       env: {
         ...isolatedOpenCodeEnv(),
@@ -234,7 +240,11 @@ class OpenCodeAttachProvider extends PushProvider {
       },
     });
     parser.finish();
-    if (result.code !== 0) throw new Error(`OpenCode attach exited with code ${result.code}`);
+    if (result.code !== 0) {
+      const error = new Error(`OpenCode attach exited with code ${result.code}`);
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     if (observedSession && this._bindingStore) {
       this._bindingStore.saveManaged({
         agentId,
@@ -248,7 +258,11 @@ class OpenCodeAttachProvider extends PushProvider {
         expectedVersion: activeBinding?.bindingVersion ?? 0,
       });
     }
-    if (eventError) throw new Error(eventError);
+    if (eventError) {
+      const error = new Error(eventError);
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
     if (!fullContent && observedSession) fullContent = await this._loadLatestReply(observedSession);
     if (!fullContent) throw new Error('OpenCode attach returned no reply');
     this.emit('agent.reply', {
@@ -266,7 +280,24 @@ class OpenCodeAttachProvider extends PushProvider {
 
   async stop(): Promise<void> {
     this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: false, reason: 'provider-stopped' });
-    if (this._server?.pid) killTree(this._server.pid);
+    const server = this._server;
+    const port = this._port;
+    const password = this._password;
+    if (server && port && password && server.exitCode === null) {
+      try {
+        const auth = Buffer.from(`opencode:${password}`).toString('base64');
+        await fetch(`http://127.0.0.1:${port}/global/dispose`, {
+          method: 'POST',
+          headers: { Authorization: `Basic ${auth}` },
+          signal: AbortSignal.timeout(3000),
+        });
+      } catch (_) {}
+      const deadline = Date.now() + 2000;
+      while (server.exitCode === null && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+    if (server?.pid && server.exitCode === null) killTree(server.pid);
     this._server = null;
     this._port = 0;
     this._password = '';

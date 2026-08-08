@@ -16,6 +16,9 @@ const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
+const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
+const { isHermesRuntimeAvailable } = require('./dispatcher/hermes-command');
+const { getProviderFamily } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -36,6 +39,7 @@ const CLI_COMMANDS = {
   cline: 'cline',
   'github-copilot': 'copilot',
   grok: 'grok',
+  reasonix: 'reasonix',
 };
 const PULL_ONLY_CLI_COMMANDS = {
   openhands: 'openhands',
@@ -73,6 +77,10 @@ const CLI_DELIVERY_METADATA = {
   aider: {
     label: 'Aider 只读问答',
     description: 'VOKO 以 ask、dry-run、no-git 模式调用 Aider，不允许编辑或提交文件。',
+  },
+  reasonix: {
+    label: 'Reasonix 受限 CLI',
+    description: 'VOKO 以 stream-json、dontAsk 和 stdin 调用 Reasonix，仅允许无人值守文字回复。',
   },
   cline: {
     label: 'Cline Plan CLI',
@@ -523,7 +531,7 @@ class RegistrationOrchestrator {
       || (path.isAbsolute(zeroclawCommand) && fs.existsSync(zeroclawCommand));
     const discoverZeroClawInstances = this.options.zeroclawInstances || zeroclawInstances;
     const zeroclaw = zeroclawInstalled ? discoverZeroClawInstances() : [];
-    const hermesInstalled = hasCommand('hermes');
+    const hermesInstalled = isHermesRuntimeAvailable();
     const hermes = hermesInstalled ? hermesInstances() : [];
     const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
     const hermesGateway = gatewaySetup.checkGateway('hermes', dbApi);
@@ -594,6 +602,28 @@ class RegistrationOrchestrator {
     const more = known
       .filter((item) => item.value !== 'others' && !detectedTypes.has(item.value))
       .map((item) => ({ type: item.value, label: item.label, detected: false }));
+
+    // 当前进程被识别为某桌面应用类（zcode/workbuddy/doubao 等，靠 process_ancestry 命中），
+    // 但 inspectEnvironment 的 instances 扫描（注册表卸载列表）无法枚举这些运行时实例，
+    // 导致 detected:true 与 instances:[] 矛盾，下游按 instance 选择会误判"没有可用实例"。
+    // 这里给被命中的类型注入一个合成 current instance，使 instances 非空、与 detected 一致。
+    try {
+      const detect = this.options.detectCurrentAgentType || detectCurrentAgentType;
+      const currentType = detect();
+      if (currentType) {
+        const item = detected.find((d) => d.type === currentType);
+        if (item && (!item.instances || item.instances.length === 0)) {
+          item.instances = [{
+            id: currentType,
+            name: item.label || currentType,
+            source: 'process_ancestry',
+            isCurrent: true,
+          }];
+          item.detectedAsCurrent = true;
+        }
+      }
+    } catch (_) { /* 检测失败不影响整体环境扫描 */ }
+
     const deliveryCount = new Set(detected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
       detected,
@@ -628,7 +658,7 @@ class RegistrationOrchestrator {
       type,
       label,
       instances,
-      supportsMultipleInstances: type === 'openclaw' || type === 'hermes' || type === 'zeroclaw',
+      supportsMultipleInstances: !!getProviderFamily(type)?.requiresInstance,
       deliveryModes: this.deliveryCapabilities(
         type,
         type === 'zeroclaw'
@@ -658,6 +688,15 @@ class RegistrationOrchestrator {
 
   deliveryCapabilities(providerType, gatewayStatus) {
     const type = normalizeBackendType(providerType);
+    const capabilities = this._deliveryCapabilities(type, gatewayStatus);
+    const family = getProviderFamily(type);
+    if (!family) return capabilities;
+    const order = new Map(family.defaultDeliveryModes.map((mode, index) => [mode, index]));
+    return capabilities.sort((a, b) => (order.get(a.mode) ?? 999) - (order.get(b.mode) ?? 999));
+  }
+
+  _deliveryCapabilities(providerType, gatewayStatus) {
+    const type = normalizeBackendType(providerType);
     const hasCommand = this.options.commandAvailable || commandAvailable;
     const pull = {
       mode: 'pull',
@@ -669,6 +708,29 @@ class RegistrationOrchestrator {
       action: null,
       description: '消息始终保存在 VOKO；Agent 可通过 VOKO CLI、MCP 工具或接口主动读取。',
     };
+    if (type === 'goose' || type === 'acp-goose') {
+      const available = this.options.commandAvailable
+        ? hasCommand('goose')
+        : isGooseRuntimeAvailable(type === 'acp-goose' ? 'acp' : 'cli');
+      const cli = {
+        mode: 'cli', label: 'Goose CLI 自动交付', role: type === 'acp-goose' ? 'fallback' : 'primary',
+        status: available ? 'ready' : 'unavailable',
+        selected: available,
+        action: available ? 'test' : null,
+        description: available ? 'VOKO 使用 Goose 原生 session ID 自动投递并续接消息。' : '本机未检测到 Goose CLI。',
+      };
+      if (type === 'goose') return [cli, pull];
+      return [
+        {
+          mode: 'acp', label: 'Goose ACP 实时会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available ? 'VOKO 通过标准 ACP 会话投递，断线时降级到 Goose CLI。' : '本机未检测到 Goose ACP 运行入口。',
+        },
+        cli,
+        pull,
+      ];
+    }
     if (type === 'openclaw') {
       const gateway = gatewayStatus || require('./gateway-setup').checkGateway('openclaw', this.db ? dbConfigAdapter(this.db) : null);
       return [
@@ -701,9 +763,9 @@ class RegistrationOrchestrator {
         },
         {
           mode: 'cli', label: 'CLI 唤起', role: 'fallback',
-          status: commandAvailable('hermes') ? 'ready' : 'unavailable',
-          selected: commandAvailable('hermes'),
-          action: commandAvailable('hermes') ? 'test' : null,
+          status: isHermesRuntimeAvailable() ? 'ready' : 'unavailable',
+          selected: isHermesRuntimeAvailable(),
+          action: isHermesRuntimeAvailable() ? 'test' : null,
           description: 'VOKO 为每条消息调用一次 Hermes CLI。',
         },
         pull,
@@ -796,6 +858,27 @@ class RegistrationOrchestrator {
           mode: 'cli', label: 'Cline Plan CLI', role: 'fallback',
           status, selected: available, action,
           description: 'ACP 不可用时，使用只读 Plan 模式调用 Cline CLI。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'openhands') return [pull];
+    if (type === 'openhands') {
+      const available = hasCommand('openhands');
+      const status = available ? 'ready' : 'unavailable';
+      const action = available ? 'test' : null;
+      return [
+        {
+          mode: 'acp', label: 'OpenHands ACP 瀹炴椂浼氳瘽', role: 'primary',
+          status, selected: available, recommended: true, action,
+          description: available
+            ? 'VOKO 閫氳繃 OpenHands 标准 ACP 鍒涘缓闅旂浼氳瘽锛涙棤宸ュ叿鎺堟潈锛屽悓涓€ Agent/璁垮缁х画浣跨敤鍚屼竴 ACP session銆?'
+            : '鏈満鏈娴嬪埌 OpenHands ACP 杩愯鍏ュ叆銆?',
+        },
+        {
+          mode: 'cli', label: 'OpenHands CLI', role: 'fallback',
+          status, selected: available, action,
+          description: 'ACP unavailable: use restricted headless JSON CLI while preserving the native conversation ID.',
         },
         pull,
       ];
@@ -974,7 +1057,11 @@ class RegistrationOrchestrator {
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
     if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
-    if (instanceId && instances.length && !instances.some((item) => item.id === instanceId)) {
+    const family = getProviderFamily(providerType);
+    if (family?.requiresInstance && !instanceId) {
+      return { success: false, error: '该 Agent 类型必须绑定一个本机已检测到的实例' };
+    }
+    if (instanceId && instances.length && family?.validateInstance && !family.validateInstance(instanceId, instances)) {
       return { success: false, error: '所选实例不存在' };
     }
     session.provider = {

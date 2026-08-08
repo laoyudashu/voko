@@ -49,7 +49,7 @@ test('主人定向恢复会清除旧收敛闸门，但后续仍走正常 A2A 治
   const db = setupAgents();
   try {
     const provider = new MockProvider();
-    const dispatcher = createDispatcher({ db, providers: { mock: provider } });
+    const dispatcher = createDispatcher({ db, providers: { 'mock-echo': provider } });
     dispatcher.markConverged('uidA', 'uidB', 'group:group_test');
     dispatcher.resetA2AForAgent('agentB', 'uidA', 'group:group_test');
     dispatcher.dispatch('agentB', groupPayload('主人要求继续回复'));
@@ -184,7 +184,9 @@ test('已入库但未通知 Agent 的邮件回复会重试并最终收敛状态'
     resumeOwnerIntervention: async (_intervention, prompt) => {
       resumeAttempts++;
       assert.equal(prompt, 'owner:29日10点');
-      return resumeAttempts === 1 ? { success: false } : { success: true };
+      return resumeAttempts === 1
+        ? { success: false, deliveryOutcome: 'not_delivered' }
+        : { success: true, deliveryOutcome: 'delivered' };
     },
   });
 
@@ -196,6 +198,114 @@ test('已入库但未通知 Agent 的邮件回复会重试并最终收敛状态'
   assert.equal(resumeAttempts, 2);
   assert.equal(remoteQueries, 0);
   assert.equal(row.status, 'resolved');
+  assert.equal(row.agent_notified, 1);
+});
+
+test('邮件记录明确 404 时标记失效并停止后续轮询', async () => {
+  const row = {
+    id: 'oi_email_not_found',
+    email_message_id: 'stale-email',
+    agent_id: 'agentB',
+    visitor_id: 'uidA',
+    session_key: 'agent:agentB:uidA',
+    problem: '需要确认',
+    status: 'pending',
+    owner_reply: null,
+    agent_notified: 0,
+    skip_reply: 0,
+  };
+  let queryCount = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        run() { return { changes: 1 }; },
+        all() {
+          if (sql.includes('FROM owner_interventions oi')) {
+            return row.skip_reply ? [] : [row];
+          }
+          return [];
+        },
+        get() { return undefined; },
+      };
+    },
+  };
+  const databaseAPI = {
+    markOwnerInterventionEmailUnavailable(_id, resolvedAt) {
+      row.skip_reply = 1;
+      row.status = 'expired';
+      row.resolved_at = resolvedAt;
+    },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db,
+    databaseAPI,
+    registry: {},
+    agentEmailApi: {
+      async queryReply() {
+        queryCount += 1;
+        return { has_reply: false, terminal: 'not_found' };
+      },
+    },
+  });
+
+  await notifier._pollEmailReplies();
+  assert.equal(queryCount, 1);
+  assert.equal(row.status, 'expired');
+  assert.equal(row.skip_reply, 1);
+
+  await notifier._pollEmailReplies();
+  assert.equal(queryCount, 1);
+});
+
+test('自动转发结果未知时只收敛一次并保留 Pull 状态', async () => {
+  const row = {
+    id: 'oi_unknown',
+    email_message_id: 'email_unknown',
+    agent_id: 'agentB',
+    visitor_id: 'uidA',
+    session_key: 'agent:agentB:uidA',
+    problem: '需要确认',
+    status: 'replied',
+    owner_reply: '继续',
+    reply_time: Date.now(),
+    agent_notified: 0,
+  };
+  let attempts = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        run() { return { changes: 1 }; },
+        all() {
+          if (sql.includes('FROM owner_interventions oi')) {
+            return row.agent_notified ? [] : [row];
+          }
+          return [];
+        },
+        get() { return undefined; },
+      };
+    },
+  };
+  const databaseAPI = {
+    updateOwnerInterventionReply() { throw new Error('should not rewrite stored reply'); },
+    markAgentNotified() { row.agent_notified = 1; },
+    updateOwnerInterventionStatus(_id, status) { row.status = status; },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db,
+    databaseAPI,
+    registry: {},
+    agentEmailApi: { async queryReply() { return null; } },
+    buildOwnerReplyPrompt: (_intervention, reply) => `owner:${reply}`,
+    resumeOwnerIntervention: async () => {
+      attempts += 1;
+      return { success: false, deliveryOutcome: 'outcome_unknown' };
+    },
+  });
+
+  await Promise.all([notifier._pollEmailReplies(), notifier._pollEmailReplies()]);
+  await notifier._pollEmailReplies();
+  assert.equal(attempts, 1);
+  assert.equal(row.status, 'unknown');
   assert.equal(row.agent_notified, 1);
 });
 

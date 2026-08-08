@@ -10,10 +10,17 @@ const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-c
 const { ClineCliProvider } = require('../build/core/dispatcher/providers/cline-cli');
 const { ClineAcpProvider } = require('../build/core/dispatcher/providers/cline-acp');
 const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
+const { ZeroClawCliProvider } = require('../build/core/dispatcher/providers/zeroclaw-cli');
 const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
+const { GitHubCopilotCliProvider } = require('../build/core/dispatcher/providers/github-copilot-cli');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { OpenHandsAcpProvider } = require('../build/core/dispatcher/providers/openhands-acp');
+const {
+  OpenHandsCliProvider,
+  normalizeOpenHandsSessionId,
+} = require('../build/core/dispatcher/providers/openhands-cli');
 const { GrokCliProvider } = require('../build/core/dispatcher/providers/grok-cli');
+const { ReasonixCliProvider } = require('../build/core/dispatcher/providers/reasonix-cli');
 const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
 const { ClaudeCliProvider } = require('../build/core/dispatcher/providers/claude-cli');
 const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor-acp');
@@ -51,6 +58,7 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.ok(provider._args.includes('--no-interactive'));
   assert.equal(provider._parserName, 'kiro-output');
   assert.match(provider._args.join(' '), /--wrap never/);
+  assert.doesNotMatch(provider._args.join(' '), /--trust-tools(?:=|\s|$)/);
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
 });
 
@@ -87,7 +95,7 @@ test('Cline JSONL parser emits partial text once and ignores tool questions', ()
   assert.deepEqual(currentChunks, ['final']);
 });
 
-test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted alias', (t) => {
+test('ZeroClaw exposes ACP and isolated stateful CLI as independent routes', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-zeroclaw-fallback-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const db = {
@@ -97,26 +105,26 @@ test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted
       return { get: () => ({ backend_instance_id: 'voko_test' }) };
     },
   };
-  const provider = new ZeroClawAcpProvider({ db });
-  assert.equal(provider._adapterType, 'zeroclaw-acp');
-  assert.deepEqual(provider._cliArgs, ['acp']);
-  assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
+  const acp = new ZeroClawAcpProvider({ db });
+  const provider = new ZeroClawCliProvider({ db });
+  assert.equal(acp._adapterType, 'zeroclaw-acp');
+  assert.deepEqual(acp._cliArgs, ['acp']);
+  assert.deepEqual(acp.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
+  assert.equal(acp._instanceAlias('agent-voko'), 'voko_test');
+  assert.equal(provider._adapterType, 'zeroclaw-cli');
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
-  const fallbackArgs = provider._cliFallback.argsForPayload({
+  const invocation = provider._prepareInvocation({
     agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
-  });
-  assert.deepEqual(fallbackArgs.slice(0, 3), ['agent', '--agent', 'voko_test']);
-  assert.ok(fallbackArgs.includes('--session-state-file'));
-  assert.equal(provider._cliFallback.stdinPrompt, true);
-  assert.equal(provider._cliFallback.parser, 'zeroclaw-interactive');
-  assert.equal(fallbackArgs.includes('--message'), false);
-  const stateFile = fallbackArgs[fallbackArgs.indexOf('--session-state-file') + 1];
+  }, 'hello');
+  assert.deepEqual(invocation.args.slice(0, 3), ['agent', '--agent', 'voko_test']);
+  assert.ok(invocation.args.includes('--session-state-file'));
+  assert.equal(provider._parserName, 'zeroclaw-interactive');
+  assert.equal(invocation.args.includes('--message'), false);
+  const stateFile = invocation.args[invocation.args.indexOf('--session-state-file') + 1];
   assert.match(path.basename(stateFile), /^[a-f0-9]{64}\.json$/);
   assert.doesNotMatch(stateFile, /agent-voko|visitor-secret/);
   fs.writeFileSync(stateFile, '{}', { mode: 0o644 });
-  provider._cliFallback.afterRun({
-    agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
-  });
+  invocation.afterRun();
   if (process.platform !== 'win32') assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
 });
 
@@ -243,21 +251,24 @@ test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {
   assert.equal(acp._adapterType, 'cursor-acp');
   assert.equal(acp._cliArgs.at(-1), 'acp');
   assert.equal(acp._matchType, 'cursor');
-  assert.equal(acp._cliFallback, null);
+  assert.equal(acp._cliFallback, undefined);
   assert.equal(cli._adapterType, 'cursor-cli');
   assert.deepEqual(cli._argsForSession('cursor-session', false).slice(-2), ['--resume', 'cursor-session']);
   assert.equal(cli._sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
 });
 
-test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
-  const provider = new GitHubCopilotAcpProvider();
-  assert.equal(provider._adapterType, 'github-copilot-acp');
-  assert.equal(provider._matchType, 'github-copilot');
-  if (!provider._runtime) return;
-  const acpArgs = provider._cliArgs.join(' ');
-  const fallbackArgs = provider._cliFallback.args.join(' ');
+test('GitHub Copilot exposes ACP and restricted CLI as independent routes', () => {
+  const acp = new GitHubCopilotAcpProvider();
+  const cli = new GitHubCopilotCliProvider();
+  assert.equal(acp._adapterType, 'github-copilot-acp');
+  assert.equal(acp._matchType, 'github-copilot');
+  assert.equal(acp._cliFallback, undefined);
+  assert.equal(cli._adapterType, 'github-copilot-cli');
+  if (!acp._runtime || !cli._runtime) return;
+  const acpArgs = acp._cliArgs.join(' ');
+  const cliArgs = cli._args.join(' ');
   assert.match(acpArgs, /--acp/);
-  assert.match(fallbackArgs, /-p \{prompt\}/);
+  assert.match(cliArgs, /-p \{prompt\}/);
   for (const flag of [
     '--no-custom-instructions',
     '--disable-builtin-mcps',
@@ -268,7 +279,7 @@ test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
     '--no-auto-update',
   ]) {
     assert.match(acpArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(fallbackArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(cliArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
 
@@ -313,11 +324,71 @@ test('Pi unattended delivery has native sessions with no tools, extensions or sk
 test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallback', () => {
   const provider = new OpenHandsAcpProvider();
   assert.equal(provider._adapterType, 'openhands-acp');
-  assert.deepEqual(provider._cliArgs, ['acp']);
+  assert.deepEqual(provider._cliArgs, ['acp', '--override-with-envs']);
   assert.equal(provider.options.env.PYTHONUTF8, '1');
   assert.equal(provider.options.env.PYTHONIOENCODING, 'utf-8');
   assert.equal(provider.options.env.OPENHANDS_SUPPRESS_BANNER, '1');
-  assert.equal(provider._cliFallback, null);
+  if (process.platform === 'win32') {
+    const pythonHookDir = String(provider.options.env.PYTHONPATH || '').split(path.delimiter)[0];
+    assert.match(pythonHookDir, /openhands-python/);
+    assert.equal(fs.existsSync(path.join(pythonHookDir, 'sitecustomize.py')), true);
+  }
+  assert.equal(provider.options.env.LITELLM_LOCAL_MODEL_COST_MAP, 'True');
+  if (process.platform === 'win32') {
+    assert.equal(provider.options.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(provider.options.env.GCM_INTERACTIVE, 'Never');
+    assert.match(provider.options.env.GIT_DIR, /voko-openhands-git-disabled-/);
+    assert.equal(provider.options.env.GIT_CONFIG_PARAMETERS, "'remote.origin.url'=''");
+    assert.equal(provider.options.env.GIT_CONFIG_COUNT, '2');
+    assert.equal(provider.options.env.GIT_CONFIG_KEY_0, 'http.lowspeedtime');
+    assert.equal(provider.options.env.GIT_CONFIG_VALUE_0, '5');
+    assert.equal(provider.options.env.GIT_CONFIG_KEY_1, 'http.lowspeedlimit');
+    assert.equal(provider.options.env.GIT_CONFIG_VALUE_1, '1');
+  }
+  assert.equal(provider._cliFallback, undefined);
+});
+
+test('OpenHands CLI is a restricted JSON fallback and accepts ACP bindings', () => {
+  const provider = new OpenHandsCliProvider();
+  assert.equal(provider._adapterType, 'openhands-cli');
+  assert.equal(provider._parserName, 'openhands-jsonl');
+  assert.deepEqual(provider._args, ['--headless', '--json', '--override-with-envs', '--file', '{promptFile}']);
+  assert.equal(provider._requireOutput, true);
+  assert.equal(provider._requireSessionId, true);
+  assert.equal(provider._env.VOKO_OPENHANDS_CLI_SAFE, '1');
+  assert.equal(provider._env.OPENHANDS_SUPPRESS_BANNER, '1');
+  assert.equal(provider._env.PYTHONUTF8, '1');
+  assert.equal(provider._cwd, os.tmpdir());
+  assert.deepEqual(provider._argsForSession('native-openhands-id', false).slice(-2), ['--resume', 'native-openhands-id']);
+  assert.equal(
+    normalizeOpenHandsSessionId('0123456789abcdef0123456789abcdef'),
+    '01234567-89ab-cdef-0123-456789abcdef',
+  );
+  assert.equal(normalizeOpenHandsSessionId('01234567-89ab-cdef-0123-456789abcdef'), '01234567-89ab-cdef-0123-456789abcdef');
+  assert.equal(provider._argsForSession(null, true).includes('--resume'), false);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'openhands', adapterType: 'openhands-acp', nativeSessionId: 'native-openhands-id',
+  }), true);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'openhands', adapterType: 'other-cli', nativeSessionId: 'native-openhands-id',
+  }), false);
+  if (process.platform === 'win32') {
+    const pythonHookDir = String(provider._env.PYTHONPATH || '').split(path.delimiter)[0];
+    assert.match(pythonHookDir, /openhands-python/);
+    assert.equal(fs.existsSync(path.join(pythonHookDir, 'sitecustomize.py')), true);
+  }
+});
+
+test('OpenHands JSONL parser keeps only agent text and surfaces generic errors', () => {
+  const chunks = [];
+  const parser = createParser({ format: 'openhands-jsonl', onText: (chunk) => chunks.push(chunk) });
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'user', llm_message: { role: 'user', content: [{ type: 'text', text: 'ignore' }] } }));
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'agent', llm_message: { role: 'assistant', content: [{ type: 'text', text: 'OPENHANDS_' }] } }));
+  parser.handleLine(JSON.stringify({ kind: 'MessageEvent', source: 'agent', llm_message: { role: 'assistant', content: [{ type: 'text', text: 'CLI_OK' }] } }));
+  assert.equal(chunks.join(''), 'OPENHANDS_CLI_OK');
+  const failed = createParser({ format: 'openhands-jsonl' });
+  failed.handleLine(JSON.stringify({ kind: 'ConversationErrorEvent', code: 'LLMBadRequestError', detail: 'secret path should not escape' }));
+  assert.equal(failed.error, 'OpenHands LLMBadRequestError');
 });
 
 test('Grok unattended delivery is tool-free and resumes only its bound session', () => {
@@ -364,6 +435,13 @@ test('DeepSeek environment is mapped without embedding credentials in command ar
     assert.equal(aider._env.PYTHONUTF8, '1');
     assert.equal(aider._env.PYTHONIOENCODING, 'utf-8');
     assert.doesNotMatch(aider._args.join(' '), /test-only-secret/);
+
+    const openhands = new OpenHandsAcpProvider();
+    assert.deepEqual(openhands._cliArgs, ['acp', '--override-with-envs']);
+    assert.equal(openhands.options.env.LLM_API_KEY, 'test-only-secret');
+    assert.equal(openhands.options.env.LLM_BASE_URL, 'https://api.deepseek.test');
+    assert.equal(openhands.options.env.LLM_MODEL, 'deepseek-chat');
+    assert.doesNotMatch(openhands._cliArgs.join(' '), /test-only-secret/);
   } finally {
     if (previous.key === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = previous.key;
@@ -389,6 +467,22 @@ test('Codex and Claude run safely from a non-project temporary directory', () =>
   assert.ok(claude._argsForSession('session-id', false).includes('--resume'));
   assert.match(args, /--permission-mode plan/);
   assert.doesNotMatch(args, /dangerously-skip-permissions|bypassPermissions/);
+});
+
+test('Claude accepts its persisted claude-code CLI session binding', () => {
+  const claude = new ClaudeCliProvider();
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude-code',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), true);
+  assert.equal(claude.acceptsBinding({
+    providerType: 'claude',
+    adapterType: 'claude-cli',
+    deliveryMode: 'cli',
+    nativeSessionId: 'session-id',
+  }), false);
 });
 
 test('Aider parser emits only the model reply', () => {
@@ -484,9 +578,10 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   assert.deepEqual(service.deliveryCapabilities('cline').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
-  for (const type of ['openhands', 'amazon-q']) {
-    assert.deepEqual(service.deliveryCapabilities(type).map((mode) => mode.mode), ['pull']);
-  }
+  assert.deepEqual(service.deliveryCapabilities('openhands').map((mode) => mode.mode), ['pull']);
+  assert.equal(service.deliveryCapabilities('openhands')[0].status, 'ready');
+  assert.equal(service.deliveryCapabilities('openhands')[0].selected, true);
+  assert.deepEqual(service.deliveryCapabilities('amazon-q').map((mode) => mode.mode), ['pull']);
   const zeroModes = service.deliveryCapabilities('zeroclaw');
   assert.deepEqual(zeroModes.map((mode) => mode.mode), ['acp_ws', 'acp', 'cli', 'pull']);
   assert.equal(zeroModes[0].status, 'configuration_required');
@@ -508,6 +603,20 @@ test('Cline registration preflight accepts ACP and CLI delivery', async () => {
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
 });
 
+test('OpenHands registration keeps Pull as the safe default', async () => {
+  const service = new RegistrationOrchestrator({
+    getLoggedEmail: async () => 'owner@example.com',
+    detectCurrentAgentType: () => null,
+    commandAvailable: (command) => command === 'openhands',
+  });
+  const started = await service.start({ email: 'owner@example.com' });
+  service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
+  const selected = service.selectProvider(started.registrationId, { providerType: 'openhands' });
+  assert.equal(selected.success, true);
+  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['pull']);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'pull' }).ready, true);
+});
+
 test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['qwen.exe --prompt']), 'qwen-code');
   assert.equal(currentAgentTypeFromProcessRows(['kiro-cli.exe chat']), 'kiro');
@@ -517,4 +626,97 @@ test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['cline --plan --json']), 'cline');
   assert.equal(currentAgentTypeFromProcessRows(['q.exe chat']), 'amazon-q');
   assert.equal(currentAgentTypeFromProcessRows(['zeroclaw.exe agent --agent voko_test']), 'zeroclaw');
+});
+
+test('Reasonix CLI provider spawns headless with stream-json and stdin prompt', () => {
+  const provider = new ReasonixCliProvider();
+  assert.equal(provider._cmd, 'reasonix');
+  assert.equal(provider._matchType, 'reasonix');
+  assert.equal(provider._adapterType, 'reasonix-cli');
+  assert.equal(provider._cwd, os.tmpdir());
+  // headless 无人值守 + stream-json 输出 + stdin prompt（不追加 '-'）
+  assert.ok(provider._args.includes('run'));
+  assert.ok(provider._args.includes('--permission-mode'));
+  assert.ok(provider._args.includes('dontAsk'));
+  assert.ok(provider._args.includes('--output-format'));
+  assert.ok(provider._args.includes('stream-json'));
+  assert.equal(provider._args.includes('-'), false);
+  assert.match(provider._promptTemplate, /不得调用工具/);
+  // parser 指向新增的 reasonix 专用解析器
+  assert.equal(provider._parserName, 'reasonix-stream-json');
+  // session resume：argsForSession 带 --resume
+  const resumeArgs = provider._argsForSession('rx-session-1', false);
+  assert.ok(resumeArgs.includes('--resume'));
+  assert.ok(resumeArgs.includes('rx-session-1'));
+  assert.equal(resumeArgs.includes('-'), false);
+  // 无 session 时不含 --resume
+  const noSessionArgs = provider._argsForSession(null, false);
+  assert.ok(!noSessionArgs.includes('--resume'));
+  // sessionIdFromLine 从 stream-json 事件提取
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'session_created', session_id: 'rx-abc' })), 'rx-abc');
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'run_done', session_id: 'rx-xyz' })), 'rx-xyz');
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'text', data: 'hi' })), null);
+  assert.equal(provider._sessionIdFromLine('not json'), null);
+  // match 只认 backend_type === 'reasonix'
+  assert.equal(provider.match('agent-1', { backend_type: 'reasonix' }), true);
+  assert.equal(provider.match('agent-1', { backend_type: 'codex' }), false);
+});
+
+test('reasonix-stream-json parser extracts run_done result and streaming text', () => {
+  // 累积流式增量
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ type: 'text', data: 'Hello ' }));
+  parser.handleLine(JSON.stringify({ type: 'text', data: 'world' }));
+  parser.handleLine(JSON.stringify({ type: 'run_done', result: 'Hello world', session_id: 's1', is_error: false }));
+  assert.equal(streamed.join(''), 'Hello world');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser matches Reasonix 1.21 stream-json events', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ kind: 'text', text: 'RAW_' }));
+  parser.handleLine(JSON.stringify({ kind: 'text', text: 'OK' }));
+  parser.handleLine(JSON.stringify({ kind: 'message', text: 'RAW_OK' }));
+  parser.handleLine(JSON.stringify({ type: 'result', result: 'RAW_OK', session_id: 's-real' }));
+  assert.equal(streamed.join(''), 'RAW_OK');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser falls back to run_done.result when no streaming', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  // 无 text 增量，直接 run_done
+  parser.handleLine(JSON.stringify({ type: 'run_done', result: '最终回复', session_id: 's2' }));
+  assert.equal(streamed.join(''), '最终回复');
+  assert.equal(done, true);
+});
+
+test('reasonix-stream-json parser surfaces error events', () => {
+  const streamed = [];
+  let done = false;
+  const parser = createParser({
+    format: 'reasonix-stream-json',
+    onText: (chunk) => streamed.push(chunk),
+    onDone: () => { done = true; },
+  });
+  parser.handleLine(JSON.stringify({ type: 'error', message: 'api timeout' }));
+  assert.match(streamed.join(''), /reasonix error.*api timeout/);
+  assert.equal(done, true);
 });

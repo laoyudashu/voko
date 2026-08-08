@@ -22,7 +22,7 @@ function makeFixture() {
   db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
     .run(JSON.stringify({
       instanceId: 'doctor-instance', pid: process.pid, port: 32123, ts: now,
-      agents: [{ agentId: 'doctor-agent', imConnected: true, backendConnected: true, activeMode: 'pull', availableModes: ['pull'] }],
+      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true }],
     }), now);
   db.prepare(`
     INSERT INTO agents
@@ -42,6 +42,7 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    mcpConfigPaths: [],
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
       isInstanceAlive: () => true,
@@ -73,6 +74,7 @@ test('doctor deep mode probes configured endpoints without starting a provider',
   const calls = [];
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    mcpConfigPaths: [],
     deep: true,
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
@@ -110,4 +112,45 @@ test('doctor CLI supports --json and does not initialize a missing database', ()
 test('doctor uses the current schema version from the database module', () => {
   assert.equal(typeof SCHEMA_VERSION, 'number');
   assert.ok(SCHEMA_VERSION >= 1);
+});
+
+test('doctor reports stale MCP configuration without exposing its contents', async (t) => {
+  const fixture = makeFixture();
+  const configPath = path.join(fixture.dir, 'goose-config.yaml');
+  fs.writeFileSync(configPath, 'extensions:\n  voko:\n    uri: http://localhost:3002/mcp\n    token: do-not-print-this-token\n');
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const result = await runDoctor({ dbPath: fixture.dbPath, mcpConfigPaths: [{ client: 'Goose', path: configPath }] });
+  const check = result.checks.find((item) => item.id === 'mcp-config');
+  assert.equal(check.status, 'warn');
+  assert.match(JSON.stringify(check), /STALE_MCP_PORT/);
+  assert.match(JSON.stringify(check), /Goose/);
+  assert.doesNotMatch(JSON.stringify(result), /do-not-print-this-token/);
+});
+
+test('doctor --fix-mcp migrates an unambiguous legacy VOKO entry and keeps a backup', async (t) => {
+  const fixture = makeFixture();
+  const configPath = path.join(fixture.dir, 'client.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    mcpServers: {
+      voko: { url: 'http://localhost:3002/mcp', headers: { Authorization: 'Bearer secret-that-must-not-leak' } },
+      other: { command: 'other-agent', args: [] },
+    },
+  }, null, 2));
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+
+  const result = await runDoctor({
+    dbPath: fixture.dbPath,
+    mcpConfigPaths: [{ client: 'Test Client', path: configPath }],
+    fixMcp: true,
+  });
+
+  assert.equal(result.mcpMigration.changed, 1);
+  assert.equal(result.mcpMigration.errors, 0);
+  assert.equal(result.mcpMigration.clients[0].status, 'updated');
+  assert.ok(fs.existsSync(`${configPath}.voko-mcp.bak`));
+  const migrated = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.deepEqual(migrated.mcpServers.voko, { command: 'voko', args: ['mcp'] });
+  assert.deepEqual(migrated.mcpServers.other, { command: 'other-agent', args: [] });
+  assert.doesNotMatch(JSON.stringify(result), /secret-that-must-not-leak/);
+  assert.equal(result.checks.find((item) => item.id === 'mcp-config')?.status, 'ok');
 });

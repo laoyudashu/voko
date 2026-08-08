@@ -1,3 +1,5 @@
+const { jsonForInlineScript } = require('./html-security');
+
 const MESSAGE_CONTENT_CSS = '.voko-media-image-link{display:inline-flex;flex-direction:column;align-items:flex-start;gap:5px;max-width:100%;padding:4px;border:1px solid #d7dee8;border-radius:9px;background:#fff;text-decoration:none}.voko-media-image-preview{display:block;max-width:min(320px,100%);max-height:240px;border-radius:6px;object-fit:contain;background:#f2f4f7}.voko-media-caption{font-size:12px;color:#667085;font-weight:600}.voko-media-fallback{padding:12px;color:#8a929a;font-size:13px}.voko-file-card{display:flex;align-items:center;gap:10px;max-width:460px;padding:10px 12px;border:1px solid #d7dee8;border-radius:9px;background:#fff}.voko-file-icon{display:flex;align-items:center;justify-content:center;flex:0 0 38px;height:38px;border-radius:8px;background:#e8f0fe;font-size:20px}.voko-file-info{min-width:0;flex:1}.voko-file-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#26364a;font-size:14px}.voko-file-meta{display:block;color:#7b8794;font-size:12px}.voko-file-action{flex:0 0 auto;font-size:13px}.voko-resource-unavailable{flex:0 0 auto;color:#8a929a;font-size:12px}.voko-compose-row{display:flex;align-items:stretch;gap:10px;margin-top:3px}.voko-compose-row input[type="text"]{flex:1;min-width:0;max-width:none;margin:0}.voko-compose-row .voko-send-button{flex:0 0 auto;margin:0}.voko-send-button:disabled{background:#e1e4e8!important;border-color:#c7ccd1!important;color:#737b84!important;cursor:not-allowed;opacity:1!important}.voko-send-button:disabled .voko-spinner{border-color:rgba(74,84,96,.25);border-top-color:#5f6b7a}';
 
 function createMessageRenderer(labels) {
@@ -10,6 +12,8 @@ function createMessageRenderer(labels) {
     openVideo: '',
     unavailable: '',
     unknownFile: '',
+    expand: 'Expand full message',
+    collapse: 'Collapse message',
   }, labels || {});
 
   function esc(value) {
@@ -142,14 +146,20 @@ function createMessageRenderer(labels) {
   }
 
   function render(contentType, content) {
-    const media = renderMedia(contentType, content);
-    if (media) return media;
-    let raw = String(content == null ? '' : content);
-    if (raw.length > 500) raw = raw.substring(0, 500) + '…';
-    return esc(raw).replace(/\n/g, '<br>');
+    return renderExpandable(contentType, content);
   }
 
-  return { normalize, renderMedia, render };
+  function renderExpandable(contentType, content) {
+    const media = renderMedia(contentType, content);
+    if (media) return media;
+    const raw = String(content == null ? '' : content);
+    if (raw.length <= 500) return esc(raw).replace(/\n/g, '<br>');
+    const shortHtml = esc(raw.substring(0, 500) + '…').replace(/\n/g, '<br>');
+    const fullHtml = esc(raw).replace(/\n/g, '<br>');
+    return '<span data-voko-expandable><span data-voko-message-preview>' + shortHtml + '</span><span data-voko-message-full hidden>' + fullHtml + '</span><button type="button" data-voko-expand-message aria-expanded="false" style="display:block;margin:5px 0 0;padding:2px 8px;min-width:auto;min-height:auto;font-size:13px;line-height:1.4">' + esc(text.expand) + '</button></span>';
+  }
+
+  return { normalize, renderMedia, render, renderExpandable };
 }
 
 function messageLabels(tFn) {
@@ -163,12 +173,23 @@ function messageLabels(tFn) {
     openVideo: t('web.message.open_video'),
     unavailable: t('web.message.unavailable'),
     unknownFile: t('web.message.unknown_file'),
+    expand: t('web.conversation.expand'),
+    collapse: t('web.conversation.collapse'),
   };
 }
 
 function messageRendererScript(tFn) {
   const labels = JSON.stringify(messageLabels(tFn)).replace(/</g, '\\u003c');
-  return '<script>window.__vokoMessageRenderer=(' + createMessageRenderer.toString() + ')(' + labels + ');</script>';
+  return '<script>window.__vokoMessageRenderer=(' + createMessageRenderer.toString() + ')(' + labels + ');</script>' + messageExpandScript(tFn);
+}
+
+function messageExpandScript(tFn) {
+  const t = tFn || ((key) => key);
+  const labels = jsonForInlineScript({
+    expand: t('web.conversation.expand'),
+    collapse: t('web.conversation.collapse'),
+  });
+  return '<script>(function(){var labels=' + labels + ';window.__vokoExpandLabels=labels;document.addEventListener("click",function(event){var button=event.target.closest("[data-voko-expand-message]");if(!button)return;var box=button.closest("[data-voko-expandable]");if(!box)return;var preview=box.querySelector("[data-voko-message-preview]"),full=box.querySelector("[data-voko-message-full]"),isExpanded=button.getAttribute("aria-expanded")==="true",nextExpanded=!isExpanded;if(!preview||!full)return;preview.hidden=nextExpanded;full.hidden=!nextExpanded;button.setAttribute("aria-expanded",nextExpanded?"true":"false");button.textContent=nextExpanded?labels.collapse:labels.expand;});})();</script>';
 }
 
 module.exports = {
@@ -176,4 +197,5 @@ module.exports = {
   createMessageRenderer,
   messageLabels,
   messageRendererScript,
+  messageExpandScript,
 };

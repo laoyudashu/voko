@@ -14,6 +14,7 @@ const { VOKO_API_URL } = require('./api-signature');
 const ENDPOINTS = require('../endpoints.json');
 const { t } = require('./i18n');
 const { normalizeBackendType } = require('./agent-backend-types');
+const { AgentDeliveryPolicyStore, normalizeDeliveryModes } = require('./agent-delivery-policy');
 const {
   normalizeOfficialImServerUrl,
   normalizeOfficialPublicUrl,
@@ -504,7 +505,7 @@ function registerAgentInDbOnDb(db, {
     const usageRate = agentUsageFeeRate != null ? agentUsageFeeRate : 0.1;
     const resolvedAccessMode = accessMode === 'public' ? 'public' : 'private';
     const resolvedDeliveryModes = Array.isArray(deliveryModes)
-      ? JSON.stringify([...new Set(deliveryModes.map(String).filter(Boolean))])
+      ? JSON.stringify(normalizeDeliveryModes(deliveryModes))
       : null;
 
     // categoryLabel 缺失时从 i18n 自动补齐（MCP/CLI/web-add 注册只传 category 码）
@@ -553,6 +554,16 @@ function registerAgentInDbOnDb(db, {
 /** 在可写 db 上更新 Agent 绑定字段（Lite 进程 / HTTP 端点共用） */
 function updateAgentBindingOnDb(db, { agentId, updates }) {
   try {
+    const hasRoutingUpdate = updates.backend_type !== undefined
+      || updates.backend_instance_id !== undefined
+      || updates.delivery_modes !== undefined;
+    if (hasRoutingUpdate) {
+      new AgentDeliveryPolicyStore(db).update(agentId, {
+        backendType: updates.backend_type === undefined ? undefined : normalizeBackendType(updates.backend_type),
+        backendInstanceId: updates.backend_instance_id,
+        deliveryModes: updates.delivery_modes,
+      });
+    }
     const sets = [];
     const values = [];
     if (updates.owner_email !== undefined) { sets.push('owner_email = ?'); values.push(updates.owner_email); }
@@ -572,17 +583,9 @@ function updateAgentBindingOnDb(db, { agentId, updates }) {
     if (updates.short_link_url !== undefined) { sets.push('short_link_url = ?'); values.push(normalizeOfficialPublicUrl(updates.short_link_url, { canonicalMain: true })); }
     if (updates.qr_code_url !== undefined) { sets.push('qr_code_url = ?'); values.push(updates.qr_code_url); }
     if (updates.icon_url !== undefined) { sets.push('icon_url = ?'); values.push(updates.icon_url); }
-    if (updates.backend_type !== undefined) { sets.push('backend_type = ?'); values.push(normalizeBackendType(updates.backend_type)); }
-    if (updates.backend_instance_id !== undefined) { sets.push('backend_instance_id = ?'); values.push(String(updates.backend_instance_id || '').trim() || null); }
     if (updates.agent_name !== undefined) { sets.push('agent_name = ?'); values.push(String(updates.agent_name || '').trim()); }
     if (updates.category !== undefined) { sets.push('category = ?'); values.push(String(updates.category || '').trim() || 'general'); }
     if (updates.description !== undefined) { sets.push('description = ?'); values.push(String(updates.description || '').trim() || null); }
-    if (updates.delivery_modes !== undefined) {
-      const modes = Array.isArray(updates.delivery_modes) ? updates.delivery_modes : JSON.parse(updates.delivery_modes);
-      if (!Array.isArray(modes)) throw new Error('delivery_modes must be an array');
-      sets.push('delivery_modes = ?');
-      values.push(JSON.stringify([...new Set(modes.map((mode) => String(mode).trim()).filter(Boolean))]));
-    }
 
     if (sets.length === 0) return { success: true };
     sets.push('updated_at = ?');

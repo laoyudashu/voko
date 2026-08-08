@@ -127,7 +127,7 @@
   "mcp.tool.ask_human_for_help.p.problem": "Problem description — the more detailed the better, to help the owner understand quickly",
   "mcp.tool.ask_human_for_help.p.suggestion": "Suggested reply or action for the owner",
 
-  "mcp.tool.check_human_replies.desc": "Check whether the owner has replied to an intervention request. When ownerReply is not empty, it means the owner has replied and the agent can proceed per the owner's instructions. Supports pagination.",
+  "mcp.tool.check_human_replies.desc": "Check whether the owner has replied to an intervention request. When ownerReply is not empty, the agent can proceed per the owner's instructions. If status=unknown, automatic delivery could not be confirmed; use this tool to Pull the reply. Supports pagination.",
   "mcp.tool.check_human_replies.p.id": "Intervention request ID; when provided, returns only the details of that record",
   "mcp.tool.check_human_replies.p.visitorId": "Visitor UID; when omitted, returns intervention requests for all visitors of this agent",
   "mcp.tool.check_human_replies.p.since": "Timestamp (milliseconds); returns only intervention requests after this time. When omitted, an automatic cursor is recorded so the next call returns only new records.",

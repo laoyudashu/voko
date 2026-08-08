@@ -146,6 +146,12 @@ function page(title,body,opt={},tFn,locale){
   return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+submitLockScript()+ajaxPaginationScript()+ajaxListFilterScript()+ajaxAccessListScript()+'\n</body>\n</html>'
 }
 
+function agentIdCopyScript(tFn){
+  const copied=jsonForInlineScript(tFn('web.agent.info.id_copied'));
+  const failed=jsonForInlineScript(tFn('web.agent.info.id_copy_failed'));
+  return '<script>(function(){var target=document.querySelector("[data-copy-agent-id]");if(!target)return;var toast=null,timer=0,copied='+copied+',failed='+failed+';function getToast(){if(toast)return toast;toast=document.createElement("div");toast.className="voko-copy-toast";toast.setAttribute("role","status");toast.setAttribute("aria-live","polite");toast.style.cssText="position:fixed;left:50%;bottom:24px;z-index:2000;max-width:calc(100% - 32px);padding:7px 13px;border-radius:7px;background:#1a1a2e;color:#fff;font-size:14px;line-height:1.4;box-shadow:0 5px 18px rgba(15,23,42,.2);opacity:0;pointer-events:none;transform:translate(-50%,8px);transition:opacity .16s ease,transform .16s ease";document.body.appendChild(toast);return toast}function show(text,isError){var el=getToast();el.textContent=text;el.style.background=isError?"#b3261e":"#1a1a2e";el.style.opacity="1";el.style.transform="translate(-50%,0)";clearTimeout(timer);timer=setTimeout(function(){el.style.opacity="0";el.style.transform="translate(-50%,8px)"},1800)}function fallback(value){var area=document.createElement("textarea");area.value=value;area.setAttribute("readonly","");area.style.position="fixed";area.style.opacity="0";document.body.appendChild(area);area.select();var ok=false;try{ok=document.execCommand("copy")}catch(_){}area.remove();return ok}async function copy(){var value=target.getAttribute("data-copy-value")||target.textContent.trim(),ok=false;if(navigator.clipboard&&navigator.clipboard.writeText){try{await navigator.clipboard.writeText(value);ok=true}catch(_){}}if(!ok)ok=fallback(value);show(ok?copied:failed,!ok)}target.addEventListener("dblclick",function(event){event.preventDefault();copy()});target.addEventListener("keydown",function(event){if((event.key==="Enter"||event.key===" ")&&event.target===target){event.preventDefault();copy()}})})();</script>';
+}
+
 function agentNav(aid,aname,tFn){const home=tFn?tFn('common.nav.home'):'首页';return'<a href="/">'+esc(home)+'</a> › <a href="/agents/'+esc(aid)+'">'+esc(aname||aid)+'</a>'}
 
 /** 生成 POST 到 /agents/{id} 的表单 */
@@ -190,7 +196,7 @@ function submitLockScript(){
 /** 判断是否为可被 /api/console 调用的 action（是函数 + 非 _ 前缀内部 helper） */
 function isCallableAction(h,action){return typeof h[action]==='function' && !action.startsWith('_')}
 
-/** 37 个 action 的分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移 */
+/** action 分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移（数量动态计算） */
 const ACTION_GROUPS=[
   {group:'im',actions:['whoami','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
   {group:'manage',actions:['get_agent_profile','update_agent_profile','set_agent_status','set_private_mode','manage_whitelist','manage_blacklist','list_access_lists','declare_capabilities','search_capabilities','start_worker','stop_worker']},
@@ -251,7 +257,30 @@ function getManifestSync(locale='zh'){
 async function getAgentList(h){const d=await h.whoami({});return d.agents||[]}
 async function getAgentInfo(h,id){const a=await getAgentList(h);return a.find(x=>x.agentId===id)||null}
 async function getAgentStatus(h,id){
-  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',backendConnected:false},warnings:[]}}
+  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[],probeFailed:true}}
+}
+
+function getMessageMode(status, tFn){
+  const agent=status&&status.agent;
+  if(!agent||status.probeFailed)return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
+  const automaticModes=Array.isArray(agent.automaticReadyModes)?agent.automaticReadyModes:[];
+  const mode=String(agent.activeAutomaticMode||automaticModes[0]||'').trim();
+  if(mode){
+    const key='web.home.message_mode.'+mode;
+    const translated=tFn(key);
+    return{detected:true,code:mode,text:translated===key?mode:translated};
+  }
+  if(agent.pullReady===true||agent.deliveryStatus){
+    return{detected:true,code:'pull',text:tFn('web.home.message_mode.pull')};
+  }
+  return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
+}
+
+const HOME_AGENT_NAME_MAX_LENGTH=24;
+function truncateAgentName(value,maxLength=HOME_AGENT_NAME_MAX_LENGTH){
+  const text=String(value==null?'':value);
+  const chars=Array.from(text);
+  return chars.length>maxLength?chars.slice(0,maxLength-1).join('')+'…':text;
 }
 
 /** 渲染操作表单页（GET） */
@@ -312,6 +341,18 @@ function agentWsScript(t) {
   const i18nObj = {
     online: t('common.status.online'),
     offline: t('common.status.offline'),
+    message_mode_loading: t('web.home.message_mode.loading'),
+    message_mode_pull: t('web.home.message_mode.pull'),
+    message_modes: {
+      pull: t('web.home.message_mode.pull'),
+      websocket: t('web.home.message_mode.websocket'),
+      http: t('web.home.message_mode.http'),
+      acp_ws: t('web.home.message_mode.acp_ws'),
+      acp: t('web.home.message_mode.acp'),
+      attach: t('web.home.message_mode.attach'),
+      cli: t('web.home.message_mode.cli'),
+      mcp: t('web.home.message_mode.mcp'),
+    },
     copied: t('common.home.copied'),
     failed: t('common.action.failed'),
     gen_creating: t('common.home.gen_creating'),
@@ -338,6 +379,27 @@ var pendingShortLinkButton=null;
 function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textContent=I.gen_creating;fetch("/api/short-link/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId:aid3})}).then(function(r){return r.json()}).then(function(d){if(d.success){location.reload()}else{t.disabled=false;t.textContent=I.gen;var m=document.getElementById("toast-msg");if(m)m.textContent=I.gen_failed;var d2=document.getElementById("dlg-toast");if(d2)d2.showModal()}}).catch(function(){t.disabled=false;t.textContent=I.gen})}
 (function(){
   var ws = null;
+  function modeText(data){
+    if(!data||data.messageModeDetected===false)return I.message_mode_loading;
+    var mode=String(data.messageMode||data.activeAutomaticMode||((data.automaticReadyModes||[])[0]||"")).trim();
+    if(mode)return I.message_modes[mode]||mode;
+    if(data.pullReady===true||data.messageModeDetected===true)return I.message_mode_pull;
+    return I.message_mode_loading;
+  }
+  function updateAgentRow(data){
+    if(!data||!data.agentId)return;
+    document.querySelectorAll("tr[data-agent-id]").forEach(function(row){
+      if(row.getAttribute("data-agent-id")!==String(data.agentId))return;
+      if(Object.prototype.hasOwnProperty.call(data,"imConnected")){
+        var statusCell=row.querySelector("[data-role=connection-status]");
+        if(statusCell)statusCell.innerHTML=data.imConnected?'<span class="online">'+I.online+'</span>':'<span class="offline">'+I.offline+'</span>';
+      }
+      if(Object.prototype.hasOwnProperty.call(data,"messageModeDetected")||Object.prototype.hasOwnProperty.call(data,"messageMode")||Object.prototype.hasOwnProperty.call(data,"activeAutomaticMode")){
+        var modeCell=row.querySelector("[data-role=message-mode]");
+        if(modeCell)modeCell.textContent=modeText(data);
+      }
+    });
+  }
   function connectWS() {
     try {
       ws = new WebSocket("ws://" + location.host + "/ws");
@@ -345,15 +407,7 @@ function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textCon
         try {
           var d = JSON.parse(e.data);
           if (d.event === "agent-wukongim:status") {
-            var link = document.querySelector('a[href="/agents/' + d.data.agentId + '"]');
-            if (link) {
-              var cell = link.closest("tr").querySelectorAll("td")[1];
-              if (cell) {
-                cell.innerHTML = d.data.imConnected
-                  ? '<span class="online">'+I.online+'</span>'
-                  : '<span class="offline">'+I.offline+'</span>';
-              }
-            }
+            updateAgentRow(d.data||{});
           }
           if (d.event === "runtime:updated") {
             var s = document.getElementById("footer-status-text");
@@ -367,6 +421,7 @@ function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textCon
               s.textContent = text;
               s.style.color = d.data.statusColor || '#888';
             }
+            if(Array.isArray(d.data.agents))d.data.agents.forEach(updateAgentRow);
           }
         } catch(_) {}
       };
@@ -545,6 +600,7 @@ function createWebRouter(handlers, db, opts={}){
       const d=JSON.parse(rt.data);
       let updateNotice='';
       try{const ur=db.prepare("SELECT data FROM config WHERE type='update_status'").get();const u=ur&&ur.data?JSON.parse(ur.data):null;if(u&&u.updateAvailable&&u.latestVersion){updateNotice=' <span style="color:#b45309;font-weight:700">'+esc(t('common.footer.update_available',{version:u.latestVersion}))+'</span>'}}catch{}
+      const deliveryScript='<script>(function(){var el=document.getElementById("delivery-status");if(!el)return;var aid=el.getAttribute("data-agent-id"),cid=el.getAttribute("data-channel-id"),labels={processing:'+JSON.stringify(t('web.conversation.delivery_processing'))+',pending:'+JSON.stringify(t('web.conversation.delivery_pending'))+',completed:'+JSON.stringify(t('web.conversation.delivery_completed'))+',failed:'+JSON.stringify(t('web.conversation.delivery_failed'))+'};function show(s){if(!s||s.agentId!==aid||String(s.channelId||s.visitorId||"")!==cid)return;var text=labels[s.status];if(!text)return;el.textContent=text;el.style.display="block";el.style.color=s.status==="failed"?"#d93025":s.status==="completed"?"#0f9d58":"#e37400";if(s.status==="completed")setTimeout(function(){if(el.textContent===text)el.style.display="none"},1800)}function connect(){try{var ws=new WebSocket("ws://"+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event==="agent-delivery:status")show(d.data||{})}catch(_){}};ws.onclose=function(){setTimeout(connect,3000)}}catch(_){setTimeout(connect,5000)}}connect()})();</script>';
       // 运行状态
       let statusKey='common.footer.status_init',statusColor='#888';
       if(d.agents&&d.agents.length){
@@ -561,7 +617,7 @@ function createWebRouter(handlers, db, opts={}){
         +' <span>'+esc(t('common.footer.status'))+': <span id="footer-status-text" style="color:'+statusColor+';font-weight:700">'+esc(t(statusKey))+'</span></span>'
         +'</span>'
         +'<span style="display:flex;gap:14px;align-items:center">'+bugLink+langSwitcher+'</span>'
-        +'</div>';
+        +'</div>'+deliveryScript;
     }catch{return '<div style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">'+bugLink+langSwitcher+'</div>'}
   }
 
@@ -706,12 +762,24 @@ function createWebRouter(handlers, db, opts={}){
 
       for(const a of pageAgents){
         let connStatus='<span class="unknown">'+L('common.status.unknown')+'</span>';
-        try{const st=await getAgentStatus(handlers,a.agentId);const ag=st.agent;if(ag)connStatus=ag.imConnected?'<span class="online">'+L('common.status.online')+'</span>':'<span class="offline">'+L('common.status.offline')+'</span>'}catch{}
+        let messageMode=L('web.home.message_mode.loading');
+        let messageModeDetected=false;
+        try{
+          const st=await getAgentStatus(handlers,a.agentId);
+          const ag=st.agent;
+          if(ag)connStatus=ag.imConnected?'<span class="online">'+L('common.status.online')+'</span>':'<span class="offline">'+L('common.status.offline')+'</span>';
+          const mode=getMessageMode(st,T);
+          messageMode=mode.text;
+          messageModeDetected=mode.detected;
+        }catch{}
         var bt=a.backendType||'-';
+        const agentNameFull=String(a.agentName||a.agentId||'');
+        const agentNameDisplay=truncateAgentName(agentNameFull);
+        const agentNameHint=agentNameDisplay===agentNameFull?'':' title="'+esc(agentNameFull)+'" aria-label="'+esc(agentNameFull)+'"';
         var shortCell='<button class="btn btn-sm btn-outline" data-role="gen-link" data-agent="'+esc(a.agentId)+'" style="margin:0;padding:2px 8px;font-size:12px;min-height:auto">'+L('common.btn.generate_link')+'</button>';
         if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);shortCell='<a href="'+su+'" target="_blank" style="font-size:13px">'+su.substring(0,35)+(su.length>35?'…':'')+'</a> <button class="btn btn-sm btn-outline" data-role="copy-link" data-url="'+su+'" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.copy')+'</button>'}}catch(ex){}}
         var actionHtml='<a href="/agents/'+esc(a.agentId)+'/edit" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.edit')+'</a> <a href="/agents/'+esc(a.agentId)+'/caps" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.caps')+'</a> <span class="'+(a.publishStatus==='published'?'online':'pending')+'" data-role="toggle-pub" data-agent="'+esc(a.agentId)+'" data-pub-status="'+(a.publishStatus==='published'?'published':'unpublished')+'" title="'+esc(a.publishStatus==='published'?T('common.pub.title_published'):T('common.pub.title_unpublished'))+'" style="cursor:pointer;font-size:12px">'+L(a.publishStatus==='published'?'common.pub.published':'common.pub.unpublished')+'</span> <span class="'+(a.accessMode==='private'?'online':'pending')+'" data-role="toggle-acc" data-agent="'+esc(a.agentId)+'" data-acc-mode="'+(a.accessMode==='private'?'private':'public')+'" title="'+esc(a.accessMode==='private'?T('common.acc.title_private'):T('common.acc.title_public'))+'" style="cursor:pointer;font-size:12px">'+L(a.accessMode==='private'?'common.acc.private':'common.acc.public')+'</span>';
-        rows.push('<tr><td><a href="/agents/'+esc(a.agentId)+'">'+esc(a.agentName||a.agentId)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
+        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td><a href="/agents/'+esc(a.agentId)+'"'+agentNameHint+'>'+esc(agentNameDisplay)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+esc(messageMode)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
       }
 
       // 信息栏
@@ -723,7 +791,7 @@ function createWebRouter(handlers, db, opts={}){
         +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add?new=1" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
         +'</div>'
         +(filtered.length>0
-          ?'<div class="table-wrap"><table><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
+          ?'<div class="table-wrap"><table><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.message_mode')+'</th><th style="text-align:center">'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
           :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
@@ -842,7 +910,7 @@ function createWebRouter(handlers, db, opts={}){
       else if(req.query.err)msg={success:false,text:req.query.err};
 
       // 信息条
-      const infoBar='<div class="info-bar"><span>ID: <code>'+aId+'</code></span><span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
+      const infoBar='<div class="info-bar"><span class="agent-id-copy" data-copy-agent-id data-copy-value="'+aId+'" tabindex="0" role="button" title="'+esc(T('web.agent.info.id_copy_hint'))+'" aria-label="'+esc(T('web.agent.info.id_copy_hint'))+'" style="cursor:copy">ID: <code>'+aId+'</code></span><span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
 
       // 搜索框
       const keywordEsc=esc(keyword);
@@ -921,7 +989,7 @@ function createWebRouter(handlers, db, opts={}){
 
       const tabScript='<script>(function(){function setTab(t){var c=document.getElementById("tab-conv"),g=document.getElementById("tab-group");if(c)c.style.display=(t==="conv"?"":"none");if(g)g.style.display=(t==="group"?"":"none");document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group")u.searchParams.set("tab","group");else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
 
-      res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript}))
+      res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript+agentIdCopyScript(T)}))
     }catch(e){next(e)}
   });
 
@@ -959,8 +1027,9 @@ function createWebRouter(handlers, db, opts={}){
       const payBtn=hasPricing&&hasPaymentAuth?'<a href=\"/payments?action=create&agentId='+aId2+'&visitorId='+cId2+'\" class=\"op-card\" data-agent-kind=\"link\" data-agent=\"nav_card\">'+L('web.conversation.pay.create')+'</a>':'<span class=\"op-card\" style=\"color:#aaa;cursor:not-allowed;opacity:0.6\" title=\"'+esc(T(hasPaymentAuth?'web.conversation.pay.unconfigured_title':'web.conversation.pay.card_required_title'))+'\">'+L('web.conversation.pay.create')+'</span>';res.send(renderPage(req,T('web.conversation.title',{id:titleId}),
 '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span class="meta" id="msg-count">'+T('web.conversation.count_msg',{count:msgs.length})+'</span></div>'
 +'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'
-+'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
-+'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
+ +'<div id="delivery-status" class="meta" data-agent-id="'+aId2+'" data-channel-id="'+cId2+'" role="status" aria-live="polite" style="display:none;margin:6px 0 10px"></div>'
+ +'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><input type="hidden" name="channelType" value="1"><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
+ +'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
 {nav:agentNav(agentId,aName,T)+' › '+navId,jsonld:{'@context':'https://schema.org',agentId,channelId,messages:jd},footer:renderFooter(T, req.locale)+messageRendererScript(T)+'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'+'<script>var _A='+jsonForInlineScript(agentId)+',_C='+jsonForInlineScript(channelId)+',_R='+jsonForInlineScript({agent:T('web.conversation.from.agent'),visitor:peerLabel,no_msg:T('web.conversation.no_messages'),count_msg:T('web.conversation.count_msg'),auditIn:T('web.audit.message_inbound'),auditOut:T('web.audit.message_outbound'),auditBlocked:T('web.audit.message_blocked'),auditAllowed:T('web.audit.message_allowed'),auditKeyword:T('web.audit.message_keyword'),auditOriginal:T('web.audit.message_original'),auditInvalid:T('web.audit.message_invalid')})+',_seen={};'+"(function(){function _esc(s){return String(s==null?\"\":s).replace(/[&<>\"']/g,function(c){return{\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]})}function _audit(ct,t){try{var d=JSON.parse(ct),out=d.direction===\"outbound\"||(!d.direction&&String(d.audit||\"\").indexOf(\"出站\")>=0),title=out?_R.auditOut:_R.auditIn,result=d.action===\"hard_deny\"?_R.auditBlocked:_R.auditAllowed,rows=\"\";if(d.keyword)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditKeyword)+\"</span>\"+_esc(d.keyword)+\"</div>\";if(d.text)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditOriginal)+\"</span>\"+_esc(d.text).replace(/\\n/g,\"<br>\")+\"</div>\";return '<div class=\"audit-message\"><div class=\"audit-message-head\"><strong>'+_esc(title)+'</strong><span class=\"audit-message-result\">'+_esc(result)+'</span><span class=\"meta\">'+_esc(t)+\"</span></div>\"+rows+\"</div>\"}catch(_){return '<div class=\"audit-message\"><strong>'+_esc(_R.auditInvalid)+'</strong> <span class=\"meta\">'+_esc(t)+\"</span></div>\"}}function _addMsg(m){var bx=document.getElementById(\"msg-box\"),isMe=m.isMe===true||m.isMe===1,sr=isMe?_R.agent:_R.visitor,t=new Date((m.timestamp||0)*1000).toLocaleTimeString(),ct=(m.content||\"\"),h;if(m.contentType===11){h=_audit(ct,t)}else{var bc=isMe?\"#0f9d58\":\"#1a73e8\",bg=isMe?\"#e6f4ea\":\"#e8f0fe\";h='<div style=\"padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+bc+';background:'+bg+'\"><strong>'+_esc(sr)+'</strong> <span style=\"color:#888;font-size:13px\">['+_esc(t)+']</span><br>'+window.__vokoMessageRenderer.render(m.contentType,ct)+\"</div>\"}bx.insertAdjacentHTML(\"beforeend\",h);bx.scrollTop=bx.scrollHeight;var mc=document.getElementById(\"msg-count\");if(mc){mc.textContent=_R.count_msg.replace(\"{count}\",bx.children.length)}}function _connect(){try{var ws=new WebSocket(\"ws://\"+location.host+\"/ws\");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event===\"agent-wukongim:message\"){var m=d.data;if(m.agentId===_A&&m.channelId===_C&&m.messageId&&!_seen[m.messageId]){_seen[m.messageId]=1;_addMsg(m)}}}catch(_){}};ws.onclose=function(){setTimeout(_connect,3000)}}catch(_){setTimeout(_connect,5000)}}_connect()})();"+'</script>'}))
     }catch(e){next(e)}
   });
@@ -1625,7 +1694,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         if(items.length)rowsHtml=items.map(r=>{
           const aname=r.agent_name||nameMap[r.agent_id]||r.agent_id||'';
           const prob=esc((r.problem||'').substring(0,100));
-          const statusCell=r.skip_reply?L('web.interventions.status.no_reply'):(r.owner_reply?L('web.interventions.reply.done'):L('web.interventions.reply.pending'));
+          const statusCell=r.skip_reply?L('web.interventions.status.no_reply'):(r.status==='unknown'?L('web.interventions.status.unknown'):(r.owner_reply?L('web.interventions.reply.done'):L('web.interventions.reply.pending')));
           const vn=intvNickMap[r.visitor_id];const member=vn?esc(vn)+' ('+esc(r.visitor_id)+')':esc(r.visitor_id||'');const vd=Number(r.target_channel_type)===2?esc(r.target_channel_id||'')+' / '+member:member;
           return '<tr><td>'+esc(aname)+'</td><td>'+vd+'</td><td style="max-width:200px;word-break:break-word;white-space:normal">'+prob+'</td><td class="meta" style="white-space:nowrap">'+timeTag(r.ask_time)+'</td><td style="white-space:nowrap;text-align:center">'+statusCell+'</td></tr>'
         }).join('\n')
@@ -2102,7 +2171,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
 +'- Manage audit rules -> GET /audit-rules\n'
 +'- View interventions -> GET /interventions\n'
 +'\n'
-+'## All Actions (37, details at /api/handlers)\n'
++'## All Actions ('+ACTION_GROUPS.reduce((s,g)=>s+g.actions.length,0)+', details at /api/handlers)\n'
 +'- Messaging: '+listActions('im').join(', ')+'\n'
 +'- Agent Management: '+listActions('manage').join(', ')+'\n'
 +'- Payment: '+listActions('pay').join(', ')+'\n'

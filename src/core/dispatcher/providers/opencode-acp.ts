@@ -29,12 +29,25 @@ class OpenCodeAcpProvider extends AcpAdapter {
     });
   }
 
-  async steer(agentId: string, visitorId: string, content: string): Promise<void> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: {
+    turnId?: string;
+    channelId?: string;
+    channelType?: number;
+    providerBinding?: PushPayload['providerBinding'];
+  }): Promise<void> {
+    const turnId = String(metadata?.turnId || `steer-${Date.now()}`);
+    const channelType = metadata?.channelType === 2 || String(visitorId).startsWith('group:') ? 2 : 1;
+    const channelId = String(metadata?.channelId || String(visitorId).replace(/^group:/, ''));
     return this.push({
       agentId,
-      fromUid: visitorId,
+      fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
       content,
-      messageId: `steer-${Date.now()}`,
+      messageId: turnId,
+      turnId,
+      channelId,
+      channelType,
+      sessionTarget: channelType === 2 ? `group:${channelId}` : visitorId,
+      providerBinding: metadata?.providerBinding || null,
       timestamp: Date.now(),
     });
   }

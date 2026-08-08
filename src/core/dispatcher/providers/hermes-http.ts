@@ -2,15 +2,17 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
+const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
+const deliveryBus = require('../../lite-bus');
 import type { ChildProcess } from 'child_process';
 import type {
   HermesApiClientOptions,
   HermesSteerResult,
 } from '../../adapters/hermes-api-client';
-import type { AgentMeta, PushPayload } from '../types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
 interface ProfileConnection {
   port?: number;
@@ -52,6 +54,7 @@ class HermesHttpProvider extends PushProvider {
   client: InstanceType<typeof HermesApiClient> | null;
   connectedAgents: Set<string> | null;
   _gatewayChildren: Map<string, ChildProcess> | null;
+  _inflightTurns: Map<string, Promise<void>>;
 
   constructor(database: unknown, mainWindow: unknown, options: HermesHttpOptions = {}) {
     super();
@@ -73,6 +76,7 @@ class HermesHttpProvider extends PushProvider {
     this._selectedConfigPaths = new Map();
     this.connectedAgents = null;
     this._gatewayChildren = null;
+    this._inflightTurns = new Map();
     for (const profileId of Object.keys(this.options.profiles || {})) {
       this._refreshProfileConnection(profileId);
     }
@@ -324,7 +328,7 @@ class HermesHttpProvider extends PushProvider {
     this.addLog(`🔧 gateway 未运行，启动 profile=${profileId} port=${port}...`);
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn('hermes', ['--profile', profileId, 'gateway', 'run', '--replace'], {
+      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
         stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
       });
       child.on('error', (err: Error) => {
@@ -366,7 +370,7 @@ class HermesHttpProvider extends PushProvider {
     this.addLog(`🔄 401: 强制重启 gateway ${profileId}（重载 config.yaml 的 key）`);
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn('hermes', ['--profile', profileId, 'gateway', 'run', '--replace'], {
+      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
         stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
       });
       child.on('error', (err: Error) => this.addLog(`❌ 重启 spawn 失败 (${profileId}): ${err.message}`));
@@ -430,7 +434,79 @@ class HermesHttpProvider extends PushProvider {
    * 发送访客消息到 Hermes agent（走 API Server）
    * sessionKey 格式: hermes:{agentId}:{visitorId}
    */
+  _deliveryKey(agentId: string, channelType: number, channelId: string, turnId: string): string {
+    return `${agentId}::${channelType === 2 ? 2 : 1}::${channelId}::${turnId}`;
+  }
+
+  _emitDeliveryStatus(input: {
+    agentId: string;
+    visitorId: string;
+    channelId?: string | null;
+    channelType?: number | null;
+    messageId?: string | null;
+    turnId?: string | null;
+    status: 'processing' | 'completed' | 'pending' | 'failed' | 'deduplicated';
+    elapsedMs?: number;
+  }): void {
+    const data = {
+      provider: 'hermes-http',
+      agentId: input.agentId,
+      visitorId: input.visitorId,
+      channelId: input.channelId || input.visitorId,
+      channelType: input.channelType === 2 ? 2 : 1,
+      messageId: input.messageId || null,
+      turnId: input.turnId || null,
+      status: input.status,
+      elapsedMs: Number.isFinite(input.elapsedMs) ? Math.max(0, Number(input.elapsedMs)) : 0,
+      timestamp: Date.now(),
+    };
+    this.emit('delivery.status', data);
+    try { deliveryBus.emit('agent-delivery:status', data); } catch (_) {}
+  }
+
+  /**
+   * Public wrapper that makes the long-running HTTP turn observable and
+   * coalesces duplicate submissions carrying the same inbound message/turn ID.
+   * A timeout is reported as pending; it is intentionally not retried here.
+   */
   async sendToSession(
+    sessionKey: string,
+    message: string,
+    extraData: Partial<PushPayload> | null = null,
+  ): Promise<void> {
+    const parts = sessionKey.split(':');
+    const agentId = parts[1] || '';
+    const visitorId = parts.slice(2).join(':');
+    const channelType = extraData?.channelType === 2 ? 2 : 1;
+    const channelId = String(extraData?.channelId || (channelType === 2 ? visitorId.replace(/^group:/, '') : visitorId));
+    const turnId = String(extraData?.turnId || extraData?.messageId || '');
+    const key = turnId ? this._deliveryKey(agentId, channelType, channelId, turnId) : null;
+    const existing = key ? this._inflightTurns.get(key) : null;
+    if (existing) {
+      this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'deduplicated' });
+      return existing;
+    }
+
+    const startedAt = Date.now();
+    this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'processing' });
+    const run = this._sendToSession(sessionKey, message, extraData)
+      .then(() => {
+        this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: 'completed', elapsedMs: Date.now() - startedAt });
+      })
+      .catch((error: unknown) => {
+        const detail = errorMessage(error);
+        const pending = /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
+        this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: pending ? 'pending' : 'failed', elapsedMs: Date.now() - startedAt });
+        throw error;
+      })
+      .finally(() => {
+        if (key && this._inflightTurns.get(key) === run) this._inflightTurns.delete(key);
+      });
+    if (key) this._inflightTurns.set(key, run);
+    return run;
+  }
+
+  async _sendToSession(
     sessionKey: string,
     message: string,
     extraData: Partial<PushPayload> | null = null,
@@ -469,7 +545,7 @@ class HermesHttpProvider extends PushProvider {
     if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     try {
-      const result = await this.client.chat(profileId, visitorId, structuredMsg);
+      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
       const replyPreview = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
@@ -490,7 +566,7 @@ class HermesHttpProvider extends PushProvider {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.chat(profileId, visitorId, structuredMsg);
+            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -501,7 +577,7 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.chat(profileId, visitorId, structuredMsg);
+            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -514,7 +590,7 @@ class HermesHttpProvider extends PushProvider {
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.chat(profileId, visitorId, structuredMsg);
+          const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
           const replyLen2 = (result.reply || '').length;
           const replyPrev2 = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
           this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字) 内容="${replyPrev2}"`);
@@ -536,15 +612,19 @@ class HermesHttpProvider extends PushProvider {
     agentId: string,
     visitorId: string,
     content: string,
-    metadata?: { turnId?: string },
+    metadata?: ProviderSteerMetadata,
   ): Promise<HermesSteerResult | null | undefined> {
-    const sessionKey = `hermes:${agentId}:${visitorId}`;
     const profileId = this._profileForAgent(agentId);
     if (!profileId) {
       const error = new Error('Hermes HTTP unavailable: agent is not bound to a Hermes profile');
       (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     }
+    const boundSession = metadata?.providerBinding?.providerType === 'hermes'
+      && metadata.providerBinding.providerInstanceId === profileId
+      ? metadata.providerBinding.nativeSessionId
+      : null;
+    const sessionKey = boundSession || `hermes:${agentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `hermes-steer-${Date.now()}`);
     this.addLog(`📝 注入系统消息 ${agentId}`);
 
@@ -561,7 +641,7 @@ class HermesHttpProvider extends PushProvider {
     };
 
     try {
-      const result = await this.client.steer(profileId, visitorId, content);
+      const result = await this.client.steer(profileId, sessionKey, visitorId, content);
       this._authStates.set(profileId, true);
       this.addLog(`✅ steer 完成 ${agentId} (回复 ${(result.output || '').length} 字)`);
       emitReply(result);
@@ -572,7 +652,7 @@ class HermesHttpProvider extends PushProvider {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.steer(profileId, visitorId, content);
+            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (刷新 profile key 后)`);
             emitReply(result);
@@ -583,7 +663,7 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.steer(profileId, visitorId, content);
+            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);
@@ -595,7 +675,7 @@ class HermesHttpProvider extends PushProvider {
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.steer(profileId, visitorId, content);
+          const result = await this.client.steer(profileId, sessionKey, visitorId, content);
           this.addLog(`✅ steer 完成 ${agentId} (重试)`);
           emitReply(result);
           return result;
@@ -623,6 +703,7 @@ class HermesHttpProvider extends PushProvider {
     this._destroyed = true;
     this.enabled = false;
     this.connected = false;
+    this._inflightTurns.clear();
     // kill detached gateway 子进程，避免直接调 destroy（非经 stop）时泄漏：占端口/读旧 key
     if (this._gatewayChildren) {
       for (const child of this._gatewayChildren.values()) {

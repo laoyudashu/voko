@@ -56,7 +56,7 @@ interface ChannelDatabaseApi {
     channelName: string,
   ): OwnerReplyUpdateResult;
   markAgentNotified(id: string): unknown;
-  updateOwnerInterventionStatus(id: string, status: string, resolvedAt: number): unknown;
+  updateOwnerInterventionStatus(id: string, status: string, resolvedAt: number | null): unknown;
   getOwnerInterventionByParentMsgId(messageId: string): unknown;
   getLatestPendingIntervention(): unknown;
   getPendingByAgentAndVisitor(agentId: string, visitorId: string): unknown;
@@ -79,6 +79,8 @@ interface ProviderConnection {
 
 interface ResumeResult {
   success?: boolean;
+  deliveryOutcome?: 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
+  output?: unknown;
 }
 
 interface ChannelRegistryDeps {
@@ -120,6 +122,7 @@ function backendTypeFromRow(row: unknown): string | undefined {
 
 const channels: Record<string, unknown> = {};
 const bus = require('../core/lite-bus');
+const { settleOwnerForward } = require('../core/owner-intervention-forward');
 
 /**
  * 构建主人回复提示词（默认实现）
@@ -158,11 +161,6 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
     const logTag = channelName.charAt(0).toUpperCase() + channelName.slice(1);
     console.log(`[${logTag}] ================== 主人回复流程 ==================`);
 
-    // 好友申请自动审批：主人回复"同意"时自动加入白名单
-    if (deps.autoApproveWhitelistIfFriendRequest) {
-      deps.autoApproveWhitelistIfFriendRequest(intervention, content);
-    }
-
     let isTestReply = false;
     if (intervention.visitorId && intervention.visitorId.startsWith('system_test:')) {
       const testId = intervention.visitorId.replace('system_test:', '');
@@ -178,17 +176,33 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
     const updateResult = databaseAPI.updateOwnerInterventionReply(intervention.id, content, Date.now(), channelName);
     console.log(`[${logTag}] 数据库更新结果: id=${intervention.id} contentChanged=${updateResult.contentChanged}${isTestReply ? ' (测试消息)' : ''}`);
 
+    // 好友申请仅在收到新回复时自动审批，避免重复轮询反复触发。
+    if (!isTestReply && updateResult.contentChanged && deps.autoApproveWhitelistIfFriendRequest) {
+      deps.autoApproveWhitelistIfFriendRequest(intervention, content);
+    }
+
     if (!isTestReply && updateResult.contentChanged && sessionKeyForForward) {
       const promptBuilder = deps.buildOwnerReplyPrompt || buildOwnerReplyPrompt;
       const forwardMsg = promptBuilder(intervention, content);
-      const doNotify = () => {
-        databaseAPI.markAgentNotified(intervention.id);
-        databaseAPI.updateOwnerInterventionStatus(intervention.id, 'resolved', Date.now());
+      const settle = (result: unknown) => settleOwnerForward(databaseAPI, intervention.id, result);
+      const reportOutcome = (outcome: string) => {
+        if (outcome === 'delivered') {
+          console.log(`[${logTag}] 主人回复已入库并成功转发`);
+        } else if (outcome === 'outcome_unknown' || outcome === 'rejected') {
+          console.warn(`[${logTag}] 主人回复已入库，自动转发结果未知，保留 Pull`);
+        } else {
+          console.log(`[${logTag}] 主人回复已入库，通道确认未投递，等待重试`);
+        }
       };
       if (typeof deps.resumeOwnerIntervention === 'function') {
         Promise.resolve(deps.resumeOwnerIntervention(intervention, forwardMsg))
-          .then((result: ResumeResult) => { if (result?.success !== false) doNotify(); })
+          .then((result: ResumeResult) => {
+            const outcome = settle(result);
+            reportOutcome(outcome);
+          })
           .catch((err: unknown) => {
+            const outcome = settle(err);
+            reportOutcome(outcome);
             console.error(`[${logTag}] resume owner intervention failed:`, errorMessage(err));
           });
       } else if (intervention.agentId) {
@@ -197,7 +211,7 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
         if (agentBackend === 'hermes' && hermesHandler?.connected && hermesHandler.steer) {
           const hermesSessionKey = 'hermes:' + intervention.agentId + ':' + intervention.visitorId;
           hermesHandler.steer(hermesSessionKey, forwardMsg).then((result) => {
-            doNotify();
+            reportOutcome(settle(result));
             const output = result?.output || '';
             if (output && db) {
               const ts = Math.floor(Date.now() / 1000);
@@ -208,10 +222,14 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
               console.log(`[${logTag}] agent 回复已入库, visitorId=${intervention.visitorId}`);
             }
           }).catch((err: unknown) => {
+            reportOutcome(settle(err));
             console.error(`[${logTag}] 通知 Hermes agent 失败:`, errorMessage(err));
           });
         } else if (agentBackend === 'openclaw' && openclawHandler?.connected && openclawHandler.sendToSession) {
-          openclawHandler.sendToSession(sessionKeyForForward, forwardMsg).then(doNotify).catch((err: unknown) => {
+          openclawHandler.sendToSession(sessionKeyForForward, forwardMsg).then((result) => {
+            reportOutcome(settle(result));
+          }).catch((err: unknown) => {
+            reportOutcome(settle(err));
             console.error(`[${logTag}] 通知 agent 失败:`, errorMessage(err));
           });
         } else {
@@ -220,7 +238,6 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
       } else {
         console.log(`[${logTag}] -> 无可用连接，跳过转发`);
       }
-      console.log(`[${logTag}] -> 已转发主人回复`);
     } else if (sessionKeyForForward && !updateResult.contentChanged) {
       console.log(`[${logTag}] -> 回复内容无变化，跳过通知 agent`);
     } else if (sessionKeyForForward) {

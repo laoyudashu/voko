@@ -21,7 +21,7 @@ npm install --global @voko/lite
 voko start
 ```
 
-打开 [http://localhost:3100](http://localhost:3100)，完成本地界面的首次登录或注册，然后添加 Agent。
+启动后运行 `voko status --json`，使用输出顶层的 `port` 打开本地 Web UI，完成首次登录或注册，然后添加 Agent。`3100` 只是默认端口；请勿把它当作固定地址。
 
 ![脱敏的本地 VOKO Web UI 示例](assets/readme/local-web-ui-sanitized.png)
 
@@ -54,9 +54,9 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 
 ## Provider 兼容性与实测
 
-VOKO 的公开矩阵覆盖 17 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Cline 已完成 Windows 实机 ACP→CLI→ACP 恢复回路验收；Goose、Codex、Claude Code、OpenCode 等已完成所列真机功能验证；Gemini、OpenHands 与 Amazon Q 仍有待验证或环境受阻的路径。
+VOKO 的公开矩阵覆盖 17 类主要 Provider，并记录 Amazon Q、WorkBuddy、豆包等已识别环境。不要把“可检测”“功能验证”和“真机完整回归”混为一谈：OpenClaw、Hermes 与 Cursor 已完成所列真实环境的完整回归；Cline 已完成 Windows 实机 ACP→CLI→ACP 恢复回路验收；OpenHands CLI 1.16.0（启动时显示 SDK 1.21.0）已完成 Windows ACP→CLI→ACP 回路和受限 CLI 工具安全验收；Goose、Codex、Claude Code、OpenCode、Kiro、GitHub Copilot、ZeroClaw、Grok 等已完成所列真机功能验证；Gemini 与 Amazon Q 仍有待验证或环境受阻的路径。
 
-所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
+所有自动通道只会在本机可用且注册时启用后使用，Pull 始终可用：Agent 可通过 VOKO CLI、MCP 或本机接口主动读取消息。注册入口、注册模式、推荐接收顺序、降级和路由刷新规则见 [Provider 注册、消息投递与路由恢复指南](docs/provider-delivery-routing.md)；完整的主 / 备 / Pull 顺序、测试 OS、会话恢复边界与安全限制见 [Provider / 智能体兼容性与实测结果](docs/provider-compatibility.md)；各 Provider 的安装、注册和使用细节见 [Provider 专属指南](docs/providers/README.md)。外部 Provider 需由你自行安装、登录并放入 `PATH`；它们各自的许可证、可用性和系统支持不由 VOKO 保证。
 
 ## 平台与本地运行
 
@@ -68,7 +68,7 @@ VOKO 是一个 Node.js 包，已针对 Windows、Ubuntu Linux 和 macOS 的路�
 
 ## 获取帮助与参与贡献
 
-1. 优先在本地 Web UI 的[错误上报页](http://localhost:3100/bug-report)提交已脱敏的产品问题；请勿提交密码、令牌、私钥、验证码或私密对话。
+1. 优先在本地 Web UI 的错误上报页提交已脱敏的产品问题；先运行 `voko status --json` 获取当前端口。请勿提交密码、令牌、私钥、验证码或私密对话。
 2. 也可以通过 [GitHub Issues](https://github.com/laoyudashu/voko/issues) 讨论可公开的问题与兼容性反馈。
 3. 安全问题请按 [SECURITY.md](SECURITY.md) 的私密报告方式处理，不要公开披露漏洞或凭据。
 

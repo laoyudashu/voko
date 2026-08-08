@@ -121,7 +121,7 @@
   "mcp.tool.ask_human_for_help.p.problem": "问题描述，越详细越好，方便主人快速理解",
   "mcp.tool.ask_human_for_help.p.suggestion": "建议主人如何回复或处理",
 
-  "mcp.tool.check_human_replies.desc": "查看主人是否已回复介入请求。ownerReply 不为空时表示主人已回复，agent 可按主人指示处理。支持分页",
+  "mcp.tool.check_human_replies.desc": "主人が介入リクエストに返信したか確認します。ownerReply が空でなければ指示に従って処理できます。status=unknown の場合は自動配信を確認できないため、このツールで Pull して返信を取得してください。ページング対応",
   "mcp.tool.check_human_replies.p.id": "介入请求 ID，传了则只返回该条记录的详情",
   "mcp.tool.check_human_replies.p.visitorId": "访客 UID，不传则返回该 agent 所有访客的介入请求",
   "mcp.tool.check_human_replies.p.since": "时间戳（毫秒），只返回此时间之后的介入请求。不传则自动记游标，下次调用只返回新记录",

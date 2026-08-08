@@ -44,15 +44,33 @@ test('ZeroClaw WebSocket provider requires a loopback URL, token and agent alias
   }
 });
 
+test('ZeroClaw WebSocket preflight reports missing configuration without probing the network', async () => {
+  const previousToken = process.env.ZEROCLAW_ACP_TOKEN;
+  try {
+    delete process.env.ZEROCLAW_ACP_TOKEN;
+    const provider = new ZeroClawWsProvider({ db: aliasDb() });
+    const result = await provider.preflightDelivery('agent-voko');
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'configuration_required');
+    assert.deepEqual(result.missing, ['ZEROCLAW_ACP_TOKEN']);
+    assert.equal(result.sideEffects, false);
+  } finally {
+    if (previousToken === undefined) delete process.env.ZEROCLAW_ACP_TOKEN;
+    else process.env.ZEROCLAW_ACP_TOKEN = previousToken;
+  }
+});
+
 test('ACP client denies tool permission requests by default', async () => {
   let permissionHandler;
+  let initialization;
   const adapter = new AcpAdapter({
     streamFactory: async () => ({ stream: {} }),
     connectionKey: () => 'shared',
   });
   adapter._acpSdk = {
+    PROTOCOL_VERSION: 1,
     methods: {
-      agent: { session: { resume: 'session/resume' } },
+      agent: { initialize: 'initialize', session: { resume: 'session/resume' } },
       client: { session: { requestPermission: 'session/request_permission' } },
     },
     client() {
@@ -62,13 +80,20 @@ test('ACP client denies tool permission requests by default', async () => {
           return this;
         },
         async connectWith(_stream, callback) {
-          await callback({});
+          await callback({ request: async (method, params) => {
+            initialization = { method, params };
+            return {};
+          } });
         },
       };
     },
   };
 
   await adapter._ensureAgent('agent-a');
+  assert.deepEqual(initialization, {
+    method: 'initialize',
+    params: { protocolVersion: 1, clientCapabilities: {} },
+  });
   assert.deepEqual(
     permissionHandler({ params: { sessionId: 's1', options: [{ optionId: 'allow' }] } }),
     { outcome: { outcome: 'cancelled' } },

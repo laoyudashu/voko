@@ -42,6 +42,7 @@ interface EmailReplyResult {
   replied_at: string | null;
   actor_email: string | null;
   expires_at: string | null;
+  terminal?: 'not_found';
 }
 
 function errorMessage(error: unknown): string {
@@ -248,6 +249,17 @@ class AgentEmailApi {
           `http:${resp.status}`,
           responseError(payload, resp.status),
         );
+        if (resp.status === 404) {
+          return {
+            has_reply: false,
+            raw_text: null,
+            status: null,
+            replied_at: null,
+            actor_email: null,
+            expires_at: null,
+            terminal: 'not_found',
+          };
+        }
         return null;
       }
       return parseReplyResult(payload);

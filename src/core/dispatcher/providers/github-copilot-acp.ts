@@ -16,18 +16,6 @@ class GitHubCopilotAcpProvider extends AcpAdapter {
       adapterType: 'github-copilot-acp',
       cliPath: runtime?.command || null,
       args: runtime ? [...runtime.prefixArgs, '--acp', ...COPILOT_SAFETY_ARGS] : [],
-      cliFallback: runtime ? {
-        cmd: runtime.command,
-        args: [
-          ...runtime.prefixArgs,
-          '-p', '{prompt}',
-          '--silent',
-          '--no-color',
-          ...COPILOT_SAFETY_ARGS,
-        ],
-        parser: 'raw',
-        timeout: 300000,
-      } : null,
       db: options.db,
       cwd: options.cwd || os.tmpdir(),
     });

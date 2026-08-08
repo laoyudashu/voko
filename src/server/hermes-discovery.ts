@@ -4,6 +4,7 @@ const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { getHermesProfilesDir } = require('../core/hermes-paths');
+const { resolveHermesCommand } = require('../core/dispatcher/hermes-command');
 
 /**
  * 发现 Hermes 下的所有 profiles（agents）
@@ -15,7 +16,7 @@ function discoverHermes() {
 
   // 方案1：解析 hermes profile list 输出（用 spawnSync 避免 Windows cmd.exe 乱码）
   try {
-    const result = spawnSync('hermes', ['profile', 'list'], {
+    const result = spawnSync(resolveHermesCommand(), ['profile', 'list'], {
       encoding: 'utf-8',
       timeout: 2000,
       windowsHide: true,
@@ -38,7 +39,17 @@ function discoverHermes() {
 
       const isDefault = trimmed.startsWith('◆');
       const clean = trimmed.replace(/^◆\s*/, '');
-      const parts = clean.split(/\s{2,}/).map((s?: any) => s.trim());
+      // Hermes aligns some rows with a single space when the profile name
+      // reaches the model column.  Fall back to token parsing in that case so
+      // the persisted profile id does not include the model text.
+      let parts = clean.split(/\s{2,}/).map((s?: any) => s.trim());
+      if (parts.length === 1) {
+        const tokens = clean.split(/\s+/).filter(Boolean);
+        if (tokens.length > 1) parts = [tokens[0], tokens[1]];
+      } else if (/\s/.test(parts[0])) {
+        const tokens = parts[0].split(/\s+/).filter(Boolean);
+        if (tokens.length > 1) parts = [tokens[0], tokens.slice(1).join(' ') || parts[1]];
+      }
 
       if (parts.length >= 1) {
         profiles.push({

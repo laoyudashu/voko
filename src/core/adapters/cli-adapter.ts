@@ -20,11 +20,11 @@
  */
 
 const { PushProvider } = require('../dispatcher/base-provider');
-const { runCli, checkCliAvailable, killTree, sanitizeCmdArg } = require('./cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
-import type { AgentMeta, PushPayload } from '../dispatcher/types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -39,6 +39,7 @@ export interface CliAdapterOptions {
   timeout?: number;
   env?: NodeJS.ProcessEnv;
   promptTemplate?: string;
+  requireOutput?: boolean;
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cwd?: string;
@@ -47,6 +48,25 @@ export interface CliAdapterOptions {
   runtimeResolver?: AgentRuntimeResolver;
   argsForSession?: (sessionId: string | null, isNew: boolean) => string[];
   createManagedSessionId?: () => string | null;
+  acceptsBinding?: (binding: any, agentId: string) => boolean;
+  preparePrompt?: (prompt: string, context: {
+    agentId: string;
+    fromUid: string;
+    nativeSessionId: string | null;
+    configuredArgs: string[];
+  }) => {
+    args: string[];
+    useStdin?: boolean;
+    stdinInput?: string;
+    cleanup?: () => void;
+  };
+  requireSessionId?: boolean;
+  classifyResult?: (result: { stdout: string; stderr: string; code: number | null }) => 'not_delivered' | 'rejected' | 'outcome_unknown' | null;
+  prepareInvocation?: (payload: PushPayload, prompt: string) => {
+    args: string[];
+    stdinInput?: string;
+    afterRun?: () => void;
+  };
   sessionIdFromLine?: (line: string) => string | null;
   resolveSessionIdAfterRun?: (context: {
     agentId: string;
@@ -96,6 +116,7 @@ class CliAdapter extends PushProvider {
     this._timeout = opts.timeout ?? 120000;
     this._env = opts.env;
     this._promptTemplate = opts.promptTemplate;
+    this._requireOutput = !!opts.requireOutput;
 
     this._contextWindow = opts.contextWindow ?? 0;
     this._db = opts.db || null;
@@ -105,6 +126,12 @@ class CliAdapter extends PushProvider {
     this._runtimeResolver = opts.runtimeResolver || defaultAgentRuntimeResolver;
     this._argsForSession = opts.argsForSession || null;
     this._createManagedSessionId = opts.createManagedSessionId || null;
+    this._acceptsBinding = opts.acceptsBinding || null;
+    this._preparePrompt = opts.preparePrompt || null;
+    this._requireOutput = !!opts.requireOutput;
+    this._requireSessionId = !!opts.requireSessionId;
+    this._classifyResult = opts.classifyResult || null;
+    this._prepareInvocation = opts.prepareInvocation || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
     this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
@@ -118,6 +145,11 @@ class CliAdapter extends PushProvider {
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === this._matchType;
+  }
+
+  acceptsBinding(binding: any, agentId = ''): boolean {
+    if (this._acceptsBinding) return !!this._acceptsBinding(binding, agentId);
+    return binding?.providerType === this._matchType;
   }
 
   isAvailable(_agentId: string): boolean {
@@ -134,7 +166,7 @@ class CliAdapter extends PushProvider {
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `cli-${Date.now()}`);
     const sessionKey = `cli:${agentId}:${fromUid}`;
-    const binding = payload.providerBinding?.providerType === this._matchType
+    const binding = this.acceptsBinding(payload.providerBinding, agentId)
       ? payload.providerBinding
       : null;
     let nativeSessionId = binding?.nativeSessionId || null;
@@ -164,14 +196,34 @@ class CliAdapter extends PushProvider {
     const configuredArgs = this._argsForSession
       ? this._argsForSession(nativeSessionId, newManagedSession)
       : this._args;
-    const useStdin = !configuredArgs.includes('{prompt}');
+    const preparedInvocation = this._prepareInvocation?.(payload, prompt) || null;
+    const invocationArgs = preparedInvocation?.args || configuredArgs;
+    let useStdin = preparedInvocation
+      ? preparedInvocation.stdinInput !== undefined
+      : !invocationArgs.includes('{prompt}');
     // Windows 下 {prompt} 经命令行参数传入时须净化 cmd.exe 元字符，否则访客
     // 消息中的 " 会断裂 cmd 引号、&|<> 充当命令分隔/重定向 → 任意命令执行 (RCE)，
     // 换行会截断命令行。用函数式 replacement 避免 String.replace 对 $ 模式的展开。
     const safePrompt = process.platform === 'win32' ? sanitizeCmdArg(prompt) : prompt;
-    const args = useStdin
-      ? [...configuredArgs]
-      : configuredArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
+    let stdinInput: string | undefined = useStdin ? prompt : undefined;
+    let cleanupPrompt: (() => void) | null = null;
+    let args: string[];
+    if (this._preparePrompt) {
+      const prepared = this._preparePrompt(prompt, {
+        agentId,
+        fromUid,
+        nativeSessionId,
+        configuredArgs: [...configuredArgs],
+      });
+      args = [...(prepared.args || [])].map((a: string) => a.replace('{prompt}', () => safePrompt));
+      useStdin = prepared.useStdin ?? !args.includes('{prompt}');
+      stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
+      cleanupPrompt = prepared.cleanup || null;
+    } else {
+    args = useStdin
+      ? [...invocationArgs]
+      : invocationArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
+    }
     const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
     if (runtime && (!runtime.available || !runtime.executable)) {
       const unavailable = new Error(`${this._name} runtime not found`);
@@ -208,7 +260,7 @@ class CliAdapter extends PushProvider {
       const result = await runCli({
         cmd,
         args,
-        stdinInput: useStdin ? prompt : undefined,
+        stdinInput: preparedInvocation?.stdinInput ?? stdinInput,
         cwd: this._cwd || undefined,
         tag: this._name,
         timeout: this._timeout,
@@ -243,7 +295,16 @@ class CliAdapter extends PushProvider {
 
       if (exitCode !== 0) {
         error = new Error(`${this._name} 退出 code=${exitCode}`);
+        (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
+      } else if (parser.error) {
+        error = new Error(parser.error);
         (error as any).deliveryOutcome = 'rejected';
+      } else if (this._requireOutput && !fullContent.trim()) {
+        error = new Error(`${this._name} produced no reply`);
+        (error as any).deliveryOutcome = 'outcome_unknown';
+      } else if (this._requireSessionId && !observedSessionId) {
+        error = new Error(`${this._name} produced no native session id`);
+        (error as any).deliveryOutcome = 'outcome_unknown';
       }
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
@@ -258,7 +319,12 @@ class CliAdapter extends PushProvider {
       console.error(`[${this._name}] push 失败: ${errorMessage(err)}`);
     }
 
-    if (error && binding && !(payload as any).__vokoManagedRetry) {
+    try { cleanupPrompt?.(); } catch (_) {}
+    try { preparedInvocation?.afterRun?.(); } catch (cleanupError) {
+      if (!error) error = cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+    }
+
+    if (error && binding && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}
       return this.push({ ...payload, providerBinding: null, __vokoManagedRetry: true });
     }
@@ -266,21 +332,22 @@ class CliAdapter extends PushProvider {
     if (!error && observedSessionId && this._bindingStore) {
       const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
       const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
-      if (binding && observedSessionId === binding.nativeSessionId) {
-        this._bindingStore.touch(binding.id);
-      } else {
-        this._bindingStore.saveManaged({
-          agentId,
-          channelId,
-          channelType,
-          providerType: this._matchType,
-          providerInstanceId: binding?.providerInstanceId || null,
-          nativeSessionId: observedSessionId,
-          deliveryMode: 'cli',
-          adapterType: this._adapterType,
-          expectedVersion: binding?.bindingVersion ?? 0,
-        });
-      }
+      // Always persist the active delivery metadata.  A CLI fallback may be
+      // resuming the same native session that ACP owns; `touch()` alone would
+      // leave the binding labelled as ACP and make the route cache stale.
+      // saveManaged keeps the native ID unchanged while atomically switching
+      // deliveryMode/adapterType when the protocol changes.
+      this._bindingStore.saveManaged({
+        agentId,
+        channelId,
+        channelType,
+        providerType: this._matchType,
+        providerInstanceId: binding?.providerInstanceId || null,
+        nativeSessionId: observedSessionId,
+        deliveryMode: 'cli',
+        adapterType: this._adapterType,
+        expectedVersion: binding?.bindingVersion ?? 0,
+      });
     }
 
     if (error) throw error;
@@ -298,11 +365,23 @@ class CliAdapter extends PushProvider {
     agentId: string,
     visitorId: string,
     content: string,
-    metadata?: { turnId?: string },
+    metadata?: ProviderSteerMetadata,
   ): Promise<void> {
     // owner intervention：走同样的 push 路径
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
-    return this.push({ agentId, fromUid: visitorId, content, messageId, turnId: messageId, timestamp: Date.now() });
+    const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;
+    const channelId = metadata?.channelId || visitorId.replace(/^group:/, '');
+    return this.push({
+      agentId,
+      fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
+      content,
+      messageId,
+      turnId: messageId,
+      channelId,
+      channelType,
+      providerBinding: metadata?.providerBinding || null,
+      timestamp: Date.now(),
+    });
   }
 
   start() { this._refreshAvailability(); }

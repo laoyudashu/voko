@@ -15,6 +15,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { getHermesProfilePath, getHermesProfilesDir } = require('./hermes-paths');
+const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 
 // ════════════════════════════════════════
 //  进度任务表（内存，一次性）
@@ -229,7 +230,7 @@ async function setupHermesGateway(databaseAPI, agentId, log) {
   if (target) {
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      require('child_process').spawn('hermes', ['--profile', target, 'gateway', 'run', '--replace'], {
+      require('child_process').spawn(resolveHermesCommand(), ['--profile', target, 'gateway', 'run', '--replace'], {
         stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv,
       }).on('error', (err) => log(`⚠ gateway 启动失败: ${err.message}`)).unref();
       log(`🚀 gateway 已触发启动 (profile=${target})`);

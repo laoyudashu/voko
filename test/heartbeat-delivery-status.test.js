@@ -42,14 +42,17 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
   };
   const dispatcher = {
     getAgentDeliveryStatus: () => ({
-      backendType: 'hermes', configuredModes: ['http'], availableModes: [],
-      activeMode: null, methods: [{ mode: 'http', provider: 'hermes-http', configured: true, available: false, status: 'unavailable' }],
-      backendAvailable: false,
+      backendType: 'hermes', configuredModes: ['http', 'pull'], automaticReadyModes: [],
+      activeAutomaticMode: null, methods: [{ mode: 'http', provider: 'hermes-http', configured: true, available: false, status: 'unavailable' }, { mode: 'pull', provider: null, configured: true, available: true, status: 'on-demand' }],
+      automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
     }),
   };
   const previousFetch = global.fetch;
+  const previousBroadcast = global.__liteBroadcast;
   let posts = 0;
+  const runtimeUpdates = [];
   global.fetch = async () => { posts++; return { ok: true }; };
+  global.__liteBroadcast = (event, data) => { if (event === 'runtime:updated') runtimeUpdates.push(data); };
   const stop = startHeartbeat(db, agentManager, null, null, { dispatcher, agentCount: 1 });
   try {
     statusHandler({ status: 'connected' });
@@ -57,10 +60,15 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
     assert.equal(posts, 1);
     const runtime = JSON.parse(db.runtimeWrites.at(-1));
     assert.equal(runtime.agents[0].imConnected, true);
-    assert.equal(runtime.agents[0].backendConnected, false);
-    assert.deepEqual(runtime.agents[0].availableModes, []);
+    assert.equal(runtime.agents[0].automaticDeliveryReady, false);
+    assert.deepEqual(runtime.agents[0].automaticReadyModes, []);
+    assert.equal(runtime.agents[0].pullReady, true);
+    assert.equal(runtimeUpdates.at(-1).agents[0].messageMode, 'pull');
+    assert.equal(runtimeUpdates.at(-1).agents[0].messageModeDetected, true);
   } finally {
     stop();
     global.fetch = previousFetch;
+    if (previousBroadcast) global.__liteBroadcast = previousBroadcast;
+    else delete global.__liteBroadcast;
   }
 });

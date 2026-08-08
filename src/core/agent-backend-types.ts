@@ -50,6 +50,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'aider', label: 'Aider' },
   { value: 'cline', label: 'Cline' },
   { value: 'amazon-q', label: 'Amazon Q Developer CLI' },
+  { value: 'reasonix', label: 'Reasonix' },
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
   { value: 'doubao', label: '豆包' },
@@ -60,7 +61,7 @@ const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
     'zeroclaw',
     'qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
-    'zcode', 'workbuddy', 'doubao', 'cline',
+    'zcode', 'workbuddy', 'doubao', 'cline', 'reasonix',
   ].includes(type.value),
 );
 

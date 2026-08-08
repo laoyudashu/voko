@@ -297,7 +297,7 @@ const MCP_SAFE_CALLS = {
 };
 
 // B0: tools/list 枚举
-reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 37 个 voko_* 工具', async () => {
+reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 voko_* 工具（数量以 tools/list 为准）', async () => {
   const r = await http('/mcp', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++_rpcId, method: 'tools/list' }),
@@ -309,7 +309,8 @@ reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 37 个 vok
   return [tools.length > 0, `${tools.length} 个工具`];
 });
 
-// B1-B37: 每个 MCP 工具
+// B1..B{N}: 每个 MCP 工具（N 在 runRegistry 运行时由 tools/list 实际结果决定）
+// 下面的静态清单仅作历史参考与排序锚点；实际注册见 runRegistry() 中的动态 splice。
 (() => {
   const toolNames = [
     'voko_register_agent', 'voko_verify_agent_email', 'voko_update_agent_profile',
@@ -326,7 +327,7 @@ reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 37 个 vok
     'voko_set_private_mode', 'voko_invite_friend', 'voko_list_audit_rules',
     'voko_manage_audit_rules',
   ];
-  // 动态注册（B 节会在运行时 resolve 实际 tools list）
+  // 运行时由 runRegistry() 从 /mcp tools/list 动态注册 B1..B{N}，此清单仅保留作参考。
   global.__smoke_mcp_tool_names = toolNames;
 })();
 
@@ -522,7 +523,7 @@ full('G0f', 'GET /api/handlers', 'GET /api/handlers', '返回 action 列表 JSON
   const r = await http('/api/handlers');
   return [r.json && r.json.actions?.length > 0, r.json ? `${r.json.actions.length} 个 action` : '无'];
 });
-full('G0g', 'MCP tools/list (Agent发现)', 'MCP tools/list', '返回 37 个工具', async () => {
+full('G0g', 'MCP tools/list (Agent发现)', 'MCP tools/list', '返回 voko_* 工具（数量以 tools/list 为准）', async () => {
   const r = await http('/mcp', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++_rpcId, method: 'tools/list' }),
@@ -985,13 +986,13 @@ for (const bt of ['openclaw', 'hermes', 'goose']) {
 // ═══════════════════════════════════════════════════
 
 async function runRegistry(ctx, mode, onItem) {
-  // 动态注册 B1-B37（MCP 工具逐个测试），插入到 B0 之后、C1 之前
+  // 动态注册 B1..B{N}（MCP 工具逐个测试，N=实际 tools/list 长度），插入到 B0 之后、C1 之前
   const toolsR = await http('/mcp', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++_rpcId, method: 'tools/list' }),
   });
   const toolNames = (toolsR.json?.result?.tools || []).map(t => t.name).filter(n => n.startsWith('voko_'));
-  const insertIdx = REGISTRY.findIndex(r => r.id === 'C1');  // B1-B37 go before C
+  const insertIdx = REGISTRY.findIndex(r => r.id === 'C1');  // B1..B{N} go before C
   let mcpIdx = 1;
   for (const name of toolNames) {
     const id = `B${mcpIdx++}`;

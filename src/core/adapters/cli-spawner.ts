@@ -17,6 +17,8 @@ export interface RunCliOptions {
   args?: string[];
   timeout?: number;
   env?: NodeJS.ProcessEnv;
+  /** Environment variable names to remove after merging the parent env. */
+  envUnset?: string[];
   onStdoutLine?: (line: string) => void;
   onStderrLine?: (line: string) => void;
   tag?: string;
@@ -32,6 +34,24 @@ export interface RunCliResult {
   stderr: string;
   code: number | null;
   signal: NodeJS.Signals | null;
+}
+
+/**
+ * Classify a non-zero CLI exit without treating every process failure as a
+ * provider rejection. A command that never reached the model is safe to
+ * retry through an explicitly configured backup; after a write or an
+ * unrecognised failure the outcome must remain unknown.
+ */
+function classifyCliFailure(result: Pick<RunCliResult, 'stdout' | 'stderr'>): 'not_delivered' | 'rejected' | 'outcome_unknown' {
+  const stderr = String(result.stderr || '');
+  const detail = `${stderr}\n${String(result.stdout || '')}`;
+  if (/gateway\s+(?:closed|failed|unavailable|not running)|connection refused|econnrefused|failed to resolve secrets|authentication\s+(?:required|failed|error)|\b(?:401|403)\s+(?:unauthorized|forbidden)?|unauthorized|not logged in|login required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)|command not found|enoent/i.test(detail)) {
+    return 'not_delivered';
+  }
+  if (/request rejected|provider rejected|safety policy|unsafe request|approval required|not allowed by policy/i.test(stderr)) {
+    return 'rejected';
+  }
+  return 'outcome_unknown';
 }
 
 // ── 日志 ─────────────────────────────────────────────────────────────
@@ -87,8 +107,9 @@ function windowsUserPath(): string {
   } catch (_) { return ''; }
 }
 
-function childEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function childEnv(extra?: NodeJS.ProcessEnv, unset: string[] = []): NodeJS.ProcessEnv {
   const merged = { ...process.env, ...(extra || {}) };
+  for (const key of unset) delete merged[key];
   const userPath = windowsUserPath();
   if (userPath) {
     const current = String(merged.PATH || merged.Path || '');
@@ -121,6 +142,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     args = [],
     timeout = 120000,
     env,
+    envUnset = [],
     onStdoutLine,
     onStderrLine,
     tag = 'cli',
@@ -143,7 +165,7 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       windowsHide,
       detached: !isWin,
       cwd: cwd || undefined,
-      env: childEnv(env),
+      env: childEnv(env, envUnset),
     };
 
     // .js/.exe 等直接 spawn；无扩展名的命令名交给系统 PATH
@@ -252,4 +274,4 @@ function sanitizeCmdArg(p: unknown): string | null | undefined {
     .trim();
 }
 
-module.exports = { runCli, killTree, checkCliAvailable, sanitizeCmdArg, _makeLogger };
+module.exports = { runCli, killTree, checkCliAvailable, classifyCliFailure, sanitizeCmdArg, _makeLogger };

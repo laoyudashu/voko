@@ -25,7 +25,7 @@ const crypto = require('crypto');
 /**
  * 检查 OSS 最新版本（统一从 OSS manifest 读取）
  */
-async function checkVersion() {
+async function checkVersion(options: { notify?: boolean } = {}) {
   try {
     const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     const result = spawnSync(npmCommand, ['view', '@voko/lite', 'version', '--registry=https://registry.npmjs.org/'], {
@@ -34,7 +34,7 @@ async function checkVersion() {
     const latestVersion = String(result.stdout || '').trim();
     if (result.error || result.status !== 0 || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(latestVersion)) return null;
     const updateAvailable = compareVersions(latestVersion, pkg.version) > 0;
-    if (updateAvailable) {
+    if (updateAvailable && options.notify !== false) {
       console.error(t('cli.updater.new_version_available', { version: latestVersion, current: pkg.version }));
     }
     return { currentVersion: pkg.version, latestVersion, updateAvailable };
@@ -348,14 +348,23 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
   const { readInstanceMetadata } = require('./core/process-lifecycle');
   const port = getActiveRuntimePort(dbPath);
   const instance = readInstanceMetadata(dbPath);
-  if (!port || !instance?.mcpToken) {
-    const result = { success: false, error: 'VOKO 运行实例未启动，请先运行 voko start' };
-    console.log(JSON.stringify(result, null, 2));
+  const emit = (result: any) => {
+    if (cliCtx.print !== false) console.log(JSON.stringify(result, null, 2));
     return result;
-  }
+  };
+  const { probeRuntimeIdentity } = require('./core/runtime-probe');
+  const probe = port && instance?.mcpToken
+    ? await probeRuntimeIdentity({ port, instance })
+    : instance
+      ? { ok: false, code: 'RUNTIME_MISMATCH', message: '当前 Lite 运行实例身份不匹配' }
+      : { ok: false, code: 'RUNTIME_REQUIRED', message: '请先运行 voko start --no-open --no-interactive' };
+  if (!probe.ok) return emit({ success: false, code: probe.code, error: probe.message });
 
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
-  const reserved = new Set(['agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive']);
+  const reserved = new Set([
+    'agent', 'as', 'help', 'h', 'verbose', 'debug', 'tools', 'interactive',
+    'db', 'port', 'no-open', 'noOpen', 'no-interactive', 'noInteractive',
+  ]);
   const params: Record<string, any> = {};
   for (const [key, value] of Object.entries(rawParams || {})) {
     if (reserved.has(key)) continue;
@@ -371,6 +380,7 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-VOKO-Token': instance.mcpToken,
+    'X-VOKO-Instance-ID': instance.instanceId,
     'X-VOKO-Caller-Connection': crypto.randomUUID(),
   };
   const providerType = detectCurrentAgentType();
@@ -383,20 +393,23 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     headers['X-VOKO-Caller-Evidence'] = 'provider_env';
   }
 
-  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
-      params: { name: `voko_${toolName}`, arguments: params },
-    }),
-    signal: AbortSignal.timeout(120000),
-  });
+  let response: any;
+  try {
+    response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call',
+        params: { name: `voko_${toolName}`, arguments: params },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (_) {
+    return emit({ success: false, code: 'RUNTIME_UNAVAILABLE', error: '无法连接当前 Lite 运行实例' });
+  }
   const rpc = await response.json().catch(() => null) as any;
   if (!response.ok || !rpc || rpc.error) {
-    const result = { success: false, error: rpc?.error?.message || `HTTP ${response.status}` };
-    console.log(JSON.stringify(result, null, 2));
-    return result;
+    return emit({ success: false, code: rpc?.error?.data?.code || rpc?.code || 'RUNTIME_UNAVAILABLE', error: rpc?.error?.message || rpc?.error || `HTTP ${response.status}` });
   }
 
   let result: any = rpc.result;
@@ -407,8 +420,96 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     try { result = JSON.parse(textBlock.text); }
     catch { result = { success: result?.isError !== true, message: textBlock.text }; }
   }
-  console.log(JSON.stringify(result, null, 2));
+  if (cliCtx.print !== false) console.log(JSON.stringify(result, null, 2));
   return { success: result?.success !== false && rpc.result?.isError !== true, result };
+}
+
+/**
+ * Send one explicitly acknowledged message through the running Lite runtime
+ * and wait for the persisted outbound reply. This is intentionally separate
+ * from doctor: it invokes the configured Provider and may send a real IM
+ * message to the supplied visitor.
+ */
+async function runRuntimeProbe(rawParams: any = {}, dbPath?: string, cliCtx: any = {}) {
+  const emit = (result: any) => {
+    if (cliCtx.print !== false) console.log(JSON.stringify(result, null, 2));
+    return result;
+  };
+  const agentId = String(rawParams.agentId || rawParams['agent-id'] || '').trim();
+  const visitorId = String(rawParams.visitorId || rawParams['visitor-id'] || '').trim();
+  const confirmed = rawParams.confirm === true || rawParams.confirm === 'true' || rawParams.confirm === '1';
+  if (!agentId || !visitorId) return emit({ success: false, code: 'INVALID_ARGUMENT', error: 'probe requires --agent-id and --visitor-id' });
+  if (!confirmed) return emit({ success: false, code: 'CONFIRM_REQUIRED', error: 'probe sends a real Provider request and IM reply; pass --confirm to continue' });
+
+  const timeoutSeconds = Math.min(300, Math.max(5, Number(rawParams.timeout || rawParams['timeout-seconds'] || 120) || 120));
+  const content = String(rawParams.message || `[VOKO probe] Reply briefly to confirm the VOKO delivery path. ${Date.now()}`).trim();
+  if (!content) return emit({ success: false, code: 'INVALID_ARGUMENT', error: 'probe message must not be empty' });
+
+  const { getActiveRuntimePort } = require('./core/runtime-port');
+  const { readInstanceMetadata } = require('./core/process-lifecycle');
+  const { probeRuntimeIdentity } = require('./core/runtime-probe');
+  const port = getActiveRuntimePort(dbPath);
+  const instance = readInstanceMetadata(dbPath);
+  const identity = port && instance?.mcpToken
+    ? await probeRuntimeIdentity({ port, instance })
+    : { ok: false, code: 'RUNTIME_REQUIRED', message: 'run voko start before using voko probe' };
+  if (!identity.ok) return emit({ success: false, code: identity.code, error: identity.message });
+
+  const { DatabaseSync: Database } = require('node:sqlite');
+  let db: any = null;
+  const startedAt = Date.now();
+  const messageId = `voko-probe-${crypto.randomUUID()}`;
+  try {
+    db = new Database(dbPath, { readOnly: true });
+    const baseline = Number(db.prepare('SELECT COALESCE(MAX(rowid), 0) AS rowid FROM messages WHERE agent_id=? AND channel_id=? AND channel_type=1').get(agentId, visitorId)?.rowid || 0);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-VOKO-Token': String(instance.mcpToken),
+      'X-VOKO-Instance-ID': String(instance.instanceId),
+    };
+    let response: any;
+    try {
+      response = await fetch(`http://127.0.0.1:${port}/api/gateway/forward`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ agentId, visitorId, message: content, messageId }),
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (_) {
+      return emit({ success: false, code: 'RUNTIME_UNAVAILABLE', error: 'unable to submit probe to the active Lite runtime' });
+    }
+    const accepted = await response.json().catch(() => null) as any;
+    if (!response.ok || accepted?.success !== true) {
+      return emit({ success: false, code: accepted?.code || 'PROBE_REJECTED', error: accepted?.error || `HTTP ${response.status}` });
+    }
+
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    while (Date.now() < deadline) {
+      const reply = db.prepare(
+        `SELECT id, status, timestamp FROM messages
+         WHERE agent_id=? AND channel_id=? AND channel_type=1 AND is_me=1 AND rowid>?
+         ORDER BY rowid DESC LIMIT 1`,
+      ).get(agentId, visitorId, baseline) as { id?: string; status?: string; timestamp?: number } | undefined;
+      if (reply?.id) {
+        const status = String(reply.status || 'pending');
+        if (status === 'sent' || status === 'failed') {
+          return emit({
+            success: status === 'sent',
+            status,
+            code: status === 'sent' ? 'PROBE_OK' : 'PROBE_DELIVERY_FAILED',
+            agentId,
+            visitorId,
+            messageId: reply.id,
+            elapsedMs: Date.now() - startedAt,
+          });
+        }
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    }
+    return emit({ success: false, status: 'pending', code: 'PROBE_TIMEOUT', error: 'no persisted Agent reply before timeout; do not resend automatically', agentId, visitorId, elapsedMs: Date.now() - startedAt });
+  } finally {
+    try { db?.close(); } catch (_) {}
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -501,4 +602,4 @@ async function printAllToolSchemas(core?: any) {
   console.log(JSON.stringify(cleaned, null, 2));
 }
 
-module.exports = { checkVersion, updateLite, runToolCommand, runRuntimeToolCommand, isKnownTool, printToolHelp, printAllToolSchemas, convertParam };
+module.exports = { checkVersion, updateLite, runToolCommand, runRuntimeToolCommand, runRuntimeProbe, isKnownTool, printToolHelp, printAllToolSchemas, convertParam };

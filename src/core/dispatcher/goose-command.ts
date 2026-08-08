@@ -14,4 +14,31 @@ function resolveGooseCommand(
   return configured || (platform === 'win32' ? 'goose.exe' : 'goose');
 }
 
-module.exports = { resolveGooseCommand };
+function gooseRuntimeRequest(
+  mode: 'acp' | 'cli',
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  overrideCommand?: string,
+) {
+  const command = overrideCommand || resolveGooseCommand(env, platform);
+  return {
+    providerId: 'goose',
+    mode,
+    candidates: require('path').isAbsolute(command)
+      ? [{ kind: 'explicit', path: command }]
+      : [{ kind: 'native', command }],
+  };
+}
+
+function resolveGooseRuntime(
+  mode: 'acp' | 'cli',
+  resolver = require('../runtime/agent-runtime-resolver').defaultAgentRuntimeResolver,
+) {
+  return resolver.resolve(gooseRuntimeRequest(mode));
+}
+
+function isGooseRuntimeAvailable(mode: 'acp' | 'cli' = 'cli'): boolean {
+  return !!resolveGooseRuntime(mode).available;
+}
+
+module.exports = { resolveGooseCommand, gooseRuntimeRequest, resolveGooseRuntime, isGooseRuntimeAvailable };

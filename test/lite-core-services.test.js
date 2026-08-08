@@ -546,6 +546,43 @@ test('PowerManager recovery restarts only published agents for the active owner'
   assert.equal(power._timer, null);
 });
 
+test('PowerManager only logs a visible success message after resume recovery', async () => {
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => logs.push(args.join(' '));
+  try {
+    const manager = {
+      workers: new Map(),
+      async stop() {},
+      async startMany(entries) {
+        return entries.map(entry => ({ agentId: entry.agentId, connected: true }));
+      },
+    };
+    const db = {
+      prepare(sql) {
+        return {
+          get: () => ({ data: '{}' }),
+          all: () => [{
+            agent_id: 'agent-1',
+            imUid: 'uid-1',
+            imToken: 'token-1',
+            im_server_url: 'wss://wukongim.vokovoko.com',
+          }],
+        };
+      },
+    };
+    const power = new PowerManager(manager, db, { networkProbe: async () => true });
+    power.start();
+    power.stop();
+    assert.equal(logs.some(log => log.includes('休眠唤醒检测已启动')), false);
+
+    await power._recover();
+    assert.equal(logs.some(log => log.includes('✅ 系统唤醒恢复成功')), true);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('PowerManager retries only failed IM connections and awaits the real result', async () => {
   const rounds = [];
   const manager = {
@@ -1154,7 +1191,10 @@ test('Lite offline sync decodes, persists and forwards a pulled message', async 
 
 test('Lite offline sync advances past an intentionally skipped empty message', async (t) => {
   const originalFetch = global.fetch;
+  const originalLog = console.log;
   const starts = [];
+  const logs = [];
+  console.log = (...args) => logs.push(args.join(' '));
   global.fetch = async (_url, options) => {
     const request = JSON.parse(options.body);
     starts.push(request.start_message_seq);
@@ -1171,7 +1211,7 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
       }),
     };
   };
-  t.after(() => { global.fetch = originalFetch; });
+  t.after(() => { global.fetch = originalFetch; console.log = originalLog; });
 
   let cursorData;
   const db = {
@@ -1215,6 +1255,77 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 0);
   assert.deepEqual(starts, [1, 2]);
   assert.equal(handled, 1);
+  // 降噪后 per-run 的“共收集”走 console.debug；汇总行（console.log）应可见，
+  // 且第二次同步（advance past empty）的汇总反映 0 条新消息。
+  const summaryLogs = logs.filter(log => log.includes('[离线同步] 完成'));
+  assert.ok(summaryLogs.length >= 1, '应有汇总日志');
+  assert.ok(summaryLogs.some(log => /收集 0 条/.test(log)), '第二次同步应汇总 0 条');
+});
+
+test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  global.fetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ messages: [] }) };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    exec() {},
+    prepare(sql) {
+      return {
+        all(arg) {
+          if (sql.includes('FROM agents')) {
+            return [
+              { agent_id: 'local-agent', imUid: 'local-uid', imToken: 'local-token', im_server_url: 'ws://im.test:5200', owner_email: 'owner@example.test' },
+              { agent_id: 'remote-agent', imUid: 'remote-uid', imToken: 'remote-token', im_server_url: 'ws://im.test:5200', owner_email: 'other@example.test' },
+            ].filter((agent) => !sql.includes('LOWER(TRIM(owner_email))') || agent.owner_email === arg);
+          }
+          if (sql.includes('FROM conversations')) return [{ channel_id: `visitor-${arg}` }];
+          return [];
+        },
+        get(key) {
+          if (sql.includes('FROM config') && key === 'user_access_token') {
+            return { data: JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }) };
+          }
+          if (sql.includes('FROM config') && key === 'current_user_email') {
+            return { data: JSON.stringify('owner@example.test') };
+          }
+          if (sql.includes('SELECT MAX(message_seq)')) return { m: 0 };
+          return undefined;
+        },
+        run() {},
+      };
+    },
+  };
+  const handler = { handleAgentMessage() { return undefined; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.login_uid, 'local-uid');
+  assert.equal(requests[0].body.channel_id, 'visitor-local-agent');
+});
+
+test('Lite offline sync does nothing when no local user is authenticated', async (t) => {
+  const originalFetch = global.fetch;
+  let fetchCalls = 0;
+  global.fetch = async () => { fetchCalls += 1; throw new Error('must not fetch'); };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    prepare(sql) {
+      return {
+        all() { assert.fail(`agents must not be queried: ${sql}`); },
+        get() { return undefined; },
+        run() {},
+      };
+    },
+  };
+  const handler = { handleAgentMessage() { return undefined; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.equal(fetchCalls, 0);
 });
 
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {

@@ -50,6 +50,19 @@ test('Windows native resolution accepts exe but never executes cmd as native', (
   } finally { cleanup(); }
 });
 
+test('Windows native resolution does not append exe to an already suffixed command', () => {
+  const { root, cleanup } = fixture();
+  try {
+    touch(path.join(root, 'goose.exe'));
+    const resolver = new AgentRuntimeResolver({ platform: 'win32', env: { PATH: root } });
+    const result = resolver.resolve({
+      providerId: 'goose', mode: 'acp', candidates: [{ kind: 'native', command: 'goose.exe' }],
+    });
+    assert.equal(result.available, true);
+    assert.equal(path.basename(result.executable), 'goose.exe');
+  } finally { cleanup(); }
+});
+
 test('negative cache is cleared explicitly after runtime installation', () => {
   const { root, cleanup } = fixture();
   try {
@@ -75,5 +88,20 @@ test('package bin cannot escape its package root', () => {
       candidates: [{ kind: 'node-package-bin', command: 'unsafe', packageName: 'unsafe' }],
     });
     assert.equal(result.available, false);
+  } finally { cleanup(); }
+});
+
+test('Unix resolution includes the user-local bin directory when PATH is minimal', () => {
+  const { root, cleanup } = fixture();
+  try {
+    const home = path.join(root, 'home');
+    const tool = path.join(home, '.local', 'bin', 'hermes');
+    touch(tool, '#!/usr/bin/env sh\n');
+    const resolver = new AgentRuntimeResolver({ platform: 'linux', env: { HOME: home, PATH: '/usr/bin' } });
+    const result = resolver.resolve({
+      providerId: 'hermes', mode: 'cli', candidates: [{ kind: 'native', command: 'hermes' }],
+    });
+    assert.equal(result.available, true);
+    assert.equal(result.canonicalPath, fs.realpathSync(tool));
   } finally { cleanup(); }
 });

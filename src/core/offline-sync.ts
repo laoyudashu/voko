@@ -91,7 +91,7 @@ function errorMessage(error: unknown): string {
  */
 async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHandlerLike, agentIdFilter?: string): Promise<number> {
   if (!messageHandler) {
-    console.log('[离线同步] 跳过：messageHandler 未初始化（Lite 独立模式下无需同步）');
+    console.debug('[离线同步] 跳过：messageHandler 未初始化（Lite 独立模式下无需同步）');
     return 0;
   }
   try {
@@ -199,7 +199,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       }
     }
 
-    console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息，开始处理...`);
+    console.debug(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
 
     // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
     // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集
@@ -256,7 +256,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       forwarded++;
     }
 
-    // console.log(`[离线同步] 完成，${pendingMessages.length} 条入库，通过审核 ${collected.length} 条，合并为 ${forwarded} 次转发`);
+    console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，合并转发 ${forwarded} 次`);
     return pendingMessages.length;
   } catch (e: unknown) {
     console.error('[离线同步] 失败:', errorMessage(e));
@@ -264,4 +264,86 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
   }
 }
 
-module.exports = { syncOfflineMessages };
+interface CoordinatorOptions {
+  /** coalesce 窗口（ms），默认 500 */
+  windowMs?: number;
+  /** 兜底定时器（ms），默认 30000 */
+  fallbackMs?: number;
+  /** 注入的同步函数，默认 syncOfflineMessages */
+  syncFn?: (db: any, handler: any, agentIdFilter?: string) => Promise<number>;
+  /** 注入 setTimeout（测试用），默认全局 setTimeout */
+  setTimeout?: (fn: () => void, ms: number) => any;
+  /** 注入 clearTimeout（测试用），默认全局 clearTimeout */
+  clearTimeout?: (id: any) => void;
+}
+
+interface Coordinator {
+  onAgentConnected(agentId: string): void;
+  onAllReady(): void;
+  start(): void;
+  stop(): void;
+}
+
+/**
+ * 创建离线同步协调器：把突发的 per-agent 同步触发合并为一次全量同步。
+ *
+ * 行为：
+ * - onAgentConnected：把 agentId 加入待同步集合，启动 windowMs 合并窗口；
+ *   窗口内多个 connected 事件合并，到期执行一次全量同步。
+ * - onAllReady：首次全部就绪时触发一次全量同步（有守卫，只触发一次）。
+ * - start：注册 fallbackMs 兜底定时器（到期再试一次全量）。
+ * - stop：清理所有定时器。
+ *
+ * 幂等：syncFn 内部按 agentIdFilter + checkpoint(MAX) + UNIQUE 去重，
+ *       全量调用不会重复处理已拉过的消息。
+ */
+function createOfflineSyncCoordinator(db: any, messageHandler: any, options: CoordinatorOptions = {}): Coordinator {
+  const windowMs = Math.max(0, options.windowMs ?? 500);
+  const fallbackMs = Math.max(0, options.fallbackMs ?? 30000);
+  const syncFn = options.syncFn || ((d: any, h: any, f?: string) => syncOfflineMessages(d, h, f));
+  const _setTimeout = options.setTimeout || setTimeout;
+  const _clearTimeout = options.clearTimeout || clearTimeout;
+
+  let _firstFullSyncDone = false;
+  const _pendingAgents = new Set<string>();
+  let _coalesceTimer: any = null;
+  let _fallbackTimer: any = null;
+
+  const _runFullSync = (tag: string) => {
+    syncFn(db, messageHandler).catch((e: unknown) => console.error(`[离线同步] ${tag} 失败:`, errorMessage(e)));
+  };
+  const _flush = () => {
+    _coalesceTimer = null;
+    if (_pendingAgents.size === 0) return;
+    _pendingAgents.clear();
+    _runFullSync('合并');
+  };
+
+  return {
+    onAgentConnected(agentId: string) {
+      if (!agentId || !messageHandler) return;
+      _pendingAgents.add(agentId);
+      if (_coalesceTimer) return;
+      _coalesceTimer = _setTimeout(_flush, windowMs);
+      // unref 仅在 Node 原生 setTimeout 上存在
+      if (typeof (_coalesceTimer as any)?.unref === 'function') (_coalesceTimer as any).unref();
+    },
+    onAllReady() {
+      if (_firstFullSyncDone) return;
+      _firstFullSyncDone = true;
+      console.log('[Lite] 开始离线同步');
+      _runFullSync('首次');
+    },
+    start() {
+      if (_fallbackTimer) return;
+      _fallbackTimer = _setTimeout(() => { this.onAllReady(); }, fallbackMs);
+      if (typeof (_fallbackTimer as any)?.unref === 'function') (_fallbackTimer as any).unref();
+    },
+    stop() {
+      if (_coalesceTimer) { _clearTimeout(_coalesceTimer); _coalesceTimer = null; }
+      if (_fallbackTimer) { _clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+    },
+  };
+}
+
+module.exports = { syncOfflineMessages, createOfflineSyncCoordinator };

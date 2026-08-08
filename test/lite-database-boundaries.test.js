@@ -39,6 +39,21 @@ test('database initialization creates a missing parent directory', (t) => {
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
 
+test('current Lite accepts the shared schema v7 marker', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-shared-v7-'));
+  const dbPath = path.join(root, 'voko.db');
+  const first = initDatabase(dbPath, { silent: true });
+  first.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  first.prepare("UPDATE config SET data=? WHERE type='schema_version'").run(JSON.stringify(SCHEMA_VERSION));
+  first.close();
+
+  const reopened = initDatabase(dbPath, { silent: true });
+  assert.equal(reopened.prepare('PRAGMA user_version').get().user_version, 7);
+  assert.equal(JSON.parse(reopened.prepare("SELECT data FROM config WHERE type='schema_version'").get().data), 7);
+  reopened.close();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+});
+
 test('older code refuses a database with a newer schema marker', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-newer-schema-'));
   const dbPath = path.join(root, 'voko.db');

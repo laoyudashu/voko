@@ -29,7 +29,7 @@ test('Goose visitor content is sent over stdin and never placed in command argum
   );
 
   assert.match(source, /const args = \['run', '-i', '-'/);
-  assert.match(source, /stdinInput: notification/);
+  assert.match(source, /stdinInput: input/);
   assert.doesNotMatch(source, /\['run', '-t', notification/);
 });
 
@@ -78,6 +78,8 @@ test('dev opens the canonical Lite page once and suppresses restart/provider pop
   assert.match(source, /BROWSER:\s*'none'/);
   assert.match(source, /waitForRuntimeExit\(child,\s*5000\)/);
   assert.match(source, /taskkill\.exe/);
+  assert.match(source, /const WATCHED_EXTENSIONS = new Set/);
+  assert.match(source, /WATCHED_EXTENSIONS\.has\(path\.extname\(relative\)\.toLowerCase\(\)\)/);
 });
 
 test('macOS ps output parsing is locale-stable and accepts single-digit dates', () => {

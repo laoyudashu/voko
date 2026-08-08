@@ -24,6 +24,7 @@ const SEND_TIMEOUT_MS = 60 * 1000;
 const bus = require('../core/lite-bus');
 const { logEvent } = require('../core/event-log');
 const { t, getLocale } = require('../core/i18n');
+const { settleOwnerForward } = require('../core/owner-intervention-forward');
 
 class OwnerInterventionNotifier {
   [key: string]: any;
@@ -390,6 +391,10 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
         const reply = row.status === 'replied' && row.owner_reply
           ? { has_reply: true, raw_text: row.owner_reply, replied_at: row.reply_time, stored: true }
           : await this.agentEmailApi.queryReply({ message_id: row.email_message_id });
+        if (reply?.terminal === 'not_found') {
+          this.databaseAPI.markOwnerInterventionEmailUnavailable(row.id, now);
+          continue;
+        }
         if (reply?.has_reply && reply.raw_text) {
           const replyTime = Date.parse(reply.replied_at) || Number(reply.replied_at) || Date.now();
           const updateResult = reply.stored
@@ -399,9 +404,10 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
             );
 
           // 转发回复给 agent（和渠道回复一致）
+          let forwardOutcome: string | null = null;
           if ((updateResult?.contentChanged || Number(row.agent_notified) !== 1) && row.session_key && row.agent_id) {
             // 好友申请自动审批：主人回复"同意"时自动加入白名单（与 IM 渠道一致）
-            if (this.autoApproveWhitelistIfFriendRequest) {
+            if (updateResult?.contentChanged && this.autoApproveWhitelistIfFriendRequest) {
               this.autoApproveWhitelistIfFriendRequest(
                 {
                   id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
@@ -414,9 +420,9 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
               { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id },
               reply.raw_text
             );
-            const doNotify = () => {
-              this.databaseAPI.markAgentNotified(row.id);
-              this.databaseAPI.updateOwnerInterventionStatus(row.id, 'resolved', Date.now());
+            const settle = (result: unknown) => {
+              forwardOutcome = settleOwnerForward(this.databaseAPI, row.id, result);
+              return forwardOutcome;
             };
             const intervention = {
               id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
@@ -427,8 +433,13 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
               sourceMessageId: row.source_message_id || null,
             };
             if (this.resumeOwnerIntervention) {
-              const result = await this.resumeOwnerIntervention(intervention, forwardMsg);
-              if (result?.success !== false) doNotify();
+              try {
+                const result = await this.resumeOwnerIntervention(intervention, forwardMsg);
+                settle(result);
+              } catch (err: any) {
+                settle(err);
+                console.error('[OwnerInterventionNotifier] resume owner intervention failed:', err.message);
+              }
             } else {
             const backendRow = this.db.prepare('SELECT backend_type FROM agents WHERE agent_id = ?').get(row.agent_id);
             const agentBackend = backendRow?.backend_type;
@@ -437,14 +448,20 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
               const hermesHandler = this.getHermesHandler();
               const hermesSessionKey = 'hermes:' + row.agent_id + ':' + row.visitor_id;
               if (hermesHandler?.connected) {
-                await hermesHandler.steer(hermesSessionKey, forwardMsg).then(doNotify).catch((err?: any) => {
+                await hermesHandler.steer(hermesSessionKey, forwardMsg).then((result: unknown) => {
+                  settle(result);
+                }).catch((err?: any) => {
+                  settle(err);
                   console.error('[OwnerInterventionNotifier] 邮件回复转发 Hermes 失败:', err.message);
                 });
               }
             } else {
               const openclawHandler = this.getOpenclawHandler();
               if (openclawHandler?.connected) {
-                await openclawHandler.sendToSession(row.session_key, forwardMsg).then(doNotify).catch((err?: any) => {
+                await openclawHandler.sendToSession(row.session_key, forwardMsg).then((result: unknown) => {
+                  settle(result);
+                }).catch((err?: any) => {
+                  settle(err);
                   console.error('[OwnerInterventionNotifier] 邮件回复转发 OpenClaw 失败:', err.message);
                 });
               }
@@ -453,15 +470,24 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
           }
 
           // 通知 UI 定向更新（推一条，不重载）
+          const forwardStatus = forwardOutcome === 'delivered'
+            ? 'resolved'
+            : (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected' ? 'unknown' : 'replied');
           bus.emit('owner-intervention:email-reply', {
             id: row.id,
             ownerReply: reply.raw_text,
             replyTime,
-            status: 'replied',
+            status: forwardStatus,
           });
 
 
-          console.log('[OwnerInterventionNotifier] 邮件回复已入库并转发, id:', row.id);
+          if (forwardOutcome === 'delivered') {
+            console.log('[OwnerInterventionNotifier] 主人回复已入库并成功转发, id:', row.id);
+          } else if (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected') {
+            console.warn('[OwnerInterventionNotifier] 主人回复已入库，自动转发结果未知，保留 Pull, id:', row.id);
+          } else {
+            console.log('[OwnerInterventionNotifier] 主人回复已入库，通道确认未投递，等待重试, id:', row.id);
+          }
         } else if (this._isEmailReplyExpired(reply, now)) {
           this.databaseAPI.updateOwnerInterventionStatus(row.id, 'expired', now);
         }

@@ -94,7 +94,6 @@ class PowerManager {
     this._lastTs = Date.now();
     this._timer = setInterval(() => this._check(), this.checkInterval);
     this._timer.unref();
-    console.error(`[PowerManager] 休眠唤醒检测已启动（间隔 ${this.checkInterval / 1000}s）`);
   }
 
   stop(): void {
@@ -171,7 +170,11 @@ class PowerManager {
 
     const pending = await this._restoreEntries(entries);
     const connected = entries.length - pending.length;
-    console.error(`[PowerManager] 系统唤醒恢复完成，IM 已连接 ${connected}/${entries.length}${pending.length ? `，失败 ${pending.length}` : ''}`);
+    if (pending.length === 0) {
+      console.error(`[PowerManager] ✅ 系统唤醒恢复成功，IM 已重新连接 ${connected}/${entries.length}`);
+    } else {
+      console.error(`[PowerManager] ⚠️ 系统唤醒恢复完成，IM 已连接 ${connected}/${entries.length}，失败 ${pending.length}`);
+    }
     if (pending.length) this._scheduleFailedRetry(pending);
   }
 
@@ -205,7 +208,7 @@ class PowerManager {
       console.error(`[PowerManager] 后台重试 ${pending.length} 个仍断开的 Agent IM`);
       void this._restoreEntries(pending).then(stillPending => {
         if (stillPending.length) this._scheduleFailedRetry(stillPending);
-        else console.error('[PowerManager] 后台恢复完成，所有 Agent IM 已连接');
+        else console.error('[PowerManager] ✅ 后台恢复成功，所有 Agent IM 已连接');
       }).catch(error => {
         console.error('[PowerManager] 后台恢复异常:', errorMessage(error));
         this._scheduleFailedRetry(pending);

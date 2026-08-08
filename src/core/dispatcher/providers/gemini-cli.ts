@@ -42,7 +42,7 @@ class GeminiCliProvider extends CliAdapter {
       name: 'GEMINI CLI',
       cmd: 'gemini',
       // prompt 经命令行参数传入（--prompt），与 Paperclip 一致
-      args: ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--prompt', '{prompt}'],
+      args: ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust', '--prompt', '{prompt}'],
       parser: 'gemini-stream-json',
       matchType: 'gemini',
       priority: 1,

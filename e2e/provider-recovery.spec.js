@@ -58,7 +58,7 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
   const checkpointScope = `1:${channelId}`;
   const before = await runtime(request);
   const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
-  expect(before.deliveryStatus.activeMode).toBe('mock-echo');
+  expect(before.deliveryStatus.activeAutomaticMode).toBe('mock');
 
   const configured = await setProvider(request, {
     available: true,
@@ -74,7 +74,10 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
     timeout: 5_000,
   }).toBe(faultedBefore + 1);
   await expect.poll(() => readMessages(channelId).some(row => row.id === failedMessageId), { timeout: 5_000 }).toBe(true);
-  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeMode, { timeout: 5_000 }).toBe('pull');
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.automaticDeliveryReady, { timeout: 5_000 }).toBe(false);
+  const pullStatus = await runtime(request);
+  expect(pullStatus.deliveryStatus.activeAutomaticMode).toBe(null);
+  expect(pullStatus.deliveryStatus.pullReady).toBe(true);
 
   const failedRows = readMessages(channelId);
   expect(failedRows).toHaveLength(1);
@@ -93,7 +96,7 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
 
   const recovered = await setProvider(request, { available: true });
   expect(recovered).toMatchObject({ success: true, available: true, fault: null });
-  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeMode, { timeout: 5_000 }).toBe('mock-echo');
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeAutomaticMode, { timeout: 5_000 }).toBe('mock');
 
   await inject(request, {
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,

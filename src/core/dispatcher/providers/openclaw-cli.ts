@@ -1,9 +1,10 @@
 const { PushProvider } = require('../base-provider');
-const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { buildOpenClawSessionKey } = require('../openclaw-session');
 import type { DatabaseLike } from '../../../types/database';
-import type { AgentMeta, PushPayload } from '../types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
 interface OpenClawCliOptions {
   contextWindow?: number;
@@ -77,7 +78,7 @@ class OpenClawCliProvider extends PushProvider {
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : `agent:${targetAgentId}:${fromUid}`;
+      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
     const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
@@ -105,7 +106,11 @@ class OpenClawCliProvider extends PushProvider {
         timeout: 120000,
         logOutput: false,
       });
-      if (result.code !== 0) throw new Error(`OpenClaw exited with code ${result.code}`);
+      if (result.code !== 0) {
+        const error = new Error(`OpenClaw exited with code ${result.code}`);
+        (error as any).deliveryOutcome = classifyCliFailure(result);
+        throw error;
+      }
       // 从 JSON stdout 提取 agent 回复并 emit（messenger.js 会写入 DB）
       const replyText = _extractReply(result.stdout);
       if (replyText) {
@@ -130,9 +135,13 @@ class OpenClawCliProvider extends PushProvider {
     }
   }
 
-  async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<null> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<null> {
     const targetAgentId = this._instanceForAgent(agentId);
-    const sessionKey = `agent:${targetAgentId}:${visitorId}`;
+    const binding = metadata?.providerBinding;
+    const sessionKey = binding?.providerType === 'openclaw'
+      && binding.providerInstanceId === targetAgentId
+      ? binding.nativeSessionId
+      : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     const turnId = String(metadata?.turnId || `openclaw-cli-steer-${Date.now()}`);
     console.error(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} session=selected`);
     const notification = JSON.stringify({

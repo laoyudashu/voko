@@ -252,7 +252,10 @@ await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () 
     const peerMessage = r.messages.find(m => m.id === 'm-fetch-room1');
     assert.strictEqual(peerMessage.sourceType, 'agent_peer');
     assert.strictEqual(peerMessage.trustLevel, 'untrusted_peer');
-    assert.match(peerMessage.content, /\[VOKO A2A CONTROL\]/);
+    // pull 路径应剥离 dispatcher 注入的 [VOKO A2A CONTROL] 协议包装，只暴露对端可见正文
+    assert.strictEqual(peerMessage.content, '同群另一 Agent 消息', 'agent_peer 消息应剥离 A2A 控制块，只留正文');
+    assert.strictEqual(peerMessage.hasControlBlock, true, '应标记曾含控制块');
+    assert.strictEqual(peerMessage.contentStripped, true, '应标记已剥离');
 
     const blocked = await handlers.fetch_new_messages({ ...params, blockTimeout: 1 });
     assert.strictEqual(blocked.messages.length, 2, '阻塞轮询也应按指定群过滤');
@@ -474,11 +477,127 @@ await test('ask_human_for_help persists and emits the original group context', a
     assert.strictEqual(interventions[0].targetChannelType, 2);
     assert.strictEqual(interventions[0].targetChannelId, 'room1');
 
+    db.prepare("UPDATE owner_interventions SET status='unknown', owner_reply=? WHERE id=?")
+      .run('approve', result.interventionId);
     const checked = await handlers.check_human_replies({ agentId: 'agentA', id: result.interventionId });
+    assert.strictEqual(checked.interventions[0].status, 'unknown');
+    assert.strictEqual(checked.interventions[0].ownerReply, 'approve');
     assert.strictEqual(checked.interventions[0].channelType, 2);
     assert.strictEqual(checked.interventions[0].channelId, 'room1');
     assert.strictEqual(checked.interventions[0].sourceSenderUid, 'visitor1');
   } finally { cleanup(); }
+});
+
+await test('fetch_new_messages onlyNew:true 首次只锚定不回吐历史，后续返回新消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    // 给单聊消息补 message_seq，模拟 IM 已投递
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(5, 'm1');
+    // 首次拉取（自动游标 0）+ onlyNew:true → 只锚定，返回空 + cursor
+    const first = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', onlyNew: true });
+    assert.strictEqual(first.success, true);
+    assert.strictEqual(first.messages.length, 0, 'onlyNew 首次不应回吐历史');
+    assert.strictEqual(first.anchored, true);
+    assert.ok(first.cursor >= 5, '应把游标锚定到当前 maxSeq');
+    // 此时插入一条新消息
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-new', 'visitor1', 'imuidA', '新消息', 'visitor1', 1, 'agentA', Date.now(), 0, 'received', 1, 9);
+    // 再次拉取 → 只返回锚点之后的新消息
+    const second = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', onlyNew: true });
+    assert.deepStrictEqual(second.messages.map(m => m.id), ['m-new'], '后续只返回新消息，历史不被重复回吐');
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages clientId 隔离：两个客户端各自独立游标不互抢', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(5, 'm1');
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-extra', 'visitor1', 'imuidA', '第二条', 'visitor1', 1, 'agentA', Date.now(), 0, 'received', 1, 8);
+    // 客户端 A 拉取（推进共享/自己的游标）
+    const a = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', clientId: 'zcode', onlyReplies: false });
+    assert.ok(a.messages.length > 0, '客户端 A 应拿到消息');
+    assert.strictEqual(a.clientId, 'zcode');
+    // 客户端 B 用不同 clientId 拉取 → 应独立拿到同样的消息（不被 A 抢走）
+    const b = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', clientId: 'codex', onlyReplies: false });
+    assert.deepStrictEqual(b.messages.map(m => m.id).sort(), ['m1', 'm-extra'].sort(), '不同 clientId 游标隔离，B 也能拿到消息');
+    assert.strictEqual(b.clientId, 'codex');
+    // 客户端 A 再次拉取 → 应为空（A 的游标已推进）
+    const a2 = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', clientId: 'zcode', onlyReplies: false });
+    assert.strictEqual(a2.messages.length, 0, 'A 的游标已推进，再次拉取为空');
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages onlyReplies 解耦：游标按全量 maxSeq 推进，不漏自己发的消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    // m1 是访客消息(seq=3)，再插一条 agent 自己发的消息(seq=7)
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(3, 'm1');
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-self', 'imuidA', 'visitor1', '我的回复', 'visitor1', 1, 'agentA', Date.now(), 1, 'sent', 1, 7);
+    // 用 messageSeq=0 从头拉，onlyReplies=true（只返回访客消息）
+    const r = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', messageSeq: 0, onlyReplies: true });
+    assert.deepStrictEqual(r.messages.map(m => m.id), ['m1'], 'onlyReplies 只返回访客消息');
+    assert.ok(r.cursor >= 7, '游标应按全量 maxSeq(7) 推进，而不是只到回复的 3');
+    // 再次拉取（无新消息）应为空，且不会因游标只到 3 而漏掉 seq 4-7 的消息
+    const r2 = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'visitor1', onlyReplies: true });
+    assert.strictEqual(r2.messages.length, 0, '游标已按全量推进，无新消息');
+  } finally { cleanup(); }
+});
+
+await test('get_chat_history order=asc 按时间正序返回', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    // m1(now) 之后插一条更早的消息，验证 asc 排序
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-early', 'visitor1', 'imuidA', '最早的消息', 'visitor1', 1, 'agentA', 1000, 0, 'received', 1);
+    const asc = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'visitor1', order: 'asc' });
+    assert.ok(asc.messages.length >= 2);
+    // asc：最早在前，时间戳递增
+    for (let i = 1; i < asc.messages.length; i++) {
+      assert.ok(asc.messages[i - 1].timestamp <= asc.messages[i].timestamp, 'asc 应按时间正序');
+    }
+    const desc = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'visitor1' });
+    // desc（默认）：最新在前
+    assert.ok(desc.messages[0].timestamp >= desc.messages[desc.messages.length - 1].timestamp, '默认 desc 应最新在前');
+  } finally { cleanup(); }
+});
+
+await test('fmtMsg 时间戳规范化：秒级 timestamp 转毫秒 timestampMs', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    // 插一条秒级时间戳的消息（模拟旧数据/某些落库路径用秒）
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-sec', 'visitor1', 'imuidA', '秒级时间戳', 'visitor1', 1, 'agentA', 1700000000, 0, 'received', 1);
+    const r = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'visitor1', order: 'asc' });
+    const msg = r.messages.find(m => m.id === 'm-sec');
+    assert.ok(msg, '应找到秒级时间戳消息');
+    assert.strictEqual(msg.timestamp, 1700000000, '保留原始秒级 timestamp');
+    assert.strictEqual(msg.timestampMs, 1700000000000, 'timestampMs 应规范化为毫秒');
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 原样', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    global.__dispatcher = createDispatcher({ db, providers: {} });
+    // m2 是 visitor 群聊消息；再插一条 agent_peer 群聊消息（会被 prepareForPull 注入 CONTROL 块）
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
+    db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run('m-peer', 'imuidB', 'room1', '对端 Agent 正文', 'room1', 2, 'agentB', Date.now() + 2, 0, 'received', 1, 2, JSON.stringify({ uids: ['imuidA'] }));
+    const r = await handlers.fetch_new_messages({ agentId: 'agentA', channelId: 'room1', channelType: 2, messageSeq: 0, onlyReplies: false });
+    const peer = r.messages.find(m => m.id === 'm-peer');
+    assert.ok(peer, '应有 agent_peer 消息');
+    assert.strictEqual(peer.sourceType, 'agent_peer');
+    assert.strictEqual(peer.content, '对端 Agent 正文', '应剥离 [VOKO A2A CONTROL] 包装，只留正文');
+    assert.strictEqual(peer.hasControlBlock, true);
+    assert.strictEqual(peer.contentStripped, true);
+    // visitor 消息原样，不带控制块标记
+    const visitor = r.messages.find(m => m.id === 'm2');
+    assert.strictEqual(visitor.content, '群聊@消息');
+    assert.strictEqual(visitor.hasControlBlock, false);
+    assert.strictEqual(visitor.contentStripped, false);
+  } finally { delete global.__dispatcher; cleanup(); }
 });
 
 // ========================================
