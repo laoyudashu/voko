@@ -781,9 +781,11 @@ ${body}
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
     const bindingFamily = getProviderFamily(binding.providerType)?.type || binding.providerType;
-    let compatible = bindingFamily === _providerFamily(route.providerId)
-      && binding.adapterType === route.providerId
-      && binding.deliveryMode === mode;
+    let compatible = typeof (route.provider as any).acceptsBinding === 'function'
+      ? !!(route.provider as any).acceptsBinding(binding, agentId)
+      : bindingFamily === _providerFamily(route.providerId)
+        && binding.adapterType === route.providerId
+        && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;
