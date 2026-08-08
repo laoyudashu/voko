@@ -26,20 +26,6 @@
 | ZeroClaw | MCP、CLI、本机接口 | ACP-over-WebSocket → ACP → CLI（alias + 独立 state file）→ Pull | ACP 版本差异会降级为新隔离会话；CLI / Pull 保留 | Ubuntu / WSL 真机功能验证 | pairing token、角色隔离与会话别名受保护；不猜测访客提供的会话或 alias。 |
 | Gemini CLI | MCP、CLI、本机接口（能力设计） | 安全沙箱 CLI（需 Docker）→ Pull | 尚未完成生产级沙箱真机验证 | 待验证 / 环境受阻 | 当前 Windows Docker daemon 未运行，不应视为自动推送已通过。 |
 
-## Cline 支持说明
-
-Cline 在 VOKO 中提供三层投递顺序：
-
-1. **ACP 主通道**：VOKO 通过 `cline --acp` 建立隔离的 ACP 会话，并按 Agent 与访客保存会话绑定。
-2. **CLI 备通道**：ACP 进程退出、握手失败或被健康检查标记不可用时，下一条消息改走 Cline Plan CLI。CLI 使用 `--plan --json --auto-approve false`，并通过命令权限策略拒绝外部访客工具调用。
-3. **Pull 兜底**：两个自动通道都不可用时，消息保留在 VOKO，Agent 可通过 MCP 或 CLI 主动读取。
-
-ACP 的运行入口检测与进程健康状态是分开的：Cline 可执行入口存在不代表当前 ACP 进程仍健康。进程退出后，VOKO 只暂时禁用该 Agent 的 ACP 路由；`healthCheck()` 或显式恢复成功并完成握手后，才重新发布 ACP 可用事件。
-
-使用前请安装并登录 Cline（`cline auth`），确保 `cline` 在 `PATH` 中。Windows 下 VOKO 会解析 npm 包的真实 Node 入口，避免把 `.cmd`/`.ps1` 包装脚本当作 ACP 原生进程直接启动。
-
-当前已完成 Windows 实机的首次 ACP 消息、会话续接、终止进程后的 CLI 单次回复、健康恢复后的 ACP 重连，以及日志敏感信息检查。多操作系统长期稳定性、多 Agent 并发和大规模连续断线仍需单独验收。
-
 ## 已识别但默认 Pull 的集成环境
 
 这些环境可被识别，Agent 仍可通过 MCP 或本机接口与 VOKO 通信；但目前没有承诺可靠的自动推送通道。
