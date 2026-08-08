@@ -31,20 +31,6 @@
 
 Ubuntu 24.04.4 LTS 的 18 个 Provider 版本、注册结果、推荐通道和限制见 [Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)。矩阵是当前 Linux 实机证据的集中记录；Windows 版本和路径说明仍保留在各 Provider 条目与专属指南中。
 
-## Cline 支持说明
-
-Cline 在 VOKO 中提供三层投递顺序：
-
-1. **ACP 主通道**：VOKO 通过 `cline --acp` 建立隔离的 ACP 会话，并按 Agent 与访客保存会话绑定。
-2. **CLI 备通道**：ACP 进程退出、握手失败或被健康检查标记不可用时，下一条消息改走 Cline Plan CLI。CLI 使用 `--plan --json --auto-approve false`，并通过命令权限策略拒绝外部访客工具调用。
-3. **Pull 兜底**：两个自动通道都不可用时，消息保留在 VOKO，Agent 可通过 MCP 或 CLI 主动读取。
-
-ACP 的运行入口检测与进程健康状态是分开的：Cline 可执行入口存在不代表当前 ACP 进程仍健康。进程退出后，VOKO 只暂时禁用该 Agent 的 ACP 路由；`healthCheck()` 或显式恢复成功并完成握手后，才重新发布 ACP 可用事件。
-
-使用前请安装并登录 Cline（`cline auth`），确保 `cline` 在 `PATH` 中。Windows 下 VOKO 会解析 npm 包的真实 Node 入口，避免把 `.cmd`/`.ps1` 包装脚本当作 ACP 原生进程直接启动。详细安装、注册和验收步骤见 [Cline 专属指南](providers/cline.md)。
-
-当前已完成 Windows 实机的首次 ACP 消息、会话续接、终止进程后的 CLI 单次回复、健康恢复后的 ACP 重连，以及日志敏感信息检查。多操作系统长期稳定性、多 Agent 并发和大规模连续断线仍需单独验收。
-
 ## 已识别但默认 Pull 的集成环境
 
 这些环境可被识别，Agent 仍可通过 MCP 或本机接口与 VOKO 通信；但目前没有承诺可靠的自动推送通道。
