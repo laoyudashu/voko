@@ -336,9 +336,14 @@ function registrationRuntimeStatus(cx: any, agentId: string, imStatus?: WorkerCo
     const status = cx.getAgentDeliveryStatus?.(agentId);
     if (status && typeof status === 'object') {
       providerDelivery = {
-        activeMode: status.activeMode || null,
-        availableModes: Array.isArray(status.availableModes) ? status.availableModes : [],
-        status: status.status || (status.backendAvailable === false ? 'unavailable' : 'ready'),
+        backendType: status.backendType || null,
+        configuredModes: Array.isArray(status.configuredModes) ? status.configuredModes : [],
+        automaticDeliveryReady: status.automaticDeliveryReady === true,
+        automaticReadyModes: Array.isArray(status.automaticReadyModes) ? status.automaticReadyModes : [],
+        activeAutomaticMode: status.activeAutomaticMode || null,
+        pullReady: status.pullReady !== false,
+        lastDeliveredMode: status.lastDeliveredMode || null,
+        methods: Array.isArray(status.methods) ? status.methods : [],
       };
     }
   } catch (_) {}
@@ -346,11 +351,17 @@ function registrationRuntimeStatus(cx: any, agentId: string, imStatus?: WorkerCo
     try {
       const row = cx.query?.('SELECT backend_type, backend_instance_id, delivery_modes FROM agents WHERE agent_id=? LIMIT 1', [agentId])?.[0] || {};
       const parsed = typeof row.delivery_modes === 'string' ? JSON.parse(row.delivery_modes) : row.delivery_modes;
+      const configuredModes = Array.isArray(parsed) ? parsed.map(String) : ['pull'];
       providerDelivery = {
         backendType: row.backend_type || 'others',
         instanceBound: !!row.backend_instance_id,
-        configuredModes: Array.isArray(parsed) ? parsed.map(String) : ['pull'],
-        status: 'configured',
+        configuredModes,
+        automaticDeliveryReady: false,
+        automaticReadyModes: [],
+        activeAutomaticMode: null,
+        pullReady: configuredModes.includes('pull'),
+        lastDeliveredMode: null,
+        methods: [],
       };
     } catch (_) {}
   }
@@ -2546,12 +2557,14 @@ function createToolHandlers(cx: McpContext) {
             const rows = await this._pollSingleChannel(
               p.agentId, targetChannelId, seq, limit, onlyReplies, blockTimeout, ctrl, targetChannelType
             );
-            // 游标推进基于【全量消息】maxSeq（含 is_me=1），与 onlyReplies 过滤解耦，
-            // 避免只拉回复时游标漏推进自己发的消息导致下次重复。
-            const cursorSeq = this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
-            if (cursorSeq > 0) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
             const hasMore = rows.length > limit;
             if (hasMore) rows.pop();
+            // 分页时只推进到本页最后一条，避免把尚未返回的消息跳过；没有下一页时
+            // 再按全量 maxSeq 推进，以免 onlyReplies 过滤掉自己发送的消息后反复扫描。
+            const cursorSeq = hasMore
+              ? Number(rows.at(-1)?.message_seq || seq)
+              : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
+            if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
             const filtered = this._a2aPreparePull(p.agentId, rows);
             return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
           } finally {
@@ -2562,10 +2575,13 @@ function createToolHandlers(cx: McpContext) {
         const rows = this._queryMessages(
           p.agentId, targetChannelId, seq, onlyReplies, limit, targetChannelType
         );
-        const cursorSeq = this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
-        if (cursorSeq > 0) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
+        // 有下一页时保留未返回消息的序号；最后一页才跳过已过滤的自发消息。
+        const cursorSeq = hasMore
+          ? Number(rows.at(-1)?.message_seq || seq)
+          : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
+        if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
         const filtered = this._a2aPreparePull(p.agentId, rows);
         return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
       }

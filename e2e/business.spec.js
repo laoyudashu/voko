@@ -82,7 +82,7 @@ test('single chat sends and receives text through the real worker and Mock Provi
   expect(Number(direct.replies)).toBe(2);
   expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
   expect(Number(direct.uniqueTurns)).toBe(Number(direct.total));
-  expect(state.deliveryStatus.activeMode).toBe('mock-echo');
+  expect(state.deliveryStatus.activeAutomaticMode).toBe('mock');
 });
 
 test('group chat renders text, supports @all, and enforces mention permission', async ({ page, request }) => {
@@ -225,7 +225,9 @@ test('provider failure leaves the message available for Pull and recovery restor
   expect(pullRows.some(row => row.is_me === 1 && row.content.includes('[echo] pull fallback e2e'))).toBeFalsy();
   await expect(page.locator('#msg-box')).toContainText('pull fallback e2e');
   const beforePull = await runtime(request);
-  expect(beforePull.deliveryStatus.activeMode).toBe('pull');
+  expect(beforePull.deliveryStatus.automaticDeliveryReady).toBe(false);
+  expect(beforePull.deliveryStatus.activeAutomaticMode).toBe(null);
+  expect(beforePull.deliveryStatus.pullReady).toBe(true);
   expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === `1:${channelId}`)).toBeFalsy();
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
@@ -254,7 +256,7 @@ test('provider failure leaves the message available for Pull and recovery restor
   await waitForMessages(channelId, rows => rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('push recovered e2e')));
   await expect(page.locator('#msg-box')).toContainText('push recovered e2e');
   const recovered = await runtime(request);
-  expect(recovered.deliveryStatus.activeMode).toBe('mock-echo');
+  expect(recovered.deliveryStatus.activeAutomaticMode).toBe('mock');
   const pullStats = recovered.messageStats.find(item => item.channelId === channelId);
   expect(Number(pullStats.replies)).toBe(1);
   expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
