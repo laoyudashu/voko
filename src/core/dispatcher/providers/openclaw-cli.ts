@@ -1,5 +1,5 @@
 const { PushProvider } = require('../base-provider');
-const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
@@ -105,7 +105,11 @@ class OpenClawCliProvider extends PushProvider {
         timeout: 120000,
         logOutput: false,
       });
-      if (result.code !== 0) throw new Error(`OpenClaw exited with code ${result.code}`);
+      if (result.code !== 0) {
+        const error = new Error(`OpenClaw exited with code ${result.code}`);
+        (error as any).deliveryOutcome = classifyCliFailure(result);
+        throw error;
+      }
       // 从 JSON stdout 提取 agent 回复并 emit（messenger.js 会写入 DB）
       const replyText = _extractReply(result.stdout);
       if (replyText) {

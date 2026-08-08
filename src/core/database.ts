@@ -226,7 +226,10 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 
 // DB schema 版本号（lite/desktop 版本脱钩后，靠此数字感知对方写入的库结构）
 // 改动表结构/字段时递增；旧代码读到更高的 DB 值会告警（见 initDatabase 末尾）
-const SCHEMA_VERSION = 6;
+// Schema 7 is the current shared Lite/Desktop marker.  The v7 database has
+// the same tables and columns already handled by Lite; keeping the marker in
+// sync prevents a newer Desktop-created database from being rejected by Lite.
+const SCHEMA_VERSION = 7;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;

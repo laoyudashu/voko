@@ -24,6 +24,7 @@ const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw
 const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
 const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
+const { classifyCliFailure } = require('../build/core/adapters/cli-spawner');
 
 test('AcpAdapter has no internal cross-transport CLI fallback', () => {
   const adapter = new AcpAdapter({
@@ -32,6 +33,14 @@ test('AcpAdapter has no internal cross-transport CLI fallback', () => {
   });
   assert.equal(adapter._pushViaCli, undefined);
   assert.equal(adapter._cliFallback, undefined);
+});
+
+test('CLI process failures distinguish confirmed non-delivery from rejection and unknown outcomes', () => {
+  assert.equal(classifyCliFailure({ stdout: '', stderr: 'GatewayTransportError: gateway closed' }), 'not_delivered');
+  assert.equal(classifyCliFailure({ stdout: '', stderr: 'AuthenticationError: 401 Unauthorized' }), 'not_delivered');
+  assert.equal(classifyCliFailure({ stdout: '', stderr: 'API key is invalid' }), 'not_delivered');
+  assert.equal(classifyCliFailure({ stdout: '', stderr: 'request rejected by safety policy' }), 'rejected');
+  assert.equal(classifyCliFailure({ stdout: '', stderr: 'model process exited unexpectedly' }), 'outcome_unknown');
 });
 const {
   RegistrationOrchestrator,

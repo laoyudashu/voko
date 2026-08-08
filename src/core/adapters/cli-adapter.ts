@@ -20,7 +20,7 @@
  */
 
 const { PushProvider } = require('../dispatcher/base-provider');
-const { runCli, checkCliAvailable, killTree, sanitizeCmdArg } = require('./cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
@@ -255,7 +255,7 @@ class CliAdapter extends PushProvider {
 
       if (exitCode !== 0) {
         error = new Error(`${this._name} 退出 code=${exitCode}`);
-        (error as any).deliveryOutcome = 'rejected';
+        (error as any).deliveryOutcome = classifyCliFailure(result);
       } else if (this._requireOutput && !fullContent.trim()) {
         error = new Error(`${this._name} produced no reply`);
         (error as any).deliveryOutcome = 'outcome_unknown';

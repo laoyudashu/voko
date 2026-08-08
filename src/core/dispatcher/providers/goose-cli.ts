@@ -1,6 +1,6 @@
 const path = require('path');
 const { PushProvider } = require('../base-provider');
-const { runCli, checkCliAvailable } = require('../../adapters/cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure } = require('../../adapters/cli-spawner');
 const { resolveGooseCommand } = require('../goose-command');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
@@ -92,7 +92,11 @@ class GooseCliProvider extends PushProvider {
         logOutput: false,
       });
 
-      if (result.code !== 0) throw new Error(`Goose exited with code ${result.code}`);
+      if (result.code !== 0) {
+        const error = new Error(`Goose exited with code ${result.code}`);
+        (error as any).deliveryOutcome = classifyCliFailure(result);
+        throw error;
+      }
 
       if (result.code === 0 && this._bindingStore) {
         this._bindingStore.saveManaged({
