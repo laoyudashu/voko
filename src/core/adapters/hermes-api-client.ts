@@ -139,23 +139,19 @@ class HermesApiClient extends EventEmitter {
     });
   }
 
-  _sessionKey(agentId: string, visitorId: string): string {
-    return `hermes:${agentId}:${visitorId}`;
-  }
-
   /**
    * 发送聊天消息并等待回复
    */
   async chat(
-    agentId: string,
+    profileId: string,
+    sessionId: string,
     visitorId: string,
     message: string,
     timeoutMs?: number,
   ): Promise<HermesChatResult> {
-    const sessionId = this._sessionKey(agentId, visitorId);
     const enriched = `[访客 ${visitorId}]: ${message}`;
-    const conn = this._agentConnection(agentId);
-    console.log(`[HermesApiClient] chat agentId=${agentId} port=${conn.port} apiKey=${_keyLog(conn.apiKey || '')}`);
+    const conn = this._agentConnection(profileId);
+    console.log(`[HermesApiClient] chat profile=${profileId} port=${conn.port} apiKey=${_keyLog(conn.apiKey || '')}`);
 
     const resp = await this._request('POST', '/v1/chat/completions', {
       messages: [{ role: 'user', content: enriched }],
@@ -170,10 +166,9 @@ class HermesApiClient extends EventEmitter {
   /**
    * 注入系统消息到会话
    */
-  async steer(agentId: string, visitorId: string, content: string): Promise<HermesSteerResult> {
-    const sessionId = this._sessionKey(agentId, visitorId);
+  async steer(profileId: string, sessionId: string, visitorId: string, content: string): Promise<HermesSteerResult> {
     const enriched = `[系统消息] ${content}`;
-    const conn = this._agentConnection(agentId);
+    const conn = this._agentConnection(profileId);
 
     const resp = await this._request('POST', '/v1/chat/completions', {
       messages: [

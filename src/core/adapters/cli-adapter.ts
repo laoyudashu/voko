@@ -24,7 +24,7 @@ const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg 
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
-import type { AgentMeta, PushPayload } from '../dispatcher/types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -365,11 +365,23 @@ class CliAdapter extends PushProvider {
     agentId: string,
     visitorId: string,
     content: string,
-    metadata?: { turnId?: string },
+    metadata?: ProviderSteerMetadata,
   ): Promise<void> {
     // owner intervention：走同样的 push 路径
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
-    return this.push({ agentId, fromUid: visitorId, content, messageId, turnId: messageId, timestamp: Date.now() });
+    const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;
+    const channelId = metadata?.channelId || visitorId.replace(/^group:/, '');
+    return this.push({
+      agentId,
+      fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
+      content,
+      messageId,
+      turnId: messageId,
+      channelId,
+      channelType,
+      providerBinding: metadata?.providerBinding || null,
+      timestamp: Date.now(),
+    });
   }
 
   start() { this._refreshAvailability(); }

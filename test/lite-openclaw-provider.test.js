@@ -2,6 +2,10 @@ const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
 const OpenClawWsProvider = require('../build/core/dispatcher/providers/openclaw-ws');
+const {
+  buildOpenClawSessionKey,
+  parseOpenClawSessionTarget,
+} = require('../build/core/dispatcher/openclaw-session');
 
 const providers = [];
 
@@ -42,19 +46,28 @@ describe('Lite OpenClaw WS provider', () => {
 
     assert.equal(sent.length, 1);
     assert.equal(sent[0].method, 'chat.send');
-    assert.equal(sent[0].params.sessionKey, 'agent:gym:visitorabc');
+    const expectedSession = buildOpenClawSessionKey('Gym', 'Gym', 'VisitorABC');
+    assert.equal(sent[0].params.sessionKey, expectedSession.toLowerCase());
     const message = JSON.parse(sent[0].params.message);
     assert.equal(message.content, 'hello');
     assert.equal(message.fromUid, 'sender-1');
     assert.equal(message.messageId, 'message-1');
     assert.equal(
-      provider._caseMap.get('agent:gym:visitorabc'),
-      'agent:Gym:VisitorABC',
+      provider._caseMap.get(expectedSession.toLowerCase()),
+      expectedSession,
     );
     assert.equal(
-      provider._sessionTurns.get('agent:gym:visitorabc').turnId,
+      provider._sessionTurns.get(expectedSession.toLowerCase()).turnId,
       'message-1',
     );
+  });
+
+  it('isolates VOKO Agents sharing one OpenClaw instance and preserves the reply target', () => {
+    const first = buildOpenClawSessionKey('shared', 'agent-a', 'group:one');
+    const second = buildOpenClawSessionKey('shared', 'agent-b', 'group:one');
+    assert.notEqual(first, second);
+    assert.equal(parseOpenClawSessionTarget(first.split(':').slice(2).join(':')), 'group:one');
+    assert.equal(parseOpenClawSessionTarget(second.split(':').slice(2).join(':')), 'group:one');
   });
 
   it('同一 session 在订阅中按发送顺序共享订阅结果', async () => {

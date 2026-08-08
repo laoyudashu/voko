@@ -5,7 +5,7 @@ const { resolveGooseCommand, isGooseRuntimeAvailable } = require('../goose-comma
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
-import type { PushPayload, AgentMeta } from '../types';
+import type { PushPayload, AgentMeta, ProviderSteerMetadata } from '../types';
 
 type RunCli = typeof runCli;
 
@@ -218,9 +218,21 @@ class GooseCliProvider extends PushProvider {
     } catch (_) { return null; }
   }
 
-  async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<void> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<void> {
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
-    return this.push({ agentId, fromUid: visitorId, content, messageId, turnId: messageId, timestamp: Date.now() });
+    const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;
+    const channelId = metadata?.channelId || visitorId.replace(/^group:/, '');
+    return this.push({
+      agentId,
+      fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
+      content,
+      messageId,
+      turnId: messageId,
+      channelId,
+      channelType,
+      providerBinding: metadata?.providerBinding || null,
+      timestamp: Date.now(),
+    });
   }
 
   start() { this._refreshAvailability(); }

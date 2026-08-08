@@ -206,6 +206,41 @@ test('messages queued before a rebind keep their original binding snapshot', asy
   assert.deepEqual(received, ['thread-a', 'thread-b']);
 });
 
+test('owner steer receives the active Provider binding snapshot', async (t) => {
+  const { db, store } = fixture(t);
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id, agent_id, imUid, imToken, im_server_url, publish_status, created_at, updated_at,
+     backend_type, backend_instance_id, delivery_modes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('row-steer', 'agent-steer', 'agent-im-steer', 'token', 'ws://local', 'published', now, now,
+      'codex', 'codex-local', JSON.stringify(['cli', 'pull']));
+  store.saveManaged({
+    agentId: 'agent-steer', channelId: 'visitor-1', channelType: 1,
+    providerType: 'codex', providerInstanceId: 'codex-local', nativeSessionId: 'thread-owner',
+    deliveryMode: 'cli', adapterType: 'codex-cli', expectedVersion: 0,
+  });
+  const received = [];
+  const dispatcher = createDispatcher({
+    db,
+    providers: {
+      'codex-cli': {
+        priority: 1,
+        match: () => true,
+        isAvailable: () => true,
+        async push() {},
+        async steer(_agentId, _visitorId, _content, metadata) { received.push(metadata); },
+      },
+    },
+  });
+
+  await dispatcher.steer('agent-steer', 'visitor-1', 'owner reply');
+  assert.equal(received.length, 1);
+  assert.equal(received[0].providerBinding.nativeSessionId, 'thread-owner');
+  assert.equal(received[0].channelId, 'visitor-1');
+  assert.equal(received[0].channelType, 1);
+});
+
 test('cross-adapter routing never reuses an incompatible managed binding', async (t) => {
   const { db, store } = fixture(t);
   const now = Date.now();

@@ -12,7 +12,7 @@ import type {
   HermesApiClientOptions,
   HermesSteerResult,
 } from '../../adapters/hermes-api-client';
-import type { AgentMeta, PushPayload } from '../types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
 interface ProfileConnection {
   port?: number;
@@ -545,7 +545,7 @@ class HermesHttpProvider extends PushProvider {
     if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
 
     try {
-      const result = await this.client.chat(profileId, visitorId, structuredMsg);
+      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
       const replyPreview = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
@@ -566,7 +566,7 @@ class HermesHttpProvider extends PushProvider {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.chat(profileId, visitorId, structuredMsg);
+            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -577,7 +577,7 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.chat(profileId, visitorId, structuredMsg);
+            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -590,7 +590,7 @@ class HermesHttpProvider extends PushProvider {
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.chat(profileId, visitorId, structuredMsg);
+          const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
           const replyLen2 = (result.reply || '').length;
           const replyPrev2 = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
           this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字) 内容="${replyPrev2}"`);
@@ -612,15 +612,19 @@ class HermesHttpProvider extends PushProvider {
     agentId: string,
     visitorId: string,
     content: string,
-    metadata?: { turnId?: string },
+    metadata?: ProviderSteerMetadata,
   ): Promise<HermesSteerResult | null | undefined> {
-    const sessionKey = `hermes:${agentId}:${visitorId}`;
     const profileId = this._profileForAgent(agentId);
     if (!profileId) {
       const error = new Error('Hermes HTTP unavailable: agent is not bound to a Hermes profile');
       (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     }
+    const boundSession = metadata?.providerBinding?.providerType === 'hermes'
+      && metadata.providerBinding.providerInstanceId === profileId
+      ? metadata.providerBinding.nativeSessionId
+      : null;
+    const sessionKey = boundSession || `hermes:${agentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `hermes-steer-${Date.now()}`);
     this.addLog(`📝 注入系统消息 ${agentId}`);
 
@@ -637,7 +641,7 @@ class HermesHttpProvider extends PushProvider {
     };
 
     try {
-      const result = await this.client.steer(profileId, visitorId, content);
+      const result = await this.client.steer(profileId, sessionKey, visitorId, content);
       this._authStates.set(profileId, true);
       this.addLog(`✅ steer 完成 ${agentId} (回复 ${(result.output || '').length} 字)`);
       emitReply(result);
@@ -648,7 +652,7 @@ class HermesHttpProvider extends PushProvider {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.steer(profileId, visitorId, content);
+            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (刷新 profile key 后)`);
             emitReply(result);
@@ -659,7 +663,7 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.steer(profileId, visitorId, content);
+            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);
@@ -671,7 +675,7 @@ class HermesHttpProvider extends PushProvider {
       if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
         await new Promise<void>(resolve => setTimeout(resolve, 2000));
         try {
-          const result = await this.client.steer(profileId, visitorId, content);
+          const result = await this.client.steer(profileId, sessionKey, visitorId, content);
           this.addLog(`✅ steer 完成 ${agentId} (重试)`);
           emitReply(result);
           return result;

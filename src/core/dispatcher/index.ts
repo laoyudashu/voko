@@ -969,6 +969,15 @@ ${body}
       if (replyContext) {
         _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
       }
+      const channelType = replyContext?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;
+      const channelId = String(replyContext?.channelId || visitorId.replace(/^group:/, ''));
+      const activeBinding = _captureProviderBinding(agentId, {
+        agentId,
+        fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
+        content,
+        channelId,
+        channelType,
+      }).providerBinding;
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const delivery = await deliveryExecutor.execute({
         next: (excluded: Set<DispatcherProvider>) => {
@@ -982,7 +991,15 @@ ${body}
             target: nextRoute.provider,
           };
         },
-        invoke: (candidate: any) => candidate.target.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId }),
+        invoke: (candidate: any) => {
+          const selectedRoute = routeByProvider.get(candidate.target)!;
+          return candidate.target.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), {
+            turnId,
+            channelId,
+            channelType,
+            providerBinding: _bindingForRoute(agentId, activeBinding, selectedRoute),
+          });
+        },
         classify: deliveryOutcome,
         onSuccess: (candidate: any) => {
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);

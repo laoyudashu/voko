@@ -1,10 +1,9 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
-const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
-import type { AgentMeta, PushPayload } from '../types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
 interface HermesCliOptions {
   contextWindow?: number;
@@ -52,9 +51,6 @@ class HermesCliProvider extends PushProvider {
     super();
     this._contextWindow = options.contextWindow ?? 0;
     this._db = options.db || null;
-    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
-      ? new ProviderConversationBindingStore(options.db as any)
-      : null;
     this._available = null;
     this._command = resolveHermesCommand();
     this._runCli = options.runCli || runCli;
@@ -127,25 +123,17 @@ class HermesCliProvider extends PushProvider {
   async _runPush(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `hermes-cli-${Date.now()}`);
-    const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
+    // `hermes -z` has no native-session argument. Keep the binding only as a
+    // correlation label and restore bounded VOKO history on every CLI turn.
+    const hasBindingLabel = payload.providerBinding?.providerType === 'hermes'
       && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
-    const sessionKey = canResumeBinding
+    const sessionKey = hasBindingLabel
       ? payload.providerBinding!.nativeSessionId
       : `hermes:${agentId}:${fromUid}`;
     const profileId = this._instanceForAgent(agentId);
     if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
-    const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
-    const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
-    if (!canResumeBinding && this._bindingStore) {
-      this._bindingStore.saveManaged({
-        agentId, channelId, channelType, providerType: 'hermes',
-        providerInstanceId: profileId, nativeSessionId: sessionKey,
-        deliveryMode: 'cli', adapterType: 'hermes-cli', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
-      });
-    }
-
     const deliveryContent = buildConversationDeliveryPrompt(
-      this._db, payload, canResumeBinding, this._contextWindow,
+      this._db, payload, false, this._contextWindow,
     );
     const notification = _buildNotification(agentId, fromUid, deliveryContent);
     // Windows 下 -z 经 cmd.exe 传多行/含元字符的 notification 会被截断或注入，净化为单行
@@ -197,7 +185,7 @@ class HermesCliProvider extends PushProvider {
     }
   }
 
-  async steer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<{ queued: true }> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<{ queued: true }> {
     const profileId = this._instanceForAgent(agentId);
     if (!profileId) {
       const error = new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
@@ -209,10 +197,13 @@ class HermesCliProvider extends PushProvider {
     return { queued: true };
   }
 
-  async _runSteer(agentId: string, visitorId: string, content: string, metadata?: { turnId?: string }): Promise<void> {
-    const sessionKey = `hermes:${agentId}:${visitorId}`;
+  async _runSteer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<void> {
     const profileId = this._instanceForAgent(agentId);
     if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
+    const sessionKey = metadata?.providerBinding?.providerType === 'hermes'
+      && metadata.providerBinding.providerInstanceId === profileId
+      ? metadata.providerBinding.nativeSessionId
+      : `hermes:${agentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `hermes-cli-steer-${Date.now()}`);
     console.error(`[HermesCli] steer agent=${agentId} visitor=${visitorId}`);
     const notification = JSON.stringify({

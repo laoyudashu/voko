@@ -7,8 +7,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
-import type { AgentMeta, PushPayload } from '../types';
+import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
 type ProtocolMessage = Record<string, any>; // OpenClaw gateway 的动态 JSON 协议边界
 type EventHandler = (message?: any) => void;
@@ -287,7 +288,7 @@ class OpenClawWsProvider {
     if (!agentMatch) return { agentId: null, visitorId: null };
     return {
       agentId: this._vokoAgentBySession.get(sessionKey.toLowerCase()) || agentMatch[1],
-      visitorId: agentMatch[2],
+      visitorId: parseOpenClawSessionTarget(agentMatch[2]),
     };
   }
 
@@ -1478,7 +1479,7 @@ class OpenClawWsProvider {
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : `agent:${targetAgentId}:${fromUid}`;
+      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
@@ -1499,7 +1500,7 @@ class OpenClawWsProvider {
     agentId: string,
     visitorId: string,
     content: string,
-    metadata?: { turnId?: string },
+    metadata?: ProviderSteerMetadata,
   ): Promise<void> {
     let targetAgentId = agentId;
     try {
@@ -1508,7 +1509,11 @@ class OpenClawWsProvider {
       ).get(agentId, 'openclaw');
       targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
     } catch (_) {}
-    const sessionKey = `agent:${targetAgentId}:${visitorId}`;
+    const binding = metadata?.providerBinding;
+    const sessionKey = binding?.providerType === 'openclaw'
+      && binding.providerInstanceId === targetAgentId
+      ? binding.nativeSessionId
+      : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     return this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
   }

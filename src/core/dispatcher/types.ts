@@ -43,6 +43,13 @@ export interface PushPayload {
   [key: string]: unknown;
 }
 
+export interface ProviderSteerMetadata {
+  turnId?: string;
+  channelId?: string;
+  channelType?: number;
+  providerBinding?: PushPayload['providerBinding'];
+}
+
 export interface ProviderHealth {
   ok: boolean;
   status?: string;

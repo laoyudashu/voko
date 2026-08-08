@@ -31,8 +31,32 @@ test('Hermes API client selects an independent key and port for each profile', a
       two: { port: second.address().port, apiKey: 'key-two' },
     },
   });
-  assert.equal((await client.chat('one', 'visitor', 'hello')).reply, 'first');
-  assert.equal((await client.chat('two', 'visitor', 'hello')).reply, 'second');
+  assert.equal((await client.chat('one', 'session-one', 'visitor', 'hello')).reply, 'first');
+  assert.equal((await client.chat('two', 'session-two', 'visitor', 'hello')).reply, 'second');
+});
+
+test('Hermes API client keeps profile selection separate from the exact VOKO session', async (t) => {
+  const sessions = [];
+  const server = http.createServer((req, res) => {
+    sessions.push(req.headers['x-hermes-session-id']);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'ok', choices: [{ message: { content: 'ok' } }] }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const client = new HermesApiClient({
+    profiles: { shared: { port: server.address().port, apiKey: 'key' } },
+  });
+
+  await client.chat('shared', 'hermes:agent-a:group:one', 'group:one', 'first');
+  await client.chat('shared', 'hermes:agent-b:group:one', 'group:one', 'second');
+  await client.steer('shared', 'hermes:agent-a:group:one', 'group:one', 'owner');
+
+  assert.deepEqual(sessions, [
+    'hermes:agent-a:group:one',
+    'hermes:agent-b:group:one',
+    'hermes:agent-a:group:one',
+  ]);
 });
 
 test('Hermes HTTP provider refreshes the selected profile key after a 401', async () => {
@@ -64,8 +88,11 @@ test('Hermes HTTP provider refreshes the selected profile key after a 401', asyn
     async ping() { return true; },
     setProfile(profileId, profile) { this.profiles[profileId] = profile; },
     async authenticate(profileId) { return this.profiles[profileId].apiKey === 'new-key'; },
-    async chat() {
+    async chat(profileId, sessionId, visitorId) {
       attempts++;
+      assert.equal(profileId, 'profile-a');
+      assert.equal(sessionId, 'hermes:agent-a:visitor');
+      assert.equal(visitorId, 'visitor');
       if (attempts === 1) throw new Error('HTTP 401: invalid key');
       assert.equal(this.profiles['profile-a'].apiKey, 'new-key');
       return { reply: 'ok', runId: 'run-1' };
@@ -91,6 +118,34 @@ test('Hermes HTTP readiness is isolated per profile', () => {
   provider.connectedAgents = new Set(['online']);
   assert.equal(provider.isProfileReady('online'), true);
   assert.equal(provider.isProfileReady('offline'), false);
+});
+
+test('Hermes HTTP steer keeps the active binding session separate from its profile', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'shared-profile' }) }),
+  }, null, { profiles: { 'shared-profile': { port: 8642, apiKey: 'key' } } });
+  const calls = [];
+  provider.connected = true;
+  provider._ensureGatewayRunning = async () => true;
+  provider.client = {
+    async steer(...args) {
+      calls.push(args);
+      return { accepted: true, output: '', sessionKey: args[1] };
+    },
+  };
+  await provider.steer('agent-a', 'visitor-a', 'owner', {
+    turnId: 'turn-a',
+    providerBinding: {
+      providerType: 'hermes',
+      providerInstanceId: 'shared-profile',
+      nativeSessionId: 'hermes:agent-a:visitor-a',
+    },
+  });
+  assert.deepEqual(calls[0].slice(0, 3), [
+    'shared-profile',
+    'hermes:agent-a:visitor-a',
+    'visitor-a',
+  ]);
 });
 
 test('Hermes never treats a missing backend instance or Agent UUID as a profile', async () => {
