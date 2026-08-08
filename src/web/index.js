@@ -257,7 +257,23 @@ function getManifestSync(locale='zh'){
 async function getAgentList(h){const d=await h.whoami({});return d.agents||[]}
 async function getAgentInfo(h,id){const a=await getAgentList(h);return a.find(x=>x.agentId===id)||null}
 async function getAgentStatus(h,id){
-  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[]}}
+  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[],probeFailed:true}}
+}
+
+function getMessageMode(status, tFn){
+  const agent=status&&status.agent;
+  if(!agent||status.probeFailed)return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
+  const automaticModes=Array.isArray(agent.automaticReadyModes)?agent.automaticReadyModes:[];
+  const mode=String(agent.activeAutomaticMode||automaticModes[0]||'').trim();
+  if(mode){
+    const key='web.home.message_mode.'+mode;
+    const translated=tFn(key);
+    return{detected:true,code:mode,text:translated===key?mode:translated};
+  }
+  if(agent.pullReady===true||agent.deliveryStatus){
+    return{detected:true,code:'pull',text:tFn('web.home.message_mode.pull')};
+  }
+  return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
 }
 
 /** 渲染操作表单页（GET） */
@@ -318,6 +334,18 @@ function agentWsScript(t) {
   const i18nObj = {
     online: t('common.status.online'),
     offline: t('common.status.offline'),
+    message_mode_loading: t('web.home.message_mode.loading'),
+    message_mode_pull: t('web.home.message_mode.pull'),
+    message_modes: {
+      pull: t('web.home.message_mode.pull'),
+      websocket: t('web.home.message_mode.websocket'),
+      http: t('web.home.message_mode.http'),
+      acp_ws: t('web.home.message_mode.acp_ws'),
+      acp: t('web.home.message_mode.acp'),
+      attach: t('web.home.message_mode.attach'),
+      cli: t('web.home.message_mode.cli'),
+      mcp: t('web.home.message_mode.mcp'),
+    },
     copied: t('common.home.copied'),
     failed: t('common.action.failed'),
     gen_creating: t('common.home.gen_creating'),
@@ -344,6 +372,27 @@ var pendingShortLinkButton=null;
 function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textContent=I.gen_creating;fetch("/api/short-link/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId:aid3})}).then(function(r){return r.json()}).then(function(d){if(d.success){location.reload()}else{t.disabled=false;t.textContent=I.gen;var m=document.getElementById("toast-msg");if(m)m.textContent=I.gen_failed;var d2=document.getElementById("dlg-toast");if(d2)d2.showModal()}}).catch(function(){t.disabled=false;t.textContent=I.gen})}
 (function(){
   var ws = null;
+  function modeText(data){
+    if(!data||data.messageModeDetected===false)return I.message_mode_loading;
+    var mode=String(data.messageMode||data.activeAutomaticMode||((data.automaticReadyModes||[])[0]||"")).trim();
+    if(mode)return I.message_modes[mode]||mode;
+    if(data.pullReady===true||data.messageModeDetected===true)return I.message_mode_pull;
+    return I.message_mode_loading;
+  }
+  function updateAgentRow(data){
+    if(!data||!data.agentId)return;
+    document.querySelectorAll("tr[data-agent-id]").forEach(function(row){
+      if(row.getAttribute("data-agent-id")!==String(data.agentId))return;
+      if(Object.prototype.hasOwnProperty.call(data,"imConnected")){
+        var statusCell=row.querySelector("[data-role=connection-status]");
+        if(statusCell)statusCell.innerHTML=data.imConnected?'<span class="online">'+I.online+'</span>':'<span class="offline">'+I.offline+'</span>';
+      }
+      if(Object.prototype.hasOwnProperty.call(data,"messageModeDetected")||Object.prototype.hasOwnProperty.call(data,"messageMode")||Object.prototype.hasOwnProperty.call(data,"activeAutomaticMode")){
+        var modeCell=row.querySelector("[data-role=message-mode]");
+        if(modeCell)modeCell.textContent=modeText(data);
+      }
+    });
+  }
   function connectWS() {
     try {
       ws = new WebSocket("ws://" + location.host + "/ws");
@@ -351,15 +400,7 @@ function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textCon
         try {
           var d = JSON.parse(e.data);
           if (d.event === "agent-wukongim:status") {
-            var link = document.querySelector('a[href="/agents/' + d.data.agentId + '"]');
-            if (link) {
-              var cell = link.closest("tr").querySelectorAll("td")[1];
-              if (cell) {
-                cell.innerHTML = d.data.imConnected
-                  ? '<span class="online">'+I.online+'</span>'
-                  : '<span class="offline">'+I.offline+'</span>';
-              }
-            }
+            updateAgentRow(d.data||{});
           }
           if (d.event === "runtime:updated") {
             var s = document.getElementById("footer-status-text");
@@ -373,6 +414,7 @@ function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textCon
               s.textContent = text;
               s.style.color = d.data.statusColor || '#888';
             }
+            if(Array.isArray(d.data.agents))d.data.agents.forEach(updateAgentRow);
           }
         } catch(_) {}
       };
@@ -713,12 +755,21 @@ function createWebRouter(handlers, db, opts={}){
 
       for(const a of pageAgents){
         let connStatus='<span class="unknown">'+L('common.status.unknown')+'</span>';
-        try{const st=await getAgentStatus(handlers,a.agentId);const ag=st.agent;if(ag)connStatus=ag.imConnected?'<span class="online">'+L('common.status.online')+'</span>':'<span class="offline">'+L('common.status.offline')+'</span>'}catch{}
+        let messageMode=L('web.home.message_mode.loading');
+        let messageModeDetected=false;
+        try{
+          const st=await getAgentStatus(handlers,a.agentId);
+          const ag=st.agent;
+          if(ag)connStatus=ag.imConnected?'<span class="online">'+L('common.status.online')+'</span>':'<span class="offline">'+L('common.status.offline')+'</span>';
+          const mode=getMessageMode(st,T);
+          messageMode=mode.text;
+          messageModeDetected=mode.detected;
+        }catch{}
         var bt=a.backendType||'-';
         var shortCell='<button class="btn btn-sm btn-outline" data-role="gen-link" data-agent="'+esc(a.agentId)+'" style="margin:0;padding:2px 8px;font-size:12px;min-height:auto">'+L('common.btn.generate_link')+'</button>';
         if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);shortCell='<a href="'+su+'" target="_blank" style="font-size:13px">'+su.substring(0,35)+(su.length>35?'…':'')+'</a> <button class="btn btn-sm btn-outline" data-role="copy-link" data-url="'+su+'" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.copy')+'</button>'}}catch(ex){}}
         var actionHtml='<a href="/agents/'+esc(a.agentId)+'/edit" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.edit')+'</a> <a href="/agents/'+esc(a.agentId)+'/caps" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.caps')+'</a> <span class="'+(a.publishStatus==='published'?'online':'pending')+'" data-role="toggle-pub" data-agent="'+esc(a.agentId)+'" data-pub-status="'+(a.publishStatus==='published'?'published':'unpublished')+'" title="'+esc(a.publishStatus==='published'?T('common.pub.title_published'):T('common.pub.title_unpublished'))+'" style="cursor:pointer;font-size:12px">'+L(a.publishStatus==='published'?'common.pub.published':'common.pub.unpublished')+'</span> <span class="'+(a.accessMode==='private'?'online':'pending')+'" data-role="toggle-acc" data-agent="'+esc(a.agentId)+'" data-acc-mode="'+(a.accessMode==='private'?'private':'public')+'" title="'+esc(a.accessMode==='private'?T('common.acc.title_private'):T('common.acc.title_public'))+'" style="cursor:pointer;font-size:12px">'+L(a.accessMode==='private'?'common.acc.private':'common.acc.public')+'</span>';
-        rows.push('<tr><td><a href="/agents/'+esc(a.agentId)+'">'+esc(a.agentName||a.agentId)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
+        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td><a href="/agents/'+esc(a.agentId)+'">'+esc(a.agentName||a.agentId)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+esc(messageMode)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
       }
 
       // 信息栏
@@ -730,7 +781,7 @@ function createWebRouter(handlers, db, opts={}){
         +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add?new=1" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
         +'</div>'
         +(filtered.length>0
-          ?'<div class="table-wrap"><table><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
+          ?'<div class="table-wrap"><table><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.message_mode')+'</th><th style="text-align:center">'+L('web.home.col.short_link')+'</th><th style="text-align:center">'+L('web.home.col.actions')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
           :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'

@@ -2374,9 +2374,6 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       const hubCount = agentManager?.getHubSummary?.()?.hubCount || 0;
       console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 接收能力=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
-      if (warnings.length > 0) {
-        console.error(`[${ts}][心跳] 发现 ${warnings.length} 个异常:\n${warnings.map((w: any) => `  ${w.message}`).join('\n')}`);
-      }
       if (onWarnings) onWarnings(warnings);
 
       // 更新 runtime 标记（连接详情）
@@ -2419,6 +2416,17 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             port: __runtimePort || port || prevData.port || null,
             statusKey, statusColor,
             ts: Date.now(),
+            agents: agentList.map((agent: any) => ({
+              agentId: agent.agentId,
+              imConnected: agent.imConnected,
+              messageMode: agent.activeAutomaticMode
+                || agent.automaticReadyModes?.[0]
+                || (agent.pullReady ? 'pull' : null),
+              messageModeDetected: true,
+              activeAutomaticMode: agent.activeAutomaticMode || null,
+              automaticReadyModes: agent.automaticReadyModes || [],
+              pullReady: !!agent.pullReady,
+            })),
           });
         } catch (_: any) {}
       } catch (_: any) {}

@@ -48,8 +48,11 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
     }),
   };
   const previousFetch = global.fetch;
+  const previousBroadcast = global.__liteBroadcast;
   let posts = 0;
+  const runtimeUpdates = [];
   global.fetch = async () => { posts++; return { ok: true }; };
+  global.__liteBroadcast = (event, data) => { if (event === 'runtime:updated') runtimeUpdates.push(data); };
   const stop = startHeartbeat(db, agentManager, null, null, { dispatcher, agentCount: 1 });
   try {
     statusHandler({ status: 'connected' });
@@ -60,8 +63,12 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
     assert.equal(runtime.agents[0].automaticDeliveryReady, false);
     assert.deepEqual(runtime.agents[0].automaticReadyModes, []);
     assert.equal(runtime.agents[0].pullReady, true);
+    assert.equal(runtimeUpdates.at(-1).agents[0].messageMode, 'pull');
+    assert.equal(runtimeUpdates.at(-1).agents[0].messageModeDetected, true);
   } finally {
     stop();
     global.fetch = previousFetch;
+    if (previousBroadcast) global.__liteBroadcast = previousBroadcast;
+    else delete global.__liteBroadcast;
   }
 });
