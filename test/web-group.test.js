@@ -88,6 +88,23 @@ describe('Web group detail rendering', () => {
     assert.match(html, /window\.__IS_MANAGER__=false;/);
   });
 
+  it('renders the current-user label without duplicate parentheses', async (t) => {
+    const html = await renderGroup(t, 'member');
+    assert.match(html, /Agent One <span[^>]*>\uFF08\u4F60\uFF09<\/span>/);
+    assert.doesNotMatch(html, /Agent One <span[^>]*>\(\uFF08\u4F60\uFF09\)<\/span>/);
+  });
+
+  it('does not show self-chat or self-mention actions', async (t) => {
+    const html = await renderGroup(t, 'member');
+    const selfRow = html.match(/<tr data-search="Agent One agent-im-uid">([\s\S]*?)<\/tr>/)?.[1];
+    const visitorRow = html.match(/<tr data-search="Visitor visitor-1">([\s\S]*?)<\/tr>/)?.[1];
+    assert.ok(selfRow);
+    assert.ok(visitorRow);
+    assert.doesNotMatch(selfRow, /私聊|@TA/);
+    assert.match(visitorRow, /私聊/);
+    assert.match(visitorRow, /@TA/);
+  });
+
   it('collapses long group messages while keeping the full content available', async (t) => {
     const longText = '群聊完整内容 '.repeat(80);
     const html = await renderGroup(t, 'member', [{

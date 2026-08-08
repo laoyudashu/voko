@@ -33,6 +33,31 @@ test('agent detail exposes a double-click copy affordance for the Agent ID', asy
   assert.doesNotThrow(() => new Function(script));
 });
 
+test('empty conversation detail still renders the reply composer', async (t) => {
+  const handlers = {
+    whoami: async () => ({ agents: [{ agentId: 'agent-empty-chat', agentName: 'Empty Chat', backendType: 'others', publishStatus: 'published' }] }),
+    get_chat_history: async () => ({ messages: [] }),
+    list_access_lists: async () => ({ data: [] }),
+    agent_pricing: async () => ({}),
+  };
+  const app = express();
+  app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-empty-chat/c/visitor-empty?action=reply&focus=1`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /暂无消息/);
+  assert.match(html, /id="reply"/);
+  assert.match(html, /action="\/messages\/send"/);
+  assert.match(html, /name="content"/);
+  assert.match(html, /name="channelType" value="1"/);
+});
+
 test('conversation detail exposes an expand control for long text', async (t) => {
   const longText = '完整消息内容 '.repeat(80);
   const handlers = {

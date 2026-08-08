@@ -234,14 +234,15 @@ function createGroupRouter(handlers, db) {
         memberHtml='<div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><input type="text" id="gm-members-search" placeholder="'+esc(T('web.group.mention.search_ph'))+'" autocomplete="off" style="max-width:260px;margin:0"><span id="gm-members-count" class="meta" style="font-size:13px"></span></div>'
           +'<div class="table-wrap"><table><thead><tr><th scope="col">'+L('web.group.col.member')+'</th><th scope="col" style="text-align:center">'+L('web.group.col.role')+'</th><th scope="col" style="text-align:center">'+L('web.group.col.status')+'</th><th scope="col" style="text-align:center">'+L('web.group.col.action')+'</th></tr></thead><tbody id="gm-members-tbody">';
         for(const m of sortedMembers){
-          const canManage = !isDissolved && isManager && m.role!=='owner' && m.uid!==myUid && !(myRole==='admin'&&m.role==='admin');
+          const isSelf = m.uid===myUid;
+          const canManage = !isDissolved && isManager && m.role!=='owner' && !isSelf && !(myRole==='admin'&&m.role==='admin');
           const isMuted = m.mute_until && new Date(m.mute_until) > new Date();
           const disp=m.name||m.nickname||m.uid;
           const escName = esc(disp);
-          const youTag = m.uid===myUid ? ' <span class="meta" style="color:#1a73e8">('+L('web.group.you')+')</span>' : '';
+          const youTag = isSelf ? ' <span class="meta" style="color:#1a73e8">'+L('web.group.you')+'</span>' : '';
           const memberUid=esc(encodeURIComponent(String(m.uid)));
-          const chatBtn='<a href="/agents/'+esc(agentId)+'/c/'+memberUid+'?action=reply&amp;focus=1" class="btn btn-xs">'+L('web.group.btn.private_chat')+'</a>';
-          const mentionBtn=isDissolved?'':'<a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=messages&amp;mentionUid='+memberUid+'" class="btn btn-xs" style="background:#fff;color:#1a73e8;border-color:#1a73e8">'+L('web.group.btn.mention')+'</a>';
+          const chatBtn=isSelf?'':'<a href="/agents/'+esc(agentId)+'/c/'+memberUid+'?action=reply&amp;focus=1" class="btn btn-xs">'+L('web.group.btn.private_chat')+'</a>';
+          const mentionBtn=(isSelf||isDissolved)?'':'<a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=messages&amp;mentionUid='+memberUid+'" class="btn btn-xs" style="background:#fff;color:#1a73e8;border-color:#1a73e8">'+L('web.group.btn.mention')+'</a>';
           const kickBtn = canManage ? '<button type="button" class="btn btn-danger btn-xs" aria-label="'+esc(T('web.group.kick_confirm',{name:disp}))+'" onclick="showKickDlg(\x27'+esc(m.uid)+'\x27,\x27'+escName+'\x27)">'+L('web.group.btn.kick')+'</button>' : '';
           const muteBtn = canManage
             ? '<form method="POST" data-group-ajax action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/mute" style="display:inline;margin:0"><input type="hidden" name="targetUid" value="'+esc(m.uid)+'"><input type="hidden" name="muted" value="'+(isMuted?'0':'1')+'"><button type="submit" class="btn-xs" aria-label="'+(isMuted?esc(T('web.group.unmute_confirm',{name:disp})):esc(T('web.group.mute_confirm',{name:disp})))+'" style="background:#e37400;border-color:#b06800">'+(isMuted?L('web.group.btn.unmute'):L('web.group.btn.mute'))+'</button></form>'
