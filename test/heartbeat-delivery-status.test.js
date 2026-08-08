@@ -42,9 +42,9 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
   };
   const dispatcher = {
     getAgentDeliveryStatus: () => ({
-      backendType: 'hermes', configuredModes: ['http'], availableModes: [],
-      activeMode: null, methods: [{ mode: 'http', provider: 'hermes-http', configured: true, available: false, status: 'unavailable' }],
-      backendAvailable: false,
+      backendType: 'hermes', configuredModes: ['http', 'pull'], automaticReadyModes: [],
+      activeAutomaticMode: null, methods: [{ mode: 'http', provider: 'hermes-http', configured: true, available: false, status: 'unavailable' }, { mode: 'pull', provider: null, configured: true, available: true, status: 'on-demand' }],
+      automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
     }),
   };
   const previousFetch = global.fetch;
@@ -57,8 +57,9 @@ test('heartbeat posts for an IM-connected agent even when no backend delivery me
     assert.equal(posts, 1);
     const runtime = JSON.parse(db.runtimeWrites.at(-1));
     assert.equal(runtime.agents[0].imConnected, true);
-    assert.equal(runtime.agents[0].backendConnected, false);
-    assert.deepEqual(runtime.agents[0].availableModes, []);
+    assert.equal(runtime.agents[0].automaticDeliveryReady, false);
+    assert.deepEqual(runtime.agents[0].automaticReadyModes, []);
+    assert.equal(runtime.agents[0].pullReady, true);
   } finally {
     stop();
     global.fetch = previousFetch;

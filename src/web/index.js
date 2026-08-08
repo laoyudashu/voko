@@ -257,7 +257,7 @@ function getManifestSync(locale='zh'){
 async function getAgentList(h){const d=await h.whoami({});return d.agents||[]}
 async function getAgentInfo(h,id){const a=await getAgentList(h);return a.find(x=>x.agentId===id)||null}
 async function getAgentStatus(h,id){
-  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',backendConnected:false},warnings:[]}}
+  try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[]}}
 }
 
 /** 渲染操作表单页（GET） */

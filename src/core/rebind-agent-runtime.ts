@@ -12,6 +12,8 @@
  * - 不影响其他 Agent：ensureBackend 按 type 共享加载（不卸载），restartAgentWorker 按 agent。
  */
 
+const { parseDeliveryModes } = require('./agent-delivery-policy');
+
 const errorMessage = (e: unknown): string => {
   if (e instanceof Error) return e.message;
   try { return JSON.stringify(e); } catch (_) { return String(e); }
@@ -20,6 +22,7 @@ const errorMessage = (e: unknown): string => {
 export interface RebindAgentSnapshot {
   backendType: string;
   backendInstanceId: string | null;
+  deliveryModes?: string[] | string | null;
   imUid?: string;
   imToken?: string;
   imServerUrl?: string;
@@ -79,6 +82,9 @@ export function createRebindAgentRuntime(deps: RebindDeps) {
     const nextInstance = next.backendInstanceId == null ? '' : normalize(next.backendInstanceId);
     const typeChanged = prevType !== nextType;
     const instanceChanged = prevInstance !== nextInstance;
+    const prevModes = parseDeliveryModes(previous.deliveryModes);
+    const nextModes = parseDeliveryModes(next.deliveryModes);
+    const deliveryModesChanged = JSON.stringify(prevModes) !== JSON.stringify(nextModes);
     const imChanged = !!(
       normalize(previous.imUid) !== normalize(next.imUid) ||
       normalize(previous.imToken) !== normalize(next.imToken) ||
@@ -95,7 +101,7 @@ export function createRebindAgentRuntime(deps: RebindDeps) {
     };
 
     // 1. 三者都没变：透传当前 deliveryStatus，不做任何运行时变更。
-    if (!typeChanged && !instanceChanged && !imChanged) {
+    if (!typeChanged && !instanceChanged && !deliveryModesChanged && !imChanged) {
       base.deliveryReadiness = safeDeliveryStatus(deps, agentId);
       maybeSetFallback(base);
       return base;
@@ -122,7 +128,7 @@ export function createRebindAgentRuntime(deps: RebindDeps) {
 
     // 3. 失效旧会话绑定（type 变 → 全 agent；仅 instance 变 → 仅旧实例；纯 IM 变 → 不动）。
     try {
-      base.bindings.invalidated = deps.invalidateBindingsForConfigChange({
+      if (typeChanged || instanceChanged) base.bindings.invalidated = deps.invalidateBindingsForConfigChange({
         agentId,
         prevProviderType: prevType,
         prevInstanceId: previous.backendInstanceId ?? null,
@@ -167,8 +173,7 @@ function safeDeliveryStatus(deps: RebindDeps, agentId: string): any {
 function maybeSetFallback(base: RebindResult): void {
   const dr = base.deliveryReadiness;
   if (!dr) return;
-  // getAgentDeliveryStatus 返回 { availableModes: [...], methods: [...] }，pull 始终在 methods 里。
-  const auto = Array.isArray(dr.availableModes) ? dr.availableModes.filter((m: any) => m && String(m) !== 'pull') : [];
+  const auto = Array.isArray(dr.automaticReadyModes) ? dr.automaticReadyModes : [];
   if (auto.length === 0) base.fallback = 'voko_fetch_new_messages';
 }
 

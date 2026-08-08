@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { PushProvider } = require('../base-provider');
-const { runCli } = require('../../adapters/cli-spawner');
+const { runCli, classifyCliFailure } = require('../../adapters/cli-spawner');
 const { resolveGooseCommand, isGooseRuntimeAvailable } = require('../goose-command');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
@@ -147,7 +147,11 @@ class GooseCliProvider extends PushProvider {
       }
     }
 
-    if (result.code !== 0) throw new Error(`Goose exited with code ${result.code}`);
+    if (result.code !== 0) {
+      const error = new Error(`Goose exited with code ${result.code}`);
+      (error as any).deliveryOutcome = classifyCliFailure(result);
+      throw error;
+    }
 
     if (!sessionId && createName) {
       const beforeIds = new Set(sessionsBefore.map(row => row.id).filter(Boolean));

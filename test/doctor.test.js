@@ -22,7 +22,7 @@ function makeFixture() {
   db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
     .run(JSON.stringify({
       instanceId: 'doctor-instance', pid: process.pid, port: 32123, ts: now,
-      agents: [{ agentId: 'doctor-agent', imConnected: true, backendConnected: true, activeMode: 'pull', availableModes: ['pull'] }],
+      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true }],
     }), now);
   db.prepare(`
     INSERT INTO agents

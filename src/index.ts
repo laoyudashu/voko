@@ -1870,7 +1870,8 @@ async function startMcpServer(args?: any, core?: any) {
     })));
     const agentList = agents.map((a: any) => ({
       agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
-      imConnected: false, backendConnected: false,
+      imConnected: false, automaticDeliveryReady: false,
+      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, lastDeliveredMode: null,
     }));
     db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
       .run(JSON.stringify({
@@ -2051,6 +2052,9 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     ? new Set(backendTypes.map((value: unknown) => String(value || '').trim()).filter(Boolean))
     : null;
   const needsBackend = (...types: string[]) => !requiredBackends || types.some(type => requiredBackends.has(type));
+  const { getProviderFamily, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
+  const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
+  const providerFactoryContext = { db, contextWindow: 20, gooseBin: resolveGooseCommand(), hermesConfig };
 
   // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('openclaw')) try {
@@ -2088,7 +2092,6 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
   //
   //    goose 默认从 PATH 解析，也可通过 VOKO_GOOSE_BIN 指定平台对应的完整版本；
   //    Claude Code 仅走 claude-cli；ACP 模式已移除，避免安装体积巨大的 Claude Agent SDK。
-  const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
   const GOOSE_BIN = resolveGooseCommand();
   const PROVIDER_REGISTRY = [
     // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
@@ -2120,13 +2123,13 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
     { backend: ['reasonix'], key: 'reasonix-cli', mod: './core/dispatcher/providers/reasonix-cli', named: 'ReasonixCliProvider', args: { db, contextWindow: 20 } },
   ];
-  for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
-    if (!needsBackend(...backend)) continue;
+  const providerDefinitions = listProviderTransports().filter((definition: any) => !definition.testOnly && !['openclaw-ws', 'hermes-http'].includes(definition.id));
+  for (const definition of providerDefinitions) {
+    const family = getProviderFamily(definition.family);
+    if (!family || !needsBackend(family.type, ...family.aliases)) continue;
     try {
-      const M = require(mod);
-      const Ctor = named ? M[named] : M;
-      providers[key] = new Ctor(args);
-    } catch (e: any) { console.error(`[Lite] ${key} 注册失败:`, e.message); }
+      providers[definition.id] = instantiateProviderTransport(definition, providerFactoryContext);
+    } catch (e: any) { console.error(`[Lite] ${definition.id} 注册失败:`, e.message); }
   }
   // 测试模式：注册 MockEchoProvider（不依赖外部 CLI/gateway）
   if (process.env.VOKO_SMOKE_TEST === '1') {
@@ -2167,11 +2170,10 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
           additions['hermes-http'] = hermesHandler;
           (global as any).__hermesHandler = hermesHandler;
         }
-        for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
-          if (!backend.includes(type) || dispatcher.providers[key] || additions[key]) continue;
-          const M = require(mod);
-          const Ctor = named ? M[named] : M;
-          additions[key] = new Ctor(args);
+        const family = getProviderFamily(type);
+        for (const definition of family ? listProviderTransports(family.type).filter((item: any) => !item.testOnly) : []) {
+          if (dispatcher.providers[definition.id] || additions[definition.id]) continue;
+          additions[definition.id] = instantiateProviderTransport(definition, providerFactoryContext);
         }
         await dispatcher.addProviders(additions);
         dispatcher.invalidateMeta();
@@ -2310,17 +2312,17 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         let deliveryStatus: any;
         try {
           deliveryStatus = dispatcher?.getAgentDeliveryStatus?.(agent.agent_id) || {
-            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
         } catch (_) {
           deliveryStatus = {
-            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
         }
         deliveryStatuses.set(agent.agent_id, deliveryStatus);
-        const backendOk = !!deliveryStatus.backendAvailable;
+        const backendOk = !!deliveryStatus.automaticDeliveryReady;
 
         if (imOk) imOnline++;
         if (backendOk) backendOnline++;
@@ -2332,8 +2334,8 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         } else {
           const failedConfigured = deliveryStatus.methods?.find((method: any) => method.configured && !method.available && method.status !== 'unknown');
           if (failedConfigured) {
-            const activeLabel = deliveryStatus.activeMode === 'pull' ? 'MCP Pull（按需）' : deliveryStatus.activeMode;
-            const fallbackLabel = deliveryStatus.activeMode && deliveryStatus.activeMode !== failedConfigured.mode
+            const activeLabel = deliveryStatus.activeAutomaticMode || 'MCP Pull（按需）';
+            const fallbackLabel = deliveryStatus.activeAutomaticMode && deliveryStatus.activeAutomaticMode !== failedConfigured.mode
               ? `已降级到 ${activeLabel}`
               : `当前使用 ${activeLabel}`;
             warnings.push({ type: 'agent-backend-degraded', message: `⚠️ ${agentName} ${failedConfigured.mode} 不可用，${fallbackLabel}`, action: 'agent-detail', agentId: agent.agent_id });
@@ -2383,16 +2385,18 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         const prevData = prev ? JSON.parse(prev.data) : {};
         const agentList = rows.map((a: any) => {
           const deliveryStatus = deliveryStatuses.get(a.agent_id) || {
-            backendType: a.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: a.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
           return {
             agentId: a.agent_id,
             agentName: a.agent_name || a.agent_id,
             imConnected: agentManager?.getStatus(a.agent_id)?.connected || false,
-            backendConnected: !!deliveryStatus.backendAvailable,
-            availableModes: deliveryStatus.availableModes || [],
-            activeMode: deliveryStatus.activeMode || null,
+            automaticDeliveryReady: !!deliveryStatus.automaticDeliveryReady,
+            automaticReadyModes: deliveryStatus.automaticReadyModes || [],
+            activeAutomaticMode: deliveryStatus.activeAutomaticMode || null,
+            pullReady: !!deliveryStatus.pullReady,
+            lastDeliveredMode: deliveryStatus.lastDeliveredMode || null,
             deliveryStatus,
           };
         });

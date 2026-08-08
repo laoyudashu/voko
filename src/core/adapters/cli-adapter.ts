@@ -20,7 +20,7 @@
  */
 
 const { PushProvider } = require('../dispatcher/base-provider');
-const { runCli, checkCliAvailable, killTree, sanitizeCmdArg } = require('./cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
@@ -39,6 +39,7 @@ export interface CliAdapterOptions {
   timeout?: number;
   env?: NodeJS.ProcessEnv;
   promptTemplate?: string;
+  requireOutput?: boolean;
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cwd?: string;
@@ -59,9 +60,13 @@ export interface CliAdapterOptions {
     stdinInput?: string;
     cleanup?: () => void;
   };
-  requireOutput?: boolean;
   requireSessionId?: boolean;
   classifyResult?: (result: { stdout: string; stderr: string; code: number | null }) => 'not_delivered' | 'rejected' | 'outcome_unknown' | null;
+  prepareInvocation?: (payload: PushPayload, prompt: string) => {
+    args: string[];
+    stdinInput?: string;
+    afterRun?: () => void;
+  };
   sessionIdFromLine?: (line: string) => string | null;
   resolveSessionIdAfterRun?: (context: {
     agentId: string;
@@ -111,6 +116,7 @@ class CliAdapter extends PushProvider {
     this._timeout = opts.timeout ?? 120000;
     this._env = opts.env;
     this._promptTemplate = opts.promptTemplate;
+    this._requireOutput = !!opts.requireOutput;
 
     this._contextWindow = opts.contextWindow ?? 0;
     this._db = opts.db || null;
@@ -125,6 +131,7 @@ class CliAdapter extends PushProvider {
     this._requireOutput = !!opts.requireOutput;
     this._requireSessionId = !!opts.requireSessionId;
     this._classifyResult = opts.classifyResult || null;
+    this._prepareInvocation = opts.prepareInvocation || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
     this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
@@ -189,7 +196,11 @@ class CliAdapter extends PushProvider {
     const configuredArgs = this._argsForSession
       ? this._argsForSession(nativeSessionId, newManagedSession)
       : this._args;
-    let useStdin = !configuredArgs.includes('{prompt}');
+    const preparedInvocation = this._prepareInvocation?.(payload, prompt) || null;
+    const invocationArgs = preparedInvocation?.args || configuredArgs;
+    let useStdin = preparedInvocation
+      ? preparedInvocation.stdinInput !== undefined
+      : !invocationArgs.includes('{prompt}');
     // Windows 下 {prompt} 经命令行参数传入时须净化 cmd.exe 元字符，否则访客
     // 消息中的 " 会断裂 cmd 引号、&|<> 充当命令分隔/重定向 → 任意命令执行 (RCE)，
     // 换行会截断命令行。用函数式 replacement 避免 String.replace 对 $ 模式的展开。
@@ -209,9 +220,9 @@ class CliAdapter extends PushProvider {
       stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
       cleanupPrompt = prepared.cleanup || null;
     } else {
-      args = useStdin
-        ? [...configuredArgs]
-        : configuredArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
+    args = useStdin
+      ? [...invocationArgs]
+      : invocationArgs.map((a: string) => a.replace('{prompt}', () => safePrompt));
     }
     const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
     if (runtime && (!runtime.available || !runtime.executable)) {
@@ -249,7 +260,7 @@ class CliAdapter extends PushProvider {
       const result = await runCli({
         cmd,
         args,
-        stdinInput,
+        stdinInput: preparedInvocation?.stdinInput ?? stdinInput,
         cwd: this._cwd || undefined,
         tag: this._name,
         timeout: this._timeout,
@@ -284,7 +295,7 @@ class CliAdapter extends PushProvider {
 
       if (exitCode !== 0) {
         error = new Error(`${this._name} 退出 code=${exitCode}`);
-        (error as any).deliveryOutcome = this._classifyResult?.(result) || 'rejected';
+        (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
       } else if (parser.error) {
         error = new Error(parser.error);
         (error as any).deliveryOutcome = 'rejected';
@@ -309,6 +320,9 @@ class CliAdapter extends PushProvider {
     }
 
     try { cleanupPrompt?.(); } catch (_) {}
+    try { preparedInvocation?.afterRun?.(); } catch (cleanupError) {
+      if (!error) error = cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
+    }
 
     if (error && binding && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}

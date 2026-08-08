@@ -17,21 +17,17 @@ import type { DatabaseLike } from '../../types/database';
 import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
-const { normalizeOwnerForwardOutcome } = require('../owner-intervention-forward');
+const { getProviderFamily, getProviderTransport } = require('./provider-catalog');
+const { ProviderRuntimeRegistry } = require('./provider-runtime-registry');
+const { RouteResolver } = require('./route-resolver');
+const { DeliveryExecutor } = require('./delivery-executor');
 
 interface DispatcherProvider {
   priority?: number;
-  fallbackModes?: string[];
   match?(agentId: string, meta: AgentMeta): boolean;
   isAvailable?(agentId: string): boolean;
-  isFallbackAvailable?(agentId: string, mode: string): boolean;
   push?(payload: PushPayload): unknown;
-  steer?(agentId: string, visitorId: string, content: string, metadata?: {
-    turnId: string;
-    channelId?: string;
-    channelType?: number;
-    providerBinding?: PushPayload['providerBinding'];
-  }): unknown;
+  steer?(agentId: string, visitorId: string, content: string, metadata?: { turnId: string }): unknown;
   start?(): unknown;
   stop?(): unknown;
   healthCheck?(): unknown;
@@ -39,20 +35,10 @@ interface DispatcherProvider {
   on?(event: string, handler: (payload: any) => void): unknown;
   off?(event: string, handler: (payload: any) => void): unknown;
   removeListener?(event: string, handler: (payload: any) => void): unknown;
-  acceptsBinding?(binding: NonNullable<PushPayload['providerBinding']>, agentId: string): boolean;
 }
 
 type RouteOperation = 'push' | 'steer';
-type DeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
-type DeliveryFailureOutcome = Exclude<DeliveryOutcome, 'delivered'>;
-
-interface SteerResult {
-  success: boolean;
-  deliveryOutcome: DeliveryOutcome;
-  output?: unknown;
-  result?: unknown;
-  error?: string;
-}
+type DeliveryOutcome = 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 interface AvailabilityEvent {
   providerId?: string;
@@ -145,14 +131,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function deliveryOutcome(error: unknown): DeliveryFailureOutcome {
+function deliveryOutcome(error: unknown): DeliveryOutcome {
   const explicit = (error as any)?.deliveryOutcome;
-  if (explicit === 'rejected' && (error as any)?.channelUnavailable === true) return 'not_delivered';
   if (explicit === 'not_delivered' || explicit === 'outcome_unknown' || explicit === 'rejected') return explicit;
-  const message = errorMessage(error);
-  if (/unavailable|not connected|disconnected|not running|not found|enoent|authentication|authorization|\b401\b|\b403\b/i.test(message)) {
-    return 'not_delivered';
-  }
   return 'outcome_unknown';
 }
 
@@ -212,6 +193,9 @@ function _isAgentByApi(fromUid?: string | null): boolean {
 }
 function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // providers: { 'openclaw-ws': provider, 'hermes-http': provider, ... }
+  const runtimeRegistry = new ProviderRuntimeRegistry(providers);
+  const routeResolver = new RouteResolver();
+  const deliveryExecutor = new DeliveryExecutor();
 
   // provider 的回复通常只带 visitorId。这里按投递顺序补回群发送者、频道和 A2A scope，
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
@@ -314,11 +298,11 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const ROUTE_CACHE_TTL = Number(process.env.VOKO_ROUTE_CACHE_TTL_MS) || 30000;
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
+  const _lastDeliveredModes = new Map<string, string>();
   const _providerIds = new Map<DispatcherProvider, string>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
   const _availabilityEventGenerations = new Map<string, number>();
-  const _availabilityListeners = new Map<DispatcherProvider, (event: AvailabilityEvent) => void>();
   for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
@@ -414,36 +398,6 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     }
   }
 
-  function attachAvailabilityProvider(providerId: string, provider: DispatcherProvider): void {
-    _providerIds.set(provider, providerId);
-    provider.setAvailabilityProviderId?.(providerId);
-    if (_availabilityListeners.has(provider) || typeof provider.on !== 'function') return;
-    const listener = (event: AvailabilityEvent = {}) => {
-      const eventKey = `${providerId}:${event.agentId || '*'}`;
-      if (Number.isFinite(event.generation)) {
-        const previous = _availabilityEventGenerations.get(eventKey) || 0;
-        if (Number(event.generation) <= previous) return;
-        _availabilityEventGenerations.set(eventKey, Number(event.generation));
-      }
-      const operations: RouteOperation[] = event.operations?.length ? event.operations : ['push', 'steer'];
-      for (const operation of operations) {
-        invalidateRoutes({ providerId, agentId: event.agentId, operation, available: event.available, reason: event.reason });
-      }
-    };
-    _availabilityListeners.set(provider, listener);
-    provider.on('availability', listener);
-  }
-
-  function detachAvailabilityProvider(provider: DispatcherProvider): void {
-    const listener = _availabilityListeners.get(provider);
-    if (!listener) return;
-    if (typeof provider.off === 'function') provider.off('availability', listener);
-    else provider.removeListener?.('availability', listener);
-    _availabilityListeners.delete(provider);
-  }
-
-  for (const [providerId, provider] of Object.entries(providers)) attachAvailabilityProvider(providerId, provider);
-
   /** 主动失效 backend_type 缓存。传 agentId 失效单个，不传清空全部。TTL 已能兜底，调用为可选。 */
   function invalidateMeta(agentId?: string): void {
     if (agentId) {
@@ -455,46 +409,37 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     }
   }
 
+  runtimeRegistry.on('availability', (event: AvailabilityEvent = {}) => {
+    const providerId = String(event.providerId || '');
+    if (!providerId) return;
+    const eventKey = `${providerId}:${event.agentId || '*'}`;
+    if (Number.isFinite(event.generation)) {
+      const previous = _availabilityEventGenerations.get(eventKey) || 0;
+      if (Number(event.generation) <= previous) return;
+      _availabilityEventGenerations.set(eventKey, Number(event.generation));
+    }
+    const operations: RouteOperation[] = event.operations?.length ? event.operations : ['push', 'steer'];
+    for (const operation of operations) invalidateRoutes({
+      providerId, agentId: event.agentId, operation, available: event.available, reason: event.reason,
+    });
+  });
+
   /**
    * 路由：match 命中的 provider 按 priority 降序，选首个就绪（isAvailable）的。
    * 长连接（HTTP/WS，priority 高）优先；不通（isAvailable=false）则降级到 CLI（priority 低）兜底；
    * 全 miss（不认识/未上报 runtime）或命中但全不就绪 → 返回 null（留库 pull）。
    */
   function _providerMode(key: string): string {
-    if (key === 'openclaw-ws') return 'websocket';
-    if (key === 'hermes-http') return 'http';
-    if (key === 'opencode-attach') return 'attach';
-    if (key === 'zeroclaw-ws') return 'acp_ws';
-    if (key.endsWith('-acp')) return 'acp';
-    if (key.endsWith('-cli')) return 'cli';
-    return key;
+    return getProviderTransport(key)?.mode || key;
   }
 
   function _providerFamily(providerId: string): string {
-    return providerId.replace(/-(?:http|websocket|ws|cli|acp|attach)$/, '');
+    return getProviderTransport(providerId)?.family || providerId;
   }
 
-  function resolveProviders(agentId: string): DispatcherProvider[] {
+  function resolveProviders(agentId: string, operation: RouteOperation = 'push'): DispatcherProvider[] {
     const meta = _metaOf(agentId);
-    const matched: Array<{ provider: DispatcherProvider; mode: string }> = [];
-    for (const [key, p] of Object.entries(providers)) {
-      try {
-        const mode = _providerMode(key);
-        const selected = !meta.delivery_modes || meta.delivery_modes.includes(mode);
-        if (selected && typeof p.match === 'function' && p.match(agentId, meta)) matched.push({ provider: p, mode });
-      } catch (_) {}
-    }
-    matched.sort((a, b) => {
-      if (meta.delivery_modes) {
-        const modeOrder = meta.delivery_modes.indexOf(a.mode) - meta.delivery_modes.indexOf(b.mode);
-        if (modeOrder) return modeOrder;
-      }
-      return (b.provider.priority || 0) - (a.provider.priority || 0);
-    });
-    return matched.map(({ provider }) => provider).filter((provider) => {
-      try { return typeof provider.isAvailable === 'function' && provider.isAvailable(agentId); }
-      catch (_) { return false; }
-    });
+    return routeResolver.resolve({ agentId, operation, meta, providers }).map((item: any) => item.provider);
   }
 
   /**
@@ -504,9 +449,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
    */
   function getAgentDeliveryStatus(agentId: string): AgentDeliveryStatus {
     const meta = _metaOf(agentId);
-    const explicitModes = Array.isArray(meta.delivery_modes) ? [...new Set(meta.delivery_modes.map(String))] : null;
+    const explicitModes = Array.isArray(meta.delivery_modes)
+      ? [...new Set([...meta.delivery_modes.map(String), 'pull'])]
+      : null;
     const methods: AgentDeliveryStatus['methods'] = [];
-    const fallbackMethods: AgentDeliveryStatus['methods'] = [];
 
     for (const [key, provider] of Object.entries(providers)) {
       const mode = _providerMode(key);
@@ -525,42 +471,6 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         status = 'unknown';
       }
       methods.push({ mode, provider: key, configured: true, available, status });
-
-      // Some ACP providers own a restricted CLI fallback instead of exposing
-      // a second CLI provider. Report that mode in diagnostics as well.
-      const fallbackModes = Array.isArray(provider.fallbackModes)
-        ? provider.fallbackModes.map(String)
-        : [];
-      for (const fallbackMode of fallbackModes) {
-        if (explicitModes && !explicitModes.includes(fallbackMode)) continue;
-        let fallbackAvailable = available;
-        let fallbackStatus: AgentDeliveryStatus['methods'][number]['status'] = status;
-        try {
-          fallbackAvailable = typeof provider.isFallbackAvailable === 'function'
-            ? !!provider.isFallbackAvailable(agentId, fallbackMode)
-            : available;
-          fallbackStatus = fallbackAvailable ? 'available' : 'unavailable';
-        } catch (_) {
-          fallbackStatus = 'unknown';
-        }
-        fallbackMethods.push({
-          mode: fallbackMode,
-          provider: key,
-          configured: true,
-          available: fallbackAvailable,
-          status: fallbackStatus,
-        });
-      }
-    }
-
-    // Prefer a dedicated provider for a mode when one is available. If that
-    // provider is down, retain an available provider-owned fallback instead.
-    for (const fallback of fallbackMethods) {
-      const existingIndex = methods.findIndex(method => method.mode === fallback.mode);
-      if (existingIndex < 0 || (!methods[existingIndex].available && fallback.available)) {
-        if (existingIndex >= 0) methods.splice(existingIndex, 1, fallback);
-        else methods.push(fallback);
-      }
     }
 
     if (!explicitModes) {
@@ -587,14 +497,18 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       if (aMode !== bMode) return aMode - bMode;
       return (providers[b.provider || '']?.priority || 0) - (providers[a.provider || '']?.priority || 0);
     });
-    const availableModes = [...new Set(methods.filter(method => method.available).map(method => method.mode))];
+    const automaticReadyModes = [...new Set(methods
+      .filter(method => method.mode !== 'pull' && method.available)
+      .map(method => method.mode))];
     return {
       backendType: meta.backend_type || null,
       configuredModes,
-      availableModes,
-      activeMode: methods.find(method => method.available)?.mode || null,
+      automaticDeliveryReady: automaticReadyModes.length > 0,
+      automaticReadyModes,
+      activeAutomaticMode: methods.find(method => method.mode !== 'pull' && method.available)?.mode || null,
+      pullReady: methods.some(method => method.mode === 'pull' && method.available),
+      lastDeliveredMode: _lastDeliveredModes.get(agentId) || null,
       methods,
-      backendAvailable: availableModes.length > 0,
     };
   }
 
@@ -618,7 +532,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       _routeCache.delete(cacheKey);
     }
 
-    const provider = resolveProviders(agentId).find(candidate => (
+    const provider = resolveProviders(agentId, operation).find(candidate => (
       !excluded.has(candidate) && typeof candidate[operation] === 'function'
     )) || null;
     if (!provider) return null;
@@ -866,11 +780,10 @@ ${body}
   function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
-    let compatible = typeof route.provider.acceptsBinding === 'function'
-      ? !!route.provider.acceptsBinding(binding, agentId)
-      : binding.providerType === _providerFamily(route.providerId)
-        && binding.adapterType === route.providerId
-        && binding.deliveryMode === mode;
+    const bindingFamily = getProviderFamily(binding.providerType)?.type || binding.providerType;
+    let compatible = bindingFamily === _providerFamily(route.providerId)
+      && binding.adapterType === route.providerId
+      && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;
@@ -916,38 +829,48 @@ ${body}
         ...(a2aContext || {})
       };
       _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
-      const failed = new Set<DispatcherProvider>();
-      let fallbackUsed = false;
-      while (route) {
-        const provider = route.provider;
-        const providerPayload = {
-          ...baseProviderPayload,
-          providerBinding: _bindingForRoute(agentId, baseProviderPayload.providerBinding, route),
-        };
-        try {
-          await provider.push!(providerPayload);
-          _cacheRouteIfCurrent(agentId, 'push', route);
-          return;
-        } catch (err) {
-          const outcome = deliveryOutcome(err);
-          failed.add(provider);
-          _forgetRoute(agentId, 'push', provider);
-          if (outcome === 'not_delivered' && providerPayload.providerBinding?.id && providerPayload.providerBinding.sessionOrigin !== 'caller') {
+      const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
+      const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
+      const result = await deliveryExecutor.execute({
+        next: (excluded: Set<DispatcherProvider>) => {
+          const nextRoute = _routeProviderEntry(agentId, 'push', excluded);
+          if (!nextRoute) return null;
+          routeByProvider.set(nextRoute.provider, nextRoute);
+          return {
+            providerId: nextRoute.providerId,
+            providerType: String(_metaOf(agentId).backend_type || getProviderTransport(nextRoute.providerId)?.family || ''),
+            deliveryMode: _providerMode(nextRoute.providerId),
+            target: nextRoute.provider,
+          };
+        },
+        invoke: async (candidate: any) => {
+          const selectedRoute = routeByProvider.get(candidate.target)!;
+          const providerPayload = {
+            ...baseProviderPayload,
+            providerBinding: _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute),
+          };
+          payloadByProvider.set(candidate.target, providerPayload);
+          return candidate.target.push!(providerPayload);
+        },
+        classify: deliveryOutcome,
+        onSuccess: (candidate: any) => {
+          const selectedRoute = routeByProvider.get(candidate.target)!;
+          _lastDeliveredModes.set(agentId, candidate.deliveryMode);
+          _cacheRouteIfCurrent(agentId, 'push', selectedRoute);
+        },
+        onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
+          _forgetRoute(agentId, 'push', candidate.target);
+          const providerPayload = payloadByProvider.get(candidate.target);
+          if (outcome === 'not_delivered' && providerPayload?.providerBinding?.id && providerPayload.providerBinding.sessionOrigin !== 'caller') {
             try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
           }
-          if (outcome !== 'not_delivered') {
-            _removeReplyContext(replyContext);
-            console.error(`[Dispatcher] push 结果=${outcome}，不跨通道重投 agent=${agentId}:`, errorMessage(err));
-            return;
-          }
-          console.error(`[Dispatcher] push 通道确认未投递，尝试备选 agent=${agentId}:`, errorMessage(err));
-          if (fallbackUsed) break;
-          fallbackUsed = true;
-          route = _routeProviderEntry(agentId, 'push', failed);
-        }
-      }
+          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
+          console.error(`[Dispatcher] push 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+        },
+      });
+      if (result.outcome === 'delivered') return;
       _removeReplyContext(replyContext);
-      console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+      if (result.outcome === 'not_delivered') console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
     }
@@ -1036,116 +959,54 @@ ${body}
     visitorId: string,
     content: string,
     replyContext: ReplyContext | null = null,
-  ): Promise<SteerResult> {
+  ): Promise<unknown> {
     let route = _routeProviderEntry(agentId, 'steer');
-    if (!route) {
-      return {
-        success: false,
-        deliveryOutcome: 'not_delivered',
-        error: 'no available steer channel',
-      };
-    }
+    if (!route) return null;
     try {
       const turnId = String(replyContext?.turnId || replyContext?.interventionId || `steer-${Date.now()}`);
-      const channelType = Number(replyContext?.channelType) === 2 || String(visitorId).startsWith('group:') ? 2 : 1;
-      const channelId = String(replyContext?.channelId || String(visitorId).replace(/^group:/, ''));
-      const steerTarget = channelType === 2 ? `group:${channelId}` : visitorId;
-      const capturedBinding = _captureProviderBinding(agentId, {
-        agentId,
-        fromUid: steerTarget,
-        content,
-        channelId,
-        channelType,
-        messageId: turnId,
-      }).providerBinding;
       if (replyContext) {
-        _rememberReplyContext(agentId, steerTarget, { ...replyContext, turnId, channelId, channelType });
+        _rememberReplyContext(agentId, visitorId, { ...replyContext, turnId });
       }
-      const failed = new Set<DispatcherProvider>();
-      let fallbackUsed = false;
-      let lastFailure: SteerResult | null = null;
-      while (route) {
-        const provider = route.provider;
-        try {
-          const result = await provider.steer!(agentId, steerTarget, wrapPushContent(content, 'owner'), {
-            turnId,
-            channelId,
-            channelType,
-            providerBinding: _bindingForRoute(agentId, capturedBinding, route),
-          });
-          const outcome = normalizeOwnerForwardOutcome(result) as DeliveryOutcome;
-          if (outcome !== 'delivered') {
-            failed.add(provider);
-            _forgetRoute(agentId, 'steer', provider);
-            lastFailure = {
-              success: false,
-              deliveryOutcome: outcome,
-              result,
-              error: `provider returned ${outcome}`,
-            };
-            if (outcome !== 'not_delivered') {
-              console.error(`[Dispatcher] steer result=${outcome}; no cross-channel retry agent=${agentId}`);
-              break;
-            }
-            console.error(`[Dispatcher] steer confirmed not delivered; trying fallback agent=${agentId}`);
-            if (fallbackUsed) break;
-            fallbackUsed = true;
-            route = _routeProviderEntry(agentId, 'steer', failed);
-            continue;
-          }
-          _cacheRouteIfCurrent(agentId, 'steer', route);
+      const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
+      const delivery = await deliveryExecutor.execute({
+        next: (excluded: Set<DispatcherProvider>) => {
+          const nextRoute = _routeProviderEntry(agentId, 'steer', excluded);
+          if (!nextRoute) return null;
+          routeByProvider.set(nextRoute.provider, nextRoute);
           return {
-            ...(result && typeof result === 'object' ? result as Record<string, unknown> : {}),
-            success: true,
-            deliveryOutcome: 'delivered',
-            result,
+            providerId: nextRoute.providerId,
+            providerType: String(_metaOf(agentId).backend_type || getProviderTransport(nextRoute.providerId)?.family || ''),
+            deliveryMode: _providerMode(nextRoute.providerId),
+            target: nextRoute.provider,
           };
-        } catch (error) {
-          const outcome = deliveryOutcome(error);
-          failed.add(provider);
-          _forgetRoute(agentId, 'steer', provider);
-          lastFailure = {
-            success: false,
-            deliveryOutcome: outcome,
-            error: errorMessage(error),
-          };
-          if (outcome !== 'not_delivered') {
-            console.error(`[Dispatcher] steer 结果=${outcome}，不跨通道重投 agent=${agentId}:`, errorMessage(error));
-            break;
-          }
-          console.error(`[Dispatcher] steer 通道确认未投递，尝试备选 agent=${agentId}:`, errorMessage(error));
-          if (fallbackUsed) break;
-          fallbackUsed = true;
-          route = _routeProviderEntry(agentId, 'steer', failed);
-        }
-      }
+        },
+        invoke: (candidate: any) => candidate.target.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), { turnId }),
+        classify: deliveryOutcome,
+        onSuccess: (candidate: any) => {
+          _lastDeliveredModes.set(agentId, candidate.deliveryMode);
+          _cacheRouteIfCurrent(agentId, 'steer', routeByProvider.get(candidate.target)!);
+        },
+        onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
+          _forgetRoute(agentId, 'steer', candidate.target);
+          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
+          console.error(`[Dispatcher] steer 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+        },
+      });
+      if (delivery.outcome === 'delivered') return delivery.result;
       if (replyContext) {
-        const queue = _replyContexts.get(_replyContextKey(agentId, steerTarget));
+        const queue = _replyContexts.get(_replyContextKey(agentId, visitorId));
         const context = queue?.find((item) => item.turnId === turnId);
         if (context) _removeReplyContext(context);
       }
-      return lastFailure || {
-        success: false,
-        deliveryOutcome: 'not_delivered',
-        error: 'no available steer channel',
-      };
+      return null;
     } catch (err) {
       console.error(`[Dispatcher] steer 失败 agent=${agentId}:`, errorMessage(err));
-      return {
-        success: false,
-        deliveryOutcome: 'outcome_unknown',
-        error: errorMessage(err),
-      };
+      return null;
     }
   }
 
-  let started = false;
   async function start() {
-    started = true;
-    for (const [providerId, p] of Object.entries(providers)) {
-      attachAvailabilityProvider(providerId, p);
-      try { await p.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
-    }
+    try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     try {
       const rows = db.prepare('SELECT agent_id FROM agents').all() as Array<{ agent_id?: string }>;
       for (const row of rows) {
@@ -1159,30 +1020,23 @@ ${body}
     }
   }
   async function addProviders(additions: Record<string, DispatcherProvider>) {
-    for (const [key, provider] of Object.entries(additions)) {
-      if (providers[key]) continue;
-      providers[key] = provider;
-      _providerIds.set(provider, key);
+    const pending = Object.fromEntries(Object.entries(additions).filter(([key]) => !providers[key]));
+    for (const [key, provider] of Object.entries(pending)) {
       attachReplyProvider(provider);
-      attachAvailabilityProvider(key, provider);
-      if (started) {
-        try { await provider.start?.(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
-      }
+      _providerIds.set(provider, key);
+    }
+    const added = await runtimeRegistry.add(pending);
+    for (const key of added) {
       invalidateRoutes({ providerId: key, available: true, reason: 'provider-added' });
     }
   }
   async function stop() {
-    started = false;
-    for (const p of Object.values(providers)) {
-      detachAvailabilityProvider(p);
-      try { await p.stop?.(); } catch (e) { console.error('[Dispatcher] provider.stop 失败:', errorMessage(e)); }
-    }
+    try { await runtimeRegistry.stopAll(); } catch (e) { console.error('[Dispatcher] provider.stop 失败:', errorMessage(e)); }
   }
   /** 自检 + 重连（替代散落的 60s 心跳 spawn 逻辑）。 */
   async function healthCheck() {
-    for (const p of Object.values(providers)) {
-      try { await p.healthCheck?.(); } catch (e) { console.error('[Dispatcher] provider.healthCheck 失败:', errorMessage(e)); }
-    }
+    try { return await runtimeRegistry.healthCheck(); }
+    catch (e) { console.error('[Dispatcher] provider.healthCheck 失败:', errorMessage(e)); return {}; }
   }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
@@ -1197,7 +1051,7 @@ ${body}
     catch (e) { console.error('[Dispatcher] invalidateBindingsForConfigChange 失败:', errorMessage(e)); return 0; }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers };
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher };

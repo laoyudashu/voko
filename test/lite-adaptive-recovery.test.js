@@ -216,19 +216,10 @@ test('ACP propagates prompt failures instead of emitting an empty successful rep
   assert.equal(replies.length, 0);
 });
 
-test('ACP CLI fallback failures remain unhandled so dispatcher can leave the message for Pull', async () => {
-  const adapter = new AcpAdapter({
-    cliFallback: {
-      cmd: process.execPath,
-      args: ['-e', 'process.exit(7)'],
-      parser: 'raw',
-    },
-  });
-  const replies = [];
-  adapter.on('agent.reply', (reply) => replies.push(reply));
-
-  await assert.rejects(adapter._pushViaCli(basePayload), /code 7/);
-  assert.equal(replies.length, 0);
+test('ACP has no internal CLI path that can bypass Dispatcher fallback policy', () => {
+  const adapter = new AcpAdapter();
+  assert.equal(adapter._pushViaCli, undefined);
+  assert.equal(adapter._cliFallback, undefined);
 });
 
 test('ACP runtime availability is separate from per-agent process health', async () => {

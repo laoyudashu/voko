@@ -1260,7 +1260,11 @@ class OpenClawWsProvider {
     console.log(`[OpenClaw WS] 🚀 sendToSession t=${now}`);
     this._evictStalePendingSubscriptions();
     if (!this._supportsSessionSubscribe()) {
-      if (!this.connected || this.connecting) throw new Error('OpenClaw WebSocket unavailable');
+      if (!this.connected || this.connecting) {
+        const error = new Error('OpenClaw WebSocket unavailable');
+        (error as any).deliveryOutcome = 'not_delivered';
+        throw error;
+      }
       this.subscribedSessions.add(sessionKey);
       this.sendChatSend(sessionKey, message, extraData, now);
       return;
@@ -1273,7 +1277,11 @@ class OpenClawWsProvider {
     if (this.subscribedSessions.has(sessionKey)) return Promise.resolve();
     const existing = this.pendingSubscriptions.get(sessionKey);
     if (existing?.promise) return existing.promise;
-    if (!this.connected || this.connecting) return Promise.reject(new Error('OpenClaw WebSocket unavailable'));
+    if (!this.connected || this.connecting) {
+      const error = new Error('OpenClaw WebSocket unavailable');
+      (error as any).deliveryOutcome = 'not_delivered';
+      return Promise.reject(error);
+    }
 
     const now = Date.now();
     const reqId = this.generateId();
@@ -1282,7 +1290,9 @@ class OpenClawWsProvider {
       const timeout = setTimeout(() => {
         if (this.pendingSubscriptions.get(sessionKey) !== pending) return;
         this.pendingSubscriptions.delete(sessionKey);
-        reject(new Error('OpenClaw session subscription timeout'));
+        const error = new Error('OpenClaw session subscription timeout');
+        (error as any).deliveryOutcome = 'not_delivered';
+        reject(error);
       }, 30000);
       pending = { timestamp: now, id: reqId, resolve, reject, timeout, promise: null };
       this.pendingSubscriptions.set(sessionKey, pending);

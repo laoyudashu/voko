@@ -42,6 +42,12 @@ test('provider loading includes all main and fallback channels in a family', asy
   assert.ok(handlers.dispatcher.providers['cursor-cli']);
   assert.ok(handlers.dispatcher.providers['cline-acp']);
   assert.ok(handlers.dispatcher.providers['cline-cli']);
+  await handlers.dispatcher.ensureBackend('github-copilot');
+  await handlers.dispatcher.ensureBackend('zeroclaw');
+  assert.ok(handlers.dispatcher.providers['github-copilot-acp']);
+  assert.ok(handlers.dispatcher.providers['github-copilot-cli']);
+  assert.ok(handlers.dispatcher.providers['zeroclaw-acp']);
+  assert.ok(handlers.dispatcher.providers['zeroclaw-cli']);
   assert.equal(handlers.dispatcher.providers['openclaw-ws'], undefined);
 });
 

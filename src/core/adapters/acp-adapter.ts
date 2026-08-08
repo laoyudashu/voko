@@ -18,8 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const { Readable, Writable } = require('stream');
 const { PushProvider } = require('../dispatcher/base-provider');
-const { runCli, sanitizeCmdArg, checkCliAvailable } = require('./cli-spawner');
-const { createParser } = require('./cli-parsers');
+const { checkCliAvailable } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
@@ -27,18 +26,6 @@ import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
-
-interface CliFallbackOptions {
-  cmd: string;
-  args?: string[];
-  argsForPayload?: (payload: PushPayload) => string[];
-  sessionIdFromLine?: (line: string) => string | null;
-  adapterType?: string;
-  parser?: string;
-  timeout?: number;
-  stdinPrompt?: boolean;
-  afterRun?: (payload: PushPayload) => void;
-}
 
 export interface AcpAdapterOptions {
   name?: string;
@@ -49,9 +36,7 @@ export interface AcpAdapterOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
-  cliFallback?: CliFallbackOptions | null;
   matchType?: string;
-  bindingProviderType?: string;
   adapterType?: string;
   cwd?: string;
   sessionRequest?: (agentId: string) => Record<string, unknown>;
@@ -109,7 +94,6 @@ interface AcpAgentHealth {
 }
 
 interface AcpSdk {
-  PROTOCOL_VERSION?: number;
   ndJsonStream(output: unknown, input: unknown): unknown;
   client(options?: { name?: string }): {
     onRequest(method: unknown, handler: (context: { params: unknown }) => unknown): {
@@ -124,7 +108,7 @@ interface AcpSdk {
     ): Promise<void>;
   };
   methods: {
-    agent: { session: { load?: unknown; resume?: unknown } };
+    agent: { session: { resume: unknown } };
     client: { session: { requestPermission: unknown } };
   };
 }
@@ -145,7 +129,6 @@ const MAX_REPLY_CHARS = 2 * 1024 * 1024; // 2MB
 class AcpAdapter extends PushProvider {
   _acpSdk: AcpSdk | null;
   _adapterType: string;
-  _bindingProviderType: string;
   _recoveryNeededSessions: Set<string>;
   _agentHealth: Map<string, AcpAgentHealth>;
   _recoveryPromises: Map<string, Promise<boolean>>;
@@ -160,10 +143,6 @@ class AcpAdapter extends PushProvider {
    * @param {string[]} [options.args]         - 传给 CLI 的额外参数（如 goose 需要 ['acp']）
    * @param {object} [options.env]            - 注入子进程的额外环境变量
    * @param {number} [options.connectTimeout] - 连接超时 ms（默认 15000）
-   * @param {object} [options.cliFallback]    - ACP 降级 CLI 配置。提供后 ACP 失败时自动回退。
-   * @param {string}   options.cliFallback.cmd       - CLI 命令
-   * @param {string[]} options.cliFallback.args      - 参数（{prompt} 替换为消息）
-   * @param {string}   [options.cliFallback.parser]   - 解析器名，默认 'stream-json'
    */
   constructor(options: AcpAdapterOptions = {}) {
     super();
@@ -187,7 +166,6 @@ class AcpAdapter extends PushProvider {
 
     // 精确匹配 backend_type（设了就不再匹配 acp-* 通配）
     this._matchType = options.matchType || null;
-    this._bindingProviderType = options.bindingProviderType || this._matchType || 'acp';
     this._adapterType = String(options.adapterType || 'acp').replace(/[^a-z0-9_-]/gi, '').slice(0, 64) || 'acp';
 
     // ACP SDK（ESM — lazy dynamic import）
@@ -207,25 +185,13 @@ class AcpAdapter extends PushProvider {
     // 当成工作区去扫描/索引，产生巨量输出导致 OOM
     this._cwd = options.cwd || os.tmpdir();
 
-    // ACP→CLI 优雅降级配置
-    this._cliFallback = options.cliFallback || null;
-
     // 已经 start() 过
     this._started = false;
   }
 
   get priority() { return 10; }
   get capabilities() { return ['acp', 'streaming', 'session_resume']; }
-  get fallbackModes() { return this._cliFallback ? ['cli'] : []; }
   get sessionMode(): SessionMode { return 'agent-issued-id'; }
-
-  isFallbackAvailable(_agentId: string, mode: string): boolean {
-    if (mode !== 'cli' || !this._cliFallback?.cmd) return false;
-    const cmd = this._cliFallback.cmd;
-    return path.isAbsolute(cmd) || cmd.includes(path.sep)
-      ? fs.existsSync(cmd)
-      : checkCliAvailable(cmd);
-  }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     const bt = meta?.backend_type;
@@ -354,7 +320,7 @@ class AcpAdapter extends PushProvider {
 
   /**
    * 推送访客消息给 ACP agent。
-   * ACP 连接失败且有 cliFallback 配置时，自动降级为 CLI stdout 模式。
+   * ACP Transport 只执行 ACP。跨通道降级由 Dispatcher 统一控制。
    */
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
@@ -362,31 +328,19 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] push 参数不完整: agentId=${agentId} fromUid=${fromUid}`);
     }
 
-    // ── 尝试 ACP 路径 ──
+    // ── ACP 路径 ──
     if (this._cliPath || this._runtimeRequest || this.options.streamFactory) {
       try {
         await this._pushViaAcp(payload);
         return;
       } catch (err) {
         console.error(`[${this._logPrefix}] push via ACP 失败 agent=${agentId}: ${errorMessage(err)}`);
-        // 有降级配置 → 继续走 CLI fallback
-        if (!this._cliFallback) {
-          const deliveryError = err instanceof Error ? err : new Error(String(err));
-          this._emitError(payload, deliveryError);
-          throw deliveryError;
-        }
-        console.error(`[${this._logPrefix}] 降级到 CLI stdout 模式 agent=${agentId}`);
+        const deliveryError = err instanceof Error ? err : new Error(String(err));
+        throw deliveryError;
       }
     }
 
-    // ── CLI fallback ──
-    if (this._cliFallback) {
-      await this._pushViaCli(payload);
-      return;
-    }
-
-    // 无 ACP 无 CLI fallback → 报错
-    this._emitError(payload, new Error(`ACP agent CLI 未找到（agentId=${agentId}）`));
+    // 无 ACP → 明确未投递，由 Dispatcher 决定是否尝试已启用的备用 Transport。
     const unavailable = new Error(`ACP provider unavailable for agentId=${agentId}`);
     (unavailable as any).deliveryOutcome = 'not_delivered';
     throw unavailable;
@@ -558,122 +512,6 @@ class AcpAdapter extends PushProvider {
       agentId, visitorId: fromUid,
       content: fullContent, done: true, sessionKey,
       turnId, replyId: turnId,
-    });
-  }
-
-  // ── CLI Fallback 路径 ─────────────────────────────────────────────
-
-  /** 通过 spawn CLI + stdout 解析发送消息（ACP 不可用时的降级路径） */
-  async _pushViaCli(payload: PushPayload): Promise<void> {
-    const { agentId, fromUid, content } = payload;
-    const turnId = String(payload.turnId || payload.messageId || `acp-cli-${Date.now()}`);
-    const fb = this._cliFallback;
-    const sessionKey = `acp:${agentId}:${fromUid}`;
-    let error: Error | null = null;
-    let fullContent = '';
-    const payloadBinding = payload.providerBinding;
-    let observedSessionId = payloadBinding && payloadBinding.providerType === this._bindingProviderType
-      ? payloadBinding.nativeSessionId
-      : null;
-    const observeSession = (line: string) => {
-      if (!fb.sessionIdFromLine) return;
-      try { observedSessionId = fb.sessionIdFromLine(line) || observedSessionId; } catch (_) {}
-    };
-
-    // Windows 下 {prompt} 经 cmd.exe 传多行/含元字符会被截断或注入（同 cli-adapter/hermes-cli），净化为单行；
-    // 函数式 replacement 避免 String.replace 的 $ 模式展开（CODE-5）
-    const rawContent = this._wrapVisitorPrompt(content, payload);
-    const safeContent = process.platform === 'win32' ? sanitizeCmdArg(rawContent) : rawContent;
-    const fallbackArgs = fb.argsForPayload ? fb.argsForPayload(payload) : (fb.args || []);
-    const args = fallbackArgs.map((arg: string) =>
-      arg.replace(/\{prompt\}/g, () => safeContent)
-    );
-
-    const parser = createParser({
-      format: fb.parser || 'stream-json',
-      onText: (chunk: string) => {
-        fullContent += chunk;
-        if (fullContent.length > MAX_REPLY_CHARS) fullContent = fullContent.slice(0, MAX_REPLY_CHARS) + '\n…[回复过长，已截断]';
-        this.emit('agent.reply', {
-          agentId, visitorId: fromUid,
-          content: fullContent, done: false, sessionKey,
-          turnId, replyId: turnId,
-        });
-      },
-    });
-
-    try {
-      const result = await runCli({
-        cmd: fb.cmd,
-        args,
-        tag: `acp-fallback-${agentId}`,
-        timeout: fb.timeout || 120000,
-        env: this.options.env,
-        cwd: this._cwd,
-        stdinInput: fb.stdinPrompt ? `${rawContent.replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n` : undefined,
-        logOutput: false,
-        onStdoutLine: (line: string) => parser.handleLine(line),
-        onStderrLine: observeSession,
-      });
-
-      if (fb.sessionIdFromLine) {
-        for (const line of result.stdout.split(/\r?\n/)) observeSession(line);
-      }
-      if (result.code !== 0) error = new Error(`CLI fallback exited with code ${result.code}`);
-      parser.finish();
-    } catch (err) {
-      error = err instanceof Error ? err : new Error(String(err));
-    } finally {
-      try { fb.afterRun?.(payload); } catch (err) {
-        error = err instanceof Error ? err : new Error(String(err));
-      }
-    }
-
-    if (error) throw error;
-    if (observedSessionId && this._bindingStore) {
-      const binding = payload.providerBinding?.providerType === this._bindingProviderType
-        ? payload.providerBinding
-        : null;
-      const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
-      const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
-      // A CLI fallback can resume the same native session as ACP.  Persist
-      // the protocol switch as well as the last-used timestamp; otherwise the
-      // binding remains marked ACP and Dispatcher can route the next message
-      // back to a dead channel.
-      this._bindingStore.saveManaged({
-        agentId,
-        channelId,
-        channelType,
-        providerType: this._bindingProviderType,
-        providerInstanceId: binding?.providerInstanceId || null,
-        nativeSessionId: observedSessionId,
-        deliveryMode: 'cli',
-        adapterType: fb.adapterType || `${this._adapterType}-cli-fallback`,
-        expectedVersion: binding?.bindingVersion ?? 0,
-      });
-    }
-    if (!fullContent.trim()) throw new Error('CLI fallback produced no reply');
-
-    this.emit('agent.reply', {
-      agentId, visitorId: fromUid,
-      content: fullContent,
-      done: true, sessionKey,
-      turnId, replyId: turnId,
-    });
-  }
-
-  /** 直接发射错误回复（无可用路径时） */
-  _emitError(payload: PushPayload, err: Error): void {
-    const turnId = String(payload.turnId || payload.messageId || `acp-error-${Date.now()}`);
-    this.emit('agent.reply', {
-      agentId: payload.agentId,
-      visitorId: payload.fromUid,
-      content: `[ACP Error] ${err.message}`,
-      done: true,
-      sessionKey: `acp:${payload.agentId}:${payload.fromUid}`,
-      turnId,
-      replyId: `${turnId}:error`,
-      error: { code: 'acp_unavailable', message: err.message },
     });
   }
 
@@ -887,13 +725,6 @@ class AcpAdapter extends PushProvider {
       const currentState = this._agents.get(stateKey);
       if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch || this._providerStopped) return;
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
-      // connectWith only opens the JSON-RPC transport; ACP initialization is
-      // an explicit request that must precede session/new (OpenHands enforces
-      // this ordering even though some older ACP servers tolerated omission).
-      await agentCtx.request((sdk.methods as any).agent.initialize, {
-        protocolVersion: sdk.PROTOCOL_VERSION || 1,
-        clientCapabilities: {},
-      });
       state.agentCtx = agentCtx;
       this._markStateHealth(state, agentId, true, 'connected');
       if (state._readyResolve) {
@@ -960,7 +791,7 @@ class AcpAdapter extends PushProvider {
   ): Promise<AcpSession> {
     const channelId = payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
-    let binding = payload.providerBinding?.providerType === this._bindingProviderType
+    let binding = payload.providerBinding?.providerType === this._matchType
       ? payload.providerBinding
       : null;
     if (!binding && this._bindingStore) {
@@ -969,14 +800,14 @@ class AcpAdapter extends PushProvider {
           agentId,
           channelId,
           channelType,
-          providerType: this._bindingProviderType,
+          providerType: this._matchType || 'acp',
           deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
           adapterType: this._adapterType,
           legacyVisitorId: visitorId,
         });
     }
     const handle = binding?.nativeSessionId || null;
-    const sessionKey = `acp:${agentId}:${channelType}:${channelId}:${handle || 'managed'}`;
+    const sessionKey = `acp:${agentId}:${visitorId}:${handle || 'managed'}`;
     // 1. 内存缓存命中
     const existing = state.sessions.get(sessionKey);
     if (existing) return existing;
@@ -987,17 +818,6 @@ class AcpAdapter extends PushProvider {
         const session = await this._resumeSession(state, handle);
         if (session) {
           state.sessions.set(sessionKey, session);
-          this._bindingStore?.saveManaged({
-            agentId,
-            channelId,
-            channelType,
-            providerType: this._bindingProviderType,
-            providerInstanceId: binding?.providerInstanceId || null,
-            nativeSessionId: session.sessionId,
-            deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
-            adapterType: this._adapterType,
-            expectedVersion: binding?.bindingVersion ?? 0,
-          });
           return session;
         }
       } catch (err) {
@@ -1022,7 +842,7 @@ class AcpAdapter extends PushProvider {
       agentId,
       channelId,
       channelType,
-      providerType: this._bindingProviderType,
+      providerType: this._matchType || 'acp',
       providerInstanceId: binding?.providerInstanceId || null,
       nativeSessionId: session.sessionId,
       deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
@@ -1032,7 +852,7 @@ class AcpAdapter extends PushProvider {
 
     state.sessions.set(sessionKey, session);
     if (saved?.nativeSessionId) {
-      state.sessions.set(`acp:${agentId}:${channelType}:${channelId}:${saved.nativeSessionId}`, session);
+      state.sessions.set(`acp:${agentId}:${visitorId}:${saved.nativeSessionId}`, session);
     }
     this._recoveryNeededSessions.add(sessionKey);
     return session;
@@ -1081,19 +901,11 @@ class AcpAdapter extends PushProvider {
     const sdk = await this._loadSdk();
     const agentCtx = state.agentCtx;
     if (!agentCtx) throw new Error(`[${this._logPrefix}] ACP agent context 未就绪`);
-    const params = { sessionId, cwd: this._cwd, mcpServers: [] };
-    let response: unknown;
-    const loadMethod = sdk.methods.agent.session.load;
-    try {
-      if (!loadMethod) throw Object.assign(new Error('standard ACP loadSession unavailable'), { code: -32601 });
-      response = await agentCtx.request(loadMethod, params);
-    } catch (error: any) {
-      const methodMissing = Number(error?.code) === -32601
-        || /method not found|loadSession unavailable/i.test(errorMessage(error));
-      const resumeMethod = sdk.methods.agent.session.resume;
-      if (!methodMissing || !resumeMethod) throw error;
-      response = await agentCtx.request(resumeMethod, params);
-    }
+    const response = await agentCtx.request(sdk.methods.agent.session.resume, {
+      sessionId,
+      cwd: this._cwd,
+      mcpServers: [],
+    });
     // attachSession 将 session/resume 响应包装为 ActiveSession
     const responseWithSessionId = response && typeof response === 'object'
       ? { ...(response as Record<string, unknown>), sessionId: (response as any).sessionId || sessionId }
@@ -1103,7 +915,7 @@ class AcpAdapter extends PushProvider {
     // requested, already-validated ID is supplied above for the SDK router.
     if (!session || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
       try { session?.dispose(); } catch {}
-      throw new Error('ACP loadSession did not return a valid session ID');
+      throw new Error('ACP session/resume did not return a valid session ID');
     }
     return session;
   }

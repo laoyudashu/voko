@@ -10,7 +10,9 @@ const { AiderCliProvider } = require('../build/core/dispatcher/providers/aider-c
 const { ClineCliProvider } = require('../build/core/dispatcher/providers/cline-cli');
 const { ClineAcpProvider } = require('../build/core/dispatcher/providers/cline-acp');
 const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
+const { ZeroClawCliProvider } = require('../build/core/dispatcher/providers/zeroclaw-cli');
 const { GitHubCopilotAcpProvider } = require('../build/core/dispatcher/providers/github-copilot-acp');
+const { GitHubCopilotCliProvider } = require('../build/core/dispatcher/providers/github-copilot-cli');
 const { PiCliProvider } = require('../build/core/dispatcher/providers/pi-cli');
 const { OpenHandsAcpProvider } = require('../build/core/dispatcher/providers/openhands-acp');
 const {
@@ -93,7 +95,7 @@ test('Cline JSONL parser emits partial text once and ignores tool questions', ()
   assert.deepEqual(currentChunks, ['final']);
 });
 
-test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted alias', (t) => {
+test('ZeroClaw exposes ACP and isolated stateful CLI as independent routes', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-zeroclaw-fallback-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const db = {
@@ -103,26 +105,26 @@ test('ZeroClaw uses ACP and an isolated stateful CLI fallback with the persisted
       return { get: () => ({ backend_instance_id: 'voko_test' }) };
     },
   };
-  const provider = new ZeroClawAcpProvider({ db });
-  assert.equal(provider._adapterType, 'zeroclaw-acp');
-  assert.deepEqual(provider._cliArgs, ['acp']);
-  assert.deepEqual(provider.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
+  const acp = new ZeroClawAcpProvider({ db });
+  const provider = new ZeroClawCliProvider({ db });
+  assert.equal(acp._adapterType, 'zeroclaw-acp');
+  assert.deepEqual(acp._cliArgs, ['acp']);
+  assert.deepEqual(acp.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
+  assert.equal(acp._instanceAlias('agent-voko'), 'voko_test');
+  assert.equal(provider._adapterType, 'zeroclaw-cli');
   assert.equal(provider._instanceAlias('agent-voko'), 'voko_test');
-  const fallbackArgs = provider._cliFallback.argsForPayload({
+  const invocation = provider._prepareInvocation({
     agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
-  });
-  assert.deepEqual(fallbackArgs.slice(0, 3), ['agent', '--agent', 'voko_test']);
-  assert.ok(fallbackArgs.includes('--session-state-file'));
-  assert.equal(provider._cliFallback.stdinPrompt, true);
-  assert.equal(provider._cliFallback.parser, 'zeroclaw-interactive');
-  assert.equal(fallbackArgs.includes('--message'), false);
-  const stateFile = fallbackArgs[fallbackArgs.indexOf('--session-state-file') + 1];
+  }, 'hello');
+  assert.deepEqual(invocation.args.slice(0, 3), ['agent', '--agent', 'voko_test']);
+  assert.ok(invocation.args.includes('--session-state-file'));
+  assert.equal(provider._parserName, 'zeroclaw-interactive');
+  assert.equal(invocation.args.includes('--message'), false);
+  const stateFile = invocation.args[invocation.args.indexOf('--session-state-file') + 1];
   assert.match(path.basename(stateFile), /^[a-f0-9]{64}\.json$/);
   assert.doesNotMatch(stateFile, /agent-voko|visitor-secret/);
   fs.writeFileSync(stateFile, '{}', { mode: 0o644 });
-  provider._cliFallback.afterRun({
-    agentId: 'agent-voko', fromUid: 'visitor-secret', channelId: 'visitor-secret', channelType: 1,
-  });
+  invocation.afterRun();
   if (process.platform !== 'win32') assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
 });
 
@@ -249,21 +251,24 @@ test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {
   assert.equal(acp._adapterType, 'cursor-acp');
   assert.equal(acp._cliArgs.at(-1), 'acp');
   assert.equal(acp._matchType, 'cursor');
-  assert.equal(acp._cliFallback, null);
+  assert.equal(acp._cliFallback, undefined);
   assert.equal(cli._adapterType, 'cursor-cli');
   assert.deepEqual(cli._argsForSession('cursor-session', false).slice(-2), ['--resume', 'cursor-session']);
   assert.equal(cli._sessionIdFromLine(JSON.stringify({ type: 'result', session_id: 'cursor-session' })), 'cursor-session');
 });
 
-test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
-  const provider = new GitHubCopilotAcpProvider();
-  assert.equal(provider._adapterType, 'github-copilot-acp');
-  assert.equal(provider._matchType, 'github-copilot');
-  if (!provider._runtime) return;
-  const acpArgs = provider._cliArgs.join(' ');
-  const fallbackArgs = provider._cliFallback.args.join(' ');
+test('GitHub Copilot exposes ACP and restricted CLI as independent routes', () => {
+  const acp = new GitHubCopilotAcpProvider();
+  const cli = new GitHubCopilotCliProvider();
+  assert.equal(acp._adapterType, 'github-copilot-acp');
+  assert.equal(acp._matchType, 'github-copilot');
+  assert.equal(acp._cliFallback, undefined);
+  assert.equal(cli._adapterType, 'github-copilot-cli');
+  if (!acp._runtime || !cli._runtime) return;
+  const acpArgs = acp._cliArgs.join(' ');
+  const cliArgs = cli._args.join(' ');
   assert.match(acpArgs, /--acp/);
-  assert.match(fallbackArgs, /-p \{prompt\}/);
+  assert.match(cliArgs, /-p \{prompt\}/);
   for (const flag of [
     '--no-custom-instructions',
     '--disable-builtin-mcps',
@@ -274,7 +279,7 @@ test('GitHub Copilot uses ACP with a restricted CLI fallback', () => {
     '--no-auto-update',
   ]) {
     assert.match(acpArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(fallbackArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(cliArgs, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
 
@@ -340,7 +345,7 @@ test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallba
     assert.equal(provider.options.env.GIT_CONFIG_KEY_1, 'http.lowspeedlimit');
     assert.equal(provider.options.env.GIT_CONFIG_VALUE_1, '1');
   }
-  assert.equal(provider._cliFallback, null);
+  assert.equal(provider._cliFallback, undefined);
 });
 
 test('OpenHands CLI is a restricted JSON fallback and accepts ACP bindings', () => {
@@ -573,7 +578,7 @@ test('registration detects all added CLIs but only exposes safe automatic delive
   assert.deepEqual(service.deliveryCapabilities('cline').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('github-copilot').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
   assert.deepEqual(service.deliveryCapabilities('cursor').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
-  assert.deepEqual(service.deliveryCapabilities('openhands').map((mode) => mode.mode), ['acp', 'cli', 'pull']);
+  assert.deepEqual(service.deliveryCapabilities('openhands').map((mode) => mode.mode), ['pull']);
   assert.equal(service.deliveryCapabilities('openhands')[0].status, 'ready');
   assert.equal(service.deliveryCapabilities('openhands')[0].selected, true);
   assert.deepEqual(service.deliveryCapabilities('amazon-q').map((mode) => mode.mode), ['pull']);
@@ -598,7 +603,7 @@ test('Cline registration preflight accepts ACP and CLI delivery', async () => {
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
 });
 
-test('OpenHands registration preflight accepts ACP and CLI fallback', async () => {
+test('OpenHands registration keeps Pull as the safe default', async () => {
   const service = new RegistrationOrchestrator({
     getLoggedEmail: async () => 'owner@example.com',
     detectCurrentAgentType: () => null,
@@ -608,9 +613,8 @@ test('OpenHands registration preflight accepts ACP and CLI fallback', async () =
   service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
   const selected = service.selectProvider(started.registrationId, { providerType: 'openhands' });
   assert.equal(selected.success, true);
-  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['acp', 'cli', 'pull']);
-  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'acp' }).ready, true);
-  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'cli' }).ready, true);
+  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['pull']);
+  assert.equal(service.preflightDelivery(started.registrationId, { mode: 'pull' }).ready, true);
 });
 
 test('current Agent process ancestry recognizes the added CLI families', () => {

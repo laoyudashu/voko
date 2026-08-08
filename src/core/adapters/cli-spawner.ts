@@ -36,6 +36,24 @@ export interface RunCliResult {
   signal: NodeJS.Signals | null;
 }
 
+/**
+ * Classify a non-zero CLI exit without treating every process failure as a
+ * provider rejection. A command that never reached the model is safe to
+ * retry through an explicitly configured backup; after a write or an
+ * unrecognised failure the outcome must remain unknown.
+ */
+function classifyCliFailure(result: Pick<RunCliResult, 'stdout' | 'stderr'>): 'not_delivered' | 'rejected' | 'outcome_unknown' {
+  const stderr = String(result.stderr || '');
+  const detail = `${stderr}\n${String(result.stdout || '')}`;
+  if (/gateway\s+(?:closed|failed|unavailable|not running)|connection refused|econnrefused|failed to resolve secrets|authentication\s+(?:required|failed|error)|\b(?:401|403)\s+(?:unauthorized|forbidden)?|unauthorized|not logged in|login required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)|command not found|enoent/i.test(detail)) {
+    return 'not_delivered';
+  }
+  if (/request rejected|provider rejected|safety policy|unsafe request|approval required|not allowed by policy/i.test(stderr)) {
+    return 'rejected';
+  }
+  return 'outcome_unknown';
+}
+
 // ── 日志 ─────────────────────────────────────────────────────────────
 
 const _logDir = os.tmpdir();
@@ -256,4 +274,4 @@ function sanitizeCmdArg(p: unknown): string | null | undefined {
     .trim();
 }
 
-module.exports = { runCli, killTree, checkCliAvailable, sanitizeCmdArg, _makeLogger };
+module.exports = { runCli, killTree, checkCliAvailable, classifyCliFailure, sanitizeCmdArg, _makeLogger };
