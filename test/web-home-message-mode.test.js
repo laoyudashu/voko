@@ -61,6 +61,24 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /updateAgentRow/);
 });
 
+test('home truncates long agent names but keeps the full name in a hover hint', async (t) => {
+  const fullName = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const handlers = {
+    whoami: async () => ({ agents: [{ agentId: 'agent-long-name', agentName: fullName, backendType: 'others', publishStatus: 'published' }] }),
+    get_status: async () => ({
+      success: true,
+      agent: { imConnected: true, activeAutomaticMode: 'cli', automaticReadyModes: ['cli'], pullReady: true },
+    }),
+  };
+  const server = await startApp(handlers);
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, new RegExp('title="' + fullName + '" aria-label="' + fullName + '">ABCDEFGHIJKLMNOPQRSTUVW…<\\/a>'));
+});
+
 test('home keeps message mode as loading when the status probe has not completed', async (t) => {
   const handlers = {
     whoami: async () => ({ agents: [{ agentId: 'agent-loading', agentName: 'Loading Agent', backendType: 'others', publishStatus: 'published' }] }),

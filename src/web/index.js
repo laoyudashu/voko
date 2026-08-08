@@ -276,6 +276,13 @@ function getMessageMode(status, tFn){
   return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
 }
 
+const HOME_AGENT_NAME_MAX_LENGTH=24;
+function truncateAgentName(value,maxLength=HOME_AGENT_NAME_MAX_LENGTH){
+  const text=String(value==null?'':value);
+  const chars=Array.from(text);
+  return chars.length>maxLength?chars.slice(0,maxLength-1).join('')+'…':text;
+}
+
 /** 渲染操作表单页（GET） */
 function renderFormPage(title,agentId,agentName,formHtml,tFn,locale){
   const nm=agentName||agentId;
@@ -766,10 +773,13 @@ function createWebRouter(handlers, db, opts={}){
           messageModeDetected=mode.detected;
         }catch{}
         var bt=a.backendType||'-';
+        const agentNameFull=String(a.agentName||a.agentId||'');
+        const agentNameDisplay=truncateAgentName(agentNameFull);
+        const agentNameHint=agentNameDisplay===agentNameFull?'':' title="'+esc(agentNameFull)+'" aria-label="'+esc(agentNameFull)+'"';
         var shortCell='<button class="btn btn-sm btn-outline" data-role="gen-link" data-agent="'+esc(a.agentId)+'" style="margin:0;padding:2px 8px;font-size:12px;min-height:auto">'+L('common.btn.generate_link')+'</button>';
         if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);shortCell='<a href="'+su+'" target="_blank" style="font-size:13px">'+su.substring(0,35)+(su.length>35?'…':'')+'</a> <button class="btn btn-sm btn-outline" data-role="copy-link" data-url="'+su+'" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.copy')+'</button>'}}catch(ex){}}
         var actionHtml='<a href="/agents/'+esc(a.agentId)+'/edit" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.edit')+'</a> <a href="/agents/'+esc(a.agentId)+'/caps" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.caps')+'</a> <span class="'+(a.publishStatus==='published'?'online':'pending')+'" data-role="toggle-pub" data-agent="'+esc(a.agentId)+'" data-pub-status="'+(a.publishStatus==='published'?'published':'unpublished')+'" title="'+esc(a.publishStatus==='published'?T('common.pub.title_published'):T('common.pub.title_unpublished'))+'" style="cursor:pointer;font-size:12px">'+L(a.publishStatus==='published'?'common.pub.published':'common.pub.unpublished')+'</span> <span class="'+(a.accessMode==='private'?'online':'pending')+'" data-role="toggle-acc" data-agent="'+esc(a.agentId)+'" data-acc-mode="'+(a.accessMode==='private'?'private':'public')+'" title="'+esc(a.accessMode==='private'?T('common.acc.title_private'):T('common.acc.title_public'))+'" style="cursor:pointer;font-size:12px">'+L(a.accessMode==='private'?'common.acc.private':'common.acc.public')+'</span>';
-        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td><a href="/agents/'+esc(a.agentId)+'">'+esc(a.agentName||a.agentId)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+esc(messageMode)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
+        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td><a href="/agents/'+esc(a.agentId)+'"'+agentNameHint+'>'+esc(agentNameDisplay)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+esc(messageMode)+'</td><td style="white-space:nowrap;font-size:13px">'+shortCell+'</td><td style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
       }
 
       // 信息栏
