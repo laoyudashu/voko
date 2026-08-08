@@ -16,6 +16,7 @@ const { createRegistrationOrchestrator } = require('../core/registration-orchest
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
+const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 import type { LiteContext } from '../context';
 import type { DatabaseLike } from '../types/database';
@@ -1027,7 +1028,7 @@ function createToolHandlers(cx: McpContext) {
       }
       // backendType 仅本地更新，不同步服务端
       const currentRow = cx.query(
-        `SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+        `SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
         [p.agentId],
       )[0] || {};
       // 运行时重绑定：DB 已更新后，统一加载 Provider / 失效旧绑定 / 清缓存 / 必要时重启 IM Worker。
@@ -1036,7 +1037,7 @@ function createToolHandlers(cx: McpContext) {
       const runRebind = async (previousSnap: any) => {
         if (rebind) {
           const nextRow = cx.query(
-            `SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+            `SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
             [p.agentId],
           )[0] || {};
           try {
@@ -1045,11 +1046,13 @@ function createToolHandlers(cx: McpContext) {
               previous: {
                 backendType: previousSnap.backend_type,
                 backendInstanceId: previousSnap.backend_instance_id ?? null,
+                deliveryModes: previousSnap.delivery_modes,
                 imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
               },
               next: {
                 backendType: nextRow.backend_type,
                 backendInstanceId: nextRow.backend_instance_id ?? null,
+                deliveryModes: nextRow.delivery_modes,
                 imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
               },
             });
@@ -1080,30 +1083,26 @@ function createToolHandlers(cx: McpContext) {
         }
       }
       const backendRebindResult: any[] = [];
-      if (p.backendType) {
-        const nextBackendType = normalizeBackendType(p.backendType);
-        const current = cx.query(`SELECT backend_type FROM agents WHERE agent_id = ?`, [p.agentId])[0];
-        if (current && normalizeBackendType(current.backend_type) !== nextBackendType) {
-          cx.exec(
-            `UPDATE agents SET backend_type=?, backend_instance_id=NULL, delivery_modes=?, updated_at=? WHERE agent_id=?`,
-            [nextBackendType, JSON.stringify(['pull']), Date.now(), p.agentId],
-          );
-        } else {
-          cx.exec(`UPDATE agents SET backend_type=?, updated_at=? WHERE agent_id=?`, [nextBackendType, Date.now(), p.agentId]);
-        }
+      const backendChanged = p.backendType !== undefined
+        && normalizeBackendType(currentRow.backend_type) !== targetBackendType;
+      const hasRoutingUpdate = p.backendType !== undefined
+        || p.backendInstanceId !== undefined
+        || p.deliveryModes !== undefined;
+      if (hasRoutingUpdate) {
+        new AgentDeliveryPolicyStore(cx.db).update(p.agentId, {
+          backendType: p.backendType === undefined ? undefined : targetBackendType,
+          backendInstanceId: p.backendInstanceId !== undefined
+            ? (requestedInstanceId || null)
+            : (backendChanged ? null : undefined),
+          deliveryModes: p.deliveryModes !== undefined
+            ? p.deliveryModes
+            : (backendChanged ? ['pull'] : undefined),
+        });
         backendRebindResult.push(await runRebind(currentRow)); // 失效 dispatcher 缓存 + 加载 Provider + 失效旧绑定
       }
 
       // 检查是否有需要同步服务端的字段
       const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone];
-      if (p.backendInstanceId !== undefined) {
-        cx.exec(
-          `UPDATE agents SET backend_instance_id=?, updated_at=? WHERE agent_id=?`,
-          [requestedInstanceId || null, Date.now(), p.agentId],
-        );
-        backendRebindResult.push(await runRebind(currentRow));
-      }
-
       if (serverFields.some((v?: any) => v !== undefined)) {
         const result = await cx.updateAgentProfile({
           db: cx.db,

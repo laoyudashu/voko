@@ -220,7 +220,7 @@ test('dispatcher isolates provider sessions by group while preserving senderUid'
       match: () => true, isAvailable: () => true,
       push: payload => pushed.push(payload), on: () => {}
     };
-    const dispatcher = createDispatcher({ db, providers: { fake: provider } });
+    const dispatcher = createDispatcher({ db, providers: { 'mock-echo': provider } });
     dispatcher.dispatch('agent_test', {
       agentId: 'agent_test', fromUid: 'visitor1', senderUid: 'visitor1',
       sessionTarget: 'group:roomA', content: 'one', channelId: 'roomA', channelType: 2

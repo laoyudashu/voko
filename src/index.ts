@@ -640,10 +640,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         return res.status(400).json({ success: false, error: 'agentId and modes are required' });
       }
       try {
-        const modes = req.body.modes === null ? null : (Array.isArray(req.body.modes) ? req.body.modes.map(String) : null);
-        db.prepare('UPDATE agents SET delivery_modes=? WHERE agent_id=?').run(modes === null ? null : JSON.stringify(modes), agentId);
+        const modes = req.body.modes === null ? ['pull'] : req.body.modes;
+        const { AgentDeliveryPolicyStore } = require('./core/agent-delivery-policy');
+        const updated = new AgentDeliveryPolicyStore(db).update(agentId, { deliveryModes: modes });
         (global as any).__dispatcher?.invalidateMeta?.(agentId);
-        return res.json({ success: true, agentId, modes });
+        return res.json({ success: true, agentId, modes: updated.next.deliveryModes });
       } catch (e: any) {
         return res.status(500).json({ success: false, error: e?.message || 'delivery mode update failed' });
       }
@@ -1070,7 +1071,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
       const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
       const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
       let runtimeRebind: any;
       if (result.success !== false) runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
@@ -1095,27 +1096,18 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const d = req.body || {};
       const { agentId } = d;
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
-      let runtimeRebind: any;
-      const F = {
+      const updates = {
         backend_type: d.backendType === undefined ? undefined : normalizeBackendType(d.backendType),
         backend_instance_id: d.instanceId,
-        delivery_modes: d.deliveryModes === undefined ? undefined : JSON.stringify(Array.isArray(d.deliveryModes) ? d.deliveryModes : []),
+        delivery_modes: d.deliveryModes,
         agent_name: d.agentName,
         category: d.category,
       };
-      const sets = [], vals = [];
-      for (const [k, v] of Object.entries(F)) {
-        if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
-      }
-      if (sets.length) {
-        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
-        // 补 updated_at（原实现遗漏，修复一致性）
-        sets.push('updated_at = ?'); vals.push(Date.now());
-        vals.push(agentId);
-        db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE agent_id = ?`).run(...vals);
-        runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
-      }
-      res.json(runtimeRebind ? { success: true, runtimeRebind } : { success: true });
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const { updateAgentBindingOnDb } = require('./core/agent-registration');
+      const result = updateAgentBindingOnDb(db, { agentId, updates });
+      const runtimeRebind = result.success === false ? undefined : await runRebindForRoute(db, agentId, prevSnap);
+      res.json(runtimeRebind ? { ...result, runtimeRebind } : result);
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
   // ── Agent 发布/下架（Desktop connect/disconnect 经此；在 Lite 可写上下文跑 publishAgent，避免只读 DB 写失败）──
@@ -1127,7 +1119,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { registerCapabilitiesForAgent } = require('./core/register-capabilities');
       const { updateAgentProfile } = require('./core/update-agent-profile');
       const { setAgentStatus } = require('./core/set-agent-status');
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = await publishAgent({
         db, agentId,
         startAgentWorker: (id?: any, cfg?: any) => agentManager.start(id, cfg),
@@ -1788,7 +1780,8 @@ async function startMcpServer(args?: any, core?: any) {
     })));
     const agentList = agents.map((a: any) => ({
       agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
-      imConnected: false, backendConnected: false,
+      imConnected: false, automaticDeliveryReady: false,
+      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, lastDeliveredMode: null,
     }));
     db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
       .run(JSON.stringify({
@@ -1867,9 +1860,10 @@ function attachRebindAgentRuntime(dispatcher: any, agentManager: any, db: any) {
       dispatcher.invalidateBindingsForConfigChange?.(input) ?? 0,
     getAgentDeliveryStatus: (agentId: string) => dispatcher.getAgentDeliveryStatus?.(agentId),
     restartAgentWorker: (agentId: string) => agentManager?.restart(agentId),
-    forceDeliveryModesPull: (database: any, agentId: string) =>
-      database.prepare('UPDATE agents SET delivery_modes=?, updated_at=? WHERE agent_id=?')
-        .run(JSON.stringify(['pull']), Date.now(), agentId),
+    forceDeliveryModesPull: (database: any, agentId: string) => {
+      const { AgentDeliveryPolicyStore } = require('./core/agent-delivery-policy');
+      new AgentDeliveryPolicyStore(database).forcePull(agentId);
+    },
   });
   const rebindLocks = new Map<string, Promise<any>>();
   (global as any).__rebindAgentRuntime = async (input: any) => {
@@ -1889,18 +1883,20 @@ function attachRebindAgentRuntime(dispatcher: any, agentManager: any, db: any) {
 async function runRebindForRoute(db: any, agentId: string, previousSnap: any): Promise<any> {
   const rebind = (global as any).__rebindAgentRuntime;
   if (rebind) {
-    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
+    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
     try {
       return await rebind({
         db, agentId,
         previous: {
           backendType: previousSnap.backend_type,
           backendInstanceId: previousSnap.backend_instance_id ?? null,
+          deliveryModes: previousSnap.delivery_modes,
           imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
         },
         next: {
           backendType: nextRow.backend_type,
           backendInstanceId: nextRow.backend_instance_id ?? null,
+          deliveryModes: nextRow.delivery_modes,
           imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
         },
       });
@@ -1962,13 +1958,16 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     ? new Set(backendTypes.map((value: unknown) => String(value || '').trim()).filter(Boolean))
     : null;
   const needsBackend = (...types: string[]) => !requiredBackends || types.some(type => requiredBackends.has(type));
+  const { getProviderFamily, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
+  const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
+  const providerFactoryContext = { db, contextWindow: 20, gooseBin: resolveGooseCommand(), hermesConfig };
 
   // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('openclaw')) try {
-    const OpenClawHandler = openclawMode === 'ws'
-      ? require('./core/dispatcher/providers/openclaw-ws')
-      : require('./server/openclaw-handler-cli');
-    openclawHandler = new OpenClawHandler(db, null); // Provider 历史恢复需要原生数据库连接
+    const definition = listProviderTransports('openclaw').find((item: any) => item.mode === 'websocket');
+    openclawHandler = openclawMode === 'ws'
+      ? instantiateProviderTransport(definition, providerFactoryContext)
+      : new (require('./server/openclaw-handler-cli'))(db, null);
     if (openclawMode === 'ws') {
       providers['openclaw-ws'] = openclawHandler;
       const status = openclawHandler.getStatus();
@@ -1981,60 +1980,21 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
 
   // ── Hermes provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('hermes')) try {
-    const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-    hermesHandler = new HermesHandler(db, null, { // Provider 历史恢复需要原生数据库连接
-      host: hermesConfig.apiHost || '127.0.0.1',
-      port: hermesConfig.apiPort || 8642,
-      apiKey: hermesConfig.apiKey || '',
-      profiles: hermesConfig.profiles || {},
-    });
+    const definition = listProviderTransports('hermes').find((item: any) => item.mode === 'http');
+    hermesHandler = instantiateProviderTransport(definition, providerFactoryContext);
     providers['hermes-http'] = hermesHandler;
     console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
 
-  // ── CLI / ACP provider 注册表：新增 backend 只在 PROVIDER_REGISTRY 追加一行。
-  //    openclaw-ws / hermes-http 长连接因构造参数与返回值依赖特殊，仍在上方单独构造。──
-  //
-  //    goose 默认从 PATH 解析，也可通过 VOKO_GOOSE_BIN 指定平台对应的完整版本；
-  //    Claude Code 仅走 claude-cli；ACP 模式已移除，避免安装体积巨大的 Claude Agent SDK。
-  const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
-  const GOOSE_BIN = resolveGooseCommand();
-  const PROVIDER_REGISTRY = [
-    // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
-    { backend: ['openclaw'], key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
-    { backend: ['hermes'], key: 'hermes-cli', mod: './core/dispatcher/providers/hermes-cli', args: { db, contextWindow: 20 } },
-    { backend: ['goose', 'goose-ai', 'goose-acp', 'acp-goose'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
-    // Goose ACP（stdio JSON-RPC，priority=10 与 WS/HTTP 同级；backend_type='acp-goose'）
-    { backend: ['acp-goose'], key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
-    // 各 CLI runtime（priority=1，本地装了对应 CLI 才 isAvailable）
-    { backend: ['claude-code'], key: 'claude-cli', mod: './core/dispatcher/providers/claude-cli', named: 'ClaudeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['codex'], key: 'codex-cli', mod: './core/dispatcher/providers/codex-cli', named: 'CodexCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['gemini'], key: 'gemini-cli', mod: './core/dispatcher/providers/gemini-cli', named: 'GeminiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-acp', mod: './core/dispatcher/providers/cursor-acp', named: 'CursorAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-cli', mod: './core/dispatcher/providers/cursor-cli', named: 'CursorCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
-    { backend: ['github-copilot'], key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['pi'], key: 'pi-cli', mod: './core/dispatcher/providers/pi-cli', named: 'PiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['qwen-code'], key: 'qwen-cli', mod: './core/dispatcher/providers/qwen-cli', named: 'QwenCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['kiro'], key: 'kiro-cli', mod: './core/dispatcher/providers/kiro-cli', named: 'KiroCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['aider'], key: 'aider-cli', mod: './core/dispatcher/providers/aider-cli', named: 'AiderCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-acp', mod: './core/dispatcher/providers/cline-acp', named: 'ClineAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-cli', mod: './core/dispatcher/providers/cline-cli', named: 'ClineCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
-  ];
-  for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
-    if (!needsBackend(...backend)) continue;
+  const providerDefinitions = listProviderTransports().filter((definition: any) => !definition.testOnly && !['openclaw-ws', 'hermes-http'].includes(definition.id));
+  for (const definition of providerDefinitions) {
+    const family = getProviderFamily(definition.family);
+    if (!family || !needsBackend(family.type, ...family.aliases)) continue;
     try {
-      const M = require(mod);
-      const Ctor = named ? M[named] : M;
-      providers[key] = new Ctor(args);
-    } catch (e: any) { console.error(`[Lite] ${key} 注册失败:`, e.message); }
+      providers[definition.id] = instantiateProviderTransport(definition, providerFactoryContext);
+    } catch (e: any) { console.error(`[Lite] ${definition.id} 注册失败:`, e.message); }
   }
   // 测试模式：注册 MockEchoProvider（不依赖外部 CLI/gateway）
   if (process.env.VOKO_SMOKE_TEST === '1') {
@@ -2059,27 +2019,21 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
       const load = (async () => {
         const additions: Record<string, any> = {};
         if (type === 'openclaw' && !dispatcher.providers['openclaw-ws']) {
-          const OpenClawHandler = require('./core/dispatcher/providers/openclaw-ws');
-          openclawHandler = new OpenClawHandler(db, null);
+          const definition = listProviderTransports('openclaw').find((item: any) => item.mode === 'websocket');
+          openclawHandler = instantiateProviderTransport(definition, providerFactoryContext);
           additions['openclaw-ws'] = openclawHandler;
           (global as any).__openclawHandler = openclawHandler;
         }
         if (type === 'hermes' && !dispatcher.providers['hermes-http']) {
-          const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-          hermesHandler = new HermesHandler(db, null, {
-            host: hermesConfig.apiHost || '127.0.0.1',
-            port: hermesConfig.apiPort || 8642,
-            apiKey: hermesConfig.apiKey || '',
-            profiles: hermesConfig.profiles || {},
-          });
+          const definition = listProviderTransports('hermes').find((item: any) => item.mode === 'http');
+          hermesHandler = instantiateProviderTransport(definition, providerFactoryContext);
           additions['hermes-http'] = hermesHandler;
           (global as any).__hermesHandler = hermesHandler;
         }
-        for (const { backend, key, mod, named, args } of PROVIDER_REGISTRY) {
-          if (!backend.includes(type) || dispatcher.providers[key] || additions[key]) continue;
-          const M = require(mod);
-          const Ctor = named ? M[named] : M;
-          additions[key] = new Ctor(args);
+        const family = getProviderFamily(type);
+        for (const definition of family ? listProviderTransports(family.type).filter((item: any) => !item.testOnly) : []) {
+          if (dispatcher.providers[definition.id] || additions[definition.id]) continue;
+          additions[definition.id] = instantiateProviderTransport(definition, providerFactoryContext);
         }
         await dispatcher.addProviders(additions);
         dispatcher.invalidateMeta();
@@ -2549,7 +2503,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         ? "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published' AND owner_email = ?"
         : "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published'";
       const rows = userEmail ? db.prepare(agentSql).all(userEmail) : db.prepare(agentSql).all();
-      let imOnline = 0, backendOnline = 0, posted = 0;
+      let imOnline = 0, automaticDeliveryOnline = 0, posted = 0;
       const deliveryStatuses = new Map<string, any>();
 
       for (const agent of rows) {
@@ -2559,29 +2513,29 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         let deliveryStatus: any;
         try {
           deliveryStatus = dispatcher?.getAgentDeliveryStatus?.(agent.agent_id) || {
-            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
         } catch (_) {
           deliveryStatus = {
-            backendType: agent.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
         }
         deliveryStatuses.set(agent.agent_id, deliveryStatus);
-        const backendOk = !!deliveryStatus.backendAvailable;
+        const backendOk = !!deliveryStatus.automaticDeliveryReady;
 
         if (imOk) imOnline++;
-        if (backendOk) backendOnline++;
+        if (backendOk) automaticDeliveryOnline++;
 
         const agentName = agent.agent_name || agent.agent_id;
         if (!imOk) warnings.push({ type: 'agent-im-offline', message: `⚠️ ${agentName} IM 连接断开`, action: 'agent-detail', agentId: agent.agent_id });
         if (!backendOk) {
-          warnings.push({ type: 'agent-backend-offline', message: `⚠️ ${agentName} 当前没有可用的消息接收方式`, action: 'agent-detail', agentId: agent.agent_id });
+          warnings.push({ type: 'agent-backend-offline', message: `⚠️ ${agentName} 未启用自动接收通道，当前使用 MCP Pull（按需）`, action: 'agent-detail', agentId: agent.agent_id });
         } else {
           const failedConfigured = deliveryStatus.methods?.find((method: any) => method.configured && !method.available && method.status !== 'unknown');
           if (failedConfigured) {
-            const activeLabel = deliveryStatus.activeMode === 'pull' ? 'MCP Pull（按需）' : deliveryStatus.activeMode;
+            const activeLabel = deliveryStatus.activeAutomaticMode || 'MCP Pull（按需）';
             warnings.push({ type: 'agent-backend-degraded', message: `⚠️ ${agentName} ${failedConfigured.mode} 不可用，当前使用 ${activeLabel}`, action: 'agent-detail', agentId: agent.agent_id });
           }
         }
@@ -2617,7 +2571,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── 上报 ──
       const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
       const hubCount = agentManager?.getHubSummary?.()?.hubCount || 0;
-      console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 接收能力=${backendOnline}/${rows.length} 上报=${posted}/${rows.length}`);
+      console.log(`[${ts}][IM 心跳] Hub=${hubCount} IM=${imOnline}/${rows.length} 自动接收=${automaticDeliveryOnline}/${rows.length} 仅Pull=${rows.length - automaticDeliveryOnline} 上报=${posted}/${rows.length}`);
       if (warnings.length > 0) {
         console.error(`[${ts}][心跳] 发现 ${warnings.length} 个异常:\n${warnings.map((w: any) => `  ${w.message}`).join('\n')}`);
       }
@@ -2629,16 +2583,18 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         const prevData = prev ? JSON.parse(prev.data) : {};
         const agentList = rows.map((a: any) => {
           const deliveryStatus = deliveryStatuses.get(a.agent_id) || {
-            backendType: a.backend_type || null, configuredModes: [], availableModes: [],
-            activeMode: null, methods: [], backendAvailable: false,
+            backendType: a.backend_type || null, configuredModes: [], automaticReadyModes: [],
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
           };
           return {
             agentId: a.agent_id,
             agentName: a.agent_name || a.agent_id,
             imConnected: agentManager?.getStatus(a.agent_id)?.connected || false,
-            backendConnected: !!deliveryStatus.backendAvailable,
-            availableModes: deliveryStatus.availableModes || [],
-            activeMode: deliveryStatus.activeMode || null,
+            automaticDeliveryReady: !!deliveryStatus.automaticDeliveryReady,
+            automaticReadyModes: deliveryStatus.automaticReadyModes || [],
+            activeAutomaticMode: deliveryStatus.activeAutomaticMode || null,
+            pullReady: !!deliveryStatus.pullReady,
+            lastDeliveredMode: deliveryStatus.lastDeliveredMode || null,
             deliveryStatus,
           };
         });

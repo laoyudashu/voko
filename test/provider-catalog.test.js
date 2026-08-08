@@ -1,0 +1,44 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { PROVIDER_CATALOG, getProviderFamily, getProviderTransport, validateProviderCatalog } = require('../build/core/dispatcher/provider-catalog');
+const { DeliveryExecutor } = require('../build/core/dispatcher/delivery-executor');
+
+test('Provider Catalog has valid explicit transports and instance requirements', () => {
+  assert.deepEqual(validateProviderCatalog(), []);
+  assert.equal(getProviderFamily('openclaw').requiresInstance, true);
+  assert.equal(getProviderFamily('hermes').requiresInstance, true);
+  assert.equal(getProviderFamily('zeroclaw').requiresInstance, true);
+  assert.equal(getProviderTransport('zeroclaw-ws').mode, 'acp_ws');
+  assert.equal(getProviderTransport('github-copilot-cli').mode, 'cli');
+  assert.ok(PROVIDER_CATALOG.every(family => family.defaultDeliveryModes.includes('pull')));
+});
+
+test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
+  const calls = [];
+  const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];
+  const executor = new DeliveryExecutor();
+  const result = await executor.execute({
+    next(excluded) {
+      const target = targets.find(item => !excluded.has(item));
+      return target ? { providerId: target.id, providerType: 'test', deliveryMode: 'cli', target } : null;
+    },
+    async invoke(candidate) { calls.push(candidate.providerId); throw Object.assign(new Error('down'), { deliveryOutcome: 'not_delivered' }); },
+    classify: error => error.deliveryOutcome,
+  });
+  assert.equal(result.outcome, 'not_delivered');
+  assert.deepEqual(calls, ['primary', 'backup']);
+});
+
+test('DeliveryExecutor never retries outcome_unknown or rejected', async () => {
+  for (const outcome of ['outcome_unknown', 'rejected']) {
+    const calls = [];
+    const executor = new DeliveryExecutor();
+    const result = await executor.execute({
+      next: excluded => excluded.size ? { providerId: 'backup', providerType: 'test', deliveryMode: 'cli', target: 'backup' } : { providerId: 'primary', providerType: 'test', deliveryMode: 'acp', target: 'primary' },
+      async invoke(candidate) { calls.push(candidate.providerId); throw Object.assign(new Error(outcome), { deliveryOutcome: outcome }); },
+      classify: error => error.deliveryOutcome,
+    });
+    assert.equal(result.outcome, outcome);
+    assert.deepEqual(calls, ['primary']);
+  }
+});

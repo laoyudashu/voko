@@ -55,19 +55,23 @@ interface RuntimeAgent {
   agentId: string;
   agentName?: string;
   imConnected?: boolean;
-  backendConnected?: boolean;
-  availableModes?: string[];
-  activeMode?: string | null;
+  automaticDeliveryReady?: boolean;
+  automaticReadyModes?: string[];
+  activeAutomaticMode?: string | null;
+  pullReady?: boolean;
+  lastDeliveredMode?: string | null;
   deliveryStatus?: AgentDeliveryStatusLike;
 }
 
 interface AgentDeliveryStatusLike {
   backendType?: string | null;
   configuredModes?: string[];
-  availableModes?: string[];
-  activeMode?: string | null;
+  automaticDeliveryReady?: boolean;
+  automaticReadyModes?: string[];
+  activeAutomaticMode?: string | null;
+  pullReady?: boolean;
+  lastDeliveredMode?: string | null;
   methods?: UnknownRecord[];
-  backendAvailable?: boolean;
 }
 
 interface ConfigRow {
@@ -220,16 +224,16 @@ function createContext({
         const live = agentManager.getStatus(agentId);
         if (live.status !== 'unknown' || live.uid) {
           const deliveryStatus = global.__dispatcher?.getAgentDeliveryStatus?.(agentId);
-          const providerConnected = !!deliveryStatus?.backendAvailable;
           return {
             imConnected: !!live.connected,
             imStatus: live.status || 'unknown',
-            providerConnected,
-            backendConnected: providerConnected,
+            automaticDeliveryReady: !!deliveryStatus?.automaticDeliveryReady,
             uid: live.uid || agentRow?.imUid || null,
             agentName: agentRow?.agent_name || null,
-            availableModes: deliveryStatus?.availableModes || [],
-            activeMode: deliveryStatus?.activeMode || null,
+            automaticReadyModes: deliveryStatus?.automaticReadyModes || [],
+            activeAutomaticMode: deliveryStatus?.activeAutomaticMode || null,
+            pullReady: !!deliveryStatus?.pullReady,
+            lastDeliveredMode: deliveryStatus?.lastDeliveredMode || null,
             deliveryStatus: deliveryStatus || null,
             source: 'live_worker',
             updatedAt: Date.now(),
@@ -244,24 +248,24 @@ function createContext({
           if (rt.agents) {
             const a = rt.agents.find((agent) => agent.agentId === agentId);
             if (a) {
-              return { imConnected: a.imConnected, imStatus: a.imConnected ? 'connected' : 'disconnected', providerConnected: !!a.backendConnected, backendConnected: !!a.backendConnected, uid: agentRow?.imUid || null, agentName: a.agentName || agentRow?.agent_name || null, availableModes: a.availableModes || [], activeMode: a.activeMode || null, deliveryStatus: a.deliveryStatus || null, source: 'runtime_snapshot', updatedAt: Date.now() };
+              return { imConnected: a.imConnected, imStatus: a.imConnected ? 'connected' : 'disconnected', automaticDeliveryReady: !!a.automaticDeliveryReady, uid: agentRow?.imUid || null, agentName: a.agentName || agentRow?.agent_name || null, automaticReadyModes: a.automaticReadyModes || [], activeAutomaticMode: a.activeAutomaticMode || null, pullReady: !!a.pullReady, lastDeliveredMode: a.lastDeliveredMode || null, deliveryStatus: a.deliveryStatus || null, source: 'runtime_snapshot', updatedAt: Date.now() };
             }
           }
         }
       } catch (_: unknown) {}
 
       // 兜底：实时查询该 Agent 的 IM Hub 客户端
-      if (!agentManager) return { imConnected: false, imStatus: 'unknown', backendConnected: false };
+      if (!agentManager) return { imConnected: false, imStatus: 'unknown', automaticDeliveryReady: false, pullReady: true };
       const status = agentManager.getStatus(agentId);
       const deliveryStatus = global.__dispatcher?.getAgentDeliveryStatus?.(agentId);
-      const backendConnected = !!deliveryStatus?.backendAvailable;
       return {
         imConnected: status.connected,
         imStatus: status.status || 'unknown',
-        backendConnected,
-        providerConnected: backendConnected,
-        availableModes: deliveryStatus?.availableModes || [],
-        activeMode: deliveryStatus?.activeMode || null,
+        automaticDeliveryReady: !!deliveryStatus?.automaticDeliveryReady,
+        automaticReadyModes: deliveryStatus?.automaticReadyModes || [],
+        activeAutomaticMode: deliveryStatus?.activeAutomaticMode || null,
+        pullReady: !!deliveryStatus?.pullReady,
+        lastDeliveredMode: deliveryStatus?.lastDeliveredMode || null,
         deliveryStatus: deliveryStatus || null,
         uid: status.uid,
       };

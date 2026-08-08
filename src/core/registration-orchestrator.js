@@ -16,6 +16,7 @@ const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
+const { getProviderFamily } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -628,7 +629,7 @@ class RegistrationOrchestrator {
       type,
       label,
       instances,
-      supportsMultipleInstances: type === 'openclaw' || type === 'hermes' || type === 'zeroclaw',
+      supportsMultipleInstances: !!getProviderFamily(type)?.requiresInstance,
       deliveryModes: this.deliveryCapabilities(
         type,
         type === 'zeroclaw'
@@ -657,6 +658,15 @@ class RegistrationOrchestrator {
   }
 
   deliveryCapabilities(providerType, gatewayStatus) {
+    const type = normalizeBackendType(providerType);
+    const capabilities = this._deliveryCapabilities(type, gatewayStatus);
+    const family = getProviderFamily(type);
+    if (!family) return capabilities;
+    const order = new Map(family.defaultDeliveryModes.map((mode, index) => [mode, index]));
+    return capabilities.sort((a, b) => (order.get(a.mode) ?? 999) - (order.get(b.mode) ?? 999));
+  }
+
+  _deliveryCapabilities(providerType, gatewayStatus) {
     const type = normalizeBackendType(providerType);
     const hasCommand = this.options.commandAvailable || commandAvailable;
     const pull = {
@@ -974,7 +984,11 @@ class RegistrationOrchestrator {
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
     if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
-    if (instanceId && instances.length && !instances.some((item) => item.id === instanceId)) {
+    const family = getProviderFamily(providerType);
+    if (family?.requiresInstance && !instanceId) {
+      return { success: false, error: '该 Agent 类型必须绑定一个本机已检测到的实例' };
+    }
+    if (instanceId && instances.length && family?.validateInstance && !family.validateInstance(instanceId, instances)) {
       return { success: false, error: '所选实例不存在' };
     }
     session.provider = {

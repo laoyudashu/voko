@@ -191,14 +191,19 @@ function inspectAgents(agents: any[], runtime: any, config: Record<string, any>,
   const runtimeAgents = Array.isArray(runtime.agents) ? runtime.agents : [];
   if (runtimeAgents.length > 0) {
     const imConnected = runtimeAgents.filter((agent: any) => agent.imConnected).length;
-    const backendAvailable = runtimeAgents.filter((agent: any) => agent.backendConnected || agent.deliveryStatus?.backendAvailable).length;
+    const automaticReady = runtimeAgents.filter((agent: any) => agent.automaticDeliveryReady || agent.deliveryStatus?.automaticDeliveryReady).length;
+    const runtimePullOnly = runtimeAgents.filter((agent: any) => {
+      const delivery = agent.deliveryStatus || agent;
+      return delivery.pullReady === true && delivery.automaticDeliveryReady !== true;
+    }).length;
     const status = imConnected === runtimeAgents.length ? 'ok' : 'warn';
-    addCheck(checks, 'runtime-agents', 'Runtime Agent status', status, `IM ${imConnected}/${runtimeAgents.length}, receiving capability ${backendAvailable}/${runtimeAgents.length}`, {
-      imConnected, backendAvailable, agents: runtimeAgents.map((agent: any) => ({
+    addCheck(checks, 'runtime-agents', 'Runtime Agent status', status, `IM ${imConnected}/${runtimeAgents.length}, automatic delivery ${automaticReady}/${runtimeAgents.length}, Pull-only ${runtimePullOnly}`, {
+      imConnected, automaticReady, pullOnly: runtimePullOnly, agents: runtimeAgents.map((agent: any) => ({
         agentId: agent.agentId,
         imConnected: !!agent.imConnected,
-        activeMode: agent.activeMode || agent.deliveryStatus?.activeMode || null,
-        availableModes: agent.availableModes || agent.deliveryStatus?.availableModes || [],
+        activeAutomaticMode: agent.activeAutomaticMode || agent.deliveryStatus?.activeAutomaticMode || null,
+        automaticReadyModes: agent.automaticReadyModes || agent.deliveryStatus?.automaticReadyModes || [],
+        pullReady: agent.pullReady ?? agent.deliveryStatus?.pullReady ?? true,
       })),
     });
   }

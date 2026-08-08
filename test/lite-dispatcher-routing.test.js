@@ -70,6 +70,34 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('delivery policy changes take effect on the next message after scoped invalidation', async () => {
+  const calls = [];
+  let modes = ['websocket', 'cli', 'pull'];
+  const db = {
+    prepare() {
+      return {
+        get: () => ({ backend_type: 'openclaw', backend_instance_id: 'isolated-test', delivery_modes: JSON.stringify(modes), imUid: 'agent-uid' }),
+        all: () => [], run: () => ({ changes: 1 }),
+      };
+    },
+  };
+  const dispatcher = createDispatcher({
+    db,
+    providers: {
+      'openclaw-ws': provider('websocket', 100, calls),
+      'openclaw-cli': provider('cli', 10, calls),
+    },
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  modes = ['cli', 'websocket', 'pull'];
+  dispatcher.invalidateMeta('agent-1');
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['websocket', 'cli']);
+  assert.equal(dispatcher.getAgentDeliveryStatus('agent-1').lastDeliveredMode, 'cli');
+});
+
 test('delivery diagnostics reports HTTP failure and CLI fallback without invoking delivery', () => {
   const dispatcher = createDispatcher({
     db: dbFor(['http', 'cli', 'pull']),
@@ -80,9 +108,10 @@ test('delivery diagnostics reports HTTP failure and CLI fallback without invokin
   });
 
   const status = dispatcher.getAgentDeliveryStatus('agent-1');
-  assert.equal(status.backendAvailable, true);
-  assert.equal(status.activeMode, 'cli');
-  assert.deepEqual(status.availableModes, ['cli', 'pull']);
+  assert.equal(status.automaticDeliveryReady, true);
+  assert.equal(status.activeAutomaticMode, 'cli');
+  assert.deepEqual(status.automaticReadyModes, ['cli']);
+  assert.equal(status.pullReady, true);
   assert.equal(status.methods.find(method => method.mode === 'http').status, 'unavailable');
   assert.equal(status.methods.find(method => method.mode === 'pull').status, 'on-demand');
 });
@@ -91,9 +120,10 @@ test('delivery diagnostics treats configured pull as an available on-demand rece
   const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');
 
-  assert.equal(status.backendAvailable, true);
-  assert.equal(status.activeMode, 'pull');
-  assert.deepEqual(status.availableModes, ['pull']);
+  assert.equal(status.automaticDeliveryReady, false);
+  assert.equal(status.activeAutomaticMode, null);
+  assert.deepEqual(status.automaticReadyModes, []);
+  assert.equal(status.pullReady, true);
   assert.equal(status.methods[0].status, 'on-demand');
 });
 
@@ -101,8 +131,9 @@ test('delivery diagnostics preserves pull fallback for legacy rows without deliv
   const dispatcher = createDispatcher({ db: dbFor(null), providers: {} });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');
 
-  assert.equal(status.backendAvailable, true);
-  assert.equal(status.activeMode, 'pull');
+  assert.equal(status.automaticDeliveryReady, false);
+  assert.equal(status.activeAutomaticMode, null);
+  assert.equal(status.pullReady, true);
   assert.equal(status.methods[0].configured, false);
   assert.equal(status.methods[0].status, 'fallback');
 });
@@ -116,18 +147,20 @@ test('delivery diagnostics isolates provider probe failures and unknown configur
   });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');
 
-  assert.equal(status.backendAvailable, false);
-  assert.equal(status.activeMode, null);
+  assert.equal(status.automaticDeliveryReady, false);
+  assert.equal(status.activeAutomaticMode, null);
   assert.equal(status.methods.find(method => method.mode === 'http').status, 'unknown');
   assert.equal(status.methods.find(method => method.mode === 'future-mode').status, 'unknown');
 });
 
 test('dispatcher falls back to the next selected channel when primary push fails', async () => {
   const calls = [];
+  const unavailable = new Error('primary unavailable');
+  unavailable.deliveryOutcome = 'not_delivered';
   const dispatcher = createDispatcher({
     db: dbFor(['websocket', 'cli', 'pull']),
     providers: {
-      'openclaw-ws': provider('websocket', 100, calls, new Error('primary unavailable')),
+      'openclaw-ws': provider('websocket', 100, calls, unavailable),
       'openclaw-cli': provider('cli', 10, calls),
     },
   });
@@ -261,6 +294,23 @@ test('outcome_unknown is not retried through another provider', async () => {
   assert.deepEqual(calls, ['websocket']);
 });
 
+test('rejected delivery is not retried even when the provider marks the channel unavailable', async () => {
+  const calls = [];
+  const rejected = new Error('provider rejected request');
+  rejected.deliveryOutcome = 'rejected';
+  rejected.channelUnavailable = true;
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli']),
+    providers: {
+      'openclaw-ws': provider('websocket', 100, calls, rejected),
+      'openclaw-cli': provider('cli', 10, calls),
+    },
+  });
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['websocket']);
+});
+
 test('confirmed failure uses at most one fallback provider', async () => {
   const calls = [];
   const unavailable = () => {
@@ -271,9 +321,9 @@ test('confirmed failure uses at most one fallback provider', async () => {
   const dispatcher = createDispatcher({
     db: dbFor(null),
     providers: {
-      first: provider('first', 30, calls, unavailable()),
-      second: provider('second', 20, calls, unavailable()),
-      third: provider('third', 10, calls),
+      'openclaw-ws': provider('first', 30, calls, unavailable()),
+      'openclaw-cli': provider('second', 20, calls, unavailable()),
+      'hermes-http': provider('third', 10, calls),
     },
   });
 

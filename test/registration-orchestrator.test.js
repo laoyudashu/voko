@@ -311,7 +311,7 @@ describe('shared registration orchestrator', () => {
     const { db, service } = createService();
     try {
       service.inspectEnvironment = () => ({
-        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [], deliveryModes: [] }],
+        detected: [{ type: 'openclaw', label: 'OpenClaw', instances: [{ id: 'openclaw-test', name: 'OpenClaw Test' }], deliveryModes: [] }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },

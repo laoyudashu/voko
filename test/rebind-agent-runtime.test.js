@@ -28,7 +28,7 @@ function makeDeps(overrides = {}) {
     },
     getAgentDeliveryStatus: (agentId) => {
       calls.getDeliveryStatus.push(agentId);
-      return overrides.deliveryStatus || { availableModes: ['push'], methods: [{ mode: 'push' }, { mode: 'pull' }] };
+      return overrides.deliveryStatus || { automaticReadyModes: ['push'], methods: [{ mode: 'push' }, { mode: 'pull' }] };
     },
     restartAgentWorker: async (agentId) => {
       calls.restartAgentWorker.push(agentId);
@@ -83,6 +83,21 @@ describe('rebindAgentRuntime 核心逻辑', () => {
     assert.equal(calls.invalidateBindings[0].nextInstanceId, 'p-b');
   });
 
+  it('仅消息通道顺序变化：立即清路由缓存但不废弃 Provider 会话绑定', async () => {
+    const { deps, calls } = makeDeps();
+    const rebind = createRebindAgentRuntime(deps);
+    const r = await rebind({
+      db: {}, agentId: 'a1',
+      previous: { ...snap('hermes', 'p-a'), deliveryModes: ['http', 'cli', 'pull'] },
+      next: { ...snap('hermes', 'p-a'), deliveryModes: ['cli', 'http', 'pull'] },
+    });
+    assert.equal(r.rebindStatus, 'rebound');
+    assert.deepEqual(calls.invalidateMeta, ['a1']);
+    assert.equal(calls.invalidateBindings.length, 0);
+    assert.equal(calls.ensureBackend.length, 0);
+    assert.equal(calls.restartAgentWorker.length, 0);
+  });
+
   it('类型+实例都变：ensureBackend 被调，绑定按类型变化全失效', async () => {
     const { deps, calls } = makeDeps({ invalidateBindingsReturn: 2 });
     const rebind = createRebindAgentRuntime(deps);
@@ -135,7 +150,7 @@ describe('rebindAgentRuntime 核心逻辑', () => {
 
   it('无自动通道可用：fallback 标注 voko_fetch_new_messages', async () => {
     const { deps } = makeDeps({
-      deliveryStatus: { availableModes: ['pull'], methods: [{ mode: 'pull' }] },
+      deliveryStatus: { automaticReadyModes: [], pullReady: true, methods: [{ mode: 'pull' }] },
     });
     const rebind = createRebindAgentRuntime(deps);
     const r = await rebind({ db: {}, agentId: 'a1', previous: snap('others', null), next: snap('hermes', null) });

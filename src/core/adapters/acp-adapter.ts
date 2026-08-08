@@ -18,8 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const { Readable, Writable } = require('stream');
 const { PushProvider } = require('../dispatcher/base-provider');
-const { runCli, sanitizeCmdArg, checkCliAvailable } = require('./cli-spawner');
-const { createParser } = require('./cli-parsers');
+const { checkCliAvailable } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
@@ -27,18 +26,6 @@ import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
-
-interface CliFallbackOptions {
-  cmd: string;
-  args?: string[];
-  argsForPayload?: (payload: PushPayload) => string[];
-  sessionIdFromLine?: (line: string) => string | null;
-  adapterType?: string;
-  parser?: string;
-  timeout?: number;
-  stdinPrompt?: boolean;
-  afterRun?: (payload: PushPayload) => void;
-}
 
 export interface AcpAdapterOptions {
   name?: string;
@@ -49,7 +36,6 @@ export interface AcpAdapterOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
-  cliFallback?: CliFallbackOptions | null;
   matchType?: string;
   adapterType?: string;
   cwd?: string;
@@ -157,10 +143,6 @@ class AcpAdapter extends PushProvider {
    * @param {string[]} [options.args]         - 传给 CLI 的额外参数（如 goose 需要 ['acp']）
    * @param {object} [options.env]            - 注入子进程的额外环境变量
    * @param {number} [options.connectTimeout] - 连接超时 ms（默认 15000）
-   * @param {object} [options.cliFallback]    - ACP 降级 CLI 配置。提供后 ACP 失败时自动回退。
-   * @param {string}   options.cliFallback.cmd       - CLI 命令
-   * @param {string[]} options.cliFallback.args      - 参数（{prompt} 替换为消息）
-   * @param {string}   [options.cliFallback.parser]   - 解析器名，默认 'stream-json'
    */
   constructor(options: AcpAdapterOptions = {}) {
     super();
@@ -202,9 +184,6 @@ class AcpAdapter extends PushProvider {
     // session 工作目录：默认系统临时目录，避免 agent 把 VOKO 项目根（含 node_modules）
     // 当成工作区去扫描/索引，产生巨量输出导致 OOM
     this._cwd = options.cwd || os.tmpdir();
-
-    // ACP→CLI 优雅降级配置
-    this._cliFallback = options.cliFallback || null;
 
     // 已经 start() 过
     this._started = false;
@@ -341,7 +320,7 @@ class AcpAdapter extends PushProvider {
 
   /**
    * 推送访客消息给 ACP agent。
-   * ACP 连接失败且有 cliFallback 配置时，自动降级为 CLI stdout 模式。
+   * ACP Transport 只执行 ACP。跨通道降级由 Dispatcher 统一控制。
    */
   async push(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
@@ -349,31 +328,19 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] push 参数不完整: agentId=${agentId} fromUid=${fromUid}`);
     }
 
-    // ── 尝试 ACP 路径 ──
+    // ── ACP 路径 ──
     if (this._cliPath || this._runtimeRequest || this.options.streamFactory) {
       try {
         await this._pushViaAcp(payload);
         return;
       } catch (err) {
         console.error(`[${this._logPrefix}] push via ACP 失败 agent=${agentId}: ${errorMessage(err)}`);
-        // 有降级配置 → 继续走 CLI fallback
-        if (!this._cliFallback) {
-          const deliveryError = err instanceof Error ? err : new Error(String(err));
-          this._emitError(payload, deliveryError);
-          throw deliveryError;
-        }
-        console.error(`[${this._logPrefix}] 降级到 CLI stdout 模式 agent=${agentId}`);
+        const deliveryError = err instanceof Error ? err : new Error(String(err));
+        throw deliveryError;
       }
     }
 
-    // ── CLI fallback ──
-    if (this._cliFallback) {
-      await this._pushViaCli(payload);
-      return;
-    }
-
-    // 无 ACP 无 CLI fallback → 报错
-    this._emitError(payload, new Error(`ACP agent CLI 未找到（agentId=${agentId}）`));
+    // 无 ACP → 明确未投递，由 Dispatcher 决定是否尝试已启用的备用 Transport。
     const unavailable = new Error(`ACP provider unavailable for agentId=${agentId}`);
     (unavailable as any).deliveryOutcome = 'not_delivered';
     throw unavailable;
@@ -516,122 +483,6 @@ class AcpAdapter extends PushProvider {
       agentId, visitorId: fromUid,
       content: fullContent, done: true, sessionKey,
       turnId, replyId: turnId,
-    });
-  }
-
-  // ── CLI Fallback 路径 ─────────────────────────────────────────────
-
-  /** 通过 spawn CLI + stdout 解析发送消息（ACP 不可用时的降级路径） */
-  async _pushViaCli(payload: PushPayload): Promise<void> {
-    const { agentId, fromUid, content } = payload;
-    const turnId = String(payload.turnId || payload.messageId || `acp-cli-${Date.now()}`);
-    const fb = this._cliFallback;
-    const sessionKey = `acp:${agentId}:${fromUid}`;
-    let error: Error | null = null;
-    let fullContent = '';
-    const payloadBinding = payload.providerBinding;
-    let observedSessionId = payloadBinding && payloadBinding.providerType === this._matchType
-      ? payloadBinding.nativeSessionId
-      : null;
-    const observeSession = (line: string) => {
-      if (!fb.sessionIdFromLine) return;
-      try { observedSessionId = fb.sessionIdFromLine(line) || observedSessionId; } catch (_) {}
-    };
-
-    // Windows 下 {prompt} 经 cmd.exe 传多行/含元字符会被截断或注入（同 cli-adapter/hermes-cli），净化为单行；
-    // 函数式 replacement 避免 String.replace 的 $ 模式展开（CODE-5）
-    const rawContent = this._wrapVisitorPrompt(content, payload);
-    const safeContent = process.platform === 'win32' ? sanitizeCmdArg(rawContent) : rawContent;
-    const fallbackArgs = fb.argsForPayload ? fb.argsForPayload(payload) : (fb.args || []);
-    const args = fallbackArgs.map((arg: string) =>
-      arg.replace(/\{prompt\}/g, () => safeContent)
-    );
-
-    const parser = createParser({
-      format: fb.parser || 'stream-json',
-      onText: (chunk: string) => {
-        fullContent += chunk;
-        if (fullContent.length > MAX_REPLY_CHARS) fullContent = fullContent.slice(0, MAX_REPLY_CHARS) + '\n…[回复过长，已截断]';
-        this.emit('agent.reply', {
-          agentId, visitorId: fromUid,
-          content: fullContent, done: false, sessionKey,
-          turnId, replyId: turnId,
-        });
-      },
-    });
-
-    try {
-      const result = await runCli({
-        cmd: fb.cmd,
-        args,
-        tag: `acp-fallback-${agentId}`,
-        timeout: fb.timeout || 120000,
-        env: this.options.env,
-        cwd: this._cwd,
-        stdinInput: fb.stdinPrompt ? `${rawContent.replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n` : undefined,
-        logOutput: false,
-        onStdoutLine: (line: string) => parser.handleLine(line),
-        onStderrLine: observeSession,
-      });
-
-      if (fb.sessionIdFromLine) {
-        for (const line of result.stdout.split(/\r?\n/)) observeSession(line);
-      }
-      if (result.code !== 0) error = new Error(`CLI fallback exited with code ${result.code}`);
-      parser.finish();
-    } catch (err) {
-      error = err instanceof Error ? err : new Error(String(err));
-    } finally {
-      try { fb.afterRun?.(payload); } catch (err) {
-        error = err instanceof Error ? err : new Error(String(err));
-      }
-    }
-
-    if (error) throw error;
-    if (observedSessionId && this._bindingStore) {
-      const binding = payload.providerBinding?.providerType === this._matchType
-        ? payload.providerBinding
-        : null;
-      const channelId = binding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
-      const channelType = binding?.channelType || (payload.channelType === 2 ? 2 : 1);
-      if (binding && observedSessionId === binding.nativeSessionId) {
-        this._bindingStore.touch(binding.id);
-      } else {
-        this._bindingStore.saveManaged({
-          agentId,
-          channelId,
-          channelType,
-          providerType: this._matchType || 'acp',
-          providerInstanceId: binding?.providerInstanceId || null,
-          nativeSessionId: observedSessionId,
-          deliveryMode: 'cli',
-          adapterType: fb.adapterType || `${this._adapterType}-cli-fallback`,
-          expectedVersion: binding?.bindingVersion ?? 0,
-        });
-      }
-    }
-    if (!fullContent.trim()) throw new Error('CLI fallback produced no reply');
-
-    this.emit('agent.reply', {
-      agentId, visitorId: fromUid,
-      content: fullContent,
-      done: true, sessionKey,
-      turnId, replyId: turnId,
-    });
-  }
-
-  /** 直接发射错误回复（无可用路径时） */
-  _emitError(payload: PushPayload, err: Error): void {
-    const turnId = String(payload.turnId || payload.messageId || `acp-error-${Date.now()}`);
-    this.emit('agent.reply', {
-      agentId: payload.agentId,
-      visitorId: payload.fromUid,
-      content: `[ACP Error] ${err.message}`,
-      done: true,
-      sessionKey: `acp:${payload.agentId}:${payload.fromUid}`,
-      turnId,
-      replyId: `${turnId}:error`,
-      error: { code: 'acp_unavailable', message: err.message },
     });
   }
 

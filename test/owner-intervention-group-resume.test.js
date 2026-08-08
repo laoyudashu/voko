@@ -49,7 +49,7 @@ test('主人定向恢复会清除旧收敛闸门，但后续仍走正常 A2A 治
   const db = setupAgents();
   try {
     const provider = new MockProvider();
-    const dispatcher = createDispatcher({ db, providers: { mock: provider } });
+    const dispatcher = createDispatcher({ db, providers: { 'mock-echo': provider } });
     dispatcher.markConverged('uidA', 'uidB', 'group:group_test');
     dispatcher.resetA2AForAgent('agentB', 'uidA', 'group:group_test');
     dispatcher.dispatch('agentB', groupPayload('主人要求继续回复'));
