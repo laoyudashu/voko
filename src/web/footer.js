@@ -3,6 +3,7 @@ const { renderLanguageSwitcher } = require('./language-switcher');
 
 const esc = (value) => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 const DOCS_URL = 'https://www.vokovoko.com/docs.html';
+const VOKO_URL = 'https://www.vokovoko.com';
 const GITHUB_URL = 'https://github.com/laoyudashu/voko';
 
 function renderFooterLinks(t, locale) {
@@ -15,7 +16,15 @@ function renderFooterLinks(t, locale) {
 }
 
 function renderCopyright(t) {
-  return '<span class="voko-footer-copyright" style="justify-self:center;font-size:12px;color:#98a2b3;white-space:nowrap">' + esc(t('common.footer.copyright')) + '</span>';
+  const text = String(t('common.footer.copyright') || '');
+  const brandIndex = text.indexOf('VOKO');
+  if (brandIndex < 0) {
+    return '<span class="voko-footer-copyright" style="justify-self:center;font-size:12px;color:#98a2b3;white-space:nowrap">' + esc(text) + '</span>';
+  }
+  const before = esc(text.slice(0, brandIndex));
+  const after = esc(text.slice(brandIndex + 'VOKO'.length));
+  const brand = '<a href="' + VOKO_URL + '" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">VOKO</a>';
+  return '<span class="voko-footer-copyright" style="justify-self:center;font-size:12px;color:#98a2b3;white-space:nowrap">' + before + brand + after + '</span>';
 }
 
 function renderSystemFooter(db, tFn, locale) {

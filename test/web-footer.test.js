@@ -5,6 +5,7 @@ const { renderSystemFooter } = require('../src/web/footer');
 const { version: packageVersion } = require('../package.json');
 
 const nextVersion = packageVersion.replace(/(\d+)$/, (patch) => String(Number(patch) + 1));
+const brandLink = /href="https:\/\/www\.vokovoko\.com" target="_blank" rel="noopener noreferrer"[^>]*>VOKO<\/a>/;
 
 test('shared web footer renders runtime status and global actions', () => {
   const runtime = { port: 3100, pid: 48264, agents: [{ imConnected: true }] };
@@ -14,6 +15,7 @@ test('shared web footer renders runtime status and global actions', () => {
     'common.footer.port': '端口',
     'common.footer.status': '运行状态',
     'common.footer.status_ok': '正常',
+    'common.footer.copyright': '© VOKO · All rights reserved',
     'web.bug_report.link': '错误上报',
   };
   const html = renderSystemFooter(db, (key) => labels[key] || key, 'zh');
@@ -28,6 +30,8 @@ test('shared web footer renders runtime status and global actions', () => {
   assert.match(html, /href="\/bug-report"[\s\S]*错误上报/);
   assert.match(html, /href="https:\/\/www\.vokovoko\.com\/docs\.html" target="_blank" rel="noopener noreferrer"[^>]*>common\.footer\.docs<\/a>/);
   assert.match(html, /href="https:\/\/github\.com\/laoyudashu\/voko" target="_blank" rel="noopener noreferrer"[^>]*>common\.footer\.github<\/a>/);
+  assert.match(html, brandLink);
+  assert.match(html, /© <a href="https:\/\/www\.vokovoko\.com"[\s\S]*>VOKO<\/a> · All rights reserved/);
   assert.ok(html.indexOf('href="/bug-report"') < html.indexOf('href="https://www.vokovoko.com/docs.html"'));
   assert.ok(html.indexOf('href="https://www.vokovoko.com/docs.html"') < html.indexOf('href="https://github.com/laoyudashu/voko"'));
   assert.match(html, /role="navigation" aria-label="common\.footer\.links_aria"/);
@@ -35,8 +39,7 @@ test('shared web footer renders runtime status and global actions', () => {
   assert.doesNotMatch(html, /<nav\b/);
   assert.match(html, /class="voko-footer-copyright"[^>]*justify-self:center[^>]*white-space:nowrap/);
   assert.doesNotMatch(html, /display:block;width:100%;margin-top:8px/);
-  assert.ok(html.indexOf('common.footer.copyright') < html.indexOf('href="/bug-report"'));
-  assert.match(html, /common\.footer\.copyright/);
+  assert.ok(html.indexOf('voko-footer-copyright') < html.indexOf('href="/bug-report"'));
   assert.match(html, /data-voko-language-switcher/);
 });
 
@@ -49,6 +52,7 @@ test('shared web footer shows a compact manual update hint without the latest ve
     'common.footer.port': '端口',
     'common.footer.status': '运行状态',
     'common.footer.status_ok': '正常',
+    'common.footer.copyright': '© VOKO · All rights reserved',
     'common.footer.update_available': '有更新',
     'common.footer.update_title': '更新 VOKO',
     'common.footer.update_instruction': '请在终端运行以下命令。升级完成后，重新启动 VOKO 即可使用新版本。',
@@ -66,6 +70,7 @@ test('shared web footer shows a compact manual update hint without the latest ve
   assert.match(html, /id="voko-copy-update"[\s\S]*复制/);
   assert.match(html, /升级完成后/);
   assert.ok(!html.includes(nextVersion));
+  assert.match(html, brandLink);
 });
 
 test('shared web footer keeps navigation when runtime data is unavailable', () => {
@@ -79,7 +84,8 @@ test('shared web footer keeps navigation when runtime data is unavailable', () =
   };
   const html = renderSystemFooter(db, (key) => labels[key] || key, 'en');
 
+  assert.match(html, brandLink);
   assert.match(html, /href="https:\/\/www\.vokovoko\.com\/docs\.html"[^>]*>Documentation<\/a>/);
   assert.match(html, /href="https:\/\/github\.com\/laoyudashu\/voko"[^>]*>GitHub<\/a>/);
-  assert.match(html, /© VOKO · All rights reserved/);
+  assert.match(html, /© <a href="https:\/\/www\.vokovoko\.com"[\s\S]*>VOKO<\/a> · All rights reserved/);
 });
