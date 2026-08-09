@@ -5,24 +5,21 @@ const LANGUAGES = [
 
 function renderLanguageSwitcher(locale) {
   const current = LANGUAGES.some((item) => item.code === locale) ? locale : 'zh';
-  const items = LANGUAGES.map((item) => {
-    if (item.code === current) {
-      return '<span aria-current="true">' + item.label + '</span>';
-    }
-    return '<a href="?lang=' + item.code + '" data-voko-lang="' + item.code + '" hreflang="' + item.code + '">' + item.label + '</a>';
-  });
-  return '<span data-voko-language-switcher="1">' + items.join(' <span aria-hidden="true">|</span> ') + '</span>'
+  const options = LANGUAGES.map((item) => '<option value="' + item.code + '"' + (item.code === current ? ' selected' : '') + '>' + item.label + '</option>');
+  return '<span data-voko-language-switcher="1" style="display:inline-flex;align-items:center">'
+    + '<select data-voko-language-select="1" aria-label="Language" style="width:auto;max-width:none;margin:0;padding:4px 28px 4px 8px;border:1px solid #d0d5dd;border-radius:6px;background:#fff;color:#344054;font:inherit;font-size:13px;line-height:1.4;cursor:pointer">'
+    + options.join('') + '</select></span>'
     + '<script>(function(){if(window.__vokoLanguageSwitcher)return;window.__vokoLanguageSwitcher=1;'
     + 'var draftKey="voko.languageSwitchDraft";'
     + 'function safeField(el){var type=(el.type||"").toLowerCase(),name=(el.name||el.id||"").toLowerCase();'
-    + 'return el.matches("input,textarea,select")&&!["password","file","hidden","submit","button"].includes(type)&&el.autocomplete!=="one-time-code"&&!/(password|passwd|code|token|secret|key)/.test(name)}'
+    + 'return el.matches("input,textarea,select")&&!el.hasAttribute("data-voko-language-select")&&!["password","file","hidden","submit","button"].includes(type)&&el.autocomplete!=="one-time-code"&&!/(password|passwd|code|token|secret|key)/.test(name)}'
     + 'function saveDraft(){try{var values=[];document.querySelectorAll("input,textarea,select").forEach(function(el,i){if(!safeField(el))return;values.push({i:i,id:el.id||"",name:el.name||"",type:el.type||"",value:el.value,checked:!!el.checked})});'
     + 'sessionStorage.setItem(draftKey,JSON.stringify({path:location.pathname,values:values}))}catch(_){}}'
     + 'function restoreDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||"null");sessionStorage.removeItem(draftKey);if(!d||d.path!==location.pathname)return;'
     + 'var fields=document.querySelectorAll("input,textarea,select");d.values.forEach(function(v){var el=v.id?document.getElementById(v.id):fields[v.i];if(!el||!safeField(el))return;if(el.type==="checkbox"||el.type==="radio")el.checked=v.checked;else el.value=v.value})}catch(_){}}'
     + 'restoreDraft();'
-    + 'document.addEventListener("click",function(e){var a=e.target.closest("[data-voko-lang]");if(!a)return;'
-    + 'e.preventDefault();saveDraft();var u=new URL(location.href);u.searchParams.set("lang",a.dataset.vokoLang);location.href=u.toString()})})();</script>';
+    + 'document.addEventListener("change",function(e){var select=e.target.closest("[data-voko-language-select]");if(!select||!select.value)return;'
+    + 'saveDraft();var u=new URL(location.href);u.searchParams.set("lang",select.value);location.href=u.toString()})})();</script>';
 }
 
 function renderLanguageFooter(locale, style) {
