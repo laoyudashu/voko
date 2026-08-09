@@ -7,7 +7,8 @@ const path = require('node:path');
 const test = require('node:test');
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
 const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore,
-  fingerprintProviderSession, getRoutingFeaturePolicy, isRoutingPolicyEligible } = require('../build/core/provider-routing');
+  fingerprintProviderSession, getRoutingFeaturePolicy, isRoutingPolicyEligible,
+  backfillLegacyAgentIdentityBindings } = require('../build/core/provider-routing');
 
 function database() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-routing-'));
@@ -42,6 +43,31 @@ test('v7 upgrade is backed up and schema 8 migration is idempotent', () => {
     upgraded.close();
     const reopened = initDatabase(dbPath, { silent: true });
     assert.equal(reopened.prepare("SELECT COUNT(*) AS c FROM config WHERE type='provider_session_hmac_key_v1'").get().c, 1);
+    reopened.close();
+  } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
+});
+
+test('schema 8 startup runs the legacy identity backfill when the marker is absent', () => {
+  const fixture = database();
+  const dbPath = fixture.dbPath;
+  try {
+    const now = Date.now();
+    fixture.db.prepare(`INSERT INTO agents
+      (id,agent_id,imUid,imToken,im_server_url,publish_status,created_at,updated_at,backend_type)
+      VALUES (?,?,?,?,?,'published',?,?,?)`)
+      .run('row-startup', 'agent-startup', 'im-startup', 'token', 'https://im.test', now, now, 'codex');
+    fixture.db.prepare(`INSERT INTO provider_conversation_bindings
+      (id,agent_id,channel_id,provider_type,provider_instance_id,delivery_mode,adapter_type,
+       native_session_id,session_origin,status,binding_version,created_at,updated_at,last_used_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?)`)
+      .run('legacy-startup', 'agent-startup', 'peer-startup', 'codex', 'startup', 'cli', 'codex-cli',
+        'thread-startup', 'caller', 'active', now, now, now);
+    fixture.db.prepare("DELETE FROM config WHERE type='provider_identity_legacy_backfill_v1'").run();
+    fixture.db.close();
+
+    const reopened = initDatabase(dbPath, { silent: true });
+    assert.deepEqual(new AgentIdentityBindingStore(reopened).resolve('codex', 'startup', 'thread-startup'), ['agent-startup']);
+    assert.ok(reopened.prepare("SELECT 1 FROM config WHERE type='provider_identity_legacy_backfill_v1'").get());
     reopened.close();
   } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
 });
@@ -119,6 +145,36 @@ test('identity binding allows shared instances and resolves only exact trusted s
     assert.deepEqual(store.resolve('codex', 'shared', 'thread-b'), ['agent-b']);
     assert.deepEqual(store.resolve('codex', 'shared', 'thread-c'), []);
     assert.equal(fingerprintProviderSession(fixture.db, 'codex', 'thread-a').length, 64);
+  } finally { fixture.close(); }
+});
+
+test('legacy identity backfill imports only unique compatible sessions and is one-time', () => {
+  const fixture = database();
+  try {
+    const now = Date.now();
+    const insertAgent = fixture.db.prepare(`INSERT INTO agents
+      (id,agent_id,imUid,imToken,im_server_url,publish_status,created_at,updated_at,backend_type)
+      VALUES (?,?,?,?,?,'published',?,?,?)`);
+    insertAgent.run('row-a', 'agent-a', 'im-a', 'token-a', 'https://im.test', now, now, 'codex');
+    insertAgent.run('row-b', 'agent-b', 'im-b', 'token-b', 'https://im.test', now, now, 'codex');
+    const insertBinding = fixture.db.prepare(`INSERT INTO provider_conversation_bindings
+      (id,agent_id,channel_id,provider_type,provider_instance_id,delivery_mode,adapter_type,
+       native_session_id,session_origin,status,binding_version,created_at,updated_at,last_used_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?)`);
+    insertBinding.run('legacy-a', 'agent-a', 'peer-a', 'codex', 'shared', 'cli', 'codex-cli', 'thread-a', 'caller', 'active', now, now, now);
+    insertBinding.run('legacy-b', 'agent-b', 'peer-b', 'codex', 'shared', 'cli', 'codex-cli', 'thread-b', 'caller', 'active', now, now, now);
+    insertBinding.run('legacy-amb-a', 'agent-a', 'peer-c', 'codex', 'shared', 'cli', 'codex-cli', 'thread-amb', 'caller', 'active', now, now, now);
+    insertBinding.run('legacy-amb-b', 'agent-b', 'peer-d', 'codex', 'shared', 'cli', 'codex-cli', 'thread-amb', 'caller', 'stale', now, now, now);
+    insertBinding.run('legacy-incompatible', 'agent-a', 'peer-e', 'goose', 'shared', 'cli', 'goose-cli', 'thread-goose', 'caller', 'active', now, now, now);
+
+    const result = backfillLegacyAgentIdentityBindings(fixture.db, { force: true });
+    assert.equal(result.inserted, 2);
+    assert.equal(result.ambiguous, 1);
+    assert.equal(result.incompatible, 1);
+    assert.deepEqual(new AgentIdentityBindingStore(fixture.db).resolve('codex', 'shared', 'thread-a'), ['agent-a']);
+    assert.deepEqual(new AgentIdentityBindingStore(fixture.db).resolve('codex', 'shared', 'thread-amb'), []);
+    assert.ok(fixture.db.prepare("SELECT 1 FROM config WHERE type='provider_identity_legacy_backfill_v1'").get());
+    assert.equal(backfillLegacyAgentIdentityBindings(fixture.db).reason, 'already_completed');
   } finally { fixture.close(); }
 });
 

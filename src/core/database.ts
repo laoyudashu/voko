@@ -289,6 +289,18 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
   }
 }
 
+// Schema 8 keeps the legacy conversation bindings. Backfill only the
+// unambiguous identities once; ambiguous historical sessions remain
+// explicit-selection cases instead of being guessed.
+function runProviderIdentityBackfill(db: DatabaseSync): void {
+  try {
+    const { backfillLegacyAgentIdentityBindings } = require('./provider-routing');
+    backfillLegacyAgentIdentityBindings(db);
+  } catch (e: any) {
+    console.error('[DB] provider identity backfill:', e.message);
+  }
+}
+
 function migrateGoosePushDeliveryModes(db: DatabaseSync): void {
   const hasAgents = !!db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents'",
@@ -436,6 +448,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   }
   if (schemaVersion === SCHEMA_VERSION) {
     runCurrentStartupMaintenance(db);
+    runProviderIdentityBackfill(db);
     return db;
   }
   const hasExistingSchema = !!db.prepare(
@@ -1353,6 +1366,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
 
   if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);
   if (schemaVersion < 8) migrateSchema8ProviderRouting(db, schemaVersion);
+  runProviderIdentityBackfill(db);
   runCurrentStartupMaintenance(db);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 

@@ -41,6 +41,25 @@ describe('MCP update_agent_profile delivery safety', () => {
     db.close();
   });
 
+  it('requires explicit selection when multiple Agents have no trusted caller context', async () => {
+    const { handlers, db } = makeHandlers('codex');
+    const now = Date.now();
+    db.prepare(`INSERT INTO agents
+      (id, agent_id, imUid, imToken, im_server_url, owner_email, publish_status, access_mode,
+       backend_type, backend_instance_id, delivery_modes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'published', 'private', ?, ?, ?, ?, ?)`)
+      .run('row-2', 'agent-2', 'im-2', 'token-2', 'wss://example.test', 'owner@example.com',
+        'codex', 'codex-shared', JSON.stringify(['cli', 'pull']), now, now);
+    const result = await handlers.whoami({});
+
+    assert.equal(result.currentAgent, null);
+    assert.equal(result.identity.status, 'selection_required');
+    assert.equal(result.identity.reason, 'multiple_agents');
+    assert.equal(result.identity.requiresAgentId, true);
+    assert.equal(result.candidates.length, 2);
+    db.close();
+  });
+
   it('lists owned Agents separately with pagination metadata', async () => {
     const { handlers, db } = makeHandlers('codex');
     const result = await handlers.list_agents({ keyword: 'agent-1', limit: 10, offset: 0 });

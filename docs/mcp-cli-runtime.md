@@ -104,6 +104,21 @@ Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI 
 
 `voko mcp` is the recommended transport because it discovers the active Lite runtime and forwards stdio traffic without requiring the client to know a fixed local port. Do not hard-code `localhost:3002` or any other historical port in an MCP client.
 
+### Caller identity and `whoami`
+
+`voko whoami` and `voko_whoami` are read-only identity queries. With one registered Agent, VOKO returns that Agent automatically. With multiple Agents, automatic resolution requires a trusted Provider session context; otherwise the result is `selection_required` and the caller must select an Agent from `voko list_agents`/`voko_list_agents`.
+
+The stdio bridge forwards a stable caller session only when the Provider exposes it (or when a VOKO-managed adapter supplies `VOKO_CALLER_SESSION_ID`). VOKO does not infer identity from the newest session, process recency, workspace name, or an untrusted client-provided value. This is intentional: an explicit selection is safer than routing a message to the wrong Agent. Historical conversation bindings are backfilled only when one compatible Agent is the unique owner; ambiguous bindings remain explicit-selection cases.
+
+For a CLI call where the Provider does not expose caller context, use:
+
+```bash
+voko list_agents
+voko whoami --agent <agentId>
+```
+
+The same `agentId` selection can be supplied to other Agent-scoped CLI/MCP operations. Do not put native Provider session IDs, tokens, or local configuration paths into prompts or ordinary logs.
+
 ### HTTP fallback for clients without stdio
 
 Use HTTP only when the client cannot launch a stdio command:
