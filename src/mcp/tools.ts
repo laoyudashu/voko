@@ -17,7 +17,8 @@ const { createRegistrationOrchestrator } = require('../core/registration-orchest
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
-const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore, fingerprintProviderSession, normalizeProviderFamily } = require('../core/provider-routing');
+const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
+  isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
@@ -804,11 +805,17 @@ function createToolHandlers(cx: McpContext) {
     } catch (_) { return ''; }
   }
   /** 从 provider caller 上下文解析 MCP 客户端身份，用作游标隔离的 clientId。 */
+  function _sessionPullEligible(agentId: string, caller: any): boolean {
+    if (!caller?.providerType || !caller?.nativeSessionId || !caller?.evidence) return false;
+    const agent = cx.query<{ backend_type?: string }>('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1', [agentId])[0];
+    const callerFamily = normalizeProviderFamily(caller.providerType);
+    if (!agent?.backend_type || normalizeProviderFamily(agent.backend_type) !== callerFamily) return false;
+    return isRoutingPolicyEligible(cx.db, 'session_scoped_pull_v1', { providerFamily: callerFamily });
+  }
   function _resolveClientId(agentId?: string, suffix?: string): string | undefined {
     try {
       const caller = getProviderCaller();
-      if (featureEnabled('session_scoped_pull_v1', false)
-        && agentId && caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
+      if (agentId && _sessionPullEligible(agentId, caller)) {
         const fp = fingerprintProviderSession(cx.db, caller.providerType, caller.nativeSessionId);
         return `session:${agentId}:${fp}${suffix ? `:${String(suffix).slice(0, 64)}` : ''}`;
       }
@@ -820,9 +827,9 @@ function createToolHandlers(cx: McpContext) {
     return clientId?.startsWith('session:') ? 'session-scoped' : clientId || null;
   }
   function _filterPullRowsForCaller(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
-    if (!featureEnabled('session_scoped_pull_v1', false) || !agentId || rows.length === 0) return rows;
+    if (!agentId || rows.length === 0) return rows;
     const caller = getProviderCaller();
-    if (!caller?.providerType || !caller?.nativeSessionId || !caller?.evidence) return rows;
+    if (!_sessionPullEligible(agentId, caller)) return rows;
     try {
       const fp = fingerprintProviderSession(cx.db, caller.providerType, caller.nativeSessionId);
       const ids = rows.map((row) => row.id);

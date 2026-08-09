@@ -7,7 +7,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
 const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore,
-  fingerprintProviderSession } = require('../build/core/provider-routing');
+  fingerprintProviderSession, getRoutingFeaturePolicy, isRoutingPolicyEligible } = require('../build/core/provider-routing');
 
 function database() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-routing-'));
@@ -119,5 +119,31 @@ test('identity binding allows shared instances and resolves only exact trusted s
     assert.deepEqual(store.resolve('codex', 'shared', 'thread-b'), ['agent-b']);
     assert.deepEqual(store.resolve('codex', 'shared', 'thread-c'), []);
     assert.equal(fingerprintProviderSession(fixture.db, 'codex', 'thread-a').length, 64);
+  } finally { fixture.close(); }
+});
+
+test('precise routing policy is limited to configured provider, channel, and content allowlists', () => {
+  const fixture = database();
+  try {
+    assert.equal(isRoutingPolicyEligible(fixture.db, 'precise_reply_routing_v1', {
+      providerFamily: 'codex', channelType: 1, contentType: 1,
+    }), false);
+    const policy = { enabled: true, providerFamilies: ['codex', 'claude-code', 'opencode', 'kiro'],
+      channelTypes: [1], contentTypes: [1] };
+    fixture.db.prepare('INSERT INTO config (type,data,updated_at) VALUES (?,?,?)')
+      .run('feature:precise_reply_routing_v1', JSON.stringify(policy), Date.now());
+    assert.equal(getRoutingFeaturePolicy(fixture.db, 'precise_reply_routing_v1').enabled, true);
+    assert.equal(isRoutingPolicyEligible(fixture.db, 'precise_reply_routing_v1', {
+      providerFamily: 'codex', channelType: 1, contentType: 1,
+    }), true);
+    assert.equal(isRoutingPolicyEligible(fixture.db, 'precise_reply_routing_v1', {
+      providerFamily: 'goose', channelType: 1, contentType: 1,
+    }), false);
+    assert.equal(isRoutingPolicyEligible(fixture.db, 'precise_reply_routing_v1', {
+      providerFamily: 'codex', channelType: 2, contentType: 1,
+    }), false);
+    assert.equal(isRoutingPolicyEligible(fixture.db, 'precise_reply_routing_v1', {
+      providerFamily: 'codex', channelType: 1, contentType: 2,
+    }), false);
   } finally { fixture.close(); }
 });

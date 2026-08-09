@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const { PushProvider } = require('../base-provider');
 const { runCli, classifyCliFailure } = require('../../adapters/cli-spawner');
-const { resolveGooseCommand, isGooseRuntimeAvailable } = require('../goose-command');
+const { resolveGooseCommand, resolveGooseRuntime, isGooseRuntimeAvailable } = require('../goose-command');
+const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
@@ -38,7 +39,12 @@ function conversationScope(payload: PushPayload): { channelId: string; channelTy
 class GooseCliProvider extends PushProvider {
   private readonly _runCli: RunCli;
   private readonly _checkAvailable: (command: string) => boolean;
+  private readonly _useResolvedRuntime: boolean;
   private readonly _queues = new Map<string, Promise<void>>();
+  private readonly _turnPromises = new Map<string, Promise<void>>();
+  private readonly _completedTurns = new Set<string>();
+  private readonly _activeTurns = new Map<string, { epoch: number; turnId: string }>();
+  private _lifecycleEpoch = 0;
 
   constructor(options: GooseCliOptions = {}) {
     super();
@@ -50,6 +56,7 @@ class GooseCliProvider extends PushProvider {
       : null;
     this._contextWindow = options.contextWindow ?? 0;
     this._runCli = options.runCli || runCli;
+    this._useResolvedRuntime = !options.runCli;
     this._checkAvailable = options.checkAvailable || (() => isGooseRuntimeAvailable('cli'));
   }
 
@@ -77,13 +84,33 @@ class GooseCliProvider extends PushProvider {
 
   push(payload: PushPayload): Promise<void> {
     const scope = conversationScope(payload);
+    const turnId = String(payload.turnId || payload.messageId || '');
+    const turnKey = turnId ? `${payload.agentId}:${turnId}` : '';
+    if (turnKey && this._completedTurns.has(turnKey)) return Promise.resolve();
+    if (turnKey && this._turnPromises.has(turnKey)) return this._turnPromises.get(turnKey)!;
     const previous = this._queues.get(scope.key) || Promise.resolve();
     const current = previous.catch(() => {}).then(() => this._pushScoped(payload, scope));
+    const tracked = current.then(() => {
+      if (turnKey) this._rememberCompletedTurn(turnKey);
+    }, (error) => {
+      if (turnKey && (error as any)?.deliveryOutcome !== 'not_delivered') this._rememberCompletedTurn(turnKey);
+      throw error;
+    });
     this._queues.set(scope.key, current);
+    if (turnKey) this._turnPromises.set(turnKey, tracked);
     current.finally(() => {
       if (this._queues.get(scope.key) === current) this._queues.delete(scope.key);
+      if (turnKey && this._turnPromises.get(turnKey) === tracked) this._turnPromises.delete(turnKey);
     }).catch(() => {});
-    return current;
+    return tracked;
+  }
+
+  private _rememberCompletedTurn(turnKey: string): void {
+    this._completedTurns.add(turnKey);
+    if (this._completedTurns.size > 1024) {
+      const oldest = this._completedTurns.values().next().value;
+      if (oldest) this._completedTurns.delete(oldest);
+    }
   }
 
   private async _pushScoped(
@@ -92,6 +119,9 @@ class GooseCliProvider extends PushProvider {
   ): Promise<void> {
     const { agentId, fromUid } = payload;
     const turnId = String(payload.turnId || payload.messageId || `goose-cli-${Date.now()}`);
+    const turn = { epoch: this._lifecycleEpoch, turnId };
+    this._activeTurns.set(scope.key, turn);
+    const isCurrent = () => this._activeTurns.get(scope.key) === turn && this._lifecycleEpoch === turn.epoch;
     let binding = this.acceptsBinding(payload.providerBinding) ? payload.providerBinding : null;
     if (!binding && this._bindingStore) {
       const active = this._bindingStore.getActive(agentId, scope.channelId, scope.channelType);
@@ -133,6 +163,8 @@ class GooseCliProvider extends PushProvider {
       throw error;
     }
 
+    if (!isCurrent()) return;
+
     if (sessionId && result.code !== 0 && /session[^\r\n]*(?:not found|does not exist)|no session found/i.test(result.stderr || result.stdout)) {
       if (binding?.id) this._bindingStore?.markStale(binding.id);
       binding = null;
@@ -145,6 +177,7 @@ class GooseCliProvider extends PushProvider {
         this._handleRuntimeFailure(agentId, error);
         throw error;
       }
+      if (!isCurrent()) return;
     }
 
     if (result.code !== 0) {
@@ -175,7 +208,7 @@ class GooseCliProvider extends PushProvider {
     }
 
     const replyText = _extractReply(result.stdout);
-    if (replyText) {
+    if (replyText && isCurrent()) {
       this.emit('agent.reply', {
         agentId, visitorId: fromUid, content: replyText, done: true,
         sessionKey: `goose:${scope.logicalName}`, turnId, replyId: turnId,
@@ -184,6 +217,7 @@ class GooseCliProvider extends PushProvider {
     } else {
       console.error(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} no reply text`);
     }
+    if (this._activeTurns.get(scope.key) === turn) this._activeTurns.delete(scope.key);
   }
 
   private _execute(input: string, sessionId: string | null, createName: string | null) {
@@ -191,8 +225,11 @@ class GooseCliProvider extends PushProvider {
     if (sessionId) args.push('--session-id', sessionId, '--resume');
     else args.push('--name', createName!);
     args.push('--quiet', '--output-format', 'json');
+    const runtime = this._useResolvedRuntime ? resolveGooseRuntime('cli') : null;
     return this._runCli({
-      cmd: this._binPath, args, stdinInput: input, tag: 'goose-cli',
+      cmd: runtime?.available ? runtime.executable : this._binPath,
+      args: [...(runtime?.available ? runtime.argvPrefix : []), ...args],
+      env: withRuntimePath(undefined, runtime), stdinInput: input, tag: 'goose-cli',
       timeout: 180000, logOutput: false,
     });
   }
@@ -207,9 +244,11 @@ class GooseCliProvider extends PushProvider {
 
   private async _safeListSessions(): Promise<GooseSessionSummary[] | null> {
     try {
+      const runtime = this._useResolvedRuntime ? resolveGooseRuntime('cli') : null;
       const result = await this._runCli({
-        cmd: this._binPath,
-        args: ['session', 'list', '--format', 'json'],
+        cmd: runtime?.available ? runtime.executable : this._binPath,
+        args: [...(runtime?.available ? runtime.argvPrefix : []), 'session', 'list', '--format', 'json'],
+        env: withRuntimePath(undefined, runtime),
         tag: 'goose-session-list', timeout: 15000, maxOutputBytes: 32 * 1024 * 1024, logOutput: false,
       });
       if (result.code !== 0) return null;
@@ -235,8 +274,14 @@ class GooseCliProvider extends PushProvider {
     });
   }
 
-  start() { this._refreshAvailability(); }
+  start() {
+    this._lifecycleEpoch += 1;
+    this._activeTurns.clear();
+    this._refreshAvailability();
+  }
   stop() {
+    this._lifecycleEpoch += 1;
+    this._activeTurns.clear();
     if (this._available === true) {
       this.notifyAvailability({ backendType: 'goose', mode: 'cli', available: false, reason: 'provider stopped' });
     }

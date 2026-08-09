@@ -17,7 +17,7 @@ import type { DatabaseLike } from '../../types/database';
 import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
-const { isRoutingFeatureEnabled } = require('../provider-routing');
+const { isRoutingPolicyEligible } = require('../provider-routing');
 const { getProviderFamily, getProviderTransport } = require('./provider-catalog');
 const { ProviderRuntimeRegistry } = require('./provider-runtime-registry');
 const { RouteResolver } = require('./route-resolver');
@@ -197,6 +197,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const runtimeRegistry = new ProviderRuntimeRegistry(providers);
   const routeResolver = new RouteResolver();
   const deliveryExecutor = new DeliveryExecutor();
+  const routingStats: Record<string, number> = Object.create(null);
+  const countRouting = (name: string) => { routingStats[name] = (routingStats[name] || 0) + 1; };
 
   // provider 的回复通常只带 visitorId。这里按投递顺序补回群发送者、频道和 A2A scope，
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
@@ -760,9 +762,14 @@ ${body}
   function _captureProviderBinding(agentId: string, payload: PushPayload): PushPayload {
     const channelId = payload.channelId || payload.fromUid;
     const channelType = payload.channelType === 2 ? 2 : 1;
-    const precise = isRoutingFeatureEnabled(db, 'precise_reply_routing_v1', false);
-    const exact = precise ? (payload as any).replyRouteContext : null;
+    const candidate = (payload as any).replyRouteContext;
+    const exact = candidate && isRoutingPolicyEligible(db, 'precise_reply_routing_v1', {
+      providerFamily: candidate.providerFamily,
+      channelType,
+      contentType: Number(payload.contentType || 1),
+    }) ? candidate : null;
     if (exact?.strictSessionRoute && exact?.nativeSessionId && exact?.providerFamily) {
+      countRouting(`precise_hit:${exact.providerFamily}`);
       return { ...payload, providerBinding: {
         id: exact.conversationId, bindingVersion: 1, providerType: exact.providerFamily,
         providerInstanceId: exact.providerInstanceKey || null, deliveryMode: 'precise',
@@ -770,6 +777,7 @@ ${body}
         sessionOrigin: 'caller', channelId, channelType, strictSessionRoute: true,
       } };
     }
+    if (candidate) countRouting(`precise_rejected:${candidate.providerFamily || 'unknown'}`);
     const binding = _bindingStore.getActive(agentId, channelId, channelType);
     return {
       ...payload,
@@ -862,9 +870,15 @@ ${body}
         },
         invoke: async (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          const selectedBinding = _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute);
+          if (baseProviderPayload.providerBinding?.strictSessionRoute && !selectedBinding) {
+            const error = new Error('Provider cannot restore the precise session');
+            (error as any).deliveryOutcome = 'not_delivered';
+            throw error;
+          }
           const providerPayload = {
             ...baseProviderPayload,
-            providerBinding: _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute),
+            providerBinding: selectedBinding,
           };
           payloadByProvider.set(candidate.target, providerPayload);
           return candidate.target.push!(providerPayload);
@@ -886,6 +900,9 @@ ${body}
         },
       });
       if (result.outcome === 'delivered') return;
+      if (baseProviderPayload.providerBinding?.strictSessionRoute) {
+        countRouting(result.outcome === 'not_delivered' ? 'precise_fallback_pull' : `precise_${result.outcome}`);
+      }
       _removeReplyContext(replyContext);
       if (result.outcome === 'not_delivered') console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
     } catch (err) {
@@ -1026,7 +1043,9 @@ ${body}
           console.error(`[Dispatcher] steer 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
         },
       });
-      if (delivery.outcome === 'delivered') return delivery.result;
+      if (delivery.outcome === 'delivered') {
+        return delivery.result ?? { success: true, deliveryOutcome: 'delivered' };
+      }
       if (replyContext) {
         const queue = _replyContexts.get(_replyContextKey(agentId, visitorId));
         const context = queue?.find((item) => item.turnId === turnId);
@@ -1085,7 +1104,8 @@ ${body}
     catch (e) { console.error('[Dispatcher] invalidateBindingsForConfigChange 失败:', errorMessage(e)); return 0; }
   }
 
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
+  const getRoutingStats = () => ({ ...routingStats });
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, getRoutingStats, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher };

@@ -7,6 +7,14 @@ const HMAC_CONFIG_KEY = 'provider_session_hmac_key_v1';
 export type ConversationOrigin = 'caller' | 'voko_managed' | 'web_system';
 export type ConversationStatus = 'active' | 'stale' | 'unavailable';
 export type RouteStatus = 'pending' | 'active' | 'failed' | 'expired' | 'invalid';
+export const PRECISE_ROUTING_GREY_PROVIDERS = Object.freeze(['codex', 'claude-code', 'opencode', 'kiro']);
+
+export interface RoutingFeaturePolicy {
+  enabled: boolean;
+  providerFamilies: string[];
+  channelTypes: number[];
+  contentTypes: number[];
+}
 
 function clean(value: unknown, max = 512): string {
   return String(value ?? '').trim().slice(0, max);
@@ -40,6 +48,56 @@ export function isRoutingFeatureEnabled(db: DatabaseLike, name: string, defaultV
     const parsed = JSON.parse(row.data);
     return parsed === true || parsed?.enabled === true;
   } catch (_) { return defaultValue; }
+}
+
+export function getRoutingFeaturePolicy(
+  db: DatabaseLike,
+  name: string,
+  defaults: Partial<RoutingFeaturePolicy> = {},
+): RoutingFeaturePolicy {
+  const fallback: RoutingFeaturePolicy = {
+    enabled: defaults.enabled ?? false,
+    providerFamilies: (defaults.providerFamilies || []).map(normalizeProviderFamily).filter(Boolean),
+    channelTypes: (defaults.channelTypes || [1]).map(Number).filter(Number.isFinite),
+    contentTypes: (defaults.contentTypes || [1]).map(Number).filter(Number.isFinite),
+  };
+  const envValue = process.env[`VOKO_${String(name).toUpperCase()}`];
+  if (envValue != null) {
+    if (/^(0|false|no|off)$/i.test(envValue)) return { ...fallback, enabled: false };
+    if (/^(1|true|yes|on)$/i.test(envValue)) return { ...fallback, enabled: true };
+    return { ...fallback, enabled: true,
+      providerFamilies: envValue.split(',').map(normalizeProviderFamily).filter(Boolean) };
+  }
+  try {
+    const row = db.prepare('SELECT data FROM config WHERE type=? LIMIT 1').get(`feature:${name}`) as { data?: string } | undefined;
+    if (!row?.data) return fallback;
+    const parsed = JSON.parse(row.data);
+    if (typeof parsed === 'boolean') return { ...fallback, enabled: parsed };
+    if (!parsed || typeof parsed !== 'object') return fallback;
+    return {
+      enabled: parsed.enabled === true,
+      providerFamilies: Array.isArray(parsed.providerFamilies)
+        ? parsed.providerFamilies.map(normalizeProviderFamily).filter(Boolean) : fallback.providerFamilies,
+      channelTypes: Array.isArray(parsed.channelTypes)
+        ? parsed.channelTypes.map(Number).filter(Number.isFinite) : fallback.channelTypes,
+      contentTypes: Array.isArray(parsed.contentTypes)
+        ? parsed.contentTypes.map(Number).filter(Number.isFinite) : fallback.contentTypes,
+    };
+  } catch (_) { return fallback; }
+}
+
+export function isRoutingPolicyEligible(
+  db: DatabaseLike,
+  name: string,
+  input: { providerFamily: string; channelType?: number; contentType?: number },
+): boolean {
+  const policy = getRoutingFeaturePolicy(db, name, {
+    providerFamilies: [...PRECISE_ROUTING_GREY_PROVIDERS], channelTypes: [1], contentTypes: [1],
+  });
+  if (!policy.enabled || !policy.providerFamilies.includes(normalizeProviderFamily(input.providerFamily))) return false;
+  if (input.channelType != null && !policy.channelTypes.includes(Number(input.channelType))) return false;
+  if (input.contentType != null && !policy.contentTypes.includes(Number(input.contentType))) return false;
+  return true;
 }
 
 export function getProviderSessionHmacKey(db: DatabaseLike): Buffer {
@@ -228,4 +286,5 @@ export class AgentIdentityBindingStore {
 }
 
 module.exports = { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore,
-  fingerprintProviderSession, getProviderSessionHmacKey, isRoutingFeatureEnabled, normalizeProviderFamily };
+  fingerprintProviderSession, getProviderSessionHmacKey, getRoutingFeaturePolicy, isRoutingFeatureEnabled,
+  isRoutingPolicyEligible, normalizeProviderFamily, PRECISE_ROUTING_GREY_PROVIDERS };

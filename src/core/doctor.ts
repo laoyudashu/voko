@@ -7,6 +7,7 @@ const { SCHEMA_VERSION } = require('./database');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle');
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
+const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
@@ -338,6 +339,20 @@ function inspectGooseDelivery(agents: any[], checks: any[]): void {
     `${ready}/${rows.length} Goose Agent(s) have configured runtime and active Push`, { agents: rows });
 }
 
+function inspectRoutingFeatures(db: any, checks: any[]): void {
+  const defaults = { providerFamilies: [...PRECISE_ROUTING_GREY_PROVIDERS], channelTypes: [1], contentTypes: [1] };
+  const precise = getRoutingFeaturePolicy(db, 'precise_reply_routing_v1', defaults);
+  const pull = getRoutingFeaturePolicy(db, 'session_scoped_pull_v1', defaults);
+  const shadow = isRoutingFeatureEnabled(db, 'routing_conversation_shadow_v1', true);
+  addCheck(checks, 'provider-routing-rollout', 'Provider message routing rollout', 'ok',
+    `shadow=${shadow ? 'on' : 'off'}, precise=${precise.enabled ? 'grey' : 'off'}, sessionPull=${pull.enabled ? 'grey' : 'off'}`, {
+      shadow,
+      precise: { enabled: precise.enabled, providerFamilies: precise.providerFamilies,
+        channelTypes: precise.channelTypes, contentTypes: precise.contentTypes },
+      sessionPull: { enabled: pull.enabled, providerFamilies: pull.providerFamilies },
+    });
+}
+
 function inspectMcpConfigFiles(options: any, checks: any[]): any {
   const report = inspectMcpConfigs({
     paths: options.mcpConfigPaths,
@@ -410,6 +425,7 @@ async function runDoctor(options: any = {}): Promise<any> {
   if (inspected.db) {
     inspectAuthentication(inspected.config, checks);
     inspectAgents(inspected.agents, inspected.runtime, inspected.config, checks);
+    inspectRoutingFeatures(inspected.db, checks);
     inspectGooseDelivery(inspected.agents, checks);
     const runtime = inspectRuntime(dbPath, inspected.runtime, checks, deps);
     if (runtime.running && typeof fetchImpl === 'function') await inspectLocalHealth(runtime.port, checks, fetchImpl);
