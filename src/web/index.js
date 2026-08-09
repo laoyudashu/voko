@@ -79,6 +79,14 @@ function detectAgentIconType(data){
 
 function h(s){return s||'-'}
 
+function renderPaymentRegionNotice(tFn){
+  const t=tFn||(k=>k);
+  return '<div class="payment-region-notice" role="note" data-testid="payment-region-notice" style="display:flex;align-items:flex-start;gap:10px;margin:0 0 12px 0;padding:10px 12px;border:1px solid #f2d675;border-radius:8px;background:#fff8e1;color:#704600;font-size:14px;line-height:1.6">'
+    +'<span aria-hidden="true" style="flex:0 0 auto;font-size:18px;line-height:1.45">ℹ️</span>'
+    +'<div><strong style="display:block;margin-bottom:2px">'+esc(t('web.payments.region_notice.title'))+'</strong>'
+    +'<span>'+esc(t('web.payments.region_notice.body'))+'</span></div></div>';
+}
+
 function fmtTime(ts){
   if(!ts)return '';
   const d=typeof ts==='number'&&ts<1e12?new Date(ts*1000):new Date(ts);
@@ -198,7 +206,7 @@ function isCallableAction(h,action){return typeof h[action]==='function' && !act
 
 /** action 分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移（数量动态计算） */
 const ACTION_GROUPS=[
-  {group:'im',actions:['whoami','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
+  {group:'im',actions:['whoami','list_agents','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
   {group:'manage',actions:['get_agent_profile','update_agent_profile','set_agent_status','set_private_mode','manage_whitelist','manage_blacklist','list_access_lists','declare_capabilities','search_capabilities','start_worker','stop_worker']},
   {group:'pay',actions:['agent_pricing','create_payment','check_payments','add_payment_auth','list_payment_auth','delete_payment_auth','apply_payment_auth','refresh_payment_auth','search_banks','bind_agent_payment_auth']},
   {group:'audit',actions:['list_audit_rules','manage_audit_rules']},
@@ -254,7 +262,7 @@ function getManifestSync(locale='zh'){
   return _manifestCache[locale];
 }
 
-async function getAgentList(h){const d=await h.whoami({});return d.agents||[]}
+async function getAgentList(h){const d=await h.list_agents({limit:500});return d.agents||[]}
 async function getAgentInfo(h,id){const a=await getAgentList(h);return a.find(x=>x.agentId===id)||null}
 async function getAgentStatus(h,id){
   try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[],probeFailed:true}}
@@ -747,8 +755,8 @@ function createWebRouter(handlers, db, opts={}){
       const ownerEmail=userEmail||tokenEmail||'';
 
       // 只显示本邮箱下的 Agent
-      const whoData=ownerEmail?await handlers.whoami({ownerEmail}):await handlers.whoami({});
-      let agents=whoData.agents||[];
+      const agentListData=await handlers.list_agents({limit:500});
+      let agents=agentListData.agents||[];
       // sort: online first (from runtime)
       try{const rt=db.prepare("SELECT data FROM config WHERE type=\'runtime\'").get();if(rt){const rd=JSON.parse(rt.data);const imMap={};for(const a of rd.agents||[])imMap[a.agentId]=a.imConnected;agents.sort((a,b)=>(imMap[b.agentId]?1:0)-(imMap[a.agentId]?1:0))}}catch{}
       // pagination + search
@@ -1112,7 +1120,7 @@ function createWebRouter(handlers, db, opts={}){
       let p={};
       try{const r=await handlers.get_agent_profile({agentId});if(r.success)p=r.data||{};else p={}}catch{}
       // 回退：从 whoami 获取基本数据（agent 可能不在本地 DB）
-      if(!p.agentId){try{const w=await handlers.whoami({});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,backendInstanceId:a.backendInstanceId,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
+      if(!p.agentId){try{const w=await handlers.list_agents({limit:500});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,backendInstanceId:a.backendInstanceId,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
       if(p.backendInstanceId===undefined){try{const row=db.prepare('SELECT backend_instance_id FROM agents WHERE agent_id=?').get(agentId);p.backendInstanceId=row?.backend_instance_id||null}catch{}}
       const aname=p.agentName||agentId;
       let catList=[];
@@ -1656,7 +1664,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       let agentOpts='';
       try{
         let oe='';const rtRow=db.prepare("SELECT data FROM config WHERE type='runtime'").get();if(rtRow){const d=JSON.parse(rtRow.data);oe=d.userEmail||''}if(!oe){const tkRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(tkRow){const d2=JSON.parse(tkRow.data);const ks=Object.keys(d2);if(ks.length)oe=ks[0]}}
-        const w=await handlers.whoami(oe?{ownerEmail:oe}:{});const ags=w.agents||[];
+        const w=await handlers.list_agents({limit:500});const ags=w.agents||[];
         for(const a of ags)agentOpts+='<option value="'+esc(a.agentId)+'"'+(filterAgentId===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>'
       }catch{}
 
@@ -1763,7 +1771,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
         let ao='<option value="">'+esc(T('web.payments.create.select_agent'))+'</option>';
         try{const ag=await getAgentList(handlers);for(const a of ag)ao+='<option value="'+esc(a.agentId)+'"'+(req.query.agentId===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>'}catch{}
         const v2=esc(req.query.visitorId||'');
-        const cbody='<div class="card"><h3>'+L('web.payments.create.heading')+'</h3><form method="POST" action="/payments"><label for="pa">'+L('web.payments.create.agent')+'</label><select id="pa" name="agentId" required>'+ao+'</select><label for="pv">'+L('web.payments.create.visitor')+'</label><input type="text" id="pv" name="visitorId" value="'+v2+'" required><label for="pa2">'+L('web.payments.create.amount')+'</label><input type="number" id="pa2" name="amount" step="0.01" min="0" required autofocus><label for="pd">'+L('web.payments.create.desc')+'</label><input type="text" id="pd" name="description"><br><br><button type="submit" class="btn-success">'+L('common.btn.create')+'</button><a href="/payments" class="btn" style="margin-left:8px">'+L('common.btn.cancel')+'</a></form></div>';
+         const cbody='<div class="card"><h3>'+L('web.payments.create.heading')+'</h3>'+renderPaymentRegionNotice(T)+'<form method="POST" action="/payments"><label for="pa">'+L('web.payments.create.agent')+'</label><select id="pa" name="agentId" required>'+ao+'</select><label for="pv">'+L('web.payments.create.visitor')+'</label><input type="text" id="pv" name="visitorId" value="'+v2+'" required><label for="pa2">'+L('web.payments.create.amount')+'</label><input type="number" id="pa2" name="amount" step="0.01" min="0" required autofocus><label for="pd">'+L('web.payments.create.desc')+'</label><input type="text" id="pd" name="description"><br><br><button type="submit" class="btn-success">'+L('common.btn.create')+'</button><a href="/payments" class="btn" style="margin-left:8px">'+L('common.btn.cancel')+'</a></form></div>';
         return res.send(renderPage(req,T('web.payments.create.title'),cbody,{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/payments">'+L('web.payments.breadcrumb')+'</a> › '+L('web.payments.create.breadcrumb')}));
       }
       const curPage=Math.max(1,parseInt(req.query.page,10)||1);const limit=10;const offset=(curPage-1)*limit;
@@ -1811,7 +1819,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const fs='padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:4px';
       const stVals=['','0','1','2','3','pending','processing','created','paid','failed','expired'];
       const stOpts=stVals.map(v=>'<option value="'+v+'"'+(st===v?' selected':'')+'>'+esc(v===''?T('web.payments.all_statuses'):stOpt(v))+'</option>').join('');
-      const body='<form method="GET" action="/payments">'
+       const body=renderPaymentRegionNotice(T)+'<form method="GET" action="/payments">'
         +'<div style="background:#fafafa;border:1px solid #e5e5e5;border-radius:8px;padding:12px;margin-bottom:12px">'
         +'<div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">'
         +fld(L('web.payments.filter.agent'),'<select name="agentId" style="width:130px;'+fs+'">'+agentOpts+'</select>')
@@ -2068,7 +2076,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       // 加载 Agent 下拉
       let agents=[],_ownerEmail='';
 try{const _rtX=db.prepare("SELECT data FROM config WHERE type='runtime'").get();if(_rtX)try{const _r=JSON.parse(_rtX.data);_ownerEmail=_r.userEmail||''}catch{}if(!_ownerEmail){const _tkX=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(_tkX)try{const _d=JSON.parse(_tkX.data);const _ks=Object.keys(_d);if(_ks.length)_ownerEmail=_ks[0]}catch{}}}catch{}
-try{if(_ownerEmail){const _wl=await handlers.whoami({ownerEmail:_ownerEmail});agents=_wl.agents||[]}else{const _a=await getAgentList(handlers);agents=_a}}catch{}
+try{const _wl=await handlers.list_agents({limit:500});agents=_wl.agents||[]}catch{}
 const defAgent=agentId||(agents.length?agents[0].agentId:'');
             const agentOpts=agents.map(a=>'<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>').join('\n');
 
@@ -2207,7 +2215,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         if(rtRow){const rt=JSON.parse(rtRow.data);ownerEmail=rt.userEmail||''}
         if(!ownerEmail){const tkRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(tkRow){const d=JSON.parse(tkRow.data);const ks=Object.keys(d);if(ks.length)ownerEmail=ks[0]}}
       }catch{}
-      try{const a=await handlers.whoami(ownerEmail?{ownerEmail}:{});agents=a.agents||[]}catch{}
+      try{const a=await handlers.list_agents({limit:500});agents=a.agents||[]}catch{}
       let agentOpts='';
       const defAgent=prefillAgent||(agents.length?agents[0].agentId:'');for(const a of agents)agentOpts+='<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>';
       res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'">'
@@ -2338,8 +2346,8 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
       smoke.setBaseUrl(`http://127.0.0.1:${port}`);
 
       // 初始化 ctx
-      const whoamiR = await handlers.whoami({});
-      const agents = whoamiR.agents || [];
+      const agentListResult = await handlers.list_agents({ limit: 500 });
+      const agents = agentListResult.agents || [];
       if (agents.length === 0) {
         send({ done: true, passed: 0, failed: 0, skipped: 0, error: '无已注册 Agent' });
         return res.end();

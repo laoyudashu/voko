@@ -143,7 +143,7 @@ function createGroupRouter(handlers, db) {
 
   // 取 agent 展示名（nav/title 用）
   async function agentName(agentId){
-    try{const d=await handlers.whoami({});const a=(d.agents||[]).find(x=>x.agentId===agentId);return a?(a.agentName||a.agentId):agentId;}catch(_){return agentId;}
+    try{const d=await handlers.list_agents({limit:500});const a=(d.agents||[]).find(x=>x.agentId===agentId);return a?(a.agentName||a.agentId):agentId;}catch(_){return agentId;}
   }
   // 取 acting agent 的 imUid（判定其在群里的 role）
   function actingImUid(agentId){
@@ -346,7 +346,7 @@ function createGroupRouter(handlers, db) {
 
       // 同主人 Agent（含已在群的；imUid 优先，无 imUid 也保留用 agentId 兜底）
       let allAgents=[];
-      try{const w=await handlers.whoami({});const me=(w.agents||[]).find(a=>a.agentId===agentId);const oe=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===oe);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
+      try{const w=await handlers.list_agents({limit:500});const me=(w.agents||[]).find(a=>a.agentId===agentId);const oe=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===oe);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
       // 判断已在群：同时尝试 imUid 和 agentId 匹配
       const agentInGroup=new Set();
       allAgents.forEach(a=>{const k=a.imUid||a.agentId;if((a.imUid&&memberUids.has(a.imUid))||memberUids.has(a.agentId))agentInGroup.add(k);});
@@ -483,7 +483,7 @@ function createGroupRouter(handlers, db) {
       const {code}=req.params;
       let agentOptions='';
       try{
-        const w=await handlers.whoami({});
+        const w=await handlers.list_agents({limit:500});
         const agents=w.agents||[];
         if(agents.length){
           const ids=agents.map(a=>a.agentId);
@@ -527,7 +527,7 @@ function createGroupRouter(handlers, db) {
       const aName=await agentName(agentId);
       // 同主人 Agent
       let allAgents=[];
-      try{const w=await handlers.whoami({});const me=(w.agents||[]).find(a=>a.agentId===agentId);const ownerEmail=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===ownerEmail);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
+      try{const w=await handlers.list_agents({limit:500});const me=(w.agents||[]).find(a=>a.agentId===agentId);const ownerEmail=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===ownerEmail);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
       let agentOpts='';
       if(allAgents.length){for(const a of allAgents)agentOpts+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0;font-weight:400;cursor:'+(a.imUid?'pointer':'not-allowed')+'"><input type="checkbox" name="inviteAgents" value="'+esc(a.imUid||'')+'" '+(a.imUid?'':'disabled')+' style="width:auto;max-width:none;margin:0">'+esc(a.agentName||a.agentId)+' <span class="meta" style="font-size:13px">'+esc(a.backendType||'')+'</span></label>';}
       else agentOpts='<p class="meta">'+L('web.group.create.no_agents')+'</p>';

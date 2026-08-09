@@ -7,7 +7,7 @@ const { createWebRouter } = require('../build/web');
 
 test('agent detail exposes a double-click copy affordance for the Agent ID', async (t) => {
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
     list_conversations: async () => ({ conversations: [], total: 0 }),
     list_groups: async () => ({ groups: [], total: 0 }),
@@ -35,7 +35,7 @@ test('agent detail exposes a double-click copy affordance for the Agent ID', asy
 
 test('empty conversation detail still renders the reply composer', async (t) => {
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-empty-chat', agentName: 'Empty Chat', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-empty-chat', agentName: 'Empty Chat', backendType: 'others', publishStatus: 'published' }] }),
     get_chat_history: async () => ({ messages: [] }),
     list_access_lists: async () => ({ data: [] }),
     agent_pricing: async () => ({}),
@@ -61,7 +61,7 @@ test('empty conversation detail still renders the reply composer', async (t) => 
 test('conversation detail exposes an expand control for long text', async (t) => {
   const longText = '完整消息内容 '.repeat(80);
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
     get_chat_history: async () => ({ messages: [{ contentType: 1, content: longText, isMe: false, timestamp: 1 }] }),
     list_access_lists: async () => ({ data: [] }),

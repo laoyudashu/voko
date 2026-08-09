@@ -134,6 +134,8 @@ function currentAgentTypeFromProcessRows(rows) {
   return null;
 }
 function currentAgentTypeFromEnvironment(env = process.env, cwd = process.cwd()) {
+  const forwarded = cleanText(env.VOKO_CALLER_PROVIDER, 80);
+  if (forwarded) return normalizeBackendType(forwarded);
   if (env.OPENCLAW_CLI === '1' || /[\\/]\.openclaw[\\/]workspace(?:-|[\\/]|$)/i.test(String(cwd || ''))) {
     return 'openclaw';
   }
@@ -268,6 +270,8 @@ function detectCurrentAgentInstance(providerType) {
   const type = normalizeBackendType(providerType);
   const forwarded = getRegistrationCaller();
   if (forwarded?.providerType === type && forwarded.instanceId) return cleanText(forwarded.instanceId, 160);
+  const forwardedInstance = cleanText(process.env.VOKO_CALLER_INSTANCE, 160);
+  if (forwardedInstance) return forwardedInstance;
   if (type === 'openclaw') {
     try {
       const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');

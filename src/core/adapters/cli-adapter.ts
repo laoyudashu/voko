@@ -24,6 +24,7 @@ const path = require('path');
 const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { AgentIdentityBindingStore, normalizeProviderFamily } = require('../provider-routing');
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
@@ -46,6 +47,7 @@ export interface CliAdapterOptions {
   db?: Pick<DatabaseLike, 'prepare'> | null;
   cwd?: string;
   adapterType?: string;
+  bindingProviderType?: string;
   runtimeRequest?: RuntimeRequest;
   runtimeResolver?: AgentRuntimeResolver;
   argsForSession?: (sessionId: string | null, isNew: boolean) => string[];
@@ -124,6 +126,7 @@ class CliAdapter extends PushProvider {
     this._db = opts.db || null;
     this._cwd = opts.cwd || null;
     this._adapterType = String(opts.adapterType || opts.matchType || opts.name || 'cli').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+    this._bindingProviderType = normalizeProviderFamily(opts.bindingProviderType || opts.matchType || opts.name || '');
     this._runtimeRequest = opts.runtimeRequest || (process.platform === 'win32' ? null : {
       providerId: this._adapterType,
       mode: 'cli',
@@ -143,6 +146,9 @@ class CliAdapter extends PushProvider {
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
     this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(opts.db as any)
+      : null;
+    this._identityBindings = opts.db && typeof (opts.db as any).exec === 'function'
+      ? new AgentIdentityBindingStore(opts.db as any)
       : null;
     this._available = null;
   }
@@ -271,7 +277,15 @@ class CliAdapter extends PushProvider {
         cwd: this._cwd || undefined,
         tag: this._name,
         timeout: this._timeout,
-        env: withRuntimePath(this._env, runtime),
+        env: withRuntimePath({
+          ...this._env,
+          ...(nativeSessionId ? {
+            VOKO_CALLER_PROVIDER: this._bindingProviderType,
+            VOKO_CALLER_INSTANCE: binding?.providerInstanceId || '',
+            VOKO_CALLER_SESSION_ID: nativeSessionId,
+            VOKO_CALLER_EVIDENCE: 'voko_created',
+          } : {}),
+        }, runtime),
         logOutput: false,
         onStdoutLine: (line: string) => {
           observeSession(line);
@@ -355,6 +369,15 @@ class CliAdapter extends PushProvider {
         adapterType: this._adapterType,
         expectedVersion: binding?.bindingVersion ?? 0,
       });
+      try {
+        this._identityBindings?.bind({
+          agentId,
+          providerFamily: this._bindingProviderType,
+          providerInstanceKey: binding?.providerInstanceId || '',
+          nativeSessionId: observedSessionId,
+          evidenceType: 'voko_created',
+        });
+      } catch (_) {}
     }
 
     if (error) throw error;

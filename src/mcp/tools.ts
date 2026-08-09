@@ -854,6 +854,38 @@ function createToolHandlers(cx: McpContext) {
       ? null
       : '当前登录用户无权访问该 Agent';
   }
+  function _listOwnedAgents(options: { keyword?: string; limit?: number; offset?: number } = {}) {
+    const currentOwner = _currentOwnerEmail();
+    const conditions = [currentOwner ? 'owner_email=?' : "(owner_email IS NULL OR TRIM(owner_email)='')"];
+    const params: unknown[] = currentOwner ? [currentOwner] : [];
+    const keyword = String(options.keyword || '').trim();
+    if (keyword) {
+      conditions.push('(LOWER(agent_name) LIKE ? OR LOWER(agent_id) LIKE ?)');
+      const pattern = `%${keyword.toLowerCase()}%`;
+      params.push(pattern, pattern);
+    }
+    const limit = Math.min(500, Math.max(1, Number(options.limit) || 200));
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const where = ` WHERE ${conditions.join(' AND ')}`;
+    const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
+    const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
+      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
+       delivery_modes,publish_status,access_mode,owner_email,created_at FROM agents${where}
+       ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
+    );
+    const agents = rows.map((r) => {
+      let deliveryModes: string[] = [];
+      try { deliveryModes = JSON.parse(r.delivery_modes || '[]'); } catch (_) {}
+      return {
+        agentId: r.agent_id, agentName: r.agent_name, description: r.description,
+        shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
+        backendInstanceId: r.backend_instance_id || null, deliveryModes,
+        publishStatus: r.publish_status, accessMode: r.access_mode,
+        ownerEmail: r.owner_email, createdAt: r.created_at,
+      };
+    });
+    return { agents, total, limit, offset, hasMore: offset + agents.length < total };
+  }
   function fmtMsg(r: MessageDbRow) {
     let mention = null;
     if (r.mention) {
@@ -1962,58 +1994,60 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 13. whoami ───
 
+    async list_agents(p: McpToolParams = {}) {
+      return { success: true, ..._listOwnedAgents(p) };
+    },
+
     async whoami(p: McpToolParams = {}) {
       const explicitOwnershipError = _agentOwnershipError(p.agentId);
       if (explicitOwnershipError) return { success: false, error: explicitOwnershipError, code: 'AGENT_OWNER_MISMATCH' };
-      let sql = `SELECT agent_id AS agent_id, agent_name, description, short_description, category, backend_type, publish_status, access_mode, owner_email, created_at FROM agents`;
-      const params: unknown[] = [];
-      const currentOwner = _currentOwnerEmail();
-      if (currentOwner) {
-        sql += ` WHERE owner_email=?`;
-        params.push(currentOwner);
-      } else {
-        sql += ` WHERE owner_email IS NULL OR TRIM(owner_email)=''`;
-      }
-      sql += ` ORDER BY created_at ASC`;
-      const rows = cx.query<AgentDbRow>(sql, params);
-      const agents = rows.map((r) => ({
-          agentId: r.agent_id,
-          agentName: r.agent_name,
-          description: r.description,
-          shortDescription: r.short_description,
-          category: r.category,
-          backendType: r.backend_type,
-          publishStatus: r.publish_status,
-          accessMode: r.access_mode,
-          ownerEmail: r.owner_email,
-          createdAt: r.created_at,
-        }));
+      const agents = _listOwnedAgents({ limit: 500 }).agents;
+      const compact = (agent: any) => agent ? ({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        backendType: agent.backendType,
+        backendInstanceId: agent.backendInstanceId,
+        deliveryModes: agent.deliveryModes,
+        publishStatus: agent.publishStatus,
+        accessMode: agent.accessMode,
+      }) : null;
+      const candidate = (agent: any) => ({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        backendType: agent.backendType,
+        backendInstanceId: agent.backendInstanceId,
+      });
       const caller = getProviderCaller();
-      let identity: any = { status: 'unavailable', evidence: [] };
+      let identity: any = { status: 'unavailable', method: 'none', reason: 'no_agents', requiresAgentId: false };
       let currentAgent: any = null;
       if (p.agentId) {
         currentAgent = agents.find((agent: any) => agent.agentId === p.agentId) || null;
         identity = currentAgent
-          ? { status: 'selected', evidence: ['explicit_agent_id'], candidateAgentIds: [p.agentId] }
-          : { status: 'not_found', evidence: ['explicit_agent_id'], candidateAgentIds: [] };
+          ? { status: 'resolved', method: 'explicit_agent_id', requiresAgentId: false }
+          : { status: 'unavailable', method: 'explicit_agent_id', reason: 'agent_not_found', requiresAgentId: false };
+      } else if (agents.length === 1) {
+        currentAgent = agents[0];
+        identity = { status: 'resolved', method: 'sole_registered_agent', requiresAgentId: false };
       } else if (featureEnabled('provider_identity_v1', true) && caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
         try {
           const candidateIds = identityBindings.resolve(
             caller.providerType, caller.providerInstanceId || caller.instanceId || '', caller.nativeSessionId,
           ).filter((id: string) => agents.some((agent: any) => agent.agentId === id));
           identity = candidateIds.length === 1
-            ? { status: 'resolved', evidence: [caller.evidence], candidateAgentIds: candidateIds }
-            : candidateIds.length > 1
-              ? { status: 'ambiguous', evidence: [caller.evidence], candidateAgentIds: candidateIds }
-              : { status: 'unbound', evidence: [caller.evidence], candidateAgentIds: [] };
+            ? { status: 'resolved', method: 'provider_binding', requiresAgentId: false }
+            : { status: 'selection_required', method: 'none', reason: candidateIds.length > 1 ? 'ambiguous_binding' : 'unbound_session', requiresAgentId: true };
           if (candidateIds.length === 1) currentAgent = agents.find((agent: any) => agent.agentId === candidateIds[0]) || null;
-        } catch (_) { identity = { status: 'unavailable', evidence: [] }; }
+        } catch (_) {
+          identity = { status: 'selection_required', method: 'none', reason: 'identity_lookup_failed', requiresAgentId: true };
+        }
+      } else if (agents.length > 1) {
+        identity = { status: 'selection_required', method: 'none', reason: 'multiple_agents', requiresAgentId: true };
       }
       return {
         success: true,
-        agents,
-        currentAgent,
+        currentAgent: compact(currentAgent),
         identity,
+        ...(identity.status === 'selection_required' ? { candidates: agents.map(candidate) } : {}),
       };
     },
 

@@ -105,8 +105,11 @@
   "mcp.tool.upload_and_send_file.p.channelType": "単聊は 1、群聊は 2",
   "mcp.tool.upload_and_send_file.p.mentions": "任意の群聊メンション",
 
-  "mcp.tool.whoami.desc": "查询本地 DB 中所有 Agent 信息。支持按主人邮箱过滤，不传 ownerEmail 则返回全部",
-  "mcp.tool.whoami.p.ownerEmail": "主人邮箱，传了只返回该邮箱的 agent，不传返回全部",
+  "mcp.tool.whoami.desc": "現在の呼び出し元に対応する VOKO Agent を識別し、複数候補の場合は簡潔な候補を返します",
+  "mcp.tool.list_agents.desc": "現在の所有者が登録した Agent をページングして一覧表示します",
+  "mcp.tool.list_agents.p.keyword": "Agent 名または ID で検索",
+  "mcp.tool.list_agents.p.limit": "返却件数。既定値 200、最大 500",
+  "mcp.tool.list_agents.p.offset": "ページングのオフセット。既定値 0",
 
   "mcp.tool.start_worker.desc": "指定した Agent の IM 接続を開始",
   "mcp.tool.start_worker.p.uid": "IM UID",

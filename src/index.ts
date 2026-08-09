@@ -2588,6 +2588,7 @@ function printUsage() {
     '\n' +
     t('cli.usage.examples_header') + '\n' +
     '  voko whoami                                   ' + t('cli.usage.example_whoami') + '\n' +
+    '  voko list_agents                              List registered agents\n' +
     '  voko send_message --agent X --toUid Y --content "hi"\n' +
     '  voko list_conversations --agent X\n' +
     '  voko --tools\n' +
@@ -2598,7 +2599,7 @@ function printUsage() {
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
     '  get_visitor_profile  list_conversations  mark_conversation_read\n' +
-    '  upload_and_send_file  whoami  start_worker  stop_worker\n' +
+    '  upload_and_send_file  whoami  list_agents  start_worker  stop_worker\n' +
     '  ask_human_for_help  check_human_replies  close_human_request\n' +
     '  create_payment  check_payments  agent_pricing\n' +
     '  add_payment_auth  list_payment_auth  delete_payment_auth\n' +

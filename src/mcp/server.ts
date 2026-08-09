@@ -305,11 +305,25 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     'voko_whoami',
     T('mcp.tool.whoami.desc'),
     {
-      ownerEmail: z.string().optional().describe(T('mcp.tool.whoami.p.ownerEmail')),
       agentId: z.string().optional().describe('Explicit Agent selection; ownership is verified and no identity binding is changed'),
     },
     async (params: unknown) => {
       const r = await toolHandlers.whoami(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { readOnlyHint: true }
+  );
+
+  server.tool(
+    'voko_list_agents',
+    T('mcp.tool.list_agents.desc'),
+    {
+      keyword: z.string().optional().describe(T('mcp.tool.list_agents.p.keyword')),
+      limit: z.number().int().min(1).max(500).optional().describe(T('mcp.tool.list_agents.p.limit')),
+      offset: z.number().int().min(0).optional().describe(T('mcp.tool.list_agents.p.offset')),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.list_agents(params);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     },
     { readOnlyHint: true }

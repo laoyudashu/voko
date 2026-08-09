@@ -7,7 +7,7 @@ const path = require('node:path');
 const { initDatabase } = require('../build/core/database');
 const { ProviderConversationBindingStore } = require('../build/core/provider-conversation-bindings');
 const { createDispatcher } = require('../build/core/dispatcher');
-const { detectProviderSessionFromEnv } = require('../build/core/registration-caller-context');
+const { detectProviderCallerFromEnv, detectProviderSessionFromEnv, detectProviderSessionFromProcess } = require('../build/core/registration-caller-context');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-provider-binding-'));
@@ -35,6 +35,42 @@ test('only stable provider session environment fields are accepted', () => {
   assert.equal(detectProviderSessionFromEnv('kiro', { KIRO_SESSION_ID: 'kiro-1' }), 'kiro-1');
   assert.equal(detectProviderSessionFromEnv('opencode', { OPENCODE_SESSION_ID: 'open-1' }), 'open-1');
   assert.equal(detectProviderSessionFromEnv('codex', { SESSION_ID: 'untrusted-latest-session' }), null);
+});
+
+test('VOKO-managed caller context overrides provider-specific environment consistently', () => {
+  assert.deepEqual(detectProviderCallerFromEnv('codex', {
+    CODEX_THREAD_ID: 'provider-thread',
+    VOKO_CALLER_PROVIDER: 'goose',
+    VOKO_CALLER_INSTANCE: 'local-goose',
+    VOKO_CALLER_SESSION_ID: 'managed-session',
+    VOKO_CALLER_EVIDENCE: 'voko_created',
+  }), {
+    providerType: 'goose',
+    providerInstanceId: 'local-goose',
+    nativeSessionId: 'managed-session',
+    evidence: 'voko_created',
+  });
+});
+
+test('Linux Codex caller session is resolved only from a unique process-owned rollout file', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-codex-proc-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, 'home');
+  const sessionDir = path.join(home, '.codex', 'sessions', '2026', '08', '09');
+  const procRoot = path.join(dir, 'proc');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(path.join(procRoot, '42', 'fd'), { recursive: true });
+  const rollout = path.join(sessionDir, 'rollout-test.jsonl');
+  fs.writeFileSync(rollout, JSON.stringify({ payload: { session_id: 'codex-session-123456' } }) + '\n');
+  try { fs.symlinkSync(rollout, path.join(procRoot, '42', 'fd', '7')); }
+  catch (_) { t.skip('file symlinks unavailable'); return; }
+  fs.writeFileSync(path.join(procRoot, '42', 'stat'), '42 (codex) S 1 0 0 0');
+  assert.equal(detectProviderSessionFromProcess('codex', {
+    platform: 'linux', procRoot, home, ppid: 42,
+  }), 'codex-session-123456');
+  assert.equal(detectProviderSessionFromProcess('goose', {
+    platform: 'linux', procRoot, home, ppid: 42,
+  }), null);
 });
 
 test('successful caller sends activate atomically and the latest commit wins', (t) => {

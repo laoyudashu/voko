@@ -105,7 +105,7 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
               instanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
               nativeSessionId: String(req.headers['x-voko-caller-session'] || '').slice(0, 512) || null,
               connectionId: String(req.headers['x-voko-caller-connection'] || '').slice(0, 128) || null,
-              evidence: ['provider_env', 'provider_hook', 'provider_event', 'voko_created'].includes(
+              evidence: ['provider_env', 'provider_process', 'provider_hook', 'provider_event', 'voko_created'].includes(
                 String(req.headers['x-voko-caller-evidence'] || ''),
               ) ? String(req.headers['x-voko-caller-evidence']) : null,
             } : {}),

@@ -317,7 +317,7 @@ reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 voko_* 工
     'voko_set_agent_status', 'voko_get_status', 'voko_get_agent_profile',
     'voko_search_capabilities', 'voko_declare_capabilities', 'voko_send_message',
     'voko_get_chat_history', 'voko_get_visitor_profile', 'voko_list_conversations',
-    'voko_mark_conversation_read', 'voko_upload_and_send_file', 'voko_whoami',
+    'voko_mark_conversation_read', 'voko_upload_and_send_file', 'voko_whoami', 'voko_list_agents',
     'voko_start_worker', 'voko_stop_worker', 'voko_ask_human_for_help',
     'voko_check_human_replies', 'voko_close_human_request', 'voko_create_payment',
     'voko_check_payments', 'voko_add_payment_auth', 'voko_list_payment_auth',
@@ -337,8 +337,8 @@ reg('C1', 'voko status', 'CLI: voko status', 'exit=0 + JSON 含 port/pid/uptime'
   return [r.exit === 0 && r.out.length > 0, `exit=${r.exit}`];
 });
 
-reg('C2', 'voko whoami', 'CLI: voko whoami', 'exit=0 + JSON agents 列表', async () => {
-  const r = cli('whoami');
+reg('C2', 'voko list_agents', 'CLI: voko list_agents', 'exit=0 + JSON agents 列表', async () => {
+  const r = cli('list_agents');
   return [r.exit === 0 && r.out.length > 0, `exit=${r.exit}`];
 });
 
@@ -448,7 +448,8 @@ for (const [table, expectedCols] of Object.entries(DB_TABLES)) {
     list_conversations:        (ctx) => ['--agent-id=' + ctx.agentId, '--limit=3'],
     mark_conversation_read:    (ctx) => ['--agent-id=' + ctx.agentId, '--channel-id=' + ctx.visitorId],
     upload_and_send_file:      null,
-    whoami:                    (ctx) => ['--owner-email='],
+    whoami:                    (ctx) => [],
+    list_agents:               (ctx) => ['--limit=20'],
     start_worker:              null,
     stop_worker:               null,
     ask_human_for_help:        null,
@@ -1144,8 +1145,8 @@ async function main() {
 
   // 初始化
   await mcpInit();
-  const whoamiR = await consoleCall('whoami', {});
-  const agents = whoamiR.json?.result?.agents || [];
+  const listAgentsR = await consoleCall('list_agents', {});
+  const agents = listAgentsR.json?.result?.agents || [];
   if (agents.length === 0) { console.error('❌ 无已注册 Agent'); process.exit(1); }
 
   // 从 DB 补全 agent 信息

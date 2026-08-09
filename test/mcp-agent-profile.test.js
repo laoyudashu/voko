@@ -30,6 +30,29 @@ function makeHandlers(currentBackendType) {
 }
 
 describe('MCP update_agent_profile delivery safety', () => {
+  it('returns the sole registered Agent as current without Provider identity evidence', async () => {
+    const { handlers, db } = makeHandlers('codex');
+    const result = await handlers.whoami({});
+
+    assert.strictEqual(result.currentAgent.agentId, 'agent-1');
+    assert.strictEqual(result.identity.status, 'resolved');
+    assert.strictEqual(result.identity.method, 'sole_registered_agent');
+    assert.strictEqual(result.agents, undefined);
+    db.close();
+  });
+
+  it('lists owned Agents separately with pagination metadata', async () => {
+    const { handlers, db } = makeHandlers('codex');
+    const result = await handlers.list_agents({ keyword: 'agent-1', limit: 10, offset: 0 });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.total, 1);
+    assert.strictEqual(result.hasMore, false);
+    assert.strictEqual(result.agents[0].agentId, 'agent-1');
+    assert.deepStrictEqual(result.agents[0].deliveryModes, ['websocket', 'pull']);
+    db.close();
+  });
+
   it('clears an incompatible instance and resets delivery to pull when the provider changes', async () => {
     const { handlers, db } = makeHandlers('openclaw');
     const result = await handlers.update_agent_profile({ agentId: 'agent-1', backendType: 'hermes' });

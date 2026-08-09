@@ -107,8 +107,11 @@
   "mcp.tool.upload_and_send_file.p.channelType": "1 表示单聊，2 表示群聊",
   "mcp.tool.upload_and_send_file.p.mentions": "可选群聊 @，例如 {all:true} 或 {uids:[\"user-1\"]}",
 
-  "mcp.tool.whoami.desc": "查询本地 DB 中所有 Agent 信息。支持按主人邮箱过滤，不传 ownerEmail 则返回全部",
-  "mcp.tool.whoami.p.ownerEmail": "主人邮箱，传了只返回该邮箱的 agent，不传返回全部",
+  "mcp.tool.whoami.desc": "识别当前调用者对应的 VOKO Agent；多 Agent 且无法自动识别时返回精简候选",
+  "mcp.tool.list_agents.desc": "分页查询当前主人账号下已注册的 Agent 列表",
+  "mcp.tool.list_agents.p.keyword": "按 Agent 名称或 ID 搜索",
+  "mcp.tool.list_agents.p.limit": "返回数量，默认 200，最大 500",
+  "mcp.tool.list_agents.p.offset": "分页偏移量，默认 0",
 
   "mcp.tool.start_worker.desc": "启动指定 Agent 的 IM 连接",
   "mcp.tool.start_worker.p.uid": "IM UID",

@@ -21,6 +21,7 @@ const { PushProvider } = require('../dispatcher/base-provider');
 const { checkCliAvailable } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { AgentIdentityBindingStore } = require('../provider-routing');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
@@ -163,6 +164,9 @@ class AcpAdapter extends PushProvider {
     this._db = options.db || null;
     this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(options.db as any)
+      : null;
+    this._identityBindings = options.db && typeof (options.db as any).exec === 'function'
+      ? new AgentIdentityBindingStore(options.db as any)
       : null;
 
     // 日志前缀（用于区分不同 ACP 实现）
@@ -841,6 +845,7 @@ class AcpAdapter extends PushProvider {
             adapterType: this._adapterType,
             expectedVersion: binding?.bindingVersion ?? 0,
           });
+          this._bindManagedIdentity(agentId, binding?.providerInstanceId || null, session.sessionId);
           return session;
         }
       } catch (err) {
@@ -877,6 +882,7 @@ class AcpAdapter extends PushProvider {
       adapterType: this._adapterType,
       expectedVersion: binding?.bindingVersion ?? 0,
     });
+    this._bindManagedIdentity(agentId, binding?.providerInstanceId || null, session.sessionId);
 
     state.sessions.set(sessionKey, session);
     if (saved?.nativeSessionId) {
@@ -884,6 +890,18 @@ class AcpAdapter extends PushProvider {
     }
     this._recoveryNeededSessions.add(sessionKey);
     return session;
+  }
+
+  _bindManagedIdentity(agentId: string, providerInstanceId: string | null, nativeSessionId: string): void {
+    try {
+      this._identityBindings?.bind({
+        agentId,
+        providerFamily: this._bindingProviderType,
+        providerInstanceKey: providerInstanceId || '',
+        nativeSessionId,
+        evidenceType: 'voko_created',
+      });
+    } catch (_) {}
   }
 
   /** 持久化 session 句柄到 DB */

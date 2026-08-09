@@ -514,7 +514,7 @@ test('payments page scopes SQL queries to the current owner', async (t) => {
     },
   };
   const app = express();
-  app.use(createWebRouter({ whoami: async () => ({ agents: [] }) }, db));
+  app.use(createWebRouter({ list_agents: async () => ({ agents: [] }) }, db));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);

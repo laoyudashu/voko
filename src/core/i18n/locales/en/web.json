@@ -1,5 +1,7 @@
 {
   "web.payments.title": "Payment Orders",
+  "web.payments.region_notice.title": "Availability notice",
+  "web.payments.region_notice.body": "Payments are currently available only to users in Mainland China. Other regions are not supported yet.",
   "web.payments.breadcrumb": "Payments",
   "web.payments.empty": "No orders",
   "web.payments.all_agents": "All agents",
@@ -465,7 +467,7 @@
   "web.console.action_desc": "Action name (e.g. send_message, whoami)",
   "web.console.params_desc": "Action params (JSON object)",
   "web.console.examples": "Common Examples",
-  "web.console.ex.whoami": "📋 View all agents",
+  "web.console.ex.whoami": "📋 Identify current agent",
   "web.console.ex.history": "💬 View chat history",
   "web.console.ex.send": "📨 Send message",
   "web.console.ex.convs": "📥 View conversations",

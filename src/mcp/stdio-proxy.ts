@@ -71,14 +71,15 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
   refreshRuntimeToken();
   const callerProvider = detectCurrentAgentType();
   const callerInstance = callerProvider ? detectCurrentAgentInstance(callerProvider) : null;
-  const { detectProviderSessionFromEnv } = require('../core/registration-caller-context');
-  const callerSession = detectProviderSessionFromEnv(callerProvider);
+  const { detectProviderCaller } = require('../core/registration-caller-context');
+  const caller = detectProviderCaller(callerProvider);
+  const callerSession = caller.nativeSessionId;
   const callerConnection = crypto.randomUUID();
-  if (callerProvider) headers['X-VOKO-Caller-Provider'] = callerProvider;
-  if (callerInstance) headers['X-VOKO-Caller-Instance'] = callerInstance;
+  if (caller.providerType) headers['X-VOKO-Caller-Provider'] = caller.providerType;
+  if (caller.providerInstanceId || callerInstance) headers['X-VOKO-Caller-Instance'] = caller.providerInstanceId || callerInstance;
   if (callerSession) {
     headers['X-VOKO-Caller-Session'] = callerSession;
-    headers['X-VOKO-Caller-Evidence'] = 'provider_env';
+    headers['X-VOKO-Caller-Evidence'] = caller.evidence;
   }
   headers['X-VOKO-Caller-Connection'] = callerConnection;
 

@@ -107,8 +107,11 @@
   "mcp.tool.upload_and_send_file.p.channelType": "1 for a direct message, 2 for a group message",
   "mcp.tool.upload_and_send_file.p.mentions": "Optional group mentions, for example {all:true} or {uids:[\"user-1\"]}",
 
-  "mcp.tool.whoami.desc": "Query all Agent information from the local database. Optionally filter by owner email; returns all agents when ownerEmail is omitted.",
-  "mcp.tool.whoami.p.ownerEmail": "Owner email address; when provided, returns only agents belonging to that email; when omitted, returns all",
+  "mcp.tool.whoami.desc": "Identify the VOKO Agent associated with the current caller; returns compact candidates when multiple Agents require explicit selection.",
+  "mcp.tool.list_agents.desc": "List registered Agents for the current owner with pagination.",
+  "mcp.tool.list_agents.p.keyword": "Search by Agent name or ID",
+  "mcp.tool.list_agents.p.limit": "Number of results; defaults to 200 and is capped at 500",
+  "mcp.tool.list_agents.p.offset": "Pagination offset; defaults to 0",
 
   "mcp.tool.start_worker.desc": "Start the IM connection for the specified Agent",
   "mcp.tool.start_worker.p.uid": "IM UID",
