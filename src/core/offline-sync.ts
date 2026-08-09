@@ -44,6 +44,33 @@ interface SyncMessage {
   header?: { no_persist?: boolean; red_dot?: boolean; sync_once?: boolean };
 }
 
+interface DecodedOfflinePayload {
+  content?: string;
+  type?: number;
+  _voko?: InboundMessage['_voko'];
+}
+
+function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
+  if (!payload) return {};
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString()) as DecodedOfflinePayload;
+    const metadata = decoded?._voko;
+    return {
+      content: typeof decoded?.content === 'string' ? decoded.content : undefined,
+      type: typeof decoded?.type === 'number' ? decoded.type : undefined,
+      _voko: metadata?.protocolVersion === 1
+        ? {
+            protocolVersion: 1,
+            ...(typeof metadata.routeId === 'string' ? { routeId: metadata.routeId } : {}),
+            ...(typeof metadata.replyToRouteId === 'string' ? { replyToRouteId: metadata.replyToRouteId } : {}),
+          }
+        : null,
+    };
+  } catch (_) {
+    return {};
+  }
+}
+
 interface MessageHandlerLike {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
   forwardToAgent(...args: unknown[]): unknown;
@@ -164,13 +191,9 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
             }
             let content = msg.content || '';
             let contentType = msg.content_type || 1;
-            if (msg.payload && !content) {
-              try {
-                const decoded = JSON.parse(Buffer.from(msg.payload, 'base64').toString());
-                content = decoded.content || '';
-                contentType = decoded.type || 1;
-              } catch (_) {}
-            }
+            const decoded = decodeOfflinePayload(msg.payload);
+            if (!content) content = decoded.content || '';
+            if (!msg.content_type && decoded.type) contentType = decoded.type;
             const toUid = msg.from_uid === agent.imUid ? conv.channel_id : agent.imUid;
             pendingMessages.push({
               agentId: agent.agent_id,
@@ -189,7 +212,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
                 clientMsgNo: msg.client_msg_no,
                 noPersist: msg.header?.no_persist ? 1 : 0,
                 redDot: msg.header?.red_dot ? 1 : 0,
-                syncOnce: msg.header?.sync_once ? 1 : 0
+                syncOnce: msg.header?.sync_once ? 1 : 0,
+                _voko: decoded._voko,
               }
             });
           }
@@ -252,7 +276,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
         : t('errors.offline.merged', { count: msgs.length }, getLocale()) + '\n'
           + msgs.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
       messageHandler.forwardToAgent(last.agentId, last.fromUid, merged, last.channelId,
-        last.channelType, last.contentType, last.messageId, last.timestamp, last.mention || null);
+        last.channelType, last.contentType, last.messageId, last.timestamp, last.mention || null, last._voko);
       forwarded++;
     }
 
@@ -346,4 +370,4 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
   };
 }
 
-module.exports = { syncOfflineMessages, createOfflineSyncCoordinator };
+module.exports = { syncOfflineMessages, createOfflineSyncCoordinator, decodeOfflinePayload };

@@ -498,7 +498,7 @@ class MessageHandler extends EventEmitter {
     // skipForward 模式：不直接转发，返回转发载荷供调用方（离线同步）收集后合并转发。
     // 被审核/黑名单/计费等拦截的消息已在上方各 return 点退出（返回 undefined）。
     if (skipForward) {
-      return { agentId, fromUid, content, channelId, channelType: channelType || 1, contentType: data.contentType || 1, messageId, timestamp };
+      return { agentId, fromUid, content, channelId, channelType: channelType || 1, contentType: data.contentType || 1, messageId, timestamp, _voko: data._voko };
     }
     this.forwardToAgent(agentId, fromUid, content, channelId, channelType, data.contentType, messageId, timestamp, null, data._voko);
   }
@@ -619,7 +619,7 @@ class MessageHandler extends EventEmitter {
     }
 
     if (skipForward) {
-      return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention };
+      return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention, _voko: data._voko };
     }
     this.forwardToAgent(agentId, fromUid, content, channelId, 2, data.contentType, messageId, timestamp, mention, data._voko);
   }

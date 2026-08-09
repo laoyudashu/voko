@@ -38,6 +38,7 @@ export interface ForwardPayload {
   messageId: string;
   timestamp: number;
   mention?: Mention | null;
+  _voko?: InboundMessage['_voko'];
 }
 
 export interface AgentReplyMessage {
