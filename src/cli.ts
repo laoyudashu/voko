@@ -265,7 +265,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
   const hasAgentIdParam = Object.prototype.hasOwnProperty.call(schema, 'agentId');
   const optionalAgentId = toolName === 'bug_report';
-  const needsAgentId = hasAgentIdParam && !optionalAgentId;
+  const needsAgentId = hasAgentIdParam && !optionalAgentId && toolName !== 'whoami' && toolName !== 'list_agents';
   try {
     const params: Record<string, any> = {};
 
