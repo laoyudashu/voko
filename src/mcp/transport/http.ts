@@ -14,6 +14,7 @@ const { Router } = require('express');
 const { normalizeBackendType } = require('../../core/agent-backend-types');
 const { getProviderFamily } = require('../../core/dispatcher/provider-catalog');
 const { runWithProviderCaller } = require('../../core/registration-caller-context');
+const { isMcpCallerHandshakeEnabled, resolveMcpCallerHandshake } = require('../../core/mcp-caller-handshake');
 
 const MCP_VERSION = '2025-11-25';
 const SERVER_NAME = 'voko';
@@ -97,19 +98,24 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
           const rawProvider = String(req.headers['x-voko-caller-provider'] || '');
           const providerType = normalizeBackendType(rawProvider);
           const providerFamily = getProviderFamily(providerType);
-          const caller = {
+          const connectionId = String(req.headers['x-voko-caller-connection'] || '').slice(0, 128) || null;
+          const caller: any = {
             source: 'mcp',
+            connectionId,
             ...(providerFamily ? {
               providerType: providerFamily.type,
               providerInstanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
               instanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
               nativeSessionId: String(req.headers['x-voko-caller-session'] || '').slice(0, 512) || null,
-              connectionId: String(req.headers['x-voko-caller-connection'] || '').slice(0, 128) || null,
               evidence: ['provider_env', 'provider_process', 'provider_hook', 'provider_event', 'voko_created'].includes(
                 String(req.headers['x-voko-caller-evidence'] || ''),
               ) ? String(req.headers['x-voko-caller-evidence']) : null,
             } : {}),
           };
+          if (isMcpCallerHandshakeEnabled() && connectionId && !caller.nativeSessionId) {
+            const binding = resolveMcpCallerHandshake(connectionId);
+            if (binding) Object.assign(caller, binding);
+          }
           const result = await runWithProviderCaller(
             caller,
             () => handler({ method: 'tools/call', params: msg.params }),

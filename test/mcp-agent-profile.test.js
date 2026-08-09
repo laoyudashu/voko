@@ -2,6 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createToolHandlers } = require('../build/mcp/tools');
 const { initDatabase } = require('../build/core/database');
+const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 
 function makeHandlers(currentBackendType) {
   const writes = [];
@@ -58,6 +59,36 @@ describe('MCP update_agent_profile delivery safety', () => {
     assert.equal(result.identity.requiresAgentId, true);
     assert.equal(result.candidates.length, 2);
     db.close();
+  });
+
+  it('guides a Codex MCP caller through identity handshake before explicit selection', async () => {
+    const previous = process.env.VOKO_MCP_IDENTITY_HANDSHAKE;
+    process.env.VOKO_MCP_IDENTITY_HANDSHAKE = '1';
+    const { handlers, db } = makeHandlers('codex');
+    const now = Date.now();
+    db.prepare(`INSERT INTO agents
+      (id, agent_id, imUid, imToken, im_server_url, owner_email, publish_status, access_mode,
+       backend_type, backend_instance_id, delivery_modes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'published', 'private', ?, ?, ?, ?, ?)`)
+      .run('row-2', 'agent-2', 'im-2', 'token-2', 'wss://example.test', 'owner@example.com',
+        'codex', 'codex-shared', JSON.stringify(['cli', 'pull']), now, now);
+    try {
+      const result = await runWithProviderCaller({
+        source: 'mcp', providerType: 'codex', connectionId: 'mcp-connection-1',
+      }, () => handlers.whoami({}));
+      assert.equal(result.identity.status, 'selection_required');
+      assert.deepStrictEqual(result.nextAction, {
+        type: 'identity_handshake',
+        tool: 'voko_prepare_identity_handshake',
+        expectedDurationSeconds: { vokoProcessing: '<1', codexEndToEnd: '60-90' },
+        instructions: 'Call the tool, run its returned command once in the current Codex shell without displaying or editing it, then retry voko_whoami without agentId.',
+        timingNote: 'VOKO returns each tool result normally in under one second; the complete Codex-guided handshake may take 60-90 seconds on Windows because it spans model and shell tool turns.',
+      });
+    } finally {
+      db.close();
+      if (previous === undefined) delete process.env.VOKO_MCP_IDENTITY_HANDSHAKE;
+      else process.env.VOKO_MCP_IDENTITY_HANDSHAKE = previous;
+    }
   });
 
   it('lists owned Agents separately with pagination metadata', async () => {

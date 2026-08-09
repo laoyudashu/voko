@@ -120,6 +120,7 @@ const TOOL_PARAM_SCHEMAS = {
   upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
   whoami:                  { agentId: 'string' },
   list_agents:             { keyword: 'string', limit: 'number', offset: 'number' },
+  complete_identity_handshake: { challenge: 'string' },
   start_worker:            { agentId: 'string' },
   stop_worker:             { agentId: 'string' },
   ask_human_for_help:      { agentId: 'string', visitorId: 'string', channelId: 'string', channelType: 'number', messageId: 'string', problem: 'string', suggestion: 'string' },

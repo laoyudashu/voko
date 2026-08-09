@@ -148,6 +148,31 @@ Configuring the second direction does not change the first direction's Provider 
 
    Codex CLI can discover the VOKO server as `mcp__voko__...`. A non-interactive `codex exec` may still ask for MCP approval; complete high-risk registration actions in an interactive Codex turn or through the same MCP state machine, and do not disable approvals globally.
 
+### Automatic `whoami` recovery on Windows
+
+Windows Codex exposes its thread ID to commands run in the current Codex shell, but not to the stdio MCP child. When one owner has multiple Codex Agents, enable VOKO's opt-in bridge before starting the runtime:
+
+```powershell
+$env:VOKO_MCP_IDENTITY_HANDSHAKE='1'
+voko start
+```
+
+```bash
+VOKO_MCP_IDENTITY_HANDSHAKE=1 voko start
+```
+
+Codex should then use this flow without asking the owner to copy IDs:
+
+1. Call `voko_whoami` without `agentId`.
+2. If it returns `nextAction.type=identity_handshake`, call `voko_prepare_identity_handshake` once.
+3. Run the returned `nextAction.command` unchanged in the current Codex shell. Do not print or save it.
+4. Retry `voko_whoami` without `agentId` once.
+5. If the result still requires selection, call `voko_list_agents` and ask the owner to select an Agent; do not guess.
+
+The challenge expires quickly and can be used only once. The MCP-to-session link is memory-only, so repeat the flow after VOKO or the MCP connection restarts. This bridge identifies the current Codex caller; it does not alter the separate VOKO-to-Codex Provider conversation binding.
+
+`nextAction.expectedDurationSeconds` separates VOKO processing from the full Codex turn. VOKO normally completes each MCP/DB step in under one second; the Windows end-to-end model + MCP + shell + retry flow measured about 80 seconds. On Linux, VOKO normally resolves a unique Codex rollout session from the `/proc` caller chain and returns `whoami` directly without this handshake. If `/proc` is restricted or the evidence is ambiguous, it falls back safely instead of selecting the most recent session.
+
 3. Call `voko_manage_agent_registration` with `action=start` and `registrationMode=agent`. Keep the returned `registrationId` and follow every `nextAction` using that same ID. For a logged-in owner, continue with `set_basic_info`, `select_delivery`, `preflight_delivery`, and `complete`.
 
 4. Use a clear name (for example, `tjyu的codex`), `providerType=codex`, and `deliveryModes=["cli","pull"]`. Codex has no ACP main channel; do not invent an ACP or OpenClaw/Hermes instance ID.
