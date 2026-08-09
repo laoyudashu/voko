@@ -24,6 +24,7 @@ export interface ResolvedRuntime {
   runtimeKind?: RuntimeKind;
   canonicalPath?: string;
   fingerprint?: string;
+  pathEntries: readonly string[];
   reasonCode?: 'not_found' | 'invalid_target' | 'permission_denied';
   resolvedAt: number;
 }
@@ -76,7 +77,7 @@ export class AgentRuntimeResolver {
       value = this.resolveCandidate(candidate);
       if (value?.available) break;
     }
-    value ||= { available: false, argvPrefix: [], reasonCode: 'not_found', resolvedAt: this.now() };
+    value ||= { available: false, argvPrefix: [], pathEntries: [], reasonCode: 'not_found', resolvedAt: this.now() };
     this.cache.set(key, { value, expiresAt: this.now() + (value.available ? this.positiveTtlMs : this.negativeTtlMs) });
     return value;
   }
@@ -140,8 +141,8 @@ export class AgentRuntimeResolver {
 
   /**
    * Non-interactive services often do not inherit shell exports.  Include the
-   * conventional per-user Unix binary directories as a bounded fallback while
-   * preserving the explicit PATH order above.
+   * conventional per-user Unix binary directories before the inherited PATH.
+   * This keeps WSL from selecting a mounted Windows shim for a Linux process.
    */
   private searchDirectories(): string[] {
     const configured = String(this.env.PATH || this.env.Path || '').split(path.delimiter).filter(Boolean);
@@ -159,17 +160,34 @@ export class AgentRuntimeResolver {
       const versions = fs.readdirSync(nvmRoot).sort().reverse();
       for (const version of versions) extra.push(path.join(nvmRoot, version, 'bin'));
     } catch (_) {}
-    return [...new Set([...configured, ...extra])];
+    return [...new Set([...extra, ...configured])];
   }
 
   private result(executable: string, argvPrefix: string[], runtimeKind: RuntimeKind, canonicalPath: string): ResolvedRuntime {
     const stat = fs.statSync(canonicalPath);
+    const pathEntries = this.platform === 'win32' ? [] : this.spawnPathEntries(canonicalPath);
     return {
       available: true, executable, argvPrefix: Object.freeze([...argvPrefix]), runtimeKind, canonicalPath,
+      pathEntries: Object.freeze(pathEntries),
       fingerprint: `${canonicalPath}:${stat.size}:${stat.mtimeMs}`, resolvedAt: this.now(),
     };
   }
+
+  private spawnPathEntries(canonicalPath: string): string[] {
+    const configured = String(this.env.PATH || this.env.Path || '').split(path.delimiter).filter(Boolean);
+    const searched = this.searchDirectories();
+    return [...new Set([
+      path.dirname(this.nodePath),
+      path.dirname(canonicalPath),
+      ...searched,
+    ].filter(Boolean))];
+  }
+}
+
+export function withRuntimePath(env: NodeJS.ProcessEnv | undefined, runtime?: ResolvedRuntime | null): NodeJS.ProcessEnv | undefined {
+  if (!runtime?.pathEntries.length || process.platform === 'win32') return env;
+  return { ...(env || {}), PATH: runtime.pathEntries.join(path.delimiter) };
 }
 
 export const defaultAgentRuntimeResolver = new AgentRuntimeResolver();
-module.exports = { AgentRuntimeResolver, defaultAgentRuntimeResolver };
+module.exports = { AgentRuntimeResolver, defaultAgentRuntimeResolver, withRuntimePath };

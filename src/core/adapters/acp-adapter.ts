@@ -24,6 +24,7 @@ const { ProviderConversationBindingStore } = require('../provider-conversation-b
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
 
@@ -657,12 +658,12 @@ class AcpAdapter extends PushProvider {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         cwd: this._cwd,
-        env: {
+        env: withRuntimePath({
           ...process.env,
           ...this.options.env,
           // A3: 注入 agent 回调环境变量（agent 可通过 HTTP 回调 voko）
           VOKO_API_URL: this.options.env?.VOKO_API_URL || process.env.VOKO_API_URL || '',
-        },
+        }, runtime),
       });
       state.child = child;
       if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {

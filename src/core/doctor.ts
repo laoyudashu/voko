@@ -302,7 +302,14 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
       mode: 'cli',
       candidates: CLI_RUNTIME_CANDIDATES[backend],
     });
-    return { backend, available: !!resolved.available, runtimeKind: resolved.runtimeKind || null, path: resolved.canonicalPath || null, reason: resolved.reasonCode || null };
+    return {
+      backend,
+      available: !!resolved.available,
+      runtimeKind: resolved.runtimeKind || null,
+      resolvedEntry: resolved.canonicalPath ? path.basename(resolved.canonicalPath) : null,
+      spawnEnvironmentReady: !!resolved.available && (process.platform === 'win32' || resolved.pathEntries.length > 0),
+      reason: resolved.reasonCode || null,
+    };
   });
   const missing = results.filter((item) => !item.available);
   if (missing.length === 0) {

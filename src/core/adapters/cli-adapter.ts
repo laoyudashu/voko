@@ -20,12 +20,14 @@
  */
 
 const { PushProvider } = require('../dispatcher/base-provider');
+const path = require('path');
 const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
 export interface CliAdapterOptions {
@@ -122,7 +124,12 @@ class CliAdapter extends PushProvider {
     this._db = opts.db || null;
     this._cwd = opts.cwd || null;
     this._adapterType = String(opts.adapterType || opts.matchType || opts.name || 'cli').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
-    this._runtimeRequest = opts.runtimeRequest || null;
+    this._runtimeRequest = opts.runtimeRequest || (process.platform === 'win32' ? null : {
+      providerId: this._adapterType,
+      mode: 'cli',
+      candidates: [{ kind: path.isAbsolute(this._cmd) ? 'explicit' : 'native',
+        ...(path.isAbsolute(this._cmd) ? { path: this._cmd } : { command: this._cmd }) }],
+    });
     this._runtimeResolver = opts.runtimeResolver || defaultAgentRuntimeResolver;
     this._argsForSession = opts.argsForSession || null;
     this._createManagedSessionId = opts.createManagedSessionId || null;
@@ -264,7 +271,7 @@ class CliAdapter extends PushProvider {
         cwd: this._cwd || undefined,
         tag: this._name,
         timeout: this._timeout,
-        env: this._env,
+        env: withRuntimePath(this._env, runtime),
         logOutput: false,
         onStdoutLine: (line: string) => {
           observeSession(line);
