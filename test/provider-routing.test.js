@@ -6,9 +6,10 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
-const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore,
+const { MessageRouteStore, RoutingConversationStore,
   fingerprintProviderSession, getRoutingFeaturePolicy, isRoutingPolicyEligible,
-  backfillLegacyAgentIdentityBindings } = require('../build/core/provider-routing');
+} = require('../build/core/provider-routing');
+const { AgentIdentityBindingStore, backfillLegacyAgentIdentityBindings } = require('../build/core/provider-agent-identity');
 
 function database() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-routing-'));

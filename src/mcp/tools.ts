@@ -18,7 +18,8 @@ const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt'
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { completeMcpCallerHandshake, isMcpCallerHandshakeEnabled, issueMcpCallerHandshake } = require('../core/mcp-caller-handshake');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
-const { AgentIdentityBindingStore, MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
+const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
+const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
@@ -2057,6 +2058,11 @@ function createToolHandlers(cx: McpContext) {
         backendInstanceId: agent.backendInstanceId,
       });
       const caller = getProviderCaller();
+      let callerProviderFamily = '';
+      try { callerProviderFamily = caller?.providerType ? normalizeProviderFamily(caller.providerType) : ''; } catch (_) {}
+      const providerCandidates = callerProviderFamily
+        ? agents.filter((agent: any) => normalizeProviderFamily(agent.backendType) === callerProviderFamily)
+        : [];
       let identity: any = { status: 'unavailable', method: 'none', reason: 'no_agents', requiresAgentId: false };
       let currentAgent: any = null;
       if (p.agentId) {
@@ -2067,17 +2073,27 @@ function createToolHandlers(cx: McpContext) {
       } else if (agents.length === 1) {
         currentAgent = agents[0];
         identity = { status: 'resolved', method: 'sole_registered_agent', requiresAgentId: false };
-      } else if (featureEnabled('provider_identity_v1', true) && caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
-        try {
-          const candidateIds = identityBindings.resolve(
-            caller.providerType, caller.providerInstanceId || caller.instanceId || '', caller.nativeSessionId,
-          ).filter((id: string) => agents.some((agent: any) => agent.agentId === id));
-          identity = candidateIds.length === 1
-            ? { status: 'resolved', method: 'provider_binding', requiresAgentId: false }
-            : { status: 'selection_required', method: 'none', reason: candidateIds.length > 1 ? 'ambiguous_binding' : 'unbound_session', requiresAgentId: true };
-          if (candidateIds.length === 1) currentAgent = agents.find((agent: any) => agent.agentId === candidateIds[0]) || null;
-        } catch (_) {
-          identity = { status: 'selection_required', method: 'none', reason: 'identity_lookup_failed', requiresAgentId: true };
+      } else if (featureEnabled('provider_identity_v1', true) && caller?.providerType && providerCandidates.length > 0) {
+        if (providerCandidates.length === 1) {
+          currentAgent = providerCandidates[0];
+          identity = { status: 'resolved', method: 'sole_provider_agent', requiresAgentId: false };
+        } else if (caller.nativeSessionId && caller.evidence) {
+          try {
+            const providerCandidateIds = new Set(providerCandidates.map((agent: any) => agent.agentId));
+            const candidateIds = identityBindings.resolve(
+              caller.providerType, caller.providerInstanceId || caller.instanceId || '', caller.nativeSessionId,
+            ).filter((id: string) => providerCandidateIds.has(id));
+            identity = candidateIds.length === 1
+              ? { status: 'resolved', method: 'provider_binding', requiresAgentId: false }
+              : { status: 'selection_required', method: 'none', reason: candidateIds.length > 1 ? 'ambiguous_binding' : 'unbound_session', requiresAgentId: true };
+            if (candidateIds.length === 1) {
+              currentAgent = providerCandidates.find((agent: any) => agent.agentId === candidateIds[0]) || null;
+            }
+          } catch (_) {
+            identity = { status: 'selection_required', method: 'none', reason: 'identity_lookup_failed', requiresAgentId: true };
+          }
+        } else {
+          identity = { status: 'selection_required', method: 'none', reason: 'multiple_provider_agents', requiresAgentId: true };
         }
       } else if (agents.length > 1) {
         identity = { status: 'selection_required', method: 'none', reason: 'multiple_agents', requiresAgentId: true };
@@ -2086,7 +2102,9 @@ function createToolHandlers(cx: McpContext) {
         success: true,
         currentAgent: compact(currentAgent),
         identity,
-        ...(identity.status === 'selection_required' ? { candidates: agents.map(candidate) } : {}),
+        ...(identity.status === 'selection_required'
+          ? { candidates: (callerProviderFamily && providerCandidates.length > 0 ? providerCandidates : agents).map(candidate) }
+          : {}),
         ...(identity.status === 'selection_required'
           && isMcpCallerHandshakeEnabled()
           && caller?.providerType === 'codex'

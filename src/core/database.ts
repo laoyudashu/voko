@@ -294,7 +294,7 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
 // explicit-selection cases instead of being guessed.
 function runProviderIdentityBackfill(db: DatabaseSync): void {
   try {
-    const { backfillLegacyAgentIdentityBindings } = require('./provider-routing');
+    const { backfillLegacyAgentIdentityBindings } = require('./provider-agent-identity');
     backfillLegacyAgentIdentityBindings(db);
   } catch (e: any) {
     console.error('[DB] provider identity backfill:', e.message);

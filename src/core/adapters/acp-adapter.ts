@@ -21,7 +21,7 @@ const { PushProvider } = require('../dispatcher/base-provider');
 const { checkCliAvailable } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
-const { AgentIdentityBindingStore } = require('../provider-routing');
+const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';

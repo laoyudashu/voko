@@ -106,7 +106,7 @@ Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI 
 
 ### Caller identity and `whoami`
 
-`voko whoami` and `voko_whoami` are read-only identity queries. With one registered Agent, VOKO returns that Agent automatically. With multiple Agents, automatic resolution requires a trusted Provider session context; otherwise the result is `selection_required` and the caller must select an Agent from `voko list_agents`/`voko_list_agents`.
+`voko whoami` and `voko_whoami` are read-only identity queries. With one registered Agent, VOKO returns that Agent automatically. With multiple Agents, VOKO can also resolve the Agent when the trusted caller Provider family matches exactly one registered Agent; this identifies the Agent even if the native Provider session is still missing. If several Agents share that Provider family, VOKO uses an existing trusted Provider session binding before requiring selection. Without a unique binding, the result is `selection_required` and the caller must select an Agent from `voko list_agents`/`voko_list_agents`. `whoami` never creates or selects a routing Conversation; Conversation resolution belongs to message send and reply handling.
 
 The stdio bridge forwards a stable caller session only when the Provider exposes it (or when a VOKO-managed adapter supplies `VOKO_CALLER_SESSION_ID`). VOKO does not infer identity from the newest session, process recency, workspace name, or an untrusted client-provided value. This is intentional: an explicit selection is safer than routing a message to the wrong Agent. Historical conversation bindings are backfilled only when one compatible Agent is the unique owner; ambiguous bindings remain explicit-selection cases.
 
