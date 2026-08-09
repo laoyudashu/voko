@@ -2862,13 +2862,12 @@ function createToolHandlers(cx: McpContext) {
         return ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'whitelist');
       }
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
-      return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason }, {
-        onWhitelistAdded: (aid?: string, vid?: string) => {
-          if (cx.sendSystemMessage) {
-            cx.sendSystemMessage(aid, vid, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000));
-          }
-        }
-      });
+      const result = ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason });
+      if (!result.success) return result;
+      const notification = cx.sendSystemMessage
+        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000))
+        : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+      return { ...result, ...notification };
     },
 
     // ─── 19. 黑名单管理 ───
@@ -2880,10 +2879,11 @@ function createToolHandlers(cx: McpContext) {
         if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
         const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
         const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');
-        if (r.success && __wasBlk && cx.sendSystemMessage) {
-          cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000));
-        }
-        return r;
+        if (!r.success || !__wasBlk) return r;
+        const notification = cx.sendSystemMessage
+          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000))
+          : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+        return { ...r, ...notification };
       }
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
       return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'blacklist', visitorId: p.visitorId, reason: p.reason });

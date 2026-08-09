@@ -298,14 +298,19 @@ class AgentWorkerManager extends EventEmitter {
 
   setDeliver(fn: Deliver): void { this._deliver = fn; }
 
-  sendSystemMessage(
+  async sendSystemMessage(
     agentId: string,
     visitorId: string,
     sysCodeOrContent: string,
     p1?: Record<string, unknown> | number | null,
     p2?: number,
-  ): void {
-    if (!agentId || !visitorId || !sysCodeOrContent || !this.db) return;
+  ): Promise<{ notificationStatus: 'sent' | 'skipped' | 'failed'; notificationReason?: string }> {
+    if (!agentId || !visitorId || !sysCodeOrContent || !this.db) {
+      return { notificationStatus: 'skipped', notificationReason: 'invalid_notification' };
+    }
+    if (!this.workers.has(agentId)) {
+      return { notificationStatus: 'skipped', notificationReason: 'agent_worker_unavailable' };
+    }
     const { t, systemMessagePrefix } = require('./i18n');
     const locale = this._visitorLocale(visitorId);
     const isNewMode = p1 === undefined || p1 === null || typeof p1 === 'object';
@@ -322,7 +327,7 @@ class AgentWorkerManager extends EventEmitter {
     const sysCode = isSysCode ? sysCodeOrContent : null;
     const sysParamsJson = isSysCode && Object.keys(sysParams as object).length ? JSON.stringify(sysParams) : null;
     const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<{ imUid?: string }>(agentId);
-    if (!agentRow?.imUid) return;
+    if (!agentRow?.imUid) return { notificationStatus: 'failed', notificationReason: 'agent_identity_unavailable' };
 
     const timestamp = typeof serverTimestamp === 'number' ? serverTimestamp + 1 : Math.floor(Date.now() / 1000);
     const msgId = `sys-${agentId}-${visitorId}-${timestamp}-${Math.random().toString(36).slice(2, 6)}`;
@@ -334,7 +339,7 @@ class AgentWorkerManager extends EventEmitter {
       );
     } catch (error: unknown) {
       console.error('[sendSystemMessage] message persistence failed:', errorMessage(error));
-      return;
+      return { notificationStatus: 'failed', notificationReason: 'persistence_failed' };
     }
 
     try {
@@ -351,22 +356,24 @@ class AgentWorkerManager extends EventEmitter {
       console.error('[sendSystemMessage] conversation update failed:', errorMessage(error));
     }
 
-    if (this._deliver) {
-      this._deliver(agentId, visitorId, content, 'text', 1, null, msgId)
-        .then((result: any) => {
-          try {
-            this.db?.prepare(`UPDATE messages SET status=?, message_seq=COALESCE(?, message_seq), client_msg_no=COALESCE(?, client_msg_no) WHERE id=?`)
-              .run(result?.success === false ? 'failed' : 'sent', result?.messageSeq ?? null, result?.clientMsgNo ?? null, msgId);
-          } catch (error: unknown) {
-            console.error('[sendSystemMessage] status update failed:', errorMessage(error));
-          }
-        })
-        .catch((error: unknown) => {
-          try { this.db?.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
-          console.error('[sendSystemMessage] delivery failed:', errorMessage(error));
-        });
+    if (!this._deliver) return { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+    try {
+      const result: any = await this._deliver(agentId, visitorId, content, 'text', 1, null, msgId);
+      const delivered = result?.success !== false;
+      try {
+        this.db?.prepare(`UPDATE messages SET status=?, message_seq=COALESCE(?, message_seq), client_msg_no=COALESCE(?, client_msg_no) WHERE id=?`)
+          .run(delivered ? 'sent' : 'failed', result?.messageSeq ?? null, result?.clientMsgNo ?? null, msgId);
+      } catch (error: unknown) {
+        console.error('[sendSystemMessage] status update failed:', errorMessage(error));
+      }
+      if (!delivered) return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
+    } catch (error: unknown) {
+      try { this.db?.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
+      console.error('[sendSystemMessage] delivery failed:', errorMessage(error));
+      return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
     }
     this.emit('system-message', { agentId, fromUid: agentRow.imUid, visitorId, content, msgId, timestamp, sysCode, locale });
+    return { notificationStatus: 'sent' };
   }
 
   _visitorLocale(visitorId: string): string {
