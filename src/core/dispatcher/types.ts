@@ -39,6 +39,7 @@ export interface PushPayload {
     sessionOrigin: 'caller' | 'voko_managed';
     channelId: string;
     channelType: number;
+    strictSessionRoute?: boolean;
   } | null;
   [key: string]: unknown;
 }

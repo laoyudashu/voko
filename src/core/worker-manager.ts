@@ -278,8 +278,9 @@ class AgentWorkerManager extends EventEmitter {
     channelType = 1,
     mentions: unknown = null,
     localMsgId: string | null = null,
+    metadata: unknown = null,
   ) {
-    return this.adapter.deliver(agentId, channelId, content, messageType, channelType, mentions, localMsgId || undefined);
+    return this.adapter.deliver(agentId, channelId, content, messageType, channelType, mentions, localMsgId || undefined, metadata);
   }
 
   send(

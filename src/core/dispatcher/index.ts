@@ -17,6 +17,7 @@ import type { DatabaseLike } from '../../types/database';
 import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { isRoutingFeatureEnabled } = require('../provider-routing');
 const { getProviderFamily, getProviderTransport } = require('./provider-catalog');
 const { ProviderRuntimeRegistry } = require('./provider-runtime-registry');
 const { RouteResolver } = require('./route-resolver');
@@ -759,6 +760,16 @@ ${body}
   function _captureProviderBinding(agentId: string, payload: PushPayload): PushPayload {
     const channelId = payload.channelId || payload.fromUid;
     const channelType = payload.channelType === 2 ? 2 : 1;
+    const precise = isRoutingFeatureEnabled(db, 'precise_reply_routing_v1', false);
+    const exact = precise ? (payload as any).replyRouteContext : null;
+    if (exact?.strictSessionRoute && exact?.nativeSessionId && exact?.providerFamily) {
+      return { ...payload, providerBinding: {
+        id: exact.conversationId, bindingVersion: 1, providerType: exact.providerFamily,
+        providerInstanceId: exact.providerInstanceKey || null, deliveryMode: 'precise',
+        adapterType: 'precise-route', nativeSessionId: exact.nativeSessionId,
+        sessionOrigin: 'caller', channelId, channelType, strictSessionRoute: true,
+      } };
+    }
     const binding = _bindingStore.getActive(agentId, channelId, channelType);
     return {
       ...payload,
@@ -781,7 +792,9 @@ ${body}
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
     const bindingFamily = getProviderFamily(binding.providerType)?.type || binding.providerType;
-    let compatible = typeof (route.provider as any).acceptsBinding === 'function'
+    let compatible = binding.strictSessionRoute
+      ? bindingFamily === _providerFamily(route.providerId)
+      : typeof (route.provider as any).acceptsBinding === 'function'
       ? !!(route.provider as any).acceptsBinding(binding, agentId)
       : bindingFamily === _providerFamily(route.providerId)
         && binding.adapterType === route.providerId
@@ -828,6 +841,8 @@ ${body}
         channelType: payload.channelType || 1,
         channelId: payload.channelId || baseProviderPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,
+        ...((payload as any).replyRouteContext ? { replyRouteContext: (payload as any).replyRouteContext } : {}),
+        ...((payload as any).remoteRouteId ? { remoteRouteId: (payload as any).remoteRouteId } : {}),
         ...(a2aContext || {})
       };
       _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);

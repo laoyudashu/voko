@@ -128,6 +128,19 @@ function inspectDatabase(dbPath: string, checks: any[]): { db: any | null; agent
       addCheck(checks, 'tables', 'Core tables', 'ok', 'agents and config are present');
     }
 
+    if (tables.includes('provider_routing_conversations') && tables.includes('provider_message_routes')) {
+      try {
+        const conversations = Number(db.prepare('SELECT COUNT(*) AS c FROM provider_routing_conversations').get()?.c || 0);
+        const activeRoutes = Number(db.prepare("SELECT COUNT(*) AS c FROM provider_message_routes WHERE status='active'").get()?.c || 0);
+        const preciseEnabled = /^(1|true|yes|on)$/i.test(String(process.env.VOKO_PRECISE_REPLY_ROUTING_V1 || ''));
+        addCheck(checks, 'provider-routing', 'Provider routing', 'ok',
+          `${conversations} conversation(s), ${activeRoutes} active route(s), precise Push ${preciseEnabled ? 'enabled' : 'gated'}`,
+          { conversations, activeRoutes, precisePushEnabled: preciseEnabled });
+      } catch (error: any) {
+        addCheck(checks, 'provider-routing', 'Provider routing', 'warn', `inspection unavailable: ${error.message}`);
+      }
+    }
+
     try {
       const quickCheck = db.prepare('PRAGMA quick_check').get()?.quick_check;
       addCheck(checks, 'integrity', 'SQLite integrity', quickCheck === 'ok' ? 'ok' : 'error', String(quickCheck || 'unknown'));

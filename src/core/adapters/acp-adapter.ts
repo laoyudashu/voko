@@ -848,6 +848,11 @@ class AcpAdapter extends PushProvider {
       // resume 失败 → 清除失效句柄
       if (binding?.id) this._bindingStore?.markStale(binding.id);
       this._deleteSessionHandle(agentId, visitorId);
+      if (binding?.strictSessionRoute) {
+        const error = new Error(`[${this._logPrefix}] precise session is unavailable`);
+        (error as any).deliveryOutcome = 'not_delivered';
+        throw error;
+      }
     }
 
     // 3. 创建新 session

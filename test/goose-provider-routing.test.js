@@ -201,7 +201,9 @@ test('schema migration enables Goose Push once and preserves later explicit pull
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
   insert.run('g1', 'goose-1', 'u1', 't1', 'http://im', 'published', 'goose', '["pull"]', 'private', now, now);
   insert.run('g2', 'goose-2', 'u2', 't2', 'http://im', 'published', 'acp-goose', '[ "pull" ]', 'private', now, now);
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+  // Goose Push was introduced by schema 7; exercise that historical boundary
+  // independently from newer additive migrations.
+  db.exec('PRAGMA user_version = 6');
   db.close();
 
   const migrated = initDatabase(dbPath, { silent: true });

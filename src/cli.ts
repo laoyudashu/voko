@@ -112,12 +112,12 @@ const TOOL_PARAM_SCHEMAS = {
   get_agent_profile:       { agentId: 'string' },
   search_capabilities:     { agentId: 'string', keyword: 'string', page: 'number', limit: 'number' },
   declare_capabilities:    { agentId: 'string', ability: 'json' },
-  send_message:            { agentId: 'string', toUid: 'string', content: 'string', contentType: 'number', channelType: 'number', mentions: 'json' },
+  send_message:            { agentId: 'string', toUid: 'string', content: 'string', contentType: 'number', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
   get_chat_history:        { agentId: 'string', channelId: 'string', channelType: 'number', keyword: 'string', limit: 'number', offset: 'number' },
   get_visitor_profile:     { visitorId: 'string', agentId: 'string', limit: 'number', offset: 'number' },
   list_conversations:      { agentId: 'string', filter: 'string', channelType: 'string', limit: 'number', offset: 'number', keyword: 'string' },
   mark_conversation_read:  { agentId: 'string', channelId: 'string' },
-  upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json' },
+  upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
   whoami:                  { ownerEmail: 'string' },
   start_worker:            { agentId: 'string' },
   stop_worker:             { agentId: 'string' },
@@ -307,18 +307,6 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
 
     // whoami 特殊化（仅 CLI 层，handler 不改、MCP 不受影响）：
     // 带 --agent 返回该 agent 资料；否则返回 agent 列表 + 提示
-    if (toolName === 'whoami') {
-      if (cliCtx.agentId && typeof handlers.get_agent_profile === 'function') {
-        const r = await handlers.get_agent_profile({ agentId: cliCtx.agentId });
-        console.log(JSON.stringify(r, null, 2));
-        return { success: r.success !== false };
-      }
-      const r = await handlers.whoami(params);
-      console.log(JSON.stringify(r, null, 2));
-      console.error(t('cli.tool.whoami_hint'));
-      return { success: r.success !== false };
-    }
-
     const providerType = detectCurrentAgentType();
     const nativeSessionId = detectProviderSessionFromEnv(providerType);
     const caller = {
@@ -328,6 +316,13 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
       nativeSessionId,
       evidence: nativeSessionId ? 'provider_env' : null,
     };
+    if (toolName === 'whoami') {
+      const r = await runWithProviderCaller(caller, () => handlers.whoami({ ...params, ...(cliCtx.agentId ? { agentId: cliCtx.agentId } : {}) }));
+      console.log(JSON.stringify(r, null, 2));
+      console.error(t('cli.tool.whoami_hint'));
+      return { success: r.success !== false };
+    }
+
     const result = await runWithProviderCaller(caller, () => handlers[toolName](params));
     console.log(JSON.stringify(result, null, 2));
     return { success: result.success !== false };

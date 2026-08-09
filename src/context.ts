@@ -179,8 +179,8 @@ function createContext({
     enqueueOwnerIntervention,
 
     // ── 消息 ──
-    sendMessage: (agentId: string, toUid: string, content: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown) => {
-      return sendMessage(agentId, toUid, content, fromUid, messageType, channelType, mentions);
+    sendMessage: (...args: unknown[]) => {
+      return sendMessage(...args);
     },
 
     // 系统消息（is_me=2 样式区分），用于黑白名单等状态变更通知访客

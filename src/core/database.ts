@@ -227,7 +227,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 // Schema 7 is the current shared Lite/Desktop marker.  The v7 database has
 // the same tables and columns already handled by Lite; keeping the marker in
 // sync prevents a newer Desktop-created database from being rejected by Lite.
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -310,6 +310,90 @@ function migrateGoosePushDeliveryModes(db: DatabaseSync): void {
       AND json_array_length(delivery_modes)=1
       AND json_extract(delivery_modes, '$[0]')='pull'
   `).run(Date.now());
+}
+
+function migrateSchema8ProviderRouting(db: DatabaseSync, previousVersion: number): void {
+  const crypto = require('node:crypto');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_agent_identity_bindings (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        provider_family TEXT NOT NULL,
+        provider_instance_key TEXT NOT NULL DEFAULT '',
+        native_session_fingerprint TEXT NOT NULL,
+        evidence_type TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','stale')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(agent_id,provider_family,provider_instance_key,native_session_fingerprint)
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_identity_lookup
+        ON provider_agent_identity_bindings(provider_family,provider_instance_key,native_session_fingerprint,status);
+
+      CREATE TABLE IF NOT EXISTS provider_routing_conversations (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        provider_family TEXT NOT NULL,
+        provider_instance_key TEXT NOT NULL DEFAULT '',
+        native_session_id TEXT NOT NULL,
+        native_session_fingerprint TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        channel_type INTEGER NOT NULL DEFAULT 1,
+        origin TEXT NOT NULL CHECK(origin IN ('caller','voko_managed','web_system')),
+        status TEXT NOT NULL CHECK(status IN ('active','stale','unavailable')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_used_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_routing_conversation_active
+        ON provider_routing_conversations(agent_id,provider_family,provider_instance_key,
+          native_session_fingerprint,channel_type,channel_id) WHERE status='active';
+      CREATE INDEX IF NOT EXISTS idx_provider_routing_conversation_channel
+        ON provider_routing_conversations(agent_id,channel_type,channel_id,status);
+
+      CREATE TABLE IF NOT EXISTS provider_message_routes (
+        route_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        conversation_id TEXT,
+        reply_to_route_id TEXT,
+        agent_id TEXT NOT NULL,
+        peer_uid TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        channel_type INTEGER NOT NULL DEFAULT 1,
+        direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+        status TEXT NOT NULL CHECK(status IN ('pending','active','failed','expired','invalid')),
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES provider_routing_conversations(id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_message_route_message
+        ON provider_message_routes(message_id,direction,agent_id);
+      CREATE INDEX IF NOT EXISTS idx_provider_message_route_conversation
+        ON provider_message_routes(conversation_id,created_at);
+      CREATE INDEX IF NOT EXISTS idx_provider_message_route_pull
+        ON provider_message_routes(agent_id,channel_type,channel_id,direction,status,message_id);
+    `);
+    const keyRow = db.prepare("SELECT data FROM config WHERE type='provider_session_hmac_key_v1'").get();
+    if (!keyRow) {
+      db.prepare('INSERT INTO config (type,data,updated_at) VALUES (?,?,?)')
+        .run('provider_session_hmac_key_v1', JSON.stringify(crypto.randomBytes(32).toString('base64')), Date.now());
+    }
+    db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+      .run('schema_version', JSON.stringify(8), Date.now());
+    db.exec('PRAGMA user_version=8');
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    try {
+      db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+        .run('schema_version', JSON.stringify(previousVersion), Date.now());
+      db.exec(`PRAGMA user_version=${Math.max(0, Math.floor(previousVersion))}`);
+    } catch (_) {}
+    throw error;
+  }
 }
 
 // ============================================
@@ -1268,6 +1352,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   }
 
   if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);
+  if (schemaVersion < 8) migrateSchema8ProviderRouting(db, schemaVersion);
   runCurrentStartupMaintenance(db);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 

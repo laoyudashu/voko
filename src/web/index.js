@@ -1040,7 +1040,7 @@ function createWebRouter(handlers, db, opts={}){
 
   R.post('/messages/send',async(req,res,next)=>{
     try{
-      const{agentId,toUid,content,channelType}=req.body;
+      const{agentId,toUid,content,channelType,conversationId,replyToMessageId}=req.body;
       let mentions=null;
       if(channelType&&Number(channelType)===2&&req.body.mentions){
         try{
@@ -1073,7 +1073,7 @@ function createWebRouter(handlers, db, opts={}){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
         return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
       }
-      const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions});
+      const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions,conversationId,replyToMessageId});
       if(req.is('json'))return res.json(r.success!==false?{success:true,message:'消息已发送',messageId:r.messageId,messageSeq:r.messageSeq}:{success:false,error:r.error||'未知错误'});
       r.success?res.redirect('/agents/'+esc(agentId)+'/c/'+esc(toUid)+'?ok='+encodeURIComponent('消息已发送')):res.send(renderPage(req,'发送失败','<p class="error">❌ '+esc(r.error||'未知错误')+'</p><a href="/agents/'+esc(agentId)+'/c/'+esc(toUid)+'">返回</a>'))
     }catch(e){next(e)}

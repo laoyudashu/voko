@@ -11,6 +11,7 @@ const { persistAgentMessage } = require('./send-message');
 const { logEvent } = require('./event-log');
 const { isSystemMessageContent } = require('./i18n');
 const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
+const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
 import type { DatabaseLike } from '../types/database';
 import type {
   AgentReplyMessage,
@@ -51,7 +52,7 @@ interface AgentTrustRow {
   imUid: string | null;
   owner_email: string | null;
 }
-interface BackendRow { backend_type: string | null }
+interface BackendRow { backend_type: string | null; backend_instance_id?: string | null }
 interface ConversationUserRow { user_uid: string }
 interface ConversationSessionRow {
   session_status: string | null;
@@ -169,6 +170,8 @@ class MessageHandler extends EventEmitter {
     this._enqueueIntervention = options.enqueueIntervention || (() => {});
     this._createPendingPayment = options.createPendingPayment || (() => {});
     this._onOwnerInterventionNew = options.onOwnerInterventionNew || (() => {});
+    this._messageRoutes = new MessageRouteStore(db);
+    this._routingConversations = new RoutingConversationStore(db);
 
     // 预填充大小写映射（OpenClaw WS）
     this._caseMap = new Map<string, string>();
@@ -497,7 +500,7 @@ class MessageHandler extends EventEmitter {
     if (skipForward) {
       return { agentId, fromUid, content, channelId, channelType: channelType || 1, contentType: data.contentType || 1, messageId, timestamp };
     }
-    this.forwardToAgent(agentId, fromUid, content, channelId, channelType, data.contentType, messageId, timestamp);
+    this.forwardToAgent(agentId, fromUid, content, channelId, channelType, data.contentType, messageId, timestamp, null, data._voko);
   }
 
   // ==========================================
@@ -618,7 +621,7 @@ class MessageHandler extends EventEmitter {
     if (skipForward) {
       return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention };
     }
-    this.forwardToAgent(agentId, fromUid, content, channelId, 2, data.contentType, messageId, timestamp, mention);
+    this.forwardToAgent(agentId, fromUid, content, channelId, 2, data.contentType, messageId, timestamp, mention, data._voko);
   }
 
   // ==========================================
@@ -761,6 +764,7 @@ class MessageHandler extends EventEmitter {
     messageId: string,
     timestamp: number,
     mention: Mention | null = null,
+    routeMetadata: InboundMessage['_voko'] = null,
   ): void {
     if (!this.dispatcher) {
       console.error(`[转发] dispatcher 未初始化，agent=${agentId} 消息留库等 pull`);
@@ -771,11 +775,42 @@ class MessageHandler extends EventEmitter {
     const agentContent = isGroup
       ? this._buildGroupMentionPrompt(channelId, fromUid, content, messageId, timestamp)
       : content;
+    let replyRouteContext: {
+      conversationId: string;
+      providerFamily: string;
+      providerInstanceKey: string;
+      nativeSessionId: string;
+      strictSessionRoute: true;
+    } | null = null;
+    const replyToRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.replyToRouteId === 'string'
+      ? routeMetadata.replyToRouteId : null;
+    const remoteRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.routeId === 'string'
+      ? routeMetadata.routeId : null;
+    if (remoteRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try { this._messageRoutes.recordInbound({ messageId, remoteRouteId, agentId, peerUid: fromUid,
+        channelId, channelType: channelType || 1 }); } catch (_) {}
+    }
+    if (replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try {
+        const resolved = this._messageRoutes.resolveReply({ replyToRouteId, agentId, peerUid: fromUid,
+          channelId, channelType: channelType || 1 });
+        if (resolved) {
+          if (remoteRouteId) this._messageRoutes.recordInbound({ messageId, remoteRouteId,
+            conversationId: resolved.conversation.id, agentId, peerUid: fromUid, channelId,
+            channelType: channelType || 1 });
+          replyRouteContext = { conversationId: resolved.conversation.id,
+            providerFamily: resolved.conversation.providerFamily,
+            providerInstanceKey: resolved.conversation.providerInstanceKey,
+            nativeSessionId: resolved.conversation.nativeSessionId, strictSessionRoute: true };
+        }
+      } catch (_) { /* invalid route remains on legacy/Pull path */ }
+    }
     this.dispatcher.dispatch(agentId, {
       agentId, fromUid, senderUid: fromUid, content: agentContent, rawContent: content, channelId,
       sessionTarget: isGroup ? 'group:' + channelId : fromUid,
       channelType: channelType || 1, contentType: contentType || 1,
-      messageId, timestamp, mention: isGroup ? mention : null
+      messageId, timestamp, mention: isGroup ? mention : null, replyRouteContext,
+      remoteRouteId,
     });
   }
   // ==========================================
@@ -975,11 +1010,38 @@ class MessageHandler extends EventEmitter {
       content: trimmedContent, contentType: 1, messageId: msgId, timestamp, isMe: true, mention: replyMentions
     });
 
-    const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId);
+    let outboundRouteId: string | null = null;
+    const replyToRouteId = typeof data.remoteRouteId === 'string' ? data.remoteRouteId : null;
+    try {
+      if (!isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) throw new Error('routing shadow disabled');
+      let conversation = data.replyRouteContext?.conversationId
+        ? this._routingConversations.getForScope(data.replyRouteContext.conversationId, agentId, replyChannelId, replyChannelType)
+        : null;
+      if (!conversation && data.sessionKey) {
+        const backend = this.db.prepare('SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
+          .get<BackendRow>(agentId);
+        const family = normalizeProviderFamily(backend?.backend_type || '');
+        if (family) conversation = this._routingConversations.resolveOrCreate({ agentId, providerFamily: family,
+          providerInstanceKey: backend?.backend_instance_id || '', nativeSessionId: data.sessionKey,
+          channelId: replyChannelId, channelType: replyChannelType, origin: 'voko_managed' });
+      }
+      if (conversation) outboundRouteId = this._messageRoutes.createPending({ messageId: msgId,
+        conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
+        channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });
+    } catch (_) {}
+    const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
+      ...(replyToRouteId ? { replyToRouteId } : {}) } } : null;
+    const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
     if ((delivery as { success?: boolean })?.success === false) {
+      if (outboundRouteId && !(delivery as { outcomeUnknown?: boolean })?.outcomeUnknown) {
+        try { this._messageRoutes.setStatus(outboundRouteId, 'failed'); } catch (_) {}
+      }
       this.db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId);
       console.error('[Agent回复] 投递失败:', (delivery as { error?: string })?.error || 'unknown error');
       return;
+    }
+    if (outboundRouteId) {
+      try { this._messageRoutes.setStatus(outboundRouteId, 'active'); } catch (_) {}
     }
 
     // Persist the successful Hub acknowledgement so local status checks and

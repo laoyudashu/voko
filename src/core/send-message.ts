@@ -31,6 +31,7 @@ interface TransportLike {
     channelType?: number,
     mentions?: unknown,
     localMsgId?: string | null,
+    metadata?: unknown,
   ): Promise<Partial<SendResult> | undefined>;
 }
 
@@ -42,6 +43,7 @@ type Deliver = (
   channelType?: number,
   mentions?: unknown,
   localMsgId?: string | null,
+  metadata?: unknown,
 ) => Promise<SendResult>;
 
 function errorMessage(error: unknown): string {
@@ -59,14 +61,14 @@ function errorMessage(error: unknown): string {
 function createDeliver({ transportManager }: {
   transportManager: TransportLike;
 }): Deliver {
-  return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null) {
+  return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null, metadata: unknown = null) {
     const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
     console.log(
       `[IM 发送] agent=${agentId} channel=${channelId} channelType=${channelType}`
       + ` type=${messageType} messageId=${lmId} contentLength=${String(content ?? '').length}`,
     );
     try {
-      const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId);
+      const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId, metadata);
       if (result?.success !== false) {
         console.log(
           `[IM SENDACK] agent=${agentId} channel=${channelId} messageId=${result?.messageId || lmId}`
@@ -171,6 +173,7 @@ function createSendMessage({ db, deliver }: {
     channelType = 1,
     mentions?: unknown,
     requestedMessageId?: string,
+    metadata?: unknown,
   ) {
     // 归一化换行：客户端可能将 \n 作为字面字符发送
     content = content.replace(/\\n/g, '\n');
@@ -191,7 +194,7 @@ function createSendMessage({ db, deliver }: {
     );
 
     // 3. 统一通过共享 Hub 投递并等待 SENDACK
-    const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId);
+    const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId, metadata);
 
     // 4. 通知渲染进程（通过事件总线）
     bus.emit('agent-wukongim:message', {

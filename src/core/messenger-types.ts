@@ -25,6 +25,7 @@ export interface InboundMessage {
   redDot?: number | boolean;
   syncOnce?: number | boolean;
   mention?: Mention | null;
+  _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string } | null;
 }
 
 export interface ForwardPayload {
@@ -54,6 +55,14 @@ export interface AgentReplyMessage {
   a2aManaged?: boolean;
   a2aPeerUid?: string;
   a2aScope?: string;
+  remoteRouteId?: string | null;
+  replyRouteContext?: {
+    conversationId: string;
+    providerFamily: string;
+    providerInstanceKey: string;
+    nativeSessionId: string;
+    strictSessionRoute: true;
+  } | null;
 }
 
 export interface AuditRuleMatch {

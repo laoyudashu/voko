@@ -82,6 +82,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider')] },
   { type: 'grok', aliases: [], label: 'Grok', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('grok-cli', './providers/grok-cli', 'GrokCliProvider')] },
+  { type: 'reasonix', aliases: [], label: 'Reasonix', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('reasonix-cli', './providers/reasonix-cli', 'ReasonixCliProvider')] },
   { type: 'openhands', aliases: [], label: 'OpenHands', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'amazon-q', aliases: [], label: 'Amazon Q Developer CLI', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'zcode', aliases: [], label: 'ZCode', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },

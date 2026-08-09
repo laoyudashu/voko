@@ -12,6 +12,7 @@ export {};
 
 const { Router } = require('express');
 const { normalizeBackendType } = require('../../core/agent-backend-types');
+const { getProviderFamily } = require('../../core/dispatcher/provider-catalog');
 const { runWithProviderCaller } = require('../../core/registration-caller-context');
 
 const MCP_VERSION = '2025-11-25';
@@ -95,15 +96,11 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
         try {
           const rawProvider = String(req.headers['x-voko-caller-provider'] || '');
           const providerType = normalizeBackendType(rawProvider);
-          const allowedProviders = new Set([
-            'openclaw', 'zeroclaw', 'hermes', 'goose', 'claude-code', 'codex',
-            'gemini', 'opencode', 'zcode', 'workbuddy', 'doubao',
-            'cursor', 'grok', 'pi', 'cline', 'reasonix',
-          ]);
+          const providerFamily = getProviderFamily(providerType);
           const caller = {
             source: 'mcp',
-            ...(allowedProviders.has(providerType) ? {
-              providerType,
+            ...(providerFamily ? {
+              providerType: providerFamily.type,
               providerInstanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
               instanceId: String(req.headers['x-voko-caller-instance'] || '').slice(0, 192) || null,
               nativeSessionId: String(req.headers['x-voko-caller-session'] || '').slice(0, 512) || null,

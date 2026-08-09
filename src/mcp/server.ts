@@ -197,6 +197,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       toUid: z.string().describe(T('mcp.tool.send_message.p.toUid')),
       content: z.string().describe(T('mcp.tool.send_message.p.content')),
       contentType: z.number().optional().default(1).describe(T('mcp.tool.send_message.p.contentType')),
+      conversationId: z.string().optional().describe('Internal VOKO routing conversation to reuse'),
+      replyToMessageId: z.string().optional().describe('Message being replied to; its verified route is reused'),
       channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时会按群频道 ID 自动判断）'),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe('群聊 @提及（channelType=2 时生效）'),
     },
@@ -286,6 +288,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       filePath: z.string().describe(T('mcp.tool.upload_and_send_file.p.filePath')),
       fileName: z.string().optional().describe(T('mcp.tool.upload_and_send_file.p.fileName')),
       message: z.string().max(8000).optional().describe(T('mcp.tool.upload_and_send_file.p.message')),
+      conversationId: z.string().optional().describe('Internal VOKO routing conversation to reuse'),
+      replyToMessageId: z.string().optional().describe('Message being replied to; its verified route is reused'),
       channelType: z.number().int().min(1).max(2).optional().describe(T('mcp.tool.upload_and_send_file.p.channelType')),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe(T('mcp.tool.upload_and_send_file.p.mentions')),
     },
@@ -302,6 +306,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     T('mcp.tool.whoami.desc'),
     {
       ownerEmail: z.string().optional().describe(T('mcp.tool.whoami.p.ownerEmail')),
+      agentId: z.string().optional().describe('Explicit Agent selection; ownership is verified and no identity binding is changed'),
     },
     async (params: unknown) => {
       const r = await toolHandlers.whoami(params);
