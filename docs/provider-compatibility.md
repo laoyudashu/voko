@@ -6,7 +6,7 @@
 
 通用的注册入口、`deliveryModes` 选择、推荐接收顺序、降级、路由缓存和健康事件刷新规则见[Provider 注册、消息投递与路由恢复指南](provider-delivery-routing.md)。本页保留各类型的能力矩阵和验收证据；未完成验收的类型不要按照矩阵中的“可检测”推断为已支持自动推送。
 
-所有表中“Agent → VOKO”均表示 Agent 可通过 VOKO MCP、CLI 或本机接口完成注册、发消息和主动读取；实际可用入口取决于你的宿主环境。所有“主 / 备”通道都只有在本机检测可用、且你在注册时启用后才会使用。**Pull 始终保留**：消息会留在 VOKO，Agent 可通过 VOKO CLI、MCP 工具或本机接口主动读取；这不是投递错误。
+所有表中“Agent → VOKO”均表示 Agent 可通过 VOKO MCP、CLI 或本机接口完成注册、发消息和主动读取；实际可用入口取决于你的宿主环境。所有“主 / 备”通道都只有在本机检测可用、且你在注册时启用后才会使用。**Pull 始终保留**：消息会留在 VOKO，Agent 可通过 VOKO CLI、MCP 工具或本机接口主动读取；这不是投递错误。消息工具的`conversationId`发现、精确历史、发送与兼容规则统一见[MCP消息与精确Conversation接口](mcp-message-conversations.md)。
 
 | 智能体名称 | Agent 向 VOKO 发消息 | VOKO 向 Agent 收 / 推新消息（主 → 备 → 兜底） | 会话连续性 / 重启恢复 | 实测结论 | 备注 |
 | --- | --- | --- | --- | --- | --- |

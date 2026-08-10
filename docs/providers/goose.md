@@ -1,5 +1,7 @@
 # Goose Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 Goose** 时的安装、注册、会话路由、ACP/CLI 降级和排障。Goose 作为 MCP 客户端调用 VOKO 时，请先看 [MCP 客户端配置](../mcp-client-setup.md) 的 Goose 小节；两种方向不要混用。
@@ -42,6 +44,10 @@ voko get_status --agent-id=<agentId>
 不要把 `backend_instance_id` 当作 Goose Instance。当前 Goose 路由使用 VOKO Agent、私聊/群聊类型、访客会话和 Goose 返回的原生 session ID；VOKO 不要求也不支持通过伪造 Instance 来隔离会话。
 
 ## 3. 会话和消息路由
+
+### Caller identity for `whoami`
+
+Goose documents `AGENT_SESSION_ID` as the native session identifier passed to local stdio extensions. VOKO reads it when Goose launches `voko mcp`; this works on Linux, Windows, and macOS when the extension process inherits the normal Goose environment. `backend_instance_id` remains a user-selected VOKO field and is not treated as a Goose instance. If the variable is absent or multiple Goose Agents share the same instance, VOKO does not inspect the newest session or run a handshake; use `voko_list_agents` and explicitly select the Agent.
 
 VOKO 为每个以下组合保存独立绑定：
 

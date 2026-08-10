@@ -80,6 +80,21 @@ voko start --no-open
 
 `--no-open` only disables browser opening. `--no-interactive` disables the headless first-run terminal wizard. Neither option changes the MCP protocol.
 
+## Routing conversations in Agent tools
+
+The canonical parameter and response contract is [MCP message and routing Conversation contract](mcp-message-conversations.md).
+
+VOKO keeps channel discovery and precise Provider-session routing as separate concepts:
+
+- `list_conversations` lists direct-chat peers and group channels. Its existing behavior is unchanged.
+- `list_routing_conversations` lists active or pending VOKO routing conversations inside one Agent channel. It returns safe VOKO `conversationId` values and never exposes Provider-native session or thread identifiers.
+
+All Conversation-aware inputs are optional for backwards compatibility. Existing channel-level calls continue to work. New callers should prefer `replyToMessageId` when replying to a concrete message, use `conversationId` when deliberately continuing a known Conversation, and omit both on a first outbound message so VOKO can resolve or create it.
+
+`send_message` and `upload_and_send_file` return `messageId` plus a nullable `conversationId`. `fetch_new_messages` and `get_chat_history` return a nullable `conversationId` on every message. `get_chat_history` keeps returning the complete Agent channel when `conversationId` is omitted; when supplied, filtering happens before pagination. Old or unrouted messages remain readable with `conversationId: null`.
+
+`ask_human_for_help` accepts either `replyToMessageId` (preferred) or `conversationId`, and returns the Conversation retained by the intervention. An invalid, cross-Agent, or cross-channel Conversation fails closed; omitting it retains compatible channel-level behavior.
+
 ## Stop and uninstall
 
 Use `voko stop` to stop the runtime without preparing package removal. Before uninstalling the npm package, use:
@@ -103,6 +118,23 @@ voko mcp
 Configure that command in your MCP client. MCP, CLI, local HTTP, and the Web UI use the same registration and runtime state; they are not separate accounts or separate Agent inventories.
 
 `voko mcp` is the recommended transport because it discovers the active Lite runtime and forwards stdio traffic without requiring the client to know a fixed local port. Do not hard-code `localhost:3002` or any other historical port in an MCP client.
+
+### Caller identity and `whoami`
+
+`voko whoami` and `voko_whoami` are read-only identity queries. With one registered Agent, VOKO returns that Agent automatically. With multiple Agents, VOKO can also resolve the Agent when the trusted caller Provider family matches exactly one registered Agent; this identifies the Agent even if the native Provider session is still missing. If several Agents share that Provider family, VOKO uses an existing trusted Provider session binding before requiring selection. Without a unique binding, the result is `selection_required` and the caller must select an Agent from `voko list_agents`/`voko_list_agents`. `whoami` never creates or selects a routing Conversation; Conversation resolution belongs to message send and reply handling.
+
+The stdio bridge forwards a stable caller session only when the Provider exposes it (or when a VOKO-managed adapter supplies `VOKO_CALLER_SESSION_ID`). VOKO does not infer identity from the newest session, process recency, workspace name, or an untrusted client-provided value. This is intentional: an explicit selection is safer than routing a message to the wrong Agent. Historical conversation bindings are backfilled only when one compatible Agent is the unique owner; ambiguous bindings remain explicit-selection cases.
+
+Provider-specific caller evidence is documented in [Provider caller identity](provider-caller-identity.md). VOKO accepts only provider-generated environment/session evidence or a VOKO-managed adapter context. It never starts a model turn, runs a shell command, scans the newest session, or asks the caller to perform a handshake to identify itself. If the Provider does not expose a stable caller Session on the current OS, `whoami` returns `selection_required`; choose an Agent explicitly with `voko_list_agents`/`voko list_agents`.
+
+For a CLI call where the Provider does not expose caller context, use:
+
+```bash
+voko list_agents
+voko whoami --agent <agentId>
+```
+
+The same `agentId` selection can be supplied to other Agent-scoped CLI/MCP operations. Do not put native Provider session IDs, tokens, or local configuration paths into prompts or ordinary logs.
 
 ### HTTP fallback for clients without stdio
 

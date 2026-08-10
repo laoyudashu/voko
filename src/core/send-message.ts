@@ -16,6 +16,7 @@ interface SendResult {
   success: boolean;
   via?: string;
   messageId?: string;
+  serverMessageId?: string;
   clientMsgNo?: string;
   messageSeq?: number;
   error?: string;
@@ -31,6 +32,7 @@ interface TransportLike {
     channelType?: number,
     mentions?: unknown,
     localMsgId?: string | null,
+    metadata?: unknown,
   ): Promise<Partial<SendResult> | undefined>;
 }
 
@@ -42,6 +44,7 @@ type Deliver = (
   channelType?: number,
   mentions?: unknown,
   localMsgId?: string | null,
+  metadata?: unknown,
 ) => Promise<SendResult>;
 
 function errorMessage(error: unknown): string {
@@ -59,14 +62,14 @@ function errorMessage(error: unknown): string {
 function createDeliver({ transportManager }: {
   transportManager: TransportLike;
 }): Deliver {
-  return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null) {
+  return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null, metadata: unknown = null) {
     const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
     console.log(
       `[IM 发送] agent=${agentId} channel=${channelId} channelType=${channelType}`
       + ` type=${messageType} messageId=${lmId} contentLength=${String(content ?? '').length}`,
     );
     try {
-      const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId);
+      const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId, metadata);
       if (result?.success !== false) {
         console.log(
           `[IM SENDACK] agent=${agentId} channel=${channelId} messageId=${result?.messageId || lmId}`
@@ -75,7 +78,16 @@ function createDeliver({ transportManager }: {
       } else {
         console.error(`[IM 发送失败] agent=${agentId} channel=${channelId} messageId=${lmId} error=${result?.error || 'unknown'}`);
       }
-      return { success: result?.success !== false, via: 'hub', messageId: lmId, ...(result || {}) };
+      return {
+        ...(result || {}),
+        success: result?.success !== false,
+        via: 'hub',
+        // messageId is the stable local identifier used by messages and
+        // provider_message_routes. Keep the IM ACK id separately so callers
+        // can immediately use messageId for precise replies.
+        messageId: lmId,
+        ...(result?.messageId && result.messageId !== lmId ? { serverMessageId: result.messageId } : {}),
+      };
     } catch (e: unknown) {
       console.error(`[IM 发送失败] agent=${agentId} channel=${channelId} messageId=${lmId} error=${errorMessage(e)}`);
       return { success: false, via: 'hub', messageId: lmId, error: errorMessage(e) };
@@ -171,6 +183,7 @@ function createSendMessage({ db, deliver }: {
     channelType = 1,
     mentions?: unknown,
     requestedMessageId?: string,
+    metadata?: unknown,
   ) {
     // 归一化换行：客户端可能将 \n 作为字面字符发送
     content = content.replace(/\\n/g, '\n');
@@ -191,18 +204,18 @@ function createSendMessage({ db, deliver }: {
     );
 
     // 3. 统一通过共享 Hub 投递并等待 SENDACK
-    const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId);
+    const sendResult = await deliver(agentId, channelId, content, messageType || 'text', channelType || 1, mentions || null, msgId, metadata);
 
     // 4. 通知渲染进程（通过事件总线）
     bus.emit('agent-wukongim:message', {
       agentId, fromUid: fromUid || 'voko', toUid: channelId, channelId, content,
       channelType: channelType || 1, mention: mentions || null,
-      messageId: sendResult.messageId || msgId, messageSeq: sendResult.messageSeq ?? null, timestamp, isMe: true, contentType
+      messageId: msgId, messageSeq: sendResult.messageSeq ?? null, timestamp, isMe: true, contentType
     });
 
     if (!sendResult.success) {
       try { db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
-      return { success: false, error: sendResult.error, messageId: sendResult.messageId || msgId };
+      return { success: false, error: sendResult.error, messageId: msgId, serverMessageId: sendResult.serverMessageId };
     }
 
     try {
@@ -217,7 +230,13 @@ function createSendMessage({ db, deliver }: {
       `).run(messageSeq, clientMsgNo, msgId);
     } catch (_) {}
 
-    return { success: true, messageId: sendResult.messageId || msgId, clientMsgNo: sendResult.clientMsgNo, messageSeq: sendResult.messageSeq };
+    return {
+      success: true,
+      messageId: msgId,
+      serverMessageId: sendResult.serverMessageId,
+      clientMsgNo: sendResult.clientMsgNo,
+      messageSeq: sendResult.messageSeq,
+    };
   };
 }
 

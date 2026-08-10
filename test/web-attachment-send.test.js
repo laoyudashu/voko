@@ -7,7 +7,7 @@ const { createWebRouter } = require('../build/web');
 test('attachment page prefills recipient and sends multipart through upload_and_send_file', async (t) => {
   let sent;
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'gym', agentName: 'Gym' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'gym', agentName: 'Gym' }] }),
     get_group_context: async ({ channelId }) => ({ success: true, groupName: channelId === 'group-1' ? 'Running Club' : '' }),
     upload_and_send_file: async (params) => {
       sent = params;

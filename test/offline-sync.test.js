@@ -8,6 +8,7 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
+const { decodeOfflinePayload } = require('../build/core/offline-sync');
 
 // 模拟 syncOfflineMessages 中的 payload 解码逻辑
 function decodePayload(payload) {
@@ -54,6 +55,31 @@ function processSyncMessage(msg, agentImUid, channelId) {
 }
 
 // WukongIM API 返回的真实 payload (base64)
+describe('offline route metadata decoding', () => {
+  it('decodes hidden metadata even when the API also supplies top-level content', () => {
+    const payload = Buffer.from(JSON.stringify({
+      content: 'payload content',
+      type: 1,
+      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', conversationKey: 'wire-a',
+        conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b', ignored: 'secret' }
+    })).toString('base64');
+    assert.deepEqual(decodeOfflinePayload(payload), {
+      content: 'payload content',
+      type: 1,
+      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', conversationKey: 'wire-a',
+        conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b' }
+    });
+  });
+
+  it('ignores route metadata without the supported protocol version', () => {
+    const payload = Buffer.from(JSON.stringify({
+      content: 'hello',
+      _voko: { routeId: 'route-a' }
+    })).toString('base64');
+    assert.equal(decodeOfflinePayload(payload)._voko, null);
+  });
+});
+
 const PAYLOAD_VISITOR = Buffer.from(JSON.stringify({
   content: '刚刚为什么说问题有点多，我上一轮问了你哪些问题',
   type: 1

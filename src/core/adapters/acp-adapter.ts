@@ -21,9 +21,11 @@ const { PushProvider } = require('../dispatcher/base-provider');
 const { checkCliAvailable } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
 
@@ -43,6 +45,7 @@ export interface AcpAdapterOptions {
   sessionRequest?: (agentId: string) => Record<string, unknown>;
   connectionKey?: (agentId: string) => string;
   contextWindow?: number;
+  recoveryDelaysMs?: number[];
   streamFactory?: (
     agentId: string,
   ) => Promise<{ stream: unknown; close?: () => void | Promise<void> }>;
@@ -137,6 +140,8 @@ class AcpAdapter extends PushProvider {
   _recoveryPromises: Map<string, Promise<boolean>>;
   _recoveryEpoch: number;
   _providerStopped: boolean;
+  _recoveryTimers: Map<string, NodeJS.Timeout>;
+  _recoveryAttempts: Map<string, number>;
 
   /**
    * @param {object} [options]
@@ -157,11 +162,16 @@ class AcpAdapter extends PushProvider {
     this._recoveryPromises = new Map<string, Promise<boolean>>();
     this._recoveryEpoch = 0;
     this._providerStopped = false;
+    this._recoveryTimers = new Map<string, NodeJS.Timeout>();
+    this._recoveryAttempts = new Map<string, number>();
 
     // DB 引用（session 句柄持久化）
     this._db = options.db || null;
     this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(options.db as any)
+      : null;
+    this._identityBindings = options.db && typeof (options.db as any).exec === 'function'
+      ? new AgentIdentityBindingStore(options.db as any)
       : null;
 
     // 日志前缀（用于区分不同 ACP 实现）
@@ -271,6 +281,38 @@ class AcpAdapter extends PushProvider {
     for (const agentId of agentIds) this._markAgentHealth(agentId, available, reason);
   }
 
+  _cancelScheduledRecovery(agentId: string): void {
+    const recoveryKey = this._connectionKey(agentId);
+    const timer = this._recoveryTimers.get(recoveryKey);
+    if (timer) clearTimeout(timer);
+    this._recoveryTimers.delete(recoveryKey);
+    this._recoveryAttempts.delete(recoveryKey);
+  }
+
+  _scheduleRecovery(agentId: string): void {
+    if (!agentId || !this._started || this._providerStopped) return;
+    const recoveryKey = this._connectionKey(agentId);
+    if (this._recoveryTimers.has(recoveryKey) || this._recoveryPromises.has(recoveryKey)) return;
+    const delays = this.options.recoveryDelaysMs?.length
+      ? this.options.recoveryDelaysMs
+      : [5000, 15000, 30000, 60000];
+    const attempt = this._recoveryAttempts.get(recoveryKey) || 0;
+    const delay = delays[Math.min(attempt, delays.length - 1)];
+    const timer = setTimeout(async () => {
+      this._recoveryTimers.delete(recoveryKey);
+      if (!this._started || this._providerStopped) return;
+      const recovered = await this.recover(agentId);
+      if (recovered) {
+        this._recoveryAttempts.delete(recoveryKey);
+        return;
+      }
+      this._recoveryAttempts.set(recoveryKey, attempt + 1);
+      this._scheduleRecovery(agentId);
+    }, delay);
+    timer.unref?.();
+    this._recoveryTimers.set(recoveryKey, timer);
+  }
+
   async recover(agentId: string): Promise<boolean> {
     if (!agentId || !this._started || this._providerStopped) return false;
     const recoveryKey = this._connectionKey(agentId);
@@ -285,6 +327,7 @@ class AcpAdapter extends PushProvider {
         const state = this._stateForAgent(agentId);
         if (!state || !this._agentStateAlive(state)) throw new Error('ACP recovery did not produce a live process');
         this._markStateHealth(state, agentId, true, 'recovered');
+        this._cancelScheduledRecovery(agentId);
         return true;
       } catch (error) {
         if (this._providerStopped || recoveryEpoch !== this._recoveryEpoch) return false;
@@ -311,6 +354,9 @@ class AcpAdapter extends PushProvider {
   async stop() {
     this._recoveryEpoch += 1;
     this._recoveryPromises.clear();
+    for (const timer of this._recoveryTimers.values()) clearTimeout(timer);
+    this._recoveryTimers.clear();
+    this._recoveryAttempts.clear();
     this._providerStopped = true;
     for (const [agentId, state] of [...this._agents]) {
       this._disconnectAgent(agentId, state, 'provider-stopped');
@@ -657,12 +703,12 @@ class AcpAdapter extends PushProvider {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         cwd: this._cwd,
-        env: {
+        env: withRuntimePath({
           ...process.env,
           ...this.options.env,
           // A3: 注入 agent 回调环境变量（agent 可通过 HTTP 回调 voko）
           VOKO_API_URL: this.options.env?.VOKO_API_URL || process.env.VOKO_API_URL || '',
-        },
+        }, runtime),
       });
       state.child = child;
       if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
@@ -685,6 +731,7 @@ class AcpAdapter extends PushProvider {
         if (!this._providerStopped && state.lifecycleEpoch === this._recoveryEpoch
           && (!currentState || currentState === state)) {
           this._markStateHealth(state, agentId, false, 'process-exit:' + (code ?? signal ?? 'unknown'));
+          this._scheduleRecovery(agentId);
         }
         console.error(`[${this._logPrefix}:${agentId}] 进程退出 code=${code} signal=${signal}`);
         state.sessions.clear();
@@ -698,6 +745,7 @@ class AcpAdapter extends PushProvider {
         if (this._providerStopped || state.lifecycleEpoch !== this._recoveryEpoch
           || (currentState && currentState !== state)) return;
         this._markStateHealth(state, agentId, false, 'process-error:' + err.message);
+        this._scheduleRecovery(agentId);
         if (/ENOENT|EACCES/i.test(String((err as any).code || err.message))) this._invalidateRuntime();
         console.error(`[${this._logPrefix}:${agentId}] 进程错误: ${err.message}`);
       });
@@ -748,6 +796,7 @@ class AcpAdapter extends PushProvider {
       const currentState = this._agents.get(stateKey);
       if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch) return;
       this._markStateHealth(state, agentId, false, 'connection-error:' + errorMessage(err));
+      this._scheduleRecovery(agentId);
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
       if (state._readyResolve) {
         state._readyResolve();
@@ -840,6 +889,7 @@ class AcpAdapter extends PushProvider {
             adapterType: this._adapterType,
             expectedVersion: binding?.bindingVersion ?? 0,
           });
+          this._bindManagedIdentity(agentId, binding?.providerInstanceId || null, session.sessionId);
           return session;
         }
       } catch (err) {
@@ -848,6 +898,11 @@ class AcpAdapter extends PushProvider {
       // resume 失败 → 清除失效句柄
       if (binding?.id) this._bindingStore?.markStale(binding.id);
       this._deleteSessionHandle(agentId, visitorId);
+      if (binding?.strictSessionRoute) {
+        const error = new Error(`[${this._logPrefix}] precise session is unavailable`);
+        (error as any).deliveryOutcome = 'not_delivered';
+        throw error;
+      }
     }
 
     // 3. 创建新 session
@@ -871,6 +926,7 @@ class AcpAdapter extends PushProvider {
       adapterType: this._adapterType,
       expectedVersion: binding?.bindingVersion ?? 0,
     });
+    this._bindManagedIdentity(agentId, binding?.providerInstanceId || null, session.sessionId);
 
     state.sessions.set(sessionKey, session);
     if (saved?.nativeSessionId) {
@@ -878,6 +934,18 @@ class AcpAdapter extends PushProvider {
     }
     this._recoveryNeededSessions.add(sessionKey);
     return session;
+  }
+
+  _bindManagedIdentity(agentId: string, providerInstanceId: string | null, nativeSessionId: string): void {
+    try {
+      this._identityBindings?.bind({
+        agentId,
+        providerFamily: this._bindingProviderType,
+        providerInstanceKey: providerInstanceId || '',
+        nativeSessionId,
+        evidenceType: 'voko_created',
+      });
+    } catch (_) {}
   }
 
   /** 持久化 session 句柄到 DB */

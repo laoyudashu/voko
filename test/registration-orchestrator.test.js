@@ -84,6 +84,10 @@ describe('shared registration orchestrator', () => {
       currentAgentTypeFromEnvironment({ HERMES_SESSION_ID: 'session-1' }, 'C:\\work'),
       'hermes',
     );
+    assert.strictEqual(
+      currentAgentTypeFromEnvironment({ VOKO_CALLER_PROVIDER: 'codex' }, '/tmp'),
+      'codex',
+    );
   });
 
   it('keeps forwarded MCP caller identities isolated across concurrent requests', async () => {

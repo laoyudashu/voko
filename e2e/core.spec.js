@@ -46,7 +46,7 @@ test('guest bug report page includes the shared footer and language controls', a
   await page.goto('/bug-report');
   await expect(page.locator('body')).toContainText(/错误上报|Report a bug/i);
   await expect(page.locator('body')).toContainText(/V\d+\.\d+\.\d+/);
-  await expect(page.locator('a[href*="lang=zh"]')).toBeVisible();
+  await expect(page.locator('[data-voko-language-select]')).toBeVisible();
 });
 
 test('English landing flow renders without leaking server-side templates', async ({ page }) => {

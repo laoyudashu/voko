@@ -387,7 +387,8 @@ test('availability invalidation keeps push and steer caches independent', async 
   });
 
   dispatchOnce(dispatcher);
-  await dispatcher.steer('agent-1', 'visitor-1', 'owner message');
+  const steerResult = await dispatcher.steer('agent-1', 'visitor-1', 'owner message');
+  assert.deepEqual(steerResult, { success: true, deliveryOutcome: 'delivered' });
   await new Promise(resolve => setImmediate(resolve));
   websocket.available = true;
   websocket.emit('availability', {

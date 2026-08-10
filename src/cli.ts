@@ -16,8 +16,8 @@ const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
 const { compareVersions } = require('./core/auto-updater');
 const { t } = require('./core/i18n');
-const { runWithProviderCaller, detectProviderSessionFromEnv } = require('./core/registration-caller-context');
-const { detectCurrentAgentInstance, detectCurrentAgentType } = require('./core/registration-orchestrator');
+const { runWithProviderCaller, detectProviderCaller } = require('./core/registration-caller-context');
+const { detectCurrentAgentType } = require('./core/registration-orchestrator');
 const { spawnSync } = require('child_process');
 const path = require('path');
 const crypto = require('crypto');
@@ -112,16 +112,18 @@ const TOOL_PARAM_SCHEMAS = {
   get_agent_profile:       { agentId: 'string' },
   search_capabilities:     { agentId: 'string', keyword: 'string', page: 'number', limit: 'number' },
   declare_capabilities:    { agentId: 'string', ability: 'json' },
-  send_message:            { agentId: 'string', toUid: 'string', content: 'string', contentType: 'number', channelType: 'number', mentions: 'json' },
-  get_chat_history:        { agentId: 'string', channelId: 'string', channelType: 'number', keyword: 'string', limit: 'number', offset: 'number' },
+  send_message:            { agentId: 'string', toUid: 'string', content: 'string', contentType: 'number', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
+  get_chat_history:        { agentId: 'string', channelId: 'string', channelType: 'number', conversationId: 'string', keyword: 'string', limit: 'number', offset: 'number' },
   get_visitor_profile:     { visitorId: 'string', agentId: 'string', limit: 'number', offset: 'number' },
   list_conversations:      { agentId: 'string', filter: 'string', channelType: 'string', limit: 'number', offset: 'number', keyword: 'string' },
+  list_routing_conversations: { agentId: 'string', channelId: 'string', channelType: 'number', limit: 'number', offset: 'number' },
   mark_conversation_read:  { agentId: 'string', channelId: 'string' },
-  upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json' },
-  whoami:                  { ownerEmail: 'string' },
+  upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
+  whoami:                  { agentId: 'string' },
+  list_agents:             { keyword: 'string', limit: 'number', offset: 'number' },
   start_worker:            { agentId: 'string' },
   stop_worker:             { agentId: 'string' },
-  ask_human_for_help:      { agentId: 'string', visitorId: 'string', channelId: 'string', channelType: 'number', messageId: 'string', problem: 'string', suggestion: 'string' },
+  ask_human_for_help:      { agentId: 'string', visitorId: 'string', channelId: 'string', channelType: 'number', messageId: 'string', replyToMessageId: 'string', conversationId: 'string', problem: 'string', suggestion: 'string' },
   check_human_replies:     { agentId: 'string', id: 'string', visitorId: 'string', since: 'number', limit: 'number', offset: 'number' },
   close_human_request:     { agentId: 'string', id: 'string' },
   create_payment:          { agentId: 'string', visitorId: 'string', amount: 'number', description: 'string' },
@@ -264,7 +266,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
   const hasAgentIdParam = Object.prototype.hasOwnProperty.call(schema, 'agentId');
   const optionalAgentId = toolName === 'bug_report';
-  const needsAgentId = hasAgentIdParam && !optionalAgentId;
+  const needsAgentId = hasAgentIdParam && !optionalAgentId && toolName !== 'whoami' && toolName !== 'list_agents';
   try {
     const params: Record<string, any> = {};
 
@@ -307,27 +309,18 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
 
     // whoami 特殊化（仅 CLI 层，handler 不改、MCP 不受影响）：
     // 带 --agent 返回该 agent 资料；否则返回 agent 列表 + 提示
+    const providerType = detectCurrentAgentType();
+    const caller = {
+      source: 'cli',
+      ...detectProviderCaller(providerType),
+    };
     if (toolName === 'whoami') {
-      if (cliCtx.agentId && typeof handlers.get_agent_profile === 'function') {
-        const r = await handlers.get_agent_profile({ agentId: cliCtx.agentId });
-        console.log(JSON.stringify(r, null, 2));
-        return { success: r.success !== false };
-      }
-      const r = await handlers.whoami(params);
+      const r = await runWithProviderCaller(caller, () => handlers.whoami({ ...params, ...(cliCtx.agentId ? { agentId: cliCtx.agentId } : {}) }));
       console.log(JSON.stringify(r, null, 2));
       console.error(t('cli.tool.whoami_hint'));
       return { success: r.success !== false };
     }
 
-    const providerType = detectCurrentAgentType();
-    const nativeSessionId = detectProviderSessionFromEnv(providerType);
-    const caller = {
-      source: 'cli',
-      providerType: providerType || null,
-      providerInstanceId: providerType ? detectCurrentAgentInstance(providerType) : null,
-      nativeSessionId,
-      evidence: nativeSessionId ? 'provider_env' : null,
-    };
     const result = await runWithProviderCaller(caller, () => handlers[toolName](params));
     console.log(JSON.stringify(result, null, 2));
     return { success: result.success !== false };
@@ -384,13 +377,12 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     'X-VOKO-Caller-Connection': crypto.randomUUID(),
   };
   const providerType = detectCurrentAgentType();
-  const providerInstance = providerType ? detectCurrentAgentInstance(providerType) : null;
-  const providerSession = detectProviderSessionFromEnv(providerType);
-  if (providerType) headers['X-VOKO-Caller-Provider'] = providerType;
-  if (providerInstance) headers['X-VOKO-Caller-Instance'] = providerInstance;
-  if (providerSession) {
-    headers['X-VOKO-Caller-Session'] = providerSession;
-    headers['X-VOKO-Caller-Evidence'] = 'provider_env';
+  const caller = detectProviderCaller(providerType);
+  if (caller.providerType) headers['X-VOKO-Caller-Provider'] = caller.providerType;
+  if (caller.providerInstanceId) headers['X-VOKO-Caller-Instance'] = caller.providerInstanceId;
+  if (caller.nativeSessionId) {
+    headers['X-VOKO-Caller-Session'] = caller.nativeSessionId;
+    headers['X-VOKO-Caller-Evidence'] = caller.evidence || 'provider_env';
   }
 
   let response: any;

@@ -1,5 +1,7 @@
 # OpenClaw Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 OpenClaw** 时的安装、实例选择、WebSocket/CLI 投递和排障。OpenClaw 作为 MCP 客户端调用 VOKO 时，请看本文的 MCP 小节；这和 VOKO 向 OpenClaw 推送访客消息是两个方向。
@@ -63,6 +65,10 @@ OpenClaw 的实例对应 `openclaw.json` 中 `agents.list[].id`，例如 `main`�
 如果 WebSocket 显示 `configuration_required`，先完成 VOKO 注册流程要求的主人确认和 Gateway 配置，不要直接编辑 `voko.db`。
 
 ## 3. 消息路由和会话边界
+
+### Caller identity for `whoami`
+
+OpenClaw's Gateway `sessionKey` is a routing selector and is not automatically exposed as an external MCP caller identity. VOKO therefore accepts OpenClaw instance context only from a VOKO-managed adapter or an explicitly trusted integration; it does not infer identity from the workspace, the newest transcript, or a Gateway session list. The rule is the same on Linux, Windows, and macOS: if multiple OpenClaw Agents cannot be uniquely identified, choose one with `voko_list_agents` and retry `whoami` with `agentId`.
 
 OpenClaw 的 VOKO 绑定按以下组合隔离：
 

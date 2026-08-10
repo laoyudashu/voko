@@ -514,7 +514,7 @@ test('payments page scopes SQL queries to the current owner', async (t) => {
     },
   };
   const app = express();
-  app.use(createWebRouter({ whoami: async () => ({ agents: [] }) }, db));
+  app.use(createWebRouter({ list_agents: async () => ({ agents: [] }) }, db));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
@@ -525,6 +525,23 @@ test('payments page scopes SQL queries to the current owner', async (t) => {
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/payments`);
   assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.equal((html.match(/data-testid="payment-region-notice"/g) || []).length, 1);
+  assert.match(html, /支付功能目前仅支持中国大陆用户使用，其他地区暂不支持。/);
+  assert.ok(html.indexOf('data-testid="payment-region-notice"') < html.indexOf('<form method="GET" action="/payments">'));
+
+  const englishResponse = await fetch(`http://127.0.0.1:${server.address().port}/payments?lang=en`);
+  assert.equal(englishResponse.status, 200);
+  const englishHtml = await englishResponse.text();
+  assert.match(englishHtml, /Payments are currently available only to users in Mainland China\. Other regions are not supported yet\./);
+
+  const createResponse = await fetch(`http://127.0.0.1:${server.address().port}/payments?action=create`);
+  assert.equal(createResponse.status, 200);
+  const createHtml = await createResponse.text();
+  assert.equal((createHtml.match(/data-testid="payment-region-notice"/g) || []).length, 1);
+  assert.ok(createHtml.indexOf('<h3>') < createHtml.indexOf('data-testid="payment-region-notice"'));
+  assert.ok(createHtml.indexOf('data-testid="payment-region-notice"') < createHtml.indexOf('<form method="POST" action="/payments">'));
+
   const paymentQuery = queries.find((entry) => entry.sql.includes('COUNT(*) as c'));
   assert.match(paymentQuery.sql, /payment_orders po JOIN agents a ON a\.agent_id=po\.agent_id/);
   assert.match(paymentQuery.sql, /LOWER\(TRIM\(a\.owner_email\)\)=\?/);
@@ -801,7 +818,12 @@ test('shared Hub runtime logs inbound, outbound, SENDACK and heartbeat summaries
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'worker-manager.ts'), 'utf8');
   const sendSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'send-message.ts'), 'utf8');
+  const hermesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'dispatcher', 'providers', 'hermes-http.ts'), 'utf8');
   assert.match(managerSource, /\[IM 接收\]/);
+  assert.doesNotMatch(managerSource, /messagePreview\(data\.content\)/);
+  assert.match(managerSource, /contentLength=/);
+  assert.doesNotMatch(hermesSource, /完整回复.*result\.reply/);
+  assert.doesNotMatch(hermesSource, /replyPreview|replyPrev2/);
   assert.match(sendSource, /\[IM 发送\]/);
   assert.match(sendSource, /\[IM SENDACK\]/);
   assert.match(entrySource, /\[\$\{ts\}\]\[IM 心跳\]/);

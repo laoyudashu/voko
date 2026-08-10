@@ -24,7 +24,7 @@
   "component": "all remaining *.test.js files",
   "business": {
     "registration": ["agent-register-fields.test.js", "registration-orchestrator.test.js", "cli-register.test.js", "web-register.test.js"],
-    "messaging": ["lite-messenger-contract.test.js", "lite-reply-idempotency-e2e.test.js", "offline-sync.test.js", "group-message.test.js"],
+    "messaging": ["lite-messenger-contract.test.js", "lite-reply-idempotency-e2e.test.js", "offline-sync.test.js", "group-message.test.js", "group-precise-routing.test.js"],
     "im": ["lite-im-hub.test.js", "heartbeat-delivery-status.test.js"],
     "providers": ["lite-dispatcher-routing.test.js", "provider-family-loading.test.js", "provider-conversation-bindings.test.js"],
     "mcp": ["lite-mcp-contract.test.js", "group-mcp-tools.test.js", "mcp-agent-profile.test.js"],

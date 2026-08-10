@@ -62,6 +62,17 @@ class VokoWorkerAdapter extends EventEmitter {
       redDot: message.header?.reddot ? 1 : 0,
       syncOnce: message.header?.syncOnce ? 1 : 0,
       mention: payload.mention || null,
+      _voko: payload._voko && Number(payload._voko.protocolVersion) === 1 ? {
+        protocolVersion: 1,
+        routeId: typeof payload._voko.routeId === 'string' ? payload._voko.routeId : undefined,
+        replyToRouteId: typeof payload._voko.replyToRouteId === 'string' ? payload._voko.replyToRouteId : undefined,
+        conversationKey: typeof payload._voko.conversationKey === 'string' ? payload._voko.conversationKey : undefined,
+        conversationStart: payload._voko.conversationStart === true ? true : undefined,
+        conversationDisposition: ['created', 'reused'].includes(payload._voko.conversationDisposition)
+          ? payload._voko.conversationDisposition : undefined,
+        canonicalConversationKey: typeof payload._voko.canonicalConversationKey === 'string'
+          ? payload._voko.canonicalConversationKey : undefined,
+      } : null,
     };
     if (typeof message.ack === 'function') normalized.ack = message.ack;
     if (typeof message.nack === 'function') normalized.nack = message.nack;
@@ -104,8 +115,8 @@ class VokoWorkerAdapter extends EventEmitter {
     return { connected: this.statuses.get(agentId) === 'connected', uid: client?.options?.uid || this.configs.get(agentId)?.uid || null, status: this.statuses.get(agentId) || 'unknown' };
   }
 
-  async deliver(agentId, channelId, content, messageType = 'text', channelType = ChannelType.Person, mentions = null, localMsgId) {
-    const options = { mention: mentions || undefined, clientMsgNo: localMsgId || undefined };
+  async deliver(agentId, channelId, content, messageType = 'text', channelType = ChannelType.Person, mentions = null, localMsgId, metadata = null) {
+    const options = { mention: mentions || undefined, clientMsgNo: localMsgId || undefined, _voko: metadata?._voko || undefined };
     try {
       let result;
       if (messageType === 'image') result = await this.pool.sendImage(agentId, channelId, channelType, content, options);
@@ -122,7 +133,7 @@ class VokoWorkerAdapter extends EventEmitter {
   }
 
   send(agentId, request) {
-    return this.deliver(agentId, request.channelId, request.content, request.messageType, request.channelType, request.mentions, request.localMsgId);
+    return this.deliver(agentId, request.channelId, request.content, request.messageType, request.channelType, request.mentions, request.localMsgId, request.metadata);
   }
 
   disconnectAll() {

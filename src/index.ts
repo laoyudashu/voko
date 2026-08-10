@@ -2,6 +2,7 @@
 export {};
 import type { AccessControlLike } from './core/messenger-types';
 const { normalizeBackendType } = require('./core/agent-backend-types');
+const { isRoutingFeatureEnabled } = require('./core/provider-routing');
 
 
 // 兼容旧的开发启动命令：源码目录中可能包含已迁移为 .ts 的模块，
@@ -943,13 +944,47 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── Steer 注入（desktop owner-intervention:steer-to-agent → 此端点） ──
   app.post('/api/owner-intervention/steer', async (req?: any, res?: any) => {
     try {
-      const { agentId, visitorId, content } = req.body || {};
+      const { agentId, visitorId, content, interventionId, conversationId, sourceMessageId } = req.body || {};
       if (!agentId || !visitorId || !content) return res.json({ success: false, error: '缺少参数' });
       const dispatcher = (global as any).__dispatcher;
       if (!dispatcher) return res.json({ success: false, error: 'dispatcher 未初始化' });
+      const preciseIntervention = isRoutingFeatureEnabled(db, 'web_intervention_precise_route_v1', true);
+      const channelType = Number(req.body?.channelType) === 2 ? 2 : 1;
+      const channelId = String(req.body?.channelId || visitorId).replace(/^group:/, '');
+      let selectedConversationId = String(conversationId || '');
+      if (preciseIntervention && !selectedConversationId && interventionId) {
+        selectedConversationId = String(db.prepare(`SELECT routing_conversation_id FROM owner_interventions
+          WHERE id=? AND agent_id=? LIMIT 1`).get(interventionId, agentId)?.routing_conversation_id || '');
+      }
+      if (preciseIntervention && !selectedConversationId && sourceMessageId) {
+        selectedConversationId = String(db.prepare(`SELECT conversation_id FROM provider_message_routes
+          WHERE message_id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active'
+          ORDER BY created_at DESC LIMIT 1`).get(sourceMessageId, agentId, channelId, channelType)?.conversation_id || '');
+      }
+      if (preciseIntervention && !selectedConversationId) {
+        const candidates = db.prepare(`SELECT id FROM provider_routing_conversations
+          WHERE agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 2`)
+          .all(agentId, channelId, channelType);
+        if (candidates.length === 1) selectedConversationId = candidates[0].id;
+        else if (candidates.length > 1) return res.status(409).json({ success: false, code: 'CONVERSATION_REQUIRED', error: 'Multiple Provider conversations are available' });
+      }
+      let replyRouteContext: any = null;
+      if (preciseIntervention && selectedConversationId) {
+        const conversation = db.prepare(`SELECT id,provider_family,provider_instance_key,native_session_id
+          FROM provider_routing_conversations WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 1`)
+          .get(selectedConversationId, agentId, channelId, channelType);
+        if (!conversation?.provider_family || !conversation?.native_session_id) {
+          return res.status(409).json({ success: false, code: 'EXACT_SESSION_UNAVAILABLE', error: 'The original Provider session cannot be restored' });
+        }
+        replyRouteContext = { strictSessionRoute: true, conversationId: conversation.id,
+          providerFamily: conversation.provider_family, providerInstanceKey: conversation.provider_instance_key || null,
+          nativeSessionId: conversation.native_session_id };
+      }
       const enriched = '[Owner Instruction] ' + content;
       // dispatcher.steer 统一构造 sessionKey + hermes 补偿 emit（在 dispatcher 内）
-      const r = await dispatcher.steer(agentId, visitorId, enriched);
+      const r = await dispatcher.steer(agentId, visitorId, enriched, {
+        interventionId, channelId, channelType, replyRouteContext,
+      });
       res.json({
         success: r?.success !== false,
         deliveryOutcome: r?.deliveryOutcome || (r?.success === false ? 'outcome_unknown' : 'delivered'),
@@ -1169,7 +1204,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
       const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
       const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
       let runtimeRebind: any;
       if (result.success !== false) runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
@@ -1207,7 +1242,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
       }
       if (sets.length) {
-        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
         // 补 updated_at（原实现遗漏，修复一致性）
         sets.push('updated_at = ?'); vals.push(Date.now());
         vals.push(agentId);
@@ -1226,7 +1261,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { registerCapabilitiesForAgent } = require('./core/register-capabilities');
       const { updateAgentProfile } = require('./core/update-agent-profile');
       const { setAgentStatus } = require('./core/set-agent-status');
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = await publishAgent({
         db, agentId,
         startAgentWorker: (id?: any, cfg?: any) => agentManager.start(id, cfg),
@@ -1635,6 +1670,10 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
   try {
     const audit = require('./core/audit');
+    const groupClient = require('./core/group-client');
+    const groupRouteContext = {
+      query: (sql: string, params: unknown[] = []) => db.prepare(sql).all(...params),
+    };
     // 访问控制：包装 access-control-api 纯函数，使独立 Lite 下黑名单/白名单/private 模式同样生效
     const acApi = require('./core/access-control-api');
     const ac: AccessControlLike = {
@@ -1662,6 +1701,8 @@ async function startMcpServer(args?: any, core?: any) {
         bus.emit('owner-intervention:new');
       },
       createPendingPayment: () => {},
+      getGroupInfo: (agentId: string, channelId: string) =>
+        groupClient.getInfo(groupRouteContext, { agentId, channelId }),
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
     });
     messageHandler?.setDispatcher(dispatcher);
@@ -1764,7 +1805,7 @@ async function startMcpServer(args?: any, core?: any) {
       databaseAPI, openclawHandler, db,
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
-      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
+      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db),
     });
   } catch (e: any) {
     console.error('[Lite] 渠道初始化失败:', e.message);
@@ -1780,7 +1821,7 @@ async function startMcpServer(args?: any, core?: any) {
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher),
+      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db),
       autoApproveWhitelistIfFriendRequest: (intervention?: any, reply?: any) =>
         messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply),
     });
@@ -1972,18 +2013,20 @@ function attachRebindAgentRuntime(dispatcher: any, agentManager: any, db: any) {
 async function runRebindForRoute(db: any, agentId: string, previousSnap: any): Promise<any> {
   const rebind = (global as any).__rebindAgentRuntime;
   if (rebind) {
-    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
+    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
     try {
       return await rebind({
         db, agentId,
         previous: {
           backendType: previousSnap.backend_type,
           backendInstanceId: previousSnap.backend_instance_id ?? null,
+          deliveryModes: previousSnap.delivery_modes,
           imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
         },
         next: {
           backendType: nextRow.backend_type,
           backendInstanceId: nextRow.backend_instance_id ?? null,
+          deliveryModes: nextRow.delivery_modes,
           imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
         },
       });
@@ -2013,13 +2056,26 @@ async function runRebindForRoute(db: any, agentId: string, previousSnap: any): P
  * @param {Function} [params.onAgentReply] - callback(data) 收到 agent 回复时触发
  * @returns {{ openclawHandler: object|null, hermesHandler: object|null }}
  */
-function createResumeOwnerIntervention(dispatcher?: any) {
+function createResumeOwnerIntervention(dispatcher?: any, db?: any) {
   return async function resumeOwnerIntervention(intervention?: any, content?: any) {
     if (!dispatcher || !intervention?.agentId) return { success: false, error: 'dispatcher unavailable' };
     const channelType = Number(intervention.targetChannelType) === 2 ? 2 : 1;
     const channelId = intervention.targetChannelId || intervention.visitorId;
     const senderUid = intervention.sourceSenderUid || intervention.visitorId;
     const sessionTarget = channelType === 2 ? `group:${channelId}` : channelId;
+    const conversationId = String(intervention.routingConversationId || intervention.routing_conversation_id || '');
+    let replyRouteContext: any = null;
+    if (conversationId && db) {
+      const conversation = db.prepare(`SELECT id,provider_family,provider_instance_key,native_session_id
+        FROM provider_routing_conversations WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 1`)
+        .get(conversationId, intervention.agentId, channelId, channelType);
+      if (!conversation?.provider_family || !conversation?.native_session_id) {
+        return { success: false, error: 'The original Provider session cannot be restored', code: 'EXACT_SESSION_UNAVAILABLE' };
+      }
+      replyRouteContext = { strictSessionRoute: true, conversationId: conversation.id,
+        providerFamily: conversation.provider_family, providerInstanceKey: conversation.provider_instance_key || null,
+        nativeSessionId: conversation.native_session_id };
+    }
     const senderIsAgent = channelType === 2 && dispatcher.isAgentImUid?.(senderUid) === true;
     if (senderIsAgent) {
       // 主人的明确指令优先于此前的自动收敛状态；只放行这次定向恢复，
@@ -2032,6 +2088,7 @@ function createResumeOwnerIntervention(dispatcher?: any) {
       senderUid,
       interventionId: intervention.id,
       interventionResume: true,
+      replyRouteContext,
     });
     if (result && typeof result === 'object' && 'deliveryOutcome' in result) return result;
     if (result === null || result === undefined || result === false) {
@@ -2588,6 +2645,7 @@ function printUsage() {
     '\n' +
     t('cli.usage.examples_header') + '\n' +
     '  voko whoami                                   ' + t('cli.usage.example_whoami') + '\n' +
+    '  voko list_agents                              List registered agents\n' +
     '  voko send_message --agent X --toUid Y --content "hi"\n' +
     '  voko list_conversations --agent X\n' +
     '  voko --tools\n' +
@@ -2597,8 +2655,8 @@ function printUsage() {
     '  update_agent_profile  set_agent_status  get_status  get_agent_profile\n' +
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
-    '  get_visitor_profile  list_conversations  mark_conversation_read\n' +
-    '  upload_and_send_file  whoami  start_worker  stop_worker\n' +
+    '  get_visitor_profile  list_conversations  list_routing_conversations  mark_conversation_read\n' +
+    '  upload_and_send_file  whoami  list_agents  start_worker  stop_worker\n' +
     '  ask_human_for_help  check_human_replies  close_human_request\n' +
     '  create_payment  check_payments  agent_pricing\n' +
     '  add_payment_auth  list_payment_auth  delete_payment_auth\n' +

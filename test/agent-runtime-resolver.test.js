@@ -103,5 +103,28 @@ test('Unix resolution includes the user-local bin directory when PATH is minimal
     });
     assert.equal(result.available, true);
     assert.equal(result.canonicalPath, fs.realpathSync(tool));
+    assert.equal(result.pathEntries[0], path.dirname(process.execPath));
+    assert.ok(result.pathEntries.includes(path.dirname(tool)));
+    assert.ok(result.pathEntries.indexOf(path.dirname(tool)) < result.pathEntries.indexOf('/usr/bin'));
+  } finally { cleanup(); }
+});
+
+test('Unix spawn PATH keeps Linux runtime directories ahead of mounted Windows shims', () => {
+  const { root, cleanup } = fixture();
+  try {
+    const home = path.join(root, 'home');
+    const nvmBin = path.join(home, '.nvm', 'versions', 'node', 'v22.0.0', 'bin');
+    const tool = path.join(nvmBin, 'reasonix');
+    touch(tool, '#!/usr/bin/env node\n');
+    touch(path.join(nvmBin, 'node'));
+    const mountedWindowsShim = path.join(root, 'mounted-windows-shim');
+    const resolver = new AgentRuntimeResolver({ platform: 'linux', env: {
+      HOME: home, PATH: [mountedWindowsShim, '/usr/bin'].join(path.delimiter),
+    }, nodePath: path.join(nvmBin, 'node') });
+    const result = resolver.resolve({ providerId: 'reasonix-cli', mode: 'cli',
+      candidates: [{ kind: 'native', command: 'reasonix' }] });
+    assert.equal(result.available, true);
+    assert.equal(result.pathEntries[0], nvmBin);
+    assert.ok(result.pathEntries.indexOf(nvmBin) < result.pathEntries.indexOf(mountedWindowsShim));
   } finally { cleanup(); }
 });

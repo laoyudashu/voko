@@ -17,12 +17,16 @@ const { createRegistrationOrchestrator } = require('../core/registration-orchest
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
+const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
+const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
+  isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
 // 入站包装是 [VOKO A2A CONTROL]+[VOKO AGENT PEER MESSAGE]，出站回复才用 [STATE]/[FINAL]。
 import type { LiteContext } from '../context';
+import type { RoutingConversation } from '../core/provider-routing';
 
 /**
  * 剥离入站 agent_peer 消息被 dispatcher 注入的协议包装，只保留对端可见正文。
@@ -78,6 +82,7 @@ interface MessageDbRow {
   client_msg_no?: string | null;
   sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'system';
   trustLevel?: 'untrusted' | 'untrusted_peer' | 'trusted_owner' | 'trusted_system';
+  routing_conversation_id?: string | null;
 }
 
 interface AgentDbRow extends DynamicRow {
@@ -280,7 +285,7 @@ type McpContext = Omit<LiteContext,
   waitForAgentConnection?(agentId?: string, timeoutMs?: number): Promise<DynamicRow | undefined>;
   stopAgentWorker?(agentId?: string): Promise<unknown> | unknown;
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
-  sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string): Promise<DynamicRow>;
+  sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string, metadata?: unknown): Promise<DynamicRow>;
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
   uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string): Promise<unknown>;
   getPaymentAuth?(agentId?: string): unknown;
@@ -507,6 +512,7 @@ interface McpToolParams {
   backendInstanceId?: string;
   blockTimeout?: number;
   category?: string;
+  challenge?: string;
   channelId?: string;
   channelType?: number | 'all' | 'direct' | 'group';
   /** MCP 客户端自报身份（如 'zcode'/'codex'/'cursor'），用于游标隔离，避免多客户端互抢消息。 */
@@ -580,6 +586,9 @@ interface McpToolParams {
   trialMinutes?: number;
   instanceId?: string;
   deliveryModes?: string[];
+  conversationId?: string;
+  replyToMessageId?: string;
+  webRequest?: boolean;
   visibility?: number;
   visitorId?: string;
 }
@@ -679,6 +688,20 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
 
 function createToolHandlers(cx: McpContext) {
   const providerBindings = new ProviderConversationBindingStore(cx.db);
+  const identityBindings = new AgentIdentityBindingStore(cx.db);
+  const routingConversations = new RoutingConversationStore(cx.db);
+  const messageRoutes = new MessageRouteStore(cx.db);
+  const featureEnabled = (name: string, defaultValue = false): boolean => {
+    const envName = `VOKO_${name.toUpperCase()}`;
+    const envValue = process.env[envName];
+    if (envValue != null) return /^(1|true|yes|on)$/i.test(envValue);
+    try {
+      const row = cx.query<{ data?: string }>('SELECT data FROM config WHERE type=? LIMIT 1', [`feature:${name}`])[0];
+      if (!row?.data) return defaultValue;
+      const parsed = JSON.parse(row.data);
+      return parsed === true || parsed?.enabled === true;
+    } catch (_) { return defaultValue; }
+  };
   // These tools can change identity, access, external delivery or payment
   // state. MCP definitions mark mutations as destructive; retain a minimal
   // local audit trail without persisting arguments, credentials or content.
@@ -787,14 +810,72 @@ function createToolHandlers(cx: McpContext) {
     } catch (_) { return ''; }
   }
   /** 从 provider caller 上下文解析 MCP 客户端身份，用作游标隔离的 clientId。 */
-  function _resolveClientId(): string | undefined {
+  function _sessionPullEligible(agentId: string, caller: any): boolean {
+    if (!caller?.providerType || !caller?.nativeSessionId || !caller?.evidence) return false;
+    const agent = cx.query<{ backend_type?: string }>('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1', [agentId])[0];
+    const callerFamily = normalizeProviderFamily(caller.providerType);
+    if (!agent?.backend_type || normalizeProviderFamily(agent.backend_type) !== callerFamily) return false;
+    return isRoutingPolicyEligible(cx.db, 'session_scoped_pull_v1', { providerFamily: callerFamily });
+  }
+  function _resolveClientId(agentId?: string, suffix?: string): string | undefined {
     try {
       const caller = getProviderCaller();
-      // providerType 由 HTTP transport 的 x-voko-caller-provider header 注入（如 'zcode'/'codex'），
-      // 天然标识发起本次 MCP 调用的客户端类型。
-      const id = caller?.providerType || caller?.providerInstanceId;
+      if (agentId && _sessionPullEligible(agentId, caller)) {
+        const fp = fingerprintProviderSession(cx.db, caller.providerType, caller.nativeSessionId);
+        return `session:${agentId}:${fp}${suffix ? `:${String(suffix).slice(0, 64)}` : ''}`;
+      }
+      const id = suffix || caller?.providerType || caller?.providerInstanceId;
       return id ? String(id).slice(0, 64) : undefined;
     } catch (_: unknown) { return undefined; }
+  }
+  function _publicClientId(clientId?: string): string | null {
+    return clientId?.startsWith('session:') ? 'session-scoped' : clientId || null;
+  }
+  function _filterPullRowsForCaller(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
+    if (!agentId || rows.length === 0) return rows;
+    const self = cx.query<{ imUid?: string }>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [agentId])[0]?.imUid;
+    rows = rows.filter((row) => {
+      if (Number(row.channel_type) !== 2) return true;
+      let mention: { all?: boolean; uids?: string[] } | null = null;
+      try { mention = typeof row.mention === 'string' ? JSON.parse(row.mention) : (row.mention as any); } catch (_) {}
+      if (!mention?.all && (!self || !Array.isArray(mention?.uids) || !mention.uids.includes(self))) return false;
+      const invalid = cx.query<{ status?: string }>(`SELECT status FROM provider_message_routes
+        WHERE message_id=? AND agent_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1`,
+      [row.id, agentId])[0];
+      return invalid?.status !== 'invalid';
+    });
+    if (rows.length === 0) return rows;
+    const caller = getProviderCaller();
+    if (!_sessionPullEligible(agentId, caller)) return rows;
+    try {
+      const fp = fingerprintProviderSession(cx.db, caller.providerType, caller.nativeSessionId);
+      const family = normalizeProviderFamily(caller.providerType);
+      const routes = new MessageRouteStore(cx.db);
+      for (const row of rows) {
+        if (Number(row.channel_type) !== 2) continue;
+        const existing = cx.query<{ conversation_id?: string | null; status?: string }>(`SELECT conversation_id,status
+          FROM provider_message_routes WHERE message_id=? AND agent_id=? AND direction='inbound' LIMIT 1`,
+        [row.id, agentId])[0];
+        if (existing?.status === 'invalid' || existing?.conversation_id) continue;
+        const instance = caller.providerInstanceId ? String(caller.providerInstanceId) : null;
+        const candidates = cx.query<{ id: string }>(`SELECT id FROM provider_routing_conversations
+          WHERE agent_id=? AND provider_family=? AND native_session_fingerprint=?
+            AND channel_type=2 AND channel_id=? AND status='active'
+            ${instance ? 'AND provider_instance_key=?' : ''} ORDER BY id LIMIT 2`,
+        [agentId, family, fp, row.channel_id, ...(instance ? [instance] : [])]);
+        if (candidates.length !== 1) continue;
+        routes.claimInbound({ messageId: row.id, conversationId: candidates[0].id, agentId,
+          peerUid: row.from_uid, channelId: row.channel_id, channelType: 2 });
+      }
+      const ids = rows.map((row) => row.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const allowed = new Set(cx.query<{ message_id: string }>(`SELECT r.message_id FROM provider_message_routes r
+        JOIN provider_routing_conversations c ON c.id=r.conversation_id
+        WHERE r.agent_id=? AND r.direction='inbound' AND r.status='active'
+          AND c.native_session_fingerprint=? AND r.message_id IN (${placeholders})`, [agentId, fp, ...ids])
+        .map((row) => row.message_id));
+      return rows.filter((row) => allowed.has(row.id));
+    } catch (_) { return []; }
   }
   function _agentOwnershipError(agentId?: string): string | null {
     if (!agentId) return null;
@@ -807,6 +888,38 @@ function createToolHandlers(cx: McpContext) {
     return current && current === String(row.owner_email).trim().toLowerCase()
       ? null
       : '当前登录用户无权访问该 Agent';
+  }
+  function _listOwnedAgents(options: { keyword?: string; limit?: number; offset?: number } = {}) {
+    const currentOwner = _currentOwnerEmail();
+    const conditions = [currentOwner ? 'owner_email=?' : "(owner_email IS NULL OR TRIM(owner_email)='')"];
+    const params: unknown[] = currentOwner ? [currentOwner] : [];
+    const keyword = String(options.keyword || '').trim();
+    if (keyword) {
+      conditions.push('(LOWER(agent_name) LIKE ? OR LOWER(agent_id) LIKE ?)');
+      const pattern = `%${keyword.toLowerCase()}%`;
+      params.push(pattern, pattern);
+    }
+    const limit = Math.min(500, Math.max(1, Number(options.limit) || 200));
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const where = ` WHERE ${conditions.join(' AND ')}`;
+    const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
+    const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
+      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
+       delivery_modes,publish_status,access_mode,owner_email,created_at FROM agents${where}
+       ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
+    );
+    const agents = rows.map((r) => {
+      let deliveryModes: string[] = [];
+      try { deliveryModes = JSON.parse(r.delivery_modes || '[]'); } catch (_) {}
+      return {
+        agentId: r.agent_id, agentName: r.agent_name, description: r.description,
+        shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
+        backendInstanceId: r.backend_instance_id || null, deliveryModes,
+        publishStatus: r.publish_status, accessMode: r.access_mode,
+        ownerEmail: r.owner_email, createdAt: r.created_at,
+      };
+    });
+    return { agents, total, limit, offset, hasMore: offset + agents.length < total };
   }
   function fmtMsg(r: MessageDbRow) {
     let mention = null;
@@ -827,8 +940,27 @@ function createToolHandlers(cx: McpContext) {
       contentType: r.content_type || 1,
       agentId: r.agent_id || null,
       channelType: r.channel_type || 1,
+      conversationId: r.routing_conversation_id || null,
       mention,
     };
+  }
+  function attachConversationIds(rows: MessageDbRow[], agentId?: string): MessageDbRow[] {
+    if (!rows.length || !agentId) return rows;
+    const ids = [...new Set(rows.map((row) => String(row.id || '')).filter(Boolean))];
+    if (!ids.length) return rows;
+    const placeholders = ids.map(() => '?').join(',');
+    const routeRows = cx.query<{ message_id: string; conversation_id?: string | null }>(
+      `SELECT message_id,conversation_id FROM provider_message_routes
+       WHERE agent_id=? AND message_id IN (${placeholders}) AND conversation_id IS NOT NULL
+       ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,created_at DESC`,
+      [agentId, ...ids],
+    );
+    const byMessage = new Map<string, string>();
+    for (const route of routeRows) {
+      if (route.conversation_id && !byMessage.has(route.message_id)) byMessage.set(route.message_id, route.conversation_id);
+    }
+    for (const row of rows) row.routing_conversation_id = byMessage.get(row.id) || null;
+    return rows;
   }
   function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean } = {}) {
     const base = fmtMsg(r);
@@ -856,6 +988,10 @@ function createToolHandlers(cx: McpContext) {
     };
   }
   function fmtPullResult(rows: MessageDbRow[], hasMore: boolean, extra: Record<string, unknown> = {}) {
+    const formattingAgentId = typeof extra._agentId === 'string' ? extra._agentId : undefined;
+    const publicExtra = { ...extra };
+    delete publicExtra._agentId;
+    attachConversationIds(rows, formattingAgentId);
     return {
       success: true,
       securityContext: createPullSecurityContext(),
@@ -863,7 +999,7 @@ function createToolHandlers(cx: McpContext) {
       messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false })),
       hasMore,
       count: rows.length,
-      ...extra,
+      ...publicExtra,
     };
   }
 
@@ -1108,6 +1244,20 @@ function createToolHandlers(cx: McpContext) {
       if (!regRes.success) return { success: false, error: regRes.error || '写入 agents 表失败' };
 
       // Step 3：更新绑定字段
+      const registrationCaller = getProviderCaller();
+      if (featureEnabled('provider_identity_v1', true)
+        && registrationCaller?.providerType && registrationCaller?.nativeSessionId && registrationCaller?.evidence
+        && normalizeProviderFamily(registrationCaller.providerType) === normalizeProviderFamily(backendType)) {
+        try {
+          identityBindings.bind({
+            agentId, providerFamily: backendType,
+            providerInstanceKey: registrationCaller.providerInstanceId || registrationCaller.instanceId || p.instanceId || '',
+            nativeSessionId: registrationCaller.nativeSessionId,
+            evidenceType: registrationCaller.evidence,
+          });
+        } catch (_) { /* identity binding must not roll back a completed registration */ }
+      }
+
       const binding = await cx.agentRegistration.updateAgentBinding({
         agentId,
         updates: {
@@ -1523,6 +1673,62 @@ function createToolHandlers(cx: McpContext) {
       let isolateWithManagedSession = false;
       const outboundMessageId = `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const caller = getProviderCaller();
+      let routingConversation: any = null;
+      let outboundRouteId: string | null = null;
+      let replyToRouteId: string | null = null;
+      const routingShadowEnabled = featureEnabled('routing_conversation_shadow_v1', true);
+      const agentForRoute = cx.query<{ backend_type?: string; backend_instance_id?: string; imUid?: string }>(
+        'SELECT backend_type, backend_instance_id, imUid FROM agents WHERE agent_id=? LIMIT 1', [p.agentId],
+      )[0];
+      if (routingShadowEnabled) {
+        try {
+          if (p.replyToMessageId) {
+            const priorRoute = messageRoutes.getByMessage(p.replyToMessageId, p.agentId);
+            if (!priorRoute || priorRoute.agent_id !== p.agentId || priorRoute.channel_id !== p.toUid
+              || Number(priorRoute.channel_type) !== channelType || priorRoute.status !== 'active'
+              || (priorRoute.expires_at && Number(priorRoute.expires_at) <= Date.now())) {
+              throw new Error('Reply target is unavailable or outside the current Agent and channel');
+            }
+            replyToRouteId = priorRoute.direction === 'inbound'
+              ? priorRoute.reply_to_route_id : priorRoute.route_id;
+            if (priorRoute.conversation_id) routingConversation = routingConversations.getForScope(
+              priorRoute.conversation_id, p.agentId, p.toUid, channelType);
+            if (!routingConversation) throw new Error('Reply target conversation is unavailable');
+          }
+          if (!routingConversation && p.conversationId) {
+            routingConversation = routingConversations.getForScope(p.conversationId, p.agentId, p.toUid, channelType);
+            if (!routingConversation) throw new Error('Conversation does not belong to the current Agent and channel');
+          }
+          if (routingConversation && !replyToRouteId) {
+            const latestInbound = messageRoutes.latestInboundForConversation(routingConversation.id);
+            if (latestInbound?.reply_to_route_id) replyToRouteId = latestInbound.reply_to_route_id;
+          }
+          if (!routingConversation && caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
+            const callerFamily = normalizeProviderFamily(caller.providerType);
+            if (callerFamily === normalizeProviderFamily(agentForRoute?.backend_type || '')) {
+              routingConversation = routingConversations.resolveOrCreate({
+                agentId: p.agentId, providerFamily: callerFamily,
+                providerInstanceKey: caller.providerInstanceId || caller.instanceId || agentForRoute?.backend_instance_id || '',
+                nativeSessionId: caller.nativeSessionId, channelId: p.toUid, channelType, origin: 'caller',
+              });
+            }
+          }
+          if (!routingConversation && p.webRequest === true) {
+            const current = routingConversations.listForScope(p.agentId, p.toUid, channelType);
+            routingConversation = current.length === 1
+              ? current[0]
+              : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
+          }
+          if (routingConversation) {
+            outboundRouteId = messageRoutes.createPending({
+              messageId: outboundMessageId, conversationId: routingConversation.id, replyToRouteId,
+              agentId: p.agentId, peerUid: p.toUid, channelId: p.toUid, channelType, direction: 'outbound',
+            });
+          }
+        } catch (error: any) {
+          return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
+        }
+      }
       if (caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
         try {
           const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
@@ -1558,7 +1764,17 @@ function createToolHandlers(cx: McpContext) {
 
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
+        outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
+          ...(replyToRouteId ? { replyToRouteId } : {}),
+          ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
+          ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) } } : undefined,
       );
+      if (outboundRouteId) {
+        try {
+          if (result?.success !== false) messageRoutes.setStatus(outboundRouteId, 'active');
+          else if (!result?.outcomeUnknown) messageRoutes.setStatus(outboundRouteId, 'failed');
+        } catch (_) {}
+      }
       if (pendingBinding) {
         try {
           if (result?.success !== false) providerBindings.activatePending(pendingBinding.id);
@@ -1579,6 +1795,15 @@ function createToolHandlers(cx: McpContext) {
         };
       }
       result.messageAccepted = result?.success !== false;
+      if (routingConversation) {
+        result.conversationId = routingConversation.id;
+        result.conversationStatus = routingConversation.status;
+        result.conversationDisposition = routingConversation.status === 'pending' ? 'created' : 'reused';
+      } else {
+        result.conversationId = null;
+        result.conversationStatus = null;
+        result.conversationDisposition = null;
+      }
       result.recipientDelivery = result.messageAccepted
         ? { status: result?.connected === false ? 'queued' : 'accepted', message: result?.connected === false ? '发送成功，等待对方上线' : '消息已接受' }
         : { status: 'failed' };
@@ -1600,10 +1825,23 @@ function createToolHandlers(cx: McpContext) {
         return { success: false, error: channelType === 2 ? '群聊查询必须提供 channelId' : '必须提供 channelId', code: 'CHANNEL_ID_REQUIRED' };
       }
 
+      let requestedConversation: RoutingConversation | null = null;
+      if (p.conversationId) {
+        requestedConversation = routingConversations.getForScope(p.conversationId, p.agentId, channelId, channelType);
+        if (!requestedConversation) {
+          return { success: false, error: 'Conversation is outside the current Agent and channel', code: 'ROUTING_CONVERSATION_INVALID' };
+        }
+      }
+
       if (channelType === 2) {
         // 群聊：共享消息表按 message id 只存一份；兼容历史重复数据，仍先去重再分页
-        let gsql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2`;
-        const gparams = [channelId];
+        let gsql = `SELECT messages.* FROM messages WHERE channel_id=? AND channel_type=2`;
+        const gparams: unknown[] = [channelId];
+        if (requestedConversation) {
+          gsql += ` AND EXISTS (SELECT 1 FROM provider_message_routes pmr
+            WHERE pmr.message_id=messages.id AND pmr.agent_id=? AND pmr.conversation_id=?)`;
+          gparams.push(p.agentId, requestedConversation.id);
+        }
         if (p.keyword) { gsql += ` AND content LIKE ?`; gparams.push(`%${p.keyword}%`); }
         gsql += ascending
           ? ` ORDER BY timestamp ASC, message_seq ASC, id ASC`
@@ -1620,12 +1858,19 @@ function createToolHandlers(cx: McpContext) {
         const rows = dedup.slice(offset, offset + limit + 1);
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
-        return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset };
+        attachConversationIds(rows, p.agentId);
+        return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+          conversationId: requestedConversation?.id || null };
       }
 
       // 单聊：保留 agent_id 过滤，排除群聊消息防 channel_id 碰撞串数据
       let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2`;
       const params: unknown[] = [channelId, p.agentId];
+      if (requestedConversation) {
+        sql += ` AND EXISTS (SELECT 1 FROM provider_message_routes pmr
+          WHERE pmr.message_id=messages.id AND pmr.agent_id=? AND pmr.conversation_id=?)`;
+        params.push(p.agentId, requestedConversation.id);
+      }
       if (p.keyword) { sql += ` AND content LIKE ?`; params.push(`%${p.keyword}%`); }
       sql += ascending
         ? ` ORDER BY timestamp ASC, message_seq ASC, id ASC LIMIT ? OFFSET ?`
@@ -1634,7 +1879,9 @@ function createToolHandlers(cx: McpContext) {
       const rows = cx.query<MessageDbRow>(sql, params);
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
-      return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset };
+      attachConversationIds(rows, p.agentId);
+      return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+        conversationId: requestedConversation?.id || null };
     },
 
     // ─── 10. 访客信息 ───
@@ -1797,6 +2044,30 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 13. 上传并发送附件 ───
 
+    async list_routing_conversations(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
+      const channelType = inferChannelType(p);
+      const channelId = String(p.channelId || p.visitorId || '').trim();
+      if (!channelId) return { success: false, error: 'channelId is required', code: 'CHANNEL_ID_REQUIRED' };
+      const limit = Math.min(Math.max(Number(p.limit) || 20, 1), 100);
+      const offset = Math.max(Number(p.offset) || 0, 0);
+      const rows = routingConversations.listForScope(p.agentId, channelId, channelType);
+      const page = rows.slice(offset, offset + limit);
+      return {
+        success: true, channelId, channelType, total: rows.length,
+        hasMore: offset + page.length < rows.length,
+        conversations: page.map((conversation: RoutingConversation) => ({
+          conversationId: conversation.id,
+          status: conversation.status,
+          origin: conversation.origin,
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
+          lastUsedAt: conversation.lastUsedAt,
+        })),
+      };
+    },
+
     async upload_and_send_file(p: McpToolParams = {}) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
@@ -1813,6 +2084,9 @@ function createToolHandlers(cx: McpContext) {
           channelType,
           content: message,
           mentions: p.mentions,
+          conversationId: p.conversationId,
+          replyToMessageId: p.replyToMessageId,
+          webRequest: p.webRequest,
         });
         if (textResult?.success === false) return { ...uploaded, success: false, error: textResult.error };
         textMessageId = textResult?.messageId;
@@ -1831,41 +2105,103 @@ function createToolHandlers(cx: McpContext) {
         contentType: uploaded.contentType,
         content: uploaded.contentType === 2 ? uploaded.url : attachment,
         mentions: p.mentions,
+        conversationId: p.conversationId,
+        replyToMessageId: p.replyToMessageId,
+        webRequest: p.webRequest,
       });
       if (fileResult?.success === false) {
         return { ...uploaded, success: false, error: fileResult.error, textMessageId };
       }
-      return { ...uploaded, messageId: fileResult?.messageId, textMessageId };
+      return {
+        ...uploaded,
+        messageId: fileResult?.messageId,
+        textMessageId,
+        conversationId: fileResult?.conversationId ?? null,
+        conversationStatus: fileResult?.conversationStatus ?? null,
+        conversationDisposition: fileResult?.conversationDisposition ?? null,
+      };
     },
 
     // ─── 13. whoami ───
 
+    async list_agents(p: McpToolParams = {}) {
+      return { success: true, ..._listOwnedAgents(p) };
+    },
+
     async whoami(p: McpToolParams = {}) {
-      let sql = `SELECT agent_id AS agent_id, agent_name, description, short_description, category, backend_type, publish_status, access_mode, owner_email, created_at FROM agents`;
-      const params: unknown[] = [];
-      const currentOwner = _currentOwnerEmail();
-      if (currentOwner) {
-        sql += ` WHERE owner_email=?`;
-        params.push(currentOwner);
-      } else {
-        sql += ` WHERE owner_email IS NULL OR TRIM(owner_email)=''`;
+      const explicitOwnershipError = _agentOwnershipError(p.agentId);
+      if (explicitOwnershipError) return { success: false, error: explicitOwnershipError, code: 'AGENT_OWNER_MISMATCH' };
+      const agents = _listOwnedAgents({ limit: 500 }).agents;
+      const compact = (agent: any) => agent ? ({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        backendType: agent.backendType,
+        backendInstanceId: agent.backendInstanceId,
+        deliveryModes: agent.deliveryModes,
+        publishStatus: agent.publishStatus,
+        accessMode: agent.accessMode,
+      }) : null;
+      const candidate = (agent: any) => ({
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        backendType: agent.backendType,
+        backendInstanceId: agent.backendInstanceId,
+      });
+      const caller = getProviderCaller();
+      let callerProviderFamily = '';
+      try { callerProviderFamily = caller?.providerType ? normalizeProviderFamily(caller.providerType) : ''; } catch (_) {}
+      const providerCandidates = callerProviderFamily
+        ? agents.filter((agent: any) => normalizeProviderFamily(agent.backendType) === callerProviderFamily)
+        : [];
+      let identity: any = { status: 'unavailable', method: 'none', reason: 'no_agents', requiresAgentId: false };
+      let currentAgent: any = null;
+      if (p.agentId) {
+        currentAgent = agents.find((agent: any) => agent.agentId === p.agentId) || null;
+        identity = currentAgent
+          ? { status: 'resolved', method: 'explicit_agent_id', requiresAgentId: false }
+          : { status: 'unavailable', method: 'explicit_agent_id', reason: 'agent_not_found', requiresAgentId: false };
+      } else if (agents.length === 1) {
+        currentAgent = agents[0];
+        identity = { status: 'resolved', method: 'sole_registered_agent', requiresAgentId: false };
+      } else if (featureEnabled('provider_identity_v1', true) && caller?.providerType && providerCandidates.length > 0) {
+        if (providerCandidates.length === 1) {
+          currentAgent = providerCandidates[0];
+          identity = { status: 'resolved', method: 'sole_provider_agent', requiresAgentId: false };
+        } else if (caller.nativeSessionId && caller.evidence) {
+          try {
+            const providerCandidateIds = new Set(providerCandidates.map((agent: any) => agent.agentId));
+            const candidateIds = identityBindings.resolve(
+              caller.providerType, caller.providerInstanceId || caller.instanceId || '', caller.nativeSessionId,
+            ).filter((id: string) => providerCandidateIds.has(id));
+            identity = candidateIds.length === 1
+              ? { status: 'resolved', method: 'provider_binding', requiresAgentId: false }
+              : { status: 'selection_required', method: 'none', reason: candidateIds.length > 1 ? 'ambiguous_binding' : 'unbound_session', requiresAgentId: true };
+            if (candidateIds.length === 1) {
+              currentAgent = providerCandidates.find((agent: any) => agent.agentId === candidateIds[0]) || null;
+            }
+          } catch (_) {
+            identity = { status: 'selection_required', method: 'none', reason: 'identity_lookup_failed', requiresAgentId: true };
+          }
+        } else {
+          identity = { status: 'selection_required', method: 'none', reason: 'multiple_provider_agents', requiresAgentId: true };
+        }
+      } else if (agents.length > 1) {
+        identity = { status: 'selection_required', method: 'none', reason: 'multiple_agents', requiresAgentId: true };
       }
-      sql += ` ORDER BY created_at ASC`;
-      const rows = cx.query<AgentDbRow>(sql, params);
       return {
         success: true,
-        agents: rows.map((r) => ({
-          agentId: r.agent_id,
-          agentName: r.agent_name,
-          description: r.description,
-          shortDescription: r.short_description,
-          category: r.category,
-          backendType: r.backend_type,
-          publishStatus: r.publish_status,
-          accessMode: r.access_mode,
-          ownerEmail: r.owner_email,
-          createdAt: r.created_at,
-        })),
+        currentAgent: compact(currentAgent),
+        identity,
+        ...(identity.status === 'selection_required'
+          ? { candidates: (callerProviderFamily && providerCandidates.length > 0 ? providerCandidates : agents).map(candidate) }
+          : {}),
+        ...(identity.status === 'selection_required'
+          ? { nextAction: {
+              type: 'select_agent',
+              tool: 'voko_list_agents',
+              instructions: 'Choose one candidate and retry voko_whoami with its agentId. VOKO will verify ownership; it will not create or modify an identity binding.',
+            } }
+          : {}),
       };
     },
 
@@ -1881,15 +2217,35 @@ function createToolHandlers(cx: McpContext) {
       }
       const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
+      const sourceMessageId = p.replyToMessageId || p.messageId || null;
+      let routingConversationId: string | null = null;
+      if (sourceMessageId) {
+        try {
+          const route = messageRoutes.getByMessage(sourceMessageId, p.agentId);
+          if (route?.channel_id === targetChannelId && Number(route.channel_type) === targetChannelType) {
+            routingConversationId = route.conversation_id || null;
+          }
+        } catch (_) {}
+      } else if (p.conversationId) {
+        try { routingConversationId = routingConversations.getForScope(
+          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
+        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
+      } else {
+        try {
+          const candidates = routingConversations.listForScope(p.agentId, targetChannelId, targetChannelType)
+            .filter((conversation: RoutingConversation) => conversation.status === 'active');
+          if (candidates.length === 1) routingConversationId = candidates[0].id;
+        } catch (_) {}
+      }
 
       // 根据 backend 类型决定 session_key 前缀
       const backendRow = cx.query ? cx.query(`SELECT backend_type FROM agents WHERE agent_id=?`, [p.agentId]) : [];
       const backendType = backendRow?.[0]?.backend_type || 'openclaw';
       const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
       cx.exec(`
-        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id)
-        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?)
-      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, p.messageId || null]);
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
+      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, sourceMessageId, routingConversationId]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
@@ -1897,10 +2253,11 @@ function createToolHandlers(cx: McpContext) {
           sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
           problem: p.problem, agentSuggestion: p.suggestion || '',
           askTime: now, skipReply: 0, sourceSenderUid: p.visitorId,
-          targetChannelId, targetChannelType, sourceMessageId: p.messageId || null,
+          routingConversationId,
+          targetChannelId, targetChannelType, sourceMessageId,
         });
       }
-      return { success: true, interventionId: id };
+      return { success: true, interventionId: id, conversationId: routingConversationId };
     },
 
     async check_human_replies(p: McpToolParams = {}) {
@@ -1922,6 +2279,7 @@ function createToolHandlers(cx: McpContext) {
             channelId: r.target_channel_id || r.visitor_id,
             channelType: r.target_channel_type || 1,
             messageId: r.source_message_id || null,
+            conversationId: r.routing_conversation_id || null,
           }] : [],
           hasMore: false,
         };
@@ -1981,6 +2339,7 @@ function createToolHandlers(cx: McpContext) {
           channelId: r.target_channel_id || r.visitor_id,
           channelType: r.target_channel_type || 1,
           messageId: r.source_message_id || null,
+          conversationId: r.routing_conversation_id || null,
         })),
         hasMore,
       };
@@ -2513,7 +2872,7 @@ function createToolHandlers(cx: McpContext) {
       const onlyNew = p.onlyNew === true;
       // clientId：多客户端游标隔离。未传时走共享游标（向后兼容）。
       // 优先用显式入参，其次从 provider caller 上下文取（如 'zcode'/'codex'）。
-      const clientId = p.clientId || _resolveClientId();
+      const clientId = _resolveClientId(p.agentId, p.clientId);
 
       // 指定频道模式：channelId 优先；visitorId 保持原有单聊兼容。
       // 只有两者都未传时才进入下面的全量模式。
@@ -2539,10 +2898,10 @@ function createToolHandlers(cx: McpContext) {
           );
           const currentMax = maxRow[0]?.max_seq || 0;
           if (currentMax > 0) this._setChannelCursor(p.agentId, targetChannelId, currentMax, targetChannelType, clientId);
-          return fmtPullResult([], false, {
+          return fmtPullResult([], false, { _agentId: p.agentId,
             cursor: currentMax,
             nextMessageSeq: currentMax,
-            clientId: clientId || null,
+            clientId: _publicClientId(clientId),
             anchored: true,
             message: '首次拉取已设定锚点，未回吐历史消息；后续调用将只返回此锚点之后的新消息。',
           });
@@ -2566,7 +2925,7 @@ function createToolHandlers(cx: McpContext) {
               : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
             if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
             const filtered = this._a2aPreparePull(p.agentId, rows);
-            return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
+            return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: _publicClientId(clientId) });
           } finally {
             if (this._fetchBlocks.get(key) === ctrl) this._fetchBlocks.delete(key);
           }
@@ -2583,7 +2942,7 @@ function createToolHandlers(cx: McpContext) {
           : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
         if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
         const filtered = this._a2aPreparePull(p.agentId, rows);
-        return fmtPullResult(filtered, hasMore, { cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: clientId || null });
+        return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: _publicClientId(clientId) });
       }
 
       // ─── 全量模式（不指定 visitorId）：按 channel 分别维护游标 ───
@@ -2639,7 +2998,7 @@ function createToolHandlers(cx: McpContext) {
       if (hasMore) allRows.length = limit;
 
       const filtered = this._a2aPreparePull(p.agentId, allRows);
-      return fmtPullResult(filtered, hasMore, { cursorByChannel, clientId: clientId || null });
+      return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursorByChannel, clientId: _publicClientId(clientId) });
     },
 
     /**
@@ -2679,7 +3038,7 @@ function createToolHandlers(cx: McpContext) {
       if (onlyReplies) sql += ` AND is_me!=1`;
       sql += ` ORDER BY message_seq ASC LIMIT ?`;
       params.push(limit + 1);
-      return cx.query<MessageDbRow>(sql, params);
+      return _filterPullRowsForCaller(agentId, cx.query<MessageDbRow>(sql, params));
     },
 
     /** push 不可用时，pull 复用 dispatcher 的 A2A 身份识别、STATE、收敛和熔断治理。 */
@@ -2721,13 +3080,12 @@ function createToolHandlers(cx: McpContext) {
         return ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'whitelist');
       }
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
-      return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason }, {
-        onWhitelistAdded: (aid?: string, vid?: string) => {
-          if (cx.sendSystemMessage) {
-            cx.sendSystemMessage(aid, vid, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000));
-          }
-        }
-      });
+      const result = ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason });
+      if (!result.success) return result;
+      const notification = cx.sendSystemMessage
+        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000))
+        : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+      return { ...result, ...notification };
     },
 
     // ─── 19. 黑名单管理 ───
@@ -2739,10 +3097,11 @@ function createToolHandlers(cx: McpContext) {
         if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
         const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
         const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');
-        if (r.success && __wasBlk && cx.sendSystemMessage) {
-          cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000));
-        }
-        return r;
+        if (!r.success || !__wasBlk) return r;
+        const notification = cx.sendSystemMessage
+          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000))
+          : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+        return { ...r, ...notification };
       }
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
       return ac.addEntry(cx.db, { agentId: p.agentId, listType: 'blacklist', visitorId: p.visitorId, reason: p.reason });

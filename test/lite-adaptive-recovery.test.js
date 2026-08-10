@@ -409,3 +409,28 @@ test('healthCheck recovers a shared dead ACP state once for all bound agents', a
   });
   assert.equal(recoverCalls, 1);
 });
+
+test('ACP process failure schedules bounded automatic recovery and stop cancels retries', async () => {
+  const adapter = new AcpAdapter({ recoveryDelaysMs: [1, 2] });
+  await adapter.start();
+  let attempts = 0;
+  adapter.recover = async (agentId) => {
+    attempts += 1;
+    if (attempts < 2) return false;
+    adapter._markAgentHealth(agentId, true, 'recovered');
+    return true;
+  };
+
+  adapter._markAgentHealth('agent-a', false, 'process-exit:1');
+  adapter._scheduleRecovery('agent-a');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(attempts, 2);
+  assert.equal(adapter._recoveryTimers.size, 0);
+
+  adapter.recover = async () => { attempts += 1; return false; };
+  adapter._scheduleRecovery('agent-a');
+  await adapter.stop();
+  const stoppedAt = attempts;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(attempts, stoppedAt);
+});

@@ -1407,7 +1407,8 @@ test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () =
   const result = await deliver('agent-1', 'visitor-1', 'hello', 'text', 1, null, 'local-1');
   assert.equal(result.success, true);
   assert.equal(result.via, 'hub');
-  assert.equal(result.messageId, 'remote-1');
+  assert.equal(result.messageId, 'local-1');
+  assert.equal(result.serverMessageId, 'remote-1');
   assert.equal(result.messageSeq, 7);
   assert.equal(result.clientMsgNo, 'local-1');
   assert.equal(calls.length, 1);
@@ -1443,6 +1444,29 @@ test('Lite send-message normalizes content, persists it and passes the local id 
   assert.ok(writes.some((entry) => entry.sql.includes('INSERT INTO messages')));
   assert.ok(writes.some((entry) => entry.sql.includes('INSERT INTO conversations')));
   assert.ok(writes.some((entry) => entry.sql.includes('message_seq=COALESCE') && entry.sql.includes('client_msg_no=COALESCE')));
+});
+
+test('Lite send-message returns the routable local id and keeps the remote ACK id separate', async () => {
+  const db = {
+    prepare(sql) {
+      return {
+        get() { return sql.includes('SELECT imUid') ? { imUid: 'agent-uid' } : undefined; },
+        run() {},
+      };
+    },
+  };
+  const send = createSendMessage({
+    db,
+    deliver: async (...args) => ({
+      success: true,
+      messageId: args[6],
+      serverMessageId: 'remote-ack-1',
+      clientMsgNo: args[6],
+    }),
+  });
+  const result = await send('agent-1', 'visitor-1', 'attachment', 'agent-uid', 'file', 1);
+  assert.match(result.messageId, /^msg-agent-1-visitor-1-/);
+  assert.equal(result.serverMessageId, 'remote-ack-1');
 });
 
 test('Lite payment processing claims once, creates a remote order and sends its link', async (t) => {

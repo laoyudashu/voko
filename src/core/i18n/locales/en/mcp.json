@@ -83,6 +83,7 @@
   "mcp.tool.get_chat_history.p.keyword": "Search keyword within message content",
   "mcp.tool.get_chat_history.p.limit": "Maximum number of messages to return (max 200)",
   "mcp.tool.get_chat_history.p.offset": "Pagination offset",
+  "mcp.tool.get_chat_history.p.conversationId": "Optional VOKO routing conversation. Omit it to keep channel-level history.",
 
   "mcp.tool.get_visitor_profile.desc": "Query a visitor's nickname, avatar, message stats, whitelist/blacklist status, recent conversations, audit records, and payment records",
   "mcp.tool.get_visitor_profile.p.visitorId": "Visitor UID",
@@ -95,6 +96,9 @@
   "mcp.tool.list_conversations.p.limit": "Maximum number of conversations to return",
   "mcp.tool.list_conversations.p.offset": "Pagination offset",
   "mcp.tool.list_conversations.p.keyword": "Search keyword",
+  "mcp.tool.list_routing_conversations.desc": "List precise VOKO routing conversations in one Agent channel without exposing Provider-native session identifiers.",
+  "mcp.tool.list_routing_conversations.p.channelId": "Peer UID for direct chat or group channel ID",
+  "mcp.tool.list_routing_conversations.p.channelType": "Channel type: 1=direct, 2=group",
 
   "mcp.tool.mark_conversation_read.desc": "Reset the unread message count of a conversation to 0. Call this after the visitor has read the messages to clear the unread badge.",
   "mcp.tool.mark_conversation_read.p.channelId": "Conversation ID (visitor UID)",
@@ -107,8 +111,11 @@
   "mcp.tool.upload_and_send_file.p.channelType": "1 for a direct message, 2 for a group message",
   "mcp.tool.upload_and_send_file.p.mentions": "Optional group mentions, for example {all:true} or {uids:[\"user-1\"]}",
 
-  "mcp.tool.whoami.desc": "Query all Agent information from the local database. Optionally filter by owner email; returns all agents when ownerEmail is omitted.",
-  "mcp.tool.whoami.p.ownerEmail": "Owner email address; when provided, returns only agents belonging to that email; when omitted, returns all",
+  "mcp.tool.whoami.desc": "Identify the VOKO Agent associated with the current caller; returns compact candidates when multiple Agents require explicit selection.",
+  "mcp.tool.list_agents.desc": "List registered Agents for the current owner with pagination.",
+  "mcp.tool.list_agents.p.keyword": "Search by Agent name or ID",
+  "mcp.tool.list_agents.p.limit": "Number of results; defaults to 200 and is capped at 500",
+  "mcp.tool.list_agents.p.offset": "Pagination offset; defaults to 0",
 
   "mcp.tool.start_worker.desc": "Start the IM connection for the specified Agent",
   "mcp.tool.start_worker.p.uid": "IM UID",
@@ -123,6 +130,8 @@
   "mcp.tool.ask_human_for_help.p.channelId": "Original group ID for group intervention; omit for direct chat",
   "mcp.tool.ask_human_for_help.p.channelType": "Conversation type: 1=direct, 2=group. Pass 2 in a group",
   "mcp.tool.ask_human_for_help.p.messageId": "Original message ID that triggered the intervention (optional)",
+  "mcp.tool.ask_human_for_help.p.conversationId": "VOKO routing conversation to preserve during owner intervention (optional)",
+  "mcp.tool.ask_human_for_help.p.replyToMessageId": "Source message whose verified Conversation should be preserved (optional, preferred over conversationId)",
   "mcp.tool.ask_human_for_help.error.channelIdRequired": "channelId is required when channelType=2",
   "mcp.tool.ask_human_for_help.p.problem": "Problem description — the more detailed the better, to help the owner understand quickly",
   "mcp.tool.ask_human_for_help.p.suggestion": "Suggested reply or action for the owner",

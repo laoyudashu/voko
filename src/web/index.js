@@ -25,6 +25,7 @@ const ENDPOINTS = require('../endpoints.json');
 const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 
 const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
 
@@ -78,6 +79,14 @@ function detectAgentIconType(data){
 }
 
 function h(s){return s||'-'}
+
+function renderPaymentRegionNotice(tFn){
+  const t=tFn||(k=>k);
+  return '<div class="payment-region-notice" role="note" data-testid="payment-region-notice" style="display:flex;align-items:flex-start;gap:10px;margin:0 0 12px 0;padding:10px 12px;border:1px solid #f2d675;border-radius:8px;background:#fff8e1;color:#704600;font-size:14px;line-height:1.6">'
+    +'<span aria-hidden="true" style="flex:0 0 auto;font-size:18px;line-height:1.45">ℹ️</span>'
+    +'<div><strong style="display:block;margin-bottom:2px">'+esc(t('web.payments.region_notice.title'))+'</strong>'
+    +'<span>'+esc(t('web.payments.region_notice.body'))+'</span></div></div>';
+}
 
 function fmtTime(ts){
   if(!ts)return '';
@@ -159,6 +168,7 @@ function actionForm(aid,action,fields,btn,cls,agentAction,submitLabel,formAttrs)
   const daa=agentAction||action;
   const lockAttrs=submitLabel?' data-submit-lock="1" data-submit-label="'+esc(submitLabel)+'"':'';
   let _af=fields.findIndex(f=>!f.val);if(_af<0)_af=0;const f=fields.map((fld,i)=>{const ff=i===_af?' autofocus':'';
+    if(fld.type==='hidden')return '<input type="hidden" id="'+fld.id+'" name="'+fld.name+'" value="'+(fld.val?esc(fld.val):'')+'">';
     let h='<label for="'+fld.id+'">'+esc(fld.label)+'</label>';
     if(fld.type==='select'){
       h+='<select id=\"'+fld.id+'\" name=\"'+fld.name+'\" '+(fld.attr||'')+ff+'>';
@@ -198,7 +208,7 @@ function isCallableAction(h,action){return typeof h[action]==='function' && !act
 
 /** action 分组映射，供 /llms.txt、/prompt、/api/handlers 共享，避免漂移（数量动态计算） */
 const ACTION_GROUPS=[
-  {group:'im',actions:['whoami','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
+  {group:'im',actions:['whoami','list_agents','send_message','get_chat_history','list_conversations','fetch_new_messages','mark_conversation_read','get_status','create_group','invite_to_group','accept_invitation','decline_invitation','get_group_members','get_group_context']},
   {group:'manage',actions:['get_agent_profile','update_agent_profile','set_agent_status','set_private_mode','manage_whitelist','manage_blacklist','list_access_lists','declare_capabilities','search_capabilities','start_worker','stop_worker']},
   {group:'pay',actions:['agent_pricing','create_payment','check_payments','add_payment_auth','list_payment_auth','delete_payment_auth','apply_payment_auth','refresh_payment_auth','search_banks','bind_agent_payment_auth']},
   {group:'audit',actions:['list_audit_rules','manage_audit_rules']},
@@ -254,7 +264,7 @@ function getManifestSync(locale='zh'){
   return _manifestCache[locale];
 }
 
-async function getAgentList(h){const d=await h.whoami({});return d.agents||[]}
+async function getAgentList(h){const d=await h.list_agents({limit:500});return d.agents||[]}
 async function getAgentInfo(h,id){const a=await getAgentList(h);return a.find(x=>x.agentId===id)||null}
 async function getAgentStatus(h,id){
   try{const s=await h.get_status({agentId:id});return s}catch{return{agent:{imConnected:false,imStatus:'unknown',automaticDeliveryReady:false,pullReady:true},warnings:[],probeFailed:true}}
@@ -448,6 +458,8 @@ function ajaxRowRemove(url,body,row){fetch(url,{method:"POST",headers:{"Content-
 
 function createWebRouter(handlers, db, opts={}){
   const R=Router();
+  const routingConversations=new RoutingConversationStore(db);
+  const messageRoutes=new MessageRouteStore(db);
   R.use(rateLimit({
     windowMs: 60 * 1000,
     limit: 300,
@@ -747,8 +759,8 @@ function createWebRouter(handlers, db, opts={}){
       const ownerEmail=userEmail||tokenEmail||'';
 
       // 只显示本邮箱下的 Agent
-      const whoData=ownerEmail?await handlers.whoami({ownerEmail}):await handlers.whoami({});
-      let agents=whoData.agents||[];
+      const agentListData=await handlers.list_agents({limit:500});
+      let agents=agentListData.agents||[];
       // sort: online first (from runtime)
       try{const rt=db.prepare("SELECT data FROM config WHERE type=\'runtime\'").get();if(rt){const rd=JSON.parse(rt.data);const imMap={};for(const a of rd.agents||[])imMap[a.agentId]=a.imConnected;agents.sort((a,b)=>(imMap[b.agentId]?1:0)-(imMap[a.agentId]?1:0))}}catch{}
       // pagination + search
@@ -927,7 +939,9 @@ function createWebRouter(handlers, db, opts={}){
           const lastFrom='<span class="meta">'+(c.lastIsMe===2||c.lastContentType===11?L('web.agent.last_from.system'):(c.needsReply?L('web.agent.last_from.visitor'):L('web.agent.last_from.ai')))+'</span>';
           const msg=esc((c.lastMessage||'').length>60?(c.lastMessage||'').substring(0,60)+'…':c.lastMessage||'');
           const unreadBadge=c.unreadCount>0?' <span class="badge" style="background:#e74c3c;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px">'+c.unreadCount+'</span>':'';
-          convHtml+='<tr><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="/agents/'+aId+'/c/'+esc(c.channelId)+'">'+esc(convNickMap[c.channelId]||c.name||c.channelId)+'</a>'+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
+          const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
+          const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';
+          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
         }
         convHtml+='</tbody></table></div>'
       }
@@ -995,6 +1009,65 @@ function createWebRouter(handlers, db, opts={}){
 
   // ────────── 会话详情 + 发消息 ──────────
 
+  const webRoutingEnabled=name=>isRoutingFeatureEnabled(db,name,true);
+  const publicConversation=(conversation,index)=>({
+    id:conversation.id,
+    label:`Conversation ${index+1}`,
+    status:conversation.status,
+    origin:conversation.origin,
+    parentConversationId:conversation.parentConversationId||null,
+    mergeStatus:conversation.mergeStatus,
+    createdAt:conversation.createdAt,
+    lastUsedAt:conversation.lastUsedAt,
+  });
+
+  R.get('/api/routing-conversations',(req,res)=>{
+    try{
+      const agentId=String(req.query.agentId||''),channelId=String(req.query.channelId||'');
+      const channelType=Number(req.query.channelType)===2?2:1;
+      if(!agentId||!channelId)return res.status(400).json({success:false,error:'agentId and channelId are required'});
+      const rows=routingConversations.listForScope(agentId,channelId,channelType);
+      res.json({success:true,conversations:rows.map(publicConversation)});
+    }catch(e){res.status(500).json({success:false,error:e.message})}
+  });
+
+  R.post('/api/routing-conversations/create',(req,res)=>{
+    try{
+      if(!webRoutingEnabled('web_private_conversations_v1'))return res.status(404).json({success:false,error:'Feature disabled'});
+      const agentId=String(req.body.agentId||''),channelId=String(req.body.channelId||'');
+      const channelType=Number(req.body.channelType)===2?2:1;
+      if(!agentId||!channelId)return res.status(400).json({success:false,error:'agentId and channelId are required'});
+      const parent=req.body.parentConversationId
+        ? routingConversations.getForScope(String(req.body.parentConversationId),agentId,channelId,channelType) : null;
+      if(req.body.parentConversationId&&!parent)return res.status(403).json({success:false,error:'Parent conversation is outside the current scope'});
+      const conversation=routingConversations.createPending({agentId,channelId,channelType,parentConversationId:parent?.id||null});
+      res.json({success:true,conversation:publicConversation(conversation,0)});
+    }catch(e){res.status(409).json({success:false,error:e.message})}
+  });
+
+  R.post('/api/routing-conversations/archive',(req,res)=>{
+    try{
+      const agentId=String(req.body.agentId||''),channelId=String(req.body.channelId||'');
+      const channelType=Number(req.body.channelType)===2?2:1,conversationId=String(req.body.conversationId||'');
+      const archived=routingConversations.archive(conversationId,agentId,channelId,channelType);
+      res.status(archived?200:404).json({success:archived,error:archived?undefined:'Conversation not found'});
+    }catch(e){res.status(500).json({success:false,error:e.message})}
+  });
+
+  R.get('/api/messages/:messageId/precise-reply',(req,res)=>{
+    try{
+      const agentId=String(req.query.agentId||''),channelId=String(req.query.channelId||'');
+      const channelType=Number(req.query.channelType)===2?2:1;
+      if(channelType===2&&!webRoutingEnabled('web_group_precise_reply_v1'))return res.json({success:true,supported:false,conversationId:null});
+      const route=messageRoutes.getByMessage(String(req.params.messageId||''),agentId);
+      const conversation=route?.conversation_id
+        ? routingConversations.getForScope(route.conversation_id,agentId,channelId,channelType) : null;
+      const supported=!!(route&&conversation&&route.status==='active'&&route.channel_id===channelId
+        && Number(route.channel_type)===channelType&&(!route.expires_at||Number(route.expires_at)>Date.now()));
+      res.json({success:true,supported,conversationId:supported?conversation.id:null});
+    }catch(e){res.status(500).json({success:false,error:e.message})}
+  });
+
   R.get('/agents/:agentId/c/:channelId',async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
@@ -1012,7 +1085,29 @@ function createWebRouter(handlers, db, opts={}){
       let md;try{md=await handlers.get_chat_history({agentId,channelId,limit:50})}catch{md={messages:[]}}
       let peerAgentName='';try{const p=db.prepare('SELECT agent_name FROM agents WHERE imUid=? AND agent_id!=? LIMIT 1').get(channelId,agentId);if(p&&p.agent_name)peerAgentName=p.agent_name}catch(_){}
       const peerLabel=peerAgentName||L('web.conversation.from.visitor');
-      const msgs=md.messages||[];let mh='<p class="meta">'+L('web.conversation.no_messages')+'</p>';const jd=[];
+      const webConversations=webRoutingEnabled('web_private_conversations_v1')
+        ? routingConversations.listForScope(agentId,channelId,1) : [];
+      const requestedConversation=String(req.query.conversationId||'');
+      const selectedConversation=webConversations.find(c=>c.id===requestedConversation)
+        ||(webConversations.length===1?webConversations[0]:webConversations[0]||null);
+      const showLegacyHistory=req.query.history==='1';
+      let msgs=md.messages||[];
+      if(selectedConversation||showLegacyHistory){
+        msgs=msgs.filter(m=>{
+          const route=m.messageId?messageRoutes.getByMessage(String(m.messageId),agentId):null;
+          if(showLegacyHistory)return !route?.conversation_id;
+          return route?.conversation_id===selectedConversation.id||(!route?.conversation_id&&webConversations.length===1);
+        });
+      }
+      let conversationTabs='';
+      if(webConversations.length>=2){
+        conversationTabs='<div class="tabs" role="tablist">'+webConversations.map((c,i)=>'<a class="tab'+(selectedConversation?.id===c.id&&!showLegacyHistory?' active':'')+'" href="/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?conversationId='+encodeURIComponent(c.id)+'">Conversation '+(i+1)+'</a>').join('')
+          +'<a class="tab'+(showLegacyHistory?' active':'')+'" href="/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?history=1">History</a></div>';
+      }
+      const conversationControls=webRoutingEnabled('web_private_conversations_v1')
+        ? '<div style="display:flex;gap:8px;margin:6px 0"><button type="button" id="new-conversation" class="btn-sm">New conversation</button>'
+          +(selectedConversation?'<button type="button" id="archive-conversation" class="btn-sm btn-outline">Archive</button>':'')+'</div>' : '';
+      let mh='<p class="meta">'+L('web.conversation.no_messages')+'</p>';const jd=[];
       if(msgs.length){mh='';const s=[...msgs].reverse();for(const m of s){const sr=m.isMe?L('web.conversation.from.agent'):peerLabel;const t=timeTag(m.timestamp);if(m.contentType===11){const audit=parseAuditContent(m.content);mh+=renderAuditContent(m.content,T,t);jd.push({from:'system',content:audit.valid?audit.text:T('web.audit.message_invalid'),timestamp:m.timestamp});continue;}const c=messageRenderer.render(m.contentType,m.content);mh+='<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(m.isMe?'#0f9d58':'#1a73e8')+';background:'+(m.isMe?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(sr)+'</strong> <span style="color:#888;font-size:13px">['+t+']</span><br>'+c+'</div>';jd.push({from:m.isMe?'agent':'visitor',content:m.content,timestamp:m.timestamp})}}
       const aId2=esc(agentId),cId2=esc(channelId);
       // 访客昵称（user_cache 有则显示名称，无则仅显示 id）
@@ -1024,12 +1119,13 @@ function createWebRouter(handlers, db, opts={}){
       const actionBtn=(action,label)=>'<form method="POST" action="/agents/'+aId2+'" class="op-card" style="padding:0"><input type="hidden" name="_action" value="'+action+'"><input type="hidden" name="visitorId" value="'+cId2+'"><input type="hidden" name="returnTo" value="'+returnTo+'"><button type="submit" style="width:100%;background:none;border:none;padding:10px 8px;margin:0;font:inherit;font-weight:600;font-size:14px;color:#1a1a2e;cursor:pointer" data-agent-kind="action">'+label+'</button></form>';
       const wlBtn=actionBtn(isWl?'remove_whitelist':'add_whitelist',L(isWl?'common.wl.remove':'common.wl.add'));
       const blBtn=actionBtn(isBl?'remove_blacklist':'add_blacklist',L(isBl?'common.bl.remove':'common.bl.add'));
+      const conversationControlScript='<script>(function(){var aid='+jsonForInlineScript(agentId)+',cid='+jsonForInlineScript(channelId)+',selected='+jsonForInlineScript(selectedConversation?.id||'')+';function post(url,body){return fetch(url,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json()})}var create=document.getElementById("new-conversation");if(create)create.onclick=function(){post("/api/routing-conversations/create",{agentId:aid,channelId:cid,channelType:1,parentConversationId:selected||null}).then(function(j){if(j.success)location.href="/agents/"+encodeURIComponent(aid)+"/c/"+encodeURIComponent(cid)+"?conversationId="+encodeURIComponent(j.conversation.id);else alert(j.error||"Unable to create conversation")})};var archive=document.getElementById("archive-conversation");if(archive)archive.onclick=function(){post("/api/routing-conversations/archive",{agentId:aid,channelId:cid,channelType:1,conversationId:selected}).then(function(j){if(j.success)location.href="/agents/"+encodeURIComponent(aid)+"/c/"+encodeURIComponent(cid);else alert(j.error||"Unable to archive conversation")})};})();</script>';
       const payBtn=hasPricing&&hasPaymentAuth?'<a href=\"/payments?action=create&agentId='+aId2+'&visitorId='+cId2+'\" class=\"op-card\" data-agent-kind=\"link\" data-agent=\"nav_card\">'+L('web.conversation.pay.create')+'</a>':'<span class=\"op-card\" style=\"color:#aaa;cursor:not-allowed;opacity:0.6\" title=\"'+esc(T(hasPaymentAuth?'web.conversation.pay.unconfigured_title':'web.conversation.pay.card_required_title'))+'\">'+L('web.conversation.pay.create')+'</span>';res.send(renderPage(req,T('web.conversation.title',{id:titleId}),
-'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span class="meta" id="msg-count">'+T('web.conversation.count_msg',{count:msgs.length})+'</span></div>'
+conversationTabs+conversationControls+'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><span class="meta" id="msg-count">'+T('web.conversation.count_msg',{count:msgs.length})+'</span></div>'
 +'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'
  +'<div id="delivery-status" class="meta" data-agent-id="'+aId2+'" data-channel-id="'+cId2+'" role="status" aria-live="polite" style="display:none;margin:6px 0 10px"></div>'
- +'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><input type="hidden" name="channelType" value="1"><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
- +'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>',
+ +'<div class="card" id="reply" style="'+replyStyle+'"><h3>'+L('web.conversation.reply_title')+'</h3><form method="POST" action="/messages/send" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="agentId" value="'+aId2+'"><input type="hidden" name="toUid" value="'+cId2+'"><input type="hidden" name="channelType" value="1"><input type="hidden" name="conversationId" value="'+esc(selectedConversation?.id||'')+'"><input type="hidden" name="replyToMessageId" id="reply-to-message-id" value=""><label for="c">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="c" name="content" required autocomplete="off" autofocus><button type="submit" class="voko-send-button" data-agent="send_msg_btn">'+L('common.btn.send')+'</button></div></form></div>'
+ +'<div class="card"><h3>'+L('web.conversation.visitor_ops')+'</h3><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/agents/'+aId2+'/visitor?uid='+cId2+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.profile')+'</a>'+wlBtn+''+blBtn+'<a href="/agents/'+aId2+'/human?visitorId='+cId2+'&conversationId='+encodeURIComponent(selectedConversation?.id||'')+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.human')+'</a><a href="/agents/'+aId2+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=1&conversationId='+encodeURIComponent(selectedConversation?.id||'')+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.conversation.op.upload')+'</a>'+payBtn+'</div></div><a href="/agents/'+aId2+'">'+T('web.conversation.back',{name:aName})+'</a>'+conversationControlScript,
 {nav:agentNav(agentId,aName,T)+' › '+navId,jsonld:{'@context':'https://schema.org',agentId,channelId,messages:jd},footer:renderFooter(T, req.locale)+messageRendererScript(T)+'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'+'<script>var _A='+jsonForInlineScript(agentId)+',_C='+jsonForInlineScript(channelId)+',_R='+jsonForInlineScript({agent:T('web.conversation.from.agent'),visitor:peerLabel,no_msg:T('web.conversation.no_messages'),count_msg:T('web.conversation.count_msg'),auditIn:T('web.audit.message_inbound'),auditOut:T('web.audit.message_outbound'),auditBlocked:T('web.audit.message_blocked'),auditAllowed:T('web.audit.message_allowed'),auditKeyword:T('web.audit.message_keyword'),auditOriginal:T('web.audit.message_original'),auditInvalid:T('web.audit.message_invalid')})+',_seen={};'+"(function(){function _esc(s){return String(s==null?\"\":s).replace(/[&<>\"']/g,function(c){return{\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",'\"':\"&quot;\",\"'\":\"&#39;\"}[c]})}function _audit(ct,t){try{var d=JSON.parse(ct),out=d.direction===\"outbound\"||(!d.direction&&String(d.audit||\"\").indexOf(\"出站\")>=0),title=out?_R.auditOut:_R.auditIn,result=d.action===\"hard_deny\"?_R.auditBlocked:_R.auditAllowed,rows=\"\";if(d.keyword)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditKeyword)+\"</span>\"+_esc(d.keyword)+\"</div>\";if(d.text)rows+='<div class=\"audit-message-row\"><span>'+_esc(_R.auditOriginal)+\"</span>\"+_esc(d.text).replace(/\\n/g,\"<br>\")+\"</div>\";return '<div class=\"audit-message\"><div class=\"audit-message-head\"><strong>'+_esc(title)+'</strong><span class=\"audit-message-result\">'+_esc(result)+'</span><span class=\"meta\">'+_esc(t)+\"</span></div>\"+rows+\"</div>\"}catch(_){return '<div class=\"audit-message\"><strong>'+_esc(_R.auditInvalid)+'</strong> <span class=\"meta\">'+_esc(t)+\"</span></div>\"}}function _addMsg(m){var bx=document.getElementById(\"msg-box\"),isMe=m.isMe===true||m.isMe===1,sr=isMe?_R.agent:_R.visitor,t=new Date((m.timestamp||0)*1000).toLocaleTimeString(),ct=(m.content||\"\"),h;if(m.contentType===11){h=_audit(ct,t)}else{var bc=isMe?\"#0f9d58\":\"#1a73e8\",bg=isMe?\"#e6f4ea\":\"#e8f0fe\";h='<div style=\"padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+bc+';background:'+bg+'\"><strong>'+_esc(sr)+'</strong> <span style=\"color:#888;font-size:13px\">['+_esc(t)+']</span><br>'+window.__vokoMessageRenderer.render(m.contentType,ct)+\"</div>\"}bx.insertAdjacentHTML(\"beforeend\",h);bx.scrollTop=bx.scrollHeight;var mc=document.getElementById(\"msg-count\");if(mc){mc.textContent=_R.count_msg.replace(\"{count}\",bx.children.length)}}function _connect(){try{var ws=new WebSocket(\"ws://\"+location.host+\"/ws\");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event===\"agent-wukongim:message\"){var m=d.data;if(m.agentId===_A&&m.channelId===_C&&m.messageId&&!_seen[m.messageId]){_seen[m.messageId]=1;_addMsg(m)}}}catch(_){}};ws.onclose=function(){setTimeout(_connect,3000)}}catch(_){setTimeout(_connect,5000)}}_connect()})();"+'</script>'}))
     }catch(e){next(e)}
   });
@@ -1040,7 +1136,7 @@ function createWebRouter(handlers, db, opts={}){
 
   R.post('/messages/send',async(req,res,next)=>{
     try{
-      const{agentId,toUid,content,channelType}=req.body;
+      const{agentId,toUid,content,channelType,conversationId,replyToMessageId}=req.body;
       let mentions=null;
       if(channelType&&Number(channelType)===2&&req.body.mentions){
         try{
@@ -1073,9 +1169,15 @@ function createWebRouter(handlers, db, opts={}){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
         return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
       }
-      const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions});
-      if(req.is('json'))return res.json(r.success!==false?{success:true,message:'消息已发送',messageId:r.messageId,messageSeq:r.messageSeq}:{success:false,error:r.error||'未知错误'});
-      r.success?res.redirect('/agents/'+esc(agentId)+'/c/'+esc(toUid)+'?ok='+encodeURIComponent('消息已发送')):res.send(renderPage(req,'发送失败','<p class="error">❌ '+esc(r.error||'未知错误')+'</p><a href="/agents/'+esc(agentId)+'/c/'+esc(toUid)+'">返回</a>'))
+      const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions,conversationId,replyToMessageId,
+        webRequest:Number(channelType)!==2&&webRoutingEnabled('web_private_conversations_v1')});
+      if(req.is('json'))return res.status(r.success===false?400:200).json(r.success!==false?{
+        success:true,messageId:r.messageId,messageSeq:r.messageSeq,
+        conversationId:r.conversationId||null,conversationStatus:r.conversationStatus||null,
+        conversationDisposition:r.conversationDisposition||null,mergedIntoConversationId:r.mergedIntoConversationId||null,
+      }:{success:false,error:r.error||'Send failed',code:r.code});
+      const selectedQuery=r.conversationId?'&conversationId='+encodeURIComponent(r.conversationId):'';
+      r.success?res.redirect('/agents/'+esc(agentId)+'/c/'+esc(toUid)+'?ok='+encodeURIComponent('消息已发送')+selectedQuery):res.send(renderPage(req,'发送失败','<p class="error">❌ '+esc(r.error||'未知错误')+'</p><a href="/agents/'+esc(agentId)+'/c/'+esc(toUid)+'">返回</a>'))
     }catch(e){next(e)}
   });
 
@@ -1112,7 +1214,7 @@ function createWebRouter(handlers, db, opts={}){
       let p={};
       try{const r=await handlers.get_agent_profile({agentId});if(r.success)p=r.data||{};else p={}}catch{}
       // 回退：从 whoami 获取基本数据（agent 可能不在本地 DB）
-      if(!p.agentId){try{const w=await handlers.whoami({});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,backendInstanceId:a.backendInstanceId,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
+      if(!p.agentId){try{const w=await handlers.list_agents({limit:500});const a=(w.agents||[]).find(x=>x.agentId===agentId);if(a)p={agentId:a.agentId,agentName:a.agentName,backendType:a.backendType,backendInstanceId:a.backendInstanceId,category:a.category,description:a.description,shortDescription:a.shortDescription,iconUrl:a.iconUrl,contactPhone:a.contactPhone,address:a.address,tags:a.tags}}catch{}}
       if(p.backendInstanceId===undefined){try{const row=db.prepare('SELECT backend_instance_id FROM agents WHERE agent_id=?').get(agentId);p.backendInstanceId=row?.backend_instance_id||null}catch{}}
       const aname=p.agentName||agentId;
       let catList=[];
@@ -1303,6 +1405,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       res.send(renderAgentFormPage(T('web.agent.human.title'),agentId,agent.agentName||agentId,
         '<div class="card"><h3>'+L('web.agent.human.request_title')+'</h3>'+actionForm(agentId,'ask_human',[
+          {id:'hc',name:'conversationId',label:'',type:'hidden',val:esc(req.query.conversationId||'')},
           {id:'hv',name:'visitorId',label:T('web.agent.human.visitor'),type:'text',val:esc(req.query.visitorId||''),attr:'required placeholder="'+esc(T('web.agent.human.visitor_ph'))+'"'},
           {id:'hp',name:'problem',label:T('web.agent.human.problem'),type:'textarea',attr:'rows="3" required placeholder="'+esc(T('web.agent.human.problem_ph'))+'"'},
           {id:'hs',name:'suggestion',label:T('web.agent.human.suggestion'),type:'textarea',attr:'rows="2" placeholder="'+esc(T('web.agent.human.suggestion_ph'))+'"'},
@@ -1350,6 +1453,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const aid=esc(agentId);
       const rawToUid=String(req.query.toUid||'');
+      const uploadConversationId=String(req.query.conversationId||'');
+      const uploadReplyToMessageId=String(req.query.replyToMessageId||'');
       const prefillChannelType=Number(req.query.channelType)===2?'2':'1';
       let recipientName='';
       if(rawToUid&&prefillChannelType==='2'){
@@ -1389,7 +1494,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           'function handleFiles(files){if(uploading)return;if(files.length){selectedFile=files[0];z.innerHTML="<p><strong>"+esc2(selectedFile.name)+"</strong></p><p style=\\"font-size:12px;color:#999\\">"+(selectedFile.size/1024).toFixed(1)+" KB</p>";btn.disabled=false}}'+
           'btn.addEventListener("click",async function(){if(uploading||!selectedFile)return;if(!to.value.trim()){to.focus();return}uploading=true;var file=selectedFile,uploadName=fn.value||selectedFile.name;btn.disabled=true;btn.setAttribute("aria-busy","true");btn.innerHTML=\'<span class="voko-spinner" aria-hidden="true"></span>\'+'+jsonForInlineScript(T('web.agent.upload.uploading'))+';f.disabled=true;fn.disabled=true;to.disabled=true;ct.disabled=true;msg.disabled=true;z.setAttribute("aria-busy","true");z.style.opacity=".55";z.style.cursor="not-allowed";prog.style.display="block";resDiv.innerHTML="";'+
             'var fd=new FormData();fd.append("file",file,uploadName);'+
-            'var initialDisplay=to.getAttribute("data-initial-display")||"",storedUid=to.getAttribute("data-to-uid")||"",recipient=to.value.trim()===initialDisplay&&storedUid?storedUid:to.value.trim();var params=new URLSearchParams({toUid:recipient,channelType:ct.value,message:msg.value.trim()});'+
+            'var initialDisplay=to.getAttribute("data-initial-display")||"",storedUid=to.getAttribute("data-to-uid")||"",recipient=to.value.trim()===initialDisplay&&storedUid?storedUid:to.value.trim();var params=new URLSearchParams({toUid:recipient,channelType:ct.value,message:msg.value.trim(),conversationId:'+jsonForInlineScript(uploadConversationId)+',replyToMessageId:'+jsonForInlineScript(uploadReplyToMessageId)+'});'+
             'try{var r=await fetch("/api/agents/'+aid+'/send-file?"+params,{method:"POST",body:fd});var j=await r.json();'+
               'if(j.success){location.href='+jsonForInlineScript(returnPath)+';return}'+
               'else{resDiv.innerHTML="<p class=\\"error\\">❌ "+esc2(j.error||"上传失败")+"</p>"}'+
@@ -1442,6 +1547,9 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
           toUid: String(req.query.toUid||''),
           channelType: Number(req.query.channelType)===2?2:1,
           message: String(req.query.message||''),
+          conversationId: String(req.query.conversationId||'')||undefined,
+          replyToMessageId: String(req.query.replyToMessageId||'')||undefined,
+          webRequest: Number(req.query.channelType)!==2&&webRoutingEnabled('web_private_conversations_v1'),
           filePath: tmpPath,
           fileName: filename,
         });
@@ -1526,7 +1634,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
             return res.redirect(actionResultLocation(back,level,req.t(key,{email:r.email||req.body.friendEmail})));
           }
           case'ask_human':await handleAction(req,res,handlers.ask_human_for_help({
-            agentId,visitorId:req.body.visitorId,problem:req.body.problem,suggestion:req.body.suggestion||''
+            agentId,visitorId:req.body.visitorId,problem:req.body.problem,suggestion:req.body.suggestion||'',conversationId:req.body.conversationId||undefined
           }),'common.action.human_requested');break;
           default:res.redirect('/agents/'+esc(agentId)+'?err='+encodeURIComponent(req.t('common.action.unknown')))
         }
@@ -1656,7 +1764,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       let agentOpts='';
       try{
         let oe='';const rtRow=db.prepare("SELECT data FROM config WHERE type='runtime'").get();if(rtRow){const d=JSON.parse(rtRow.data);oe=d.userEmail||''}if(!oe){const tkRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(tkRow){const d2=JSON.parse(tkRow.data);const ks=Object.keys(d2);if(ks.length)oe=ks[0]}}
-        const w=await handlers.whoami(oe?{ownerEmail:oe}:{});const ags=w.agents||[];
+        const w=await handlers.list_agents({limit:500});const ags=w.agents||[];
         for(const a of ags)agentOpts+='<option value="'+esc(a.agentId)+'"'+(filterAgentId===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>'
       }catch{}
 
@@ -1763,7 +1871,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
         let ao='<option value="">'+esc(T('web.payments.create.select_agent'))+'</option>';
         try{const ag=await getAgentList(handlers);for(const a of ag)ao+='<option value="'+esc(a.agentId)+'"'+(req.query.agentId===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>'}catch{}
         const v2=esc(req.query.visitorId||'');
-        const cbody='<div class="card"><h3>'+L('web.payments.create.heading')+'</h3><form method="POST" action="/payments"><label for="pa">'+L('web.payments.create.agent')+'</label><select id="pa" name="agentId" required>'+ao+'</select><label for="pv">'+L('web.payments.create.visitor')+'</label><input type="text" id="pv" name="visitorId" value="'+v2+'" required><label for="pa2">'+L('web.payments.create.amount')+'</label><input type="number" id="pa2" name="amount" step="0.01" min="0" required autofocus><label for="pd">'+L('web.payments.create.desc')+'</label><input type="text" id="pd" name="description"><br><br><button type="submit" class="btn-success">'+L('common.btn.create')+'</button><a href="/payments" class="btn" style="margin-left:8px">'+L('common.btn.cancel')+'</a></form></div>';
+         const cbody='<div class="card"><h3>'+L('web.payments.create.heading')+'</h3>'+renderPaymentRegionNotice(T)+'<form method="POST" action="/payments"><label for="pa">'+L('web.payments.create.agent')+'</label><select id="pa" name="agentId" required>'+ao+'</select><label for="pv">'+L('web.payments.create.visitor')+'</label><input type="text" id="pv" name="visitorId" value="'+v2+'" required><label for="pa2">'+L('web.payments.create.amount')+'</label><input type="number" id="pa2" name="amount" step="0.01" min="0" required autofocus><label for="pd">'+L('web.payments.create.desc')+'</label><input type="text" id="pd" name="description"><br><br><button type="submit" class="btn-success">'+L('common.btn.create')+'</button><a href="/payments" class="btn" style="margin-left:8px">'+L('common.btn.cancel')+'</a></form></div>';
         return res.send(renderPage(req,T('web.payments.create.title'),cbody,{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/payments">'+L('web.payments.breadcrumb')+'</a> › '+L('web.payments.create.breadcrumb')}));
       }
       const curPage=Math.max(1,parseInt(req.query.page,10)||1);const limit=10;const offset=(curPage-1)*limit;
@@ -1811,7 +1919,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const fs='padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:4px';
       const stVals=['','0','1','2','3','pending','processing','created','paid','failed','expired'];
       const stOpts=stVals.map(v=>'<option value="'+v+'"'+(st===v?' selected':'')+'>'+esc(v===''?T('web.payments.all_statuses'):stOpt(v))+'</option>').join('');
-      const body='<form method="GET" action="/payments">'
+       const body=renderPaymentRegionNotice(T)+'<form method="GET" action="/payments">'
         +'<div style="background:#fafafa;border:1px solid #e5e5e5;border-radius:8px;padding:12px;margin-bottom:12px">'
         +'<div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">'
         +fld(L('web.payments.filter.agent'),'<select name="agentId" style="width:130px;'+fs+'">'+agentOpts+'</select>')
@@ -2068,7 +2176,7 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       // 加载 Agent 下拉
       let agents=[],_ownerEmail='';
 try{const _rtX=db.prepare("SELECT data FROM config WHERE type='runtime'").get();if(_rtX)try{const _r=JSON.parse(_rtX.data);_ownerEmail=_r.userEmail||''}catch{}if(!_ownerEmail){const _tkX=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(_tkX)try{const _d=JSON.parse(_tkX.data);const _ks=Object.keys(_d);if(_ks.length)_ownerEmail=_ks[0]}catch{}}}catch{}
-try{if(_ownerEmail){const _wl=await handlers.whoami({ownerEmail:_ownerEmail});agents=_wl.agents||[]}else{const _a=await getAgentList(handlers);agents=_a}}catch{}
+try{const _wl=await handlers.list_agents({limit:500});agents=_wl.agents||[]}catch{}
 const defAgent=agentId||(agents.length?agents[0].agentId:'');
             const agentOpts=agents.map(a=>'<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>').join('\n');
 
@@ -2207,7 +2315,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         if(rtRow){const rt=JSON.parse(rtRow.data);ownerEmail=rt.userEmail||''}
         if(!ownerEmail){const tkRow=db.prepare("SELECT data FROM config WHERE type='user_access_token'").get();if(tkRow){const d=JSON.parse(tkRow.data);const ks=Object.keys(d);if(ks.length)ownerEmail=ks[0]}}
       }catch{}
-      try{const a=await handlers.whoami(ownerEmail?{ownerEmail}:{});agents=a.agents||[]}catch{}
+      try{const a=await handlers.list_agents({limit:500});agents=a.agents||[]}catch{}
       let agentOpts='';
       const defAgent=prefillAgent||(agents.length?agents[0].agentId:'');for(const a of agents)agentOpts+='<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>';
       res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'">'
@@ -2338,8 +2446,8 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
       smoke.setBaseUrl(`http://127.0.0.1:${port}`);
 
       // 初始化 ctx
-      const whoamiR = await handlers.whoami({});
-      const agents = whoamiR.agents || [];
+      const agentListResult = await handlers.list_agents({ limit: 500 });
+      const agents = agentListResult.agents || [];
       if (agents.length === 0) {
         send({ done: true, passed: 0, failed: 0, skipped: 0, error: '无已注册 Agent' });
         return res.end();

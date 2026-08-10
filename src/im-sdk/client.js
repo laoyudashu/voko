@@ -333,16 +333,16 @@ class VokoIMClient extends EventEmitter {
   }
 
   sendText(channelId, channelType, text, options = {}) {
-    return this.sendRaw(channelId, channelType, encodeContent(ContentType.Text, { content: text || '' }, options.mention), options);
+    return this.sendRaw(channelId, channelType, encodeContent(ContentType.Text, { content: text || '', ...(options._voko ? { _voko: options._voko } : {}) }, options.mention), options);
   }
 
   sendImage(channelId, channelType, image, options = {}) {
     const value = typeof image === 'string' ? { url: image } : image;
-    return this.sendRaw(channelId, channelType, encodeContent(ContentType.Image, { url: value.url || '', width: value.width || 0, height: value.height || 0 }, options.mention), options);
+    return this.sendRaw(channelId, channelType, encodeContent(ContentType.Image, { url: value.url || '', width: value.width || 0, height: value.height || 0, ...(options._voko ? { _voko: options._voko } : {}) }, options.mention), options);
   }
 
   sendFile(channelId, channelType, file, options = {}) {
-    return this.sendRaw(channelId, channelType, encodeContent(ContentType.File, { url: file.url || '', name: file.name || '', size: file.size || 0, mime: file.type || file.mime || '' }, options.mention), options);
+    return this.sendRaw(channelId, channelType, encodeContent(ContentType.File, { url: file.url || '', name: file.name || '', size: file.size || 0, mime: file.type || file.mime || '', ...(options._voko ? { _voko: options._voko } : {}) }, options.mention), options);
   }
 
   _failConnect(error) {

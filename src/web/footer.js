@@ -2,14 +2,38 @@ const pkg = require('../../package.json');
 const { renderLanguageSwitcher } = require('./language-switcher');
 
 const esc = (value) => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const DOCS_URL = 'https://www.vokovoko.com/docs.html';
+const VOKO_URL = 'https://www.vokovoko.com';
+const GITHUB_URL = 'https://github.com/laoyudashu/voko';
+
+function renderFooterLinks(t, locale) {
+  const report = '<a href="/bug-report" style="font-size:13px">' + esc(t('web.bug_report.link')) + '</a>';
+  const docs = '<a href="' + DOCS_URL + '" target="_blank" rel="noopener noreferrer" style="font-size:13px">' + esc(t('common.footer.docs')) + '</a>';
+  const github = '<a href="' + GITHUB_URL + '" target="_blank" rel="noopener noreferrer" style="font-size:13px">' + esc(t('common.footer.github')) + '</a>';
+  const language = renderLanguageSwitcher(locale);
+  return '<div role="navigation" aria-label="' + esc(t('common.footer.links_aria')) + '" style="display:flex;justify-content:flex-end;align-items:center;justify-self:end;gap:14px;flex-wrap:nowrap;margin:0;padding:0;border:0;border-bottom:0;box-shadow:none">'
+    + report + docs + github + language + '</div>';
+}
+
+function renderCopyright(t) {
+  const text = String(t('common.footer.copyright') || '');
+  const brandIndex = text.indexOf('VOKO');
+  if (brandIndex < 0) {
+    return '<span class="voko-footer-copyright" style="justify-self:center;font-size:12px;color:#98a2b3;white-space:nowrap">' + esc(text) + '</span>';
+  }
+  const before = esc(text.slice(0, brandIndex));
+  const after = esc(text.slice(brandIndex + 'VOKO'.length));
+  const brand = '<a href="' + VOKO_URL + '" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">VOKO</a>';
+  return '<span class="voko-footer-copyright" style="justify-self:center;font-size:12px;color:#98a2b3;white-space:nowrap">' + before + brand + after + '</span>';
+}
 
 function renderSystemFooter(db, tFn, locale) {
   const t = tFn || ((key) => key);
-  const language = renderLanguageSwitcher(locale);
-  const report = '<a href="/bug-report" style="font-size:13px">' + esc(t('web.bug_report.link')) + '</a>';
+  const links = renderFooterLinks(t, locale);
+  const copyright = renderCopyright(t);
   try {
     const row = db && db.prepare("SELECT data FROM config WHERE type='runtime'").get();
-    if (!row) return '<div data-voko-system-footer style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">' + report + language + '</div>';
+    if (!row) return '<div data-voko-system-footer style="margin-top:20px;font-size:13px;color:#888"><div style="display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;overflow-x:auto"><span aria-hidden="true"></span>' + copyright + links + '</div></div>';
     const runtime = JSON.parse(row.data);
     let updateNotice = '';
     let updateDialog = '';
@@ -26,14 +50,14 @@ function renderSystemFooter(db, tFn, locale) {
       if (runtime.agents.some((agent) => agent.imConnected === false)) { statusKey = 'common.footer.status_im_down'; color = '#d93025'; }
       else { statusKey = 'common.footer.status_ok'; color = '#0f9d58'; }
     }
-    return '<div class="info-bar" data-voko-system-footer style="margin-top:20px;font-size:13px;color:#888;display:flex;justify-content:space-between;align-items:center"><span>'
+    return '<div class="info-bar" data-voko-system-footer style="display:block;width:100%;margin-top:20px;padding-top:12px;border-top:1px solid #edf0f4;font-size:13px;color:#888"><div style="display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;overflow-x:auto"><span style="display:flex;align-items:center;justify-self:start;gap:12px;flex-wrap:nowrap">'
       + '<span>' + esc(t('common.footer.version')) + ': V' + esc(pkg.version) + '</span>'
       + updateNotice
       + (runtime.port ? ' <span>' + esc(t('common.footer.port')) + ': ' + esc(runtime.port) + '</span>' : '')
       + ' <span>PID: ' + esc(runtime.pid || '') + '</span> <span>' + esc(t('common.footer.status')) + ': <span id="footer-status-text" style="color:' + color + ';font-weight:700">' + esc(t(statusKey)) + '</span></span></span>'
-      + '<span style="display:flex;gap:14px;align-items:center">' + report + language + '</span></div>' + updateDialog;
+      + copyright + links + '</div>' + updateDialog;
   } catch (_) {
-    return '<div data-voko-system-footer style="display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:20px">' + report + language + '</div>';
+    return '<div data-voko-system-footer style="margin-top:20px;font-size:13px;color:#888"><div style="display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;overflow-x:auto"><span aria-hidden="true"></span>' + copyright + links + '</div></div>';
   }
 }
 

@@ -4,6 +4,8 @@
 
 This guide connects MCP clients such as WorkBuddy and Qwen Code to the local VOKO runtime. They can then use VOKO MCP tools for Agent registration, conversations, messages, and groups.
 
+After connecting, use the [MCP message and routing Conversation contract](mcp-message-conversations.md) for message parameters, response fields, backward-compatible `conversationId` behavior, and the recommended reply order.
+
 > This differs from VOKO invoking a Provider CLI. This page configures an Agent application as an **MCP client** of VOKO. To use Qwen Code as a VOKO Provider, add Qwen Code in the Web UI and make sure `qwen` is installed, signed in, and on `PATH`; no VOKO MCP entry is required in Qwen Code for that Provider workflow.
 
 ## Start VOKO first

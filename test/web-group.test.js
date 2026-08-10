@@ -27,7 +27,7 @@ function createDb(imUid) {
 function startServer(role, messages = []) {
   const imUid = 'agent-im-uid';
   const handlers = {
-    whoami: async () => ({
+    list_agents: async () => ({
       agents: [{ agentId: 'agent-1', agentName: 'Agent One' }],
     }),
     get_group_context: async () => ({
@@ -123,7 +123,7 @@ describe('Web group detail rendering', () => {
 
 it('redirects a newly created group to the group list and preserves its id for pinning', async (t) => {
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-1', agentName: 'Agent One', ownerEmail: 'owner@example.com' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-1', agentName: 'Agent One', ownerEmail: 'owner@example.com' }] }),
     list_access_lists: async () => ({ success: true, data: [], total: 0 }),
     create_group: async () => ({ success: true, channelId: 'group-new' }),
     invite_to_group: async () => ({ success: true }),
@@ -193,7 +193,7 @@ it('pins the newly created group first and paginates group lists at ten rows', a
     })),
   ];
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-1', agentName: 'Agent One', ownerEmail: 'owner@example.com', backendType: 'others' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-1', agentName: 'Agent One', ownerEmail: 'owner@example.com', backendType: 'others' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
     list_conversations: async () => ({ conversations: [], total: 0 }),
     list_groups: async () => ({ success: true, groups, total: groups.length }),
@@ -250,7 +250,7 @@ it('pins the newly created group first and paginates group lists at ten rows', a
 it('searches invite candidates and returns whitelist pages as a partial response', async (t) => {
   const accessCalls = [];
   const handlers = {
-    whoami: async () => ({ agents: [
+    list_agents: async () => ({ agents: [
       { agentId: 'agent-1', agentName: 'Host', ownerEmail: 'owner@example.com' },
       { agentId: 'agent-2', agentName: 'Searchable Agent', ownerEmail: 'owner@example.com' },
     ] }),

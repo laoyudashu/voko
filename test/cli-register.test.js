@@ -63,6 +63,15 @@ describe('CLI verify_agent_email 参数桥接', () => {
   });
 });
 
+describe('CLI identity commands do not require a preselected Agent', () => {
+  it('allows whoami and list_agents without --agent', async () => {
+    const who = await runCli('whoami', {});
+    const list = await runCli('list_agents', {});
+    assert.notEqual(JSON.parse(who.out).error, '缺少 agent 身份');
+    assert.notEqual(JSON.parse(list.out).error, '缺少 agent 身份');
+  });
+});
+
 describe('CLI manage_agent_registration state flow', () => {
   it('accepts the shared action and returns nextAction JSON', async () => {
     const { out, core } = await runCli('manage_agent_registration', {

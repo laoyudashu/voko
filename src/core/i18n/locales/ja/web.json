@@ -1,5 +1,7 @@
 {
   "web.payments.title": "支付流水",
+  "web.payments.region_notice.title": "利用範囲のお知らせ",
+  "web.payments.region_notice.body": "決済機能は現在、中国本土のユーザーのみ利用できます。その他の地域には対応していません。",
   "web.payments.breadcrumb": "支付",
   "web.payments.empty": "暂无订单",
   "web.payments.all_agents": "所有Agent",
@@ -435,7 +437,7 @@
   "web.console.action_desc": "操作名称（如 send_message、whoami）",
   "web.console.params_desc": "操作参数（JSON 对象）",
   "web.console.examples": "常用指令示例",
-  "web.console.ex.whoami": "📋 查看所有 Agent",
+  "web.console.ex.whoami": "📋 現在の Agent を識別",
   "web.console.ex.history": "💬 查看聊天历史",
   "web.console.ex.send": "📨 发送消息",
   "web.console.ex.convs": "📥 查看会话列表",

@@ -197,6 +197,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       toUid: z.string().describe(T('mcp.tool.send_message.p.toUid')),
       content: z.string().describe(T('mcp.tool.send_message.p.content')),
       contentType: z.number().optional().default(1).describe(T('mcp.tool.send_message.p.contentType')),
+      conversationId: z.string().optional().describe('Internal VOKO routing conversation to reuse'),
+      replyToMessageId: z.string().optional().describe('Message being replied to; its verified route is reused'),
       channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时会按群频道 ID 自动判断）'),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe('群聊 @提及（channelType=2 时生效）'),
     },
@@ -216,6 +218,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       channelId: z.string().optional().describe(T('mcp.tool.get_chat_history.p.channelId')),
       channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时按频道 ID 和本地记录判断）'),
       keyword: z.string().optional().describe(T('mcp.tool.get_chat_history.p.keyword')),
+      conversationId: z.string().optional().describe(T('mcp.tool.get_chat_history.p.conversationId')),
       limit: z.number().optional().default(20).describe(T('mcp.tool.get_chat_history.p.limit')),
       offset: z.number().optional().default(0).describe(T('mcp.tool.get_chat_history.p.offset')),
     },
@@ -262,6 +265,23 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { readOnlyHint: true }
   );
 
+  server.tool(
+    'voko_list_routing_conversations',
+    T('mcp.tool.list_routing_conversations.desc'),
+    {
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      channelId: z.string().describe(T('mcp.tool.list_routing_conversations.p.channelId')),
+      channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.list_routing_conversations.p.channelType')),
+      limit: z.number().int().min(1).max(100).optional().default(20),
+      offset: z.number().int().min(0).optional().default(0),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.list_routing_conversations(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { readOnlyHint: true }
+  );
+
   // ─── 12. mark_conversation_read ───
   server.tool(
     'voko_mark_conversation_read',
@@ -286,6 +306,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       filePath: z.string().describe(T('mcp.tool.upload_and_send_file.p.filePath')),
       fileName: z.string().optional().describe(T('mcp.tool.upload_and_send_file.p.fileName')),
       message: z.string().max(8000).optional().describe(T('mcp.tool.upload_and_send_file.p.message')),
+      conversationId: z.string().optional().describe('Internal VOKO routing conversation to reuse'),
+      replyToMessageId: z.string().optional().describe('Message being replied to; its verified route is reused'),
       channelType: z.number().int().min(1).max(2).optional().describe(T('mcp.tool.upload_and_send_file.p.channelType')),
       mentions: z.object({ all: z.boolean().optional(), uids: z.array(z.string()).optional() }).optional().describe(T('mcp.tool.upload_and_send_file.p.mentions')),
     },
@@ -296,15 +318,29 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { destructiveHint: true }
   );
 
-  // ─── 13. whoami ───
   server.tool(
     'voko_whoami',
-    T('mcp.tool.whoami.desc'),
+    `${T('mcp.tool.whoami.desc')} If identity evidence is unavailable or ambiguous, select an Agent explicitly.`,
     {
-      ownerEmail: z.string().optional().describe(T('mcp.tool.whoami.p.ownerEmail')),
+      agentId: z.string().optional().describe('Explicit Agent selection; ownership is verified and no identity binding is changed'),
     },
     async (params: unknown) => {
       const r = await toolHandlers.whoami(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { readOnlyHint: true }
+  );
+
+  server.tool(
+    'voko_list_agents',
+    T('mcp.tool.list_agents.desc'),
+    {
+      keyword: z.string().optional().describe(T('mcp.tool.list_agents.p.keyword')),
+      limit: z.number().int().min(1).max(500).optional().describe(T('mcp.tool.list_agents.p.limit')),
+      offset: z.number().int().min(0).optional().describe(T('mcp.tool.list_agents.p.offset')),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.list_agents(params);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     },
     { readOnlyHint: true }
@@ -346,6 +382,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       channelId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.channelId')),
       channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.ask_human_for_help.p.channelType')),
       messageId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.messageId')),
+      conversationId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.replyToMessageId')),
       problem: z.string().describe(T('mcp.tool.ask_human_for_help.p.problem')),
       suggestion: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.suggestion')),
     },

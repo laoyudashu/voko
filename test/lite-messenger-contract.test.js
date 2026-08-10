@@ -136,6 +136,7 @@ describe('Lite Messenger contract smoke', () => {
       const direct = fixture.handler.handleAgentMessage('agent-1', inbound({
         messageId: 'offline-direct-1',
         clientMsgNo: 'offline-client-1',
+        _voko: { protocolVersion: 1, routeId: 'route-direct' },
       }), true);
       const group = fixture.handler.handleAgentMessage('agent-1', inbound({
         channelId: 'group_legacy',
@@ -154,6 +155,7 @@ describe('Lite Messenger contract smoke', () => {
         contentType: 1,
         messageId: 'offline-direct-1',
         timestamp: 1700000000,
+        _voko: { protocolVersion: 1, routeId: 'route-direct' },
       });
       assert.equal(group.channelId, 'group_legacy');
       assert.equal(group.channelType, 2);

@@ -179,13 +179,22 @@ function createContext({
     enqueueOwnerIntervention,
 
     // ── 消息 ──
-    sendMessage: (agentId: string, toUid: string, content: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown) => {
-      return sendMessage(agentId, toUid, content, fromUid, messageType, channelType, mentions);
+    sendMessage: (...args: unknown[]) => {
+      return sendMessage(...args);
     },
 
     // 系统消息（is_me=2 样式区分），用于黑白名单等状态变更通知访客
-    sendSystemMessage: (...args: unknown[]) => {
-      if (agentManager?.sendSystemMessage) agentManager.sendSystemMessage(...args);
+    sendSystemMessage: async (...args: unknown[]) => {
+      const agentId = String(args[0] || '');
+      if (!agentManager?.sendSystemMessage || !agentManager.workers?.has(agentId)) {
+        return { notificationStatus: 'skipped', notificationReason: 'agent_worker_unavailable' };
+      }
+      try {
+        const result = await agentManager.sendSystemMessage(...args) as UnknownRecord | undefined;
+        return result || { notificationStatus: 'sent' };
+      } catch (_) {
+        return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
+      }
     },
 
     // 收消息通道是否就绪（供 send_message tool 提示 agent 是否需改用 pull）

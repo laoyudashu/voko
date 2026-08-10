@@ -1,5 +1,7 @@
 # Hermes Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 Hermes** 时的安装、profile 选择、HTTP/CLI 投递和排障。Hermes 作为 MCP 客户端调用 VOKO 时，属于另一条方向，需结合 Hermes 自身的 `mcp` 命令配置。
@@ -57,6 +59,10 @@ Hermes 的 `backend_instance_id` 对应 Hermes profile，例如 `default`、`psy
 不要把 VOKO Agent ID 当成 Hermes profile；也不要把 profile 名称当成访客 session。多个 VOKO Agent 如共享同一个 Hermes profile，消息仍会通过 VOKO 的 Agent/session key 隔离，但模型资源和 profile 级配置是共享的；除非确定需要共享，否则建议一 Agent 一 profile。
 
 ## 3. HTTP 主通道和 session
+
+### Caller identity for `whoami`
+
+Hermes documents `HERMES_SESSION_ID` as the current session value for subprocesses. VOKO accepts it when Hermes passes it to the MCP child. Hermes filters stdio environment variables, so configure the VOKO extension using the supported Hermes MCP environment mechanism if the variable is not inherited. This applies where Hermes runs (Linux, macOS, or WSL); Hermes is not a native Windows runtime. A Hermes profile is an instance/configuration selector, not a session identity. Missing evidence falls back to explicit Agent selection.
 
 HTTP Provider 通过 Hermes 本机 API 发送消息，并使用稳定的 VOKO session key：
 

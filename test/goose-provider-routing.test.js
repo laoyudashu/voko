@@ -166,6 +166,51 @@ test('Goose leaves an indeterminate delivery un-retried', async (t) => {
   assert.equal(runCount, 1);
 });
 
+test('Goose suppresses a reply completed after provider stop or restart', async (t) => {
+  const { db } = fixture(t);
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  const provider = new GooseCliProvider({
+    db, checkAvailable: () => true,
+    runCli: async ({ args }) => {
+      if (args[0] === 'session') return { stdout: '[]', stderr: '', code: 0, signal: null };
+      await pending;
+      return { stdout: JSON.stringify({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'stale' }] }] }),
+        stderr: '', code: 0, signal: null };
+    },
+  });
+  const replies = [];
+  provider.on('agent.reply', (reply) => replies.push(reply));
+  const push = provider.push({ agentId: 'agent-a', fromUid: 'visitor-a', channelId: 'visitor-a',
+    channelType: 1, content: 'hello', messageId: 'm-stale' });
+  await new Promise((resolve) => setImmediate(resolve));
+  provider.stop();
+  provider.start();
+  finish();
+  await push;
+  assert.deepEqual(replies, []);
+});
+
+test('Goose coalesces an in-flight turn and does not execute a completed turn again', async (t) => {
+  const { db } = fixture(t);
+  const fake = fakeGoose();
+  let runCount = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const provider = new GooseCliProvider({ db, checkAvailable: () => true, runCli: async (options) => {
+    if (options.args[0] === 'run') { runCount += 1; await gate; }
+    return fake.runCli(options);
+  } });
+  const payload = { agentId: 'agent-a', fromUid: 'visitor-a', channelId: 'visitor-a', channelType: 1,
+    content: 'owner reply', messageId: 'owner-turn-1', turnId: 'owner-turn-1' };
+  const first = provider.push(payload);
+  const duplicate = provider.push(payload);
+  release();
+  await Promise.all([first, duplicate]);
+  await provider.push(payload);
+  assert.equal(runCount, 1);
+});
+
 test('Goose ACP and CLI accept the same native binding family', () => {
   const acp = new GooseAcpProvider({ binPath: 'goose' });
   const binding = { providerType: 'goose', providerInstanceId: null, adapterType: 'goose-cli', nativeSessionId: '20260806_1' };
@@ -201,7 +246,9 @@ test('schema migration enables Goose Push once and preserves later explicit pull
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
   insert.run('g1', 'goose-1', 'u1', 't1', 'http://im', 'published', 'goose', '["pull"]', 'private', now, now);
   insert.run('g2', 'goose-2', 'u2', 't2', 'http://im', 'published', 'acp-goose', '[ "pull" ]', 'private', now, now);
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+  // Goose Push was introduced by schema 7; exercise that historical boundary
+  // independently from newer additive migrations.
+  db.exec('PRAGMA user_version = 6');
   db.close();
 
   const migrated = initDatabase(dbPath, { silent: true });

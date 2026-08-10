@@ -17,6 +17,7 @@ const { renderLanguageFooter, renderLanguageSwitcher } = require('./language-swi
 const { renderSystemFooter } = require('./footer');
 const { defaultGroupName } = require('../core/group-client');
 const { MESSAGE_CONTENT_CSS, createMessageRenderer, messageLabels, messageRendererScript } = require('./message-content');
+const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const ENDPOINTS = require('../endpoints.json');
 
 const GROUP_TIP_CONTENT_TYPE = 12; // 与 core/messenger.js CONTENT_TYPE_GROUP_TIP 一致
@@ -137,13 +138,15 @@ function roleBadge(role,tFn){
 
 function createGroupRouter(handlers, db) {
   const R = Router();
+  const routingConversations = new RoutingConversationStore(db);
+  const messageRoutes = new MessageRouteStore(db);
   const renderFooter = (tFn, locale) => renderSystemFooter(db, tFn, locale);
 
   function renderPage(req,title,body,opt){const options=opt||{};return page(title,body,{...options,footer:options.footer===undefined?renderSystemFooter(db,req.t,req.locale):options.footer},req.t,req.locale);}
 
   // 取 agent 展示名（nav/title 用）
   async function agentName(agentId){
-    try{const d=await handlers.whoami({});const a=(d.agents||[]).find(x=>x.agentId===agentId);return a?(a.agentName||a.agentId):agentId;}catch(_){return agentId;}
+    try{const d=await handlers.list_agents({limit:500});const a=(d.agents||[]).find(x=>x.agentId===agentId);return a?(a.agentName||a.agentId):agentId;}catch(_){return agentId;}
   }
   // 取 acting agent 的 imUid（判定其在群里的 role）
   function actingImUid(agentId){
@@ -207,7 +210,12 @@ function createGroupRouter(handlers, db) {
           const senderHtml=!isDissolved&&!myMuted&&senderUid&&senderUid!==myUid
             ? '<button type="button" class="gm-sender-mention" data-uid="'+esc(senderUid)+'" data-name="'+esc(senderName)+'" title="'+esc(T('web.group.mention.click_sender'))+'">'+esc(senderName)+'</button>'
             : '<strong>'+esc(senderName)+'</strong>';
-          mh+='<div class="gm-message'+(atMe?' gm-message-at-me':'')+'">'+senderHtml+mentionBadge+' <span style="color:#888;font-size:13px">['+t+']</span><br>'+contentHtml+'</div>';
+          const route=m.messageId?messageRoutes.getByMessage(String(m.messageId),agentId):null;
+          const routeConversation=route?.conversation_id?routingConversations.getForScope(route.conversation_id,agentId,channelId,2):null;
+          const exactReply=!!(isRoutingFeatureEnabled(db,'web_group_precise_reply_v1',true)&&route&&routeConversation
+            &&route.status==='active'&&(!route.expires_at||Number(route.expires_at)>Date.now()));
+          const replyButton=exactReply?'<button type="button" class="gm-precise-reply btn-xs" data-reply-message-id="'+esc(m.messageId)+'" data-reply-summary="'+esc(senderName)+'">Reply precisely</button>':'';
+          mh+='<div class="gm-message'+(atMe?' gm-message-at-me':'')+'">'+senderHtml+mentionBadge+' <span style="color:#888;font-size:13px">['+t+']</span>'+replyButton+'<br>'+contentHtml+'</div>';
         }
       }}
 
@@ -304,7 +312,7 @@ function createGroupRouter(handlers, db) {
         ?'<div class="card" id="reply" style="opacity:0.75"><h3>'+L('web.group.reply_title')+'</h3><input type="text" disabled placeholder="'+esc(T('web.group.dissolved.placeholder'))+'" style="background:#f5f5f5;color:#999;cursor:not-allowed"></div>'
         :myMuted
         ?'<div class="card" id="reply" style="opacity:0.75"><h3>'+L('web.group.reply_title')+'</h3><input type="text" disabled placeholder="'+esc(T('web.group.you_are_muted'))+'" style="background:#f5f5f5;color:#999;cursor:not-allowed"></div>'
-        :'<div class="card" id="reply"><h3>'+L('web.group.reply_title')+'</h3><form method="POST" action="/messages/send" onsubmit="return groupReplySend(event)" id="group-reply-form"><input type="hidden" name="agentId" value="'+aId+'"><input type="hidden" name="toUid" value="'+cId+'"><input type="hidden" name="channelType" value="2"><label for="group-reply-input" class="meta">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="group-reply-input" name="content" required autocomplete="off" autofocus'+mentionInputAttrs+'><a class="btn btn-outline btn-sm" style="margin:0;display:flex;align-items:center;white-space:nowrap" href="/agents/'+aId+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=2">'+L('web.conversation.op.upload')+'</a><button type="submit" class="voko-send-button">'+L('common.btn.send')+'</button></div><span id="reply-send-err" style="display:block;font-size:14px;margin-top:4px"></span></form></div>';
+        :'<div class="card" id="reply"><h3>'+L('web.group.reply_title')+'</h3><form method="POST" action="/messages/send" onsubmit="return groupReplySend(event)" id="group-reply-form"><input type="hidden" name="agentId" value="'+aId+'"><input type="hidden" name="toUid" value="'+cId+'"><input type="hidden" name="channelType" value="2"><input type="hidden" name="replyToMessageId" id="group-reply-message-id" value=""><div id="group-precise-reply-summary" class="meta" hidden></div><label for="group-reply-input" class="meta">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="group-reply-input" name="content" required autocomplete="off" autofocus'+mentionInputAttrs+'><a id="group-upload-link" class="btn btn-outline btn-sm" style="margin:0;display:flex;align-items:center;white-space:nowrap" href="/agents/'+aId+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=2">'+L('web.conversation.op.upload')+'</a><button type="submit" class="voko-send-button">'+L('common.btn.send')+'</button></div><span id="reply-send-err" style="display:block;font-size:14px;margin-top:4px"></span></form></div>';
       const msgPanel=panel('messages')+'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'+msgPager+replyCard+'</div>';
       const opsSection = allowedManager?'<div class="gm-manage-section" data-active-only><h3 class="gm-manage-section-title">'+L('web.group.manage.quick_actions')+'</h3><div class="gm-action-grid"><a class="gm-action-card" data-agent-kind="link" data-agent-action="group.invite" href="/agents/'+aId+'/g/'+cId+'/invite"><span class="gm-action-icon" aria-hidden="true">＋</span><span><strong>'+L('web.group.op.invite')+'</strong><small>'+L('web.group.manage.invite_desc')+'</small></span></a></div></div>':'';
       const memberPanel=panel('members')+'<div class="card">'+memberHtml+'</div></div>';
@@ -346,7 +354,7 @@ function createGroupRouter(handlers, db) {
 
       // 同主人 Agent（含已在群的；imUid 优先，无 imUid 也保留用 agentId 兜底）
       let allAgents=[];
-      try{const w=await handlers.whoami({});const me=(w.agents||[]).find(a=>a.agentId===agentId);const oe=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===oe);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
+      try{const w=await handlers.list_agents({limit:500});const me=(w.agents||[]).find(a=>a.agentId===agentId);const oe=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===oe);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
       // 判断已在群：同时尝试 imUid 和 agentId 匹配
       const agentInGroup=new Set();
       allAgents.forEach(a=>{const k=a.imUid||a.agentId;if((a.imUid&&memberUids.has(a.imUid))||memberUids.has(a.agentId))agentInGroup.add(k);});
@@ -483,7 +491,7 @@ function createGroupRouter(handlers, db) {
       const {code}=req.params;
       let agentOptions='';
       try{
-        const w=await handlers.whoami({});
+        const w=await handlers.list_agents({limit:500});
         const agents=w.agents||[];
         if(agents.length){
           const ids=agents.map(a=>a.agentId);
@@ -527,7 +535,7 @@ function createGroupRouter(handlers, db) {
       const aName=await agentName(agentId);
       // 同主人 Agent
       let allAgents=[];
-      try{const w=await handlers.whoami({});const me=(w.agents||[]).find(a=>a.agentId===agentId);const ownerEmail=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===ownerEmail);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
+      try{const w=await handlers.list_agents({limit:500});const me=(w.agents||[]).find(a=>a.agentId===agentId);const ownerEmail=me&&me.ownerEmail||'';const candidates=(w.agents||[]).filter(a=>a.agentId!==agentId&&a.ownerEmail===ownerEmail);if(candidates.length){const ids=candidates.map(a=>a.agentId);const rows=db.prepare('SELECT agent_id, imUid FROM agents WHERE agent_id IN ('+ids.map(()=>'?').join(',')+')').all(...ids);const imMap={};rows.forEach(r=>{imMap[r.agent_id]=r.imUid||''});allAgents=candidates.map(a=>({...a,imUid:imMap[a.agentId]||null}));}}catch(_){}
       let agentOpts='';
       if(allAgents.length){for(const a of allAgents)agentOpts+='<label style="display:flex;align-items:center;gap:8px;margin:4px 0;font-weight:400;cursor:'+(a.imUid?'pointer':'not-allowed')+'"><input type="checkbox" name="inviteAgents" value="'+esc(a.imUid||'')+'" '+(a.imUid?'':'disabled')+' style="width:auto;max-width:none;margin:0">'+esc(a.agentName||a.agentId)+' <span class="meta" style="font-size:13px">'+esc(a.backendType||'')+'</span></label>';}
       else agentOpts='<p class="meta">'+L('web.group.create.no_agents')+'</p>';
@@ -766,6 +774,8 @@ window.__gmCollectMentions=function(content){var st=window.__GROUP_MENTION_STATE
 window.__gmStripMentions=function(content){var result=String(content||""),st=window.__GROUP_MENTION_STATE__||[];st.forEach(function(x){var i=result.indexOf(x.token);if(i>=0)result=result.slice(0,i)+result.slice(i+x.token.length);});return result.replace(/[ \\t]{2,}/g," ").trim();};
 window.__gmMentionMember=function(uid,name){if(!uid||uid===window.__MY_UID__)return;var label=name||uid,token="@"+label,st=window.__GROUP_MENTION_STATE__||[],exists=false;st.forEach(function(x){if(x.uid===uid&&inp.value.indexOf(x.token)>=0)exists=true;});var caret=typeof inp.selectionStart==="number"?inp.selectionStart:inp.value.length;if(!exists){var end=typeof inp.selectionEnd==="number"?inp.selectionEnd:caret,before=inp.value.slice(0,caret),after=inp.value.slice(end),prefix=before&&!/\s$/.test(before)?" ":"",suffix=!after||!/^\s/.test(after)?" ":"";inp.value=before+prefix+token+suffix+after;caret=before.length+prefix.length+token.length+suffix.length;st.push({token:token,uid:uid,all:false});window.__GROUP_MENTION_STATE__=st;}inp.focus();inp.setSelectionRange(caret,caret);};
 document.addEventListener("click",function(ev){var b=ev.target.closest?ev.target.closest(".gm-sender-mention"):null;if(!b)return;window.__gmMentionMember(b.getAttribute("data-uid")||"",b.getAttribute("data-name")||"");});
+document.addEventListener("click",function(ev){var b=ev.target.closest?ev.target.closest(".gm-precise-reply"):null;if(!b)return;var id=b.getAttribute("data-reply-message-id")||"",hidden=document.getElementById("group-reply-message-id"),summary=document.getElementById("group-precise-reply-summary"),upload=document.getElementById("group-upload-link");if(hidden)hidden.value=id;if(summary){summary.hidden=false;summary.textContent="Replying precisely to "+(b.getAttribute("data-reply-summary")||"message");}if(upload){var u=new URL(upload.href,location.href);u.searchParams.set("replyToMessageId",id);upload.href=u.href;}inp.focus();});
+var preciseFetch=window.fetch.bind(window);window.fetch=function(input,init){try{var url=new URL(typeof input==="string"?input:input.url,location.href),hidden=document.getElementById("group-reply-message-id");if(url.pathname==="/messages/send"&&hidden&&hidden.value&&init&&typeof init.body==="string"){var body=JSON.parse(init.body);body.replyToMessageId=hidden.value;init=Object.assign({},init,{body:JSON.stringify(body)});}}catch(_){}return preciseFetch(input,init);};
 var pop=null,searchInput=null,listEl=null,pageBarEl=null;
 var query='',page=1,hi=0,filtered=[],trigAt=-1;
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}

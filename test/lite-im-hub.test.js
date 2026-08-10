@@ -130,6 +130,27 @@ test('buffers manual-ACK messages until the VOKO persistence handler is attached
   await transport.stopAll();
 });
 
+test('inbound runtime logs metadata without leaking message content', async () => {
+  const transport = manager();
+  transport.on('message', () => {});
+  const lines = [];
+  const originalLog = console.log;
+  console.log = (...args) => lines.push(args.join(' '));
+  try {
+    transport.adapter.emit('worker.message', {
+      agentId: 'agent-a',
+      data: {
+        fromUid: 'visitor-a', channelId: 'visitor-a', channelType: 1,
+        contentType: 1, messageSeq: 1, content: 'private-production-prompt',
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(lines.some(line => line.includes('private-production-prompt')), false);
+  assert.equal(lines.some(line => line.includes('contentLength=25')), true);
+});
+
 test('keeps the public start_worker and stop_worker tool names without duplicate start_im tools', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/mcp/server.ts'), 'utf8');
   assert.match(source, /'voko_start_worker'/);

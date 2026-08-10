@@ -98,6 +98,7 @@ interface OwnerInterventionRow {
   target_channel_id: string | null;
   target_channel_type: number | null;
   source_message_id: string | null;
+  routing_conversation_id?: string | null;
 }
 
 interface ConversationRow {
@@ -179,6 +180,7 @@ interface OwnerInterventionInput {
   targetChannelId?: string | null;
   targetChannelType?: number | null;
   sourceMessageId?: string | null;
+  routingConversationId?: string | null;
 }
 
 interface PaymentOrderInput {
@@ -227,7 +229,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 // Schema 7 is the current shared Lite/Desktop marker.  The v7 database has
 // the same tables and columns already handled by Lite; keeping the marker in
 // sync prevents a newer Desktop-created database from being rejected by Lite.
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -237,6 +239,16 @@ function readSchemaVersion(db: DatabaseSync): number {
 function backupLegacyDatabase(db: DatabaseSync, dbPath: string): string | null {
   if (!dbPath || dbPath === ':memory:' || !fs.existsSync(dbPath)) return null;
   const backupPath = `${dbPath}.pre-schema-v${SCHEMA_VERSION}.bak`;
+  if (fs.existsSync(backupPath)) return backupPath;
+  try { db.exec('PRAGMA wal_checkpoint(FULL)'); } catch (_) {}
+  fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+}
+
+function backupSchema8WebRoutingRevision(db: DatabaseSync): string | null {
+  const dbPath = String((db as any)._dbPath || '');
+  if (!dbPath || dbPath === ':memory:' || !fs.existsSync(dbPath)) return null;
+  const backupPath = `${dbPath}.pre-schema-v8-web-routing.bak`;
   if (fs.existsSync(backupPath)) return backupPath;
   try { db.exec('PRAGMA wal_checkpoint(FULL)'); } catch (_) {}
   fs.copyFileSync(dbPath, backupPath);
@@ -275,6 +287,7 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 }
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
+  migrateSchema8WebRoutingRevision(db);
   ensureSyncCheckpointSchema(db);
   try {
     const pkg = require('../../package.json');
@@ -286,6 +299,120 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
     seedBackendTypes(db);
   } catch (e: any) {
     console.error('[DB] agent_backend_types seed 失败:', e.message);
+  }
+}
+
+function createFinalSchema8RoutingTables(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE provider_routing_conversations (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      provider_family TEXT,
+      provider_instance_key TEXT,
+      native_session_id TEXT,
+      native_session_fingerprint TEXT,
+      wire_conversation_key TEXT NOT NULL,
+      parent_conversation_id TEXT,
+      merge_status TEXT NOT NULL DEFAULT 'none' CHECK(merge_status IN ('none','requested','merged')),
+      channel_id TEXT NOT NULL,
+      channel_type INTEGER NOT NULL DEFAULT 1,
+      origin TEXT NOT NULL CHECK(origin IN ('caller','voko_managed','web_system')),
+      status TEXT NOT NULL CHECK(status IN ('pending','active','stale','unavailable','archived')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_provider_routing_conversation_active
+      ON provider_routing_conversations(agent_id,provider_family,provider_instance_key,
+        native_session_fingerprint,channel_type,channel_id)
+      WHERE status='active' AND native_session_fingerprint IS NOT NULL;
+    CREATE UNIQUE INDEX idx_provider_routing_conversation_wire
+      ON provider_routing_conversations(agent_id,channel_type,channel_id,wire_conversation_key);
+    CREATE UNIQUE INDEX idx_provider_routing_conversation_pending
+      ON provider_routing_conversations(agent_id,channel_type,channel_id) WHERE status='pending';
+    CREATE INDEX idx_provider_routing_conversation_channel
+      ON provider_routing_conversations(agent_id,channel_type,channel_id,status);
+  `);
+}
+
+function createFinalSchema8MessageRoutes(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE provider_message_routes (
+      route_id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      conversation_id TEXT,
+      reply_to_route_id TEXT,
+      agent_id TEXT NOT NULL,
+      peer_uid TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      channel_type INTEGER NOT NULL DEFAULT 1,
+      direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')),
+      status TEXT NOT NULL CHECK(status IN ('pending','active','failed','expired','invalid')),
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES provider_routing_conversations(id)
+    );
+    CREATE UNIQUE INDEX idx_provider_message_route_message
+      ON provider_message_routes(message_id,direction,agent_id);
+    CREATE INDEX idx_provider_message_route_conversation
+      ON provider_message_routes(conversation_id,created_at);
+    CREATE INDEX idx_provider_message_route_pull
+      ON provider_message_routes(agent_id,channel_type,channel_id,direction,status,message_id);
+  `);
+}
+
+function migrateSchema8WebRoutingRevision(db: DatabaseSync): void {
+  const marker = db.prepare("SELECT 1 FROM config WHERE type='schema8_web_routing_revision_v1' LIMIT 1").get();
+  if (marker) return;
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_routing_conversations'").get();
+  if (!table) return;
+  backupSchema8WebRoutingRevision(db);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`ALTER TABLE provider_message_routes RENAME TO provider_message_routes_webrev_old`);
+    db.exec(`ALTER TABLE provider_routing_conversations RENAME TO provider_routing_conversations_webrev_old`);
+    db.exec(`
+      DROP INDEX IF EXISTS idx_provider_routing_conversation_active;
+      DROP INDEX IF EXISTS idx_provider_routing_conversation_channel;
+      DROP INDEX IF EXISTS idx_provider_message_route_message;
+      DROP INDEX IF EXISTS idx_provider_message_route_conversation;
+      DROP INDEX IF EXISTS idx_provider_message_route_pull;
+    `);
+    createFinalSchema8RoutingTables(db);
+    db.exec(`INSERT INTO provider_routing_conversations
+      (id,agent_id,provider_family,provider_instance_key,native_session_id,native_session_fingerprint,
+       wire_conversation_key,parent_conversation_id,merge_status,channel_id,channel_type,origin,status,
+       created_at,updated_at,last_used_at)
+      SELECT id,agent_id,provider_family,provider_instance_key,native_session_id,native_session_fingerprint,
+       lower(hex(randomblob(16))),NULL,'none',channel_id,channel_type,origin,status,
+       created_at,updated_at,last_used_at FROM provider_routing_conversations_webrev_old`);
+    createFinalSchema8MessageRoutes(db);
+    db.exec(`INSERT INTO provider_message_routes SELECT * FROM provider_message_routes_webrev_old`);
+    db.exec(`DROP TABLE provider_message_routes_webrev_old`);
+    db.exec(`DROP TABLE provider_routing_conversations_webrev_old`);
+    const columns = db.prepare('PRAGMA table_info(owner_interventions)').all() as TableInfoRow[];
+    if (!columns.some((column) => column.name === 'routing_conversation_id')) {
+      db.exec('ALTER TABLE owner_interventions ADD COLUMN routing_conversation_id TEXT');
+    }
+    db.prepare('INSERT INTO config (type,data,updated_at) VALUES (?,?,?)')
+      .run('schema8_web_routing_revision_v1', JSON.stringify(true), Date.now());
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    throw error;
+  }
+}
+
+// Schema 8 keeps the legacy conversation bindings. Backfill only the
+// unambiguous identities once; ambiguous historical sessions remain
+// explicit-selection cases instead of being guessed.
+function runProviderIdentityBackfill(db: DatabaseSync): void {
+  try {
+    const { backfillLegacyAgentIdentityBindings } = require('./provider-agent-identity');
+    backfillLegacyAgentIdentityBindings(db);
+  } catch (e: any) {
+    console.error('[DB] provider identity backfill:', e.message);
   }
 }
 
@@ -310,6 +437,58 @@ function migrateGoosePushDeliveryModes(db: DatabaseSync): void {
       AND json_array_length(delivery_modes)=1
       AND json_extract(delivery_modes, '$[0]')='pull'
   `).run(Date.now());
+}
+
+function migrateSchema8ProviderRouting(db: DatabaseSync, previousVersion: number): void {
+  const crypto = require('node:crypto');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_agent_identity_bindings (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        provider_family TEXT NOT NULL,
+        provider_instance_key TEXT NOT NULL DEFAULT '',
+        native_session_fingerprint TEXT NOT NULL,
+        evidence_type TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','stale')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(agent_id,provider_family,provider_instance_key,native_session_fingerprint)
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_identity_lookup
+        ON provider_agent_identity_bindings(provider_family,provider_instance_key,native_session_fingerprint,status);
+
+    `);
+    const hasRouting = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_routing_conversations'").get();
+    if (!hasRouting) {
+      createFinalSchema8RoutingTables(db);
+      createFinalSchema8MessageRoutes(db);
+    }
+    const interventionColumns = db.prepare('PRAGMA table_info(owner_interventions)').all() as TableInfoRow[];
+    if (!interventionColumns.some((column) => column.name === 'routing_conversation_id')) {
+      db.exec('ALTER TABLE owner_interventions ADD COLUMN routing_conversation_id TEXT');
+    }
+    const keyRow = db.prepare("SELECT data FROM config WHERE type='provider_session_hmac_key_v1'").get();
+    if (!keyRow) {
+      db.prepare('INSERT INTO config (type,data,updated_at) VALUES (?,?,?)')
+        .run('provider_session_hmac_key_v1', JSON.stringify(crypto.randomBytes(32).toString('base64')), Date.now());
+    }
+    db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+      .run('schema_version', JSON.stringify(8), Date.now());
+    db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+      .run('schema8_web_routing_revision_v1', JSON.stringify(true), Date.now());
+    db.exec('PRAGMA user_version=8');
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    try {
+      db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+        .run('schema_version', JSON.stringify(previousVersion), Date.now());
+      db.exec(`PRAGMA user_version=${Math.max(0, Math.floor(previousVersion))}`);
+    } catch (_) {}
+    throw error;
+  }
 }
 
 // ============================================
@@ -352,6 +531,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   }
   if (schemaVersion === SCHEMA_VERSION) {
     runCurrentStartupMaintenance(db);
+    runProviderIdentityBackfill(db);
     return db;
   }
   const hasExistingSchema = !!db.prepare(
@@ -1268,6 +1448,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   }
 
   if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);
+  if (schemaVersion < 8) migrateSchema8ProviderRouting(db, schemaVersion);
+  runProviderIdentityBackfill(db);
   runCurrentStartupMaintenance(db);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
@@ -1480,10 +1662,27 @@ function createDatabaseAPI(db: DatabaseSync) {
 
     saveOwnerIntervention: (intervention: OwnerInterventionInput) => {
       try {
+        let routingConversationId = intervention.routingConversationId || null;
+        if (!routingConversationId) {
+          routingConversationId = db.prepare('SELECT routing_conversation_id FROM owner_interventions WHERE id=? LIMIT 1')
+            .get(intervention.id)?.routing_conversation_id || null;
+        }
+        if (!routingConversationId && intervention.sourceMessageId && intervention.agentId) {
+          const route = db.prepare(`SELECT conversation_id FROM provider_message_routes
+            WHERE message_id=? AND agent_id=? AND status='active' ORDER BY created_at DESC LIMIT 1`)
+            .get(intervention.sourceMessageId, intervention.agentId);
+          routingConversationId = route?.conversation_id || null;
+        }
+        if (!routingConversationId && intervention.agentId && intervention.targetChannelId) {
+          const candidates = db.prepare(`SELECT id FROM provider_routing_conversations
+            WHERE agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 2`)
+            .all(intervention.agentId, intervention.targetChannelId, intervention.targetChannelType || 1);
+          if (candidates.length === 1) routingConversationId = candidates[0].id;
+        }
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO owner_interventions
-          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         stmt.run(
           intervention.id,
@@ -1506,7 +1705,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           intervention.sourceSenderUid || intervention.visitorId,
           intervention.targetChannelId || intervention.visitorId,
           intervention.targetChannelType || 1,
-          intervention.sourceMessageId || null
+          intervention.sourceMessageId || null,
+          routingConversationId
         );
         return { success: true };
       } catch (e: any) {
@@ -1528,7 +1728,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           resolvedAt: row.resolved_at, createdAt: row.created_at, updatedAt: row.updated_at,
           agentId: row.agent_id,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         } : null;
       } catch (e: any) {
         console.error('getOwnerIntervention error:', e);
@@ -1549,7 +1750,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           resolvedAt: row.resolved_at, createdAt: row.created_at, updatedAt: row.updated_at,
           agentId: row.agent_id,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         } : null;
       } catch (e: any) {
         console.error('getOwnerInterventionByParentMsgId error:', e);
@@ -1573,7 +1775,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           parentMessageId: row.parent_message_id, channelType: row.channel_type,
           resolvedAt: row.resolved_at, createdAt: row.created_at, updatedAt: row.updated_at,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         } : null;
       } catch (e: any) {
         console.error('getLatestPendingIntervention error:', e);
@@ -1683,7 +1886,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           parentMessageId: row.parent_message_id, channelType: row.channel_type,
           resolvedAt: row.resolved_at, createdAt: row.created_at, updatedAt: row.updated_at,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         }));
       } catch (e: any) {
         console.error('getUnresolvedOwnerInterventions error:', e);
@@ -1703,7 +1907,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           channelType: row.channel_type, resolvedAt: row.resolved_at,
           createdAt: row.created_at, updatedAt: row.updated_at, skipReply: row.skip_reply || 0,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         }));
       } catch (e: any) {
         console.error('getAllOwnerInterventions error:', e);
@@ -1730,7 +1935,8 @@ function createDatabaseAPI(db: DatabaseSync) {
           retryCount: row.retry_count || 0, lastRetryAt: row.last_retry_at || 0,
           skipReply: row.skip_reply || 0,
           sourceSenderUid: row.source_sender_uid, targetChannelId: row.target_channel_id,
-          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id
+          targetChannelType: row.target_channel_type || 1, sourceMessageId: row.source_message_id,
+          routingConversationId: row.routing_conversation_id
         }));
       } catch (e: any) {
         console.error('getPendingOwnerInterventions error:', e);

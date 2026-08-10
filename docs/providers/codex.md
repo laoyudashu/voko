@@ -1,5 +1,7 @@
 # Codex Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 **VOKO 调用 Codex CLI** 时的安装、登录、注册、会话恢复和安全边界。Codex 作为 MCP 客户端调用 VOKO 时，属于另一条方向，见本文的 MCP 小节。
@@ -147,6 +149,12 @@ Configuring the second direction does not change the first direction's Provider 
    ```
 
    Codex CLI can discover the VOKO server as `mcp__voko__...`. A non-interactive `codex exec` may still ask for MCP approval; complete high-risk registration actions in an interactive Codex turn or through the same MCP state machine, and do not disable approvals globally.
+
+### Caller identity for `whoami`
+
+Codex exposes `CODEX_THREAD_ID` to Shell tool executions, but current Codex stdio MCP launches do not reliably inject it into the MCP child on Windows or macOS. On Linux, VOKO may use a bounded `/proc` parent-process check when it finds exactly one active Codex rollout file; restricted `/proc`, containers, and concurrent rollouts are treated as unavailable. VOKO does not run a model-guided or shell-command handshake. If `voko_whoami` returns `selection_required`, call `voko_list_agents`, ask the owner to choose, and retry with the selected `agentId`.
+
+### MCP registration flow (continued)
 
 3. Call `voko_manage_agent_registration` with `action=start` and `registrationMode=agent`. Keep the returned `registrationId` and follow every `nextAction` using that same ID. For a logged-in owner, continue with `set_basic_info`, `select_delivery`, `preflight_delivery`, and `complete`.
 

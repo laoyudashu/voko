@@ -40,7 +40,7 @@ async function startApp(handlers) {
 
 test('home shows the detected primary message mode and wires runtime partial refresh', async (t) => {
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-home', agentName: 'Home Agent', backendType: 'qwen', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-home', agentName: 'Home Agent', backendType: 'qwen', publishStatus: 'published' }] }),
     get_status: async () => ({
       success: true,
       agent: { imConnected: true, activeAutomaticMode: 'cli', automaticReadyModes: ['cli'], pullReady: true },
@@ -64,7 +64,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
 test('home truncates long agent names but keeps the full name in a hover hint', async (t) => {
   const fullName = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-long-name', agentName: fullName, backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-long-name', agentName: fullName, backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({
       success: true,
       agent: { imConnected: true, activeAutomaticMode: 'cli', automaticReadyModes: ['cli'], pullReady: true },
@@ -81,7 +81,7 @@ test('home truncates long agent names but keeps the full name in a hover hint', 
 
 test('home keeps message mode as loading when the status probe has not completed', async (t) => {
   const handlers = {
-    whoami: async () => ({ agents: [{ agentId: 'agent-loading', agentName: 'Loading Agent', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-loading', agentName: 'Loading Agent', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => { throw new Error('status unavailable'); },
   };
   const server = await startApp(handlers);

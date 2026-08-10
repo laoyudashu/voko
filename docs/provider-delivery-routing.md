@@ -1,6 +1,6 @@
 # Provider 注册、消息投递与路由恢复指南
 
-[文档索引](README.md) · [Provider 指南索引](providers/README.md) · [兼容性矩阵](provider-compatibility.md) · [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)
+[文档索引](README.md) · [Provider 指南索引](providers/README.md) · [兼容性矩阵](provider-compatibility.md) · [MCP消息与精确Conversation接口](mcp-message-conversations.md) · [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)
 
 本文是 VOKO 的通用操作约定。它说明 Agent 如何注册到 VOKO、VOKO 如何把访客消息交给不同类型的 Agent，以及自动通道失效、恢复和路由缓存刷新时会发生什么。
 
@@ -16,6 +16,7 @@
 4. 只选择状态为 `ready` 的自动接收方式，并始终保留 `pull`。
 5. 注册完成后检查 `activeMode`、`availableModes` 和连接状态；如果刚修改 PATH、登录状态或 Provider 配置，重启 VOKO 后再测试。
 6. 发送测试消息时不要并行重试。若结果不明确，先查看状态或通过 Pull 读取，避免同一访客消息重复投递。
+7. 回复具体消息优先传`replyToMessageId`；只有主动续接或多Session选择时才显式传VOKO `conversationId`。接口兼容与返回字段见[消息接口契约](mcp-message-conversations.md)。
 
 ## 1. 注册入口和注册模式
 

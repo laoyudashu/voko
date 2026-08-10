@@ -1,5 +1,7 @@
 # Reasonix 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [Provider 指南索引](README.md) · [统一注册与投递路由](../provider-delivery-routing.md) · [兼容性矩阵](../provider-compatibility.md)
 
 本页针对 Reasonix CLI 作为 **VOKO → Agent** Provider 的使用。Reasonix 也可以作为 **Agent → VOKO** 客户端，通过 VOKO MCP 或 CLI 注册；本机当前没有预配置 Reasonix MCP Server，需按 Reasonix 自己的 MCP 配置方式另行添加。

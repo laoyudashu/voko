@@ -7,6 +7,7 @@ const { SCHEMA_VERSION } = require('./database');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle');
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
+const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
@@ -126,6 +127,19 @@ function inspectDatabase(dbPath: string, checks: any[]): { db: any | null; agent
       addCheck(checks, 'tables', 'Core tables', 'error', 'agents/config table is missing', { tables });
     } else {
       addCheck(checks, 'tables', 'Core tables', 'ok', 'agents and config are present');
+    }
+
+    if (tables.includes('provider_routing_conversations') && tables.includes('provider_message_routes')) {
+      try {
+        const conversations = Number(db.prepare('SELECT COUNT(*) AS c FROM provider_routing_conversations').get()?.c || 0);
+        const activeRoutes = Number(db.prepare("SELECT COUNT(*) AS c FROM provider_message_routes WHERE status='active'").get()?.c || 0);
+        const preciseEnabled = /^(1|true|yes|on)$/i.test(String(process.env.VOKO_PRECISE_REPLY_ROUTING_V1 || ''));
+        addCheck(checks, 'provider-routing', 'Provider routing', 'ok',
+          `${conversations} conversation(s), ${activeRoutes} active route(s), precise Push ${preciseEnabled ? 'enabled' : 'gated'}`,
+          { conversations, activeRoutes, precisePushEnabled: preciseEnabled });
+      } catch (error: any) {
+        addCheck(checks, 'provider-routing', 'Provider routing', 'warn', `inspection unavailable: ${error.message}`);
+      }
     }
 
     try {
@@ -289,7 +303,14 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
       mode: 'cli',
       candidates: CLI_RUNTIME_CANDIDATES[backend],
     });
-    return { backend, available: !!resolved.available, runtimeKind: resolved.runtimeKind || null, path: resolved.canonicalPath || null, reason: resolved.reasonCode || null };
+    return {
+      backend,
+      available: !!resolved.available,
+      runtimeKind: resolved.runtimeKind || null,
+      resolvedEntry: resolved.canonicalPath ? path.basename(resolved.canonicalPath) : null,
+      spawnEnvironmentReady: !!resolved.available && (process.platform === 'win32' || resolved.pathEntries.length > 0),
+      reason: resolved.reasonCode || null,
+    };
   });
   const missing = results.filter((item) => !item.available);
   if (missing.length === 0) {
@@ -316,6 +337,26 @@ function inspectGooseDelivery(agents: any[], checks: any[]): void {
   const ready = rows.filter((row) => row.activePushMode).length;
   addCheck(checks, 'goose-delivery', 'Goose delivery', ready === rows.length ? 'ok' : 'warn',
     `${ready}/${rows.length} Goose Agent(s) have configured runtime and active Push`, { agents: rows });
+}
+
+function inspectRoutingFeatures(db: any, checks: any[]): void {
+  const defaults = { providerFamilies: [...PRECISE_ROUTING_GREY_PROVIDERS], channelTypes: [1], contentTypes: [1] };
+  const precise = getRoutingFeaturePolicy(db, 'precise_reply_routing_v1', defaults);
+  const pull = getRoutingFeaturePolicy(db, 'session_scoped_pull_v1', defaults);
+  const shadow = isRoutingFeatureEnabled(db, 'routing_conversation_shadow_v1', true);
+  const web = {
+    privateConversations: isRoutingFeatureEnabled(db, 'web_private_conversations_v1', true),
+    groupPreciseReply: isRoutingFeatureEnabled(db, 'web_group_precise_reply_v1', true),
+    interventionPreciseRoute: isRoutingFeatureEnabled(db, 'web_intervention_precise_route_v1', true),
+  };
+  addCheck(checks, 'provider-routing-rollout', 'Provider message routing rollout', 'ok',
+    `shadow=${shadow ? 'on' : 'off'}, precise=${precise.enabled ? 'grey' : 'off'}, sessionPull=${pull.enabled ? 'grey' : 'off'}, web=${Object.values(web).every(Boolean) ? 'on' : 'partial'}`, {
+      shadow,
+      precise: { enabled: precise.enabled, providerFamilies: precise.providerFamilies,
+        channelTypes: precise.channelTypes, contentTypes: precise.contentTypes },
+      sessionPull: { enabled: pull.enabled, providerFamilies: pull.providerFamilies },
+      web,
+    });
 }
 
 function inspectMcpConfigFiles(options: any, checks: any[]): any {
@@ -390,6 +431,7 @@ async function runDoctor(options: any = {}): Promise<any> {
   if (inspected.db) {
     inspectAuthentication(inspected.config, checks);
     inspectAgents(inspected.agents, inspected.runtime, inspected.config, checks);
+    inspectRoutingFeatures(inspected.db, checks);
     inspectGooseDelivery(inspected.agents, checks);
     const runtime = inspectRuntime(dbPath, inspected.runtime, checks, deps);
     if (runtime.running && typeof fetchImpl === 'function') await inspectLocalHealth(runtime.port, checks, fetchImpl);

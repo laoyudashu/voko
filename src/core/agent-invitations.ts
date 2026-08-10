@@ -33,6 +33,10 @@ interface SyncEvent {
 const CURSOR_CONFIG_TYPE = 'agent_access_sync_cursors';
 const CHECKPOINT_NAMESPACE = 'access_sync';
 const SERVER_INVITATION_REASON = 'server_invitation';
+const MAX_BATCH_AGENTS = 50;
+const MAX_BATCH_EVENT_IDS = 200;
+const MAX_UNSIGNED_BIGINT = 18446744073709551615n;
+const batchSupport = new Map<string, boolean>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -249,22 +253,11 @@ async function acknowledgeEvents(
   });
 }
 
-async function reconcileSnapshot(
+function applySnapshotRelations(
   db: DatabaseLike,
-  apiBaseUrl: string,
-  token: string,
   localAgentId: string,
-  serverAgentId = localAgentId,
-): Promise<number> {
-  const { payload } = await requestJson(
-    apiBaseUrl,
-    `/api/external/v1/agent-access-relations?agentId=${encodeURIComponent(serverAgentId)}`,
-    token,
-  );
-  const data = resultData(payload);
-  const rawItems = Array.isArray(payload.data)
-    ? payload.data
-    : (Array.isArray(data.items) ? data.items : (Array.isArray(data.relations) ? data.relations : []));
+  rawItems: JsonRecord[],
+): number {
   const relations = rawItems.map(normalizeRelation).filter(Boolean) as Array<{
     listType: string;
     visitorId: string;
@@ -315,11 +308,491 @@ async function reconcileSnapshot(
   return relations.length;
 }
 
+async function reconcileSnapshot(
+  db: DatabaseLike,
+  apiBaseUrl: string,
+  token: string,
+  localAgentId: string,
+  serverAgentId = localAgentId,
+): Promise<number> {
+  const { payload } = await requestJson(
+    apiBaseUrl,
+    `/api/external/v1/agent-access-relations?agentId=${encodeURIComponent(serverAgentId)}`,
+    token,
+  );
+  const data = resultData(payload);
+  const rawItems = Array.isArray(payload.data)
+    ? payload.data
+    : (Array.isArray(data.items) ? data.items : (Array.isArray(data.relations) ? data.relations : []));
+  return applySnapshotRelations(db, localAgentId, rawItems as JsonRecord[]);
+}
+
 function isCursorError(error: unknown): boolean {
   const candidate = error as { status?: number; code?: string };
+  const detail = String(candidate?.code || errorMessage(error));
   return candidate?.status === 409
     || candidate?.status === 410
-    || /cursor.*(?:invalid|expired|lost)|(?:invalid|expired).*cursor/i.test(String(candidate?.code || errorMessage(error)));
+    || (candidate?.status === 400 && /cursor/i.test(detail))
+    || /cursor.*(?:invalid|expired|lost)|(?:invalid|expired).*cursor/i.test(detail);
+}
+
+function isBatchUnsupported(error: unknown): boolean {
+  const status = (error as { status?: number })?.status;
+  return status === 404 || status === 405;
+}
+
+async function requestAccessSyncBatch(
+  apiBaseUrl: string,
+  token: string,
+  agents: Array<{ agentId: string; cursor: string }>,
+  limit: number,
+): Promise<JsonRecord> {
+  const { payload } = await requestJson(apiBaseUrl, '/api/external/v1/agent-access-sync/batch', token, {
+    method: 'POST',
+    body: JSON.stringify({ agents, limit }),
+  });
+  return resultData(payload);
+}
+
+async function acknowledgeEventsBatch(
+  apiBaseUrl: string,
+  token: string,
+  agents: Array<{ agentId: string; eventIds: string[] }>,
+): Promise<JsonRecord> {
+  const { payload } = await requestJson(apiBaseUrl, '/api/external/v1/agent-access-sync/batch/ack', token, {
+    method: 'POST',
+    body: JSON.stringify({ agents }),
+  });
+  return resultData(payload);
+}
+
+/**
+ * ACK entries are merged by remote Agent ID before being sent. The server
+ * intentionally rejects more than 200 unique IDs per Agent, so a duplicate
+ * remote ID is split across sequential requests instead of being put twice
+ * in one request.
+ */
+async function acknowledgeBatchEntries(
+  apiBaseUrl: string,
+  token: string,
+  entries: Array<{ context: { serverAgentId: string }; eventIds: string[] }>,
+): Promise<Map<string, boolean>> {
+  const groups = new Map<string, { agentId: string; eventIds: string[]; offset: number; success: boolean }>();
+  for (const entry of entries) {
+    const agentId = entry.context.serverAgentId;
+    const group = groups.get(agentId) || { agentId, eventIds: [], offset: 0, success: true };
+    const known = new Set(group.eventIds);
+    for (const eventId of entry.eventIds) {
+      if (!known.has(eventId)) {
+        known.add(eventId);
+        group.eventIds.push(eventId);
+      }
+    }
+    groups.set(agentId, group);
+  }
+  const pending = [...groups.values()];
+  while (pending.some((group) => group.success && group.offset < group.eventIds.length)) {
+    const round = pending
+      .filter((group) => group.success && group.offset < group.eventIds.length)
+      .slice(0, MAX_BATCH_AGENTS);
+    if (!round.length) break;
+    const data = await acknowledgeEventsBatch(apiBaseUrl, token, round.map((group) => ({
+      agentId: group.agentId,
+      eventIds: group.eventIds.slice(group.offset, group.offset + MAX_BATCH_EVENT_IDS),
+    })));
+    const resultMap = agentResultMap(data);
+    for (const group of round) {
+      const result = resultMap.get(group.agentId);
+      if (!result || result.success === false) {
+        group.success = false;
+        continue;
+      }
+      group.offset += Math.min(MAX_BATCH_EVENT_IDS, group.eventIds.length - group.offset);
+    }
+  }
+  return new Map([...groups.values()].map((group) => [group.agentId, group.success]));
+}
+
+async function requestAccessRelationsBatch(
+  apiBaseUrl: string,
+  token: string,
+  agentIds: string[],
+): Promise<JsonRecord> {
+  const { payload } = await requestJson(apiBaseUrl, '/api/external/v1/agent-access-relations/batch', token, {
+    method: 'POST',
+    body: JSON.stringify({ agentIds }),
+  });
+  return resultData(payload);
+}
+
+function getCheckpointState(db: DatabaseLike, agentId: string): JsonRecord | null {
+  const cursorMap = loadCursorMap(db);
+  let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+  if (!checkpoint && Object.prototype.hasOwnProperty.call(cursorMap, agentId)) {
+    setCheckpoint(db, CHECKPOINT_NAMESPACE, agentId, 'opaque', cursorMap[agentId]);
+    checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, agentId);
+  }
+  return checkpoint as JsonRecord | null;
+}
+
+function pendingEventIds(checkpoint: JsonRecord | null): string[] {
+  if (!checkpoint || checkpoint.pendingValue === null || checkpoint.pendingValue === undefined) return [];
+  let pendingMeta: { eventIds?: string[] } = {};
+  try { pendingMeta = checkpoint.pendingMeta ? JSON.parse(checkpoint.pendingMeta) : {}; } catch (_) {}
+  return Array.isArray(pendingMeta.eventIds) ? pendingMeta.eventIds.map(String).filter(Boolean) : [];
+}
+
+function agentResultMap(data: JsonRecord): Map<string, JsonRecord> {
+  const items = Array.isArray(data.agents) ? data.agents : [];
+  return new Map(items
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => [String(item.agentId || ''), item]));
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+function normalizeBatchLimit(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 200) return 100;
+  return parsed;
+}
+
+function normalizeBatchCursor(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return '0';
+  const text = String(value).trim();
+  if (!/^(0|[1-9]\d*)$/.test(text)) return null;
+  try {
+    const cursor = BigInt(text);
+    return cursor <= MAX_UNSIGNED_BIGINT ? cursor.toString() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function maxBatchCursor(left: string, right: string): string {
+  const leftValue = normalizeBatchCursor(left);
+  const rightValue = normalizeBatchCursor(right);
+  if (leftValue === null || rightValue === null) throw new Error('Invalid cursor');
+  return BigInt(leftValue) >= BigInt(rightValue) ? leftValue : rightValue;
+}
+
+function isBatchSafeId(value: string): boolean {
+  return value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+type BatchAgentResult = {
+  agentId: string;
+  success: boolean;
+  applied?: number;
+  skipped?: boolean;
+  error?: string;
+};
+
+type BatchSyncResult = {
+  success: boolean;
+  applied: number;
+  agents: BatchAgentResult[];
+  fallback?: boolean;
+  error?: string;
+};
+
+function setBatchAgentError(
+  context: { agentId: string; serverAgentId: string },
+  result: BatchAgentResult | undefined,
+  error: unknown,
+): void {
+  if (!result) return;
+  const message = String(error || 'Agent not found');
+  if (context.agentId === context.serverAgentId && /^agent not found$/i.test(message.trim())) {
+    result.success = true;
+    result.skipped = true;
+    result.error = undefined;
+    return;
+  }
+  result.success = false;
+  result.error = message;
+}
+
+async function syncAgentAccessBatch({
+  db,
+  apiBaseUrl,
+  agentIds,
+  limit = 100,
+}: {
+  db: DatabaseLike;
+  apiBaseUrl: string;
+  agentIds: string[];
+  limit?: number;
+}): Promise<BatchSyncResult> {
+  const ids = [...new Set(agentIds.map(String).filter(Boolean))];
+  if (!ids.length) return { success: true, applied: 0, agents: [] };
+  const safeLimit = normalizeBatchLimit(limit);
+  const token = getAgentToken(db, ids[0]).token;
+  const contexts = ids.map((agentId) => {
+    const credentials = getAgentToken(db, agentId);
+    return {
+      agentId,
+      serverAgentId: credentials.serverAgentId,
+      checkpoint: getCheckpointState(db, agentId),
+      applied: 0,
+    };
+  });
+  const results = new Map<string, BatchAgentResult>(contexts.map((context) => [
+    context.agentId,
+    { agentId: context.agentId, success: true, applied: 0 },
+  ]));
+  const baseKey = normalizeBaseUrl(apiBaseUrl);
+  if (contexts.some((context) => !isBatchSafeId(context.serverAgentId))) {
+    const fallbackResults: BatchAgentResult[] = [];
+    for (const agentId of ids) {
+      const result = await syncAgentAccess({ db, apiBaseUrl, agentId, limit: safeLimit });
+      fallbackResults.push({ agentId, ...result });
+    }
+    return {
+      success: fallbackResults.every((result) => result.success),
+      applied: fallbackResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+      agents: fallbackResults,
+      fallback: true,
+    };
+  }
+  if (batchSupport.get(baseKey) === false) {
+    const fallbackResults: BatchAgentResult[] = [];
+    for (const agentId of ids) {
+      const result = await syncAgentAccess({ db, apiBaseUrl, agentId, limit: safeLimit });
+      fallbackResults.push({ agentId, ...result });
+    }
+    return {
+      success: fallbackResults.every((result) => result.success),
+      applied: fallbackResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+      agents: fallbackResults,
+      fallback: true,
+    };
+  }
+
+  try {
+    const pending = contexts
+      .map((context) => ({ context, eventIds: pendingEventIds(context.checkpoint) }))
+      .filter((item) => item.eventIds.length);
+    const commitPending = (context: typeof contexts[number]) => {
+      const checkpoint = context.checkpoint;
+      commitCheckpoint(db, CHECKPOINT_NAMESPACE, context.agentId);
+      saveLegacyCursor(db, context.agentId, checkpoint?.pendingValue);
+      context.checkpoint = getCheckpointState(db, context.agentId);
+    };
+    if (pending.length) {
+      const legacyPending = pending.filter(({ eventIds }) => eventIds.some((eventId) => !isBatchSafeId(eventId)));
+      for (const { context, eventIds } of legacyPending) {
+        await acknowledgeEvents(apiBaseUrl, token, context.serverAgentId, eventIds);
+        commitPending(context);
+      }
+      const batchPending = pending.filter(({ eventIds }) => eventIds.every(isBatchSafeId));
+      if (batchPending.length) {
+        const ackResults = await acknowledgeBatchEntries(
+          apiBaseUrl,
+          token,
+          batchPending.map(({ context, eventIds }) => ({ context, eventIds })),
+        );
+        for (const { context } of batchPending) {
+          if (!ackResults.get(context.serverAgentId)) {
+            const result = results.get(context.agentId);
+            if (result) {
+              result.success = false;
+              result.error = 'AccessSync pending ack failed';
+            }
+          } else {
+            commitPending(context);
+          }
+        }
+      }
+    }
+
+    const ready = contexts.filter((context) => results.get(context.agentId)?.success !== false);
+    const snapshotDone = new Set<string>();
+    const invalidCursor = ready.filter((context) => {
+      const committed = context.checkpoint?.committedValue;
+      return committed !== null && committed !== undefined && normalizeBatchCursor(committed) === null;
+    });
+    for (const context of invalidCursor) {
+      try {
+        await reconcileSnapshot(db, apiBaseUrl, token, context.agentId, context.serverAgentId);
+        context.checkpoint = getCheckpointState(db, context.agentId);
+        snapshotDone.add(context.agentId);
+      } catch (error: unknown) {
+        setBatchAgentError(context, results.get(context.agentId), errorMessage(error));
+      }
+    }
+    const withoutCursor = ready.filter((context) => (
+      !snapshotDone.has(context.agentId)
+      && (context.checkpoint?.committedValue === null || context.checkpoint?.committedValue === undefined)
+    ));
+    if (withoutCursor.length) {
+      for (const chunk of chunkArray(withoutCursor, MAX_BATCH_AGENTS)) {
+        let snapshotData: JsonRecord;
+        try {
+          snapshotData = await requestAccessRelationsBatch(
+            apiBaseUrl,
+            token,
+            chunk.map((context) => context.serverAgentId),
+          );
+        } catch (error: unknown) {
+          if (isBatchUnsupported(error)) {
+            batchSupport.set(baseKey, false);
+            const fallbackResults: BatchAgentResult[] = [];
+            for (const agentId of ids) {
+              const result = await syncAgentAccess({ db, apiBaseUrl, agentId, limit: safeLimit });
+              fallbackResults.push({ agentId, ...result });
+            }
+            return {
+              success: fallbackResults.every((result) => result.success),
+              applied: fallbackResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+              agents: fallbackResults,
+              fallback: true,
+            };
+          }
+          throw error;
+        }
+        const snapshots = agentResultMap(snapshotData);
+        for (const context of chunk) {
+          const snapshot = snapshots.get(context.serverAgentId);
+          const result = results.get(context.agentId);
+          if (!snapshot || snapshot.success === false) {
+            setBatchAgentError(context, result, snapshot?.message || snapshot?.error || 'Agent not found');
+            continue;
+          }
+          const count = applySnapshotRelations(
+            db,
+            context.agentId,
+            (Array.isArray(snapshot.relations) ? snapshot.relations : []) as JsonRecord[],
+          );
+          context.checkpoint = getCheckpointState(db, context.agentId);
+          if (result) result.applied = Number(result.applied || 0) + count;
+        }
+      }
+    }
+
+    let active = ready.filter((context) => results.get(context.agentId)?.success !== false);
+    while (active.length) {
+      const nextActive = [] as typeof contexts;
+      for (const chunk of chunkArray(active, MAX_BATCH_AGENTS)) {
+        const data = await requestAccessSyncBatch(
+          apiBaseUrl,
+          token,
+          chunk.map((context) => ({
+            agentId: context.serverAgentId,
+            cursor: normalizeBatchCursor(context.checkpoint?.committedValue) || '0',
+          })),
+          safeLimit,
+        );
+        const responseMap = agentResultMap(data);
+        const staged = [] as Array<{ context: typeof contexts[number]; eventIds: string[]; nextCursor: string }>;
+        const chunkNextActive = [] as typeof contexts;
+        for (const context of chunk) {
+          const page = responseMap.get(context.serverAgentId);
+          const result = results.get(context.agentId);
+          if (!page || page.success === false) {
+            setBatchAgentError(context, result, page?.message || page?.error || 'Agent not found');
+            continue;
+          }
+          const items = Array.isArray(page.items) ? page.items as SyncEvent[] : [];
+          const cursor = normalizeBatchCursor(context.checkpoint?.committedValue) || '0';
+          const serverNextCursor = normalizeBatchCursor(page.nextCursor ?? page.next_cursor ?? cursor);
+          if (serverNextCursor === null) throw new Error('Invalid cursor');
+          const nextCursor = maxBatchCursor(cursor, serverNextCursor);
+          const eventIds = items.map((item) => String(item.eventId || item.event_id || '')).filter(Boolean);
+          if (eventIds.length !== items.length) throw new Error('璁块棶鍚屾浜嬩欢缂哄皯 eventId');
+          if (items.length) {
+            applyEvents(db, context.agentId, items, nextCursor, eventIds);
+            staged.push({ context, eventIds, nextCursor });
+            if (result) result.applied = Number(result.applied || 0) + items.length;
+          } else {
+            saveCursor(db, context.agentId, nextCursor);
+            context.checkpoint = getCheckpointState(db, context.agentId);
+          }
+          if (page.hasMore || page.has_more) {
+            if (!items.length) throw new Error('访问同步返回 hasMore 但没有事件');
+            chunkNextActive.push(context);
+          }
+        }
+        if (staged.length) {
+          const batchAck = staged.filter(({ eventIds }) => eventIds.every(isBatchSafeId));
+          const legacyAck = staged.filter(({ eventIds }) => eventIds.some((eventId) => !isBatchSafeId(eventId)));
+          for (const { context, eventIds, nextCursor } of legacyAck) {
+            await acknowledgeEvents(apiBaseUrl, token, context.serverAgentId, eventIds);
+            commitCheckpoint(db, CHECKPOINT_NAMESPACE, context.agentId);
+            saveLegacyCursor(db, context.agentId, nextCursor);
+            context.checkpoint = getCheckpointState(db, context.agentId);
+          }
+          if (batchAck.length) {
+            const ackResults = await acknowledgeBatchEntries(
+              apiBaseUrl,
+              token,
+              batchAck.map(({ context, eventIds }) => ({ context, eventIds })),
+            );
+            for (const { context, nextCursor } of batchAck) {
+              const result = results.get(context.agentId);
+              if (!ackResults.get(context.serverAgentId)) {
+                if (result) {
+                  result.success = false;
+                  result.error = 'AccessSync ack failed';
+                }
+                continue;
+              }
+              commitCheckpoint(db, CHECKPOINT_NAMESPACE, context.agentId);
+              saveLegacyCursor(db, context.agentId, nextCursor);
+              context.checkpoint = getCheckpointState(db, context.agentId);
+            }
+          }
+        }
+        nextActive.push(...chunkNextActive);
+      }
+      active = nextActive.filter((context) => results.get(context.agentId)?.success !== false);
+    }
+  } catch (error: unknown) {
+    if (isBatchUnsupported(error)) {
+      batchSupport.set(baseKey, false);
+      const fallbackResults: BatchAgentResult[] = [];
+      for (const agentId of ids) {
+        const result = await syncAgentAccess({ db, apiBaseUrl, agentId, limit: safeLimit });
+        fallbackResults.push({ agentId, ...result });
+      }
+      return {
+        success: fallbackResults.every((result) => result.success),
+        applied: fallbackResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+        agents: fallbackResults,
+        fallback: true,
+      };
+    }
+    if (isCursorError(error)) {
+      for (const context of contexts) {
+        const result = results.get(context.agentId);
+        if (!result || !result.success) continue;
+        try {
+          const count = await reconcileSnapshot(db, apiBaseUrl, token, context.agentId, context.serverAgentId);
+          result.applied = Number(result.applied || 0) + count;
+          context.checkpoint = getCheckpointState(db, context.agentId);
+        } catch (snapshotError: unknown) {
+          setBatchAgentError(context, result, errorMessage(snapshotError));
+        }
+      }
+      const recoveredResults = [...results.values()];
+      return {
+        success: recoveredResults.every((result) => result.success),
+        applied: recoveredResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+        agents: recoveredResults,
+      };
+    }
+    return { success: false, applied: 0, agents: ids.map((agentId) => ({ agentId, success: false, error: errorMessage(error) })), error: errorMessage(error) };
+  }
+  const agentResults = [...results.values()];
+  return {
+    success: agentResults.every((result) => result.success),
+    applied: agentResults.reduce((sum, result) => sum + Number(result.applied || 0), 0),
+    agents: agentResults,
+  };
 }
 
 async function syncAgentAccess({
@@ -407,13 +880,26 @@ function startAgentAccessSync({
   db,
   apiBaseUrl,
   intervalMs = 60000,
+  initialDelayMs = 15000,
+  wakeDelayMs = 15000,
+  // A delayed interval callback is the portable sleep/resume signal. Keep a
+  // little jitter tolerance so ordinary scheduler delays do not add a wake
+  // pause, while a laptop resume does not immediately hit the API.
+  sleepGapMs = Math.max(intervalMs + 30000, 90000),
+  now = () => Date.now(),
 }: {
   db: DatabaseLike;
   apiBaseUrl: string;
   intervalMs?: number;
+  initialDelayMs?: number;
+  wakeDelayMs?: number;
+  sleepGapMs?: number;
+  now?: () => number;
 }): () => void {
   let stopped = false;
   let running = false;
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastTickAt = now();
   const lastErrors = new Map<string, string>();
   const unsupportedAgents = new Set<string>();
   const run = async () => {
@@ -422,30 +908,94 @@ function startAgentAccessSync({
     try {
       const agents = db.prepare(`SELECT agent_id,owner_email FROM agents
         WHERE owner_email IS NOT NULL AND TRIM(owner_email)!=''`).all<AgentRow>();
+      const grouped = new Map<string, string[]>();
       for (const agent of agents) {
         if (unsupportedAgents.has(agent.agent_id)) continue;
         if (!getUserAccessToken(db, agent.owner_email)) continue;
-        const result = await syncAgentAccess({ db, apiBaseUrl, agentId: agent.agent_id });
-        if (result.success) {
-          lastErrors.delete(agent.agent_id);
-          if (result.skipped) unsupportedAgents.add(agent.agent_id);
-        } else {
-          const error = result.error || '同步失败';
-          if (lastErrors.get(agent.agent_id) === error) continue;
-          lastErrors.set(agent.agent_id, error);
-          console.warn(`[AccessSync] agent=${agent.agent_id} ${error}`);
+        let credentials: { email: string; token: string; serverAgentId: string };
+        try {
+          credentials = getAgentToken(db, agent.agent_id);
+        } catch (error: unknown) {
+          const message = errorMessage(error);
+          if (lastErrors.get(agent.agent_id) !== message) {
+            lastErrors.set(agent.agent_id, message);
+            console.warn(`[AccessSync] agent=${agent.agent_id} ${message}`);
+          }
+          continue;
+        }
+        const key = `${credentials.email}\u0000${credentials.token}`;
+        const group = grouped.get(key) || [];
+        group.push(agent.agent_id);
+        grouped.set(key, group);
+      }
+      for (const agentIds of grouped.values()) {
+        const result = await syncAgentAccessBatch({ db, apiBaseUrl, agentIds });
+        if (result.fallback) {
+          const fallbackKey = agentIds.join(',');
+          if (lastErrors.get(fallbackKey) !== 'legacy') {
+            console.info(`[AccessSync] 批量接口不可用，已回退旧版逐 Agent 同步（${agentIds.length} 个）`);
+            lastErrors.set(fallbackKey, 'legacy');
+          }
+        }
+        const batchError = result.error && result.agents.length === agentIds.length
+          && result.agents.every((agentResult) => agentResult.error === result.error)
+          ? result.error
+          : null;
+        if (batchError) {
+          const batchKey = `batch:${agentIds.join(',')}`;
+          if (lastErrors.get(batchKey) !== batchError) {
+            lastErrors.set(batchKey, batchError);
+            console.warn(`[AccessSync] agents=${agentIds.length} 批量同步失败: ${batchError}`);
+          }
+          continue;
+        }
+        for (const agentResult of result.agents) {
+          if (agentResult.success) {
+            lastErrors.delete(agentResult.agentId);
+            if (agentResult.skipped) unsupportedAgents.add(agentResult.agentId);
+          } else {
+            const error = agentResult.error || result.error || '同步失败';
+            if (lastErrors.get(agentResult.agentId) === error) continue;
+            lastErrors.set(agentResult.agentId, error);
+            console.warn(`[AccessSync] agent=${agentResult.agentId} ${error}`);
+          }
         }
       }
     } finally {
       running = false;
     }
   };
-  void run();
-  const timer = setInterval(() => { void run(); }, intervalMs);
+  const scheduleRun = (delayMs: number) => {
+    if (stopped || running) return;
+    if (wakeTimer) return;
+    if (delayMs <= 0) {
+      void run();
+      return;
+    }
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null;
+      void run();
+    }, delayMs);
+    wakeTimer.unref?.();
+  };
+  scheduleRun(initialDelayMs);
+  const timer = setInterval(() => {
+    const currentTime = now();
+    const elapsed = currentTime - lastTickAt;
+    lastTickAt = currentTime;
+    if (elapsed >= sleepGapMs) {
+      console.info(`[AccessSync] 检测到休眠/恢复，${wakeDelayMs}ms 后执行合并同步`);
+      scheduleRun(wakeDelayMs);
+      return;
+    }
+    scheduleRun(0);
+  }, intervalMs);
   timer.unref?.();
   return () => {
     stopped = true;
     clearInterval(timer);
+    if (wakeTimer) clearTimeout(wakeTimer);
+    wakeTimer = null;
   };
 }
 
@@ -455,6 +1005,7 @@ module.exports = {
   SERVER_INVITATION_REASON,
   createAgentInvitation,
   syncAgentAccess,
+  syncAgentAccessBatch,
   reconcileSnapshot,
   startAgentAccessSync,
 };

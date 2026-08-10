@@ -13,6 +13,10 @@ describe('Lite MCP and channel contracts', () => {
       assert.equal(typeof tool.description, 'string');
       assert.equal(tool.inputSchema?.type, 'object');
     }
+    const whoami = tools.find((tool) => tool.name === 'voko_whoami');
+    assert.ok(whoami);
+    assert.match(whoami.description, /select an Agent explicitly/);
+    assert.equal(tools.some((tool) => tool.name === 'voko_prepare_identity_handshake' || tool.name === 'voko_complete_identity_handshake'), false);
   });
 
   it('channel registry exposes every configured channel definition', () => {

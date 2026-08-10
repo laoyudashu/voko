@@ -11,7 +11,10 @@ const { persistAgentMessage } = require('./send-message');
 const { logEvent } = require('./event-log');
 const { isSystemMessageContent } = require('./i18n');
 const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
+const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
+const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
 import type { DatabaseLike } from '../types/database';
+import type { RoutingConversation } from './provider-routing';
 import type {
   AgentReplyMessage,
   AuditAction,
@@ -51,7 +54,7 @@ interface AgentTrustRow {
   imUid: string | null;
   owner_email: string | null;
 }
-interface BackendRow { backend_type: string | null }
+interface BackendRow { backend_type: string | null; backend_instance_id?: string | null }
 interface ConversationUserRow { user_uid: string }
 interface ConversationSessionRow {
   session_status: string | null;
@@ -169,6 +172,12 @@ class MessageHandler extends EventEmitter {
     this._enqueueIntervention = options.enqueueIntervention || (() => {});
     this._createPendingPayment = options.createPendingPayment || (() => {});
     this._onOwnerInterventionNew = options.onOwnerInterventionNew || (() => {});
+    this._messageRoutes = new MessageRouteStore(db);
+    this._routingConversations = new RoutingConversationStore(db);
+    const membershipCache = options.getGroupInfo
+      ? new GroupMembershipSnapshotCache(options.getGroupInfo)
+      : null;
+    this._groupRouteResolver = new GroupReplyRouteResolver(db, this._messageRoutes, membershipCache);
 
     // 预填充大小写映射（OpenClaw WS）
     this._caseMap = new Map<string, string>();
@@ -297,7 +306,7 @@ class MessageHandler extends EventEmitter {
 
     const systemMsg = ['NO_REPLY', 'HEARTBEAT_OK', 'ANNOUNCE_SKIP'];
     if (typeof content === 'string' && systemMsg.includes(content.trim())) {
-      console.log(`[消息跳过] agentId=${agentId} 系统消息: ${content.trim()}`);
+      console.log(`[消息跳过] agentId=${agentId} 系统消息 contentLength=${content.trim().length}`);
       return;
     }
 
@@ -495,9 +504,9 @@ class MessageHandler extends EventEmitter {
     // skipForward 模式：不直接转发，返回转发载荷供调用方（离线同步）收集后合并转发。
     // 被审核/黑名单/计费等拦截的消息已在上方各 return 点退出（返回 undefined）。
     if (skipForward) {
-      return { agentId, fromUid, content, channelId, channelType: channelType || 1, contentType: data.contentType || 1, messageId, timestamp };
+      return { agentId, fromUid, content, channelId, channelType: channelType || 1, contentType: data.contentType || 1, messageId, timestamp, _voko: data._voko };
     }
-    this.forwardToAgent(agentId, fromUid, content, channelId, channelType, data.contentType, messageId, timestamp);
+    this.forwardToAgent(agentId, fromUid, content, channelId, channelType, data.contentType, messageId, timestamp, null, data._voko);
   }
 
   // ==========================================
@@ -616,9 +625,9 @@ class MessageHandler extends EventEmitter {
     }
 
     if (skipForward) {
-      return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention };
+      return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention, _voko: data._voko };
     }
-    this.forwardToAgent(agentId, fromUid, content, channelId, 2, data.contentType, messageId, timestamp, mention);
+    this.forwardToAgent(agentId, fromUid, content, channelId, 2, data.contentType, messageId, timestamp, mention, data._voko);
   }
 
   // ==========================================
@@ -761,6 +770,7 @@ class MessageHandler extends EventEmitter {
     messageId: string,
     timestamp: number,
     mention: Mention | null = null,
+    routeMetadata: InboundMessage['_voko'] = null,
   ): void {
     if (!this.dispatcher) {
       console.error(`[转发] dispatcher 未初始化，agent=${agentId} 消息留库等 pull`);
@@ -771,11 +781,126 @@ class MessageHandler extends EventEmitter {
     const agentContent = isGroup
       ? this._buildGroupMentionPrompt(channelId, fromUid, content, messageId, timestamp)
       : content;
+    let replyRouteContext: {
+      conversationId: string;
+      providerFamily: string;
+      providerInstanceKey: string;
+      nativeSessionId: string;
+      strictSessionRoute: true;
+    } | null = null;
+    const replyToRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.replyToRouteId === 'string'
+      ? routeMetadata.replyToRouteId : null;
+    const remoteRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.routeId === 'string'
+      ? routeMetadata.routeId : null;
+    let hasGroupRoutingConversation = false;
+    if (isGroup && !replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try {
+        hasGroupRoutingConversation = !!this.db.prepare(`SELECT 1 AS found FROM provider_routing_conversations
+          WHERE agent_id=? AND channel_type=2 AND channel_id=? AND status='active' LIMIT 1`)
+          .get<{ found: number }>(agentId, channelId);
+      } catch (_) {}
+    }
+    if (isGroup && (replyToRouteId || hasGroupRoutingConversation)
+      && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      void this._forwardGroupReplyRoute({ agentId, fromUid, agentContent, content, channelId,
+        contentType: contentType || 1, messageId, timestamp, mention, replyToRouteId, remoteRouteId });
+      return;
+    }
+    if (remoteRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try { this._messageRoutes.recordInbound({ messageId, remoteRouteId, agentId, peerUid: fromUid,
+        channelId, channelType: channelType || 1 }); } catch (_) {}
+    }
+    if (replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try {
+        const resolved = this._messageRoutes.resolvePrivateReply({ replyToRouteId, agentId, peerUid: fromUid,
+          channelId, channelType: channelType || 1 });
+        if (resolved) {
+          if (remoteRouteId) this._messageRoutes.recordInbound({ messageId, remoteRouteId,
+            conversationId: resolved.conversation.id, agentId, peerUid: fromUid, channelId,
+            channelType: channelType || 1 });
+          let targetConversation = resolved.conversation;
+          if (routeMetadata?.conversationDisposition === 'reused' && resolved.conversation.parentConversationId) {
+            targetConversation = this._routingConversations.mergePendingInto(
+              resolved.conversation.id, resolved.conversation.parentConversationId) || resolved.conversation;
+          } else if (resolved.conversation.status === 'pending') {
+            try { this.db.prepare(`UPDATE provider_routing_conversations SET status='active',updated_at=?,last_used_at=?
+              WHERE id=? AND status='pending'`).run(Date.now(), Date.now(), resolved.conversation.id); } catch (_) {}
+          }
+          if (targetConversation.providerFamily && targetConversation.nativeSessionId) {
+            replyRouteContext = { conversationId: targetConversation.id,
+              providerFamily: targetConversation.providerFamily,
+              providerInstanceKey: targetConversation.providerInstanceKey || '',
+              nativeSessionId: targetConversation.nativeSessionId, strictSessionRoute: true };
+          }
+        }
+      } catch (_) { /* invalid route remains on legacy/Pull path */ }
+    }
     this.dispatcher.dispatch(agentId, {
       agentId, fromUid, senderUid: fromUid, content: agentContent, rawContent: content, channelId,
       sessionTarget: isGroup ? 'group:' + channelId : fromUid,
       channelType: channelType || 1, contentType: contentType || 1,
-      messageId, timestamp, mention: isGroup ? mention : null
+      messageId, timestamp, mention: isGroup ? mention : null, replyRouteContext,
+      remoteRouteId,
+      remoteConversationKey: routeMetadata?.conversationKey,
+      conversationStart: routeMetadata?.conversationStart === true,
+    });
+  }
+
+  async _forwardGroupReplyRoute(input: {
+    agentId: string; fromUid: string; agentContent: string; content: string; channelId: string;
+    contentType: number; messageId: string; timestamp: number; mention: Mention | null;
+    replyToRouteId: string | null; remoteRouteId: string | null;
+  }): Promise<void> {
+    const resolved = await this._groupRouteResolver.resolve({
+      replyToRouteId: input.replyToRouteId,
+      agentId: input.agentId,
+      channelId: input.channelId,
+      fromUid: input.fromUid,
+      mentionAll: input.mention?.all === true,
+    });
+    if (resolved.state === 'invalid') {
+      try { this._messageRoutes.recordInvalidInbound({ messageId: input.messageId,
+        remoteRouteId: input.replyToRouteId, agentId: input.agentId, peerUid: input.fromUid,
+        channelId: input.channelId, channelType: 2 }); } catch (_) {}
+      console.warn(`[GroupRoute] fail-closed agent=${input.agentId} group=${input.channelId} reason=${resolved.reason}`);
+      return;
+    }
+    if (resolved.state === 'ambiguous') {
+      if (input.remoteRouteId) {
+        try { this._messageRoutes.recordInbound({ messageId: input.messageId, remoteRouteId: input.remoteRouteId,
+          agentId: input.agentId, peerUid: input.fromUid, channelId: input.channelId, channelType: 2 }); } catch (_) {}
+      }
+      console.log(`[GroupRoute] waiting for MCP session claim agent=${input.agentId} group=${input.channelId} candidates=${resolved.candidateCount}`);
+      return;
+    }
+    if (resolved.state === 'absent') {
+      this.dispatcher?.dispatch(input.agentId, {
+        agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
+        content: input.agentContent, rawContent: input.content, channelId: input.channelId,
+        sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
+        messageId: input.messageId, timestamp: input.timestamp, mention: input.mention,
+        routeState: 'absent',
+      });
+      return;
+    }
+    if (input.remoteRouteId) {
+      try { this._messageRoutes.recordInbound({ messageId: input.messageId, remoteRouteId: input.remoteRouteId,
+        conversationId: resolved.conversation.id, agentId: input.agentId, peerUid: input.fromUid,
+        channelId: input.channelId, channelType: 2 }); } catch (_) {}
+    }
+    this.dispatcher?.dispatch(input.agentId, {
+      agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
+      content: input.agentContent, rawContent: input.content, channelId: input.channelId,
+      sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
+      messageId: input.messageId, timestamp: input.timestamp, mention: input.mention,
+      remoteRouteId: input.remoteRouteId, routeState: 'valid',
+      replyRouteContext: {
+        conversationId: resolved.conversation.id,
+        providerFamily: resolved.conversation.providerFamily,
+        providerInstanceKey: resolved.conversation.providerInstanceKey,
+        nativeSessionId: resolved.conversation.nativeSessionId,
+        strictSessionRoute: true,
+      },
     });
   }
   // ==========================================
@@ -871,7 +996,7 @@ class MessageHandler extends EventEmitter {
 
     // 过滤系统消息（全大写 + 下划线）
     if (/^[A-Z_]{3,}$/.test(content.trim())) {
-      console.log(`[Agent回复] 跳过系统消息: ${content.trim()}`);
+      console.log(`[Agent回复] 跳过系统消息 contentLength=${content.trim().length}`);
       return;
     }
 
@@ -975,11 +1100,46 @@ class MessageHandler extends EventEmitter {
       content: trimmedContent, contentType: 1, messageId: msgId, timestamp, isMe: true, mention: replyMentions
     });
 
-    const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId);
+    let outboundRouteId: string | null = null;
+    let routingConversation: RoutingConversation | null = null;
+    let conversationDisposition: 'created' | 'reused' | null = null;
+    const replyToRouteId = typeof data.remoteRouteId === 'string' ? data.remoteRouteId : null;
+    try {
+      if (!isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) throw new Error('routing shadow disabled');
+      let conversation = data.replyRouteContext?.conversationId
+        ? this._routingConversations.getForScope(data.replyRouteContext.conversationId, agentId, replyChannelId, replyChannelType)
+        : null;
+      if (!conversation && data.sessionKey) {
+        const backend = this.db.prepare('SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
+          .get<BackendRow>(agentId);
+        const family = normalizeProviderFamily(backend?.backend_type || '');
+        const existed = family ? this._routingConversations.listForScope(agentId, replyChannelId, replyChannelType)
+          .some((item: RoutingConversation) => item.providerFamily === family && item.nativeSessionId === data.sessionKey) : false;
+        if (family) conversation = this._routingConversations.resolveOrCreate({ agentId, providerFamily: family,
+          providerInstanceKey: backend?.backend_instance_id || '', nativeSessionId: data.sessionKey,
+          channelId: replyChannelId, channelType: replyChannelType, origin: 'voko_managed' });
+        if (data.conversationStart === true) conversationDisposition = existed ? 'reused' : 'created';
+      }
+      routingConversation = conversation;
+      if (conversation) outboundRouteId = this._messageRoutes.createPending({ messageId: msgId,
+        conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
+        channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });
+    } catch (_) {}
+    const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
+      ...(replyToRouteId ? { replyToRouteId } : {}),
+      ...(routingConversation?.wireConversationKey ? { canonicalConversationKey: routingConversation.wireConversationKey } : {}),
+      ...(conversationDisposition ? { conversationDisposition } : {}) } } : null;
+    const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
     if ((delivery as { success?: boolean })?.success === false) {
+      if (outboundRouteId && !(delivery as { outcomeUnknown?: boolean })?.outcomeUnknown) {
+        try { this._messageRoutes.setStatus(outboundRouteId, 'failed'); } catch (_) {}
+      }
       this.db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId);
       console.error('[Agent回复] 投递失败:', (delivery as { error?: string })?.error || 'unknown error');
       return;
+    }
+    if (outboundRouteId) {
+      try { this._messageRoutes.setStatus(outboundRouteId, 'active'); } catch (_) {}
     }
 
     // Persist the successful Hub acknowledgement so local status checks and

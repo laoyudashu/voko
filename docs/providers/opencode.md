@@ -1,5 +1,7 @@
 # OpenCode Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 VOKO 调用本机 OpenCode 的安装、凭据、注册、ACP/CLI 投递和会话恢复。OpenCode 调用 VOKO MCP 属于相反方向，仍按 [MCP 客户端配置](../mcp-client-setup.md) 配置。
@@ -72,6 +74,10 @@ opencode run --format json <prompt>
 CLI 只在注册时启用且主通道确认未投递时使用；结果不明确时不自动重复发送，消息保留到 Pull。不要自行替换成带写权限或外部插件的交互式命令。
 
 ## 4. 会话和恢复
+
+### Caller identity for `whoami`
+
+OpenCode currently does not pass a stable session identifier to MCP servers. VOKO therefore does not treat an OpenCode session filename, project directory, recent session, or an invented `OPENCODE_SESSION_ID` variable as caller evidence. A VOKO-managed adapter may supply its own trusted context; otherwise `voko_whoami` returns `selection_required` on Windows, Linux, and macOS. Use `voko_list_agents`, choose the Agent, and retry with its `agentId`.
 
 绑定范围固定为：
 

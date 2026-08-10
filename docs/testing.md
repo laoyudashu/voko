@@ -13,6 +13,7 @@
   temporary SQLite database and never contacts production services.
 - `npm run test:ci`: the local equivalent of the code CI gate.
 - `npm run test:real:*`: explicit local-only checks using `.env.real-test.local`.
+- Windows + WSL Ubuntu production acceptance reuses `.env.dual-machine.local`; see [双机生产环境测试手册](dual-machine-production-testing.md). Read that local file before rediscovering paths, ports, test Agents, whitelist prerequisites, or WSL runtime PATH.
 - `npm run release:gate:code`: the release code gate (typecheck, build, i18n,
   full baseline coverage, all deterministic tests and package-secret scan).
 - The npm release workflow additionally runs Chromium E2E before creating the

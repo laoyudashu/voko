@@ -3,6 +3,7 @@ const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCmdArg } = requir
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { buildOpenClawSessionKey } = require('../openclaw-session');
+const { resolveOpenClawRuntime, runtimeSpawnOptions } = require('../openclaw-command');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -43,6 +44,7 @@ class OpenClawCliProvider extends PushProvider {
       ? new ProviderConversationBindingStore(options.db as any)
       : null;
     this._available = null;
+    this._runtime = null;
     this._isWin = process.platform === 'win32';
   }
 
@@ -55,7 +57,8 @@ class OpenClawCliProvider extends PushProvider {
 
   isAvailable(agentId: string): boolean {
     if (this._available !== null) return this._available;
-    this._available = checkCliAvailable('openclaw');
+    this._runtime = resolveOpenClawRuntime('cli');
+    this._available = this._runtime.available || (this._isWin && checkCliAvailable('openclaw'));
     return this._available;
   }
 
@@ -97,11 +100,22 @@ class OpenClawCliProvider extends PushProvider {
     const notification = _buildNotification(agentId, fromUid, deliveryContent, sessionKey);
     // Windows 下 --message 经 cmd.exe 传多行/含元字符 notification 会被截断或注入，净化为单行
     const safeNotification = this._isWin ? sanitizeCmdArg(notification) : notification;
+    const runtime = resolveOpenClawRuntime('cli');
+    if (!runtime.available && !this._isWin) {
+      const error = new Error('找不到可用的 OpenClaw CLI 运行入口');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
+    }
+    this._runtime = runtime;
+    const spawnOptions = this._isWin && !runtime.available
+      ? { cmd: 'openclaw', prefixArgs: [], env: process.env }
+      : runtimeSpawnOptions(runtime);
 
     try {
       const result = await runCli({
-        cmd: this._isWin ? 'openclaw' : 'openclaw',
-        args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', safeNotification, '--local', '--json'],
+        cmd: spawnOptions.cmd,
+        args: [...spawnOptions.prefixArgs, 'agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', safeNotification, '--local', '--json'],
+        env: spawnOptions.env,
         tag: 'openclaw-cli',
         timeout: 120000,
         logOutput: false,
@@ -128,6 +142,7 @@ class OpenClawCliProvider extends PushProvider {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
       if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
         this._available = false;
+        this._runtime = null;
         (err as any).deliveryOutcome = 'not_delivered';
         this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
       }
@@ -151,10 +166,15 @@ class OpenClawCliProvider extends PushProvider {
       content,
       safety: '此消息来自主人（可信任）。请按主人要求执行。',
     });
+    const runtime = resolveOpenClawRuntime('cli');
+    const spawnOptions = this._isWin && !runtime.available
+      ? { cmd: 'openclaw', prefixArgs: [], env: process.env }
+      : runtimeSpawnOptions(runtime);
     try {
       const result = await runCli({
-        cmd: this._isWin ? 'openclaw' : 'openclaw',
-        args: ['agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', notification, '--local', '--json'],
+        cmd: spawnOptions.cmd,
+        args: [...spawnOptions.prefixArgs, 'agent', '--agent', targetAgentId, '--session-key', sessionKey, '--message', notification, '--local', '--json'],
+        env: spawnOptions.env,
         tag: 'openclaw-cli',
         timeout: 120000,
         logOutput: false,
@@ -175,6 +195,7 @@ class OpenClawCliProvider extends PushProvider {
       console.error(`[OpenClawCli] steer 失败 agent=${agentId}: ${errorMessage(err)}`);
       if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
         this._available = false;
+        this._runtime = null;
         (err as any).deliveryOutcome = 'not_delivered';
         this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
       }
@@ -193,7 +214,8 @@ class OpenClawCliProvider extends PushProvider {
   healthCheck() { this._refreshAvailability(); }
   _refreshAvailability() {
     const previous = this._available;
-    this._available = checkCliAvailable('openclaw');
+    this._runtime = resolveOpenClawRuntime('cli');
+    this._available = this._runtime.available || (this._isWin && checkCliAvailable('openclaw'));
     if (previous !== this._available) this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', available: this._available, reason: this._available ? 'cli-detected' : 'cli-not-found' });
   }
 }

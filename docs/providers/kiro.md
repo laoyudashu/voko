@@ -1,5 +1,7 @@
 # Kiro CLI Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 VOKO 调用 Kiro CLI 的安装、登录、注册、无交互使用和会话恢复。Kiro 作为 MCP 客户端调用 VOKO 时，按 [MCP 客户端配置](../mcp-client-setup.md) 单独配置。
@@ -54,6 +56,10 @@ kiro-cli chat --no-interactive --trust-tools= --wrap never <prompt>
 访客消息只允许产生文字回复，不会等待人工批准工具，也不会把 VOKO 项目目录当作 Kiro 工作区。Kiro CLI `2.15.2` 可能对空的 `--trust-tools=` 输出参数警告；本机实测该警告没有阻断 VOKO 的文字回路。不要为消除警告而自行放开工具权限；如果未来 Kiro 版本把它改为错误，应先升级 VOKO/Provider 或暂时使用 Pull。
 
 ## 4. 会话恢复
+
+### Caller identity for `whoami`
+
+Kiro CLI session IDs are available to Kiro's own resume commands, but Kiro does not document a stable caller session environment variable for an MCP child. VOKO does not infer identity from `--list-sessions`, the current directory, or a newest session file. A VOKO-managed adapter may supply trusted context; otherwise use `voko_list_agents` and retry `voko_whoami` with the selected `agentId` on the supported OS.
 
 绑定范围固定为：
 

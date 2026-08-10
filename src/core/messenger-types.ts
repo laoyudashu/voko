@@ -25,6 +25,9 @@ export interface InboundMessage {
   redDot?: number | boolean;
   syncOnce?: number | boolean;
   mention?: Mention | null;
+  _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
+    conversationKey?: string; conversationStart?: boolean;
+    conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
 }
 
 export interface ForwardPayload {
@@ -37,6 +40,7 @@ export interface ForwardPayload {
   messageId: string;
   timestamp: number;
   mention?: Mention | null;
+  _voko?: InboundMessage['_voko'];
 }
 
 export interface AgentReplyMessage {
@@ -54,6 +58,16 @@ export interface AgentReplyMessage {
   a2aManaged?: boolean;
   a2aPeerUid?: string;
   a2aScope?: string;
+  remoteRouteId?: string | null;
+  remoteConversationKey?: string | null;
+  conversationStart?: boolean;
+  replyRouteContext?: {
+    conversationId: string;
+    providerFamily: string;
+    providerInstanceKey: string;
+    nativeSessionId: string;
+    strictSessionRoute: true;
+  } | null;
 }
 
 export interface AuditRuleMatch {
@@ -181,4 +195,10 @@ export interface MessageHandlerOptions {
     timestamp: number,
   ) => unknown;
   onOwnerInterventionNew?: () => unknown;
+  getGroupInfo?: (agentId: string, channelId: string) => Promise<{
+    status?: string;
+    dissolved_at?: string | null;
+    dissolvedAt?: string | null;
+    members?: Array<{ uid?: string; role?: string }>;
+  }>;
 }
