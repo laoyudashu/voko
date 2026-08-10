@@ -63,6 +63,12 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
             protocolVersion: 1,
             ...(typeof metadata.routeId === 'string' ? { routeId: metadata.routeId } : {}),
             ...(typeof metadata.replyToRouteId === 'string' ? { replyToRouteId: metadata.replyToRouteId } : {}),
+            ...(typeof metadata.conversationKey === 'string' ? { conversationKey: metadata.conversationKey } : {}),
+            ...(metadata.conversationStart === true ? { conversationStart: true } : {}),
+            ...(['created', 'reused'].includes(String(metadata.conversationDisposition))
+              ? { conversationDisposition: metadata.conversationDisposition as 'created' | 'reused' } : {}),
+            ...(typeof metadata.canonicalConversationKey === 'string'
+              ? { canonicalConversationKey: metadata.canonicalConversationKey } : {}),
           }
         : null,
     };

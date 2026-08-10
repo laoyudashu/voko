@@ -5,7 +5,7 @@ const HMAC_NAMESPACE = 'voko/provider-session/v1';
 const HMAC_CONFIG_KEY = 'provider_session_hmac_key_v1';
 
 export type ConversationOrigin = 'caller' | 'voko_managed' | 'web_system';
-export type ConversationStatus = 'active' | 'stale' | 'unavailable';
+export type ConversationStatus = 'pending' | 'active' | 'stale' | 'unavailable' | 'archived';
 export type RouteStatus = 'pending' | 'active' | 'failed' | 'expired' | 'invalid';
 export const PRECISE_ROUTING_GREY_PROVIDERS = Object.freeze(['codex', 'claude-code', 'opencode', 'kiro']);
 
@@ -119,8 +119,9 @@ export function fingerprintProviderSession(db: DatabaseLike, providerFamily: str
 }
 
 export interface RoutingConversation {
-  id: string; agentId: string; providerFamily: string; providerInstanceKey: string;
-  nativeSessionId: string; nativeSessionFingerprint: string; channelId: string;
+  id: string; agentId: string; providerFamily: string | null; providerInstanceKey: string | null;
+  nativeSessionId: string | null; nativeSessionFingerprint: string | null; wireConversationKey: string;
+  parentConversationId: string | null; mergeStatus: 'none' | 'requested' | 'merged'; channelId: string;
   channelType: number; origin: ConversationOrigin; status: ConversationStatus;
   createdAt: number; updatedAt: number; lastUsedAt: number;
 }
@@ -134,7 +135,8 @@ function conversationFromRow(row: any): RoutingConversation | null {
   return row ? {
     id: row.id, agentId: row.agent_id, providerFamily: row.provider_family,
     providerInstanceKey: row.provider_instance_key, nativeSessionId: row.native_session_id,
-    nativeSessionFingerprint: row.native_session_fingerprint, channelId: row.channel_id,
+    nativeSessionFingerprint: row.native_session_fingerprint, wireConversationKey: row.wire_conversation_key,
+    parentConversationId: row.parent_conversation_id, mergeStatus: row.merge_status || 'none', channelId: row.channel_id,
     channelType: row.channel_type, origin: row.origin, status: row.status,
     createdAt: row.created_at, updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
   } : null;
@@ -172,10 +174,12 @@ export class RoutingConversationStore {
     try {
       this.db.prepare(`INSERT INTO provider_routing_conversations
         (id,agent_id,provider_family,provider_instance_key,native_session_id,native_session_fingerprint,
-         channel_id,channel_type,origin,status,created_at,updated_at,last_used_at)
-        VALUES (?,?,?,?,?,?,?,?,?,'active',?,?,?)`)
+         wire_conversation_key,parent_conversation_id,merge_status,channel_id,channel_type,origin,status,
+         created_at,updated_at,last_used_at)
+        VALUES (?,?,?,?,?,?,?,NULL,'none',?,?,?,'active',?,?,?)`)
         .run(crypto.randomUUID(), value.agentId, value.providerFamily, value.providerInstanceKey,
-          value.nativeSessionId, fingerprint, value.channelId, value.channelType, value.origin, now, now, now);
+          value.nativeSessionId, fingerprint, crypto.randomBytes(24).toString('base64url'),
+          value.channelId, value.channelType, value.origin, now, now, now);
     } catch (error) {
       const raced = find();
       if (raced) return raced;
@@ -188,8 +192,80 @@ export class RoutingConversationStore {
 
   getForScope(id: string, agentId: string, channelId: string, channelType = 1): RoutingConversation | null {
     return conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
-      WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 1`)
+      WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active') LIMIT 1`)
       .get(clean(id, 128), clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1));
+  }
+
+  listForScope(agentId: string, channelId: string, channelType = 1): RoutingConversation[] {
+    return this.db.prepare(`SELECT * FROM provider_routing_conversations
+      WHERE agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active')
+      ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,last_used_at DESC,id ASC`)
+      .all(clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1)
+      .map(conversationFromRow).filter((row): row is RoutingConversation => !!row);
+  }
+
+  createPending(input: { agentId: string; channelId: string; channelType?: number;
+    parentConversationId?: string | null }): RoutingConversation {
+    const agentId = clean(input.agentId, 128);
+    const channelId = clean(input.channelId, 192);
+    const channelType = Number(input.channelType) === 2 ? 2 : 1;
+    if (!agentId || !channelId) throw new Error('Incomplete routing conversation scope');
+    const existing = conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
+      WHERE agent_id=? AND channel_id=? AND channel_type=? AND status='pending' LIMIT 1`)
+      .get(agentId, channelId, channelType));
+    if (existing) return existing;
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    try {
+      this.db.prepare(`INSERT INTO provider_routing_conversations
+        (id,agent_id,provider_family,provider_instance_key,native_session_id,native_session_fingerprint,
+         wire_conversation_key,parent_conversation_id,merge_status,channel_id,channel_type,origin,status,
+         created_at,updated_at,last_used_at)
+        VALUES (?,?,NULL,NULL,NULL,NULL,?,?, 'none',?,?,'voko_managed','pending',?,?,?)`)
+        .run(id, agentId, crypto.randomBytes(24).toString('base64url'), clean(input.parentConversationId, 128) || null,
+          channelId, channelType, now, now, now);
+    } catch (_) {
+      const raced = conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
+        WHERE agent_id=? AND channel_id=? AND channel_type=? AND status='pending' LIMIT 1`)
+        .get(agentId, channelId, channelType));
+      if (raced) return raced;
+      throw _;
+    }
+    return conversationFromRow(this.db.prepare('SELECT * FROM provider_routing_conversations WHERE id=?').get(id))!;
+  }
+
+  activate(id: string): void {
+    this.db.prepare(`UPDATE provider_routing_conversations SET status='active',updated_at=?,last_used_at=?
+      WHERE id=? AND status='pending'`).run(Date.now(), Date.now(), clean(id, 128));
+  }
+
+  archive(id: string, agentId: string, channelId: string, channelType = 1): boolean {
+    const result = this.db.prepare(`UPDATE provider_routing_conversations SET status='archived',updated_at=?
+      WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active')`)
+      .run(Date.now(), clean(id, 128), clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1);
+    return Number((result as any).changes || 0) === 1;
+  }
+
+  mergePendingInto(id: string, parentId: string): RoutingConversation | null {
+    const pending = conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
+      WHERE id=? AND status='pending' LIMIT 1`).get(clean(id, 128)));
+    if (!pending || pending.parentConversationId !== clean(parentId, 128)) return null;
+    const parent = this.getForScope(parentId, pending.agentId, pending.channelId, pending.channelType);
+    if (!parent || parent.status !== 'active') return null;
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE provider_message_routes SET conversation_id=?,updated_at=? WHERE conversation_id=?')
+        .run(parent.id, now, pending.id);
+      this.db.prepare(`UPDATE provider_routing_conversations
+        SET status='archived',merge_status='merged',updated_at=?,last_used_at=? WHERE id=? AND status='pending'`)
+        .run(now, now, pending.id);
+      this.db.exec('COMMIT');
+      return parent;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
   }
 
 }
@@ -300,6 +376,12 @@ export class MessageRouteStore {
       .get(...(agentId ? [clean(messageId, 256), clean(agentId, 128)] : [clean(messageId, 256)])) || null;
   }
 
+  latestInboundForConversation(conversationId: string): any | null {
+    return this.db.prepare(`SELECT * FROM provider_message_routes
+      WHERE conversation_id=? AND direction='inbound' AND status='active' AND expires_at>?
+      ORDER BY created_at DESC LIMIT 1`).get(clean(conversationId, 128), Date.now()) || null;
+  }
+
   resolvePrivateReply(input: { replyToRouteId: string; agentId: string; peerUid: string; channelId: string;
     channelType?: number; }): { route: any; conversation: RoutingConversation } | null {
     const row = this.db.prepare(`SELECT
@@ -311,13 +393,16 @@ export class MessageRouteStore {
       c.provider_instance_key AS conversation_provider_instance_key,
       c.native_session_id AS conversation_native_session_id,
       c.native_session_fingerprint AS conversation_native_session_fingerprint,
+      c.wire_conversation_key AS conversation_wire_conversation_key,
+      c.parent_conversation_id AS conversation_parent_conversation_id,
+      c.merge_status AS conversation_merge_status,
       c.channel_id AS conversation_channel_id, c.channel_type AS conversation_channel_type,
       c.origin AS conversation_origin, c.status AS conversation_status,
       c.created_at AS conversation_created_at, c.updated_at AS conversation_updated_at,
       c.last_used_at AS conversation_last_used_at
       FROM provider_message_routes r JOIN provider_routing_conversations c ON c.id=r.conversation_id
       WHERE r.route_id=? AND r.agent_id=? AND r.peer_uid=? AND r.channel_id=? AND r.channel_type=?
-        AND r.direction='outbound' AND r.status='active' AND r.expires_at>? AND c.status='active' LIMIT 1`)
+        AND r.direction='outbound' AND r.status='active' AND r.expires_at>? AND c.status IN ('pending','active') LIMIT 1`)
       .get(cleanRouteId(input.replyToRouteId, true), clean(input.agentId, 128), clean(input.peerUid, 192),
         clean(input.channelId, 192), Number(input.channelType) === 2 ? 2 : 1, Date.now()) as any;
     if (!row) return null;
@@ -344,6 +429,9 @@ export class MessageRouteStore {
       c.provider_instance_key AS conversation_provider_instance_key,
       c.native_session_id AS conversation_native_session_id,
       c.native_session_fingerprint AS conversation_native_session_fingerprint,
+      c.wire_conversation_key AS conversation_wire_conversation_key,
+      c.parent_conversation_id AS conversation_parent_conversation_id,
+      c.merge_status AS conversation_merge_status,
       c.channel_id AS conversation_channel_id, c.channel_type AS conversation_channel_type,
       c.origin AS conversation_origin, c.status AS conversation_status,
       c.created_at AS conversation_created_at, c.updated_at AS conversation_updated_at,
@@ -377,6 +465,9 @@ function conversationFromAliasedRow(row: any): RoutingConversation {
     providerInstanceKey: row.conversation_provider_instance_key,
     nativeSessionId: row.conversation_native_session_id,
     nativeSessionFingerprint: row.conversation_native_session_fingerprint,
+    wireConversationKey: row.conversation_wire_conversation_key,
+    parentConversationId: row.conversation_parent_conversation_id,
+    mergeStatus: row.conversation_merge_status || 'none',
     channelId: row.conversation_channel_id, channelType: row.conversation_channel_type,
     origin: row.conversation_origin, status: row.conversation_status,
     createdAt: row.conversation_created_at, updatedAt: row.conversation_updated_at,

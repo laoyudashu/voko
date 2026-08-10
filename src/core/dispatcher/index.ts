@@ -821,6 +821,10 @@ ${body}
       try { compatible = String(resolveInstance.call(route.provider, agentId) || '') === String(binding.providerInstanceId); }
       catch (_) { compatible = false; }
     }
+    if (compatible && binding.strictSessionRoute && typeof (route.provider as any).canRestoreExactSession === 'function') {
+      try { compatible = !!(route.provider as any).canRestoreExactSession(binding, agentId); }
+      catch (_) { compatible = false; }
+    }
     if (compatible) return binding;
     if (binding.sessionOrigin !== 'caller') {
       try { _bindingStore.markStale(binding.id); } catch (_) {}
@@ -858,6 +862,8 @@ ${body}
         senderUid: payload.senderUid || payload.fromUid,
         ...((payload as any).replyRouteContext ? { replyRouteContext: (payload as any).replyRouteContext } : {}),
         ...((payload as any).remoteRouteId ? { remoteRouteId: (payload as any).remoteRouteId } : {}),
+        ...((payload as any).remoteConversationKey ? { remoteConversationKey: (payload as any).remoteConversationKey } : {}),
+        ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
       _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
@@ -1026,6 +1032,7 @@ ${body}
         content,
         channelId,
         channelType,
+        replyRouteContext: replyContext?.replyRouteContext,
       }).providerBinding;
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const delivery = await deliveryExecutor.execute({
@@ -1042,11 +1049,15 @@ ${body}
         },
         invoke: (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          const providerBinding = _bindingForRoute(agentId, activeBinding, selectedRoute);
+          if (activeBinding?.strictSessionRoute && !providerBinding) {
+            return { success: false, deliveryOutcome: 'not_delivered', error: 'Exact Provider session cannot be restored' };
+          }
           return candidate.target.steer!(agentId, visitorId, wrapPushContent(content, 'owner'), {
             turnId,
             channelId,
             channelType,
-            providerBinding: _bindingForRoute(agentId, activeBinding, selectedRoute),
+            providerBinding,
           });
         },
         classify: deliveryOutcome,

@@ -70,7 +70,8 @@ export class GroupReplyRouteResolver {
       conversation = {
         id: row.id, agentId: row.agent_id, providerFamily: row.provider_family,
         providerInstanceKey: row.provider_instance_key, nativeSessionId: row.native_session_id,
-        nativeSessionFingerprint: row.native_session_fingerprint, channelId: row.channel_id,
+        nativeSessionFingerprint: row.native_session_fingerprint, wireConversationKey: row.wire_conversation_key,
+        parentConversationId: row.parent_conversation_id, mergeStatus: row.merge_status || 'none', channelId: row.channel_id,
         channelType: row.channel_type, origin: row.origin, status: row.status,
         createdAt: row.created_at, updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
       };

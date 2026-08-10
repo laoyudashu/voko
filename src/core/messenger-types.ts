@@ -25,7 +25,9 @@ export interface InboundMessage {
   redDot?: number | boolean;
   syncOnce?: number | boolean;
   mention?: Mention | null;
-  _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string } | null;
+  _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
+    conversationKey?: string; conversationStart?: boolean;
+    conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
 }
 
 export interface ForwardPayload {
@@ -57,6 +59,8 @@ export interface AgentReplyMessage {
   a2aPeerUid?: string;
   a2aScope?: string;
   remoteRouteId?: string | null;
+  remoteConversationKey?: string | null;
+  conversationStart?: boolean;
   replyRouteContext?: {
     conversationId: string;
     providerFamily: string;

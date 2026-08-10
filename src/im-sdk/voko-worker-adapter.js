@@ -66,6 +66,12 @@ class VokoWorkerAdapter extends EventEmitter {
         protocolVersion: 1,
         routeId: typeof payload._voko.routeId === 'string' ? payload._voko.routeId : undefined,
         replyToRouteId: typeof payload._voko.replyToRouteId === 'string' ? payload._voko.replyToRouteId : undefined,
+        conversationKey: typeof payload._voko.conversationKey === 'string' ? payload._voko.conversationKey : undefined,
+        conversationStart: payload._voko.conversationStart === true ? true : undefined,
+        conversationDisposition: ['created', 'reused'].includes(payload._voko.conversationDisposition)
+          ? payload._voko.conversationDisposition : undefined,
+        canonicalConversationKey: typeof payload._voko.canonicalConversationKey === 'string'
+          ? payload._voko.canonicalConversationKey : undefined,
       } : null,
     };
     if (typeof message.ack === 'function') normalized.ack = message.ack;

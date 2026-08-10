@@ -12,7 +12,8 @@ for (const [name, type, fields] of [
   ['file', ContentType.File, { url: 'https://example.invalid/file', name: 'a.txt' }],
 ]) {
   test(`${name} payload preserves hidden VOKO route metadata`, () => {
-    const metadata = { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b' };
+    const metadata = { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b',
+      conversationKey: 'wire-a', conversationStart: true, conversationDisposition: 'created', canonicalConversationKey: 'wire-b' };
     const decoded = decodeContent(encodeContent(type, { ...fields, _voko: metadata }));
     assert.deepEqual(decoded._voko, metadata);
   });
@@ -22,9 +23,11 @@ test('worker normalization keeps only versioned route metadata outside visible c
   const adapter = Object.create(VokoWorkerAdapter.prototype);
   const normalized = adapter._normalizeMessage({ fromUid: 'peer', channelId: 'peer', contentType: 1,
     content: { contentObj: { type: 1, content: 'hello', _voko: {
-      protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', ignored: 'secret' } } } });
+      protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', conversationKey: 'wire-a',
+      conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b', ignored: 'secret' } } } });
   assert.equal(normalized.content, 'hello');
-  assert.deepEqual(normalized._voko, { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b' });
+  assert.deepEqual(normalized._voko, { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b',
+    conversationKey: 'wire-a', conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b' });
   assert.equal(JSON.stringify(normalized.content).includes('route-a'), false);
 });
 

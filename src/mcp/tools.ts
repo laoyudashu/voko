@@ -26,6 +26,7 @@ const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/che
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
 // 入站包装是 [VOKO A2A CONTROL]+[VOKO AGENT PEER MESSAGE]，出站回复才用 [STATE]/[FINAL]。
 import type { LiteContext } from '../context';
+import type { RoutingConversation } from '../core/provider-routing';
 
 /**
  * 剥离入站 agent_peer 消息被 dispatcher 注入的协议包装，只保留对端可见正文。
@@ -586,6 +587,7 @@ interface McpToolParams {
   deliveryModes?: string[];
   conversationId?: string;
   replyToMessageId?: string;
+  webRequest?: boolean;
   visibility?: number;
   visitorId?: string;
 }
@@ -1658,17 +1660,24 @@ function createToolHandlers(cx: McpContext) {
         try {
           if (p.replyToMessageId) {
             const priorRoute = messageRoutes.getByMessage(p.replyToMessageId, p.agentId);
-            if (priorRoute && priorRoute.agent_id === p.agentId && priorRoute.channel_id === p.toUid
-              && Number(priorRoute.channel_type) === channelType) {
-              replyToRouteId = priorRoute.direction === 'inbound'
-                ? priorRoute.reply_to_route_id : priorRoute.route_id;
-              if (priorRoute.conversation_id) routingConversation = routingConversations.getForScope(
-                priorRoute.conversation_id, p.agentId, p.toUid, channelType);
+            if (!priorRoute || priorRoute.agent_id !== p.agentId || priorRoute.channel_id !== p.toUid
+              || Number(priorRoute.channel_type) !== channelType || priorRoute.status !== 'active'
+              || (priorRoute.expires_at && Number(priorRoute.expires_at) <= Date.now())) {
+              throw new Error('Reply target is unavailable or outside the current Agent and channel');
             }
+            replyToRouteId = priorRoute.direction === 'inbound'
+              ? priorRoute.reply_to_route_id : priorRoute.route_id;
+            if (priorRoute.conversation_id) routingConversation = routingConversations.getForScope(
+              priorRoute.conversation_id, p.agentId, p.toUid, channelType);
+            if (!routingConversation) throw new Error('Reply target conversation is unavailable');
           }
           if (!routingConversation && p.conversationId) {
             routingConversation = routingConversations.getForScope(p.conversationId, p.agentId, p.toUid, channelType);
             if (!routingConversation) throw new Error('Conversation does not belong to the current Agent and channel');
+          }
+          if (routingConversation && !replyToRouteId) {
+            const latestInbound = messageRoutes.latestInboundForConversation(routingConversation.id);
+            if (latestInbound?.reply_to_route_id) replyToRouteId = latestInbound.reply_to_route_id;
           }
           if (!routingConversation && caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
             const callerFamily = normalizeProviderFamily(caller.providerType);
@@ -1680,11 +1689,11 @@ function createToolHandlers(cx: McpContext) {
               });
             }
           }
-          if (!routingConversation && (!caller?.nativeSessionId || caller?.source === 'web')) {
-            routingConversation = routingConversations.resolveOrCreate({
-              agentId: p.agentId, providerFamily: 'voko-web', providerInstanceKey: '',
-              nativeSessionId: `web-system:${p.agentId}`, channelId: p.toUid, channelType, origin: 'web_system',
-            });
+          if (!routingConversation && p.webRequest === true) {
+            const current = routingConversations.listForScope(p.agentId, p.toUid, channelType);
+            routingConversation = current.length === 1
+              ? current[0]
+              : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
           }
           if (routingConversation) {
             outboundRouteId = messageRoutes.createPending({
@@ -1732,7 +1741,9 @@ function createToolHandlers(cx: McpContext) {
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
-          ...(replyToRouteId ? { replyToRouteId } : {}) } } : undefined,
+          ...(replyToRouteId ? { replyToRouteId } : {}),
+          ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
+          ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) } } : undefined,
       );
       if (outboundRouteId) {
         try {
@@ -1760,7 +1771,11 @@ function createToolHandlers(cx: McpContext) {
         };
       }
       result.messageAccepted = result?.success !== false;
-      if (routingConversation) result.conversationId = routingConversation.id;
+      if (routingConversation) {
+        result.conversationId = routingConversation.id;
+        result.conversationStatus = routingConversation.status;
+        result.conversationDisposition = routingConversation.status === 'pending' ? 'created' : 'reused';
+      }
       result.recipientDelivery = result.messageAccepted
         ? { status: result?.connected === false ? 'queued' : 'accepted', message: result?.connected === false ? '发送成功，等待对方上线' : '消息已接受' }
         : { status: 'failed' };
@@ -1997,6 +2012,7 @@ function createToolHandlers(cx: McpContext) {
           mentions: p.mentions,
           conversationId: p.conversationId,
           replyToMessageId: p.replyToMessageId,
+          webRequest: p.webRequest,
         });
         if (textResult?.success === false) return { ...uploaded, success: false, error: textResult.error };
         textMessageId = textResult?.messageId;
@@ -2017,6 +2033,7 @@ function createToolHandlers(cx: McpContext) {
         mentions: p.mentions,
         conversationId: p.conversationId,
         replyToMessageId: p.replyToMessageId,
+        webRequest: p.webRequest,
       });
       if (fileResult?.success === false) {
         return { ...uploaded, success: false, error: fileResult.error, textMessageId };
@@ -2119,15 +2136,34 @@ function createToolHandlers(cx: McpContext) {
       }
       const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
+      let routingConversationId: string | null = null;
+      if (p.conversationId) {
+        try { routingConversationId = routingConversations.getForScope(
+          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
+        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
+      } else if (p.messageId) {
+        try {
+          const route = messageRoutes.getByMessage(p.messageId, p.agentId);
+          if (route?.channel_id === targetChannelId && Number(route.channel_type) === targetChannelType) {
+            routingConversationId = route.conversation_id || null;
+          }
+        } catch (_) {}
+      } else {
+        try {
+          const candidates = routingConversations.listForScope(p.agentId, targetChannelId, targetChannelType)
+            .filter((conversation: RoutingConversation) => conversation.status === 'active');
+          if (candidates.length === 1) routingConversationId = candidates[0].id;
+        } catch (_) {}
+      }
 
       // 根据 backend 类型决定 session_key 前缀
       const backendRow = cx.query ? cx.query(`SELECT backend_type FROM agents WHERE agent_id=?`, [p.agentId]) : [];
       const backendType = backendRow?.[0]?.backend_type || 'openclaw';
       const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
       cx.exec(`
-        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id)
-        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?)
-      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, p.messageId || null]);
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
+      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, p.messageId || null, routingConversationId]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
@@ -2135,6 +2171,7 @@ function createToolHandlers(cx: McpContext) {
           sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
           problem: p.problem, agentSuggestion: p.suggestion || '',
           askTime: now, skipReply: 0, sourceSenderUid: p.visitorId,
+          routingConversationId,
           targetChannelId, targetChannelType, sourceMessageId: p.messageId || null,
         });
       }
@@ -2160,6 +2197,7 @@ function createToolHandlers(cx: McpContext) {
             channelId: r.target_channel_id || r.visitor_id,
             channelType: r.target_channel_type || 1,
             messageId: r.source_message_id || null,
+            conversationId: r.routing_conversation_id || null,
           }] : [],
           hasMore: false,
         };
@@ -2219,6 +2257,7 @@ function createToolHandlers(cx: McpContext) {
           channelId: r.target_channel_id || r.visitor_id,
           channelType: r.target_channel_type || 1,
           messageId: r.source_message_id || null,
+          conversationId: r.routing_conversation_id || null,
         })),
         hasMore,
       };

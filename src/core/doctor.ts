@@ -344,12 +344,18 @@ function inspectRoutingFeatures(db: any, checks: any[]): void {
   const precise = getRoutingFeaturePolicy(db, 'precise_reply_routing_v1', defaults);
   const pull = getRoutingFeaturePolicy(db, 'session_scoped_pull_v1', defaults);
   const shadow = isRoutingFeatureEnabled(db, 'routing_conversation_shadow_v1', true);
+  const web = {
+    privateConversations: isRoutingFeatureEnabled(db, 'web_private_conversations_v1', true),
+    groupPreciseReply: isRoutingFeatureEnabled(db, 'web_group_precise_reply_v1', true),
+    interventionPreciseRoute: isRoutingFeatureEnabled(db, 'web_intervention_precise_route_v1', true),
+  };
   addCheck(checks, 'provider-routing-rollout', 'Provider message routing rollout', 'ok',
-    `shadow=${shadow ? 'on' : 'off'}, precise=${precise.enabled ? 'grey' : 'off'}, sessionPull=${pull.enabled ? 'grey' : 'off'}`, {
+    `shadow=${shadow ? 'on' : 'off'}, precise=${precise.enabled ? 'grey' : 'off'}, sessionPull=${pull.enabled ? 'grey' : 'off'}, web=${Object.values(web).every(Boolean) ? 'on' : 'partial'}`, {
       shadow,
       precise: { enabled: precise.enabled, providerFamilies: precise.providerFamilies,
         channelTypes: precise.channelTypes, contentTypes: precise.contentTypes },
       sessionPull: { enabled: pull.enabled, providerFamilies: pull.providerFamilies },
+      web,
     });
 }
 

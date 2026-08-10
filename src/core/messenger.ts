@@ -14,6 +14,7 @@ const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./di
 const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
 const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
 import type { DatabaseLike } from '../types/database';
+import type { RoutingConversation } from './provider-routing';
 import type {
   AgentReplyMessage,
   AuditAction,
@@ -817,10 +818,20 @@ class MessageHandler extends EventEmitter {
           if (remoteRouteId) this._messageRoutes.recordInbound({ messageId, remoteRouteId,
             conversationId: resolved.conversation.id, agentId, peerUid: fromUid, channelId,
             channelType: channelType || 1 });
-          replyRouteContext = { conversationId: resolved.conversation.id,
-            providerFamily: resolved.conversation.providerFamily,
-            providerInstanceKey: resolved.conversation.providerInstanceKey,
-            nativeSessionId: resolved.conversation.nativeSessionId, strictSessionRoute: true };
+          let targetConversation = resolved.conversation;
+          if (routeMetadata?.conversationDisposition === 'reused' && resolved.conversation.parentConversationId) {
+            targetConversation = this._routingConversations.mergePendingInto(
+              resolved.conversation.id, resolved.conversation.parentConversationId) || resolved.conversation;
+          } else if (resolved.conversation.status === 'pending') {
+            try { this.db.prepare(`UPDATE provider_routing_conversations SET status='active',updated_at=?,last_used_at=?
+              WHERE id=? AND status='pending'`).run(Date.now(), Date.now(), resolved.conversation.id); } catch (_) {}
+          }
+          if (targetConversation.providerFamily && targetConversation.nativeSessionId) {
+            replyRouteContext = { conversationId: targetConversation.id,
+              providerFamily: targetConversation.providerFamily,
+              providerInstanceKey: targetConversation.providerInstanceKey || '',
+              nativeSessionId: targetConversation.nativeSessionId, strictSessionRoute: true };
+          }
         }
       } catch (_) { /* invalid route remains on legacy/Pull path */ }
     }
@@ -830,6 +841,8 @@ class MessageHandler extends EventEmitter {
       channelType: channelType || 1, contentType: contentType || 1,
       messageId, timestamp, mention: isGroup ? mention : null, replyRouteContext,
       remoteRouteId,
+      remoteConversationKey: routeMetadata?.conversationKey,
+      conversationStart: routeMetadata?.conversationStart === true,
     });
   }
 
@@ -1088,6 +1101,8 @@ class MessageHandler extends EventEmitter {
     });
 
     let outboundRouteId: string | null = null;
+    let routingConversation: RoutingConversation | null = null;
+    let conversationDisposition: 'created' | 'reused' | null = null;
     const replyToRouteId = typeof data.remoteRouteId === 'string' ? data.remoteRouteId : null;
     try {
       if (!isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) throw new Error('routing shadow disabled');
@@ -1098,16 +1113,22 @@ class MessageHandler extends EventEmitter {
         const backend = this.db.prepare('SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
           .get<BackendRow>(agentId);
         const family = normalizeProviderFamily(backend?.backend_type || '');
+        const existed = family ? this._routingConversations.listForScope(agentId, replyChannelId, replyChannelType)
+          .some((item: RoutingConversation) => item.providerFamily === family && item.nativeSessionId === data.sessionKey) : false;
         if (family) conversation = this._routingConversations.resolveOrCreate({ agentId, providerFamily: family,
           providerInstanceKey: backend?.backend_instance_id || '', nativeSessionId: data.sessionKey,
           channelId: replyChannelId, channelType: replyChannelType, origin: 'voko_managed' });
+        if (data.conversationStart === true) conversationDisposition = existed ? 'reused' : 'created';
       }
+      routingConversation = conversation;
       if (conversation) outboundRouteId = this._messageRoutes.createPending({ messageId: msgId,
         conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
         channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });
     } catch (_) {}
     const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
-      ...(replyToRouteId ? { replyToRouteId } : {}) } } : null;
+      ...(replyToRouteId ? { replyToRouteId } : {}),
+      ...(routingConversation?.wireConversationKey ? { canonicalConversationKey: routingConversation.wireConversationKey } : {}),
+      ...(conversationDisposition ? { conversationDisposition } : {}) } } : null;
     const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
     if ((delivery as { success?: boolean })?.success === false) {
       if (outboundRouteId && !(delivery as { outcomeUnknown?: boolean })?.outcomeUnknown) {

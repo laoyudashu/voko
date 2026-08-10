@@ -88,6 +88,57 @@ test('routing conversation is stable per session and peer, and isolated across e
   } finally { fixture.close(); }
 });
 
+test('web pending conversation is unique and can merge back into its active parent', () => {
+  const fixture = database();
+  try {
+    const conversations = new RoutingConversationStore(fixture.db);
+    const routes = new MessageRouteStore(fixture.db);
+    const parent = conversations.resolveOrCreate({ agentId: 'agent-web', providerFamily: 'codex',
+      nativeSessionId: 'thread-parent', channelId: 'peer-web', channelType: 1, origin: 'caller' });
+    const pending = conversations.createPending({ agentId: 'agent-web', channelId: 'peer-web',
+      channelType: 1, parentConversationId: parent.id });
+    assert.equal(conversations.createPending({ agentId: 'agent-web', channelId: 'peer-web', channelType: 1 }).id, pending.id);
+    const routeId = routes.createPending({ messageId: 'web-out', conversationId: pending.id,
+      agentId: 'agent-web', peerUid: 'peer-web', channelId: 'peer-web', direction: 'outbound' });
+    routes.setStatus(routeId, 'active');
+    assert.equal(conversations.mergePendingInto(pending.id, parent.id).id, parent.id);
+    assert.equal(routes.getByMessage('web-out', 'agent-web').conversation_id, parent.id);
+    assert.equal(fixture.db.prepare('SELECT status,merge_status FROM provider_routing_conversations WHERE id=?')
+      .get(pending.id).status, 'archived');
+  } finally { fixture.close(); }
+});
+
+test('current development schema 8 receives the one-time Web routing revision and backup', () => {
+  const fixture = database();
+  const dbPath = fixture.dbPath;
+  try {
+    fixture.db.prepare("DELETE FROM config WHERE type='schema8_web_routing_revision_v1'").run();
+    fixture.db.exec(`
+      DROP TABLE provider_message_routes;
+      DROP TABLE provider_routing_conversations;
+      CREATE TABLE provider_routing_conversations (
+        id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,provider_family TEXT NOT NULL,
+        provider_instance_key TEXT NOT NULL,native_session_id TEXT NOT NULL,
+        native_session_fingerprint TEXT NOT NULL,channel_id TEXT NOT NULL,channel_type INTEGER NOT NULL,
+        origin TEXT NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,last_used_at INTEGER NOT NULL
+      );
+      CREATE TABLE provider_message_routes (
+        route_id TEXT PRIMARY KEY,message_id TEXT NOT NULL,conversation_id TEXT,reply_to_route_id TEXT,
+        agent_id TEXT NOT NULL,peer_uid TEXT NOT NULL,channel_id TEXT NOT NULL,channel_type INTEGER NOT NULL,
+        direction TEXT NOT NULL,status TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+      );
+    `);
+    fixture.db.close();
+    const reopened = initDatabase(dbPath, { silent: true });
+    const columns = reopened.prepare('PRAGMA table_info(provider_routing_conversations)').all().map(row => row.name);
+    assert.ok(columns.includes('wire_conversation_key'));
+    assert.ok(columns.includes('parent_conversation_id'));
+    assert.ok(reopened.prepare("SELECT 1 FROM config WHERE type='schema8_web_routing_revision_v1'").get());
+    assert.ok(fs.existsSync(`${dbPath}.pre-schema-v8-web-routing.bak`));
+    reopened.close();
+  } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
+});
+
 test('message reply route validates agent, peer, channel, direction and expiry', () => {
   const fixture = database();
   try {

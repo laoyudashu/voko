@@ -60,12 +60,14 @@ describe('offline route metadata decoding', () => {
     const payload = Buffer.from(JSON.stringify({
       content: 'payload content',
       type: 1,
-      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', ignored: 'secret' }
+      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', conversationKey: 'wire-a',
+        conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b', ignored: 'secret' }
     })).toString('base64');
     assert.deepEqual(decodeOfflinePayload(payload), {
       content: 'payload content',
       type: 1,
-      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b' }
+      _voko: { protocolVersion: 1, routeId: 'route-a', replyToRouteId: 'route-b', conversationKey: 'wire-a',
+        conversationStart: true, conversationDisposition: 'reused', canonicalConversationKey: 'wire-b' }
     });
   });
 
