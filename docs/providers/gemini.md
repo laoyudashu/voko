@@ -1,5 +1,7 @@
 # Gemini CLI Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 本文只记录 Gemini CLI 作为 VOKO Provider 时的安装、认证、注册和接收消息方式。Agent 调用 VOKO MCP 的通用流程仍以[统一注册与投递路由规则](../provider-delivery-routing.md)为准。
 
 ## 1. 安装、登录和 Linux headless 注意事项

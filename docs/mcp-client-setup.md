@@ -4,6 +4,8 @@
 
 本页说明如何让 WorkBuddy、Qwen Code 等 MCP 客户端调用本机 VOKO 的工具。它们接入的是同一个本地 VOKO 运行时，因此可使用 Agent 注册、会话、消息和群组等 MCP 工具。
 
+完成连接后，消息类工具的参数、返回值、`conversationId`兼容规则和推荐回复顺序见[MCP消息与精确Conversation接口契约](mcp-message-conversations.md)。
+
 > 这与“由 VOKO 调用某个 Provider 的 CLI”是两件事。下文是把 Agent 应用作为 **MCP 客户端** 接入 VOKO；Qwen Code 作为 VOKO Provider 时，只需在 Web UI 中添加 Qwen Code，并确保 `qwen` 已安装、登录且位于 `PATH` 中，无需在 Qwen Code 中再配置 VOKO MCP。
 
 ## 先启动 VOKO

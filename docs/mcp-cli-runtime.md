@@ -82,6 +82,8 @@ voko start --no-open
 
 ## Routing conversations in Agent tools
 
+The canonical parameter and response contract is [MCP message and routing Conversation contract](mcp-message-conversations.md).
+
 VOKO keeps channel discovery and precise Provider-session routing as separate concepts:
 
 - `list_conversations` lists direct-chat peers and group channels. Its existing behavior is unchanged.

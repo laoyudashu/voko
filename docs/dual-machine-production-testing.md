@@ -43,6 +43,8 @@ PATH=<node bin directory>:/home/tjyu/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 推荐让 Ubuntu已发布 Codex测试 Agent充当稳定发送者，调用 Ubuntu运行实例的 MCP `voko_send_message`，目标使用 Windows Agent的 `imUid`。反向测试则交换 Agent和 IM UID。
 
+涉及多Session时，同时记录发送响应的`messageId/conversationId`，让接收侧使用`replyToMessageId`回程，并用`voko_get_chat_history`的可选`conversationId`验证过滤结果。完整接口契约见[MCP消息与精确Conversation接口](mcp-message-conversations.md)。
+
 通过 WSL执行 MCP时使用如下结构，具体值从 `.env.dual-machine.local` 读取：
 
 ```powershell
@@ -79,4 +81,3 @@ MCP输入为一行 JSON-RPC。不要把认证信息放在命令行；stdio代理
 - 保留测试消息。
 - 确认 VOKO双端仍运行、ACP恢复任务没有遗留重复进程。
 - 报告只记录 Provider类型、版本、通道、耗时、回复数量和通过/失败，不记录敏感身份材料。
-

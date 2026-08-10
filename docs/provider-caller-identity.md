@@ -2,6 +2,8 @@
 
 This document defines how VOKO identifies the caller of `whoami` and other Agent-scoped MCP/CLI tools. It is separate from Conversation routing: caller identity selects the VOKO `agentId`; a message `conversationId` and `routeId` are resolved later when a message is sent or answered.
 
+For the Agent-facing message parameters and Conversation discovery flow, see [MCP message and routing Conversation contract](mcp-message-conversations.md). `whoami` must not be used as a Conversation lookup.
+
 VOKO accepts only these evidence classes:
 
 - `voko_created`: a VOKO-managed CLI/ACP adapter supplies the Provider type, instance and native session.

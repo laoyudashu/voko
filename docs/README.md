@@ -7,6 +7,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 ## Start here
 
 - [MCP, CLI, and the local Agent IM runtime](mcp-cli-runtime.md): install, `voko setup`/`voko doctor`, local Web UI, MCP stdio, local database, headless use, and how Agent messages share one runtime.
+- [MCP message and routing Conversation contract](mcp-message-conversations.md): channel discovery versus precise Conversations, history/Pull/send/attachment/owner-intervention parameters, nullable `conversationId`, and compatibility rules.
 - [Connect MCP clients](mcp-client-setup.md): copy-ready WorkBuddy and Qwen Code configuration, generic stdio MCP configuration, and troubleshooting.
 - [Provider registration, delivery, and route recovery](provider-delivery-routing.md): Agent registration modes, recommended Push order, Pull fallback, route-cache invalidation, and health-event recovery.
 - [Provider caller identity](provider-caller-identity.md): OS/provider-specific trusted caller Session evidence, `whoami` matching, and manual-selection fallback.

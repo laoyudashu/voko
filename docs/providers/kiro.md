@@ -1,5 +1,7 @@
 # Kiro CLI Provider 专属指南
 
+Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契约](../mcp-message-conversations.md)：优先使用 `replyToMessageId`，按需使用VOKO `conversationId`，不要把Provider原生Session/thread ID当作VOKO会话ID。
+
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
 本文说明 VOKO 调用 Kiro CLI 的安装、登录、注册、无交互使用和会话恢复。Kiro 作为 MCP 客户端调用 VOKO 时，按 [MCP 客户端配置](../mcp-client-setup.md) 单独配置。

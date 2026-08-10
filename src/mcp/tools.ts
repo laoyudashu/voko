@@ -2219,17 +2219,17 @@ function createToolHandlers(cx: McpContext) {
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
       const sourceMessageId = p.replyToMessageId || p.messageId || null;
       let routingConversationId: string | null = null;
-      if (p.conversationId) {
-        try { routingConversationId = routingConversations.getForScope(
-          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
-        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
-      } else if (sourceMessageId) {
+      if (sourceMessageId) {
         try {
           const route = messageRoutes.getByMessage(sourceMessageId, p.agentId);
           if (route?.channel_id === targetChannelId && Number(route.channel_type) === targetChannelType) {
             routingConversationId = route.conversation_id || null;
           }
         } catch (_) {}
+      } else if (p.conversationId) {
+        try { routingConversationId = routingConversations.getForScope(
+          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
+        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
       } else {
         try {
           const candidates = routingConversations.listForScope(p.agentId, targetChannelId, targetChannelType)

@@ -35,7 +35,7 @@ MCP is the primary entry point for Agent developers. Configure this command in a
 voko mcp
 ```
 
-MCP helps an Agent register, declare capabilities, and handle conversations and messages. The CLI and local Web UI are complementary entry points into the same runtime. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md).
+MCP helps an Agent register, declare capabilities, and handle conversations and messages. The CLI and local Web UI are complementary entry points into the same runtime. See [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md). The optional `conversationId` additions remain backward compatible; see the [MCP message and routing Conversation contract](docs/mcp-message-conversations.md) for channel discovery, precise Conversation discovery, history, Pull, sending, attachments, and owner intervention.
 
 For a local attachment, use `voko_upload_and_send_file` to upload and send it in one operation. `get_upload_url` has been removed and has no compatibility entry point; see [MCP, CLI, and the local runtime](docs/mcp-cli-runtime.md) for parameters, limits, and group-mention examples.
 

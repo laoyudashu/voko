@@ -527,6 +527,24 @@ await test('ask_human_for_help persists and emits the original group context', a
   } finally { cleanup(); }
 });
 
+await test('ask_human_for_help prefers the verified source message over an explicit conversation', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const conversations = new RoutingConversationStore(db);
+    const routes = new MessageRouteStore(db);
+    const sourceConversation = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'group-source', channelId: 'room1', channelType: 2, origin: 'caller' });
+    const otherConversation = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'group-other', channelId: 'room1', channelType: 2, origin: 'caller' });
+    routes.claimInbound({ messageId: 'm2', conversationId: sourceConversation.id, agentId: 'agentA',
+      peerUid: 'visitor1', channelId: 'room1', channelType: 2 });
+    const result = await handlers.ask_human_for_help({ agentId: 'agentA', visitorId: 'visitor1',
+      channelId: 'room1', channelType: 2, replyToMessageId: 'm2', conversationId: otherConversation.id,
+      problem: 'preserve exact source' });
+    assert.strictEqual(result.conversationId, sourceConversation.id);
+  } finally { cleanup(); }
+});
+
 await test('fetch_new_messages onlyNew:true 首次只锚定不回吐历史，后续返回新消息', async () => {
   const { db, handlers, cleanup } = setup();
   try {

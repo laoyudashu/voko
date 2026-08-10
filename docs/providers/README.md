@@ -1,6 +1,6 @@
 # Provider 专属指南
 
-[文档索引](../README.md) · [统一注册与投递路由规则](../provider-delivery-routing.md) · [Provider 调用方身份与 Session 证据](../provider-caller-identity.md) · [MCP、CLI 与本地运行模型](../mcp-cli-runtime.md) · [兼容性矩阵](../provider-compatibility.md)
+[文档索引](../README.md) · [统一注册与投递路由规则](../provider-delivery-routing.md) · [Provider 调用方身份与 Session 证据](../provider-caller-identity.md) · [MCP消息与精确Conversation接口](../mcp-message-conversations.md) · [MCP、CLI 与本地运行模型](../mcp-cli-runtime.md) · [兼容性矩阵](../provider-compatibility.md)
 
 开发新的 Provider 时，先阅读[新增智能体框架开发指南](../adding-provider.md)。专属指南只在对应 Provider 完成真实安装、注册、消息、Session、降级和恢复验收后创建。
 
@@ -21,6 +21,7 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 2. 读取 VOKO 注册预检返回的 `providerType` 和 `deliveryModes`，不要自行猜测类型或伪造 instance/session 字段。
 3. 打开下方对应的专属指南，按“Agent 快速路径”和“VOKO 注册”章节操作。
 4. 接收消息优先选择该 Provider 的推荐自动通道，`pull` 始终保留；修改 PATH、登录或配置后重启 VOKO 并重新检查状态。
+5. 通过MCP收发消息时遵循[统一消息接口契约](../mcp-message-conversations.md)：具体回复优先传`replyToMessageId`，多Session选择才显式传`conversationId`。
 
 ## 已验收并提供指南的 Provider
 
