@@ -33,6 +33,30 @@ test('agent detail exposes a double-click copy affordance for the Agent ID', asy
   assert.doesNotThrow(() => new Function(script));
 });
 
+test('agent detail truncates long visitor names and keeps the full name in a tooltip', async (t) => {
+  const visitorName = '这是一个很长的访客名称用于验证列表截断效果';
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'agent-visitor-name', agentName: 'Visitor Name Test', backendType: 'others', publishStatus: 'published' }] }),
+    get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
+    list_conversations: async () => ({ conversations: [{ channelId: 'visitor-long', name: visitorName, lastMessage: 'hello', lastTimestamp: 1, lastIsMe: 0, lastContentType: 1, needsReply: true, unreadCount: 0 }], total: 1 }),
+    list_groups: async () => ({ groups: [], total: 0 }),
+  };
+  const app = express();
+  app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, { refreshUserProfiles: async () => {} }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-visitor-name`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, new RegExp(`title="${visitorName}"`));
+  assert.match(html, /display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap/);
+  assert.match(html, /width:180px;max-width:180px;white-space:nowrap;overflow:hidden/);
+});
+
 test('empty conversation detail still renders the reply composer', async (t) => {
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-empty-chat', agentName: 'Empty Chat', backendType: 'others', publishStatus: 'published' }] }),

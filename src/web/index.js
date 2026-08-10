@@ -935,7 +935,9 @@ function createWebRouter(handlers, db, opts={}){
           const lastFrom='<span class="meta">'+(c.lastIsMe===2||c.lastContentType===11?L('web.agent.last_from.system'):(c.needsReply?L('web.agent.last_from.visitor'):L('web.agent.last_from.ai')))+'</span>';
           const msg=esc((c.lastMessage||'').length>60?(c.lastMessage||'').substring(0,60)+'…':c.lastMessage||'');
           const unreadBadge=c.unreadCount>0?' <span class="badge" style="background:#e74c3c;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px">'+c.unreadCount+'</span>':'';
-          convHtml+='<tr><td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="/agents/'+aId+'/c/'+esc(c.channelId)+'">'+esc(convNickMap[c.channelId]||c.name||c.channelId)+'</a>'+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
+          const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
+          const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';
+          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
         }
         convHtml+='</tbody></table></div>'
       }
