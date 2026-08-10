@@ -25,9 +25,48 @@ function inbound(replyToRouteId, routeId = 'remote-route-12345678901234567890') 
     fromUid: 'member-b', toUid: 'group-1', channelId: 'group-1', channelType: 2,
     contentType: 1, content: 'reply', messageId: `in-${Math.random()}`, timestamp: 1,
     mention: { uids: ['agent-im-a'] },
-    _voko: { protocolVersion: 1, routeId, replyToRouteId },
+    _voko: { protocolVersion: 1, routeId, ...(replyToRouteId ? { replyToRouteId } : {}) },
   };
 }
+
+test('an unthreaded mention uses the only active group conversation', async (t) => {
+  const db = fixture(t);
+  const conversation = new RoutingConversationStore(db).resolveOrCreate({
+    agentId: 'agent-a', providerFamily: 'codex', providerInstanceKey: 'instance-a',
+    nativeSessionId: 'session-a', channelId: 'group-1', channelType: 2,
+  });
+  const forwarded = [];
+  const handler = new MessageHandler(db, {
+    dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
+    getGroupInfo: async () => ({ status: 'active', members: [
+      { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
+    ] }),
+  });
+  handler.handleAgentMessage('agent-a', inbound(null));
+  await settle();
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0].routeState, 'valid');
+  assert.equal(forwarded[0].replyRouteContext.conversationId, conversation.id);
+});
+
+test('an unthreaded mention with multiple conversations waits for an MCP session claim', async (t) => {
+  const db = fixture(t);
+  const conversations = new RoutingConversationStore(db);
+  conversations.resolveOrCreate({ agentId: 'agent-a', providerFamily: 'codex',
+    nativeSessionId: 'session-a', channelId: 'group-1', channelType: 2 });
+  conversations.resolveOrCreate({ agentId: 'agent-a', providerFamily: 'codex',
+    nativeSessionId: 'session-b', channelId: 'group-1', channelType: 2 });
+  const forwarded = [];
+  const handler = new MessageHandler(db, {
+    dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
+    getGroupInfo: async () => ({ status: 'active', members: [
+      { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
+    ] }),
+  });
+  handler.handleAgentMessage('agent-a', inbound(null));
+  await settle();
+  assert.equal(forwarded.length, 0);
+});
 
 async function settle() { await new Promise((resolve) => setTimeout(resolve, 25)); }
 

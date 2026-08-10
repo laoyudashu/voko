@@ -191,6 +191,7 @@ export class RoutingConversationStore {
       WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 1`)
       .get(clean(id, 128), clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1));
   }
+
 }
 
 export class MessageRouteStore {
@@ -261,6 +262,36 @@ export class MessageRouteStore {
         clean(input.peerUid, 192), clean(input.channelId, 192), Number(input.channelType) === 2 ? 2 : 1,
         now + 30 * 24 * 60 * 60 * 1000, now, now);
     return (this.getByMessage(input.messageId, input.agentId)?.route_id as string) || routeId;
+  }
+
+  claimInbound(input: { messageId: string; conversationId: string; agentId: string; peerUid: string;
+    channelId: string; channelType?: number; ttlMs?: number; }): boolean {
+    const now = Date.now();
+    const routeId = crypto.randomBytes(32).toString('base64url');
+    const messageId = clean(input.messageId, 256);
+    const conversationId = clean(input.conversationId, 128);
+    const agentId = clean(input.agentId, 128);
+    const peerUid = clean(input.peerUid, 192);
+    const channelId = clean(input.channelId, 192);
+    const channelType = Number(input.channelType) === 2 ? 2 : 1;
+    const conversation = this.db.prepare(`SELECT 1 FROM provider_routing_conversations
+      WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 1`)
+      .get(conversationId, agentId, channelId, channelType);
+    if (!conversation) return false;
+    this.db.prepare(`UPDATE provider_message_routes SET conversation_id=?,status='active',updated_at=?
+      WHERE message_id=? AND direction='inbound' AND agent_id=? AND conversation_id IS NULL
+        AND peer_uid=? AND channel_id=? AND channel_type=? AND status='active'`)
+      .run(conversationId, now, messageId, agentId, peerUid, channelId, channelType);
+    this.db.prepare(`INSERT INTO provider_message_routes
+      (route_id,message_id,conversation_id,reply_to_route_id,agent_id,peer_uid,channel_id,channel_type,
+       direction,status,expires_at,created_at,updated_at)
+      VALUES (?,?,?,NULL,?,?,?,?,'inbound','active',?,?,?)
+      ON CONFLICT(message_id,direction,agent_id) DO NOTHING`)
+      .run(routeId, messageId, conversationId, agentId, peerUid, channelId, channelType,
+        now + Math.max(60_000, input.ttlMs || 30 * 24 * 60 * 60 * 1000), now, now);
+    const claimed = this.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
+      WHERE message_id=? AND direction='inbound' AND agent_id=? LIMIT 1`).get(messageId, agentId) as any;
+    return claimed?.status === 'active' && claimed?.conversation_id === conversationId;
   }
 
   getByMessage(messageId: string, agentId?: string): any | null {

@@ -11,8 +11,9 @@ type GroupSnapshot = {
 
 export type GroupRouteResolution =
   | { state: 'absent' }
+  | { state: 'ambiguous'; candidateCount: number }
   | { state: 'invalid'; reason: string }
-  | { state: 'valid'; conversation: RoutingConversation };
+  | { state: 'valid'; conversation: RoutingConversation; source: 'reply' | 'unique' };
 
 type SnapshotLoader = (agentId: string, channelId: string) => Promise<GroupSnapshot>;
 
@@ -57,16 +58,36 @@ export class GroupReplyRouteResolver {
     fromUid: string;
     mentionAll?: boolean;
   }): Promise<GroupRouteResolution> {
-    if (!input.replyToRouteId) return { state: 'absent' };
-    const inspected = this.routes.inspectGroupReply({
-      replyToRouteId: input.replyToRouteId,
-      agentId: input.agentId,
-      channelId: input.channelId,
-    });
-    if (inspected.state === 'other_agent') {
-      return input.mentionAll ? { state: 'absent' } : { state: 'invalid', reason: 'route_wrong_agent' };
+    let conversation: RoutingConversation | null = null;
+    let source: 'reply' | 'unique' = 'reply';
+    if (!input.replyToRouteId) {
+      const rows = this.db.prepare(`SELECT * FROM provider_routing_conversations
+        WHERE agent_id=? AND channel_type=2 AND channel_id=? AND status='active'
+        ORDER BY last_used_at DESC, id ASC`).all(input.agentId, input.channelId) as any[];
+      if (rows.length === 0) return { state: 'absent' };
+      if (rows.length > 1) return { state: 'ambiguous', candidateCount: rows.length };
+      const row = rows[0];
+      conversation = {
+        id: row.id, agentId: row.agent_id, providerFamily: row.provider_family,
+        providerInstanceKey: row.provider_instance_key, nativeSessionId: row.native_session_id,
+        nativeSessionFingerprint: row.native_session_fingerprint, channelId: row.channel_id,
+        channelType: row.channel_type, origin: row.origin, status: row.status,
+        createdAt: row.created_at, updatedAt: row.updated_at, lastUsedAt: row.last_used_at,
+      };
+      source = 'unique';
     }
-    if (inspected.state !== 'valid') return inspected;
+    if (input.replyToRouteId) {
+      const inspected = this.routes.inspectGroupReply({
+        replyToRouteId: input.replyToRouteId,
+        agentId: input.agentId,
+        channelId: input.channelId,
+      });
+      if (inspected.state === 'other_agent') {
+        return input.mentionAll ? { state: 'absent' } : { state: 'invalid', reason: 'route_wrong_agent' };
+      }
+      if (inspected.state !== 'valid') return inspected;
+      conversation = inspected.conversation;
+    }
     if (!this.memberships) return { state: 'invalid', reason: 'membership_unavailable' };
 
     let snapshot: GroupSnapshot;
@@ -86,7 +107,7 @@ export class GroupReplyRouteResolver {
     if (input.mentionAll && !['owner', 'admin'].includes(String(sender.role || '').toLowerCase())) {
       return { state: 'invalid', reason: 'mention_all_forbidden' };
     }
-    return { state: 'valid', conversation: inspected.conversation };
+    return { state: 'valid', conversation: conversation!, source };
   }
 }
 

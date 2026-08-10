@@ -18,6 +18,8 @@ const os = require('os');
 const { initDatabase } = require('../build/core/database');
 const { createToolHandlers } = require('../build/mcp/tools');
 const { createDispatcher } = require('../build/core/dispatcher');
+const { RoutingConversationStore } = require('../build/core/provider-routing');
+const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -598,6 +600,34 @@ await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 
     assert.strictEqual(visitor.hasControlBlock, false);
     assert.strictEqual(visitor.contentStripped, false);
   } finally { delete global.__dispatcher; cleanup(); }
+});
+
+await test('session-scoped MCP Pull atomically claims an unthreaded group mention', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare("UPDATE agents SET backend_type='codex' WHERE agent_id='agentA'").run();
+    db.prepare('UPDATE messages SET message_seq=1 WHERE id=?').run('m2');
+    db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)').run(
+      'feature:session_scoped_pull_v1',
+      JSON.stringify({ enabled: true, providerFamilies: ['codex'], channelTypes: [2], contentTypes: [1] }),
+      Date.now(),
+    );
+    const conversations = new RoutingConversationStore(db);
+    const a = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'thread-a', channelId: 'room1', channelType: 2, origin: 'caller' });
+    conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'thread-b', channelId: 'room1', channelType: 2, origin: 'caller' });
+    const params = { agentId: 'agentA', channelId: 'room1', channelType: 2,
+      messageSeq: 0, onlyReplies: false, limit: 50 };
+    const first = await runWithProviderCaller({ source: 'mcp', providerType: 'codex',
+      nativeSessionId: 'thread-a', evidence: 'trusted-test' }, () => handlers.fetch_new_messages(params));
+    assert.deepStrictEqual(first.messages.map(message => message.id), ['m2']);
+    assert.strictEqual(db.prepare(`SELECT conversation_id FROM provider_message_routes
+      WHERE message_id='m2' AND agent_id='agentA' AND direction='inbound'`).get().conversation_id, a.id);
+    const second = await runWithProviderCaller({ source: 'mcp', providerType: 'codex',
+      nativeSessionId: 'thread-b', evidence: 'trusted-test' }, () => handlers.fetch_new_messages(params));
+    assert.deepStrictEqual(second.messages, []);
+  } finally { cleanup(); }
 });
 
 // ========================================

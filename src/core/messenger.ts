@@ -791,7 +791,16 @@ class MessageHandler extends EventEmitter {
       ? routeMetadata.replyToRouteId : null;
     const remoteRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.routeId === 'string'
       ? routeMetadata.routeId : null;
-    if (isGroup && replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+    let hasGroupRoutingConversation = false;
+    if (isGroup && !replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try {
+        hasGroupRoutingConversation = !!this.db.prepare(`SELECT 1 AS found FROM provider_routing_conversations
+          WHERE agent_id=? AND channel_type=2 AND channel_id=? AND status='active' LIMIT 1`)
+          .get<{ found: number }>(agentId, channelId);
+      } catch (_) {}
+    }
+    if (isGroup && (replyToRouteId || hasGroupRoutingConversation)
+      && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       void this._forwardGroupReplyRoute({ agentId, fromUid, agentContent, content, channelId,
         contentType: contentType || 1, messageId, timestamp, mention, replyToRouteId, remoteRouteId });
       return;
@@ -827,7 +836,7 @@ class MessageHandler extends EventEmitter {
   async _forwardGroupReplyRoute(input: {
     agentId: string; fromUid: string; agentContent: string; content: string; channelId: string;
     contentType: number; messageId: string; timestamp: number; mention: Mention | null;
-    replyToRouteId: string; remoteRouteId: string | null;
+    replyToRouteId: string | null; remoteRouteId: string | null;
   }): Promise<void> {
     const resolved = await this._groupRouteResolver.resolve({
       replyToRouteId: input.replyToRouteId,
@@ -841,6 +850,14 @@ class MessageHandler extends EventEmitter {
         remoteRouteId: input.replyToRouteId, agentId: input.agentId, peerUid: input.fromUid,
         channelId: input.channelId, channelType: 2 }); } catch (_) {}
       console.warn(`[GroupRoute] fail-closed agent=${input.agentId} group=${input.channelId} reason=${resolved.reason}`);
+      return;
+    }
+    if (resolved.state === 'ambiguous') {
+      if (input.remoteRouteId) {
+        try { this._messageRoutes.recordInbound({ messageId: input.messageId, remoteRouteId: input.remoteRouteId,
+          agentId: input.agentId, peerUid: input.fromUid, channelId: input.channelId, channelType: 2 }); } catch (_) {}
+      }
+      console.log(`[GroupRoute] waiting for MCP session claim agent=${input.agentId} group=${input.channelId} candidates=${resolved.candidateCount}`);
       return;
     }
     if (resolved.state === 'absent') {

@@ -134,6 +134,27 @@ test('unbound inbound route preserves the remote route id until a local conversa
   } finally { fixture.close(); }
 });
 
+test('an inbound group message can be claimed by only one provider conversation', () => {
+  const fixture = database();
+  try {
+    const conversations = new RoutingConversationStore(fixture.db);
+    const routes = new MessageRouteStore(fixture.db);
+    const first = conversations.resolveOrCreate({ agentId: 'agent-a', providerFamily: 'codex',
+      nativeSessionId: 'thread-a', channelId: 'group-a', channelType: 2, origin: 'caller' });
+    const second = conversations.resolveOrCreate({ agentId: 'agent-a', providerFamily: 'codex',
+      nativeSessionId: 'thread-b', channelId: 'group-a', channelType: 2, origin: 'caller' });
+    const remoteRouteId = 'remote-group-route-1234567890123456';
+    routes.recordInbound({ messageId: 'group-in-1', remoteRouteId, agentId: 'agent-a',
+      peerUid: 'member-a', channelId: 'group-a', channelType: 2 });
+    assert.equal(routes.claimInbound({ messageId: 'group-in-1', conversationId: first.id,
+      agentId: 'agent-a', peerUid: 'member-a', channelId: 'group-a', channelType: 2 }), true);
+    assert.equal(routes.claimInbound({ messageId: 'group-in-1', conversationId: second.id,
+      agentId: 'agent-a', peerUid: 'member-a', channelId: 'group-a', channelType: 2 }), false);
+    assert.equal(routes.getByMessage('group-in-1', 'agent-a').conversation_id, first.id);
+    assert.equal(routes.getByMessage('group-in-1', 'agent-a').reply_to_route_id, remoteRouteId);
+  } finally { fixture.close(); }
+});
+
 test('identity binding allows shared instances and resolves only exact trusted sessions', () => {
   const fixture = database();
   try {

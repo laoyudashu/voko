@@ -846,6 +846,24 @@ function createToolHandlers(cx: McpContext) {
     if (!_sessionPullEligible(agentId, caller)) return rows;
     try {
       const fp = fingerprintProviderSession(cx.db, caller.providerType, caller.nativeSessionId);
+      const family = normalizeProviderFamily(caller.providerType);
+      const routes = new MessageRouteStore(cx.db);
+      for (const row of rows) {
+        if (Number(row.channel_type) !== 2) continue;
+        const existing = cx.query<{ conversation_id?: string | null; status?: string }>(`SELECT conversation_id,status
+          FROM provider_message_routes WHERE message_id=? AND agent_id=? AND direction='inbound' LIMIT 1`,
+        [row.id, agentId])[0];
+        if (existing?.status === 'invalid' || existing?.conversation_id) continue;
+        const instance = caller.providerInstanceId ? String(caller.providerInstanceId) : null;
+        const candidates = cx.query<{ id: string }>(`SELECT id FROM provider_routing_conversations
+          WHERE agent_id=? AND provider_family=? AND native_session_fingerprint=?
+            AND channel_type=2 AND channel_id=? AND status='active'
+            ${instance ? 'AND provider_instance_key=?' : ''} ORDER BY id LIMIT 2`,
+        [agentId, family, fp, row.channel_id, ...(instance ? [instance] : [])]);
+        if (candidates.length !== 1) continue;
+        routes.claimInbound({ messageId: row.id, conversationId: candidates[0].id, agentId,
+          peerUid: row.from_uid, channelId: row.channel_id, channelType: 2 });
+      }
       const ids = rows.map((row) => row.id);
       const placeholders = ids.map(() => '?').join(',');
       const allowed = new Set(cx.query<{ message_id: string }>(`SELECT r.message_id FROM provider_message_routes r
