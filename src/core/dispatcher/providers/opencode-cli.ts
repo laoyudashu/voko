@@ -29,13 +29,34 @@ import type { PushPayload } from '../types';
 
 class OpenCodeCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
+    const baseArgs = ['run', '--format', 'json'];
     super({
       name: 'OPENCODE CLI',
       cmd: resolveOpenCodeCommand(),
       // prompt 经 stdin 传入（Paperclip 一致）
-      args: ['run', '--format', 'json', '{prompt}'],
+      args: [...baseArgs, '{prompt}'],
+      argsForSession: (sessionId: string | null) => [
+        ...baseArgs,
+        ...(sessionId ? ['--session', sessionId] : []),
+        '{prompt}',
+      ],
+      sessionIdFromLine: (line: string) => {
+        try {
+          const event = JSON.parse(line);
+          return String(
+            event.sessionID || event.sessionId || event.session_id
+            || event.part?.sessionID || event.part?.sessionId || event.part?.session_id
+            || event.info?.sessionID || event.info?.sessionId || event.info?.session_id
+            || '',
+          ).trim() || null;
+        } catch (_) {
+          return null;
+        }
+      },
       parser: 'opencode-json',    // text 事件 → part.text
       matchType: 'opencode',
+      bindingProviderType: 'opencode',
+      adapterType: 'opencode-cli',
       priority: 1,
       timeout: 300000,
       env: isolatedOpenCodeEnv(),

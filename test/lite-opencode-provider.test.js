@@ -6,6 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
 const { OpenCodeAcpProvider } = require('../build/core/dispatcher/providers/opencode-acp');
+const { OpenCodeCliProvider } = require('../build/core/dispatcher/providers/opencode-cli');
 const { OpenCodeAttachProvider } = require('../build/core/dispatcher/providers/opencode-attach');
 const {
   buildOpenCodeVisitorContent,
@@ -42,6 +43,15 @@ test('OpenCode visitor prompts carry explicit role and session boundaries', () =
   assert.match(prompt, /text-only external visitor conversation/);
   assert.match(prompt, /Never access another visitor session/);
   assert.match(prompt, /Visitor message:\nhello/);
+});
+
+test('OpenCode CLI resumes the exact ACP native session instead of continuing the latest session', () => {
+  const provider = new OpenCodeCliProvider();
+  const args = provider._argsForSession('session-from-acp', false);
+  assert.deepEqual(args.slice(-3), ['--session', 'session-from-acp', '{prompt}']);
+  assert.equal(args.includes('--continue'), false);
+  assert.equal(provider.acceptsBinding({ providerType: 'opencode' }, 'agent-a'), true);
+  assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'step_start', sessionID: 'session-from-acp' })), 'session-from-acp');
 });
 
 test('ACP session handles are isolated by agent, visitor, and adapter', () => {
