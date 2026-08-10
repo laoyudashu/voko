@@ -16,7 +16,6 @@ const { normalizeBackendType } = require('../core/agent-backend-types');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
-const { completeMcpCallerHandshake, isMcpCallerHandshakeEnabled, issueMcpCallerHandshake } = require('../core/mcp-caller-handshake');
 const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
 const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
@@ -2001,43 +2000,6 @@ function createToolHandlers(cx: McpContext) {
       return { success: true, ..._listOwnedAgents(p) };
     },
 
-    async prepare_identity_handshake() {
-      if (!isMcpCallerHandshakeEnabled()) {
-        return { success: false, code: 'FEATURE_DISABLED', error: 'MCP identity handshake is disabled' };
-      }
-      const caller = getProviderCaller();
-      if (!caller?.connectionId) {
-        return { success: false, code: 'CALLER_CONNECTION_REQUIRED', error: 'MCP caller connection is unavailable' };
-      }
-      if (caller.nativeSessionId) return { success: true, status: 'identity_context_available' };
-      const issued = issueMcpCallerHandshake(caller.connectionId);
-      return {
-        success: true,
-        status: 'challenge_issued',
-        expiresAt: issued.expiresAt,
-        nextAction: {
-          type: 'run_command_then_retry',
-          command: `voko complete_identity_handshake --challenge ${issued.challenge}`,
-          retryTool: 'voko_whoami',
-          expectedDurationSeconds: { vokoProcessing: '<1', codexEndToEnd: '60-90' },
-          instructions: 'Run the command once in the current Codex shell without displaying or editing it, then retry voko_whoami without agentId.',
-          timingNote: 'VOKO validation is normally sub-second. The 60-90 second estimate is for the full Codex model/tool round trip measured on Windows, not database or MCP processing time.',
-        },
-      };
-    },
-
-    async complete_identity_handshake(p: McpToolParams = {}) {
-      if (!isMcpCallerHandshakeEnabled()) {
-        return { success: false, code: 'FEATURE_DISABLED', error: 'MCP identity handshake is disabled' };
-      }
-      try {
-        completeMcpCallerHandshake(String(p.challenge || ''), getProviderCaller());
-        return { success: true, status: 'connected' };
-      } catch (error: any) {
-        return { success: false, code: 'IDENTITY_HANDSHAKE_FAILED', error: error?.message || 'Identity handshake failed' };
-      }
-    },
-
     async whoami(p: McpToolParams = {}) {
       const explicitOwnershipError = _agentOwnershipError(p.agentId);
       if (explicitOwnershipError) return { success: false, error: explicitOwnershipError, code: 'AGENT_OWNER_MISMATCH' };
@@ -2106,16 +2068,10 @@ function createToolHandlers(cx: McpContext) {
           ? { candidates: (callerProviderFamily && providerCandidates.length > 0 ? providerCandidates : agents).map(candidate) }
           : {}),
         ...(identity.status === 'selection_required'
-          && isMcpCallerHandshakeEnabled()
-          && caller?.providerType === 'codex'
-          && caller?.connectionId
-          && !caller?.nativeSessionId
           ? { nextAction: {
-              type: 'identity_handshake',
-              tool: 'voko_prepare_identity_handshake',
-              expectedDurationSeconds: { vokoProcessing: '<1', codexEndToEnd: '60-90' },
-              instructions: 'Call the tool, run its returned command once in the current Codex shell without displaying or editing it, then retry voko_whoami without agentId.',
-              timingNote: 'VOKO returns each tool result normally in under one second; the complete Codex-guided handshake may take 60-90 seconds on Windows because it spans model and shell tool turns.',
+              type: 'select_agent',
+              tool: 'voko_list_agents',
+              instructions: 'Choose one candidate and retry voko_whoami with its agentId. VOKO will verify ownership; it will not create or modify an identity binding.',
             } }
           : {}),
       };

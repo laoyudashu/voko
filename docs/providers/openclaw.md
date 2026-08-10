@@ -64,6 +64,10 @@ OpenClaw 的实例对应 `openclaw.json` 中 `agents.list[].id`，例如 `main`�
 
 ## 3. 消息路由和会话边界
 
+### Caller identity for `whoami`
+
+OpenClaw's Gateway `sessionKey` is a routing selector and is not automatically exposed as an external MCP caller identity. VOKO therefore accepts OpenClaw instance context only from a VOKO-managed adapter or an explicitly trusted integration; it does not infer identity from the workspace, the newest transcript, or a Gateway session list. The rule is the same on Linux, Windows, and macOS: if multiple OpenClaw Agents cannot be uniquely identified, choose one with `voko_list_agents` and retry `whoami` with `agentId`.
+
 OpenClaw 的 VOKO 绑定按以下组合隔离：
 
 ```text

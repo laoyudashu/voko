@@ -25,10 +25,11 @@ function detectProviderSessionFromEnv(providerType, env = process.env) {
   const names = {
     codex: ['CODEX_THREAD_ID'],
     'claude-code': ['CLAUDE_CODE_SESSION_ID'],
-    kiro: ['KIRO_SESSION_ID', 'KIRO_CLI_SESSION_ID'],
-    opencode: ['OPENCODE_SESSION_ID'],
+    goose: ['AGENT_SESSION_ID'],
+    hermes: ['HERMES_SESSION_ID'],
   }[String(providerType || '').toLowerCase()] || [];
-  for (const name of ['VOKO_CALLER_SESSION_ID', ...names]) {
+  const managedEvidence = String(env.VOKO_CALLER_EVIDENCE || '').trim() === 'voko_created';
+  for (const name of [...(managedEvidence ? ['VOKO_CALLER_SESSION_ID'] : []), ...names]) {
     const value = String(env[name] || '').trim();
     if (value) return value.slice(0, 512);
   }
@@ -39,9 +40,15 @@ function detectProviderCallerFromEnv(providerType, env = process.env) {
   const forwardedType = String(env.VOKO_CALLER_PROVIDER || '').trim().toLowerCase();
   const resolvedType = forwardedType || String(providerType || '').trim().toLowerCase();
   const nativeSessionId = detectProviderSessionFromEnv(resolvedType, env);
+  const managedEvidence = String(env.VOKO_CALLER_EVIDENCE || '').trim() === 'voko_created';
   return {
     providerType: resolvedType || null,
-    providerInstanceId: String(env.VOKO_CALLER_INSTANCE || '').trim().slice(0, 192) || null,
+    // An instance is a VOKO-managed adapter fact, not a free-form Provider
+    // environment value. Without the explicit evidence marker, ignore it so
+    // a manually set variable cannot select another Agent's binding.
+    providerInstanceId: managedEvidence
+      ? (String(env.VOKO_CALLER_INSTANCE || '').trim().slice(0, 192) || null)
+      : null,
     nativeSessionId,
     evidence: nativeSessionId
       ? (String(env.VOKO_CALLER_EVIDENCE || '').trim() === 'voko_created' ? 'voko_created' : 'provider_env')

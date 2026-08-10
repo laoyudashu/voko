@@ -73,6 +73,10 @@ CLI 只在注册时启用且主通道确认未投递时使用；结果不明确�
 
 ## 4. 会话和恢复
 
+### Caller identity for `whoami`
+
+OpenCode currently does not pass a stable session identifier to MCP servers. VOKO therefore does not treat an OpenCode session filename, project directory, recent session, or an invented `OPENCODE_SESSION_ID` variable as caller evidence. A VOKO-managed adapter may supply its own trusted context; otherwise `voko_whoami` returns `selection_required` on Windows, Linux, and macOS. Use `voko_list_agents`, choose the Agent, and retry with its `agentId`.
+
 绑定范围固定为：
 
 ```text

@@ -2829,17 +2829,6 @@ async function main() {
     return;
   }
 
-  if (subcommand === 'complete_identity_handshake') {
-    const result = await cli.runRuntimeToolCommand(
-      subcommand,
-      args,
-      resolveDbPath(args, { silent: true }),
-      { debug: verbose },
-    );
-    if (!result.success) process.exitCode = 1;
-    return;
-  }
-
   const willServe = !subcommand || subcommand === 'start';
   if (willServe) {
     const dbPath = resolveDbPath(args);

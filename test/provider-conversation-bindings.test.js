@@ -7,7 +7,7 @@ const path = require('node:path');
 const { initDatabase } = require('../build/core/database');
 const { ProviderConversationBindingStore } = require('../build/core/provider-conversation-bindings');
 const { createDispatcher } = require('../build/core/dispatcher');
-const { detectProviderCallerFromEnv, detectProviderSessionFromEnv, detectProviderSessionFromProcess } = require('../build/core/registration-caller-context');
+const { detectProviderCallerFromEnv, detectProviderCaller, detectProviderSessionFromEnv, detectProviderSessionFromProcess } = require('../build/core/registration-caller-context');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-provider-binding-'));
@@ -32,8 +32,10 @@ function pending(store, session, message, channelId = 'visitor-1', channelType =
 test('only stable provider session environment fields are accepted', () => {
   assert.equal(detectProviderSessionFromEnv('codex', { CODEX_THREAD_ID: 'thread-1' }), 'thread-1');
   assert.equal(detectProviderSessionFromEnv('claude-code', { CLAUDE_CODE_SESSION_ID: 'session-1' }), 'session-1');
-  assert.equal(detectProviderSessionFromEnv('kiro', { KIRO_SESSION_ID: 'kiro-1' }), 'kiro-1');
-  assert.equal(detectProviderSessionFromEnv('opencode', { OPENCODE_SESSION_ID: 'open-1' }), 'open-1');
+  assert.equal(detectProviderSessionFromEnv('goose', { AGENT_SESSION_ID: 'goose-1' }), 'goose-1');
+  assert.equal(detectProviderSessionFromEnv('hermes', { HERMES_SESSION_ID: 'hermes-1' }), 'hermes-1');
+  assert.equal(detectProviderSessionFromEnv('kiro', { KIRO_SESSION_ID: 'kiro-1' }), null);
+  assert.equal(detectProviderSessionFromEnv('opencode', { OPENCODE_SESSION_ID: 'open-1' }), null);
   assert.equal(detectProviderSessionFromEnv('codex', { SESSION_ID: 'untrusted-latest-session' }), null);
 });
 
@@ -49,6 +51,17 @@ test('VOKO-managed caller context overrides provider-specific environment consis
     providerInstanceId: 'local-goose',
     nativeSessionId: 'managed-session',
     evidence: 'voko_created',
+  });
+});
+
+test('caller instance is ignored without VOKO-managed evidence', () => {
+  assert.deepEqual(detectProviderCallerFromEnv('goose', {
+    AGENT_SESSION_ID: 'provider-session',
+    VOKO_CALLER_SESSION_ID: 'manually-injected-session',
+    VOKO_CALLER_INSTANCE: 'manually-injected-instance',
+  }), {
+    providerType: 'goose', providerInstanceId: null,
+    nativeSessionId: 'provider-session', evidence: 'provider_env',
   });
 });
 
@@ -68,6 +81,12 @@ test('Linux Codex caller session is resolved only from a unique process-owned ro
   assert.equal(detectProviderSessionFromProcess('codex', {
     platform: 'linux', procRoot, home, ppid: 42,
   }), 'codex-session-123456');
+  assert.deepEqual(detectProviderCaller('codex', {}, {
+    platform: 'linux', procRoot, home, ppid: 42,
+  }), {
+    providerType: 'codex', providerInstanceId: null,
+    nativeSessionId: 'codex-session-123456', evidence: 'provider_process',
+  });
   assert.equal(detectProviderSessionFromProcess('goose', {
     platform: 'linux', procRoot, home, ppid: 42,
   }), null);

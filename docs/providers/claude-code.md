@@ -69,6 +69,10 @@ VOKO 使用非交互的 stream JSON 调用 Claude Code，提示词经 stdin 传�
 
 ## 4. 会话连续性和 Pull 兜底
 
+### Caller identity for `whoami`
+
+Current Claude Code releases pass `CLAUDE_CODE_SESSION_ID` to stdio MCP servers, matching the value available to hooks and Bash. VOKO uses that value as trusted caller evidence on Linux, Windows, and macOS; it is not a Provider instance identifier. Restart Claude Code after upgrading or changing MCP configuration. If an older release does not pass the variable, VOKO returns explicit Agent selection instead of starting a slow handshake or guessing a session.
+
 Claude CLI 返回的原生 `session_id` 会保存到 VOKO 的会话绑定中。绑定键固定为：
 
 ```text

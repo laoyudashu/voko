@@ -43,6 +43,10 @@ voko get_status --agent-id=<agentId>
 
 ## 3. 会话和消息路由
 
+### Caller identity for `whoami`
+
+Goose documents `AGENT_SESSION_ID` as the native session identifier passed to local stdio extensions. VOKO reads it when Goose launches `voko mcp`; this works on Linux, Windows, and macOS when the extension process inherits the normal Goose environment. `backend_instance_id` remains a user-selected VOKO field and is not treated as a Goose instance. If the variable is absent or multiple Goose Agents share the same instance, VOKO does not inspect the newest session or run a handshake; use `voko_list_agents` and explicitly select the Agent.
+
 VOKO 为每个以下组合保存独立绑定：
 
 ```text

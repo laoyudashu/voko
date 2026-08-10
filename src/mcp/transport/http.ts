@@ -14,7 +14,6 @@ const { Router } = require('express');
 const { normalizeBackendType } = require('../../core/agent-backend-types');
 const { getProviderFamily } = require('../../core/dispatcher/provider-catalog');
 const { runWithProviderCaller } = require('../../core/registration-caller-context');
-const { isMcpCallerHandshakeEnabled, resolveMcpCallerHandshake } = require('../../core/mcp-caller-handshake');
 
 const MCP_VERSION = '2025-11-25';
 const SERVER_NAME = 'voko';
@@ -112,10 +111,6 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
               ) ? String(req.headers['x-voko-caller-evidence']) : null,
             } : {}),
           };
-          if (isMcpCallerHandshakeEnabled() && connectionId && !caller.nativeSessionId) {
-            const binding = resolveMcpCallerHandshake(connectionId);
-            if (binding) Object.assign(caller, binding);
-          }
           const result = await runWithProviderCaller(
             caller,
             () => handler({ method: 'tools/call', params: msg.params }),

@@ -55,6 +55,10 @@ kiro-cli chat --no-interactive --trust-tools= --wrap never <prompt>
 
 ## 4. 会话恢复
 
+### Caller identity for `whoami`
+
+Kiro CLI session IDs are available to Kiro's own resume commands, but Kiro does not document a stable caller session environment variable for an MCP child. VOKO does not infer identity from `--list-sessions`, the current directory, or a newest session file. A VOKO-managed adapter may supply trusted context; otherwise use `voko_list_agents` and retry `voko_whoami` with the selected `agentId` on the supported OS.
+
 绑定范围固定为：
 
 ```text

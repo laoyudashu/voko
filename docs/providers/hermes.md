@@ -58,6 +58,10 @@ Hermes 的 `backend_instance_id` 对应 Hermes profile，例如 `default`、`psy
 
 ## 3. HTTP 主通道和 session
 
+### Caller identity for `whoami`
+
+Hermes documents `HERMES_SESSION_ID` as the current session value for subprocesses. VOKO accepts it when Hermes passes it to the MCP child. Hermes filters stdio environment variables, so configure the VOKO extension using the supported Hermes MCP environment mechanism if the variable is not inherited. This applies where Hermes runs (Linux, macOS, or WSL); Hermes is not a native Windows runtime. A Hermes profile is an instance/configuration selector, not a session identity. Missing evidence falls back to explicit Agent selection.
+
 HTTP Provider 通过 Hermes 本机 API 发送消息，并使用稳定的 VOKO session key：
 
 ```text

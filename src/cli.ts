@@ -16,8 +16,8 @@ const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
 const { compareVersions } = require('./core/auto-updater');
 const { t } = require('./core/i18n');
-const { runWithProviderCaller, detectProviderSessionFromEnv } = require('./core/registration-caller-context');
-const { detectCurrentAgentInstance, detectCurrentAgentType } = require('./core/registration-orchestrator');
+const { runWithProviderCaller, detectProviderCaller } = require('./core/registration-caller-context');
+const { detectCurrentAgentType } = require('./core/registration-orchestrator');
 const { spawnSync } = require('child_process');
 const path = require('path');
 const crypto = require('crypto');
@@ -120,7 +120,6 @@ const TOOL_PARAM_SCHEMAS = {
   upload_and_send_file:    { agentId: 'string', toUid: 'string', filePath: 'string', fileName: 'string', message: 'string', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
   whoami:                  { agentId: 'string' },
   list_agents:             { keyword: 'string', limit: 'number', offset: 'number' },
-  complete_identity_handshake: { challenge: 'string' },
   start_worker:            { agentId: 'string' },
   stop_worker:             { agentId: 'string' },
   ask_human_for_help:      { agentId: 'string', visitorId: 'string', channelId: 'string', channelType: 'number', messageId: 'string', problem: 'string', suggestion: 'string' },
@@ -310,13 +309,9 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
     // whoami 特殊化（仅 CLI 层，handler 不改、MCP 不受影响）：
     // 带 --agent 返回该 agent 资料；否则返回 agent 列表 + 提示
     const providerType = detectCurrentAgentType();
-    const nativeSessionId = detectProviderSessionFromEnv(providerType);
     const caller = {
       source: 'cli',
-      providerType: providerType || null,
-      providerInstanceId: providerType ? detectCurrentAgentInstance(providerType) : null,
-      nativeSessionId,
-      evidence: nativeSessionId ? 'provider_env' : null,
+      ...detectProviderCaller(providerType),
     };
     if (toolName === 'whoami') {
       const r = await runWithProviderCaller(caller, () => handlers.whoami({ ...params, ...(cliCtx.agentId ? { agentId: cliCtx.agentId } : {}) }));
@@ -381,13 +376,12 @@ async function runRuntimeToolCommand(toolName?: any, rawParams?: any, dbPath?: a
     'X-VOKO-Caller-Connection': crypto.randomUUID(),
   };
   const providerType = detectCurrentAgentType();
-  const providerInstance = providerType ? detectCurrentAgentInstance(providerType) : null;
-  const providerSession = detectProviderSessionFromEnv(providerType);
-  if (providerType) headers['X-VOKO-Caller-Provider'] = providerType;
-  if (providerInstance) headers['X-VOKO-Caller-Instance'] = providerInstance;
-  if (providerSession) {
-    headers['X-VOKO-Caller-Session'] = providerSession;
-    headers['X-VOKO-Caller-Evidence'] = 'provider_env';
+  const caller = detectProviderCaller(providerType);
+  if (caller.providerType) headers['X-VOKO-Caller-Provider'] = caller.providerType;
+  if (caller.providerInstanceId) headers['X-VOKO-Caller-Instance'] = caller.providerInstanceId;
+  if (caller.nativeSessionId) {
+    headers['X-VOKO-Caller-Session'] = caller.nativeSessionId;
+    headers['X-VOKO-Caller-Evidence'] = caller.evidence || 'provider_env';
   }
 
   let response: any;

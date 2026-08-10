@@ -19,10 +19,7 @@ export {};
 const readline = require('readline');
 const crypto = require('crypto');
 const { t } = require('../core/i18n');
-const {
-  detectCurrentAgentInstance,
-  detectCurrentAgentType,
-} = require('../core/registration-orchestrator');
+const { detectCurrentAgentType } = require('../core/registration-orchestrator');
 
 /** fetch + 超时：用 AbortController + clearTimeout（AbortSignal.timeout 的定时器在 Windows process.exit 残留 libuv handle） */
 async function fetchWithTimeout(url?: any, opts?: any, ms: any = 120000) {
@@ -70,13 +67,12 @@ async function runMcpProxy(dbPath?: any, options: any = {}) {
   };
   refreshRuntimeToken();
   const callerProvider = detectCurrentAgentType();
-  const callerInstance = callerProvider ? detectCurrentAgentInstance(callerProvider) : null;
   const { detectProviderCaller } = require('../core/registration-caller-context');
   const caller = detectProviderCaller(callerProvider);
   const callerSession = caller.nativeSessionId;
   const callerConnection = crypto.randomUUID();
   if (caller.providerType) headers['X-VOKO-Caller-Provider'] = caller.providerType;
-  if (caller.providerInstanceId || callerInstance) headers['X-VOKO-Caller-Instance'] = caller.providerInstanceId || callerInstance;
+  if (caller.providerInstanceId) headers['X-VOKO-Caller-Instance'] = caller.providerInstanceId;
   if (callerSession) {
     headers['X-VOKO-Caller-Session'] = callerSession;
     headers['X-VOKO-Caller-Evidence'] = caller.evidence;
