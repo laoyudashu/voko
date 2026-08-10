@@ -20,6 +20,8 @@ npm pack --dry-run
 
 For a Provider compatibility report, include the VOKO version, operating system/version, Provider version, connection mode, safe reproduction steps, and any non-sensitive logs.
 
+Before implementing a new Provider adapter, follow [Add a new Agent Provider](docs/adding-provider.md). A Provider is not considered supported until its runtime resolution, registration readiness, Session isolation, delivery outcomes, fallback/recovery, security boundary, and real-device matrix have been validated.
+
 All user-visible strings in `src` must use the existing i18n system. Chinese and English keys must remain aligned.
 
 ## Contribution terms

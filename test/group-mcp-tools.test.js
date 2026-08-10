@@ -18,7 +18,7 @@ const os = require('os');
 const { initDatabase } = require('../build/core/database');
 const { createToolHandlers } = require('../build/mcp/tools');
 const { createDispatcher } = require('../build/core/dispatcher');
-const { RoutingConversationStore } = require('../build/core/provider-routing');
+const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 
 // ========================================
@@ -216,6 +216,42 @@ await test('get_chat_history 缺少 channelId 返回可操作错误', async () =
     assert.strictEqual(r.success, false);
     assert.strictEqual(r.code, 'CHANNEL_ID_REQUIRED');
     assert.match(r.error, /channelId/);
+  } finally { cleanup(); }
+});
+
+await test('get_chat_history keeps channel compatibility and optionally filters by routing conversation', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const conversations = new RoutingConversationStore(db);
+    const routes = new MessageRouteStore(db);
+    const conversation = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'history-thread', channelId: 'visitor1', channelType: 1, origin: 'caller' });
+    const routeId = routes.createPending({ messageId: 'm1', conversationId: conversation.id,
+      agentId: 'agentA', peerUid: 'visitor1', channelId: 'visitor1', channelType: 1, direction: 'inbound' });
+    routes.setStatus(routeId, 'active');
+    const legacy = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'visitor1' });
+    assert.strictEqual(legacy.messages[0].conversationId, conversation.id);
+    assert.strictEqual(legacy.conversationId, null);
+    const precise = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'visitor1',
+      conversationId: conversation.id });
+    assert.strictEqual(precise.conversationId, conversation.id);
+    assert.deepStrictEqual(precise.messages.map(message => message.id), ['m1']);
+    const invalid = await handlers.get_chat_history({ agentId: 'agentA', channelId: 'other',
+      conversationId: conversation.id });
+    assert.strictEqual(invalid.code, 'ROUTING_CONVERSATION_INVALID');
+  } finally { cleanup(); }
+});
+
+await test('list_routing_conversations returns safe identifiers without native sessions', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const conversation = new RoutingConversationStore(db).resolveOrCreate({ agentId: 'agentA',
+      providerFamily: 'codex', nativeSessionId: 'secret-native-thread', channelId: 'visitor1',
+      channelType: 1, origin: 'caller' });
+    const result = await handlers.list_routing_conversations({ agentId: 'agentA', channelId: 'visitor1' });
+    assert.strictEqual(result.conversations[0].conversationId, conversation.id);
+    assert.strictEqual('nativeSessionId' in result.conversations[0], false);
+    assert.strictEqual(JSON.stringify(result).includes('secret-native-thread'), false);
   } finally { cleanup(); }
 });
 
@@ -469,6 +505,7 @@ await test('ask_human_for_help persists and emits the original group context', a
       messageId: 'm2', problem: 'need owner decision', suggestion: 'approve'
     });
     assert.strictEqual(result.success, true);
+    assert.strictEqual(result.conversationId, null, 'legacy intervention without a route remains compatible');
     const row = db.prepare('SELECT * FROM owner_interventions WHERE id=?').get(result.interventionId);
     assert.strictEqual(row.visitor_id, 'visitor1');
     assert.strictEqual(row.source_sender_uid, 'visitor1');
@@ -622,6 +659,7 @@ await test('session-scoped MCP Pull atomically claims an unthreaded group mentio
     const first = await runWithProviderCaller({ source: 'mcp', providerType: 'codex',
       nativeSessionId: 'thread-a', evidence: 'trusted-test' }, () => handlers.fetch_new_messages(params));
     assert.deepStrictEqual(first.messages.map(message => message.id), ['m2']);
+    assert.strictEqual(first.messages[0].conversationId, a.id);
     assert.strictEqual(db.prepare(`SELECT conversation_id FROM provider_message_routes
       WHERE message_id='m2' AND agent_id='agentA' AND direction='inbound'`).get().conversation_id, a.id);
     const second = await runWithProviderCaller({ source: 'mcp', providerType: 'codex',

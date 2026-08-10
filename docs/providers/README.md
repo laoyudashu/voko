@@ -2,6 +2,8 @@
 
 [文档索引](../README.md) · [统一注册与投递路由规则](../provider-delivery-routing.md) · [Provider 调用方身份与 Session 证据](../provider-caller-identity.md) · [MCP、CLI 与本地运行模型](../mcp-cli-runtime.md) · [兼容性矩阵](../provider-compatibility.md)
 
+开发新的 Provider 时，先阅读[新增智能体框架开发指南](../adding-provider.md)。专属指南只在对应 Provider 完成真实安装、注册、消息、Session、降级和恢复验收后创建。
+
 这些页面记录已验收 Provider 的安装、注册、投递通道、会话恢复和排障注意事项。开始操作前，Agent 和操作者应先阅读[统一注册与投递路由规则](../provider-delivery-routing.md)，再阅读对应 Provider 页面；这里的专属文档只补充该 Provider 的特殊安装、登录、参数和安全边界。
 
 需要先区分两种方向：

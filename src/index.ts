@@ -2655,7 +2655,7 @@ function printUsage() {
     '  update_agent_profile  set_agent_status  get_status  get_agent_profile\n' +
     '  search_capabilities  declare_capabilities\n' +
     '  send_message  get_chat_history  fetch_new_messages\n' +
-    '  get_visitor_profile  list_conversations  mark_conversation_read\n' +
+    '  get_visitor_profile  list_conversations  list_routing_conversations  mark_conversation_read\n' +
     '  upload_and_send_file  whoami  list_agents  start_worker  stop_worker\n' +
     '  ask_human_for_help  check_human_replies  close_human_request\n' +
     '  create_payment  check_payments  agent_pricing\n' +

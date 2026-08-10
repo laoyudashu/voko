@@ -81,6 +81,7 @@
   "mcp.tool.get_chat_history.p.keyword": "在消息内容中搜索关键词",
   "mcp.tool.get_chat_history.p.limit": "最多返回条数（上限 200）",
   "mcp.tool.get_chat_history.p.offset": "分页偏移量",
+  "mcp.tool.get_chat_history.p.conversationId": "任意の VOKO ルーティング Conversation。省略時はチャンネル単位の履歴を維持します",
 
   "mcp.tool.get_visitor_profile.desc": "查询访客的昵称、头像、消息统计、黑白名单状态、最近对话、审核记录和支付记录",
   "mcp.tool.get_visitor_profile.p.visitorId": "访客 UID",
@@ -93,6 +94,9 @@
   "mcp.tool.list_conversations.p.limit": "最多返回条数",
   "mcp.tool.list_conversations.p.offset": "ページオフセット",
   "mcp.tool.list_conversations.p.keyword": "検索キーワード",
+  "mcp.tool.list_routing_conversations.desc": "Provider のネイティブ Session ID を公開せず、Agent チャンネル内の正確な VOKO Conversation を一覧表示します",
+  "mcp.tool.list_routing_conversations.p.channelId": "ダイレクトチャットの相手 UID またはグループチャンネル ID",
+  "mcp.tool.list_routing_conversations.p.channelType": "チャンネル種別：1=ダイレクト、2=グループ",
 
   "mcp.tool.mark_conversation_read.desc": "将会话的未读消息数重置为 0。访客已读消息后调用此工具清除未读标记",
   "mcp.tool.mark_conversation_read.p.channelId": "会话 ID（访客 UID）",
@@ -122,6 +126,8 @@
   "mcp.tool.ask_human_for_help.p.agentId": "哪个 Agent 请求介入",
   "mcp.tool.ask_human_for_help.p.visitorId": "需要主人关注的访客 UID",
   "mcp.tool.ask_human_for_help.p.problem": "问题描述，越详细越好，方便主人快速理解",
+  "mcp.tool.ask_human_for_help.p.conversationId": "オーナー介入中に維持する VOKO Conversation ID（任意）",
+  "mcp.tool.ask_human_for_help.p.replyToMessageId": "正確なルートを維持する元メッセージ ID（任意、conversationId より優先）",
   "mcp.tool.ask_human_for_help.p.suggestion": "建议主人如何回复或处理",
 
   "mcp.tool.check_human_replies.desc": "主人が介入リクエストに返信したか確認します。ownerReply が空でなければ指示に従って処理できます。status=unknown の場合は自動配信を確認できないため、このツールで Pull して返信を取得してください。ページング対応",

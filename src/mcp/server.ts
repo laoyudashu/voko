@@ -218,6 +218,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       channelId: z.string().optional().describe(T('mcp.tool.get_chat_history.p.channelId')),
       channelType: z.number().int().min(1).max(2).optional().describe('频道类型：1=单聊，2=群聊（省略时按频道 ID 和本地记录判断）'),
       keyword: z.string().optional().describe(T('mcp.tool.get_chat_history.p.keyword')),
+      conversationId: z.string().optional().describe(T('mcp.tool.get_chat_history.p.conversationId')),
       limit: z.number().optional().default(20).describe(T('mcp.tool.get_chat_history.p.limit')),
       offset: z.number().optional().default(0).describe(T('mcp.tool.get_chat_history.p.offset')),
     },
@@ -259,6 +260,23 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     },
     async (params: unknown) => {
       const r = await toolHandlers.list_conversations(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { readOnlyHint: true }
+  );
+
+  server.tool(
+    'voko_list_routing_conversations',
+    T('mcp.tool.list_routing_conversations.desc'),
+    {
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      channelId: z.string().describe(T('mcp.tool.list_routing_conversations.p.channelId')),
+      channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.list_routing_conversations.p.channelType')),
+      limit: z.number().int().min(1).max(100).optional().default(20),
+      offset: z.number().int().min(0).optional().default(0),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.list_routing_conversations(params);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     },
     { readOnlyHint: true }
@@ -364,6 +382,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       channelId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.channelId')),
       channelType: z.number().int().min(1).max(2).optional().default(1).describe(T('mcp.tool.ask_human_for_help.p.channelType')),
       messageId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.messageId')),
+      conversationId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.replyToMessageId')),
       problem: z.string().describe(T('mcp.tool.ask_human_for_help.p.problem')),
       suggestion: z.string().optional().describe(T('mcp.tool.ask_human_for_help.p.suggestion')),
     },

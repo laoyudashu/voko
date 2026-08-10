@@ -287,6 +287,7 @@ reg('A3', 'goose 消息回路', 'POST /api/gateway/forward → goose agent', '60
 const MCP_SAFE_CALLS = {
   'voko_get_status':             (ctx) => ({ agentId: ctx.agentId }),
   'voko_list_conversations':     (ctx) => ({ agentId: ctx.agentId, limit: 5 }),
+  'voko_list_routing_conversations': (ctx) => ({ agentId: ctx.agentId, channelId: ctx.visitorId, limit: 5 }),
   'voko_get_chat_history':       (ctx) => ({ agentId: ctx.agentId, channelId: ctx.visitorId, limit: 5 }),
   'voko_get_visitor_profile':    (ctx) => ({ agentId: ctx.agentId, visitorId: ctx.visitorId }),
   'voko_fetch_new_messages':     (ctx) => ({ agentId: ctx.agentId, visitorId: ctx.visitorId, blockTimeout: 1 }),
@@ -317,6 +318,7 @@ reg('B0', 'MCP tools/list 枚举', 'MCP JSON-RPC tools/list', '返回 voko_* 工
     'voko_set_agent_status', 'voko_get_status', 'voko_get_agent_profile',
     'voko_search_capabilities', 'voko_declare_capabilities', 'voko_send_message',
     'voko_get_chat_history', 'voko_get_visitor_profile', 'voko_list_conversations',
+    'voko_list_routing_conversations',
     'voko_mark_conversation_read', 'voko_upload_and_send_file', 'voko_whoami', 'voko_list_agents',
     'voko_start_worker', 'voko_stop_worker', 'voko_ask_human_for_help',
     'voko_check_human_replies', 'voko_close_human_request', 'voko_create_payment',
@@ -447,6 +449,7 @@ for (const [table, expectedCols] of Object.entries(DB_TABLES)) {
     get_visitor_profile:       (ctx) => ['--visitor-id=' + ctx.visitorId, '--agent-id=' + ctx.agentId],
     list_conversations:        (ctx) => ['--agent-id=' + ctx.agentId, '--limit=3'],
     mark_conversation_read:    (ctx) => ['--agent-id=' + ctx.agentId, '--channel-id=' + ctx.visitorId],
+    list_routing_conversations: (ctx) => ['--agent-id=' + ctx.agentId, '--channel-id=' + ctx.visitorId],
     upload_and_send_file:      null,
     whoami:                    (ctx) => [],
     list_agents:               (ctx) => ['--limit=20'],

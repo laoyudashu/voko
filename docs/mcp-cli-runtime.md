@@ -80,6 +80,19 @@ voko start --no-open
 
 `--no-open` only disables browser opening. `--no-interactive` disables the headless first-run terminal wizard. Neither option changes the MCP protocol.
 
+## Routing conversations in Agent tools
+
+VOKO keeps channel discovery and precise Provider-session routing as separate concepts:
+
+- `list_conversations` lists direct-chat peers and group channels. Its existing behavior is unchanged.
+- `list_routing_conversations` lists active or pending VOKO routing conversations inside one Agent channel. It returns safe VOKO `conversationId` values and never exposes Provider-native session or thread identifiers.
+
+All Conversation-aware inputs are optional for backwards compatibility. Existing channel-level calls continue to work. New callers should prefer `replyToMessageId` when replying to a concrete message, use `conversationId` when deliberately continuing a known Conversation, and omit both on a first outbound message so VOKO can resolve or create it.
+
+`send_message` and `upload_and_send_file` return `messageId` plus a nullable `conversationId`. `fetch_new_messages` and `get_chat_history` return a nullable `conversationId` on every message. `get_chat_history` keeps returning the complete Agent channel when `conversationId` is omitted; when supplied, filtering happens before pagination. Old or unrouted messages remain readable with `conversationId: null`.
+
+`ask_human_for_help` accepts either `replyToMessageId` (preferred) or `conversationId`, and returns the Conversation retained by the intervention. An invalid, cross-Agent, or cross-channel Conversation fails closed; omitting it retains compatible channel-level behavior.
+
 ## Stop and uninstall
 
 Use `voko stop` to stop the runtime without preparing package removal. Before uninstalling the npm package, use:

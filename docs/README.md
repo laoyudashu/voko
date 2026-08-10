@@ -12,6 +12,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [Provider caller identity](provider-caller-identity.md): OS/provider-specific trusted caller Session evidence, `whoami` matching, and manual-selection fallback.
 - [Provider compatibility matrix](provider-compatibility.md): the 18 validated Provider families, connection types, validation status, and how to report results.
 - [Provider-specific guides](providers/README.md): installation, registration, routing, recovery, and troubleshooting notes for individual Provider families.
+- [Add a new Agent Provider](adding-provider.md): architecture decisions, code integration points, Session routing, safety, automated tests, real-device validation, and documentation gates.
 - [Ubuntu Linux real-test matrix](providers/linux-real-test-2026-08.md): versions, registration, message continuity, Push order, and Linux-specific caveats for the 18 validated Provider families.
 - [Safe uninstall](uninstall.en.md) · [中文](uninstall.md) · [日本語](uninstall.ja.md): stop the runtime, preserve or purge local data, and review remaining MCP / Provider configuration.
 

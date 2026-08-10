@@ -83,6 +83,7 @@
   "mcp.tool.get_chat_history.p.keyword": "在消息内容中搜索关键词",
   "mcp.tool.get_chat_history.p.limit": "最多返回条数（上限 200）",
   "mcp.tool.get_chat_history.p.offset": "分页偏移量",
+  "mcp.tool.get_chat_history.p.conversationId": "可选的 VOKO 精确路由会话 ID；不传时保持频道级历史查询",
 
   "mcp.tool.get_visitor_profile.desc": "查询访客的昵称、头像、消息统计、黑白名单状态、最近对话、审核记录和支付记录",
   "mcp.tool.get_visitor_profile.p.visitorId": "访客 UID",
@@ -95,6 +96,9 @@
   "mcp.tool.list_conversations.p.limit": "最多返回条数",
   "mcp.tool.list_conversations.p.offset": "分页偏移",
   "mcp.tool.list_conversations.p.keyword": "搜索关键字",
+  "mcp.tool.list_routing_conversations.desc": "列出一个 Agent 频道内的精确路由会话，不暴露 Provider 原生 Session 标识",
+  "mcp.tool.list_routing_conversations.p.channelId": "单聊对端 UID 或群频道 ID",
+  "mcp.tool.list_routing_conversations.p.channelType": "频道类型：1=单聊，2=群聊",
 
   "mcp.tool.mark_conversation_read.desc": "将会话的未读消息数重置为 0。访客已读消息后调用此工具清除未读标记",
   "mcp.tool.mark_conversation_read.p.channelId": "会话 ID（访客 UID）",
@@ -126,6 +130,8 @@
   "mcp.tool.ask_human_for_help.p.channelId": "\u7fa4\u7ec4\u4ecb\u5165\u65f6\u7684\u539f\u7fa4 ID\uff1b\u79c1\u804a\u65f6\u4e0d\u4f20",
   "mcp.tool.ask_human_for_help.p.channelType": "\u4f1a\u8bdd\u7c7b\u578b\uff1a1=\u79c1\u804a\uff0c2=\u7fa4\u7ec4\uff1b\u7fa4\u7ec4\u4e2d\u5fc5\u987b\u4f20 2",
   "mcp.tool.ask_human_for_help.p.messageId": "\u89e6\u53d1\u4ecb\u5165\u7684\u539f\u6d88\u606f ID\uff08\u53ef\u9009\uff09",
+  "mcp.tool.ask_human_for_help.p.conversationId": "主人介入期间需要保留的 VOKO 精确路由会话 ID（可选）",
+  "mcp.tool.ask_human_for_help.p.replyToMessageId": "需要保留其精确路由的来源消息 ID（可选，优先于 conversationId）",
   "mcp.tool.ask_human_for_help.error.channelIdRequired": "channelType=2 \u65f6\u5fc5\u987b\u4f20 channelId",
   "mcp.tool.ask_human_for_help.p.problem": "问题描述，越详细越好，方便主人快速理解",
   "mcp.tool.ask_human_for_help.p.suggestion": "建议主人如何回复或处理",
