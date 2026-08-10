@@ -94,9 +94,13 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
       const handler = mcpServer.server._requestHandlers.get('tools/call');
       if (handler) {
         try {
-          const rawProvider = String(req.headers['x-voko-caller-provider'] || '');
-          const providerType = normalizeBackendType(rawProvider);
-          const providerFamily = getProviderFamily(providerType);
+          const rawProvider = String(req.headers['x-voko-caller-provider'] || '').trim();
+          // An ordinary HTTP MCP client has no Provider caller context.  Do
+          // not normalize an empty value to the synthetic `others` backend:
+          // doing so would turn the shared legacy cursor into a fake
+          // Provider-scoped cursor and break backward-compatible Pull.
+          const providerType = rawProvider ? normalizeBackendType(rawProvider) : '';
+          const providerFamily = rawProvider ? getProviderFamily(providerType) : null;
           const connectionId = String(req.headers['x-voko-caller-connection'] || '').slice(0, 128) || null;
           const caller: any = {
             source: 'mcp',

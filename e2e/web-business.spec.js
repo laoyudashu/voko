@@ -78,7 +78,7 @@ test('guest bug report submits successfully and preserves the shared footer', as
 
   await expect(page.locator('main')).toContainText(/submitted|success|成功|提交/i);
   await expect(page.locator('[data-voko-system-footer]')).toContainText(/V\d+\.\d+\.\d+/);
-  await expect(page.locator('a[href*="lang="]')).toBeVisible();
+  await expect(page.locator('[data-voko-language-select]')).toBeVisible();
 });
 
 test('English Web pages keep translated labels and no server template placeholders', async ({ page }) => {

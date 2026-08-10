@@ -66,6 +66,10 @@ test('caller instance is ignored without VOKO-managed evidence', () => {
 });
 
 test('Linux Codex caller session is resolved only from a unique process-owned rollout file', (t) => {
+  if (process.platform !== 'linux') {
+    t.skip('the process-owned rollout lookup is Linux-specific');
+    return;
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-codex-proc-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, 'home');
