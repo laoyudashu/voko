@@ -830,6 +830,18 @@ function createToolHandlers(cx: McpContext) {
   }
   function _filterPullRowsForCaller(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
     if (!agentId || rows.length === 0) return rows;
+    const self = cx.query<{ imUid?: string }>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [agentId])[0]?.imUid;
+    rows = rows.filter((row) => {
+      if (Number(row.channel_type) !== 2) return true;
+      let mention: { all?: boolean; uids?: string[] } | null = null;
+      try { mention = typeof row.mention === 'string' ? JSON.parse(row.mention) : (row.mention as any); } catch (_) {}
+      if (!mention?.all && (!self || !Array.isArray(mention?.uids) || !mention.uids.includes(self))) return false;
+      const invalid = cx.query<{ status?: string }>(`SELECT status FROM provider_message_routes
+        WHERE message_id=? AND agent_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1`,
+      [row.id, agentId])[0];
+      return invalid?.status !== 'invalid';
+    });
+    if (rows.length === 0) return rows;
     const caller = getProviderCaller();
     if (!_sessionPullEligible(agentId, caller)) return rows;
     try {

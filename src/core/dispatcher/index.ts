@@ -711,6 +711,12 @@ ${body}
   }
 
   function _a2aScope(payload: PushPayload): string {
+    if (payload.channelType !== 2) return 'direct';
+    const conversationId = (payload as any).replyRouteContext?.conversationId;
+    return conversationId ? `group:${payload.channelId}:conversation:${conversationId}` : `group:${payload.channelId}`;
+  }
+
+  function _a2aRateScope(payload: PushPayload): string {
     return payload.channelType === 2 ? `group:${payload.channelId}` : 'direct';
   }
 
@@ -741,7 +747,7 @@ ${body}
 
     payload.content = _injectStatePrompt(payload.content, turns, A2A_MAX_TURNS);
     console.log(`[Dispatcher] A2A agent=${agentId} from=${peerUid} scope=${scope} turn=${turns}/${A2A_MAX_TURNS}`);
-    return { blocked: false, context: { ...context, a2aTurn: turns }, delay: _a2aRateDelay(meta.imUid, peerUid, scope) };
+    return { blocked: false, context: { ...context, a2aTurn: turns }, delay: _a2aRateDelay(meta.imUid, peerUid, _a2aRateScope(payload)) };
   }
 
   /** 实际路由 push；统一保存回复上下文。 */
@@ -763,7 +769,8 @@ ${body}
     const channelId = payload.channelId || payload.fromUid;
     const channelType = payload.channelType === 2 ? 2 : 1;
     const candidate = (payload as any).replyRouteContext;
-    const exact = candidate && isRoutingPolicyEligible(db, 'precise_reply_routing_v1', {
+    const exactFeature = channelType === 2 ? 'precise_group_reply_routing_v1' : 'precise_reply_routing_v1';
+    const exact = candidate && isRoutingPolicyEligible(db, exactFeature, {
       providerFamily: candidate.providerFamily,
       channelType,
       contentType: Number(payload.contentType || 1),
@@ -875,6 +882,16 @@ ${body}
             const error = new Error('Provider cannot restore the precise session');
             (error as any).deliveryOutcome = 'not_delivered';
             throw error;
+          }
+          if (selectedBinding?.strictSessionRoute) {
+            const restore = (selectedRoute.provider as any).canRestoreExactSession;
+            const restorable = typeof restore === 'function'
+              && await restore.call(selectedRoute.provider, selectedBinding, agentId);
+            if (!restorable) {
+              const error = new Error('Provider exact-session restore probe failed');
+              (error as any).deliveryOutcome = 'not_delivered';
+              throw error;
+            }
           }
           const providerPayload = {
             ...baseProviderPayload,

@@ -1169,7 +1169,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!agentId) return res.json({ success: false, error: '缺少 agentId' });
       const allowed = new Set(['backend_type', 'backend_instance_id', 'delivery_modes', 'agent_name', 'category', 'description', 'access_mode']);
       const safeUpdates = Object.fromEntries(Object.entries(updates || {}).filter(([key]) => allowed.has(key)));
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = updateAgentBindingOnDb(db, { agentId, updates: safeUpdates });
       let runtimeRebind: any;
       if (result.success !== false) runtimeRebind = await runRebindForRoute(db, agentId, prevSnap);
@@ -1207,7 +1207,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }
       }
       if (sets.length) {
-        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+        const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
         // 补 updated_at（原实现遗漏，修复一致性）
         sets.push('updated_at = ?'); vals.push(Date.now());
         vals.push(agentId);
@@ -1226,7 +1226,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const { registerCapabilitiesForAgent } = require('./core/register-capabilities');
       const { updateAgentProfile } = require('./core/update-agent-profile');
       const { setAgentStatus } = require('./core/set-agent-status');
-      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
+      const prevSnap = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId);
       const result = await publishAgent({
         db, agentId,
         startAgentWorker: (id?: any, cfg?: any) => agentManager.start(id, cfg),
@@ -1635,6 +1635,10 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
   try {
     const audit = require('./core/audit');
+    const groupClient = require('./core/group-client');
+    const groupRouteContext = {
+      query: (sql: string, params: unknown[] = []) => db.prepare(sql).all(...params),
+    };
     // 访问控制：包装 access-control-api 纯函数，使独立 Lite 下黑名单/白名单/private 模式同样生效
     const acApi = require('./core/access-control-api');
     const ac: AccessControlLike = {
@@ -1662,6 +1666,8 @@ async function startMcpServer(args?: any, core?: any) {
         bus.emit('owner-intervention:new');
       },
       createPendingPayment: () => {},
+      getGroupInfo: (agentId: string, channelId: string) =>
+        groupClient.getInfo(groupRouteContext, { agentId, channelId }),
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
     });
     messageHandler?.setDispatcher(dispatcher);
@@ -1972,18 +1978,20 @@ function attachRebindAgentRuntime(dispatcher: any, agentManager: any, db: any) {
 async function runRebindForRoute(db: any, agentId: string, previousSnap: any): Promise<any> {
   const rebind = (global as any).__rebindAgentRuntime;
   if (rebind) {
-    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
+    const nextRow = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id=?').get(agentId) || {};
     try {
       return await rebind({
         db, agentId,
         previous: {
           backendType: previousSnap.backend_type,
           backendInstanceId: previousSnap.backend_instance_id ?? null,
+          deliveryModes: previousSnap.delivery_modes,
           imUid: previousSnap.imUid, imToken: previousSnap.imToken, imServerUrl: previousSnap.im_server_url,
         },
         next: {
           backendType: nextRow.backend_type,
           backendInstanceId: nextRow.backend_instance_id ?? null,
+          deliveryModes: nextRow.delivery_modes,
           imUid: nextRow.imUid, imToken: nextRow.imToken, imServerUrl: nextRow.im_server_url,
         },
       });

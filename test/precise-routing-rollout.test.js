@@ -31,10 +31,18 @@ function candidate(providerFamily) {
 
 function provider(name, calls, failure) {
   return { priority: name.endsWith('acp') ? 100 : 10, match: () => true, isAvailable: () => true,
+    canRestoreExactSession: async (binding) => !!binding?.nativeSessionId,
     async push(payload) {
       calls.push({ name, binding: payload.providerBinding });
       if (failure) throw failure;
     } };
+}
+
+function enableGroupExact(db, providerFamilies = ['codex']) {
+  const policy = JSON.stringify({ enabled: true, providerFamilies, channelTypes: [2], contentTypes: [1] });
+  db.prepare(`INSERT INTO config(type,data,updated_at) VALUES(?,?,?)
+    ON CONFLICT(type) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`)
+    .run('feature:precise_group_reply_routing_v1', policy, Date.now());
 }
 
 async function settle() { await new Promise((resolve) => setTimeout(resolve, 25)); }
@@ -65,6 +73,20 @@ test('precise routing leaves group and non-allowlisted providers on the compatib
   assert.equal(calls.every((call) => call.binding == null), true);
   assert.equal(dispatcher.getRoutingStats()['precise_rejected:codex'], 1);
   assert.equal(dispatcher.getRoutingStats()['precise_rejected:goose'], 1);
+});
+
+test('group exact routing is enabled only by the dedicated group policy', async (t) => {
+  const db = fixture(t, 'codex', ['cli', 'pull']);
+  enableGroupExact(db);
+  const calls = [];
+  const dispatcher = createDispatcher({ db, providers: { 'codex-cli': provider('codex-cli', calls) } });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'group:peer-1', senderUid: 'peer-1',
+    channelId: 'peer-1', channelType: 2, contentType: 1, content: 'group', messageId: 'm-group',
+    replyRouteContext: candidate('codex') });
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].binding.strictSessionRoute, true);
+  assert.equal(calls[0].binding.nativeSessionId, 'native-session-1');
 });
 
 test('ACP failure falls back once while retaining the same strict native session', async (t) => {

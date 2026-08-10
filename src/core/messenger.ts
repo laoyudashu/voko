@@ -12,6 +12,7 @@ const { logEvent } = require('./event-log');
 const { isSystemMessageContent } = require('./i18n');
 const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
 const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
+const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
 import type { DatabaseLike } from '../types/database';
 import type {
   AgentReplyMessage,
@@ -172,6 +173,10 @@ class MessageHandler extends EventEmitter {
     this._onOwnerInterventionNew = options.onOwnerInterventionNew || (() => {});
     this._messageRoutes = new MessageRouteStore(db);
     this._routingConversations = new RoutingConversationStore(db);
+    const membershipCache = options.getGroupInfo
+      ? new GroupMembershipSnapshotCache(options.getGroupInfo)
+      : null;
+    this._groupRouteResolver = new GroupReplyRouteResolver(db, this._messageRoutes, membershipCache);
 
     // 预填充大小写映射（OpenClaw WS）
     this._caseMap = new Map<string, string>();
@@ -786,13 +791,18 @@ class MessageHandler extends EventEmitter {
       ? routeMetadata.replyToRouteId : null;
     const remoteRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.routeId === 'string'
       ? routeMetadata.routeId : null;
+    if (isGroup && replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      void this._forwardGroupReplyRoute({ agentId, fromUid, agentContent, content, channelId,
+        contentType: contentType || 1, messageId, timestamp, mention, replyToRouteId, remoteRouteId });
+      return;
+    }
     if (remoteRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       try { this._messageRoutes.recordInbound({ messageId, remoteRouteId, agentId, peerUid: fromUid,
         channelId, channelType: channelType || 1 }); } catch (_) {}
     }
     if (replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       try {
-        const resolved = this._messageRoutes.resolveReply({ replyToRouteId, agentId, peerUid: fromUid,
+        const resolved = this._messageRoutes.resolvePrivateReply({ replyToRouteId, agentId, peerUid: fromUid,
           channelId, channelType: channelType || 1 });
         if (resolved) {
           if (remoteRouteId) this._messageRoutes.recordInbound({ messageId, remoteRouteId,
@@ -811,6 +821,56 @@ class MessageHandler extends EventEmitter {
       channelType: channelType || 1, contentType: contentType || 1,
       messageId, timestamp, mention: isGroup ? mention : null, replyRouteContext,
       remoteRouteId,
+    });
+  }
+
+  async _forwardGroupReplyRoute(input: {
+    agentId: string; fromUid: string; agentContent: string; content: string; channelId: string;
+    contentType: number; messageId: string; timestamp: number; mention: Mention | null;
+    replyToRouteId: string; remoteRouteId: string | null;
+  }): Promise<void> {
+    const resolved = await this._groupRouteResolver.resolve({
+      replyToRouteId: input.replyToRouteId,
+      agentId: input.agentId,
+      channelId: input.channelId,
+      fromUid: input.fromUid,
+      mentionAll: input.mention?.all === true,
+    });
+    if (resolved.state === 'invalid') {
+      try { this._messageRoutes.recordInvalidInbound({ messageId: input.messageId,
+        remoteRouteId: input.replyToRouteId, agentId: input.agentId, peerUid: input.fromUid,
+        channelId: input.channelId, channelType: 2 }); } catch (_) {}
+      console.warn(`[GroupRoute] fail-closed agent=${input.agentId} group=${input.channelId} reason=${resolved.reason}`);
+      return;
+    }
+    if (resolved.state === 'absent') {
+      this.dispatcher?.dispatch(input.agentId, {
+        agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
+        content: input.agentContent, rawContent: input.content, channelId: input.channelId,
+        sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
+        messageId: input.messageId, timestamp: input.timestamp, mention: input.mention,
+        routeState: 'absent',
+      });
+      return;
+    }
+    if (input.remoteRouteId) {
+      try { this._messageRoutes.recordInbound({ messageId: input.messageId, remoteRouteId: input.remoteRouteId,
+        conversationId: resolved.conversation.id, agentId: input.agentId, peerUid: input.fromUid,
+        channelId: input.channelId, channelType: 2 }); } catch (_) {}
+    }
+    this.dispatcher?.dispatch(input.agentId, {
+      agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
+      content: input.agentContent, rawContent: input.content, channelId: input.channelId,
+      sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
+      messageId: input.messageId, timestamp: input.timestamp, mention: input.mention,
+      remoteRouteId: input.remoteRouteId, routeState: 'valid',
+      replyRouteContext: {
+        conversationId: resolved.conversation.id,
+        providerFamily: resolved.conversation.providerFamily,
+        providerInstanceKey: resolved.conversation.providerInstanceKey,
+        nativeSessionId: resolved.conversation.nativeSessionId,
+        strictSessionRoute: true,
+      },
     });
   }
   // ==========================================

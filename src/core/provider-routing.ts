@@ -125,6 +125,11 @@ export interface RoutingConversation {
   createdAt: number; updatedAt: number; lastUsedAt: number;
 }
 
+export type GroupRouteLookup =
+  | { state: 'valid'; route: Record<string, unknown>; conversation: RoutingConversation }
+  | { state: 'invalid'; reason: string }
+  | { state: 'other_agent' };
+
 function conversationFromRow(row: any): RoutingConversation | null {
   return row ? {
     id: row.id, agentId: row.agent_id, providerFamily: row.provider_family,
@@ -240,24 +245,112 @@ export class MessageRouteStore {
     return (this.getByMessage(messageId, agentId)?.route_id as string) || routeId;
   }
 
+  recordInvalidInbound(input: { messageId: string; remoteRouteId?: string | null; agentId: string;
+    peerUid: string; channelId: string; channelType?: number; }): string {
+    const now = Date.now();
+    const routeId = crypto.randomBytes(32).toString('base64url');
+    let remoteRouteId: string | null = null;
+    try { remoteRouteId = cleanRouteId(input.remoteRouteId); } catch (_) {}
+    this.db.prepare(`INSERT INTO provider_message_routes
+      (route_id,message_id,conversation_id,reply_to_route_id,agent_id,peer_uid,channel_id,channel_type,
+       direction,status,expires_at,created_at,updated_at)
+      VALUES (?,?,NULL,?,?,?,?,?,'inbound','invalid',?,?,?)
+      ON CONFLICT(message_id,direction,agent_id) DO UPDATE SET
+        conversation_id=NULL,reply_to_route_id=excluded.reply_to_route_id,status='invalid',updated_at=excluded.updated_at`)
+      .run(routeId, clean(input.messageId, 256), remoteRouteId, clean(input.agentId, 128),
+        clean(input.peerUid, 192), clean(input.channelId, 192), Number(input.channelType) === 2 ? 2 : 1,
+        now + 30 * 24 * 60 * 60 * 1000, now, now);
+    return (this.getByMessage(input.messageId, input.agentId)?.route_id as string) || routeId;
+  }
+
   getByMessage(messageId: string, agentId?: string): any | null {
     return this.db.prepare(`SELECT * FROM provider_message_routes WHERE message_id=?
       ${agentId ? 'AND agent_id=?' : ''} ORDER BY created_at DESC LIMIT 1`)
       .get(...(agentId ? [clean(messageId, 256), clean(agentId, 128)] : [clean(messageId, 256)])) || null;
   }
 
-  resolveReply(input: { replyToRouteId: string; agentId: string; peerUid: string; channelId: string;
+  resolvePrivateReply(input: { replyToRouteId: string; agentId: string; peerUid: string; channelId: string;
     channelType?: number; }): { route: any; conversation: RoutingConversation } | null {
-    const row = this.db.prepare(`SELECT r.*, c.*,
-      r.route_id AS resolved_route_id, r.message_id AS resolved_message_id
+    const row = this.db.prepare(`SELECT
+      r.route_id AS route_id, r.message_id AS route_message_id, r.agent_id AS route_agent_id,
+      r.peer_uid AS route_peer_uid, r.channel_id AS route_channel_id, r.channel_type AS route_channel_type,
+      r.direction AS route_direction, r.status AS route_status, r.expires_at AS route_expires_at,
+      c.id AS conversation_id, c.agent_id AS conversation_agent_id,
+      c.provider_family AS conversation_provider_family,
+      c.provider_instance_key AS conversation_provider_instance_key,
+      c.native_session_id AS conversation_native_session_id,
+      c.native_session_fingerprint AS conversation_native_session_fingerprint,
+      c.channel_id AS conversation_channel_id, c.channel_type AS conversation_channel_type,
+      c.origin AS conversation_origin, c.status AS conversation_status,
+      c.created_at AS conversation_created_at, c.updated_at AS conversation_updated_at,
+      c.last_used_at AS conversation_last_used_at
       FROM provider_message_routes r JOIN provider_routing_conversations c ON c.id=r.conversation_id
       WHERE r.route_id=? AND r.agent_id=? AND r.peer_uid=? AND r.channel_id=? AND r.channel_type=?
         AND r.direction='outbound' AND r.status='active' AND r.expires_at>? AND c.status='active' LIMIT 1`)
       .get(cleanRouteId(input.replyToRouteId, true), clean(input.agentId, 128), clean(input.peerUid, 192),
         clean(input.channelId, 192), Number(input.channelType) === 2 ? 2 : 1, Date.now()) as any;
     if (!row) return null;
-    return { route: { ...row, route_id: row.resolved_route_id, message_id: row.resolved_message_id }, conversation: conversationFromRow(row)! };
+    return { route: row, conversation: conversationFromAliasedRow(row) };
   }
+
+  /** Backwards-compatible private resolver. Group callers must use inspectGroupReply(). */
+  resolveReply(input: { replyToRouteId: string; agentId: string; peerUid: string; channelId: string;
+    channelType?: number; }): { route: any; conversation: RoutingConversation } | null {
+    if (Number(input.channelType) === 2) return null;
+    return this.resolvePrivateReply(input);
+  }
+
+  inspectGroupReply(input: { replyToRouteId: string; agentId: string; channelId: string }): GroupRouteLookup {
+    let routeId: string;
+    try { routeId = cleanRouteId(input.replyToRouteId, true)!; }
+    catch (_) { return { state: 'invalid', reason: 'malformed_route' }; }
+    const row = this.db.prepare(`SELECT
+      r.route_id AS route_id, r.message_id AS route_message_id, r.agent_id AS route_agent_id,
+      r.peer_uid AS route_peer_uid, r.channel_id AS route_channel_id, r.channel_type AS route_channel_type,
+      r.direction AS route_direction, r.status AS route_status, r.expires_at AS route_expires_at,
+      c.id AS conversation_id, c.agent_id AS conversation_agent_id,
+      c.provider_family AS conversation_provider_family,
+      c.provider_instance_key AS conversation_provider_instance_key,
+      c.native_session_id AS conversation_native_session_id,
+      c.native_session_fingerprint AS conversation_native_session_fingerprint,
+      c.channel_id AS conversation_channel_id, c.channel_type AS conversation_channel_type,
+      c.origin AS conversation_origin, c.status AS conversation_status,
+      c.created_at AS conversation_created_at, c.updated_at AS conversation_updated_at,
+      c.last_used_at AS conversation_last_used_at
+      FROM provider_message_routes r
+      LEFT JOIN provider_routing_conversations c ON c.id=r.conversation_id
+      WHERE r.route_id=? LIMIT 1`).get(routeId) as any;
+    if (!row) return { state: 'invalid', reason: 'route_not_found' };
+    if (String(row.route_agent_id) !== clean(input.agentId, 128)) return { state: 'other_agent' };
+    const channelId = clean(input.channelId, 192);
+    if (Number(row.route_channel_type) !== 2 || String(row.route_channel_id) !== channelId) {
+      return { state: 'invalid', reason: 'route_scope_mismatch' };
+    }
+    if (row.route_direction !== 'outbound' || row.route_status !== 'active'
+      || Number(row.route_expires_at) <= Date.now()) {
+      return { state: 'invalid', reason: 'route_inactive' };
+    }
+    if (!row.conversation_id || String(row.conversation_agent_id) !== clean(input.agentId, 128)
+      || Number(row.conversation_channel_type) !== 2 || String(row.conversation_channel_id) !== channelId
+      || row.conversation_status !== 'active') {
+      return { state: 'invalid', reason: 'conversation_scope_mismatch' };
+    }
+    return { state: 'valid', route: row, conversation: conversationFromAliasedRow(row) };
+  }
+}
+
+function conversationFromAliasedRow(row: any): RoutingConversation {
+  return {
+    id: row.conversation_id, agentId: row.conversation_agent_id,
+    providerFamily: row.conversation_provider_family,
+    providerInstanceKey: row.conversation_provider_instance_key,
+    nativeSessionId: row.conversation_native_session_id,
+    nativeSessionFingerprint: row.conversation_native_session_fingerprint,
+    channelId: row.conversation_channel_id, channelType: row.conversation_channel_type,
+    origin: row.conversation_origin, status: row.conversation_status,
+    createdAt: row.conversation_created_at, updatedAt: row.conversation_updated_at,
+    lastUsedAt: row.conversation_last_used_at,
+  };
 }
 
 module.exports = { MessageRouteStore, RoutingConversationStore,

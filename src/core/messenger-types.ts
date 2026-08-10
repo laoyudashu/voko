@@ -191,4 +191,10 @@ export interface MessageHandlerOptions {
     timestamp: number,
   ) => unknown;
   onOwnerInterventionNew?: () => unknown;
+  getGroupInfo?: (agentId: string, channelId: string) => Promise<{
+    status?: string;
+    dissolved_at?: string | null;
+    dissolvedAt?: string | null;
+    members?: Array<{ uid?: string; role?: string }>;
+  }>;
 }

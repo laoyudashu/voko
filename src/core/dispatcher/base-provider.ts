@@ -117,6 +117,13 @@ class PushProvider extends EventEmitter {
     return this.preflightDelivery(agentId);
   }
 
+  /** Read-only exact-session probe. It must never create, load-test or mutate a Provider session. */
+  async canRestoreExactSession(binding: PushPayload['providerBinding'], agentId: string): Promise<boolean> {
+    if (!binding?.strictSessionRoute || !binding.nativeSessionId || !this.isAvailable(agentId)) return false;
+    const accepts = (this as any).acceptsBinding;
+    return typeof accepts !== 'function' || accepts.call(this, binding, agentId) === true;
+  }
+
   /** Optional model-backed test. Providers must require an explicit caller acknowledgement. */
   async runLoopbackTest(_agentId: string, _options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     return { ok: false, status: 'unavailable', code: 'LOOPBACK_UNSUPPORTED' };
