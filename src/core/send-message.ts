@@ -16,6 +16,7 @@ interface SendResult {
   success: boolean;
   via?: string;
   messageId?: string;
+  serverMessageId?: string;
   clientMsgNo?: string;
   messageSeq?: number;
   error?: string;
@@ -77,7 +78,16 @@ function createDeliver({ transportManager }: {
       } else {
         console.error(`[IM 发送失败] agent=${agentId} channel=${channelId} messageId=${lmId} error=${result?.error || 'unknown'}`);
       }
-      return { success: result?.success !== false, via: 'hub', messageId: lmId, ...(result || {}) };
+      return {
+        ...(result || {}),
+        success: result?.success !== false,
+        via: 'hub',
+        // messageId is the stable local identifier used by messages and
+        // provider_message_routes. Keep the IM ACK id separately so callers
+        // can immediately use messageId for precise replies.
+        messageId: lmId,
+        ...(result?.messageId && result.messageId !== lmId ? { serverMessageId: result.messageId } : {}),
+      };
     } catch (e: unknown) {
       console.error(`[IM 发送失败] agent=${agentId} channel=${channelId} messageId=${lmId} error=${errorMessage(e)}`);
       return { success: false, via: 'hub', messageId: lmId, error: errorMessage(e) };
@@ -200,12 +210,12 @@ function createSendMessage({ db, deliver }: {
     bus.emit('agent-wukongim:message', {
       agentId, fromUid: fromUid || 'voko', toUid: channelId, channelId, content,
       channelType: channelType || 1, mention: mentions || null,
-      messageId: sendResult.messageId || msgId, messageSeq: sendResult.messageSeq ?? null, timestamp, isMe: true, contentType
+      messageId: msgId, messageSeq: sendResult.messageSeq ?? null, timestamp, isMe: true, contentType
     });
 
     if (!sendResult.success) {
       try { db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
-      return { success: false, error: sendResult.error, messageId: sendResult.messageId || msgId };
+      return { success: false, error: sendResult.error, messageId: msgId, serverMessageId: sendResult.serverMessageId };
     }
 
     try {
@@ -220,7 +230,13 @@ function createSendMessage({ db, deliver }: {
       `).run(messageSeq, clientMsgNo, msgId);
     } catch (_) {}
 
-    return { success: true, messageId: sendResult.messageId || msgId, clientMsgNo: sendResult.clientMsgNo, messageSeq: sendResult.messageSeq };
+    return {
+      success: true,
+      messageId: msgId,
+      serverMessageId: sendResult.serverMessageId,
+      clientMsgNo: sendResult.clientMsgNo,
+      messageSeq: sendResult.messageSeq,
+    };
   };
 }
 

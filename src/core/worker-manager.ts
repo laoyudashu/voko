@@ -33,11 +33,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function messagePreview(content: unknown, limit = 80): string {
-  const text = String(content ?? '').replace(/\s+/g, ' ').trim();
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-}
-
 class AgentWorkerManager extends EventEmitter {
   [key: string]: any;
   db: DatabaseLike | null;
@@ -75,7 +70,7 @@ class AgentWorkerManager extends EventEmitter {
       console.log(
         `[IM 接收] agent=${msg.agentId} channel=${data.channelId || '-'} channelType=${data.channelType || 1}`
         + ` from=${data.fromUid || '-'} type=${data.contentType || 1} seq=${data.messageSeq ?? '-'}`
-        + ` content="${messagePreview(data.content)}"`,
+        + ` contentLength=${String(data.content ?? '').length}`,
       );
       if (this.listenerCount('message') > 0) {
         this.emit('message', msg);

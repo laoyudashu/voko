@@ -818,7 +818,12 @@ test('shared Hub runtime logs inbound, outbound, SENDACK and heartbeat summaries
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'worker-manager.ts'), 'utf8');
   const sendSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'send-message.ts'), 'utf8');
+  const hermesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'dispatcher', 'providers', 'hermes-http.ts'), 'utf8');
   assert.match(managerSource, /\[IM 接收\]/);
+  assert.doesNotMatch(managerSource, /messagePreview\(data\.content\)/);
+  assert.match(managerSource, /contentLength=/);
+  assert.doesNotMatch(hermesSource, /完整回复.*result\.reply/);
+  assert.doesNotMatch(hermesSource, /replyPreview|replyPrev2/);
   assert.match(sendSource, /\[IM 发送\]/);
   assert.match(sendSource, /\[IM SENDACK\]/);
   assert.match(entrySource, /\[\$\{ts\}\]\[IM 心跳\]/);

@@ -306,7 +306,7 @@ class MessageHandler extends EventEmitter {
 
     const systemMsg = ['NO_REPLY', 'HEARTBEAT_OK', 'ANNOUNCE_SKIP'];
     if (typeof content === 'string' && systemMsg.includes(content.trim())) {
-      console.log(`[消息跳过] agentId=${agentId} 系统消息: ${content.trim()}`);
+      console.log(`[消息跳过] agentId=${agentId} 系统消息 contentLength=${content.trim().length}`);
       return;
     }
 
@@ -996,7 +996,7 @@ class MessageHandler extends EventEmitter {
 
     // 过滤系统消息（全大写 + 下划线）
     if (/^[A-Z_]{3,}$/.test(content.trim())) {
-      console.log(`[Agent回复] 跳过系统消息: ${content.trim()}`);
+      console.log(`[Agent回复] 跳过系统消息 contentLength=${content.trim().length}`);
       return;
     }
 

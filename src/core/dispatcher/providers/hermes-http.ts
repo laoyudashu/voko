@@ -548,9 +548,7 @@ class HermesHttpProvider extends PushProvider {
       const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
-      const replyPreview = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
-      this.addLog(`📥 收到回复 ${agentId} (${replyLen} 字) 内容="${replyPreview}"`);
-      console.log(`[HermesHandler] 完整回复 ${agentId}:`, result.reply);
+      this.addLog(`📥 收到回复 ${agentId} (${replyLen} 字)`);
       this.emit('agent.reply', {
         agentId,
         visitorId,
@@ -592,9 +590,7 @@ class HermesHttpProvider extends PushProvider {
         try {
           const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
           const replyLen2 = (result.reply || '').length;
-          const replyPrev2 = (result.reply || '').substring(0, 120).replace(/\n/g, '\\n');
-          this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字) 内容="${replyPrev2}"`);
-          console.log(`[HermesHandler] 完整回复(重试) ${agentId}:`, result.reply);
+          this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字)`);
           this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
           return;
         } catch (retryErr) {}

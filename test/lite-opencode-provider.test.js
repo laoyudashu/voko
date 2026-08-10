@@ -136,6 +136,46 @@ test('attach does not retry an indeterminate timeout with a fresh session', asyn
   assert.equal(staleMarks, 0);
 });
 
+test('attach safely falls back after a pre-delivery serve failure', async () => {
+  const provider = new OpenCodeAttachProvider();
+  let attempts = 0;
+  let staleMarks = 0;
+  provider._bindingStore = { markStale: () => { staleMarks++; } };
+  provider._pushOnce = async (payload) => {
+    attempts++;
+    if (!payload.__vokoManagedRetry) {
+      const error = new Error('OpenCode serve health check timed out before delivery');
+      error.deliveryOutcome = 'not_delivered';
+      throw error;
+    }
+  };
+  await provider.push({
+    agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello',
+    messageId: 'message-a', timestamp: Date.now(),
+    providerBinding: { id: 'binding-1', providerType: 'opencode' },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(staleMarks, 1);
+});
+
+test('attach clears a failed serve process before recovery', async () => {
+  const provider = new OpenCodeAttachProvider();
+  let killed = false;
+  provider._server = { pid: 123, exitCode: null };
+  provider._port = 4096;
+  provider._password = 'password';
+  provider._disposeFailedServer = function () {
+    killed = true;
+    this._server = null;
+    this._port = 0;
+    this._password = '';
+  };
+  provider._serverPromise = null;
+  provider._disposeFailedServer();
+  assert.equal(killed, true);
+  assert.equal(provider._server, null);
+});
+
 test('OpenCode ACP reports failure to Dispatcher instead of switching adapters internally', async () => {
   const provider = new OpenCodeAcpProvider();
   const calls = [];

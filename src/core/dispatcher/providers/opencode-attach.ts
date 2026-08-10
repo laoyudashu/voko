@@ -76,7 +76,17 @@ class OpenCodeAttachProvider extends PushProvider {
   isAvailable() { return checkCliAvailable(this._cmd); }
 
   async _ensureServer(): Promise<void> {
-    if (this._server && this._server.exitCode === null && this._port) return;
+    if (this._server && this._server.exitCode === null && this._port && this._password) {
+      try {
+        const auth = Buffer.from(`opencode:${this._password}`).toString('base64');
+        const response = await fetch(`http://127.0.0.1:${this._port}/global/health`, {
+          headers: { Authorization: `Basic ${auth}` },
+          signal: AbortSignal.timeout(2000),
+        });
+        if (response.ok) return;
+      } catch (_) {}
+      this._disposeFailedServer();
+    }
     if (this._serverPromise) return this._serverPromise;
     this._serverPromise = (async () => {
       this._port = await findPort(4096);
@@ -104,7 +114,7 @@ class OpenCodeAttachProvider extends PushProvider {
           this._password = '';
         }
       });
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
         if (child.exitCode !== null) throw new Error(`OpenCode serve exited with code ${child.exitCode}`);
         try {
@@ -119,9 +129,21 @@ class OpenCodeAttachProvider extends PushProvider {
         } catch {}
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-      throw new Error('OpenCode serve health check timed out');
+      this._disposeFailedServer();
+      const error = new Error('OpenCode serve health check timed out before delivery');
+      (error as any).deliveryOutcome = 'not_delivered';
+      throw error;
     })().finally(() => { this._serverPromise = null; });
     return this._serverPromise;
+  }
+
+  _disposeFailedServer(): void {
+    const server = this._server;
+    if (server?.pid && server.exitCode === null) killTree(server.pid);
+    this._server = null;
+    this._port = 0;
+    this._password = '';
+    this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: false, reason: 'serve-unhealthy' });
   }
 
   _loadSession(agentId: string, visitorId: string): string | null {
