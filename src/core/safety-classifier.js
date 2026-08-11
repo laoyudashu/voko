@@ -10,18 +10,25 @@ function clamp(value, min, max, fallback) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
+function trimTrailingSlashes(value) {
+  let normalized = String(value || '').trim();
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
 function normalizeConfig(input = {}, previous = {}) {
   const apiType = input.apiType === 'anthropic-messages' ? 'anthropic-messages' : 'openai-chat';
   const apiKey = input.apiKey === undefined || input.apiKey === '' ? String(previous.apiKey || '') : String(input.apiKey);
   return { enabled: input.enabled === true || input.enabled === 'true' || input.enabled === '1', apiType,
-    baseUrl: String(input.baseUrl || '').trim().replace(/\/+$/, ''), modelId: String(input.modelId || '').trim(), apiKey,
+    baseUrl: trimTrailingSlashes(input.baseUrl), modelId: String(input.modelId || '').trim(), apiKey,
     timeoutSeconds: clamp(input.timeoutSeconds, 1, 15, 5), highThreshold: clamp(input.highThreshold, 0.5, 1, 0.9),
     mediumThreshold: clamp(input.mediumThreshold, 0, 0.99, 0.65) };
 }
 
 function configFingerprint(config) {
-  return crypto.createHash('sha256').update(JSON.stringify({ apiType: config.apiType, baseUrl: config.baseUrl,
-    modelId: config.modelId, apiKey: config.apiKey })).digest('hex');
+  const key = config.apiKey || 'voko-safety-config-fingerprint-v1';
+  return crypto.createHmac('sha256', key).update(JSON.stringify({ apiType: config.apiType, baseUrl: config.baseUrl,
+    modelId: config.modelId })).digest('hex');
 }
 
 function loadSafetyClassifierConfig(db, includeSecret = false) {

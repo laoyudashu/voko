@@ -12,7 +12,6 @@
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "365e02facb7d121:1@114", "reason": "同一 challenge 分派的数据流；nonce 的类型和长度已在敏感操作前验证。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/local-http-security.js", "fingerprint": "b4e8ced11edb3ec9:1@8", "reason": "该函数本身就是 Host allowlist：仅接受 localhost、127.0.0.1、::1，并拒绝凭据和额外 URL 部分。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/core/registration-orchestrator.js", "fingerprint": "b8d50ca1cabe6688:1@4", "reason": "这是注册状态机 action 分派；verifyEmail 仍校验服务端签发的 registrationId、验证码和状态。" },
-    { "ruleId": "js/reflected-xss", "file": "src/web/index.js", "fingerprint": "b3fe06b3a8c87757:1@9", "reason": "编辑页的 HTML 动态值均经 esc() 处理，页面标题和 Agent 导航由同一转义边界保护；远端分类 code 已补充属性上下文转义，并有恶意 category 回归测试。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "61ec898fbf02e24c:1@3", "reason": "这是 /reauth 的 sendCode action 分派；request_login_code 负责验证码发送和服务端限流，不执行任意 action。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "7ddd71b041c6f3ab:1@3", "reason": "这是 /reauth 的 verify action 分派；login_by_code 负责权威 OTP 校验，成功后才创建本地 Web session。" },
     { "ruleId": "js/user-controlled-bypass", "file": "src/web/register.js", "fingerprint": "cf44aa2498d85cbf:1@4", "reason": "这是登录 POST 的 sendCode action 分派；服务端 register_agent 执行邮箱校验和 OTP 限流。" },
