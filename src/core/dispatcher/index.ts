@@ -14,14 +14,17 @@
  * lite 其他模块只通过 dispatcher 调度，不再直接 spawn / 配置 agent。
  */
 import type { DatabaseLike } from '../../types/database';
-import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
+import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
-const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
 const { isRoutingPolicyEligible } = require('../provider-routing');
 const { getProviderFamily, getProviderTransport } = require('./provider-catalog');
 const { ProviderRuntimeRegistry } = require('./provider-runtime-registry');
 const { RouteResolver } = require('./route-resolver');
 const { DeliveryExecutor } = require('./delivery-executor');
+const { getProviderModularRollout, providerModularModeForFamily } = require('./provider-modular-rollout');
+const { ProviderEventGate } = require('./provider-event-gate');
+const crypto = require('crypto');
 
 interface DispatcherProvider {
   priority?: number;
@@ -204,10 +207,31 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
-  const _bindingStore = new ProviderConversationBindingStore(db);
+  const _sessionCoordinator = new ProviderSessionCoordinator(db);
+  const _bindingStore = _sessionCoordinator.store;
+  const _modularRollout = getProviderModularRollout(db);
   const _conversationRoutes = new Map<string, Promise<void>>();
-  try { _bindingStore.recoverPending(); } catch (_) {}
+  try { _sessionCoordinator.recoverPending(); } catch (_) {}
+
+  function _commitProviderSession(input: any): void {
+    const mode = providerModularModeForFamily(_modularRollout, input.providerType);
+    if (mode === 'shadow') {
+      if (input.receipt?.nativeSessionId) {
+        console.error(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
+      }
+      return;
+    }
+    if (mode === 'enabled') _sessionCoordinator.commitDelivery(input);
+  }
   const _processedFinalReplies = new Map<string, number>();
+  const _providerEventGate = new ProviderEventGate();
+  const _providerEventCounts = new Map<string, number>();
+  function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
+    if (!_providerEventGate.accept(event)) return false;
+    const key = `${event.providerId}:${event.type}`;
+    _providerEventCounts.set(key, (_providerEventCounts.get(key) || 0) + 1);
+    return true;
+  }
   const FINAL_REPLY_TTL_MS = 10 * 60 * 1000;
   function _replyContextKey(agentId?: string, visitorId?: string): string {
     return `${agentId}::${visitorId || ''}`;
@@ -283,10 +307,28 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return true;
   }
   const attachedReplyProviders = new Set<DispatcherProvider>();
+  const attachedEventProviders = new Set<DispatcherProvider>();
+  const _providerIds = new Map<DispatcherProvider, string>();
+  for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
+  function attachProviderEvents(p: DispatcherProvider): void {
+    if (attachedEventProviders.has(p) || typeof p.on !== 'function') return;
+    attachedEventProviders.add(p);
+    p.on('provider.event', (event: ProviderCoreEvent) => {
+      _acceptProviderEvent(event);
+    });
+  }
   function attachReplyProvider(p: DispatcherProvider): void {
     if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
+          const providerId = _providerIds.get(p) || 'unregistered';
+          _acceptProviderEvent({
+            eventId: reply.replyId
+              ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
+              : crypto.randomUUID(),
+            type: 'reply', providerId, agentId: String(reply.agentId || ''),
+            turnId: reply.turnId, occurredAt: Date.now(), terminal: false, payload: reply,
+          });
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
           if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
           const contextualized = _contextualizeReply(reply);
@@ -294,7 +336,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           onAgentReply(contextualized);
     });
   }
-  for (const p of Object.values(providers)) attachReplyProvider(p);
+  for (const p of Object.values(providers)) {
+    attachProviderEvents(p);
+    attachReplyProvider(p);
+  }
   // backend_type 内存缓存：避免每条访客消息都查一次 DB（match/isAvailable 已是同步纯判断，
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
@@ -302,11 +347,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
-  const _providerIds = new Map<DispatcherProvider, string>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
   const _availabilityEventGenerations = new Map<string, number>();
-  for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
   const _convergedMap = new Map<string, number>();   // scopeKey -> markedAt
@@ -473,7 +516,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       } catch (_) {
         status = 'unknown';
       }
-      methods.push({ mode, provider: key, configured: true, available, status });
+      methods.push({ mode, provider: key, configured: true, available, status,
+        capabilities: getProviderTransport(key)?.capabilities });
     }
 
     if (!explicitModes) {
@@ -785,7 +829,7 @@ ${body}
       } };
     }
     if (candidate) countRouting(`precise_rejected:${candidate.providerFamily || 'unknown'}`);
-    const binding = _bindingStore.getActive(agentId, channelId, channelType);
+    const binding = _sessionCoordinator.getActive(agentId, channelId, channelType);
     return {
       ...payload,
       providerBinding: binding ? {
@@ -806,30 +850,23 @@ ${body}
   function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
-    const bindingFamily = getProviderFamily(binding.providerType)?.type || binding.providerType;
-    let compatible = binding.strictSessionRoute
-      ? bindingFamily === _providerFamily(route.providerId)
-      : typeof (route.provider as any).acceptsBinding === 'function'
-      ? !!(route.provider as any).acceptsBinding(binding, agentId)
-      : bindingFamily === _providerFamily(route.providerId)
-        && binding.adapterType === route.providerId
-        && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;
-    if (compatible && binding.providerInstanceId && typeof resolveInstance === 'function') {
-      try { compatible = String(resolveInstance.call(route.provider, agentId) || '') === String(binding.providerInstanceId); }
-      catch (_) { compatible = false; }
+    let providerInstanceId: string | null | undefined;
+    if (binding.providerInstanceId && typeof resolveInstance === 'function') {
+      try { providerInstanceId = String(resolveInstance.call(route.provider, agentId) || '') || null; }
+      catch (_) { providerInstanceId = null; }
     }
-    if (compatible && binding.strictSessionRoute && typeof (route.provider as any).canRestoreExactSession === 'function') {
-      try { compatible = !!(route.provider as any).canRestoreExactSession(binding, agentId); }
-      catch (_) { compatible = false; }
-    }
-    if (compatible) return binding;
-    if (binding.sessionOrigin !== 'caller') {
-      try { _bindingStore.markStale(binding.id); } catch (_) {}
-    }
-    return null;
+    return _sessionCoordinator.resolveForTransport(agentId, binding, {
+      providerType: _providerFamily(route.providerId),
+      providerInstanceId,
+      deliveryMode: mode,
+      adapterType: route.providerId,
+      acceptsBinding: typeof (route.provider as any).acceptsBinding === 'function'
+        ? (candidate: NonNullable<PushPayload['providerBinding']>, id: string) => !!(route.provider as any).acceptsBinding(candidate, id)
+        : undefined,
+    });
   }
 
   async function _doRoute(
@@ -907,17 +944,32 @@ ${body}
           return candidate.target.push!(providerPayload);
         },
         classify: deliveryOutcome,
-        onSuccess: (candidate: any) => {
+        onSuccess: (candidate: any, deliveryReceipt: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          const providerPayload = payloadByProvider.get(candidate.target);
+          if (providerPayload && deliveryReceipt?.nativeSessionId) {
+            try {
+              _commitProviderSession({
+                agentId,
+                channelId: String(providerPayload.channelId || providerPayload.fromUid).replace(/^group:/, ''),
+                channelType: providerPayload.channelType,
+                providerType: candidate.providerType,
+                deliveryMode: candidate.deliveryMode,
+                adapterType: selectedRoute.providerId,
+                binding: providerPayload.providerBinding,
+                receipt: deliveryReceipt,
+              });
+            } catch (error) {
+              console.error(`[Dispatcher] Provider session commit failed agent=${agentId}:`, errorMessage(error));
+            }
+          }
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
           _cacheRouteIfCurrent(agentId, 'push', selectedRoute);
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
-          if (outcome === 'not_delivered' && providerPayload?.providerBinding?.id && providerPayload.providerBinding.sessionOrigin !== 'caller') {
-            try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
-          }
+          try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}
           const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
           console.error(`[Dispatcher] push 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
         },
@@ -1061,9 +1113,24 @@ ${body}
           });
         },
         classify: deliveryOutcome,
-        onSuccess: (candidate: any) => {
+        onSuccess: (candidate: any, deliveryReceipt: any) => {
+          const selectedRoute = routeByProvider.get(candidate.target)!;
+          if (deliveryReceipt?.nativeSessionId) {
+            try {
+              _commitProviderSession({
+                agentId, channelId, channelType,
+                providerType: candidate.providerType,
+                deliveryMode: candidate.deliveryMode,
+                adapterType: selectedRoute.providerId,
+                binding: _bindingForRoute(agentId, activeBinding, selectedRoute),
+                receipt: deliveryReceipt,
+              });
+            } catch (error) {
+              console.error(`[Dispatcher] Provider session commit failed agent=${agentId}:`, errorMessage(error));
+            }
+          }
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
-          _cacheRouteIfCurrent(agentId, 'steer', routeByProvider.get(candidate.target)!);
+          _cacheRouteIfCurrent(agentId, 'steer', selectedRoute);
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'steer', candidate.target);
@@ -1103,6 +1170,7 @@ ${body}
   async function addProviders(additions: Record<string, DispatcherProvider>) {
     const pending = Object.fromEntries(Object.entries(additions).filter(([key]) => !providers[key]));
     for (const [key, provider] of Object.entries(pending)) {
+      attachProviderEvents(provider);
       attachReplyProvider(provider);
       _providerIds.set(provider, key);
     }
@@ -1119,6 +1187,9 @@ ${body}
     try { return await runtimeRegistry.healthCheck(); }
     catch (e) { console.error('[Dispatcher] provider.healthCheck 失败:', errorMessage(e)); return {}; }
   }
+  async function restartProvider(providerId?: string) {
+    await runtimeRegistry.restart(providerId);
+  }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
   function invalidateBindingsForConfigChange(input: {
@@ -1128,12 +1199,16 @@ ${body}
     nextProviderType: string;
     nextInstanceId: string | null;
   }): number {
-    try { return _bindingStore.invalidateForAgentConfigChange(input); }
+    try { return _sessionCoordinator.invalidateForAgentConfigChange(input); }
     catch (e) { console.error('[Dispatcher] invalidateBindingsForConfigChange 失败:', errorMessage(e)); return 0; }
   }
 
   const getRoutingStats = () => ({ ...routingStats });
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, getRoutingStats, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
+  const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, getRoutingStats,
+    getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
+    invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
+    invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher };

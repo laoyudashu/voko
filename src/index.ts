@@ -2112,16 +2112,34 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     ? new Set(backendTypes.map((value: unknown) => String(value || '').trim()).filter(Boolean))
     : null;
   const needsBackend = (...types: string[]) => !requiredBackends || types.some(type => requiredBackends.has(type));
-  const { getProviderFamily, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
+  const { getProviderFamily, getProviderTransport, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
   const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
-  const providerFactoryContext = { db, contextWindow: 20, gooseBin: resolveGooseCommand(), hermesConfig };
+  const { getProviderModularRollout, providerModularModeForFamily } = require('./core/dispatcher/provider-modular-rollout');
+  const modularRollout = getProviderModularRollout(db);
+  const providerFactoryContext = {
+    db,
+    contextWindow: 20,
+    getProviderConfig(transportId: string) {
+      const family = getProviderTransport(transportId)?.family || '';
+      const sessionPersistence = providerModularModeForFamily(modularRollout, family) === 'enabled'
+        ? 'dispatcher' : 'transport';
+      if (transportId === 'goose-cli' || transportId === 'goose-acp') return {
+        binPath: resolveGooseCommand(),
+        sessionPersistence,
+      };
+      if (transportId === 'hermes-http') return { ...hermesConfig, sessionPersistence };
+      return { sessionPersistence };
+    },
+  };
 
   // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('openclaw')) try {
-    const OpenClawHandler = openclawMode === 'ws'
-      ? require('./core/dispatcher/providers/openclaw-ws')
-      : require('./server/openclaw-handler-cli');
-    openclawHandler = new OpenClawHandler(db, null); // Provider 历史恢复需要原生数据库连接
+    if (openclawMode === 'ws') {
+      openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
+    } else {
+      const OpenClawHandler = require('./server/openclaw-handler-cli');
+      openclawHandler = new OpenClawHandler(db, null);
+    }
     if (openclawMode === 'ws') {
       providers['openclaw-ws'] = openclawHandler;
       const status = openclawHandler.getStatus();
@@ -2134,55 +2152,14 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
 
   // ── Hermes provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('hermes')) try {
-    const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-    hermesHandler = new HermesHandler(db, null, { // Provider 历史恢复需要原生数据库连接
-      host: hermesConfig.apiHost || '127.0.0.1',
-      port: hermesConfig.apiPort || 8642,
-      apiKey: hermesConfig.apiKey || '',
-      profiles: hermesConfig.profiles || {},
-    });
+    hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
     providers['hermes-http'] = hermesHandler;
     console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
 
-  // ── CLI / ACP provider 注册表：新增 backend 只在 PROVIDER_REGISTRY 追加一行。
-  //    openclaw-ws / hermes-http 长连接因构造参数与返回值依赖特殊，仍在上方单独构造。──
-  //
-  //    goose 默认从 PATH 解析，也可通过 VOKO_GOOSE_BIN 指定平台对应的完整版本；
-  //    Claude Code 仅走 claude-cli；ACP 模式已移除，避免安装体积巨大的 Claude Agent SDK。
-  const GOOSE_BIN = resolveGooseCommand();
-  const PROVIDER_REGISTRY = [
-    // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
-    { backend: ['openclaw'], key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
-    { backend: ['hermes'], key: 'hermes-cli', mod: './core/dispatcher/providers/hermes-cli', args: { db, contextWindow: 20 } },
-    { backend: ['goose', 'goose-ai', 'goose-acp', 'acp-goose'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
-    // Goose ACP（stdio JSON-RPC，priority=10 与 WS/HTTP 同级；backend_type='acp-goose'）
-    { backend: ['acp-goose'], key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
-    // 各 CLI runtime（priority=1，本地装了对应 CLI 才 isAvailable）
-    { backend: ['claude-code'], key: 'claude-cli', mod: './core/dispatcher/providers/claude-cli', named: 'ClaudeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['codex'], key: 'codex-cli', mod: './core/dispatcher/providers/codex-cli', named: 'CodexCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['gemini'], key: 'gemini-cli', mod: './core/dispatcher/providers/gemini-cli', named: 'GeminiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-acp', mod: './core/dispatcher/providers/cursor-acp', named: 'CursorAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-cli', mod: './core/dispatcher/providers/cursor-cli', named: 'CursorCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
-    { backend: ['github-copilot'], key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['pi'], key: 'pi-cli', mod: './core/dispatcher/providers/pi-cli', named: 'PiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['qwen-code'], key: 'qwen-cli', mod: './core/dispatcher/providers/qwen-cli', named: 'QwenCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['kiro'], key: 'kiro-cli', mod: './core/dispatcher/providers/kiro-cli', named: 'KiroCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['aider'], key: 'aider-cli', mod: './core/dispatcher/providers/aider-cli', named: 'AiderCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-acp', mod: './core/dispatcher/providers/cline-acp', named: 'ClineAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-cli', mod: './core/dispatcher/providers/cline-cli', named: 'ClineCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['openhands'], key: 'openhands-acp', mod: './core/dispatcher/providers/openhands-acp', named: 'OpenHandsAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['openhands'], key: 'openhands-cli', mod: './core/dispatcher/providers/openhands-cli', named: 'OpenHandsCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['reasonix'], key: 'reasonix-cli', mod: './core/dispatcher/providers/reasonix-cli', named: 'ReasonixCliProvider', args: { db, contextWindow: 20 } },
-  ];
+  // CLI, ACP, HTTP and WebSocket transports are all constructed by the Catalog.
   const providerDefinitions = listProviderTransports().filter((definition: any) => !definition.testOnly && !['openclaw-ws', 'hermes-http'].includes(definition.id));
   for (const definition of providerDefinitions) {
     const family = getProviderFamily(definition.family);
@@ -2214,19 +2191,12 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
       const load = (async () => {
         const additions: Record<string, any> = {};
         if (type === 'openclaw' && !dispatcher.providers['openclaw-ws']) {
-          const OpenClawHandler = require('./core/dispatcher/providers/openclaw-ws');
-          openclawHandler = new OpenClawHandler(db, null);
+          openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
           additions['openclaw-ws'] = openclawHandler;
           (global as any).__openclawHandler = openclawHandler;
         }
         if (type === 'hermes' && !dispatcher.providers['hermes-http']) {
-          const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-          hermesHandler = new HermesHandler(db, null, {
-            host: hermesConfig.apiHost || '127.0.0.1',
-            port: hermesConfig.apiPort || 8642,
-            apiKey: hermesConfig.apiKey || '',
-            profiles: hermesConfig.profiles || {},
-          });
+          hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
           additions['hermes-http'] = hermesHandler;
           (global as any).__hermesHandler = hermesHandler;
         }

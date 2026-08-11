@@ -6,7 +6,7 @@ const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 import type { DatabaseLike } from '../../../types/database';
-import type { PushPayload, AgentMeta, ProviderSteerMetadata } from '../types';
+import type { PushPayload, AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata } from '../types';
 
 type RunCli = typeof runCli;
 
@@ -16,6 +16,7 @@ export interface GooseCliOptions {
   contextWindow?: number;
   runCli?: RunCli;
   checkAvailable?: (command: string) => boolean;
+  sessionPersistence?: 'transport' | 'dispatcher';
 }
 
 interface GooseContent { type?: string; text?: string }
@@ -40,8 +41,8 @@ class GooseCliProvider extends PushProvider {
   private readonly _runCli: RunCli;
   private readonly _checkAvailable: (command: string) => boolean;
   private readonly _useResolvedRuntime: boolean;
-  private readonly _queues = new Map<string, Promise<void>>();
-  private readonly _turnPromises = new Map<string, Promise<void>>();
+  private readonly _queues = new Map<string, Promise<ProviderDeliveryReceipt | void>>();
+  private readonly _turnPromises = new Map<string, Promise<ProviderDeliveryReceipt | void>>();
   private readonly _completedTurns = new Set<string>();
   private readonly _activeTurns = new Map<string, { epoch: number; turnId: string }>();
   private _lifecycleEpoch = 0;
@@ -51,7 +52,8 @@ class GooseCliProvider extends PushProvider {
     this._available = null;
     this._binPath = options.binPath || resolveGooseCommand();
     this._db = options.db || null;
-    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+    this._bindingStore = options.sessionPersistence !== 'dispatcher'
+      && options.db && typeof (options.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(options.db as any)
       : null;
     this._contextWindow = options.contextWindow ?? 0;
@@ -82,18 +84,27 @@ class GooseCliProvider extends PushProvider {
     return this._available;
   }
 
-  push(payload: PushPayload): Promise<void> {
+  push(payload: PushPayload): Promise<ProviderDeliveryReceipt | void> {
     const scope = conversationScope(payload);
     const turnId = String(payload.turnId || payload.messageId || '');
     const turnKey = turnId ? `${payload.agentId}:${turnId}` : '';
     if (turnKey && this._completedTurns.has(turnKey)) return Promise.resolve();
     if (turnKey && this._turnPromises.has(turnKey)) return this._turnPromises.get(turnKey)!;
+    this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId,
+      messageId: payload.messageId, turnId: turnId || payload.messageId, terminal: false });
     const previous = this._queues.get(scope.key) || Promise.resolve();
     const current = previous.catch(() => {}).then(() => this._pushScoped(payload, scope));
-    const tracked = current.then(() => {
+    const tracked = current.then((receipt) => {
       if (turnKey) this._rememberCompletedTurn(turnKey);
+      this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId,
+        messageId: payload.messageId, turnId: turnId || payload.messageId,
+        nativeSessionId: receipt?.nativeSessionId || null, terminal: true });
+      return receipt;
     }, (error) => {
       if (turnKey && (error as any)?.deliveryOutcome !== 'not_delivered') this._rememberCompletedTurn(turnKey);
+      this.notifyProviderEvent({ type: 'failed', agentId: payload.agentId,
+        messageId: payload.messageId, turnId: turnId || payload.messageId,
+        terminal: true, payload: { outcome: (error as any)?.deliveryOutcome || 'outcome_unknown' } });
       throw error;
     });
     this._queues.set(scope.key, current);
@@ -116,7 +127,7 @@ class GooseCliProvider extends PushProvider {
   private async _pushScoped(
     payload: PushPayload,
     scope: { channelId: string; channelType: number; key: string; logicalName: string },
-  ): Promise<void> {
+  ): Promise<ProviderDeliveryReceipt | void> {
     const { agentId, fromUid } = payload;
     const turnId = String(payload.turnId || payload.messageId || `goose-cli-${Date.now()}`);
     const turn = { epoch: this._lifecycleEpoch, turnId };
@@ -127,7 +138,6 @@ class GooseCliProvider extends PushProvider {
       const active = this._bindingStore.getActive(agentId, scope.channelId, scope.channelType);
       if (this.acceptsBinding(active)) binding = active as any;
     }
-
     let sessionId = binding?.nativeSessionId || null;
     let createName: string | null = null;
     let sessionsBefore: GooseSessionSummary[] = [];
@@ -218,6 +228,7 @@ class GooseCliProvider extends PushProvider {
       console.error(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} no reply text`);
     }
     if (this._activeTurns.get(scope.key) === turn) this._activeTurns.delete(scope.key);
+    return sessionId ? { nativeSessionId: sessionId, deliveryMode: 'cli', adapterType: 'goose-cli' } : {};
   }
 
   private _execute(input: string, sessionId: string | null, createName: string | null) {
@@ -257,7 +268,7 @@ class GooseCliProvider extends PushProvider {
     } catch (_) { return null; }
   }
 
-  async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<void> {
+  async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<unknown> {
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
     const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;
     const channelId = metadata?.channelId || visitorId.replace(/^group:/, '');

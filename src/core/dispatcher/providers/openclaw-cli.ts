@@ -73,7 +73,7 @@ class OpenClawCliProvider extends PushProvider {
     }
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `openclaw-cli-${Date.now()}`);
     const targetAgentId = this._instanceForAgent(agentId);
@@ -138,6 +138,8 @@ class OpenClawCliProvider extends PushProvider {
       } else {
         throw new Error('OpenClaw returned no reply text');
       }
+      return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+        deliveryMode: 'cli', adapterType: 'openclaw-cli' };
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
       if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
@@ -149,6 +151,8 @@ class OpenClawCliProvider extends PushProvider {
       throw err;
     }
   }
+
+  useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 
   async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<null> {
     const targetAgentId = this._instanceForAgent(agentId);

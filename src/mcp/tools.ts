@@ -16,7 +16,7 @@ const { normalizeBackendType } = require('../core/agent-backend-types');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
 const { getProviderCaller } = require('../core/registration-caller-context');
-const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
+const { ProviderSessionCoordinator } = require('../core/provider-session-coordinator');
 const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
@@ -688,7 +688,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
 }
 
 function createToolHandlers(cx: McpContext) {
-  const providerBindings = new ProviderConversationBindingStore(cx.db);
+  const providerBindings = new ProviderSessionCoordinator(cx.db);
   const identityBindings = new AgentIdentityBindingStore(cx.db);
   const routingConversations = new RoutingConversationStore(cx.db);
   const messageRoutes = new MessageRouteStore(cx.db);

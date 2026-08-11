@@ -1,7 +1,21 @@
 export type ProviderOperation = 'push' | 'steer';
 
+export interface ProviderCapabilities {
+  push: boolean;
+  steer: boolean;
+  streaming: boolean;
+  asyncReply: boolean;
+  sessionResume: boolean;
+  cancel: boolean;
+  pause: boolean;
+  progress: boolean;
+  toolCall: boolean;
+  humanApproval: boolean;
+}
+
 export interface ProviderTransportDefinition {
   id: string;
+  family?: string;
   mode: string;
   priority: number;
   operations: ProviderOperation[];
@@ -9,7 +23,8 @@ export interface ProviderTransportDefinition {
   exportName?: string;
   safetyProfile: string;
   sandboxPolicyId: string;
-  factoryKind?: 'standard' | 'openclaw' | 'hermes';
+  capabilities: ProviderCapabilities;
+  create(context: ProviderFactoryContext): any;
   testOnly?: boolean;
   preflight?: (provider: any, agentId: string) => Promise<unknown>;
   loopback?: (provider: any, agentId: string) => Promise<unknown>;
@@ -30,8 +45,7 @@ export interface ProviderFamilyDefinition {
 export interface ProviderFactoryContext {
   db: unknown;
   contextWindow?: number;
-  gooseBin?: string;
-  hermesConfig?: { apiHost?: string; apiPort?: number; apiKey?: string; profiles?: Record<string, unknown> };
+  getProviderConfig?: (transportId: string) => Record<string, unknown> | null;
   /** Optional version supplied by a trusted runtime probe or a test fixture. */
   providerVersion?: string | null;
   providerVersionSource?: 'command' | 'runtime' | 'protocol' | 'config' | 'unknown';
@@ -58,32 +72,63 @@ export function getProviderVersionCommand(transportId: unknown): string | null {
   return PROVIDER_VERSION_COMMANDS[String(transportId || '').trim()] || null;
 }
 
-const cli = (id: string, modulePath: string, exportName?: string, sandboxPolicyId = 'cli-unverified'): ProviderTransportDefinition => ({
-  id, mode: 'cli', priority: 1, operations: ['push', 'steer'], modulePath, exportName,
-  safetyProfile: 'restricted-cli', sandboxPolicyId,
+const capabilities = (input: Partial<ProviderCapabilities> = {}): ProviderCapabilities => ({
+  push: true, steer: true, streaming: false, asyncReply: false, sessionResume: false,
+  cancel: false, pause: false, progress: false, toolCall: false, humanApproval: false,
+  ...input,
 });
-const acp = (id: string, modulePath: string, exportName?: string): ProviderTransportDefinition => ({
+
+type TransportInput = Omit<ProviderTransportDefinition, 'capabilities' | 'create'> & {
+  capabilities?: Partial<ProviderCapabilities>;
+  create?: (context: ProviderFactoryContext) => any;
+  options?: (context: ProviderFactoryContext) => Record<string, unknown>;
+};
+
+function transport(input: TransportInput): ProviderTransportDefinition {
+  return {
+    ...input,
+    capabilities: capabilities(input.capabilities),
+    create: input.create || ((context: ProviderFactoryContext) => {
+      const loaded = require(input.modulePath);
+      const Ctor = input.exportName ? loaded[input.exportName] : loaded;
+      if (typeof Ctor !== 'function') throw new Error(`Provider transport factory unavailable: ${input.id}`);
+      const scopedOptions = input.options?.(context) || {};
+      const instance = new Ctor({ db: context.db, contextWindow: context.contextWindow ?? 20, ...scopedOptions });
+      if (scopedOptions.sessionPersistence === 'dispatcher') instance.useDispatcherSessionPersistence?.();
+      return instance;
+    }),
+  };
+}
+
+const cli = (id: string, modulePath: string, exportName?: string, sandboxPolicyId = 'cli-unverified'): ProviderTransportDefinition => transport({
+  id, mode: 'cli', priority: 1, operations: ['push', 'steer'], modulePath, exportName,
+  safetyProfile: 'restricted-cli', sandboxPolicyId, capabilities: { sessionResume: true },
+  options: context => context.getProviderConfig?.(id) || {},
+});
+const acp = (id: string, modulePath: string, exportName?: string): ProviderTransportDefinition => transport({
   id, mode: 'acp', priority: 10, operations: ['push', 'steer'], modulePath, exportName,
   safetyProfile: 'isolated-acp', sandboxPolicyId: 'acp-deny-permission',
+  capabilities: { streaming: true, sessionResume: true, cancel: true, progress: true, humanApproval: true },
+  options: context => context.getProviderConfig?.(id) || {},
 });
 
 export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'openclaw', aliases: [], label: 'OpenClaw', requiresInstance: true, defaultDeliveryModes: ['websocket', 'cli', 'pull'], transports: [
-    { id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', factoryKind: 'openclaw' },
+    transport({ id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', capabilities: { streaming: true, asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/openclaw-ws'); return new Ctor(context.db, null); } }),
     cli('openclaw-cli', './providers/openclaw-cli'),
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
-    { id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', factoryKind: 'hermes' },
+    transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', capabilities: { asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
     cli('hermes-cli', './providers/hermes-cli'),
   ] },
   { type: 'zeroclaw', aliases: [], label: 'ZeroClaw', requiresInstance: true, defaultDeliveryModes: ['acp_ws', 'acp', 'cli', 'pull'], transports: [
-    { id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local' },
+    transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),
     acp('zeroclaw-acp', './providers/zeroclaw-acp', 'ZeroClawAcpProvider'),
     cli('zeroclaw-cli', './providers/zeroclaw-cli', 'ZeroClawCliProvider'),
   ] },
   { type: 'opencode', aliases: [], label: 'OpenCode', requiresInstance: false, defaultDeliveryModes: ['acp', 'attach', 'cli', 'pull'], transports: [
     acp('opencode-acp', './providers/opencode-acp', 'OpenCodeAcpProvider'),
-    { id: 'opencode-attach', mode: 'attach', priority: 5, operations: ['push', 'steer'], modulePath: './providers/opencode-attach', exportName: 'OpenCodeAttachProvider', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local' },
+    transport({ id: 'opencode-attach', mode: 'attach', priority: 5, operations: ['push', 'steer'], modulePath: './providers/opencode-attach', exportName: 'OpenCodeAttachProvider', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', capabilities: { streaming: true, sessionResume: true } }),
     cli('opencode-cli', './providers/opencode-cli', 'OpenCodeCliProvider'),
   ] },
   { type: 'github-copilot', aliases: [], label: 'GitHub Copilot CLI', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
@@ -115,7 +160,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'doubao', aliases: [], label: '豆包', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'others', aliases: [], label: 'Others', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'mock', aliases: [], label: 'Mock Echo', requiresInstance: false, defaultDeliveryModes: ['mock', 'pull'], transports: [
-    { id: 'mock-echo', mode: 'mock', priority: 99, operations: ['push', 'steer'], modulePath: './providers/mock-echo', exportName: 'MockEchoProvider', safetyProfile: 'test-only', sandboxPolicyId: 'provider-managed-local', testOnly: true },
+    transport({ id: 'mock-echo', mode: 'mock', priority: 99, operations: ['push', 'steer'], modulePath: './providers/mock-echo', exportName: 'MockEchoProvider', safetyProfile: 'test-only', sandboxPolicyId: 'provider-managed-local', testOnly: true }),
   ] },
 ];
 
@@ -129,6 +174,7 @@ for (const family of PROVIDER_CATALOG) {
   familiesByType.set(family.type, family);
   for (const alias of family.aliases) familiesByType.set(alias, family);
   for (const transport of family.transports) {
+    transport.family = family.type;
     transport.preflight ||= async (provider: any, agentId: string) => {
       const readiness = await (provider.preflightDelivery?.(agentId)
         ?? { status: provider.isAvailable?.(agentId) ? 'preflight_passed' : 'unavailable' });
@@ -175,6 +221,8 @@ export function validateProviderCatalog(): string[] {
       if (!transport.safetyProfile) errors.push(`${transport.id}: safetyProfile missing`);
       if (!transport.sandboxPolicyId) errors.push(`${transport.id}: sandboxPolicyId missing`);
       if (!transport.modulePath) errors.push(`${transport.id}: modulePath missing`);
+      if (typeof transport.create !== 'function') errors.push(`${transport.id}: create missing`);
+      if (!transport.capabilities) errors.push(`${transport.id}: capabilities missing`);
       if (typeof transport.preflight !== 'function') errors.push(`${transport.id}: preflight missing`);
       if (typeof transport.loopback !== 'function') errors.push(`${transport.id}: loopback missing`);
     }
@@ -183,23 +231,10 @@ export function validateProviderCatalog(): string[] {
 }
 
 export function instantiateProviderTransport(definition: ProviderTransportDefinition, context: ProviderFactoryContext): any {
-  const loaded = require(definition.modulePath);
-  const Ctor = definition.exportName ? loaded[definition.exportName] : loaded;
-  if (typeof Ctor !== 'function') throw new Error(`Provider transport factory unavailable: ${definition.id}`);
-  let instance: any;
-  if (definition.factoryKind === 'openclaw') instance = new Ctor(context.db, null);
-  if (definition.factoryKind === 'hermes') {
-    const config = context.hermesConfig || {};
-    instance = new Ctor(context.db, null, {
-      host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642,
-      apiKey: config.apiKey || '', profiles: config.profiles || {},
-    });
-  }
-  if (!instance) {
-    const args: Record<string, unknown> = { db: context.db, contextWindow: context.contextWindow ?? 20 };
-    if (definition.id === 'goose-cli' || definition.id === 'goose-acp') args.binPath = context.gooseBin;
-    instance = new Ctor(args);
-  }
+  const instance = definition.create(context);
+  if (!instance) throw new Error(`Provider transport factory returned no instance: ${definition.id}`);
+  const scopedConfig = context.getProviderConfig?.(definition.id) || {};
+  if (scopedConfig.sessionPersistence === 'dispatcher') instance.useDispatcherSessionPersistence?.();
   const family = getProviderTransport(definition.id)?.family || '';
   let versionProbe: any = context.providerVersion !== undefined
     ? { version: context.providerVersion || null,
@@ -217,6 +252,7 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     return { ...versionProbe };
   };
   Object.defineProperty(instance, 'sandboxPolicyId', { value: definition.sandboxPolicyId, enumerable: true });
+  Object.defineProperty(instance, 'providerCapabilities', { value: Object.freeze({ ...definition.capabilities }), enumerable: true });
   instance.getSandboxStatus = (agentId?: string) => {
     const { evaluateProviderSandbox } = require('../provider-sandbox');
     const version = instance.getProviderVersion();

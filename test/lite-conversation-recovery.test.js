@@ -189,9 +189,10 @@ test('history cannot forge a VOKO control boundary', () => {
 });
 
 test('runtime injects the native database into long-lived providers', () => {
-  const source = fs.readFileSync(require.resolve('../build/index'), 'utf8');
-  assert.match(source, /new OpenClawHandler\(db, null\)/);
-  assert.match(source, /new HermesHandler\(db, null,/);
-  assert.doesNotMatch(source, /new OpenClawHandler\(databaseAPI,/);
-  assert.doesNotMatch(source, /new HermesHandler\(databaseAPI,/);
+  const runtimeSource = fs.readFileSync(require.resolve('../build/index'), 'utf8');
+  const catalogSource = fs.readFileSync(require.resolve('../build/core/dispatcher/provider-catalog'), 'utf8');
+  assert.match(runtimeSource, /const providerFactoryContext = \{\s*db,/);
+  assert.match(catalogSource, /new Ctor\(context\.db, null\)/);
+  assert.match(catalogSource, /new Ctor\(context\.db, null, \{/);
+  assert.doesNotMatch(catalogSource, /new Ctor\(context\.databaseAPI,/);
 });

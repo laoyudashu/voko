@@ -27,7 +27,7 @@ const { ProviderConversationBindingStore } = require('../provider-conversation-b
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 const { normalizeProviderFamily } = require('../provider-routing');
 import type { DatabaseLike } from '../../types/database';
-import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
+import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
@@ -79,9 +79,10 @@ export interface CliAdapterOptions {
     startedAt: number;
     cwd: string;
   }) => Promise<string | null> | string | null;
+  sessionPersistence?: 'transport' | 'dispatcher';
 }
 
-export type CliProviderOptions = Pick<CliAdapterOptions, 'contextWindow' | 'db' | 'cwd'>;
+export type CliProviderOptions = Pick<CliAdapterOptions, 'contextWindow' | 'db' | 'cwd' | 'sessionPersistence'>;
 
 interface ContextMessage {
   content: string;
@@ -145,9 +146,11 @@ class CliAdapter extends PushProvider {
     this._prepareInvocation = opts.prepareInvocation || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
-    this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
+    this._bindingStore = opts.sessionPersistence !== 'dispatcher'
+      && opts.db && typeof (opts.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(opts.db as any)
       : null;
+    this._sessionPersistence = opts.sessionPersistence || 'transport';
     this._identityBindings = opts.db && typeof (opts.db as any).exec === 'function'
       ? new AgentIdentityBindingStore(opts.db as any)
       : null;
@@ -156,6 +159,11 @@ class CliAdapter extends PushProvider {
 
   get priority() { return this._priority; }
   get capabilities() { return ['streaming']; }
+
+  useDispatcherSessionPersistence(): void {
+    this._sessionPersistence = 'dispatcher';
+    this._bindingStore = null;
+  }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === this._matchType;
@@ -176,9 +184,12 @@ class CliAdapter extends PushProvider {
     return this._runtimeResolver.resolve(this._runtimeRequest);
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `cli-${Date.now()}`);
+    if (!(payload as any).__vokoManagedRetry) {
+      this.notifyProviderEvent({ type: 'accepted', agentId, messageId, turnId, terminal: false });
+    }
     const sessionKey = `cli:${agentId}:${fromUid}`;
     const binding = this.acceptsBinding(payload.providerBinding, agentId)
       ? payload.providerBinding
@@ -381,7 +392,11 @@ class CliAdapter extends PushProvider {
       } catch (_) {}
     }
 
-    if (error) throw error;
+    if (error) {
+      this.notifyProviderEvent({ type: 'failed', agentId, messageId, turnId, terminal: true,
+        payload: { outcome: (error as any).deliveryOutcome || 'outcome_unknown' } });
+      throw error;
+    }
     this.emit('agent.reply', {
       agentId, visitorId: fromUid,
       content: fullContent,
@@ -390,6 +405,15 @@ class CliAdapter extends PushProvider {
       turnId,
       replyId: turnId,
     });
+    const receipt = {
+      nativeSessionId: observedSessionId,
+      providerInstanceId: binding?.providerInstanceId || null,
+      deliveryMode: 'cli',
+      adapterType: this._adapterType,
+    };
+    this.notifyProviderEvent({ type: 'completed', agentId, messageId, turnId,
+      nativeSessionId: observedSessionId, terminal: true });
+    return receipt;
   }
 
   async steer(
@@ -397,7 +421,7 @@ class CliAdapter extends PushProvider {
     visitorId: string,
     content: string,
     metadata?: ProviderSteerMetadata,
-  ): Promise<void> {
+  ): Promise<unknown> {
     // owner intervention：走同样的 push 路径
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
     const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;

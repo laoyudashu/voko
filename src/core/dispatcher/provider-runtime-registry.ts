@@ -13,6 +13,7 @@ interface RuntimeProvider {
 export class ProviderRuntimeRegistry extends EventEmitter {
   private started = false;
   private readonly availabilityListeners = new Map<RuntimeProvider, (event: any) => void>();
+  private readonly eventGenerations = new Map<string, number>();
 
   constructor(readonly providers: Record<string, RuntimeProvider> = {}) {
     super();
@@ -22,7 +23,25 @@ export class ProviderRuntimeRegistry extends EventEmitter {
   private attach(id: string, provider: RuntimeProvider): void {
     provider.setAvailabilityProviderId?.(id);
     if (this.availabilityListeners.has(provider) || typeof provider.on !== 'function') return;
-    const listener = (event: any = {}) => this.emit('availability', { ...event, providerId: id });
+    const listener = (event: any = {}) => {
+      const agentId = String(event.agentId || '*');
+      const key = `${id}:${agentId}`;
+      const previous = this.eventGenerations.get(key) || 0;
+      const suppliedGeneration = Number.isFinite(event.generation) ? Number(event.generation) : null;
+      const generation = suppliedGeneration ?? previous + 1;
+      if (suppliedGeneration == null || suppliedGeneration > previous) {
+        this.eventGenerations.set(key, generation);
+      }
+      this.emit('availability', {
+        ...event,
+        providerId: id,
+        agentId: event.agentId,
+        operations: Array.isArray(event.operations) && event.operations.length ? event.operations : ['push', 'steer'],
+        available: event.available === true,
+        reason: String(event.reason || 'provider-state-changed'),
+        generation,
+      });
+    };
     this.availabilityListeners.set(provider, listener);
     provider.on('availability', listener);
   }
@@ -60,6 +79,20 @@ export class ProviderRuntimeRegistry extends EventEmitter {
     }
   }
 
+  async restart(providerId?: string): Promise<void> {
+    const entries = providerId
+      ? (this.providers[providerId] ? [[providerId, this.providers[providerId]] as const] : [])
+      : Object.entries(this.providers);
+    for (const [id, provider] of entries) {
+      try {
+        await provider.stop?.();
+        await provider.start?.();
+      } catch (error) {
+        this.emit('providerError', { providerId: id, operation: 'restart', error });
+      }
+    }
+  }
+
   async stopAll(): Promise<void> {
     this.started = false;
     for (const [id, provider] of Object.entries(this.providers)) {
@@ -69,9 +102,12 @@ export class ProviderRuntimeRegistry extends EventEmitter {
     }
   }
 
-  async healthCheck(): Promise<Record<string, unknown>> {
+  async healthCheck(providerId?: string): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {};
-    for (const [id, provider] of Object.entries(this.providers)) {
+    const entries = providerId
+      ? (this.providers[providerId] ? [[providerId, this.providers[providerId]] as const] : [])
+      : Object.entries(this.providers);
+    for (const [id, provider] of entries) {
       try { result[id] = await provider.healthCheck?.(); }
       catch (error) {
         result[id] = { ok: false, error: error instanceof Error ? error.message : String(error) };

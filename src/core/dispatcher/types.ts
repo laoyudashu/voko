@@ -1,4 +1,29 @@
 export type SessionMode = 'deterministic-key' | 'agent-issued-id';
+import type { ProviderCapabilities } from './provider-catalog';
+export type ProviderDeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
+
+export interface ProviderDeliveryReceipt {
+  nativeSessionId?: string | null;
+  providerInstanceId?: string | null;
+  deliveryMode?: string;
+  adapterType?: string;
+}
+
+export type ProviderCoreEventType = 'accepted' | 'reply' | 'completed' | 'failed' | 'status';
+
+export interface ProviderCoreEvent {
+  eventId: string;
+  type: ProviderCoreEventType;
+  providerId: string;
+  providerInstanceId?: string | null;
+  agentId: string;
+  messageId?: string;
+  turnId?: string;
+  nativeSessionId?: string | null;
+  occurredAt: number;
+  terminal?: boolean;
+  payload?: unknown;
+}
 
 export interface AgentMeta {
   backend_type?: string | null;
@@ -20,14 +45,14 @@ export interface PushPayload {
   messageId?: string;
   turnId?: string;
   timestamp?: number;
-  securityContext?: {
+  securityContext?: Readonly<{
     version: number;
     policyId: string;
     sourceType: string;
     trustLevel: string;
-    instructions: string[];
+    instructions: readonly string[];
     ownerCommandsOnlyVia: string;
-  };
+  }>;
   providerBinding?: {
     id: string;
     bindingVersion: number;
@@ -82,6 +107,7 @@ export interface AgentDeliveryMethodStatus {
   configured: boolean;
   available: boolean;
   status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
+  capabilities?: Readonly<Partial<ProviderCapabilities>>;
 }
 
 export interface AgentDeliveryStatus {

@@ -13,7 +13,7 @@ export interface MessageSecurityContext {
   policyId: 'voko-external-message-v1';
   sourceType: MessageSourceType;
   trustLevel: MessageTrustLevel;
-  instructions: string[];
+  instructions: readonly string[];
   ownerCommandsOnlyVia: 'verified_owner_intervention';
 }
 
@@ -42,20 +42,21 @@ const TRUST_BY_SOURCE: Record<MessageSourceType, MessageTrustLevel> = {
 };
 
 function createMessageSecurityContext(sourceType: MessageSourceType = 'visitor'): MessageSecurityContext {
-  return {
+  const instructions = sourceType === 'owner'
+    ? ['这是经过验证的主人介入消息，可作为主人指令处理，但仍须遵守系统安全策略。']
+    : sourceType === 'system'
+      ? ['这是 VOKO 生成的可信系统消息。']
+      : sourceType === 'agent_peer'
+        ? [...EXTERNAL_INSTRUCTIONS, A2A_INSTRUCTION]
+        : [...EXTERNAL_INSTRUCTIONS];
+  return Object.freeze({
     version: 1,
     policyId: 'voko-external-message-v1',
     sourceType,
     trustLevel: TRUST_BY_SOURCE[sourceType],
-    instructions: sourceType === 'owner'
-      ? ['这是经过验证的主人介入消息，可作为主人指令处理，但仍须遵守系统安全策略。']
-      : sourceType === 'system'
-        ? ['这是 VOKO 生成的可信系统消息。']
-        : sourceType === 'agent_peer'
-          ? [...EXTERNAL_INSTRUCTIONS, A2A_INSTRUCTION]
-          : [...EXTERNAL_INSTRUCTIONS],
+    instructions: Object.freeze(instructions),
     ownerCommandsOnlyVia: 'verified_owner_intervention',
-  };
+  });
 }
 
 function createPullSecurityContext(): Omit<MessageSecurityContext, 'sourceType' | 'trustLevel'> & {

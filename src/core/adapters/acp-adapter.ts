@@ -27,7 +27,7 @@ import type { DatabaseLike } from '../../types/database';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
-import type { AgentMeta, PushPayload, SessionMode } from '../dispatcher/types';
+import type { AgentMeta, ProviderDeliveryReceipt, PushPayload, SessionMode } from '../dispatcher/types';
 
 export interface AcpAdapterOptions {
   name?: string;
@@ -46,6 +46,7 @@ export interface AcpAdapterOptions {
   connectionKey?: (agentId: string) => string;
   contextWindow?: number;
   recoveryDelaysMs?: number[];
+  sessionPersistence?: 'transport' | 'dispatcher';
   streamFactory?: (
     agentId: string,
   ) => Promise<{ stream: unknown; close?: () => void | Promise<void> }>;
@@ -167,9 +168,11 @@ class AcpAdapter extends PushProvider {
 
     // DB 引用（session 句柄持久化）
     this._db = options.db || null;
-    this._bindingStore = options.db && typeof (options.db as any).exec === 'function'
+    this._bindingStore = options.sessionPersistence !== 'dispatcher'
+      && options.db && typeof (options.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(options.db as any)
       : null;
+    this._sessionPersistence = options.sessionPersistence || 'transport';
     this._identityBindings = options.db && typeof (options.db as any).exec === 'function'
       ? new AgentIdentityBindingStore(options.db as any)
       : null;
@@ -206,6 +209,11 @@ class AcpAdapter extends PushProvider {
   get priority() { return 10; }
   get capabilities() { return ['acp', 'streaming', 'session_resume']; }
   get sessionMode(): SessionMode { return 'agent-issued-id'; }
+
+  useDispatcherSessionPersistence(): void {
+    this._sessionPersistence = 'dispatcher';
+    this._bindingStore = null;
+  }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     const bt = meta?.backend_type;
@@ -372,7 +380,7 @@ class AcpAdapter extends PushProvider {
    * 推送访客消息给 ACP agent。
    * ACP Transport 只执行 ACP。跨通道降级由 Dispatcher 统一控制。
    */
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     const { agentId, fromUid, content } = payload;
     if (!agentId || !fromUid || content == null) {
       throw new Error(`[${this._logPrefix}] push 参数不完整: agentId=${agentId} fromUid=${fromUid}`);
@@ -380,12 +388,19 @@ class AcpAdapter extends PushProvider {
 
     // ── ACP 路径 ──
     if (this._cliPath || this._runtimeRequest || this.options.streamFactory) {
+      const turnId = String(payload.turnId || payload.messageId || `acp-${Date.now()}`);
+      this.notifyProviderEvent({ type: 'accepted', agentId, messageId: payload.messageId,
+        turnId, terminal: false });
       try {
-        await this._pushViaAcp(payload);
-        return;
+        const receipt = await this._pushViaAcp(payload);
+        this.notifyProviderEvent({ type: 'completed', agentId, messageId: payload.messageId,
+          turnId, nativeSessionId: receipt.nativeSessionId, terminal: true });
+        return receipt;
       } catch (err) {
         console.error(`[${this._logPrefix}] push via ACP 失败 agent=${agentId}: ${errorMessage(err)}`);
         const deliveryError = err instanceof Error ? err : new Error(String(err));
+        this.notifyProviderEvent({ type: 'failed', agentId, messageId: payload.messageId,
+          turnId, terminal: true, payload: { outcome: (deliveryError as any).deliveryOutcome || 'outcome_unknown' } });
         throw deliveryError;
       }
     }
@@ -407,11 +422,11 @@ class AcpAdapter extends PushProvider {
       channelType?: number;
       providerBinding?: PushPayload['providerBinding'];
     },
-  ): Promise<void> {
+  ): Promise<unknown> {
     const turnId = String(metadata?.turnId || `steer-${Date.now()}`);
     const channelType = metadata?.channelType === 2 || String(visitorId).startsWith('group:') ? 2 : 1;
     const channelId = String(metadata?.channelId || String(visitorId).replace(/^group:/, ''));
-    await this.push({
+    return this.push({
       agentId,
       fromUid: channelType === 2 ? `group:${channelId}` : visitorId,
       content,
@@ -471,7 +486,7 @@ class AcpAdapter extends PushProvider {
   // ── ACP 路径 ──────────────────────────────────────────────────────
 
   /** 通过 ACP session/prompt 发送消息并流式读取回复 */
-  async _pushViaAcp(payload: PushPayload): Promise<void> {
+  async _pushViaAcp(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `acp-${Date.now()}`);
     const state = await this._ensureAgent(agentId);
@@ -563,6 +578,11 @@ class AcpAdapter extends PushProvider {
       content: fullContent, done: true, sessionKey,
       turnId, replyId: turnId,
     });
+    return {
+      nativeSessionId: session.sessionId,
+      deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
+      adapterType: this._adapterType,
+    };
   }
 
   /** Dispatcher 已统一附加安全上下文；这里只保留 ACP 消息标签。 */
@@ -950,7 +970,7 @@ class AcpAdapter extends PushProvider {
 
   /** 持久化 session 句柄到 DB */
   _saveSessionHandle(agentId: string, visitorId: string, sessionId: string): void {
-    if (!this._db) return;
+    if (!this._db || this._sessionPersistence === 'dispatcher') return;
     try {
       this._db.prepare(
         `INSERT OR REPLACE INTO agent_session_handles (agent_id, visitor_id, adapter_type, session_handle, updated_at) VALUES (?, ?, ?, ?, ?)`
@@ -962,7 +982,7 @@ class AcpAdapter extends PushProvider {
 
   /** 从 DB 读取持久化的 session 句柄 */
   _loadSessionHandle(agentId: string, visitorId: string): string | null {
-    if (!this._db) return null;
+    if (!this._db || this._sessionPersistence === 'dispatcher') return null;
     try {
       const row = this._db.prepare(
         `SELECT session_handle FROM agent_session_handles WHERE agent_id=? AND visitor_id=? AND adapter_type=?`
@@ -975,7 +995,7 @@ class AcpAdapter extends PushProvider {
 
   /** 删除 session 句柄（session 失效时） */
   _deleteSessionHandle(agentId: string, visitorId: string): void {
-    if (!this._db) return;
+    if (!this._db || this._sessionPersistence === 'dispatcher') return;
     try {
       this._db.prepare(
         `DELETE FROM agent_session_handles WHERE agent_id=? AND visitor_id=? AND adapter_type=?`

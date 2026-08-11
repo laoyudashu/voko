@@ -750,7 +750,7 @@ class HermesHttpProvider extends PushProvider {
   }
 
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
     const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
       && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
@@ -769,8 +769,12 @@ class HermesHttpProvider extends PushProvider {
       });
     }
     const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    return { nativeSessionId: sessionKey, providerInstanceId: profileId,
+      deliveryMode: 'http', adapterType: 'hermes-http' };
   }
+
+  useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 }
 
 /** 杀进程树：Windows taskkill /F /T，Unix 进程组 SIGKILL。用于清理 detached 的 gateway 子进程。 */

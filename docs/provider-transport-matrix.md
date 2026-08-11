@@ -1,0 +1,24 @@
+# Provider Transport behavior matrix
+
+This matrix freezes the behavior that the modular Dispatcher must preserve.
+`Pull` is durable on-demand consumption and is not a Provider transport.
+
+| Family | Transport order | Native session | Reply model | Binding owner | Cross-transport fallback |
+|---|---|---|---|---|---|
+| Goose | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Dispatcher when rollout is enabled; legacy transport otherwise | Dispatcher only |
+| Cline, Cursor, GitHub Copilot | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Legacy transport during migration | Dispatcher; legacy same-transport recovery remains |
+| OpenCode | ACP, Attach, CLI, Pull | Agent-issued ID | Streaming or final | Legacy transport during migration | Dispatcher; Attach may recreate only its own invalid session |
+| ZeroClaw | ACP WebSocket, ACP, CLI, Pull | Instance-scoped ID | Async/streaming or final | Legacy transport during migration | Dispatcher only |
+| OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Legacy transport during migration | Dispatcher only |
+| Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Legacy transport during migration | Dispatcher only |
+| CLI-only families | CLI, Pull | Provider-specific | Final | Legacy transport during migration | Pull after confirmed `not_delivered` |
+
+## Invariants
+
+- `delivery_modes=null` uses Catalog priority; `[]` disables Push; a non-empty list is strict and ordered.
+- A message is attempted through at most two transports. Only `not_delivered` permits the second attempt.
+- `outcome_unknown` and `rejected` never trigger a cross-transport retry.
+- Availability invalidation is scoped by provider, optional Agent, and operation, and stale generations are ignored.
+- Caller-origin exact-session bindings are never rewritten by automatic recovery or fallback.
+- A transport may reconnect or recreate an invalid session within itself, but it cannot invoke another transport.
+- Shadow rollout computes diagnostics only; it never invokes a second Provider or persists a second binding.

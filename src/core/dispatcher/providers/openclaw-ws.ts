@@ -1466,7 +1466,7 @@ class OpenClawWsProvider {
   }
 
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
     let targetAgentId = agentId;
     try {
@@ -1492,7 +1492,9 @@ class OpenClawWsProvider {
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
   }
 
   /** 注入系统消息（openclaw 无独立 steer，走 sendToSession）。 */
@@ -1501,7 +1503,7 @@ class OpenClawWsProvider {
     visitorId: string,
     content: string,
     metadata?: ProviderSteerMetadata,
-  ): Promise<void> {
+  ): Promise<unknown> {
     let targetAgentId = agentId;
     try {
       const row = this.db?.prepare(
@@ -1515,8 +1517,12 @@ class OpenClawWsProvider {
       ? binding.nativeSessionId
       : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
-    return this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
+    await this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
+    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
   }
+
+  useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 
   /** 自检 + 重连（替代 index.js 散落的 openclaw 心跳恢复逻辑）。 */
   async healthCheck() {
