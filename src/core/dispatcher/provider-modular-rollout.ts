@@ -17,6 +17,8 @@ const DEFAULT_ROLLOUT: ProviderModularRollout = {
     'github-copilot': 'shadow',
     opencode: 'shadow',
     zeroclaw: 'shadow',
+    openclaw: 'shadow',
+    hermes: 'shadow',
   },
 };
 

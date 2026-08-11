@@ -78,6 +78,7 @@ class OpenClawCliProvider extends PushProvider {
     const turnId = String(payload.turnId || payload.messageId || `openclaw-cli-${Date.now()}`);
     const targetAgentId = this._instanceForAgent(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && payload.providerBinding.providerInstanceId === targetAgentId
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId

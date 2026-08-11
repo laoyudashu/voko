@@ -9,8 +9,8 @@ This matrix freezes the behavior that the modular Dispatcher must preserve.
 | Cline, Cursor, GitHub Copilot | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; failed bound sessions are not silently replaced |
 | OpenCode | ACP, Attach, CLI, Pull | Agent-issued ID | Streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; compatible native sessions may move across ACP, Attach and CLI |
 | ZeroClaw | ACP WebSocket, ACP, CLI, Pull | Instance-scoped ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
-| OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Legacy transport during migration | Dispatcher only |
-| Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Legacy transport during migration | Dispatcher only |
+| OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
+| Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; queued CLI failures remain asynchronous |
 | CLI-only families | CLI, Pull | Provider-specific | Final | Legacy transport during migration | Pull after confirmed `not_delivered` |
 
 ## Invariants

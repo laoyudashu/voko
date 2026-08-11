@@ -59,7 +59,8 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(defaults, 'github-copilot'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'opencode'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'zeroclaw'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'disabled');
+  assert.equal(providerModularModeForFamily(defaults, 'openclaw'), 'shadow');
+  assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'shadow');
 
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
     .run('feature:provider_modular_dispatch_v1', JSON.stringify({
@@ -406,6 +407,72 @@ test('OpenCode and ZeroClaw use only the first eligible fallback transport', asy
     'opencode-attach');
   assert.equal(new ProviderSessionCoordinator(db).getActive('agent-zeroclaw', 'visitor-agent-zeroclaw', 1).adapterType,
     'zeroclaw-acp');
+});
+
+test('OpenClaw and Hermes fall back once only for confirmed pre-delivery failures', async (t) => {
+  const db = fixture(t);
+  db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
+    .run('feature:provider_modular_dispatch_v1', JSON.stringify({
+      mode: 'enabled', providerFamilies: ['goose'],
+      familyModes: { openclaw: 'enabled', hermes: 'enabled' },
+    }), Date.now());
+  const now = Date.now();
+  const insert = db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run('row-openclaw', 'agent-openclaw', 'im-openclaw', 'token', 'http://im', 'published',
+    'openclaw', '["websocket","cli","pull"]', 'private', now, now);
+  insert.run('row-hermes', 'agent-hermes', 'im-hermes', 'token', 'http://im', 'published',
+    'hermes', '["http","cli","pull"]', 'private', now, now);
+  insert.run('row-hermes-unknown', 'agent-hermes-unknown', 'im-hermes-unknown', 'token', 'http://im', 'published',
+    'hermes', '["http","cli","pull"]', 'private', now, now);
+
+  const calls = [];
+  const failing = (family, id, outcome) => ({
+    priority: 10,
+    match: (_agentId, meta) => meta.backend_type === family,
+    isAvailable: () => true,
+    push: async payload => {
+      calls.push(`${payload.agentId}:${id}`);
+      const error = new Error(`${id} failed`);
+      error.deliveryOutcome = outcome;
+      throw error;
+    },
+  });
+  const fallback = (family, id) => ({
+    priority: 1,
+    match: (_agentId, meta) => meta.backend_type === family,
+    isAvailable: () => true,
+    push: async payload => {
+      calls.push(`${payload.agentId}:${id}`);
+      return { accepted: true, queued: true, nativeSessionId: `session-${payload.agentId}`,
+        providerInstanceId: `${payload.agentId}-instance`, deliveryMode: 'cli', adapterType: id };
+    },
+  });
+  const hermesHttp = failing('hermes', 'hermes-http', 'not_delivered');
+  hermesHttp.push = async payload => {
+    calls.push(`${payload.agentId}:hermes-http`);
+    const error = new Error('hermes-http failed');
+    error.deliveryOutcome = payload.agentId.endsWith('-unknown') ? 'outcome_unknown' : 'not_delivered';
+    throw error;
+  };
+  const dispatcher = createDispatcher({ db, providers: {
+    'openclaw-ws': failing('openclaw', 'openclaw-ws', 'not_delivered'),
+    'openclaw-cli': fallback('openclaw', 'openclaw-cli'),
+    'hermes-http': hermesHttp,
+    'hermes-cli': fallback('hermes', 'hermes-cli'),
+  } });
+  for (const agentId of ['agent-openclaw', 'agent-hermes', 'agent-hermes-unknown']) {
+    dispatcher.dispatch(agentId, { agentId, fromUid: `visitor-${agentId}`, channelId: `visitor-${agentId}`,
+      channelType: 1, content: 'hello', messageId: `message-${agentId}` });
+  }
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.deepEqual(calls.filter(call => call.startsWith('agent-openclaw:')),
+    ['agent-openclaw:openclaw-ws', 'agent-openclaw:openclaw-cli']);
+  assert.deepEqual(calls.filter(call => call.startsWith('agent-hermes:')),
+    ['agent-hermes:hermes-http', 'agent-hermes:hermes-cli']);
+  assert.deepEqual(calls.filter(call => call.startsWith('agent-hermes-unknown:')),
+    ['agent-hermes-unknown:hermes-http']);
 });
 
 test('shadow rollout never persists a Provider receipt', async (t) => {

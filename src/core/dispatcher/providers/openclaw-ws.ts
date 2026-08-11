@@ -1448,6 +1448,17 @@ class OpenClawWsProvider {
     return !!this.connected;
   }
 
+  getInstanceId(agentId: string): string {
+    try {
+      const row = this.db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'openclaw');
+      return String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {
+      return agentId;
+    }
+  }
+
   /** 建立连接：确保 gateway 运行 + setEnabled 开启 WS（幂等）。 */
   async start() {
     try {
@@ -1468,14 +1479,9 @@ class OpenClawWsProvider {
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
   async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
-    let targetAgentId = agentId;
-    try {
-      const row = this.db?.prepare(
-        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
-      ).get(agentId, 'openclaw');
-      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
-    } catch (_) {}
+    const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && payload.providerBinding.providerInstanceId === targetAgentId
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
@@ -1504,13 +1510,7 @@ class OpenClawWsProvider {
     content: string,
     metadata?: ProviderSteerMetadata,
   ): Promise<unknown> {
-    let targetAgentId = agentId;
-    try {
-      const row = this.db?.prepare(
-        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
-      ).get(agentId, 'openclaw');
-      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
-    } catch (_) {}
+    const targetAgentId = this.getInstanceId(agentId);
     const binding = metadata?.providerBinding;
     const sessionKey = binding?.providerType === 'openclaw'
       && binding.providerInstanceId === targetAgentId

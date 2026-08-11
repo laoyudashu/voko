@@ -36,6 +36,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function notDeliveredError(message: string): Error {
+  const error = new Error(message);
+  (error as any).deliveryOutcome = 'not_delivered';
+  return error;
+}
+
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8642;
 
@@ -540,9 +546,10 @@ class HermesHttpProvider extends PushProvider {
     });
 
     // 自动启动 gateway
-    const justStarted = !this.connected;
     const gatewayReady = await this._ensureGatewayRunning(profileId);
-    if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
+    if (!gatewayReady || !this.connected || !this.client) {
+      throw notDeliveredError(`Hermes gateway is unavailable for profile ${profileId}`);
+    }
 
     try {
       const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
@@ -569,7 +576,11 @@ class HermesHttpProvider extends PushProvider {
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
             return;
-          } catch (retryErr) { this.addLog(`❌ 刷新 profile key 后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`); }
+          } catch (retryErr) {
+            this.addLog(`❌ 刷新 profile key 后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`);
+            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            throw retryErr;
+          }
         }
       }
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
@@ -580,21 +591,15 @@ class HermesHttpProvider extends PushProvider {
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
             return;
-          } catch (retryErr) { this.addLog(`❌ 重启后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`); }
+          } catch (retryErr) {
+            this.addLog(`❌ 重启后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`);
+            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            throw retryErr;
+          }
         }
-        throw new Error('Hermes gateway authentication failed');
+        throw notDeliveredError('Hermes gateway authentication failed');
       }
-      // 刚启动的 gateway 可能因 --replace 切换窗口而短暂不可用，等 2s 重试
-      if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
-        await new Promise<void>(resolve => setTimeout(resolve, 2000));
-        try {
-          const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
-          const replyLen2 = (result.reply || '').length;
-          this.addLog(`📥 收到回复 ${agentId} (重试, ${replyLen2} 字)`);
-          this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
-          return;
-        } catch (retryErr) {}
-      }
+      if (message.includes('HTTP 401')) (err as any).deliveryOutcome = 'not_delivered';
       this.addLog(`❌ chat 失败 ${agentId}: ${message}`);
       throw err;
     }
@@ -625,9 +630,10 @@ class HermesHttpProvider extends PushProvider {
     this.addLog(`📝 注入系统消息 ${agentId}`);
 
     // 自动启动 gateway
-    const justStarted = !this.connected;
     const gatewayReady = await this._ensureGatewayRunning(profileId);
-    if (!gatewayReady || !this.connected || !this.client) throw new Error(`Hermes gateway is unavailable for profile ${profileId}`);
+    if (!gatewayReady || !this.connected || !this.client) {
+      throw notDeliveredError(`Hermes gateway is unavailable for profile ${profileId}`);
+    }
 
     // hermes steer 本身不 emit agent.reply（其 chat 才 emit），手动补偿以走 onAgentReply → handleAgentReply
     const emitReply = (result: HermesSteerResult): void => {
@@ -653,7 +659,11 @@ class HermesHttpProvider extends PushProvider {
             this.addLog(`✅ steer 完成 ${agentId} (刷新 profile key 后)`);
             emitReply(result);
             return result;
-          } catch (retryErr) { this.addLog(`❌ 刷新 profile key 后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`); }
+          } catch (retryErr) {
+            this.addLog(`❌ 刷新 profile key 后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`);
+            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            throw retryErr;
+          }
         }
       }
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
@@ -664,19 +674,15 @@ class HermesHttpProvider extends PushProvider {
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);
             return result;
-          } catch (retryErr) { this.addLog(`❌ 重启后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`); }
+          } catch (retryErr) {
+            this.addLog(`❌ 重启后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`);
+            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            throw retryErr;
+          }
         }
-        throw new Error('Hermes gateway authentication failed');
+        throw notDeliveredError('Hermes gateway authentication failed');
       }
-      if (justStarted && (message.includes('ECONNRESET') || message.includes('ECONNREFUSED'))) {
-        await new Promise<void>(resolve => setTimeout(resolve, 2000));
-        try {
-          const result = await this.client.steer(profileId, sessionKey, visitorId, content);
-          this.addLog(`✅ steer 完成 ${agentId} (重试)`);
-          emitReply(result);
-          return result;
-        } catch (retryErr) {}
-      }
+      if (message.includes('HTTP 401')) (err as any).deliveryOutcome = 'not_delivered';
       this.addLog(`❌ steer 失败 ${agentId}: ${message}`);
       throw err;
     }
@@ -752,12 +758,13 @@ class HermesHttpProvider extends PushProvider {
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
   async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
+    const profileId = this._profileForAgent(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
+      && payload.providerBinding.providerInstanceId === profileId
       && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
       : `hermes:${agentId}:${fromUid}`;
-    const profileId = this._profileForAgent(agentId);
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
     if (!canResumeBinding && profileId && this._bindingStore) {

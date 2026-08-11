@@ -209,7 +209,11 @@ test('Hermes CLI fallback queues the same profile serially without blocking disp
   });
   const first = provider.push({ agentId: 'agent-a', fromUid: 'visitor-1', content: 'one', messageId: 'm1' });
   const second = provider.push({ agentId: 'agent-a', fromUid: 'visitor-2', content: 'two', messageId: 'm2' });
-  await Promise.all([first, second]);
+  const receipts = await Promise.all([first, second]);
+  assert.deepEqual(receipts[0], {
+    accepted: true, queued: true, nativeSessionId: 'hermes:agent-a:visitor-1',
+    providerInstanceId: 'shared-profile', deliveryMode: 'cli', adapterType: 'hermes-cli',
+  });
   assert.equal(active <= 1, true);
   await provider.waitForIdle('shared-profile');
   assert.equal(maxActive, 1);
