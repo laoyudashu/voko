@@ -248,7 +248,7 @@ export class RoutingConversationStore {
 
   mergePendingInto(id: string, parentId: string): RoutingConversation | null {
     const pending = conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
-      WHERE id=? AND status='pending' LIMIT 1`).get(clean(id, 128)));
+      WHERE id=? AND status IN ('pending','active') LIMIT 1`).get(clean(id, 128)));
     if (!pending || pending.parentConversationId !== clean(parentId, 128)) return null;
     const parent = this.getForScope(parentId, pending.agentId, pending.channelId, pending.channelType);
     if (!parent || parent.status !== 'active') return null;
@@ -258,7 +258,7 @@ export class RoutingConversationStore {
       this.db.prepare('UPDATE provider_message_routes SET conversation_id=?,updated_at=? WHERE conversation_id=?')
         .run(parent.id, now, pending.id);
       this.db.prepare(`UPDATE provider_routing_conversations
-        SET status='archived',merge_status='merged',updated_at=?,last_used_at=? WHERE id=? AND status='pending'`)
+        SET status='archived',merge_status='merged',updated_at=?,last_used_at=? WHERE id=? AND status IN ('pending','active')`)
         .run(now, now, pending.id);
       this.db.exec('COMMIT');
       return parent;

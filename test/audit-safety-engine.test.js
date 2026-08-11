@@ -4,6 +4,8 @@ const http = require('node:http');
 const { DatabaseSync } = require('node:sqlite');
 const { checkAuditRules, normalizeAuditText, luhnValid, isValidChineseId } = require('../build/core/audit');
 const { classifyUncertain, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../build/core/safety-classifier');
+const { SAFETY_MODEL_PRESETS, findSafetyModelPreset } = require('../build/core/safety-model-presets');
+const { LLMClient } = require('../build/core/llm-client');
 const { wrapPushContent } = require('../build/core/dispatcher/safety-prompt');
 
 function ruleDb(rules = [], classifierConfig = null) {
@@ -21,6 +23,27 @@ function ruleDb(rules = [], classifierConfig = null) {
     },
   };
 }
+
+test('bundled safety model presets resolve to explicit compatible endpoints', () => {
+  assert.ok(SAFETY_MODEL_PRESETS.length >= 4);
+  for (const preset of SAFETY_MODEL_PRESETS) {
+    assert.match(preset.baseUrl, /^https:\/\//);
+    assert.ok(['openai-chat', 'anthropic-messages'].includes(preset.apiType));
+    assert.equal(findSafetyModelPreset(preset)?.id, preset.id);
+  }
+  assert.equal(findSafetyModelPreset({ apiType: 'openai-chat', baseUrl: 'https://custom.test', modelId: 'custom' }), null);
+});
+
+test('Anthropic-compatible responses skip reasoning blocks and return text blocks', () => {
+  const client = new LLMClient({ providers: [], activeProviderId: null });
+  const result = client.parseResponse({ apiType: 'anthropic-messages' }, {
+    content: [
+      { type: 'thinking', thinking: 'internal reasoning' },
+      { type: 'text', text: '{"risk":"low"}' },
+    ],
+  });
+  assert.equal(result, '{"risk":"low"}');
+});
 
 test('normalizes case, width and invisible characters', () => {
   assert.equal(normalizeAuditText(' ＴＯＫ\u200Ben \n TEST '), 'token test');

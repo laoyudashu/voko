@@ -1769,6 +1769,7 @@ function createToolHandlers(cx: McpContext) {
         }
       }
 
+      const routingConversationWasPending = routingConversation?.status === 'pending';
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
@@ -1792,6 +1793,15 @@ function createToolHandlers(cx: McpContext) {
       } else if (isolateWithManagedSession && result?.success !== false) {
         try { providerBindings.markConversationStale(p.agentId, p.toUid, channelType); } catch (_) {}
       }
+      // A Web-created Conversation is a logical VOKO conversation. Once its
+      // first outbound message is accepted it is usable even when the peer is
+      // a human and will never expose a Provider-native Session.
+      if (p.webRequest === true && routingConversationWasPending && result?.success !== false) {
+        try {
+          routingConversations.activate(routingConversation.id);
+          routingConversation = { ...routingConversation, status: 'active', updatedAt: Date.now(), lastUsedAt: Date.now() };
+        } catch (_) {}
+      }
       // 检测收消息通道是否畅通
       if (cx.checkReceiveChannel) {
         const ch = cx.checkReceiveChannel(p.agentId);
@@ -1805,7 +1815,7 @@ function createToolHandlers(cx: McpContext) {
       if (routingConversation) {
         result.conversationId = routingConversation.id;
         result.conversationStatus = routingConversation.status;
-        result.conversationDisposition = routingConversation.status === 'pending' ? 'created' : 'reused';
+        result.conversationDisposition = routingConversationWasPending ? 'created' : 'reused';
       } else {
         result.conversationId = null;
         result.conversationStatus = null;

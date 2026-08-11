@@ -288,6 +288,30 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
   migrateSchema8WebRoutingRevision(db);
+  // schema 8 is still unreleased and may already exist locally without fields
+  // added later in the same schema iteration. Keep those development databases
+  // readable instead of letting list_agents fail on a missing column.
+  const agentColumns = db.prepare('PRAGMA table_info(agents)').all() as TableInfoRow[];
+  if (!agentColumns.some((column) => column.name === 'visibility_type')) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec('ALTER TABLE agents ADD COLUMN visibility_type INTEGER NOT NULL DEFAULT 0');
+      db.exec("UPDATE agents SET visibility_type = CASE WHEN access_mode = 'public' THEN 1 ELSE 0 END");
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+  // Earlier schema-8 development builds left Web-created conversations in
+  // pending forever while waiting for a Provider Session that human peers do
+  // not have. An acknowledged outbound route is sufficient to activate the
+  // logical VOKO conversation.
+  db.exec(`UPDATE provider_routing_conversations AS c SET status='active',updated_at=MAX(updated_at,last_used_at)
+    WHERE c.status='pending' AND EXISTS (
+      SELECT 1 FROM provider_message_routes AS r
+      WHERE r.conversation_id=c.id AND r.direction='outbound' AND r.status='active'
+    )`);
   ensureSyncCheckpointSchema(db);
   try {
     const pkg = require('../../package.json');

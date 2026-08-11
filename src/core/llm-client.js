@@ -534,7 +534,8 @@ class LLMClient {
     if (provider.apiType === 'anthropic-messages') {
       const content = data.content || [];
       if (content.length > 0) {
-        return content[0].text || '';
+        return content.filter((block) => block && typeof block.text === 'string')
+          .map((block) => block.text).join('\n').trim();
       }
     } else {
       const choices = data.choices || [];
