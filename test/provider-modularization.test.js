@@ -61,6 +61,9 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(defaults, 'zeroclaw'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'openclaw'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'shadow');
+  for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
+    assert.equal(providerModularModeForFamily(defaults, family), 'shadow', family);
+  }
 
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
     .run('feature:provider_modular_dispatch_v1', JSON.stringify({
@@ -77,13 +80,62 @@ test('generic ACP and CLI constructors honor Dispatcher-owned session persistenc
   const db = fixture(t);
   for (const providerId of ['cline-acp', 'cline-cli', 'cursor-acp', 'cursor-cli',
     'github-copilot-acp', 'github-copilot-cli', 'opencode-acp', 'opencode-attach',
-    'opencode-cli', 'zeroclaw-ws', 'zeroclaw-acp', 'zeroclaw-cli']) {
+    'opencode-cli', 'zeroclaw-ws', 'zeroclaw-acp', 'zeroclaw-cli',
+    'claude-cli', 'codex-cli', 'gemini-cli', 'pi-cli', 'qwen-cli', 'kiro-cli',
+    'aider-cli', 'grok-cli', 'reasonix-cli']) {
     const provider = catalog.instantiateProviderTransport(catalog.getProviderTransport(providerId), {
       db,
       getProviderConfig: () => ({ sessionPersistence: 'dispatcher' }),
     });
     assert.equal(provider._bindingStore, null, providerId);
     assert.equal(provider._sessionPersistence, 'dispatcher', providerId);
+  }
+});
+
+test('CLI-only families commit receipts through Dispatcher when enabled', async (t) => {
+  const db = fixture(t);
+  const families = ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix'];
+  db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
+    .run('feature:provider_modular_dispatch_v1', JSON.stringify({
+      mode: 'enabled', providerFamilies: [],
+      familyModes: Object.fromEntries(families.map(family => [family, 'enabled'])),
+    }), Date.now());
+  const now = Date.now();
+  const insert = db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  const providers = {};
+  const transportIds = {
+    'claude-code': 'claude-cli', codex: 'codex-cli', gemini: 'gemini-cli', pi: 'pi-cli',
+    'qwen-code': 'qwen-cli', kiro: 'kiro-cli', aider: 'aider-cli', grok: 'grok-cli', reasonix: 'reasonix-cli',
+  };
+  for (const family of families) {
+    const agentId = `agent-${family}`;
+    const providerId = transportIds[family];
+    insert.run(`row-${agentId}`, agentId, `im-${agentId}`, 'token', 'http://im', 'published',
+      family, '["cli","pull"]', 'private', now, now);
+    providers[providerId] = {
+      priority: 1,
+      match: (_agentId, meta) => meta.backend_type === family,
+      isAvailable: () => true,
+      push: async payload => ({ nativeSessionId: `session-${payload.agentId}`,
+        deliveryMode: 'cli', adapterType: providerId }),
+    };
+  }
+  const dispatcher = createDispatcher({ db, providers });
+  for (const family of families) {
+    const agentId = `agent-${family}`;
+    dispatcher.dispatch(agentId, { agentId, fromUid: `visitor-${agentId}`, channelId: `visitor-${agentId}`,
+      channelType: 1, content: 'hello', messageId: `message-${agentId}` });
+  }
+  await new Promise(resolve => setTimeout(resolve, 60));
+  const coordinator = new ProviderSessionCoordinator(db);
+  for (const family of families) {
+    const agentId = `agent-${family}`;
+    const binding = coordinator.getActive(agentId, `visitor-${agentId}`, 1);
+    assert.equal(binding?.providerType, family);
+    assert.equal(binding?.adapterType, transportIds[family]);
+    assert.equal(binding?.nativeSessionId, `session-${agentId}`);
   }
 });
 

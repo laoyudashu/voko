@@ -11,7 +11,7 @@ This matrix freezes the behavior that the modular Dispatcher must preserve.
 | ZeroClaw | ACP WebSocket, ACP, CLI, Pull | Instance-scoped ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
 | OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
 | Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; queued CLI failures remain asynchronous |
-| CLI-only families | CLI, Pull | Provider-specific | Final | Legacy transport during migration | Pull after confirmed `not_delivered` |
+| CLI-only families (Claude Code, Codex, Gemini, Pi, Qwen Code, Kiro, Aider, Grok, Reasonix) | CLI, Pull | Provider-specific | Final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; Pull after confirmed `not_delivered` |
 
 ## Invariants
 

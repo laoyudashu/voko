@@ -19,6 +19,15 @@ const DEFAULT_ROLLOUT: ProviderModularRollout = {
     zeroclaw: 'shadow',
     openclaw: 'shadow',
     hermes: 'shadow',
+    'claude-code': 'shadow',
+    codex: 'shadow',
+    gemini: 'shadow',
+    pi: 'shadow',
+    'qwen-code': 'shadow',
+    kiro: 'shadow',
+    aider: 'shadow',
+    grok: 'shadow',
+    reasonix: 'shadow',
   },
 };
 
