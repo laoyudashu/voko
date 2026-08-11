@@ -94,6 +94,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isCliConfigurationUnavailable(detail: string): boolean {
+  return /not (?:logged|signed) in|login required|authentication required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)/i.test(detail);
+}
+
 const MAX_REPLY_CHARS = 2 * 1024 * 1024; // 单次回复字符上限，防 agent 输出失控撑爆内存
 
 class CliAdapter extends PushProvider {
@@ -329,8 +333,14 @@ class CliAdapter extends PushProvider {
       }
 
       if (exitCode !== 0) {
+        const cliFailureDetail = `${result.stdout || ''}\n${result.stderr || ''}`;
         error = new Error(`${this._name} 退出 code=${exitCode}`);
         (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
+        if ((error as any).deliveryOutcome === 'not_delivered' && isCliConfigurationUnavailable(cliFailureDetail)) {
+          this._available = false;
+          this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId,
+            available: false, reason: 'cli-auth-required' });
+        }
       } else if (parser.error) {
         error = new Error(parser.error);
         (error as any).deliveryOutcome = 'rejected';

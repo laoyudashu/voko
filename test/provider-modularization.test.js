@@ -63,8 +63,8 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'claude-code'), 'enabled');
   assert.equal(providerModularModeForFamily(defaults, 'codex'), 'enabled');
-  for (const family of ['gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
-    assert.equal(providerModularModeForFamily(defaults, family), 'shadow', family);
+  for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
+    assert.equal(providerModularModeForFamily(defaults, family), 'enabled', family);
   }
 
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
