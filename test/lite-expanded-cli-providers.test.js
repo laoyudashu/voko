@@ -185,12 +185,21 @@ test('OpenClaw rejects a failed CLI process and Hermes reports a background deli
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const previousPath = process.env.PATH;
+  const previousOpenClawBin = process.env.VOKO_OPENCLAW_BIN;
   t.after(() => { process.env.PATH = previousPath; });
+  t.after(() => {
+    if (previousOpenClawBin === undefined) delete process.env.VOKO_OPENCLAW_BIN;
+    else process.env.VOKO_OPENCLAW_BIN = previousOpenClawBin;
+  });
   for (const command of ['openclaw', 'hermes']) {
     const file = path.join(root, process.platform === 'win32' ? `${command}.cmd` : command);
     fs.writeFileSync(file, process.platform === 'win32' ? '@exit /b 7\r\n' : '#!/bin/sh\nexit 7\n', { mode: 0o755 });
   }
   process.env.PATH = `${root}${path.delimiter}${previousPath || ''}`;
+  // Linux runtime discovery intentionally prefers user-local binary folders
+  // ahead of PATH. Pin this test to its fake executable so it never depends
+  // on a real OpenClaw installation on the host.
+  process.env.VOKO_OPENCLAW_BIN = path.join(root, process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw');
   const db = {
     prepare(sql) {
       if (/backend_instance_id/.test(sql)) return { get: () => ({ backend_instance_id: 'isolated-test' }) };
