@@ -157,6 +157,73 @@ async function smoke(config, reporter) {
   } else reporter.check('attachment upload and send', true, 'SKIP: VOKO_REAL_TEST_FILE not configured');
 }
 
+function loadProviderTargets() {
+  const raw = String(process.env.VOKO_REAL_PROVIDER_TARGETS || '').trim();
+  if (!raw) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (error) { throw new Error(`VOKO_REAL_PROVIDER_TARGETS must be valid JSON: ${error.message}`); }
+  if (!Array.isArray(parsed)) throw new Error('VOKO_REAL_PROVIDER_TARGETS must be a JSON array');
+  return parsed.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new Error(`provider target ${index} must be an object`);
+    const label = String(item.label || item.backend || `target-${index + 1}`).trim();
+    const agentId = String(item.agentId || '').trim();
+    const uid = String(item.uid || '').trim();
+    if (!agentId || !uid) throw new Error(`provider target ${label} requires agentId and uid`);
+    return { label, agentId, uid };
+  });
+}
+
+async function providers(config, reporter) {
+  const targets = loadProviderTargets();
+  if (!targets.length) {
+    reporter.check('Provider real reply loop', true, 'SKIP: VOKO_REAL_PROVIDER_TARGETS not configured');
+    return;
+  }
+  const senderAgentId = String(process.env.VOKO_REAL_PROVIDER_SENDER_AGENT_ID || config.agentId).trim();
+  const senderUid = String(process.env.VOKO_REAL_PROVIDER_SENDER_UID || '').trim();
+  if (!senderUid) throw new Error('VOKO_REAL_PROVIDER_SENDER_UID is required when provider targets are configured');
+  const timeout = durationMs(process.env.VOKO_REAL_PROVIDER_TIMEOUT || '120s');
+  const interval = durationMs(process.env.VOKO_REAL_PROVIDER_INTERVAL || '5s');
+  for (const target of targets) {
+    const marker = `[VOKO-REAL-PROVIDER ${reporter.runId} ${target.label}]`;
+    const replyToken = `VOKO_PROVIDER_REPLY_${reporter.runId}_${target.label.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    try {
+      const sent = await mcpCall(config.dbPath, 'voko_send_message', {
+        agentId: senderAgentId,
+        toUid: target.uid,
+        channelType: 1,
+        content: `${marker} Reply exactly ${replyToken}. Do not use tools.`,
+      });
+      const accepted = sent?.success !== false;
+      reporter.summary.counters.sent += accepted ? 1 : 0;
+      reporter.check(`Provider ${target.label} accepted inbound message`, accepted, JSON.stringify(sent).slice(0, 240));
+      if (!accepted) continue;
+
+      const deadline = Date.now() + timeout;
+      let matches = [];
+      while (Date.now() < deadline) {
+        const history = await mcpCall(config.dbPath, 'voko_get_chat_history', {
+          agentId: target.agentId, channelId: senderUid, channelType: 1, limit: 100, order: 'asc',
+        });
+        const messages = history?.messages || history?.data?.messages || [];
+        matches = messages.filter((item) => {
+          const fromUid = item.fromUid ?? item.from_uid;
+          return String(fromUid || '') === target.uid && String(item.content || '').includes(replyToken);
+        });
+        if (matches.length) break;
+        const wait = Math.min(interval, Math.max(0, deadline - Date.now()));
+        if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      if (matches.length === 0) reporter.summary.counters.lost += 1;
+      if (matches.length > 1) reporter.summary.counters.duplicates += matches.length - 1;
+      reporter.check(`Provider ${target.label} replied exactly once`, matches.length === 1, `matches=${matches.length}`);
+      if (matches.length === 1) reporter.summary.counters.verified += 1;
+    } catch (error) {
+      reporter.check(`Provider ${target.label} real reply loop`, false, error.stack || error.message);
+    }
+  }
+}
+
 async function recovery(config, reporter) {
   await mcpCall(config.dbPath, 'voko_stop_worker', { agentId: config.agentId });
   reporter.check('stop selected Worker', true);
@@ -192,6 +259,7 @@ async function main() {
   try {
     if (scenario === 'smoke') await smoke(config, reporter);
     else if (scenario === 'recovery') await recovery(config, reporter);
+    else if (scenario === 'providers' || scenario === 'provider') await providers(config, reporter);
     else if (scenario === 'stability') await stability(config, reporter, durationMs(durationArg));
     else if (scenario === 'all') { await smoke(config, reporter); await recovery(config, reporter); await stability(config, reporter, durationMs(durationArg)); }
     else throw new Error(`unknown real-test scenario: ${scenario}`);
@@ -206,4 +274,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createReporter, durationMs, loadEnv, redact };
+module.exports = { createReporter, durationMs, loadEnv, redact, loadProviderTargets };
