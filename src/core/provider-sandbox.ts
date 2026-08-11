@@ -191,17 +191,21 @@ export function evaluateProviderSandbox(input: {
   const runtimeUnchecked = policy.requiresRuntime && input.runtimeAvailable == null;
   const baseline = policy.support === 'enforced';
   const effective = baseline && !runtimeMissing && !runtimeUnchecked;
-  let status = effective ? 'verified_and_enforced' : policy.support === 'unknown' ? 'legacy_unchanged' : 'supported_not_enabled';
+  let status = effective
+    ? (policy.reasonCode ? 'partially_enforced' : 'verified_and_enforced')
+    : policy.support === 'unknown' ? 'legacy_unchanged' : 'supported_not_enabled';
   let degradedReason = policy.reasonCode || null;
   if (rollout.killedByEnvironment) status = baseline ? 'legacy_enforced_kill_switch' : 'legacy_unchanged';
   else if (runtimeMissing) { status = 'sandbox_runtime_missing'; degradedReason = 'SANDBOX_RUNTIME_UNAVAILABLE'; }
   else if (runtimeUnchecked) { status = 'sandbox_runtime_unchecked'; degradedReason = 'SANDBOX_RUNTIME_NOT_PROBED'; }
-  else if (selected && rollout.mode === 'observe') status = effective ? 'verified_and_enforced' : 'would_apply';
+  else if (selected && rollout.mode === 'observe') status = effective
+    ? (policy.reasonCode ? 'partially_enforced' : 'verified_and_enforced') : 'would_apply';
   else if (selected && rollout.mode === 'enforce' && !effective) status = 'legacy_unchanged';
   return {
     provider: input.providerFamily, transport: input.transportId, platform,
     providerVersion: input.providerVersion || null, rolloutMode: rollout.enabled ? rollout.mode : 'off', rolloutSelected: selected,
     policyId: policy.id, effective, status, support: policy.support, failurePolicy: policy.failurePolicy,
+    coverage: policy.reasonCode ? 'partial' : effective ? 'full' : 'unknown',
     dimensions: { ...policy.dimensions }, verification: [...policy.verification], evidence: [...policy.evidence],
     degradedReason, restartRequired: false,
   };

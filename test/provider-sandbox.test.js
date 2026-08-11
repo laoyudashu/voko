@@ -121,3 +121,13 @@ test('Provider preflight reports the effective sandbox profile as additive diagn
   assert.equal(result.sandbox.policyId, 'codex-readonly');
   assert.equal(result.sandbox.dimensions.filesystem, 'read_only');
 });
+
+test('ACP permission denial is reported as partial rather than full process isolation', () => {
+  const result = evaluateProviderSandbox({ db: dbWith(null), providerFamily: 'goose',
+    transportId: 'goose-acp', policyId: 'acp-deny-permission', platform: 'linux', env: {} });
+  assert.equal(result.effective, true);
+  assert.equal(result.status, 'partially_enforced');
+  assert.equal(result.coverage, 'partial');
+  assert.equal(result.dimensions.humanApproval, 'denied');
+  assert.equal(result.dimensions.filesystem, 'unknown');
+});

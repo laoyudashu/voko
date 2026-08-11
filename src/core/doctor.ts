@@ -394,9 +394,9 @@ function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: 
   }
   const applicable = unique.filter((row: any) => row.status !== 'not_applicable');
   const effective = applicable.filter((row: any) => row.effective).length;
-  const degraded = unique.filter((row: any) => !row.effective && row.status !== 'not_applicable');
+  const degraded = applicable.filter((row: any) => !row.effective || !!row.degradedReason);
   addCheck(checks, 'provider-sandbox', 'Provider sandbox', degraded.length ? 'warn' : 'ok',
-    `${effective}/${applicable.length} automatic transport capability profile(s) enforced; ${degraded.length} degraded or unverified`, {
+    `${effective}/${applicable.length} automatic transport capability profile(s) active; ${degraded.length} partial, degraded or unverified`, {
       transports: unique,
     });
 }
