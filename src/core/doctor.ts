@@ -9,8 +9,8 @@ const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle')
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
 const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
-const { getProviderFamily } = require('./dispatcher/provider-catalog');
-const { evaluateProviderSandbox } = require('./provider-sandbox');
+const { getProviderFamily, getProviderVersionCommand } = require('./dispatcher/provider-catalog');
+const { evaluateProviderSandbox, probeProviderVersion } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
 
@@ -381,8 +381,15 @@ function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: 
           status: 'unknown', degradedReason: 'TRANSPORT_NOT_IN_CATALOG' });
       }
       for (const transport of transports) {
+        const versionProbe = options.deep && getProviderVersionCommand(transport.id)
+          ? probeProviderVersion(getProviderVersionCommand(transport.id))
+          : null;
         rows.push(evaluateProviderSandbox({ db, providerFamily: family.type, transportId: transport.id,
           policyId: transport.sandboxPolicyId, platform: process.platform,
+          providerVersion: versionProbe?.version || null,
+          providerVersionSource: versionProbe?.source || 'unknown',
+          providerVersionObservedAt: versionProbe?.observedAt || null,
+          providerVersionProbe: versionProbe,
           runtimeAvailable: transport.sandboxPolicyId === 'gemini-container' ? dockerAvailable : null }));
       }
     }
@@ -394,7 +401,7 @@ function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: 
   }
   const applicable = unique.filter((row: any) => row.status !== 'not_applicable');
   const effective = applicable.filter((row: any) => row.effective).length;
-  const degraded = applicable.filter((row: any) => !row.effective || !!row.degradedReason);
+  const degraded = applicable.filter((row: any) => !row.effective || !!row.degradedReason || row.versionState !== 'known');
   addCheck(checks, 'provider-sandbox', 'Provider sandbox', degraded.length ? 'warn' : 'ok',
     `${effective}/${applicable.length} automatic transport capability profile(s) active; ${degraded.length} partial, degraded or unverified`, {
       transports: unique,

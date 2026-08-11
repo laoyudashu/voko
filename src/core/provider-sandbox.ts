@@ -1,9 +1,23 @@
+import { execFileSync } from 'node:child_process';
 import type { DatabaseLike } from '../types/database';
 
 export type SandboxPlatform = 'win32' | 'linux' | 'darwin';
 export type SandboxSupport = 'enforced' | 'supported_not_enabled' | 'unsupported' | 'unknown' | 'not_applicable';
 export type SandboxVerification = 'static' | 'simulated' | 'windows_real' | 'linux_real' | 'macos_real';
 export type SandboxFailurePolicy = 'required' | 'best_effort' | 'report_only';
+export type ProviderVersionSource = 'command' | 'runtime' | 'protocol' | 'config' | 'unknown';
+export type ProviderVersionState = 'unknown' | 'known_unverified' | 'verified';
+
+/** Increment when the meaning of a sandbox policy or its dimensions changes. */
+export const SANDBOX_POLICY_REVISION = 1;
+
+export interface ProviderVersionProbe {
+  version: string | null;
+  source: ProviderVersionSource;
+  observedAt: string;
+  result: 'known' | 'unknown';
+  errorCode?: 'not_found' | 'timeout' | 'failed' | 'invalid_version';
+}
 
 export interface ProviderSandboxDimensions {
   filesystem: 'blocked' | 'read_only' | 'workspace_scoped' | 'sandbox_scoped' | 'host_unrestricted' | 'unknown' | 'not_applicable';
@@ -23,6 +37,52 @@ export interface ProviderSandboxPolicy {
   dimensions: ProviderSandboxDimensions;
   requiresRuntime?: 'docker_or_podman' | 'macos_seatbelt_or_container';
   reasonCode?: string;
+}
+
+function extractProviderVersion(output: string): string | null {
+  // Keep only a semver-like token; never return the command output itself.
+  const match = String(output || '').match(/\bv?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\b/);
+  return match?.[1] || null;
+}
+
+/**
+ * Read a Provider version without invoking a model or a shell. This is deliberately
+ * bounded and returns only a normalized version/error code, never stdout/stderr.
+ */
+export function probeProviderVersion(command: string | null | undefined, options: {
+  args?: string[];
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+} = {}): ProviderVersionProbe {
+  const observedAt = new Date().toISOString();
+  const target = String(command || '').trim();
+  if (!target || target.includes('\0')) {
+    return { version: null, source: 'unknown', observedAt, result: 'unknown', errorCode: 'failed' };
+  }
+  try {
+    const output = execFileSync(target, options.args || ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      timeout: Math.max(250, Math.min(Number(options.timeoutMs || 1500), 5000)),
+      maxBuffer: 16 * 1024,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+    });
+    const version = extractProviderVersion(String(output));
+    return version
+      ? { version, source: 'command', observedAt, result: 'known' }
+      : { version: null, source: 'unknown', observedAt, result: 'unknown', errorCode: 'invalid_version' };
+  } catch (error: any) {
+    const timedOut = error?.code === 'ETIMEDOUT' || error?.signal === 'SIGTERM';
+    const notFound = error?.code === 'ENOENT';
+    return {
+      version: null,
+      source: 'unknown',
+      observedAt,
+      result: 'unknown',
+      errorCode: timedOut ? 'timeout' : notFound ? 'not_found' : 'failed',
+    };
+  }
 }
 
 export interface ProviderSandboxRollout {
@@ -175,14 +235,25 @@ export function evaluateProviderSandbox(input: {
   policyId?: string | null;
   platform?: NodeJS.Platform;
   providerVersion?: string | null;
+  providerVersionSource?: ProviderVersionSource;
+  providerVersionObservedAt?: string | null;
+  providerVersionProbe?: Pick<ProviderVersionProbe, 'result' | 'errorCode'> | null;
+  providerVersionVerified?: boolean;
   runtimeAvailable?: boolean | null;
   env?: NodeJS.ProcessEnv;
 }): Record<string, unknown> {
   const platform = input.platform || process.platform;
   const policy = getProviderSandboxPolicy(input.policyId, platform);
   const rollout = getProviderSandboxRollout(input.db, input.env);
+  const versionState: ProviderVersionState = input.providerVersion && input.providerVersionVerified === true
+    ? 'verified' : input.providerVersion ? 'known_unverified' : 'unknown';
   if (!policy) return { provider: input.providerFamily, transport: input.transportId, platform,
-    policyId: input.policyId || null, effective: false, status: 'unknown', degradedReason: 'POLICY_NOT_DEFINED' };
+    policyId: input.policyId || null, effective: false, status: 'unknown', degradedReason: 'POLICY_NOT_DEFINED',
+    safetyProfile: { id: input.policyId || null, revision: SANDBOX_POLICY_REVISION,
+      providerVersion: input.providerVersion || null, versionSource: input.providerVersionSource || 'unknown',
+      observedAt: input.providerVersionObservedAt || null, versionVerified: versionState === 'verified',
+      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null },
+    versionState };
   const selected = rollout.enabled
     && (!rollout.providerFamilies.length || rollout.providerFamilies.includes(input.providerFamily))
     && (!rollout.transportIds.length || rollout.transportIds.includes(input.transportId))
@@ -201,9 +272,25 @@ export function evaluateProviderSandbox(input: {
   else if (selected && rollout.mode === 'observe') status = effective
     ? (policy.reasonCode ? 'partially_enforced' : 'verified_and_enforced') : 'would_apply';
   else if (selected && rollout.mode === 'enforce' && !effective) status = 'legacy_unchanged';
+  // The flags may be present, but without the actual Provider version we cannot
+  // claim that this exact binary honors the tested parameters.
+  if (effective && versionState !== 'verified' && !policy.reasonCode && status === 'verified_and_enforced') {
+    status = 'provider_version_unverified';
+    degradedReason = versionState === 'unknown' ? 'PROVIDER_VERSION_UNKNOWN' : 'PROVIDER_VERSION_NOT_VERIFIED';
+  }
   return {
     provider: input.providerFamily, transport: input.transportId, platform,
-    providerVersion: input.providerVersion || null, rolloutMode: rollout.enabled ? rollout.mode : 'off', rolloutSelected: selected,
+    providerVersion: input.providerVersion || null,
+    providerVersionSource: input.providerVersion ? (input.providerVersionSource || 'command') : 'unknown',
+    providerVersionObservedAt: input.providerVersionObservedAt || null,
+    versionState,
+    safetyProfile: { id: policy.id, revision: SANDBOX_POLICY_REVISION,
+      providerVersion: input.providerVersion || null,
+      versionSource: input.providerVersion ? (input.providerVersionSource || 'command') : 'unknown',
+      observedAt: input.providerVersionObservedAt || null, versionVerified: versionState === 'verified',
+      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null },
+    providerVersionProbe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null,
+    rolloutMode: rollout.enabled ? rollout.mode : 'off', rolloutSelected: selected,
     policyId: policy.id, effective, status, support: policy.support, failurePolicy: policy.failurePolicy,
     coverage: policy.reasonCode ? 'partial' : effective ? 'full' : 'unknown',
     dimensions: { ...policy.dimensions }, verification: [...policy.verification], evidence: [...policy.evidence],
@@ -216,4 +303,5 @@ export function listProviderSandboxPolicies(): ProviderSandboxPolicy[] {
     verification: [...policy.verification], evidence: [...policy.evidence], dimensions: { ...policy.dimensions } }));
 }
 
-module.exports = { getProviderSandboxPolicy, getProviderSandboxRollout, evaluateProviderSandbox, listProviderSandboxPolicies };
+module.exports = { getProviderSandboxPolicy, getProviderSandboxRollout, evaluateProviderSandbox,
+  listProviderSandboxPolicies, probeProviderVersion, SANDBOX_POLICY_REVISION };

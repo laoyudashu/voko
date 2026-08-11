@@ -9,6 +9,8 @@ const {
   getProviderSandboxPolicy,
   getProviderSandboxRollout,
   listProviderSandboxPolicies,
+  probeProviderVersion,
+  SANDBOX_POLICY_REVISION,
 } = require('../build/core/provider-sandbox');
 
 function dbWith(value) {
@@ -55,15 +57,64 @@ test('allowlist requires Provider, transport, and OS match', () => {
   const db = dbWith({ enabled: true, mode: 'observe', providerFamilies: ['codex'],
     transportIds: ['codex-cli'], platforms: ['linux'] });
   const matched = evaluateProviderSandbox({ db, providerFamily: 'codex', transportId: 'codex-cli',
-    policyId: 'codex-readonly', platform: 'linux', env: {} });
+    policyId: 'codex-readonly', platform: 'linux', providerVersion: '1.2.3', providerVersionVerified: true, env: {} });
   assert.equal(matched.rolloutMode, 'observe');
   assert.equal(matched.rolloutSelected, true);
   assert.equal(matched.status, 'verified_and_enforced');
   const unmatched = evaluateProviderSandbox({ db, providerFamily: 'codex', transportId: 'codex-cli',
-    policyId: 'codex-readonly', platform: 'win32', env: {} });
+    policyId: 'codex-readonly', platform: 'win32', providerVersion: '1.2.3', providerVersionVerified: true, env: {} });
   assert.equal(unmatched.rolloutMode, 'observe');
   assert.equal(unmatched.rolloutSelected, false);
   assert.equal(unmatched.status, 'verified_and_enforced');
+});
+
+test('version probe is bounded, shell-free, and returns only normalized metadata', () => {
+  const known = probeProviderVersion(process.execPath, { args: ['--version'] });
+  assert.equal(known.result, 'known');
+  assert.match(known.version, /^\d+\.\d+/);
+  assert.equal(known.source, 'command');
+  assert.equal(Object.prototype.hasOwnProperty.call(known, 'output'), false);
+
+  const missing = probeProviderVersion('voko-provider-that-is-not-installed', { timeoutMs: 250 });
+  assert.equal(missing.result, 'unknown');
+  assert.ok(['not_found', 'failed'].includes(missing.errorCode));
+});
+
+test('sandbox status binds the policy to the observed Provider version', () => {
+  const result = evaluateProviderSandbox({ db: dbWith(null), providerFamily: 'codex', transportId: 'codex-cli',
+    policyId: 'codex-readonly', platform: 'linux', providerVersion: '1.2.3',
+    providerVersionSource: 'command', providerVersionObservedAt: '2026-08-11T00:00:00.000Z',
+    providerVersionProbe: { result: 'known' }, providerVersionVerified: true, env: {} });
+  assert.equal(result.versionState, 'verified');
+  assert.deepEqual(result.safetyProfile, {
+    id: 'codex-readonly', revision: SANDBOX_POLICY_REVISION, providerVersion: '1.2.3',
+    versionSource: 'command', observedAt: '2026-08-11T00:00:00.000Z', versionVerified: true,
+    probe: { result: 'known' },
+  });
+});
+
+test('unknown Provider version remains visible as unbound verification', () => {
+  const result = evaluateProviderSandbox({ db: dbWith(null), providerFamily: 'goose', transportId: 'goose-acp',
+    policyId: 'acp-deny-permission', platform: 'linux', providerVersionProbe: { result: 'unknown', errorCode: 'not_found' }, env: {} });
+  assert.equal(result.versionState, 'unknown');
+  assert.equal(result.safetyProfile.providerVersion, null);
+  assert.equal(result.safetyProfile.probe.errorCode, 'not_found');
+});
+
+test('enforced flags without a known Provider version are not reported as verified', () => {
+  const result = evaluateProviderSandbox({ db: dbWith(null), providerFamily: 'codex', transportId: 'codex-cli',
+    policyId: 'codex-readonly', platform: 'linux', env: {} });
+  assert.equal(result.effective, true);
+  assert.equal(result.status, 'provider_version_unverified');
+  assert.equal(result.degradedReason, 'PROVIDER_VERSION_UNKNOWN');
+});
+
+test('a known but unverified Provider version is not reported as verified', () => {
+  const result = evaluateProviderSandbox({ db: dbWith(null), providerFamily: 'codex', transportId: 'codex-cli',
+    policyId: 'codex-readonly', platform: 'linux', providerVersion: '99.0.0', env: {} });
+  assert.equal(result.versionState, 'known_unverified');
+  assert.equal(result.status, 'provider_version_unverified');
+  assert.equal(result.degradedReason, 'PROVIDER_VERSION_NOT_VERIFIED');
 });
 
 test('required sandbox reports unavailable runtime without claiming enforcement', () => {
@@ -86,11 +137,14 @@ test('unverified transports stay unchanged and are never presented as sandboxed'
 test('instantiated transports expose the Catalog sandbox policy without changing routing metadata', () => {
   const catalog = require('../build/core/dispatcher/provider-catalog');
   const definition = catalog.getProviderTransport('codex-cli');
-  const provider = catalog.instantiateProviderTransport(definition, { db: null, contextWindow: 5 });
+  const provider = catalog.instantiateProviderTransport(definition, { db: null, contextWindow: 5,
+    providerVersion: '1.2.3', providerVersionSource: 'config', providerVersionObservedAt: '2026-08-11T00:00:00.000Z',
+    providerVersionVerified: true });
   assert.equal(provider.sandboxPolicyId, 'codex-readonly');
   const status = provider.getSandboxStatus('agent-test');
   assert.equal(status.provider, 'codex');
   assert.equal(status.transport, 'codex-cli');
+  assert.equal(status.providerVersion, '1.2.3');
   assert.equal(provider.priority, 1);
 });
 
@@ -114,7 +168,9 @@ test('Gemini strict approval is Provider-whitelisted and default invocation rema
 test('Provider preflight reports the effective sandbox profile as additive diagnostics', async () => {
   const catalog = require('../build/core/dispatcher/provider-catalog');
   const definition = catalog.getProviderTransport('codex-cli');
-  const provider = catalog.instantiateProviderTransport(definition, { db: null });
+  const provider = catalog.instantiateProviderTransport(definition, { db: null,
+    providerVersion: '1.2.3', providerVersionSource: 'config', providerVersionObservedAt: '2026-08-11T00:00:00.000Z',
+    providerVersionVerified: true });
   provider.preflightDelivery = async () => ({ ok: true, status: 'preflight_passed', sideEffects: false });
   const result = await definition.preflight(provider, 'agent-test');
   assert.equal(result.status, 'preflight_passed');

@@ -32,6 +32,30 @@ export interface ProviderFactoryContext {
   contextWindow?: number;
   gooseBin?: string;
   hermesConfig?: { apiHost?: string; apiPort?: number; apiKey?: string; profiles?: Record<string, unknown> };
+  /** Optional version supplied by a trusted runtime probe or a test fixture. */
+  providerVersion?: string | null;
+  providerVersionSource?: 'command' | 'runtime' | 'protocol' | 'config' | 'unknown';
+  providerVersionObservedAt?: string | null;
+  providerVersionVerified?: boolean;
+  versionProbeCommand?: string | null;
+}
+
+// Version probes are read-only `--version` calls. Persistent transports without a
+// stable local executable intentionally remain unknown until their protocol reports one.
+const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
+  'goose-acp': 'goose', 'goose-cli': 'goose',
+  'opencode-acp': 'opencode', 'opencode-attach': 'opencode', 'opencode-cli': 'opencode',
+  'cursor-acp': 'cursor-agent', 'cursor-cli': 'cursor-agent',
+  'cline-acp': 'cline', 'cline-cli': 'cline',
+  'github-copilot-acp': 'copilot', 'github-copilot-cli': 'copilot',
+  'zeroclaw-ws': 'zeroclaw', 'zeroclaw-acp': 'zeroclaw', 'zeroclaw-cli': 'zeroclaw',
+  'claude-cli': 'claude', 'codex-cli': 'codex', 'gemini-cli': 'gemini',
+  'pi-cli': 'pi', 'qwen-cli': 'qwen', 'kiro-cli': 'kiro-cli',
+  'aider-cli': 'aider', 'grok-cli': 'grok', 'reasonix-cli': 'reasonix',
+};
+
+export function getProviderVersionCommand(transportId: unknown): string | null {
+  return PROVIDER_VERSION_COMMANDS[String(transportId || '').trim()] || null;
 }
 
 const cli = (id: string, modulePath: string, exportName?: string, sandboxPolicyId = 'cli-unverified'): ProviderTransportDefinition => ({
@@ -177,15 +201,35 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     instance = new Ctor(args);
   }
   const family = getProviderTransport(definition.id)?.family || '';
+  let versionProbe: any = context.providerVersion !== undefined
+    ? { version: context.providerVersion || null,
+      source: context.providerVersion ? (context.providerVersionSource || 'config') : 'unknown',
+      observedAt: context.providerVersionObservedAt || new Date().toISOString(),
+      result: context.providerVersion ? 'known' : 'unknown' }
+    : null;
+  instance.getProviderVersion = () => {
+    if (versionProbe) return { ...versionProbe };
+    const { probeProviderVersion } = require('../provider-sandbox');
+    const command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
+    versionProbe = command ? probeProviderVersion(command) : {
+      version: null, source: 'unknown', observedAt: new Date().toISOString(), result: 'unknown', errorCode: 'failed',
+    };
+    return { ...versionProbe };
+  };
   Object.defineProperty(instance, 'sandboxPolicyId', { value: definition.sandboxPolicyId, enumerable: true });
   instance.getSandboxStatus = (agentId?: string) => {
     const { evaluateProviderSandbox } = require('../provider-sandbox');
+    const version = instance.getProviderVersion();
     return evaluateProviderSandbox({ db: context.db as any, providerFamily: family,
       transportId: definition.id, policyId: definition.sandboxPolicyId,
+      providerVersion: version.version, providerVersionSource: version.source,
+      providerVersionObservedAt: version.observedAt, providerVersionProbe: version,
+      providerVersionVerified: context.providerVersionVerified === true,
       runtimeAvailable: definition.sandboxPolicyId === 'gemini-container'
         ? !!instance.isAvailable?.(agentId || '') : null });
   };
   return instance;
 }
 
-module.exports = { PROVIDER_CATALOG, getProviderFamily, getProviderTransport, listProviderTransports, validateProviderCatalog, instantiateProviderTransport };
+module.exports = { PROVIDER_CATALOG, getProviderFamily, getProviderTransport, listProviderTransports,
+  getProviderVersionCommand, validateProviderCatalog, instantiateProviderTransport };
