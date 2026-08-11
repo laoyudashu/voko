@@ -61,7 +61,9 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(defaults, 'zeroclaw'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'openclaw'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'shadow');
-  for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
+  assert.equal(providerModularModeForFamily(defaults, 'claude-code'), 'enabled');
+  assert.equal(providerModularModeForFamily(defaults, 'codex'), 'enabled');
+  for (const family of ['gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
     assert.equal(providerModularModeForFamily(defaults, family), 'shadow', family);
   }
 
