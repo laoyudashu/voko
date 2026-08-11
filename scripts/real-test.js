@@ -138,10 +138,17 @@ async function smoke(config, reporter) {
   await mcpCall(config.dbPath, 'voko_fetch_new_messages', { agentId: config.agentId, visitorId: config.peerUid, blockTimeout: 1 });
   reporter.check('MCP Pull', true);
   if (config.filePath) {
-    const uploaded = await mcpCall(config.dbPath, 'voko_upload_and_send_file', {
+    const configuredAttachmentMessage = process.env.VOKO_REAL_ATTACHMENT_MESSAGE;
+    const omitAttachmentMessage = /^(1|true|yes)$/i.test(String(process.env.VOKO_REAL_OMIT_ATTACHMENT_MESSAGE || ''));
+    const attachmentMessage = omitAttachmentMessage ? '' : configuredAttachmentMessage === undefined
+      ? `[VOKO-REAL-TEST ${reporter.runId}] attachment`
+      : String(configuredAttachmentMessage).trim();
+    const uploadArgs = {
       agentId: config.agentId, toUid: config.peerUid, channelType: 1,
-      filePath: path.resolve(config.filePath), message: `[VOKO-REAL-TEST ${reporter.runId}] attachment`,
-    });
+      filePath: path.resolve(config.filePath), message: attachmentMessage,
+    };
+    if (!attachmentMessage) delete uploadArgs.message;
+    const uploaded = await mcpCall(config.dbPath, 'voko_upload_and_send_file', uploadArgs);
     const attachmentOk = uploaded?.success !== false
       && !!(uploaded?.messageId || uploaded?.fileMessageId || uploaded?.attachmentMessageId);
     reporter.check('attachment upload and send', attachmentOk, JSON.stringify(uploaded).slice(0, 200));
@@ -150,9 +157,21 @@ async function smoke(config, reporter) {
         agentId: config.agentId, channelId: config.peerUid, channelType: 1, limit: 100,
       });
       const rows = history?.messages || history?.data?.messages || [];
-      const tagged = rows.filter((item) => String(item.content || '').includes(reporter.runId));
-      reporter.check('attachment persisted exactly once', tagged.length >= 1, `matches=${tagged.length}`);
-      if (tagged.length > 1) reporter.summary.counters.duplicates += tagged.length - 1;
+      const fileMessageId = uploaded.messageId || uploaded.fileMessageId || uploaded.attachmentMessageId || '';
+      const fileMatches = rows.filter((item) => {
+        const rowId = item.id || item.messageId || '';
+        const isFileType = [3, 4, 8].includes(Number(item.contentType ?? item.content_type));
+        return (fileMessageId && String(rowId) === String(fileMessageId))
+          || (isFileType && String(item.content || '').includes(String(uploaded.url || '')));
+      });
+      const textMatches = rows.filter((item) => String(item.content || '').trim() === attachmentMessage
+        && !fileMatches.some((file) => String(file.id || file.messageId || '') === String(item.id || item.messageId || '')));
+      const expectedTextCount = attachmentMessage ? 1 : 0;
+      const persistedExactlyOnce = fileMatches.length === 1 && textMatches.length === expectedTextCount;
+      reporter.check('attachment persisted exactly once', persistedExactlyOnce,
+        `fileMatches=${fileMatches.length},textMatches=${textMatches.length}`);
+      if (fileMatches.length > 1) reporter.summary.counters.duplicates += fileMatches.length - 1;
+      if (textMatches.length > expectedTextCount) reporter.summary.counters.duplicates += textMatches.length - expectedTextCount;
     }
   } else reporter.check('attachment upload and send', true, 'SKIP: VOKO_REAL_TEST_FILE not configured');
 }
