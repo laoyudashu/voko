@@ -10,6 +10,8 @@ const {
   getProviderSandboxRollout,
   listProviderSandboxPolicies,
   probeProviderVersion,
+  findProviderSandboxVerification,
+  recordProviderSandboxVerification,
   SANDBOX_POLICY_REVISION,
 } = require('../build/core/provider-sandbox');
 
@@ -89,7 +91,7 @@ test('sandbox status binds the policy to the observed Provider version', () => {
   assert.deepEqual(result.safetyProfile, {
     id: 'codex-readonly', revision: SANDBOX_POLICY_REVISION, providerVersion: '1.2.3',
     versionSource: 'command', observedAt: '2026-08-11T00:00:00.000Z', versionVerified: true,
-    probe: { result: 'known' },
+    probe: { result: 'known' }, verification: null,
   });
 });
 
@@ -115,6 +117,35 @@ test('a known but unverified Provider version is not reported as verified', () =
   assert.equal(result.versionState, 'known_unverified');
   assert.equal(result.status, 'provider_version_unverified');
   assert.equal(result.degradedReason, 'PROVIDER_VERSION_NOT_VERIFIED');
+});
+
+test('exact-version verification records are isolated by Provider, transport, OS, and policy revision', () => {
+  const record = {
+    providerFamily: 'codex', transportId: 'codex-cli', platform: 'linux', providerVersion: '1.2.3',
+    policyRevision: SANDBOX_POLICY_REVISION, verifiedAt: '2026-08-11T00:00:00.000Z', source: 'real_test',
+  };
+  const result = evaluateProviderSandbox({ db: dbWith({ records: [record] }), providerFamily: 'codex',
+    transportId: 'codex-cli', policyId: 'codex-readonly', platform: 'linux', providerVersion: '1.2.3', env: {} });
+  assert.equal(result.versionState, 'verified');
+  assert.equal(result.safetyProfile.verification.source, 'real_test');
+  assert.equal(findProviderSandboxVerification(dbWith({ records: [record] }), {
+    providerFamily: 'codex', transportId: 'codex-cli', platform: 'win32', providerVersion: '1.2.3',
+  }), null);
+});
+
+test('verification registration writes only the sanitized exact-version record', () => {
+  let stored = null;
+  const db = { prepare() { return {
+    get() { return stored ? { data: JSON.stringify(stored) } : undefined; },
+    run(_type, data) { stored = JSON.parse(data); },
+  }; } };
+  const record = recordProviderSandboxVerification(db, {
+    providerFamily: 'codex/unsafe', transportId: 'codex-cli', platform: 'linux', providerVersion: 'v1.2.3-extra',
+    policyRevision: SANDBOX_POLICY_REVISION, verifiedAt: '2026-08-11T00:00:00.000Z', source: 'manual',
+  });
+  assert.equal(record.providerFamily, 'codexunsafe');
+  assert.equal(record.providerVersion, '1.2.3-extra');
+  assert.equal(stored.records.length, 1);
 });
 
 test('required sandbox reports unavailable runtime without claiming enforcement', () => {

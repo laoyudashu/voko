@@ -10,6 +10,7 @@ export type ProviderVersionState = 'unknown' | 'known_unverified' | 'verified';
 
 /** Increment when the meaning of a sandbox policy or its dimensions changes. */
 export const SANDBOX_POLICY_REVISION = 1;
+export const SANDBOX_VERIFICATION_CONFIG = 'provider_sandbox_verifications_v1';
 
 export interface ProviderVersionProbe {
   version: string | null;
@@ -17,6 +18,16 @@ export interface ProviderVersionProbe {
   observedAt: string;
   result: 'known' | 'unknown';
   errorCode?: 'not_found' | 'timeout' | 'failed' | 'invalid_version';
+}
+
+export interface ProviderSandboxVerificationRecord {
+  providerFamily: string;
+  transportId: string;
+  platform: SandboxPlatform;
+  providerVersion: string;
+  policyRevision: number;
+  verifiedAt: string;
+  source: 'real_test' | 'manual';
 }
 
 export interface ProviderSandboxDimensions {
@@ -209,6 +220,66 @@ function cleanList(value: unknown): string[] {
   return Array.isArray(value) ? [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))] : [];
 }
 
+function cleanToken(value: unknown, max = 64): string {
+  return String(value || '').trim().replace(/[^a-z0-9._-]/gi, '').slice(0, max);
+}
+
+function normalizeVerificationRecord(value: unknown): ProviderSandboxVerificationRecord | null {
+  const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const providerFamily = cleanToken(item.providerFamily);
+  const transportId = cleanToken(item.transportId);
+  const platform = String(item.platform || '') as SandboxPlatform;
+  const providerVersion = extractProviderVersion(String(item.providerVersion || ''));
+  const policyRevision = Number(item.policyRevision);
+  const verifiedAt = String(item.verifiedAt || '').trim();
+  const source = item.source === 'manual' ? 'manual' : item.source === 'real_test' ? 'real_test' : null;
+  if (!providerFamily || !transportId || !ALL_PLATFORMS.includes(platform)
+    || !providerVersion || !Number.isInteger(policyRevision) || policyRevision < 1
+    || !/^\d{4}-\d{2}-\d{2}T/.test(verifiedAt) || !source) return null;
+  return { providerFamily, transportId, platform, providerVersion, policyRevision, verifiedAt, source };
+}
+
+function readVerificationRecords(db?: Pick<DatabaseLike, 'prepare'> | null): ProviderSandboxVerificationRecord[] {
+  try {
+    const row = db?.prepare('SELECT data FROM config WHERE type=? LIMIT 1').get(SANDBOX_VERIFICATION_CONFIG) as { data?: string } | undefined;
+    const parsed = row?.data ? JSON.parse(row.data) : null;
+    const records = Array.isArray(parsed) ? parsed : parsed?.records;
+    return Array.isArray(records) ? records.map(normalizeVerificationRecord).filter(Boolean) as ProviderSandboxVerificationRecord[] : [];
+  } catch (_) { return []; }
+}
+
+export function findProviderSandboxVerification(db: Pick<DatabaseLike, 'prepare'> | null | undefined, input: {
+  providerFamily: string;
+  transportId: string;
+  platform: SandboxPlatform;
+  providerVersion: string | null | undefined;
+}): ProviderSandboxVerificationRecord | null {
+  const version = extractProviderVersion(String(input.providerVersion || ''));
+  if (!version) return null;
+  return readVerificationRecords(db).find(record => record.providerFamily === cleanToken(input.providerFamily)
+    && record.transportId === cleanToken(input.transportId)
+    && record.platform === input.platform
+    && record.providerVersion === version
+    && record.policyRevision === SANDBOX_POLICY_REVISION) || null;
+}
+
+/**
+ * Store only a sanitized, exact-version verification record in the existing config
+ * table. This is called by an explicit local verification flow, never by a visitor
+ * request or a remote AgentDID response.
+ */
+export function recordProviderSandboxVerification(db: any, value: unknown): ProviderSandboxVerificationRecord {
+  const record = normalizeVerificationRecord(value);
+  if (!record || record.policyRevision !== SANDBOX_POLICY_REVISION) throw new Error('Invalid Provider sandbox verification record');
+  const records = readVerificationRecords(db).filter(item => !(item.providerFamily === record.providerFamily
+    && item.transportId === record.transportId && item.platform === record.platform
+    && item.providerVersion === record.providerVersion && item.policyRevision === record.policyRevision));
+  records.push(record);
+  db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
+    .run(SANDBOX_VERIFICATION_CONFIG, JSON.stringify({ records }), Date.now());
+  return record;
+}
+
 export function getProviderSandboxRollout(db?: Pick<DatabaseLike, 'prepare'> | null, env: NodeJS.ProcessEnv = process.env): ProviderSandboxRollout {
   if (/^(0|false|no|off)$/i.test(String(env.VOKO_PROVIDER_SANDBOX || ''))) {
     return { enabled: false, mode: 'observe', providerFamilies: [], transportIds: [], platforms: [], killedByEnvironment: true };
@@ -245,14 +316,21 @@ export function evaluateProviderSandbox(input: {
   const platform = input.platform || process.platform;
   const policy = getProviderSandboxPolicy(input.policyId, platform);
   const rollout = getProviderSandboxRollout(input.db, input.env);
-  const versionState: ProviderVersionState = input.providerVersion && input.providerVersionVerified === true
-    ? 'verified' : input.providerVersion ? 'known_unverified' : 'unknown';
+  const verificationRecord = findProviderSandboxVerification(input.db, {
+    providerFamily: input.providerFamily, transportId: input.transportId,
+    platform: platform as SandboxPlatform, providerVersion: input.providerVersion,
+  });
+  const versionState: ProviderVersionState = input.providerVersion
+    && (input.providerVersionVerified === true || !!verificationRecord) ? 'verified'
+    : input.providerVersion ? 'known_unverified' : 'unknown';
   if (!policy) return { provider: input.providerFamily, transport: input.transportId, platform,
     policyId: input.policyId || null, effective: false, status: 'unknown', degradedReason: 'POLICY_NOT_DEFINED',
     safetyProfile: { id: input.policyId || null, revision: SANDBOX_POLICY_REVISION,
       providerVersion: input.providerVersion || null, versionSource: input.providerVersionSource || 'unknown',
       observedAt: input.providerVersionObservedAt || null, versionVerified: versionState === 'verified',
-      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null },
+      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null,
+      verification: verificationRecord ? { verifiedAt: verificationRecord.verifiedAt, source: verificationRecord.source,
+        policyRevision: verificationRecord.policyRevision } : null },
     versionState };
   const selected = rollout.enabled
     && (!rollout.providerFamilies.length || rollout.providerFamilies.includes(input.providerFamily))
@@ -288,7 +366,9 @@ export function evaluateProviderSandbox(input: {
       providerVersion: input.providerVersion || null,
       versionSource: input.providerVersion ? (input.providerVersionSource || 'command') : 'unknown',
       observedAt: input.providerVersionObservedAt || null, versionVerified: versionState === 'verified',
-      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null },
+      probe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null,
+      verification: verificationRecord ? { verifiedAt: verificationRecord.verifiedAt, source: verificationRecord.source,
+        policyRevision: verificationRecord.policyRevision } : null },
     providerVersionProbe: input.providerVersionProbe ? { ...input.providerVersionProbe } : null,
     rolloutMode: rollout.enabled ? rollout.mode : 'off', rolloutSelected: selected,
     policyId: policy.id, effective, status, support: policy.support, failurePolicy: policy.failurePolicy,
@@ -304,4 +384,5 @@ export function listProviderSandboxPolicies(): ProviderSandboxPolicy[] {
 }
 
 module.exports = { getProviderSandboxPolicy, getProviderSandboxRollout, evaluateProviderSandbox,
-  listProviderSandboxPolicies, probeProviderVersion, SANDBOX_POLICY_REVISION };
+  listProviderSandboxPolicies, probeProviderVersion, findProviderSandboxVerification,
+  recordProviderSandboxVerification, SANDBOX_POLICY_REVISION, SANDBOX_VERIFICATION_CONFIG };
