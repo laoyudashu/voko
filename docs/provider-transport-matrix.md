@@ -6,11 +6,11 @@ This matrix freezes the behavior that the modular Dispatcher must preserve.
 | Family | Transport order | Native session | Reply model | Binding owner | Cross-transport fallback |
 |---|---|---|---|---|---|
 | Goose | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Dispatcher when rollout is enabled; legacy transport otherwise | Dispatcher only |
-| Cline, Cursor, GitHub Copilot | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; failed bound sessions are not silently replaced |
-| OpenCode | ACP, Attach, CLI, Pull | Agent-issued ID | Streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; compatible native sessions may move across ACP, Attach and CLI |
-| ZeroClaw | ACP WebSocket, ACP, CLI, Pull | Instance-scoped ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
-| OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement |
-| Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Shadow by default; Dispatcher after Family enablement | Dispatcher only after enablement; queued CLI failures remain asynchronous |
+| Cline, Cursor, GitHub Copilot | ACP, CLI, Pull | Agent-issued ID | ACP streaming / CLI final | Dispatcher enabled | Dispatcher only; failed bound sessions are not silently replaced |
+| OpenCode | ACP, Attach, CLI, Pull | Agent-issued ID | Streaming or final | Dispatcher enabled | Dispatcher only; compatible native sessions may move across ACP, Attach and CLI |
+| ZeroClaw | ACP WebSocket, ACP, CLI, Pull | Instance-scoped ID | Async/streaming or final | Dispatcher enabled | Dispatcher only |
+| OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Dispatcher enabled | Dispatcher only |
+| Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Dispatcher enabled | Dispatcher only; queued CLI failures remain asynchronous |
 | CLI-only families (Claude Code, Codex, Gemini, Pi, Qwen Code, Kiro, Aider, Grok, Reasonix) | CLI, Pull | Provider-specific | Final | All listed CLI-only families enabled after canary validation | Dispatcher for enabled families; Pull after confirmed `not_delivered` |
 
 ## Invariants

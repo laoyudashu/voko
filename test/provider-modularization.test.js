@@ -54,13 +54,9 @@ test('modular rollout defaults to Goose and supports config and environment over
   const db = fixture(t);
   const defaults = getProviderModularRollout(db, {});
   assert.equal(providerModularModeForFamily(defaults, 'goose'), 'enabled');
-  assert.equal(providerModularModeForFamily(defaults, 'cline'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'cursor'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'github-copilot'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'opencode'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'zeroclaw'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'openclaw'), 'shadow');
-  assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'shadow');
+  for (const family of ['cline', 'cursor', 'github-copilot', 'opencode', 'zeroclaw', 'openclaw', 'hermes']) {
+    assert.equal(providerModularModeForFamily(defaults, family), 'enabled', family);
+  }
   assert.equal(providerModularModeForFamily(defaults, 'claude-code'), 'enabled');
   assert.equal(providerModularModeForFamily(defaults, 'codex'), 'enabled');
   for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
