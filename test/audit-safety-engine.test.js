@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { DatabaseSync } = require('node:sqlite');
 const { checkAuditRules, normalizeAuditText, luhnValid, isValidChineseId } = require('../build/core/audit');
-const { classifyUncertain, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../build/core/safety-classifier');
+const { classifyUncertain, loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../build/core/safety-classifier');
 const { SAFETY_MODEL_PRESETS, findSafetyModelPreset } = require('../build/core/safety-model-presets');
 const { LLMClient } = require('../build/core/llm-client');
 const { wrapPushContent } = require('../build/core/dispatcher/safety-prompt');
@@ -152,6 +152,10 @@ test('explicit classifier config is tested before enable and classifies uncertai
   db.exec('CREATE TABLE config (type TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
   assert.equal((await testSafetyClassifierConfig(input)).risk, 'low');
   assert.throws(() => saveSafetyClassifierConfig(db, { ...input, enabled: true }), /Test this exact/);
+  saveSafetyClassifierConfig(db, { ...input, _markTested: true });
+  assert.equal(loadSafetyClassifierConfig(db, false).tested, true);
+  saveSafetyClassifierConfig(db, { ...input, modelId: 'changed-model' });
+  assert.equal(loadSafetyClassifierConfig(db, false).tested, false);
   saveSafetyClassifierConfig(db, { ...input, _markTested: true });
   saveSafetyClassifierConfig(db, { ...input, enabled: true });
   const result = await classifyUncertain(db, 'suspicious request', 'inbound',

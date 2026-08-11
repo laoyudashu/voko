@@ -34,7 +34,8 @@ function loadSafetyClassifierConfig(db, includeSecret = false) {
   if (includeSecret) return config;
   const { apiKey, testedFingerprint, ...publicConfig } = config;
   return { ...publicConfig, hasApiKey: !!apiKey,
-    apiKeyMasked: apiKey ? `****${String(apiKey).slice(-4)}` : '' };
+    apiKeyMasked: apiKey ? `****${String(apiKey).slice(-4)}` : '',
+    tested: !!config.lastTestedAt && testedFingerprint === configFingerprint(config) };
 }
 
 function saveSafetyClassifierConfig(db, input) {
