@@ -163,6 +163,24 @@ test('attach safely falls back after a pre-delivery serve failure', async () => 
   assert.equal(staleMarks, 1);
 });
 
+test('Dispatcher-owned attach reports pre-delivery failure without an internal retry', async () => {
+  const provider = new OpenCodeAttachProvider();
+  provider.useDispatcherSessionPersistence();
+  let attempts = 0;
+  provider._pushOnce = async () => {
+    attempts++;
+    const error = new Error('OpenCode serve unavailable before delivery');
+    error.deliveryOutcome = 'not_delivered';
+    throw error;
+  };
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello',
+    messageId: 'message-a', timestamp: Date.now(),
+    providerBinding: { id: 'binding-1', providerType: 'opencode' },
+  }), error => error.deliveryOutcome === 'not_delivered');
+  assert.equal(attempts, 1);
+});
+
 test('attach clears a failed serve process before recovery', async () => {
   const provider = new OpenCodeAttachProvider();
   let killed = false;

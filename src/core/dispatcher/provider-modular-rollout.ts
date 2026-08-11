@@ -11,7 +11,13 @@ export interface ProviderModularRollout {
 const DEFAULT_ROLLOUT: ProviderModularRollout = {
   mode: 'enabled',
   providerFamilies: ['goose'],
-  familyModes: { cline: 'shadow', cursor: 'shadow', 'github-copilot': 'shadow' },
+  familyModes: {
+    cline: 'shadow',
+    cursor: 'shadow',
+    'github-copilot': 'shadow',
+    opencode: 'shadow',
+    zeroclaw: 'shadow',
+  },
 };
 
 function normalizeMode(value: unknown): ProviderModularMode | null {

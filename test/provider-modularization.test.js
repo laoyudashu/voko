@@ -57,6 +57,8 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(defaults, 'cline'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'cursor'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'github-copilot'), 'shadow');
+  assert.equal(providerModularModeForFamily(defaults, 'opencode'), 'shadow');
+  assert.equal(providerModularModeForFamily(defaults, 'zeroclaw'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'disabled');
 
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
@@ -73,7 +75,8 @@ test('modular rollout defaults to Goose and supports config and environment over
 test('generic ACP and CLI constructors honor Dispatcher-owned session persistence', (t) => {
   const db = fixture(t);
   for (const providerId of ['cline-acp', 'cline-cli', 'cursor-acp', 'cursor-cli',
-    'github-copilot-acp', 'github-copilot-cli']) {
+    'github-copilot-acp', 'github-copilot-cli', 'opencode-acp', 'opencode-attach',
+    'opencode-cli', 'zeroclaw-ws', 'zeroclaw-acp', 'zeroclaw-cli']) {
     const provider = catalog.instantiateProviderTransport(catalog.getProviderTransport(providerId), {
       db,
       getProviderConfig: () => ({ sessionPersistence: 'dispatcher' }),
@@ -276,18 +279,23 @@ test('family allowlist enables central receipts without changing other families'
   assert.equal(new ProviderSessionCoordinator(db).getActive('agent-h', 'visitor-h', 1).adapterType, 'hermes-http');
 });
 
-test('Cline Cursor and Copilot fall back once without crossing Agent sessions', async (t) => {
+test('generic ACP families fall back once without crossing Agent sessions', async (t) => {
   const db = fixture(t);
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
     .run('feature:provider_modular_dispatch_v1', JSON.stringify({
       mode: 'enabled', providerFamilies: ['goose'],
-      familyModes: { cline: 'enabled', cursor: 'enabled', 'github-copilot': 'enabled' },
+      familyModes: {
+        cline: 'enabled', cursor: 'enabled', 'github-copilot': 'enabled',
+        opencode: 'enabled', zeroclaw: 'enabled',
+      },
     }), Date.now());
   const now = Date.now();
   const families = [
     ['cline', 'agent-cline'],
     ['cursor', 'agent-cursor'],
     ['github-copilot', 'agent-copilot'],
+    ['opencode', 'agent-opencode'],
+    ['zeroclaw', 'agent-zeroclaw'],
   ];
   const insert = db.prepare(`INSERT INTO agents
     (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
@@ -331,7 +339,7 @@ test('Cline Cursor and Copilot fall back once without crossing Agent sessions', 
   }));
   await new Promise(resolve => setTimeout(resolve, 50));
 
-  assert.equal(attempts.length, 6);
+  assert.equal(attempts.length, families.length * 2);
   for (const [family, agentId] of families) {
     assert.deepEqual(attempts.filter(value => value.startsWith(`${agentId}:`)), [
       `${agentId}:acp:message-${agentId}`,
@@ -342,6 +350,62 @@ test('Cline Cursor and Copilot fall back once without crossing Agent sessions', 
     assert.equal(binding.adapterType, `${family}-cli`);
     assert.equal(binding.nativeSessionId, `session-${agentId}`);
   }
+});
+
+test('OpenCode and ZeroClaw use only the first eligible fallback transport', async (t) => {
+  const db = fixture(t);
+  db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
+    .run('feature:provider_modular_dispatch_v1', JSON.stringify({
+      mode: 'enabled', providerFamilies: ['goose'],
+      familyModes: { opencode: 'enabled', zeroclaw: 'enabled' },
+    }), Date.now());
+  const now = Date.now();
+  const insert = db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run('row-opencode', 'agent-opencode', 'im-opencode', 'token', 'http://im', 'published',
+    'opencode', '["acp","attach","cli","pull"]', 'private', now, now);
+  insert.run('row-zeroclaw', 'agent-zeroclaw', 'im-zeroclaw', 'token', 'http://im', 'published',
+    'zeroclaw', '["acp_ws","acp","cli","pull"]', 'private', now, now);
+  const calls = [];
+  const provider = (family, id, priority, result) => ({
+    priority,
+    match: (_agentId, meta) => meta.backend_type === family,
+    isAvailable: () => true,
+    push: async payload => {
+      calls.push(`${payload.agentId}:${id}`);
+      if (result === 'fail') {
+        const error = new Error(`${id} unavailable before delivery`);
+        error.deliveryOutcome = 'not_delivered';
+        throw error;
+      }
+      return { nativeSessionId: `session-${payload.agentId}`, deliveryMode: result, adapterType: id };
+    },
+  });
+  const providers = {
+    'opencode-acp': provider('opencode', 'opencode-acp', 10, 'fail'),
+    'opencode-attach': provider('opencode', 'opencode-attach', 5, 'attach'),
+    'opencode-cli': provider('opencode', 'opencode-cli', 1, 'cli'),
+    'zeroclaw-ws': provider('zeroclaw', 'zeroclaw-ws', 20, 'fail'),
+    'zeroclaw-acp': provider('zeroclaw', 'zeroclaw-acp', 10, 'acp'),
+    'zeroclaw-cli': provider('zeroclaw', 'zeroclaw-cli', 1, 'cli'),
+  };
+  const dispatcher = createDispatcher({ db, providers });
+  for (const agentId of ['agent-opencode', 'agent-zeroclaw']) {
+    dispatcher.dispatch(agentId, { agentId, fromUid: `visitor-${agentId}`, channelId: `visitor-${agentId}`,
+      channelType: 1, content: 'hello', messageId: `message-${agentId}` });
+  }
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(calls.filter(call => call.startsWith('agent-opencode:')), [
+    'agent-opencode:opencode-acp', 'agent-opencode:opencode-attach',
+  ]);
+  assert.deepEqual(calls.filter(call => call.startsWith('agent-zeroclaw:')), [
+    'agent-zeroclaw:zeroclaw-ws', 'agent-zeroclaw:zeroclaw-acp',
+  ]);
+  assert.equal(new ProviderSessionCoordinator(db).getActive('agent-opencode', 'visitor-agent-opencode', 1).adapterType,
+    'opencode-attach');
+  assert.equal(new ProviderSessionCoordinator(db).getActive('agent-zeroclaw', 'visitor-agent-zeroclaw', 1).adapterType,
+    'zeroclaw-acp');
 });
 
 test('shadow rollout never persists a Provider receipt', async (t) => {

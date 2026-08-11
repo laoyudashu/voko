@@ -58,6 +58,7 @@ class ZeroClawWsProvider extends AcpAdapter {
       matchType: 'zeroclaw',
       adapterType: 'zeroclaw-ws',
       db,
+      sessionPersistence: options.sessionPersistence,
       cwd: options.cwd,
       connectionKey: () => configuredUrl() || 'zeroclaw-ws',
       sessionRequest: (agentId: string) => {

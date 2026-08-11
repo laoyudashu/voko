@@ -20,6 +20,7 @@ interface Options {
   db?: Pick<DatabaseLike, 'prepare'> | null;
   contextWindow?: number;
   cwd?: string;
+  sessionPersistence?: 'transport' | 'dispatcher';
 }
 
 interface SessionRow { session_handle?: string }
@@ -69,6 +70,7 @@ class OpenCodeAttachProvider extends PushProvider {
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
     this._cmd = resolveOpenCodeCommand();
+    if (options.sessionPersistence === 'dispatcher') this.useDispatcherSessionPersistence();
   }
 
   get priority() { return 5; }
@@ -188,7 +190,7 @@ class OpenCodeAttachProvider extends PushProvider {
       return await this._pushOnce(payload);
     } catch (error) {
       const binding = payload.providerBinding?.providerType === 'opencode' ? payload.providerBinding : null;
-      if (!binding || (payload as any).__vokoManagedRetry) throw error;
+      if (this._sessionPersistence === 'dispatcher' || !binding || (payload as any).__vokoManagedRetry) throw error;
       const message = String((error as any)?.message || error || '');
       const outcome = (error as any)?.deliveryOutcome
         || (/timeout|timed out|超时/i.test(message) ? 'outcome_unknown' : 'not_delivered');

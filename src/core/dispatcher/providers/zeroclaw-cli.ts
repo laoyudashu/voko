@@ -51,6 +51,7 @@ class ZeroClawCliProvider extends CliAdapter {
       timeout: 180000,
       requireOutput: true,
       db,
+      sessionPersistence: options.sessionPersistence,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
       prepareInvocation: (payload: PushPayload, prompt: string) => {
