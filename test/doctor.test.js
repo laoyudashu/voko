@@ -127,6 +127,21 @@ test('doctor reports stale MCP configuration without exposing its contents', asy
   assert.doesNotMatch(JSON.stringify(result), /do-not-print-this-token/);
 });
 
+test('doctor reports effective Provider sandbox dimensions without exposing local paths or credentials', async (t) => {
+  const fixture = makeFixture();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const db = new (require('node:sqlite').DatabaseSync)(fixture.dbPath);
+  db.prepare("UPDATE agents SET backend_type='codex', delivery_modes=? WHERE agent_id='doctor-agent'")
+    .run(JSON.stringify(['cli', 'pull']));
+  db.close();
+  const result = await runDoctor({ dbPath: fixture.dbPath, mcpConfigPaths: [] });
+  const check = result.checks.find((item) => item.id === 'provider-sandbox');
+  assert.ok(check);
+  assert.match(JSON.stringify(check), /codex-readonly/);
+  assert.match(JSON.stringify(check), /read_only/);
+  assert.doesNotMatch(JSON.stringify(check), /doctor-secret-value|[A-Z]:\\|\/home\/|\/Users\//);
+});
+
 test('doctor --fix-mcp migrates an unambiguous legacy VOKO entry and keeps a backup', async (t) => {
   const fixture = makeFixture();
   const configPath = path.join(fixture.dir, 'client.json');

@@ -9,6 +9,8 @@ const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle')
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
 const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
+const { getProviderFamily } = require('./dispatcher/provider-catalog');
+const { evaluateProviderSandbox } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
 const ENDPOINTS = require('../endpoints.json');
 
@@ -339,6 +341,66 @@ function inspectGooseDelivery(agents: any[], checks: any[]): void {
     `${ready}/${rows.length} Goose Agent(s) have configured runtime and active Push`, { agents: rows });
 }
 
+function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: any): void {
+  const rows: any[] = [];
+  let dockerAvailable: boolean | null = null;
+  if (options.deep) {
+    if (typeof options.deps?.sandboxRuntimeAvailable === 'function') {
+      try { dockerAvailable = !!options.deps.sandboxRuntimeAvailable('docker_or_podman'); } catch { dockerAvailable = false; }
+    } else {
+      try {
+        const { execFileSync } = require('node:child_process');
+        execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], {
+          stdio: 'ignore', windowsHide: true, timeout: CHECK_TIMEOUT_MS,
+        });
+        dockerAvailable = true;
+      } catch { dockerAvailable = false; }
+    }
+  }
+  for (const agent of agents) {
+    const backend = normalizeBackendType(agent.backend_type || 'others');
+    const family = getProviderFamily(backend);
+    const configuredModes = parseDeliveryModes(agent.delivery_modes).modes || family?.defaultDeliveryModes || ['pull'];
+    if (!family) {
+      rows.push({ provider: backend, transport: null, platform: process.platform, effective: false,
+        status: 'unknown', degradedReason: 'PROVIDER_NOT_IN_CATALOG' });
+      continue;
+    }
+    for (const mode of configuredModes) {
+      if (mode === 'pull') {
+        rows.push({ provider: family.type, transport: 'pull', platform: process.platform, effective: false,
+          status: 'not_applicable', dimensions: {
+            filesystem: 'not_applicable', network: 'not_applicable', commandExecution: 'not_applicable',
+            workingDirectory: 'not_applicable', humanApproval: 'not_applicable',
+          }, verification: ['static'], degradedReason: null });
+        continue;
+      }
+      const transports = family.transports.filter((transport: any) => transport.mode === mode);
+      if (!transports.length) {
+        rows.push({ provider: family.type, transport: mode, platform: process.platform, effective: false,
+          status: 'unknown', degradedReason: 'TRANSPORT_NOT_IN_CATALOG' });
+      }
+      for (const transport of transports) {
+        rows.push(evaluateProviderSandbox({ db, providerFamily: family.type, transportId: transport.id,
+          policyId: transport.sandboxPolicyId, platform: process.platform,
+          runtimeAvailable: transport.sandboxPolicyId === 'gemini-container' ? dockerAvailable : null }));
+      }
+    }
+  }
+  const unique = [...new Map(rows.map((row) => [`${row.provider}:${row.transport}:${row.platform}`, row])).values()];
+  if (!unique.length) {
+    addCheck(checks, 'provider-sandbox', 'Provider sandbox', 'skip', 'no configured Provider transport to inspect');
+    return;
+  }
+  const applicable = unique.filter((row: any) => row.status !== 'not_applicable');
+  const effective = applicable.filter((row: any) => row.effective).length;
+  const degraded = unique.filter((row: any) => !row.effective && row.status !== 'not_applicable');
+  addCheck(checks, 'provider-sandbox', 'Provider sandbox', degraded.length ? 'warn' : 'ok',
+    `${effective}/${applicable.length} automatic transport capability profile(s) enforced; ${degraded.length} degraded or unverified`, {
+      transports: unique,
+    });
+}
+
 function inspectRoutingFeatures(db: any, checks: any[]): void {
   const defaults = { providerFamilies: [...PRECISE_ROUTING_GREY_PROVIDERS], channelTypes: [1], contentTypes: [1] };
   const precise = getRoutingFeaturePolicy(db, 'precise_reply_routing_v1', defaults);
@@ -433,6 +495,7 @@ async function runDoctor(options: any = {}): Promise<any> {
     inspectAgents(inspected.agents, inspected.runtime, inspected.config, checks);
     inspectRoutingFeatures(inspected.db, checks);
     inspectGooseDelivery(inspected.agents, checks);
+    inspectProviderSandbox(inspected.agents, inspected.db, checks, options);
     const runtime = inspectRuntime(dbPath, inspected.runtime, checks, deps);
     if (runtime.running && typeof fetchImpl === 'function') await inspectLocalHealth(runtime.port, checks, fetchImpl);
     if (options.deep) {
