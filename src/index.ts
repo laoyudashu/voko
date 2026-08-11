@@ -1914,7 +1914,7 @@ async function startMcpServer(args?: any, core?: any) {
     const agentList = agents.map((a: any) => ({
       agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
       imConnected: false, automaticDeliveryReady: false,
-      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, lastDeliveredMode: null,
+      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: false, lastDeliveredMode: null,
     }));
     db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
       .run(JSON.stringify({
@@ -2334,7 +2334,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         try {
           deliveryStatus = dispatcher?.getAgentDeliveryStatus?.(agent.agent_id) || {
             backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
-            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, pullOnly: false, lastDeliveredMode: null,
           };
         } catch (_) {
           deliveryStatus = {
@@ -2404,7 +2404,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         const agentList = rows.map((a: any) => {
           const deliveryStatus = deliveryStatuses.get(a.agent_id) || {
             backendType: a.backend_type || null, configuredModes: [], automaticReadyModes: [],
-            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, pullOnly: false, lastDeliveredMode: null,
           };
           return {
             agentId: a.agent_id,
@@ -2414,6 +2414,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             automaticReadyModes: deliveryStatus.automaticReadyModes || [],
             activeAutomaticMode: deliveryStatus.activeAutomaticMode || null,
             pullReady: !!deliveryStatus.pullReady,
+            pullOnly: !!deliveryStatus.pullOnly,
             lastDeliveredMode: deliveryStatus.lastDeliveredMode || null,
             deliveryStatus,
           };
@@ -2447,6 +2448,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
               activeAutomaticMode: agent.activeAutomaticMode || null,
               automaticReadyModes: agent.automaticReadyModes || [],
               pullReady: !!agent.pullReady,
+              pullOnly: !!agent.pullOnly,
             })),
           });
         } catch (_: any) {}

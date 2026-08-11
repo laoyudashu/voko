@@ -495,6 +495,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
    */
   function getAgentDeliveryStatus(agentId: string): AgentDeliveryStatus {
     const meta = _metaOf(agentId);
+    const family = getProviderFamily(meta.backend_type);
+    const backendFamily = family?.type || (meta.backend_type ? String(meta.backend_type) : null);
     const explicitModes = Array.isArray(meta.delivery_modes)
       ? [...new Set([...meta.delivery_modes.map(String), 'pull'])]
       : null;
@@ -516,7 +518,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       } catch (_) {
         status = 'unknown';
       }
-      methods.push({ mode, provider: key, configured: true, available, status,
+      methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
+        configured: true, available, status,
         capabilities: getProviderTransport(key)?.capabilities });
     }
 
@@ -529,12 +532,17 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         methods.push({
           mode: 'pull',
           provider: null,
+          family: backendFamily,
           configured: !!explicitModes,
           available: true,
           status: explicitModes ? 'on-demand' : 'fallback',
+          reason: explicitModes
+            ? 'configured-on-demand'
+            : (family && family.transports.length === 0 ? 'provider-pull-only' : 'legacy-fallback'),
         });
       } else if (!methods.some(method => method.mode === mode)) {
-        methods.push({ mode, provider: null, configured: true, available: false, status: 'unknown' });
+        methods.push({ mode, provider: null, family: backendFamily, configured: true, available: false, status: 'unknown',
+          reason: 'no-registered-transport' });
       }
     }
 
@@ -547,6 +555,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const automaticReadyModes = [...new Set(methods
       .filter(method => method.mode !== 'pull' && method.available)
       .map(method => method.mode))];
+    const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
+    const pullOnly = !!(family && family.transports.length === 0)
+      || (!!explicitModes && configuredPushModes.length === 0);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
@@ -554,6 +565,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       automaticReadyModes,
       activeAutomaticMode: methods.find(method => method.mode !== 'pull' && method.available)?.mode || null,
       pullReady: methods.some(method => method.mode === 'pull' && method.available),
+      pullOnly,
       lastDeliveredMode: _lastDeliveredModes.get(agentId) || null,
       methods,
     };

@@ -104,9 +104,11 @@ export interface ProviderStatus {
 export interface AgentDeliveryMethodStatus {
   mode: string;
   provider: string | null;
+  family?: string | null;
   configured: boolean;
   available: boolean;
   status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
+  reason?: string;
   capabilities?: Readonly<Partial<ProviderCapabilities>>;
 }
 
@@ -117,6 +119,7 @@ export interface AgentDeliveryStatus {
   automaticReadyModes: string[];
   activeAutomaticMode: string | null;
   pullReady: boolean;
+  pullOnly: boolean;
   lastDeliveredMode: string | null;
   methods: AgentDeliveryMethodStatus[];
 }
