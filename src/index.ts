@@ -1649,7 +1649,6 @@ async function startMcpServer(args?: any, core?: any) {
     const hcResult = createHandlers({
       db,
       databaseAPI,
-      openclawMode: 'ws',
       backendTypes: published.map((agent: any) => agent.backend_type || 'openclaw'),
       hermesConfig: { apiHost: hc.apiHost, apiPort: hc.apiPort, apiKey: hc.apiKey, profiles: hc.profiles || {} },
       onAgentReply: (data?: any) => {
@@ -2054,7 +2053,6 @@ async function runRebindForRoute(db: any, agentId: string, previousSnap: any): P
  *
  * @param {object} params
  * @param {object}   params.databaseAPI - 来自 createDatabaseAPI()
- * @param {string}   [params.openclawMode='ws'] - 'ws' | 'cli'
  * @param {object}   [params.hermesConfig] - { apiHost, apiPort, apiKey, profiles }
  * @param {Function} [params.onAgentReply] - callback(data) 收到 agent 回复时触发
  * @returns {{ openclawHandler: object|null, hermesHandler: object|null }}
@@ -2104,7 +2102,7 @@ function createResumeOwnerIntervention(dispatcher?: any, db?: any) {
   };
 }
 
-function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
+function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
   let openclawHandler = null;
   let hermesHandler = null;
   const providers: Record<string, any> = {};
@@ -2132,20 +2130,13 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     },
   };
 
-  // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
+  // ── OpenClaw WebSocket provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('openclaw')) try {
-    if (openclawMode === 'ws') {
-      openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
-    } else {
-      const OpenClawHandler = require('./server/openclaw-handler-cli');
-      openclawHandler = new OpenClawHandler(db, null);
-    }
-    if (openclawMode === 'ws') {
-      providers['openclaw-ws'] = openclawHandler;
-      const status = openclawHandler.getStatus();
-      if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
-    }
-    console.error(`[Lite] OpenClaw 处理器已创建 (${openclawMode} 模式)`);
+    openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
+    providers['openclaw-ws'] = openclawHandler;
+    const status = openclawHandler.getStatus();
+    if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
+    console.error('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
   } catch (err: any) {
     console.error('[Lite] OpenClaw 处理器创建失败:', err.message);
   }
