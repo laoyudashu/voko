@@ -115,7 +115,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     {
       agentId: z.string().describe(T('mcp.param.agentId')),
       status: z.number().int().min(0).max(1).optional().describe(T('mcp.tool.set_agent_status.p.status')),
-      visibility: z.number().int().min(0).max(1).optional().describe(T('mcp.tool.set_agent_status.p.visibility')),
+      visibility: z.number().int().min(0).max(2).optional().describe(T('mcp.tool.set_agent_status.p.visibility')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.set_agent_status(params);

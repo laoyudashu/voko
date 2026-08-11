@@ -713,6 +713,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       login_token TEXT,
       ability TEXT,
       publish_status TEXT NOT NULL DEFAULT 'unpublished',
+      visibility_type INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -878,6 +879,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   // 迁移：agents 批量添加 Hermes/计费/能力相关字段
   try {
     const agentsCols = db.prepare(`PRAGMA table_info(agents)`).all();
+    let addedVisibilityType = false;
     const agentFields = [
       ['backend_type', "TEXT NOT NULL DEFAULT 'openclaw'"],
       ['backend_instance_id', 'TEXT'],
@@ -894,12 +896,19 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       ['tags', 'TEXT'],
       ['capability', 'TEXT'],
       ["access_mode", "TEXT NOT NULL DEFAULT 'private'"],
+      ['visibility_type', 'INTEGER NOT NULL DEFAULT 0'],
     ];
     for (const [col, type] of agentFields) {
       if (!agentsCols.some((c: TableInfoRow) => c.name === col)) {
         db.exec(`ALTER TABLE agents ADD COLUMN ${col} ${type}`);
+        if (col === 'visibility_type') addedVisibilityType = true;
         console.error(`Added ${col} column to agents table`);
       }
+    }
+    if (addedVisibilityType) {
+      // Preserve the old two-state mapping when upgrading databases created
+      // before remote visibility was stored separately from local access_mode.
+      db.exec(`UPDATE agents SET visibility_type = CASE WHEN access_mode = 'public' THEN 1 ELSE 0 END`);
     }
   } catch (e: any) {
     console.error('Agents backend_type/meta fields migration error:', e.message);

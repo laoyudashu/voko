@@ -34,6 +34,7 @@ interface AgentRow {
   category_label?: string | null;
   backend_type?: string | null;
   access_mode?: 'public' | 'private' | null;
+  visibility_type?: 0 | 1 | 2 | null;
   description?: string | null;
   short_description?: string | null;
   address?: string | null;
@@ -54,7 +55,7 @@ interface PublishResult {
 interface StatusParams {
   agentId: string;
   status: 0 | 1;
-  visibility: 0 | 1;
+  visibility: 0 | 1 | 2;
 }
 
 type AsyncOperation = (...args: any[]) => Promise<unknown> | unknown; // Injected JS service boundary.
@@ -127,11 +128,13 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
     const chatroomUrl = uid && imBaseUrl ? imBaseUrl + '/#/chat?peer=' + uid : '';
     const backend = row.backend_type || 'openclaw';
     const accessMode = row.access_mode || 'private';
-    const visibility = accessMode === 'public' ? 1 : 0;
+    const visibility = row.visibility_type === 0 || row.visibility_type === 1 || row.visibility_type === 2
+      ? row.visibility_type
+      : (accessMode === 'public' ? 1 : 0);
 
     db.prepare(`
-      INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, owner_email, chatroom_url, agent_name, category, category_label, publish_status, access_mode, backend_type, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?)
+      INSERT INTO agents (id, agent_id, imUid, imToken, im_server_url, owner_email, chatroom_url, agent_name, category, category_label, publish_status, access_mode, visibility_type, backend_type, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?)
       ON CONFLICT(agent_id) DO UPDATE SET
         imUid = excluded.imUid,
         imToken = excluded.imToken,
@@ -142,9 +145,10 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
         category = excluded.category,
         category_label = excluded.category_label,
         publish_status = 'published',
+        visibility_type = excluded.visibility_type,
         backend_type = excluded.backend_type,
         updated_at = excluded.updated_at
-    `).run(`agent-${agentId}`, agentId, uid, token, serverUrl, row.owner_email || null, chatroomUrl, row.agent_name || null, row.category || null, row.category_label || null, accessMode, backend, now, now);
+    `).run(`agent-${agentId}`, agentId, uid, token, serverUrl, row.owner_email || null, chatroomUrl, row.agent_name || null, row.category || null, row.category_label || null, accessMode, visibility, backend, now, now);
 
     // 注册能力到服务端
     if (registerCapabilities) {
@@ -173,7 +177,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
       }
     }
 
-    // 同步上下架状态到服务端（保持当前 access_mode 对应的 visibility）
+    // 同步上下架状态到服务端，使用独立的 Agent visibility_type。
     if (setAgentStatus) {
       await setAgentStatus({ agentId, status: 1, visibility }).catch(() => {});
     }
@@ -201,10 +205,12 @@ async function unpublishAgent(opts?: PublishOptions): Promise<PublishResult> {
   if (!agentId) return { success: false, error: 'agentId is required' };
 
   try {
-    const row = db.prepare(`SELECT access_mode FROM agents WHERE agent_id = ?`).get<AgentRow>(agentId);
-    const visibility = row?.access_mode === 'public' ? 1 : 0;
+    const row = db.prepare(`SELECT access_mode, visibility_type FROM agents WHERE agent_id = ?`).get<AgentRow>(agentId);
+    const visibility = row?.visibility_type === 0 || row?.visibility_type === 1 || row?.visibility_type === 2
+      ? row.visibility_type
+      : (row?.access_mode === 'public' ? 1 : 0);
 
-    // 同步上下架状态到服务端（visibility 跟随 access_mode，不随下架清零）
+    // 同步上下架状态到服务端（不修改 visibility_type）。
     if (setAgentStatus) {
       await setAgentStatus({ agentId, status: 0, visibility }).catch(() => {});
     }

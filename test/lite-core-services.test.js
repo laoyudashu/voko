@@ -60,14 +60,14 @@ function createAgentDb(row) {
         run(...args) {
           writes.push({ sql, args });
           if (!data) return;
+          if (sql.includes('SET publish_status')) {
+            data.publish_status = args[0];
+            if (sql.includes('visibility_type')) data.visibility_type = args[1];
+            data.updated_at = sql.includes('visibility_type') ? args[2] : args[1];
+          }
           if (sql.includes('SET access_mode')) {
             data.access_mode = args[0];
             data.updated_at = args[1];
-          }
-          if (sql.includes('SET publish_status')) {
-            data.publish_status = args[0];
-            data.access_mode = args[1];
-            data.updated_at = args[2];
           }
         },
       };
@@ -112,7 +112,7 @@ function createCapabilityDb() {
 }
 
 test('Lite access control keeps local and remote status mapping stable', async () => {
-  const db = createAgentDb({ publish_status: 'published', access_mode: 'public' });
+  const db = createAgentDb({ publish_status: 'published', access_mode: 'public', visibility_type: 0 });
   const statusCalls = [];
   const result = await toggleWhitelistMode({
     db,
@@ -197,6 +197,7 @@ test('Lite set-agent-status signs, posts and updates the local row on success', 
   const db = createAgentDb({
     did: 'did:test:agent-1',
     private_key: TEST_PRIVATE_KEY,
+    access_mode: 'private',
   });
   const originalFetch = global.fetch;
   let request;
@@ -217,6 +218,7 @@ test('Lite set-agent-status signs, posts and updates the local row on success', 
   assert.equal(typeof body.signature, 'string');
   assert.equal(db.data.publish_status, 'published');
   assert.equal(db.data.access_mode, 'private');
+  assert.equal(db.data.visibility_type, 0);
 });
 
 test('Lite set-agent-status does not update local state on rejection or missing DID', async (t) => {
@@ -261,7 +263,7 @@ test('Lite set-agent-status rejects invalid flags before database or network acc
     { status: -1, visibility: 0 },
     { status: 2, visibility: 1 },
     { status: 1, visibility: -1 },
-    { status: 0, visibility: 2 },
+    { status: 0, visibility: 3 },
     { status: '1', visibility: 0 },
     { status: 1, visibility: '0' },
     { status: true, visibility: 0 },
@@ -284,7 +286,7 @@ test('Lite set-agent-status rejects invalid flags before database or network acc
   assert.equal(fetchCalls, 0);
 });
 
-test('Lite set-agent-status accepts all four valid status and visibility combinations', async (t) => {
+test('Lite set-agent-status accepts all six valid status and visibility combinations', async (t) => {
   const originalFetch = global.fetch;
   let fetchCalls = 0;
   global.fetch = async () => {
@@ -294,10 +296,11 @@ test('Lite set-agent-status accepts all four valid status and visibility combina
   t.after(() => { global.fetch = originalFetch; });
 
   for (const status of [0, 1]) {
-    for (const visibility of [0, 1]) {
+    for (const visibility of [0, 1, 2]) {
       const db = createAgentDb({
         did: 'did:test:agent-1',
         private_key: TEST_PRIVATE_KEY,
+        access_mode: 'private',
       });
       const result = await setAgentStatus({
         db,
@@ -307,10 +310,11 @@ test('Lite set-agent-status accepts all four valid status and visibility combina
       });
       assert.equal(result.success, true);
       assert.equal(db.data.publish_status, status === 1 ? 'published' : 'unpublished');
-      assert.equal(db.data.access_mode, visibility === 1 ? 'public' : 'private');
+      assert.equal(db.data.access_mode, 'private');
+      assert.equal(db.data.visibility_type, visibility);
     }
   }
-  assert.equal(fetchCalls, 4);
+  assert.equal(fetchCalls, 6);
 });
 
 test('Lite set-agent-status classifies invalid external API responses without local writes', async (t) => {

@@ -15,7 +15,7 @@
   "errors.forbidden_host": "禁止的 Host",
   "errors.unauthorized_token": "未授权：缺少或错误的 X-VOKO-Token",
   "errors.agent_status.missing_values": "缺少 status 或 visibility",
-  "errors.agent_status.invalid_values": "status 和 visibility 必须为 0 或 1",
+  "errors.agent_status.invalid_values": "status 必须为 0 或 1，visibility 必须为 0（私密）、1（公开）或 2（隐藏）",
   "errors.external_api.http_error": "远程服务返回 HTTP {status}",
   "errors.external_api.invalid_json": "远程服务返回了无效的 JSON",
   "errors.external_api.invalid_response": "远程服务返回的数据结构无效",

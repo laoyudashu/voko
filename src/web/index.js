@@ -252,7 +252,7 @@ function getManifestSync(locale='zh'){
   _manifestCache[locale]={
     name:'VOKO LITE',description:'IM interface for AI agents',version:pkg.version,entrypoint:'/',
     capabilities:{
-      browse:{methods:['GET'],paths:['/','/register','/agents/{id}','/agents/{id}/c/{uid}','/agents/{id}/edit','/agents/{id}/status','/agents/{id}/whitelist','/agents/{id}/blacklist','/agents/{id}/access-mode','/agents/{id}/pricing','/agents/{id}/caps','/agents/{id}/human','/interventions','/audit-rules','/payments','/payment-auth','/send-message','/capabilities']},
+      browse:{methods:['GET'],paths:['/','/register','/agents/{id}','/agents/{id}/c/{uid}','/agents/{id}/edit','/agents/{id}/status','/agents/{id}/visibility','/agents/{id}/whitelist','/agents/{id}/blacklist','/agents/{id}/access-mode','/agents/{id}/pricing','/agents/{id}/caps','/agents/{id}/human','/interventions','/audit-rules','/payments','/payment-auth','/send-message','/capabilities']},
       act:{methods:['POST'],actions:FORM_ACTIONS},
       json:{console:'/api/console',hint:'POST with Accept: application/json or ?json=1 returns pure JSON'},
       guest:{bugReport:'/api/bug-report'},
@@ -955,7 +955,7 @@ function createWebRouter(handlers, db, opts={}){
         if(page<convPages)pgBar+='<a href="/agents/'+aId+'?page='+(page+1)+kwParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';
         pgBar+='</div>'
       }
-      const aclOps='<h2>'+L('web.agent.acl_title')+'</h2><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/capabilities?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.capabilities')+'</a><a href="/send-message?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.send_message')+'</a><a href="/interventions?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.interventions')+'</a><a href="/agents/'+aId+'/invite" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.invite.title')+'</a><a href="/agents/'+aId+'/payment-auth" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.payments')+'</a><a href="/agents/'+aId+'/whitelist" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.whitelist')+'</a><a href="/agents/'+aId+'/blacklist" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.blacklist')+'</a><a href="/agents/'+aId+'/pricing" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.pricing')+'</a></div>';;;
+       const aclOps='<h2>'+L('web.agent.acl_title')+'</h2><div class="ops" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr))"><a href="/capabilities?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.capabilities')+'</a><a href="/send-message?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.send_message')+'</a><a href="/interventions?agentId='+aId+'" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.interventions')+'</a><a href="/agents/'+aId+'/invite" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.invite.title')+'</a><a href="/agents/'+aId+'/payment-auth" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.payments')+'</a><a href="/agents/'+aId+'/visibility" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.visibility.title')+'</a><a href="/agents/'+aId+'/whitelist" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.whitelist')+'</a><a href="/agents/'+aId+'/blacklist" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.blacklist')+'</a><a href="/agents/'+aId+'/pricing" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.agent.op.pricing')+'</a></div>';;;
       // 群列表（群 Tab）
       let groupHtml='<p class="meta">'+L('web.agent.no_groups')+'</p>';
       if(groups.length){
@@ -1355,6 +1355,20 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     }catch(e){next(e)}
   });
 
+  // ── 外部展现范围（与访客白名单访问模式分离）──
+  R.get('/agents/:agentId/visibility',async(req,res,next)=>{
+    try{
+      const T=req.t;
+      const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
+      const raw=Number(agent.visibilityType);const visibility=[0,1,2].includes(raw)?raw:0;
+      const descriptions={0:T('web.agent.visibility.private_desc'),1:T('web.agent.visibility.public_desc'),2:T('web.agent.visibility.hidden_desc')};
+      res.send(renderAgentFormPage(T('web.agent.visibility.title'),agentId,agent.agentName||agentId,
+        '<p>'+T('web.agent.visibility.current')+'：<strong>'+esc(descriptions[visibility])+'</strong></p><p class="meta">'+esc(T('web.agent.visibility.hint'))+'</p>'+actionForm(agentId,'set_visibility',[
+          {id:'av',name:'visibility',label:T('web.agent.visibility.label'),type:'select',options:{0:T('web.agent.visibility.private_opt'),1:T('web.agent.visibility.public_opt'),2:T('web.agent.visibility.hidden_opt')},val:String(visibility)},
+        ],T('common.btn.save'),null,'agent.visibility.set'),req.t,req.locale));
+    }catch(e){next(e)}
+  });
+
   // ── 订阅 ──
   R.get('/agents/:agentId/pricing',async(req,res,next)=>{
     try{
@@ -1605,7 +1619,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
             address:req.body.address||undefined,contact_phone:req.body.contact_phone||undefined,
             backendType:req.body.backendType||undefined,backendInstanceId:req.body.backendInstanceId
           }),'common.action.profile_updated');break;
-          case'set_status':await handleAction(req,res,handlers.set_agent_status({agentId,status:parseInt(req.body.status,10)}),'common.action.status_updated');break;
+           case'set_status':await handleAction(req,res,handlers.set_agent_status({agentId,status:parseInt(req.body.status,10)}),'common.action.status_updated');break;
+           case'set_visibility':await handleAction(req,res,handlers.set_agent_status({agentId,visibility:parseInt(req.body.visibility,10)}),'common.action.status_updated');break;
           case'add_whitelist':await handleAction(req,res,handlers.manage_whitelist({agentId,action:'add',visitorId:req.body.visitorId,reason:req.body.reason||''}),'common.action.whitelist_added');break;
           case'add_blacklist':await handleAction(req,res,handlers.manage_blacklist({agentId,action:'add',visitorId:req.body.visitorId,reason:req.body.reason||''}),'common.action.blacklist_added');break;
           case'remove_blacklist':await handleAction(req,res,handlers.manage_blacklist({agentId,action:'remove',visitorId:req.body.visitorId}),'common.action.blacklist_removed');break;

@@ -90,6 +90,7 @@ interface AgentDbRow extends DynamicRow {
   agent_name?: string | null;
   imUid?: string | null;
   owner_email?: string | null;
+  visibility_type?: number | null;
 }
 
 interface ConversationDbRow extends DynamicRow {
@@ -905,7 +906,7 @@ function createToolHandlers(cx: McpContext) {
     const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
     const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
       `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
-       delivery_modes,publish_status,access_mode,owner_email,created_at FROM agents${where}
+       delivery_modes,publish_status,access_mode,visibility_type,owner_email,created_at FROM agents${where}
        ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
     );
     const agents = rows.map((r) => {
@@ -916,6 +917,7 @@ function createToolHandlers(cx: McpContext) {
         shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
         backendInstanceId: r.backend_instance_id || null, deliveryModes,
         publishStatus: r.publish_status, accessMode: r.access_mode,
+        visibilityType: [0, 1, 2].includes(Number(r.visibility_type)) ? Number(r.visibility_type) : 0,
         ownerEmail: r.owner_email, createdAt: r.created_at,
       };
     });
@@ -1156,7 +1158,10 @@ function createToolHandlers(cx: McpContext) {
         await cx.setAgentStatus({
           agentId,
           status: 1,
-          visibility: accessMode === 'public' ? 1 : 0,
+          // Registration accessMode controls the local visitor whitelist;
+          // external Agent visibility starts private unless explicitly changed
+          // later with set_agent_status visibility=0/1/2.
+          visibility: 0,
         });
       }
 
@@ -1275,7 +1280,8 @@ function createToolHandlers(cx: McpContext) {
         const statusResult = await cx.setAgentStatus({
           agentId,
           status: 1,
-          visibility: accessMode === 'public' ? 1 : 0,
+          // Keep local visitor access separate from external discoverability.
+          visibility: 0,
         });
         accessModeSynced = statusResult?.success !== false;
       }
@@ -1429,13 +1435,13 @@ function createToolHandlers(cx: McpContext) {
       return okResult;
     },
 
-    // ─── 4. 设置 Agent 上下架 / 公开私有状态 ───
+    // ─── 4. 设置 Agent 上下架 / 外部展现范围 ───
 
     async set_agent_status(p: McpToolParams = {}) {
-      const hasVisibility = p.visibility === 0 || p.visibility === 1;
+      const hasVisibility = p.visibility === 0 || p.visibility === 1 || p.visibility === 2;
       const hasStatus = p.status === 0 || p.status === 1;
 
-      // 仅切换公有 / 私有（不改变上下架）
+      // 仅切换外部展现范围（不改变上下架，也不改变本地访客白名单模式）
       if (hasVisibility && !hasStatus) {
         if (!cx.setAgentStatus) {
           return { success: false, error: '当前环境不支持同步 Agent 状态' };
@@ -1450,11 +1456,10 @@ function createToolHandlers(cx: McpContext) {
         });
       }
 
+      if (hasVisibility && (p.status === 0 || p.status === 1)) {
+        cx.exec(`UPDATE agents SET visibility_type = ?, updated_at = ? WHERE agent_id = ?`, [p.visibility, Date.now(), p.agentId]);
+      }
       if (p.status === 1) {
-        if (hasVisibility) {
-          const accessMode = p.visibility === 1 ? 'public' : 'private';
-          cx.exec(`UPDATE agents SET access_mode = ?, updated_at = ? WHERE agent_id = ?`, [accessMode, Date.now(), p.agentId]);
-        }
         if (!cx.publishAgent) {
           return { success: false, error: '当前环境不支持发布 Agent' };
         }
@@ -1466,7 +1471,7 @@ function createToolHandlers(cx: McpContext) {
         }
         return cx.unpublishAgent({ agentId: p.agentId });
       }
-      return { success: false, error: 'status 必须为 0（下架）或 1（上架），或使用 visibility 单独切换公有/私有' };
+      return { success: false, error: 'status 必须为 0（下架）或 1（上架），或使用 visibility 单独切换 0（私密）、1（公开）、2（隐藏）' };
     },
 
     // ─── 5. 状态 ───
@@ -1559,6 +1564,7 @@ function createToolHandlers(cx: McpContext) {
           backendInstanceId: a.backend_instance_id || null,
           publishStatus: a.publish_status,
           accessMode: a.access_mode,
+          visibilityType: [0, 1, 2].includes(Number(a.visibility_type)) ? Number(a.visibility_type) : 0,
           did: a.did,
           imUid: a.imUid,
           ownerEmail: a.owner_email,
@@ -1581,6 +1587,7 @@ function createToolHandlers(cx: McpContext) {
           iconUrl: '头像图片链接',
           backendType: 'Agent 类型（预定义：openclaw/hermes/goose 等，也可为自定义类型）',
           publishStatus: '发布状态（published=已上架, unpublished=未上架）',
+          visibilityType: '服务端外部展现范围：0=私密（可搜索、不进黄页），1=公开，2=隐藏（不可搜索）',
           paymentFeeRate: '支付手续费率（如 0.006 = 0.6%）',
           agentUsageFeeRate: '按时计费模式下，平台抽取的佣金比例',
           paymentConfigured: '是否已配置支付认证',

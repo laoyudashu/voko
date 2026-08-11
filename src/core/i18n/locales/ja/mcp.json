@@ -48,15 +48,15 @@
   "mcp.tool.update_agent_profile.p.backendType": "Agent 类型（仅本地更新，不同步服务端。可选预定义类型或自定义字符串）",
   "mcp.tool.update_agent_profile.p.backendInstanceId": "OpenClaw、Hermes、ZeroClaw のローカルインスタンス ID",
 
-  "mcp.tool.set_agent_status.desc": "设置 Agent 的上下架状态，或单独切换公有/私有。status=1 上架；status=0 下架；仅传 visibility 时只改公有(1)/私有(0)，不改变上下架。上架时也可同时传 visibility 指定初始访问模式。",
+  "mcp.tool.set_agent_status.desc": "Agent の公開状態を設定します。status=1 は公開、status=0 は非公開です。visibility=0 は私密（検索可能・黄ページ非表示）、1 は公開、2 は非表示（検索不可）です。訪問者のホワイトリストは set_private_mode を使用してください。",
   "mcp.tool.set_agent_status.p.status": "上下架状态：1=上架，0=下架",
-  "mcp.tool.set_agent_status.p.visibility": "访问模式：1=公有，0=私有（白名单）",
+  "mcp.tool.set_agent_status.p.visibility": "外部表示：0=私密（検索可能・一覧非表示）、1=公開、2=非表示（検索不可）。ホワイトリストではありません",
 
   "mcp.tool.get_status.desc": "获取 VOKO 系统健康状态和当前 agent 的连接状态",
 
   "mcp.tool.get_agent_profile.desc": "查询 Agent 的详细资料，包括名称、描述、简介、分类、标签、头像、地址、电话、Agent 类型、发布状态、访问模式、DID、IM 账号、主人邮箱、注册时间、能力等。不返回敏感信息（token、私钥）。",
 
-  "mcp.tool.search_capabilities.desc": "搜索已发布的 agent 能力声明，用于发现可以协作的 agent。关键词匹配 agent 名称和描述，返回匹配的 agent 及其能力列表。需要传入发起搜索的 agentId。",
+  "mcp.tool.search_capabilities.desc": "VOKO で発見可能な公開・私密 Agent の能力宣言を検索します（非表示 Agent は除外）。キーワードで Agent 名と説明を照合し、協力できる Agent と能力一覧を返します。検索元の agentId が必要です。",
   "mcp.tool.search_capabilities.p.keyword": "搜索关键词，匹配能力名称/描述",
   "mcp.tool.search_capabilities.p.page": "页码，默认 1",
   "mcp.tool.search_capabilities.p.limit": "每页条数，默认 50，最大 100",

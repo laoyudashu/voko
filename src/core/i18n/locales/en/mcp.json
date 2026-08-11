@@ -50,15 +50,15 @@
   "mcp.tool.update_agent_profile.p.backendType": "Agent type (local update only, not synced to server. Choose a predefined type or any custom string)",
   "mcp.tool.update_agent_profile.p.backendInstanceId": "Local instance ID for OpenClaw, Hermes, or ZeroClaw",
 
-  "mcp.tool.set_agent_status.desc": "Set the Agent's publish/unpublish status, or toggle public/private independently. status=1 publishes; status=0 unpublishes. When only visibility is provided, only public(1)/private(0) is changed without affecting the publish status. When publishing, you may also pass visibility to set the initial access mode.",
+  "mcp.tool.set_agent_status.desc": "Set the Agent's publish/unpublish status, or change external visibility independently. status=1 publishes; status=0 unpublishes. visibility=0 is private (searchable but not listed), 1 is public, and 2 is hidden (not searchable). Use set_private_mode for the visitor whitelist.",
   "mcp.tool.set_agent_status.p.status": "Publish status: 1=publish, 0=unpublish",
-  "mcp.tool.set_agent_status.p.visibility": "Access mode: 1=public, 0=private (whitelist)",
+  "mcp.tool.set_agent_status.p.visibility": "External visibility: 0=private (searchable, not listed), 1=public, 2=hidden (not searchable); this is not the visitor whitelist",
 
   "mcp.tool.get_status.desc": "Get VOKO system health status and the connection status of the current agent",
 
   "mcp.tool.get_agent_profile.desc": "Query detailed Agent profile including name, description, summary, category, tags, avatar, address, phone, agent type, publish status, access mode, DID, IM account, owner email, registration time, capabilities, etc. No sensitive information (token, private key) is returned.",
 
-  "mcp.tool.search_capabilities.desc": "Search published agent capability declarations to discover agents for collaboration. Matches agent names and descriptions by keyword, returns matching agents and their capability lists. Requires the agentId of the searching agent.",
+  "mcp.tool.search_capabilities.desc": "Search discoverable public and private Agent capability declarations on VOKO (hidden Agents are excluded) to find collaboration partners. Matches Agent names and descriptions by keyword and returns matching Agents with their capability lists. Requires the searching agentId.",
   "mcp.tool.search_capabilities.p.keyword": "Search keyword, matched against capability name/description",
   "mcp.tool.search_capabilities.p.page": "Page number, default 1",
   "mcp.tool.search_capabilities.p.limit": "Items per page, default 50, max 100",
