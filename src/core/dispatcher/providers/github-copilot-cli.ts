@@ -26,6 +26,7 @@ class GitHubCopilotCliProvider extends CliAdapter {
       timeout: 300000,
       requireOutput: true,
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
     });

@@ -7,7 +7,13 @@
  */
 const os = require('os');
 const { CliAdapter } = require('../../adapters/cli-adapter');
+const { withClineRuntimeLock } = require('./cline-runtime-coordinator');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
+import type { ProviderDeliveryReceipt, PushPayload } from '../types';
+
+const platformArtifact = process.platform === 'win32'
+  ? { artifactPackage: `@cline/cli-windows-${process.arch}`, relativePath: 'bin/cline.exe' }
+  : { artifactPackage: `@cline/cli-${process.platform}-${process.arch}`, relativePath: 'bin/cline' };
 
 class ClineCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
@@ -17,9 +23,11 @@ class ClineCliProvider extends CliAdapter {
       runtimeRequest: {
         providerId: 'cline-cli',
         mode: 'cli',
-        candidates: process.platform === 'win32'
-          ? [{ kind: 'node-package-bin', command: 'cline', packageName: 'cline' }, { kind: 'native', command: 'cline' }]
-          : [{ kind: 'native', command: 'cline' }, { kind: 'node-package-bin', command: 'cline', packageName: 'cline' }],
+        candidates: [
+          { kind: 'node-package-artifact', command: 'cline', packageName: 'cline', ...platformArtifact },
+          { kind: 'native', command: 'cline' },
+          { kind: 'node-package-bin', command: 'cline', packageName: 'cline' },
+        ],
       },
       args: [
         '--plan',
@@ -42,9 +50,14 @@ class ClineCliProvider extends CliAdapter {
       },
       promptTemplate: '这是来自外部访客的文本消息。仅返回安全的文字答复或计划，不得修改文件、执行命令、调用工具或访问外部系统。\n\n{prompt}',
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
     });
+  }
+
+  async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
+    return withClineRuntimeLock(() => super.push(payload));
   }
 }
 

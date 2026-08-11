@@ -171,7 +171,9 @@ class CliAdapter extends PushProvider {
 
   acceptsBinding(binding: any, agentId = ''): boolean {
     if (this._acceptsBinding) return !!this._acceptsBinding(binding, agentId);
-    return binding?.providerType === this._matchType;
+    return binding?.providerType === this._bindingProviderType
+      && binding.adapterType === this._adapterType
+      && binding.deliveryMode === 'cli';
   }
 
   isAvailable(_agentId: string): boolean {
@@ -357,7 +359,8 @@ class CliAdapter extends PushProvider {
       if (!error) error = cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
     }
 
-    if (error && binding && !binding.strictSessionRoute && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
+    if (error && binding && this._sessionPersistence === 'transport' && !binding.strictSessionRoute
+      && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}
       return this.push({ ...payload, providerBinding: null, __vokoManagedRetry: true });
     }

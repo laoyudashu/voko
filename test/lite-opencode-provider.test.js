@@ -50,7 +50,12 @@ test('OpenCode CLI resumes the exact ACP native session instead of continuing th
   const args = provider._argsForSession('session-from-acp', false);
   assert.deepEqual(args.slice(-3), ['--session', 'session-from-acp', '{prompt}']);
   assert.equal(args.includes('--continue'), false);
-  assert.equal(provider.acceptsBinding({ providerType: 'opencode' }, 'agent-a'), true);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'opencode', adapterType: 'opencode-acp', deliveryMode: 'acp', nativeSessionId: 'session-from-acp',
+  }, 'agent-a'), true);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'opencode', adapterType: 'foreign-cli', deliveryMode: 'cli', nativeSessionId: 'session-from-acp',
+  }, 'agent-a'), false);
   assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'step_start', sessionID: 'session-from-acp' })), 'session-from-acp');
 });
 

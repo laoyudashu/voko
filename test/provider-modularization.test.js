@@ -13,6 +13,9 @@ const catalog = require('../build/core/dispatcher/provider-catalog');
 const { getProviderModularRollout, providerModularModeForFamily } = require('../build/core/dispatcher/provider-modular-rollout');
 const { createMessageSecurityContext } = require('../build/core/dispatcher/safety-prompt');
 const { createDispatcher } = require('../build/core/dispatcher');
+const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
+const { CliAdapter } = require('../build/core/adapters/cli-adapter');
+const { withClineRuntimeLock } = require('../build/core/dispatcher/providers/cline-runtime-coordinator');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-provider-modular-'));
@@ -51,13 +54,107 @@ test('modular rollout defaults to Goose and supports config and environment over
   const db = fixture(t);
   const defaults = getProviderModularRollout(db, {});
   assert.equal(providerModularModeForFamily(defaults, 'goose'), 'enabled');
+  assert.equal(providerModularModeForFamily(defaults, 'cline'), 'shadow');
+  assert.equal(providerModularModeForFamily(defaults, 'cursor'), 'shadow');
+  assert.equal(providerModularModeForFamily(defaults, 'github-copilot'), 'shadow');
   assert.equal(providerModularModeForFamily(defaults, 'hermes'), 'disabled');
 
   db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
-    .run('feature:provider_modular_dispatch_v1', JSON.stringify({ mode: 'shadow', providerFamilies: ['hermes'] }), Date.now());
+    .run('feature:provider_modular_dispatch_v1', JSON.stringify({
+      mode: 'enabled', providerFamilies: ['goose'], familyModes: { hermes: 'shadow', cline: 'enabled' },
+    }), Date.now());
   const configured = getProviderModularRollout(db, {});
   assert.equal(providerModularModeForFamily(configured, 'hermes'), 'shadow');
+  assert.equal(providerModularModeForFamily(configured, 'cline'), 'enabled');
+  assert.equal(providerModularModeForFamily(configured, 'goose'), 'enabled');
   assert.equal(getProviderModularRollout(db, { VOKO_PROVIDER_MODULAR_DISPATCH: 'disabled' }).mode, 'disabled');
+});
+
+test('generic ACP and CLI constructors honor Dispatcher-owned session persistence', (t) => {
+  const db = fixture(t);
+  for (const providerId of ['cline-acp', 'cline-cli', 'cursor-acp', 'cursor-cli',
+    'github-copilot-acp', 'github-copilot-cli']) {
+    const provider = catalog.instantiateProviderTransport(catalog.getProviderTransport(providerId), {
+      db,
+      getProviderConfig: () => ({ sessionPersistence: 'dispatcher' }),
+    });
+    assert.equal(provider._bindingStore, null, providerId);
+    assert.equal(provider._sessionPersistence, 'dispatcher', providerId);
+  }
+});
+
+test('generic CLI accepts only its own adapter binding unless a Provider opts into compatibility', () => {
+  const provider = new CliAdapter({
+    name: 'CLINE CLI', cmd: process.execPath, args: [], matchType: 'cline', adapterType: 'cline-cli',
+  });
+  const binding = { providerType: 'cline', adapterType: 'cline-cli', deliveryMode: 'cli', nativeSessionId: 's1' };
+  assert.equal(provider.acceptsBinding(binding), true);
+  assert.equal(provider.acceptsBinding({ ...binding, adapterType: 'cline-acp', deliveryMode: 'acp' }), false);
+});
+
+test('Cline ACP and CLI turns share one process-wide serial coordinator', async () => {
+  const events = [];
+  let active = 0;
+  let maxActive = 0;
+  const run = (name, delay) => withClineRuntimeLock(async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    events.push(`${name}:start`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    events.push(`${name}:end`);
+    active -= 1;
+    return name;
+  });
+  const results = await Promise.all([run('acp', 20), run('cli', 1), run('agent-b', 1)]);
+  assert.deepEqual(results, ['acp', 'cli', 'agent-b']);
+  assert.equal(maxActive, 1);
+  assert.deepEqual(events, ['acp:start', 'acp:end', 'cli:start', 'cli:end', 'agent-b:start', 'agent-b:end']);
+});
+
+test('Cline serial coordinator releases the next turn after failure', async () => {
+  await assert.rejects(withClineRuntimeLock(async () => { throw new Error('failed'); }), /failed/);
+  assert.equal(await withClineRuntimeLock(async () => 'recovered'), 'recovered');
+});
+
+test('Dispatcher-owned CLI session failure is attempted once and returned to Dispatcher', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-attempt-'));
+  const marker = path.join(dir, 'attempts.txt');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const script = `require('fs').appendFileSync(${JSON.stringify(marker)}, '1'); process.stderr.write('command not found'); process.exit(7)`;
+  const provider = new CliAdapter({
+    name: 'TEST CLI', cmd: process.execPath, args: ['-e', script], matchType: 'cline',
+    adapterType: 'cline-cli', sessionPersistence: 'dispatcher', timeout: 5000,
+  });
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello', messageId: 'message-a',
+    providerBinding: {
+      id: 'binding-a', bindingVersion: 1, providerType: 'cline', providerInstanceId: null,
+      deliveryMode: 'cli', adapterType: 'cline-cli', nativeSessionId: 'session-a',
+      sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
+    },
+  }), error => error.deliveryOutcome === 'not_delivered');
+  assert.equal(fs.readFileSync(marker, 'utf8'), '1');
+});
+
+test('Dispatcher-owned ACP does not replace a failed bound session inside the transport', async () => {
+  const provider = new AcpAdapter({
+    name: 'TEST ACP', cliPath: process.execPath, args: [], matchType: 'cline', adapterType: 'cline-acp',
+    sessionPersistence: 'dispatcher',
+  });
+  let created = 0;
+  provider._resumeSession = async () => null;
+  const state = {
+    sessions: new Map(), agentCtx: { buildSession: () => ({ start: async () => { created += 1; return { sessionId: 'new' }; } }) },
+  };
+  await assert.rejects(() => provider._ensureSession(state, 'agent-a', 'visitor-a', {
+    agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello', messageId: 'message-a',
+    providerBinding: {
+      id: 'binding-a', bindingVersion: 1, providerType: 'cline', providerInstanceId: null,
+      deliveryMode: 'acp', adapterType: 'cline-acp', nativeSessionId: 'missing-session',
+      sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
+    },
+  }), error => error.deliveryOutcome === 'not_delivered');
+  assert.equal(created, 0);
 });
 
 test('Session Coordinator persists managed receipts but never rewrites caller-owned bindings', (t) => {
@@ -177,6 +274,74 @@ test('family allowlist enables central receipts without changing other families'
     channelType: 1, content: 'hello', messageId: 'message-h' });
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(new ProviderSessionCoordinator(db).getActive('agent-h', 'visitor-h', 1).adapterType, 'hermes-http');
+});
+
+test('Cline Cursor and Copilot fall back once without crossing Agent sessions', async (t) => {
+  const db = fixture(t);
+  db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
+    .run('feature:provider_modular_dispatch_v1', JSON.stringify({
+      mode: 'enabled', providerFamilies: ['goose'],
+      familyModes: { cline: 'enabled', cursor: 'enabled', 'github-copilot': 'enabled' },
+    }), Date.now());
+  const now = Date.now();
+  const families = [
+    ['cline', 'agent-cline'],
+    ['cursor', 'agent-cursor'],
+    ['github-copilot', 'agent-copilot'],
+  ];
+  const insert = db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const [family, agentId] of families) {
+    insert.run(`row-${agentId}`, agentId, `im-${agentId}`, 'token', 'http://im', 'published', family,
+      '["acp","cli","pull"]', 'private', now, now);
+  }
+  const attempts = [];
+  const providers = {};
+  for (const [family] of families) {
+    const acpId = `${family}-acp`;
+    const cliId = `${family}-cli`;
+    providers[acpId] = {
+      priority: 10,
+      match: (_agentId, meta) => meta.backend_type === family,
+      isAvailable: () => true,
+      push: async payload => {
+        attempts.push(`${payload.agentId}:acp:${payload.messageId}`);
+        const error = new Error('ACP unavailable before delivery');
+        error.deliveryOutcome = 'not_delivered';
+        throw error;
+      },
+    };
+    providers[cliId] = {
+      priority: 1,
+      match: (_agentId, meta) => meta.backend_type === family,
+      isAvailable: () => true,
+      push: async payload => {
+        attempts.push(`${payload.agentId}:cli:${payload.messageId}`);
+        return { nativeSessionId: `session-${payload.agentId}`, deliveryMode: 'cli', adapterType: cliId };
+      },
+    };
+  }
+  const dispatcher = createDispatcher({ db, providers });
+  await Promise.all(families.map(async ([, agentId]) => {
+    dispatcher.dispatch(agentId, {
+      agentId, fromUid: `visitor-${agentId}`, channelId: `visitor-${agentId}`, channelType: 1,
+      content: `hello-${agentId}`, messageId: `message-${agentId}`,
+    });
+  }));
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  assert.equal(attempts.length, 6);
+  for (const [family, agentId] of families) {
+    assert.deepEqual(attempts.filter(value => value.startsWith(`${agentId}:`)), [
+      `${agentId}:acp:message-${agentId}`,
+      `${agentId}:cli:message-${agentId}`,
+    ]);
+    const binding = new ProviderSessionCoordinator(db).getActive(agentId, `visitor-${agentId}`, 1);
+    assert.equal(binding.providerType, family);
+    assert.equal(binding.adapterType, `${family}-cli`);
+    assert.equal(binding.nativeSessionId, `session-${agentId}`);
+  }
 });
 
 test('shadow rollout never persists a Provider receipt', async (t) => {

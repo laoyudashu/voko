@@ -18,7 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const { Readable, Writable } = require('stream');
 const { PushProvider } = require('../dispatcher/base-provider');
-const { checkCliAvailable } = require('./cli-spawner');
+const { checkCliAvailable, killTree } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
@@ -722,6 +722,7 @@ class AcpAdapter extends PushProvider {
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        detached: process.platform !== 'win32',
         cwd: this._cwd,
         env: withRuntimePath({
           ...process.env,
@@ -732,6 +733,7 @@ class AcpAdapter extends PushProvider {
       });
       state.child = child;
       if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
+        if (child.pid !== undefined) killTree(child.pid);
         try { child.kill(); } catch {}
         const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled after spawn`);
         (cancelled as any).deliveryOutcome = 'not_delivered';
@@ -918,8 +920,8 @@ class AcpAdapter extends PushProvider {
       // resume 失败 → 清除失效句柄
       if (binding?.id) this._bindingStore?.markStale(binding.id);
       this._deleteSessionHandle(agentId, visitorId);
-      if (binding?.strictSessionRoute) {
-        const error = new Error(`[${this._logPrefix}] precise session is unavailable`);
+      if (binding?.strictSessionRoute || this._sessionPersistence === 'dispatcher') {
+        const error = new Error(`[${this._logPrefix}] bound session is unavailable`);
         (error as any).deliveryOutcome = 'not_delivered';
         throw error;
       }
@@ -1065,7 +1067,8 @@ class AcpAdapter extends PushProvider {
       state.sessions.clear();
       // 3. kill 子进程
       if (state.child && !state.child.killed) {
-        state.child.kill();
+        if (state.child.pid !== undefined) killTree(state.child.pid);
+        try { state.child.kill(); } catch {}
       }
       state.transportAlive = false;
       if (state.transportClose) {
