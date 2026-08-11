@@ -22,7 +22,7 @@ function makeFixture() {
   db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
     .run(JSON.stringify({
       instanceId: 'doctor-instance', pid: process.pid, port: 32123, ts: now,
-      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true }],
+      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: true, deliveryStatus: { pullOnly: true, methods: [{ mode: 'pull', reason: 'provider-pull-only' }] } }],
     }), now);
   db.prepare(`
     INSERT INTO agents
@@ -57,6 +57,9 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   assert.doesNotMatch(JSON.stringify(result), /doctor-secret-value/);
   assert.ok(result.checks.some((check) => check.id === 'integrity' && check.status === 'ok'));
   assert.ok(result.checks.some((check) => check.id === 'runtime' && check.status === 'ok'));
+  const runtimeAgents = result.checks.find((check) => check.id === 'runtime-agents');
+  assert.equal(runtimeAgents?.data?.providerPullOnly, 1);
+  assert.equal(runtimeAgents?.data?.agents?.[0]?.pullReason, 'provider-pull-only');
 });
 
 test('doctor reports a missing database with a machine-readable error code', async (t) => {

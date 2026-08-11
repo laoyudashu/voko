@@ -216,15 +216,27 @@ function inspectAgents(agents: any[], runtime: any, config: Record<string, any>,
       const delivery = agent.deliveryStatus || agent;
       return delivery.pullReady === true && delivery.automaticDeliveryReady !== true;
     }).length;
+    const providerPullOnly = runtimeAgents.filter((agent: any) => {
+      const delivery = agent.deliveryStatus || agent;
+      return delivery.pullOnly === true;
+    }).length;
     const status = imConnected === runtimeAgents.length ? 'ok' : 'warn';
     addCheck(checks, 'runtime-agents', 'Runtime Agent status', status, `IM ${imConnected}/${runtimeAgents.length}, automatic delivery ${automaticReady}/${runtimeAgents.length}, Pull-only ${runtimePullOnly}`, {
-      imConnected, automaticReady, pullOnly: runtimePullOnly, agents: runtimeAgents.map((agent: any) => ({
+      imConnected, automaticReady, pullOnly: runtimePullOnly, providerPullOnly, agents: runtimeAgents.map((agent: any) => {
+        const delivery = agent.deliveryStatus || agent;
+        const pullMethod = Array.isArray(delivery.methods)
+          ? delivery.methods.find((method: any) => method.mode === 'pull')
+          : null;
+        return {
         agentId: agent.agentId,
         imConnected: !!agent.imConnected,
         activeAutomaticMode: agent.activeAutomaticMode || agent.deliveryStatus?.activeAutomaticMode || null,
         automaticReadyModes: agent.automaticReadyModes || agent.deliveryStatus?.automaticReadyModes || [],
         pullReady: agent.pullReady ?? agent.deliveryStatus?.pullReady ?? true,
-      })),
+        pullOnly: delivery.pullOnly === true,
+        pullReason: pullMethod?.reason || null,
+      };
+      }),
     });
   }
 

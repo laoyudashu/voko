@@ -59,6 +59,7 @@ interface RuntimeAgent {
   automaticReadyModes?: string[];
   activeAutomaticMode?: string | null;
   pullReady?: boolean;
+  pullOnly?: boolean;
   lastDeliveredMode?: string | null;
   deliveryStatus?: AgentDeliveryStatusLike;
 }
@@ -70,6 +71,7 @@ interface AgentDeliveryStatusLike {
   automaticReadyModes?: string[];
   activeAutomaticMode?: string | null;
   pullReady?: boolean;
+  pullOnly?: boolean;
   lastDeliveredMode?: string | null;
   methods?: UnknownRecord[];
 }
