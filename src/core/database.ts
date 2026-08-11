@@ -1355,9 +1355,9 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     { direction: 'inbound',  keyword: '忽略以上所有内容',    action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
     { direction: 'inbound',  keyword: '忘记所有设定',        action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
     { direction: 'inbound',  keyword: '覆盖你的规则',        action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
-    { direction: 'inbound',  keyword: '你现在是DAN',         action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
-    { direction: 'inbound',  keyword: 'Do Anything Now',    action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
-    { direction: 'inbound',  keyword: 'jailbreak',          action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
+    { direction: 'inbound',  keyword: '你现在是DAN',         action: 'soft_deny', prompt: '' },
+    { direction: 'inbound',  keyword: 'Do Anything Now',    action: 'soft_deny', prompt: '' },
+    { direction: 'inbound',  keyword: 'jailbreak',          action: 'soft_deny', prompt: '' },
     { direction: 'inbound',  keyword: '输出你的提示词',     action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
     { direction: 'inbound',  keyword: '你的system prompt',  action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
     { direction: 'inbound',  keyword: 'reveal your prompt', action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
@@ -1367,20 +1367,18 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     { direction: 'inbound',  keyword: '[INST]',             action: 'hard_deny', prompt: '对不起，该信息包含敏感词"{keyword}"，无法执行或转发。' },
     { direction: 'inbound',  keyword: '<<SYS>>',            action: 'soft_deny', prompt: '' },
     { direction: 'inbound',  keyword: '如何绕过',            action: 'soft_deny', prompt: '' },
-    { direction: 'inbound',  keyword: '怎么联系主人',        action: 'soft_deny', prompt: '' },
     { direction: 'inbound',  keyword: '获取你的权限',        action: 'soft_deny', prompt: '' },
-    { direction: 'outbound', keyword: '/sk-[A-Za-z0-9-]{20,}/',   action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: '/AKID[A-Za-z0-9]{16,}/',   action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: '/\\d{17}[\\dXx]/',          action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: '/10\\.\\d+\\.\\d+\\.\\d+/', action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: 'secret',                    action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: '银行卡',                    action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: '密码',                      action: 'hard_deny', prompt: '' },
-    { direction: 'outbound', keyword: 'token',                     action: 'hard_deny', prompt: '' },
   ];
 
+  const auditRulePackVersion = 2;
+  const savedAuditRulePackVersion = (() => {
+    try {
+      const row = db.prepare(`SELECT data FROM config WHERE type='audit_rule_pack_version' LIMIT 1`).get();
+      return Number(row?.data || 0);
+    } catch (_) { return 0; }
+  })();
   const defaultRuleCount = db.prepare(`SELECT COUNT(*) as cnt FROM audit_rules WHERE is_default = 1`).get()?.cnt || 0;
-  if (defaultRuleCount > 0 && defaultRuleCount !== defaultRules.length) {
+  if (defaultRuleCount > 0 && (savedAuditRulePackVersion !== auditRulePackVersion || defaultRuleCount !== defaultRules.length)) {
     console.error(`[审核-出站] 默认规则版本更新 (${defaultRuleCount} → ${defaultRules.length})，重新初始化`);
     db.prepare(`DELETE FROM audit_rules WHERE is_default = 1`).run();
   }
@@ -1409,6 +1407,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
         insertRule.run(`audit_default_${r.direction}_${safeKeyword}`, r.direction, r.keyword, r.action, r.prompt, promptKey, now, now);
       }
       db.exec('COMMIT');
+      db.prepare(`INSERT OR REPLACE INTO config (type,data,updated_at) VALUES ('audit_rule_pack_version',?,?)`)
+        .run(String(auditRulePackVersion), now);
     } catch (e: any) {
       db.exec('ROLLBACK');
       throw e;

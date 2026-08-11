@@ -26,6 +26,7 @@ const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
+const { loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../core/safety-classifier');
 
 const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
 
@@ -1741,6 +1742,23 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       res.json(r.success !== false ? { success: true } : { success: false, error: r.error || '删除失败' });
     } catch (e) { res.json({ success: false, error: e.message }); }
   });
+  R.get('/api/audit-rules/model-assistance',requireSensitiveLocalAuth,(_req,res)=>{
+    try{return res.json({success:true,config:loadSafetyClassifierConfig(db,false)})}
+    catch(e){return res.status(500).json({success:false,error:e.message})}
+  });
+  R.post('/api/audit-rules/model-assistance',requireSensitiveLocalAuth,requireSensitiveCsrf,(req,res)=>{
+    try{return res.json({success:true,config:saveSafetyClassifierConfig(db,req.body||{})})}
+    catch(e){return res.status(400).json({success:false,error:e.message})}
+  });
+  R.post('/api/audit-rules/model-assistance/test',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res)=>{
+    try{
+      const previous=loadSafetyClassifierConfig(db,true);
+      const input={...previous,...(req.body||{}),apiKey:req.body?.apiKey||previous.apiKey,enabled:false};
+      const result=await testSafetyClassifierConfig(input);
+      const config=saveSafetyClassifierConfig(db,{...input,enabled:false,_markTested:true});
+      return res.json({success:true,result,config});
+    }catch(e){return res.status(400).json({success:false,error:e.message})}
+  });
 
   // ══════════════════════════════════════════════════════════
   //  全局功能页面
@@ -2012,7 +2030,22 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
       const actOpt=(val)=>'<option value="'+val+'">'+actTxt(val)+'</option>';
       const aOpts=actOpt('soft_deny')+actOpt('hard_deny')+actOpt('allow');
 
-      const body='<form method="GET" action="/audit-rules" style="display:flex;gap:8px;margin-bottom:10px">'
+      const modelCfg=loadSafetyClassifierConfig(db,false);
+      const csrf=opts.webSessions?.requestCsrfToken(req)||'';
+      const modelCard='<div class="card"><h3>'+L('web.audit.model.title')+'</h3>'
+        +'<p class="meta">'+L('web.audit.model.description')+'</p>'
+        +'<form method="POST" action="/audit-rules/model-assistance"><input type="hidden" name="_csrf" value="'+esc(csrf)+'">'
+        +'<label><input type="checkbox" name="enabled" value="1" style="width:auto"'+(modelCfg.enabled?' checked':'')+'> '+L('web.audit.model.enabled')+'</label>'
+        +'<div class="form-grid"><div><label>'+L('web.audit.model.api_type')+'</label><select name="apiType"><option value="openai-chat"'+(modelCfg.apiType!=='anthropic-messages'?' selected':'')+'>OpenAI compatible</option><option value="anthropic-messages"'+(modelCfg.apiType==='anthropic-messages'?' selected':'')+'>Anthropic compatible</option></select></div>'
+        +'<div><label>'+L('web.audit.model.model_id')+'</label><input name="modelId" value="'+esc(modelCfg.modelId||'')+'"></div>'
+        +'<div class="full"><label>'+L('web.audit.model.base_url')+'</label><input name="baseUrl" value="'+esc(modelCfg.baseUrl||'')+'" placeholder="https://api.example.com"></div>'
+        +'<div><label>'+L('web.audit.model.api_key')+'</label><input type="password" name="apiKey" value="" placeholder="'+esc(modelCfg.apiKeyMasked||'')+'" autocomplete="new-password"></div>'
+        +'<div><label>'+L('web.audit.model.timeout')+'</label><input type="number" min="1" max="15" name="timeoutSeconds" value="'+esc(modelCfg.timeoutSeconds||5)+'"></div>'
+        +'<div><label>'+L('web.audit.model.medium_threshold')+'</label><input type="number" min="0" max="0.99" step="0.01" name="mediumThreshold" value="'+esc(modelCfg.mediumThreshold||0.65)+'"></div>'
+        +'<div><label>'+L('web.audit.model.high_threshold')+'</label><input type="number" min="0.5" max="1" step="0.01" name="highThreshold" value="'+esc(modelCfg.highThreshold||0.9)+'"></div></div>'
+        +'<button type="submit" name="mode" value="save">'+L('common.btn.save')+'</button> <button type="submit" name="mode" value="test" class="btn-outline">'+L('web.audit.model.test')+'</button>'
+        +'</form></div>';
+      const body=modelCard+'<form method="GET" action="/audit-rules" style="display:flex;gap:8px;margin-bottom:10px">'
         +(dir?'<input type="hidden" name="direction" value="'+esc(dir)+'">':'')
         +'<div><label for="aq" style="font-size:14px;margin:0">'+L('web.audit.search_label')+'</label><input type="text" id="aq" name="q" value="'+esc(keyword)+'" style="width:200px;padding:6px 10px;font-size:14px" placeholder="'+esc(T('web.audit.search_ph'))+'" autofocus></div>'
         +'<button type="submit" class="btn-sm" style="margin:0;margin-top:18px" data-testid="search-btn" data-agent="search_btn">'+L('common.btn.search')+'</button>'
@@ -2025,6 +2058,17 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
     }catch(e){next(e)}
   });  R.post('/audit-rules',async(req,res,next)=>{
     try{const r=await handlers.manage_audit_rules({action:req.body.action,ruleId:req.body.ruleId||undefined,direction:req.body.direction||undefined,keyword:req.body.keyword||undefined,actionType:req.body.actionType||undefined,prompt:req.body.prompt||undefined});r.success!==false?res.redirect('/audit-rules'):res.send(renderPage(req,req.t('common.label.failed'),'<p class="error">'+esc(r.error)+'</p><a href="/audit-rules">'+esc(req.t('common.btn.back'))+'</a>'))}catch(e){next(e)}
+  });
+  R.post('/audit-rules/model-assistance',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res,next)=>{
+    try{
+      const previous=loadSafetyClassifierConfig(db,true);
+      const input={...req.body,enabled:req.body.enabled==='1',apiKey:req.body.apiKey||previous.apiKey};
+      if(req.body.mode==='test'){
+        await testSafetyClassifierConfig({...input,enabled:false});
+        saveSafetyClassifierConfig(db,{...input,enabled:false,_markTested:true});
+      }else saveSafetyClassifierConfig(db,input);
+      res.redirect('/audit-rules');
+    }catch(e){res.status(400).send(renderPage(req,req.t('common.label.failed'),'<p class="error">'+esc(e.message)+'</p><a href="/audit-rules">'+esc(req.t('common.btn.back'))+'</a>'))}
   });
 
   // ── 删除审核规则确认页 ──

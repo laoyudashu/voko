@@ -78,6 +78,7 @@ export interface AuditRuleMatch {
 
 export interface AuditResult {
   action: AuditAction;
+  verdict?: 'allow' | 'deny' | 'uncertain';
   matchedKeyword?: string | null;
   matchedRule?: AuditRuleMatch | null;
   [key: string]: unknown;
@@ -181,6 +182,11 @@ export interface MessageHandlerOptions {
   ) => unknown;
   deliver?: Deliver;
   checkAuditRules?: (content: string, direction: AuditDirection) => AuditResult;
+  classifyAuditDecision?: (
+    content: string,
+    direction: AuditDirection,
+    decision: AuditResult,
+  ) => Promise<AuditResult>;
   substitutePromptVariables?: (
     prompt: string,
     variables: Record<string, unknown>,

@@ -517,7 +517,7 @@ function initCore(args?: any, options: any = {}) {
   // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
   const wukongimSender = agentManager;
   const deliver = createDeliver({ transportManager: agentManager });
-  const sendMessage = createSendMessage({ db, deliver, agentWorkers: agentManager.workers, mainWindow: null });
+  const sendMessage = createSendMessage({ db, deliver, databaseAPI, agentWorkers: agentManager.workers, mainWindow: null });
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;  // 供 /api/message/send 等 HTTP 端点统一发送（自带兜底）
   return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, deliver, sendMessage };
@@ -1670,6 +1670,7 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
   try {
     const audit = require('./core/audit');
+    const safetyClassifier = require('./core/safety-classifier');
     const groupClient = require('./core/group-client');
     const groupRouteContext = {
       query: (sql: string, params: unknown[] = []) => db.prepare(sql).all(...params),
@@ -1690,6 +1691,8 @@ async function startMcpServer(args?: any, core?: any) {
       ac,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       checkAuditRules: (msg?: any, dir?: any) => audit.checkAuditRules(msg, dir, db),
+      classifyAuditDecision: (msg?: any, dir?: any, decision?: any) =>
+        safetyClassifier.classifyUncertain(db, msg, dir, decision),
       substitutePromptVariables: (p?: any, vars?: any) => audit.substitutePromptVariables(p, vars, db),
       notifyUI: (event?: any, data?: any) => {
         const bus = require('./core/lite-bus');

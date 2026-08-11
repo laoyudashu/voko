@@ -72,8 +72,6 @@ function createPullSecurityContext(): Omit<MessageSecurityContext, 'sourceType' 
 
 function wrapPushContent(content: unknown, sourceType: MessageSourceType = 'visitor'): string {
   const body = typeof content === 'string' ? content : String(content ?? '');
-  if (body.includes(SECURITY_CONTEXT_START) && body.includes(SECURITY_CONTEXT_END)) return body;
-
   const context = createMessageSecurityContext(sourceType);
   const isExternal = sourceType === 'visitor' || sourceType === 'agent_peer';
   const messageStart = sourceType === 'owner'

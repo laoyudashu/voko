@@ -167,6 +167,7 @@ class MessageHandler extends EventEmitter {
     this._sendSystemMessage = options.sendSystemMessage || (() => {});
     this._deliver = options.deliver || null;  // 统一 VokoIMSDK Hub 投递器
     this._checkAuditRules = options.checkAuditRules || (() => ({ action: 'allow' }));
+    this._classifyAuditDecision = options.classifyAuditDecision || null;
     this._substitutePromptVariables = options.substitutePromptVariables || ((prompt: string) => prompt);
     this._notifyUI = options.notifyUI || (() => {});
     this._enqueueIntervention = options.enqueueIntervention || (() => {});
@@ -488,7 +489,7 @@ class MessageHandler extends EventEmitter {
       }
       if (auditResult.action === 'soft_deny') {
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: fromUid, messageId, data: { ruleId: auditResult.matchedKeyword, direction: 'inbound', action: auditResult.action } });
-        this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
+        if (!this._classifyAuditDecision) this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
       }
     }
 
@@ -617,7 +618,7 @@ class MessageHandler extends EventEmitter {
     if (this._checkAuditRules) {
       const auditResult = this._checkAuditRules(typeof content === 'string' ? content : String(content), 'inbound');
       if (auditResult.action === 'hard_deny' || auditResult.action === 'soft_deny') {
-        this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId, {
+        if (auditResult.action === 'hard_deny' || !this._classifyAuditDecision) this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId, {
           channelId, channelType: 2, senderUid: fromUid,
         });
       }
@@ -771,10 +772,33 @@ class MessageHandler extends EventEmitter {
     timestamp: number,
     mention: Mention | null = null,
     routeMetadata: InboundMessage['_voko'] = null,
+    modelReviewed = false,
   ): void {
     if (!this.dispatcher) {
       console.error(`[转发] dispatcher 未初始化，agent=${agentId} 消息留库等 pull`);
       return;
+    }
+    if (!modelReviewed && this._classifyAuditDecision) {
+      const deterministic = this._checkAuditRules(content, 'inbound');
+      if (deterministic.verdict === 'uncertain' || deterministic.action === 'soft_deny') {
+        void this._classifyAuditDecision(content, 'inbound', deterministic).then((reviewed: AuditResult) => {
+          if (reviewed.action === 'hard_deny' || reviewed.action === 'soft_deny') {
+            this._triggerAuditIntervention(agentId, fromUid, content, reviewed, timestamp, messageId,
+              { channelId, channelType: channelType || 1, senderUid: fromUid });
+            if (reviewed.action === 'hard_deny' && channelType !== 2) {
+              this._sendSystemMessage(agentId, fromUid, 'audit.default.sensitive_keyword',
+                { keyword: reviewed.matchedKeyword || reviewed.reasonCode || 'security policy' }, timestamp);
+            }
+            return;
+          }
+          this.forwardToAgent(agentId, fromUid, content, channelId, channelType, contentType,
+            messageId, timestamp, mention, routeMetadata, true);
+        }).catch(() => {
+          this._triggerAuditIntervention(agentId, fromUid, content, deterministic, timestamp, messageId,
+            { channelId, channelType: channelType || 1, senderUid: fromUid });
+        });
+        return;
+      }
     }
     // 统一交 dispatcher 决策：连接就绪则 push，否则留库等 agent 通过 voko_fetch_new_messages pull
     const isGroup = channelType === 2;
@@ -1069,7 +1093,10 @@ class MessageHandler extends EventEmitter {
 
     // 出站审核
     if (this._checkAuditRules) {
-      const auditResult = this._checkAuditRules(trimmedContent, 'outbound');
+      let auditResult = this._checkAuditRules(trimmedContent, 'outbound');
+      if (this._classifyAuditDecision && (auditResult.verdict === 'uncertain' || auditResult.action === 'soft_deny')) {
+        auditResult = await this._classifyAuditDecision(trimmedContent, 'outbound', auditResult);
+      }
       if (auditResult.action === 'hard_deny') {
         console.log(`[审核-出站] hard_deny agentId=${agentId} keyword="${auditResult.matchedKeyword}"`);
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: replyChannelId, messageId: msgId, data: { ruleId: auditResult.matchedKeyword, direction: 'outbound', action: 'hard_deny' } });

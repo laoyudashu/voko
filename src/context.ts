@@ -142,6 +142,8 @@ function createContext({
   const sendMessage = passedSendMessage || createSendMessage({
     db,
     deliver,
+    databaseAPI,
+    enqueueIntervention: enqueueOwnerIntervention,
     agentWorkers: agentManager?.workers || new Map(),
     mainWindow: null,
   });
