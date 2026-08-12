@@ -2393,7 +2393,27 @@ function createToolHandlers(cx: McpContext) {
       const now = Date.now();
       const orderId = `po_${now}_${Math.random().toString(36).substr(2, 8)}`;
       const fromUid = cx.getAgentImUid ? cx.getAgentImUid(p.agentId) : '';
-      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now });
+      let paymentConversation: RoutingConversation | null = null;
+      try {
+        if (p.conversationId) {
+          paymentConversation = routingConversations.getForScope(p.conversationId, p.agentId, p.visitorId, 1);
+          if (!paymentConversation) return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: 'Conversation does not belong to the current Agent and visitor' };
+        } else {
+          const caller = getProviderCaller();
+          const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
+            'SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1', [p.agentId])[0];
+          if (caller?.providerType && caller?.nativeSessionId && caller?.evidence
+            && normalizeProviderFamily(caller.providerType) === normalizeProviderFamily(agent?.backend_type || '')) {
+            paymentConversation = routingConversations.resolveOrCreate({ agentId: p.agentId,
+              providerFamily: normalizeProviderFamily(caller.providerType),
+              providerInstanceKey: caller.providerInstanceId || caller.instanceId || agent?.backend_instance_id || '',
+              nativeSessionId: caller.nativeSessionId, channelId: p.visitorId, channelType: 1, origin: 'caller' });
+          }
+        }
+      } catch (error: any) {
+        return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
+      }
+      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null });
       // 同步处理 pending 订单（DID 签名 → 调支付 API → 生成二维码 → 通知访客）
       // 注意：必须等待处理完成，否则 MCP 返回成功但访客收不到支付链接
       if (cx.processPaymentOrder) {

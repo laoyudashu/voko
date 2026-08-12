@@ -194,6 +194,7 @@ interface PaymentOrderInput {
   status: string;
   created_at: number;
   updated_at: number;
+  routing_conversation_id?: string | null;
 }
 
 interface PaymentOrderUpdates {
@@ -631,7 +632,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       source_message_id TEXT,
       resolved_at INTEGER,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      routing_conversation_id TEXT
     )
   `);
 
@@ -1108,6 +1110,10 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     if (!poCols.some((col: TableInfoRow) => col.name === 'query_token')) {
       db.exec(`ALTER TABLE payment_orders ADD COLUMN query_token TEXT`);
       console.error('Added query_token column to payment_orders table');
+    }
+    if (!poCols.some((col: TableInfoRow) => col.name === 'routing_conversation_id')) {
+      db.exec(`ALTER TABLE payment_orders ADD COLUMN routing_conversation_id TEXT`);
+      console.error('Added routing_conversation_id column to payment_orders table');
     }
   } catch (e: any) {
     console.error('Payment orders migration error:', e.message);
@@ -2048,10 +2054,10 @@ function createDatabaseAPI(db: DatabaseSync) {
     savePaymentOrder: (order: PaymentOrderInput) => {
       try {
         const stmt = db.prepare(`
-          INSERT INTO payment_orders (id, agent_id, visitor_id, from_uid, amount, description, type, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO payment_orders (id, agent_id, visitor_id, from_uid, amount, description, type, status, created_at, updated_at, routing_conversation_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        stmt.run(order.id, order.agent_id, order.visitor_id, order.from_uid, order.amount, order.description, order.type || 'service', order.status, order.created_at, order.updated_at);
+        stmt.run(order.id, order.agent_id, order.visitor_id, order.from_uid, order.amount, order.description, order.type || 'service', order.status, order.created_at, order.updated_at, order.routing_conversation_id || null);
         return { success: true };
       } catch (e: any) {
         console.error('savePaymentOrder error:', e);

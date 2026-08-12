@@ -10,6 +10,7 @@ const EventEmitter = require('events');
 const { VokoWorkerAdapter } = require('../im-sdk');
 const { normalizeOfficialImServerUrl } = require('./url-security');
 import type { DatabaseLike } from '../types/database';
+import { MessageRouteStore, RoutingConversationStore } from './provider-routing';
 
 interface AgentWorkerConfig {
   agentId?: string;
@@ -27,6 +28,7 @@ type Deliver = (
   channelType?: number,
   mentions?: unknown,
   localMsgId?: string | null,
+  metadata?: unknown,
 ) => Promise<unknown>;
 
 function errorMessage(error: unknown): string {
@@ -299,6 +301,7 @@ class AgentWorkerManager extends EventEmitter {
     sysCodeOrContent: string,
     p1?: Record<string, unknown> | number | null,
     p2?: number,
+    route?: { conversationId?: string | null },
   ): Promise<{ notificationStatus: 'sent' | 'skipped' | 'failed'; notificationReason?: string }> {
     if (!agentId || !visitorId || !sysCodeOrContent || !this.db) {
       return { notificationStatus: 'skipped', notificationReason: 'invalid_notification' };
@@ -326,6 +329,27 @@ class AgentWorkerManager extends EventEmitter {
 
     const timestamp = typeof serverTimestamp === 'number' ? serverTimestamp + 1 : Math.floor(Date.now() / 1000);
     const msgId = `sys-${agentId}-${visitorId}-${timestamp}-${Math.random().toString(36).slice(2, 6)}`;
+    let routeId: string | null = null;
+    let routeMetadata: Record<string, unknown> | null = null;
+    if (route?.conversationId) {
+      try {
+        const conversations = new RoutingConversationStore(this.db);
+        const routes = new MessageRouteStore(this.db);
+        const conversation = conversations.getForScope(route.conversationId, agentId, visitorId, 1);
+        if (conversation) {
+          const latestInbound = routes.latestInboundForConversation(conversation.id);
+          routeId = routes.createPending({ messageId: msgId, conversationId: conversation.id,
+            replyToRouteId: latestInbound?.route_id || null, agentId, peerUid: visitorId,
+            channelId: visitorId, channelType: 1, direction: 'outbound' });
+          routeMetadata = { _voko: { protocolVersion: 1, routeId,
+            ...(latestInbound?.route_id ? { replyToRouteId: latestInbound.route_id } : {}),
+            ...(conversation.wireConversationKey ? { conversationKey: conversation.wireConversationKey } : {}) } };
+        } else return { notificationStatus: 'failed', notificationReason: 'routing_conversation_unavailable' };
+      } catch (_) {
+        try { if (routeId) new MessageRouteStore(this.db).setStatus(routeId, 'failed'); } catch (_) {}
+        return { notificationStatus: 'failed', notificationReason: 'routing_conversation_unavailable' };
+      }
+    }
     try {
       this.db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, sys_code, sys_params)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -333,6 +357,7 @@ class AgentWorkerManager extends EventEmitter {
         2, 'pending', null, null, 0, 0, 0, 1, sysCode, sysParamsJson,
       );
     } catch (error: unknown) {
+      try { if (routeId) new MessageRouteStore(this.db).setStatus(routeId, 'failed'); } catch (_) {}
       console.error('[sendSystemMessage] message persistence failed:', errorMessage(error));
       return { notificationStatus: 'failed', notificationReason: 'persistence_failed' };
     }
@@ -351,10 +376,14 @@ class AgentWorkerManager extends EventEmitter {
       console.error('[sendSystemMessage] conversation update failed:', errorMessage(error));
     }
 
-    if (!this._deliver) return { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+    if (!this._deliver) {
+      try { if (routeId) new MessageRouteStore(this.db).setStatus(routeId, 'failed'); } catch (_) {}
+      return { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
+    }
     try {
-      const result: any = await this._deliver(agentId, visitorId, content, 'text', 1, null, msgId);
+      const result: any = await this._deliver(agentId, visitorId, content, 'text', 1, null, msgId, routeMetadata);
       const delivered = result?.success !== false;
+      if (routeId) new MessageRouteStore(this.db).setStatus(routeId, delivered ? 'active' : 'failed');
       try {
         this.db?.prepare(`UPDATE messages SET status=?, message_seq=COALESCE(?, message_seq), client_msg_no=COALESCE(?, client_msg_no) WHERE id=?`)
           .run(delivered ? 'sent' : 'failed', result?.messageSeq ?? null, result?.clientMsgNo ?? null, msgId);
@@ -364,6 +393,7 @@ class AgentWorkerManager extends EventEmitter {
       if (!delivered) return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
     } catch (error: unknown) {
       try { this.db?.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
+      try { if (routeId && this.db) new MessageRouteStore(this.db).setStatus(routeId, 'failed'); } catch (_) {}
       console.error('[sendSystemMessage] delivery failed:', errorMessage(error));
       return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
     }

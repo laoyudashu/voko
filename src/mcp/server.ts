@@ -437,6 +437,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().describe(T('mcp.tool.create_payment.p.visitorId')),
       amount: z.number().positive().describe(T('mcp.tool.create_payment.p.amount')),
       description: z.string().optional().describe(T('mcp.tool.create_payment.p.description')),
+      conversationId: z.string().optional().describe('VOKO Conversation ID used to keep payment updates in the same session'),
     },
     async (params: unknown) => {
       const r = await toolHandlers.create_payment(params);

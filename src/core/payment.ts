@@ -10,6 +10,7 @@
 const { signDidRequest } = require('./did-auth');
 const { t, getLocale } = require('./i18n');
 import type { DatabaseLike } from '../types/database';
+import { MessageRouteStore, RoutingConversationStore } from './provider-routing';
 
 interface PaymentOrder {
   id: string;
@@ -24,6 +25,7 @@ interface PaymentOrder {
   created_at?: number;
   type?: string;
   status?: string;
+  routing_conversation_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -65,7 +67,7 @@ interface PaymentDeps {
   payLog?: (data: Record<string, unknown>) => void;
   hermesHandler?: { connected?: boolean; steer(sessionKey: string, content: string): unknown };
   openclawHandler?: { connected?: boolean; sendToSession(sessionKey: string, content: string): unknown };
-  sendSystemMessage?: (agentId: string, visitorId: string, key: string, params: Record<string, unknown>) => unknown;
+  sendSystemMessage?: (agentId: string, visitorId: string, key: string, params: Record<string, unknown>, timestamp?: number, route?: { conversationId?: string | null }) => unknown;
   ownerInterventionNotifier?: { enqueue(data: Record<string, unknown>): unknown };
 }
 
@@ -176,20 +178,55 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
 
     const textMsg = `请支付 ¥${order.amount.toFixed(2)}，支付链接：${payUrl}`;
     const timestamp = Math.floor(Date.now() / 1000);
+    const textMsgId = `pay_msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    let paymentRouteId: string | null = null;
+    let paymentRouteMetadata: Record<string, unknown> | undefined;
+    if (order.routing_conversation_id) {
+      try {
+        const conversations = new RoutingConversationStore(db);
+        const routes = new MessageRouteStore(db);
+        const conversation = conversations.getForScope(order.routing_conversation_id, order.agent_id, order.visitor_id, 1);
+        if (conversation) {
+          const latestInbound = routes.latestInboundForConversation(conversation.id);
+          paymentRouteId = routes.createPending({ messageId: textMsgId, conversationId: conversation.id,
+            replyToRouteId: latestInbound?.route_id || null, agentId: order.agent_id,
+            peerUid: order.visitor_id, channelId: order.visitor_id, channelType: 1, direction: 'outbound' });
+          paymentRouteMetadata = { _voko: { protocolVersion: 1, routeId: paymentRouteId,
+            ...(latestInbound?.route_id ? { replyToRouteId: latestInbound.route_id } : {}),
+            ...(conversation.wireConversationKey ? { conversationKey: conversation.wireConversationKey } : {}) } };
+        } else throw new Error('Payment routing conversation is unavailable');
+      } catch (error) {
+        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
+        throw error;
+      }
+    }
 
     if (sendMessage) {
       // 统一发送：落库 + 会话 + 投递 + UI 通知（sendMessage 内已 emit）
-      await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text');
+      try {
+        const sent: any = await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text', 1, null, textMsgId, paymentRouteMetadata);
+        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false ? 'failed' : 'active');
+      } catch (error) {
+        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
+        throw error;
+      }
     } else {
       // 兜底（未注入 sendMessage）：保留原 落库 + 投递 逻辑
-      const textMsgId = `pay_msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
       db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(textMsgId, fromUid, order.visitor_id, textMsg, order.visitor_id, 1, order.agent_id, timestamp, 1, 'sent', null, null, 0, 0, 0, 1);
       db.prepare(`INSERT OR IGNORE INTO conversations (user_uid, channel_id, channel_type, name, last_message, last_timestamp, unread_count, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(fromUid, order.visitor_id, 1, order.visitor_id, textMsg, timestamp, 0, order.agent_id);
       db.prepare(`UPDATE conversations SET last_message = ?, last_timestamp = ? WHERE user_uid = ? AND channel_id = ?`)
         .run(textMsg, timestamp, fromUid, order.visitor_id);
-      if (deliver) await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId);
+      if (deliver) {
+        try {
+          const sent: any = await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId, paymentRouteMetadata);
+          if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false ? 'failed' : 'active');
+        } catch (error) {
+          if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
+          throw error;
+        }
+      }
       else throw new Error('IM Hub 投递器未初始化');
     }
 
@@ -321,9 +358,9 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
             try {
               const isTimed = order.type === 'timed';
               if (isTimed) {
-                _sendMsg(order.agent_id, order.visitor_id, 'payment_success_timed', {});
+                await _sendMsg(order.agent_id, order.visitor_id, 'payment_success_timed', {}, undefined, { conversationId: order.routing_conversation_id });
               } else {
-                _sendMsg(order.agent_id, order.visitor_id, 'payment_success_detail', { amount: order.amount.toFixed(2), description: order.description || '无', orderNo: order.order_no || '-' });
+                await _sendMsg(order.agent_id, order.visitor_id, 'payment_success_detail', { amount: order.amount.toFixed(2), description: order.description || '无', orderNo: order.order_no || '-' }, undefined, { conversationId: order.routing_conversation_id });
               }
             } catch (e: unknown) { console.error('[Payment] 通知访客支付结果失败:', errorMessage(e)); }
 
@@ -359,7 +396,7 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
                 id: oiId, visitorId: order.visitor_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id,
                 problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2,
                 status: 'pending', channelType: 'voko', createdAt: now2, updatedAt: now2, agentId: order.agent_id,
-                skipReply: 1,
+                skipReply: 1, routingConversationId: order.routing_conversation_id || null,
               });
               if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue({ id: oiId, visitorId: order.visitor_id, agentId: order.agent_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id, problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2, skipReply: 1 });
             } catch (e: unknown) { console.error('[Payment] 通知主人失败:', errorMessage(e)); }
@@ -370,9 +407,9 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
               try {
                 const isTimed = order.type === 'timed';
                 if (isTimed) {
-                  _sendMsg(order.agent_id, order.visitor_id, 'payment_expired_timed', {});
+                  await _sendMsg(order.agent_id, order.visitor_id, 'payment_expired_timed', {}, undefined, { conversationId: order.routing_conversation_id });
                 } else {
-                  _sendMsg(order.agent_id, order.visitor_id, 'payment_expired_detail', { orderNo: order.order_no || '-', description: order.description || '无', amount: order.amount.toFixed(2) });
+                  await _sendMsg(order.agent_id, order.visitor_id, 'payment_expired_detail', { orderNo: order.order_no || '-', description: order.description || '无', amount: order.amount.toFixed(2) }, undefined, { conversationId: order.routing_conversation_id });
                 }
               } catch (e: unknown) { console.error('[Payment] 通知访客超时失败:', errorMessage(e)); }
             }
