@@ -1667,9 +1667,20 @@ async function startMcpServer(args?: any, core?: any) {
     hermesHandler = hcResult.hermesHandler;
     dispatcher = hcResult.dispatcher;
     if (a2aModule.enabled && dispatcher) {
-      const { A2ABridgeRuntime } = require('./a2a');
-      const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), dispatcher });
-      await taskManager.start('a2a-bridge', () => a2aRuntime.start());
+      try {
+        const { A2ABridgeRuntime, A2ARegistrationService } = require('./a2a');
+        const endpoints = require('./endpoints.json');
+        const ownerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
+        if (userEmail && ownerToken) {
+          const registration = new A2ARegistrationService({ mainDb: db, a2aDb: a2aModule.getDatabase(),
+            apiBaseUrl: endpoints.api.baseUrl, ownerEmail: userEmail, userAccessToken: ownerToken });
+          await registration.ensureRegistered();
+        }
+        const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), dispatcher });
+        await taskManager.start('a2a-bridge', () => a2aRuntime.start());
+      } catch (error: any) {
+        console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+      }
     }
   } catch (e: any) {
     console.error('[Lite] 创建后端处理器失败:', e.message);

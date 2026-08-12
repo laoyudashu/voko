@@ -14,8 +14,10 @@ class A2ABridgeRuntime {
   constructor(private readonly options: A2ABridgeRuntimeOptions) {}
   async start(): Promise<() => void> {
     const env = this.options.env || process.env;
-    const baseUrl = String(env.VOKO_A2A_MAILBOX_URL || ''); const token = String(env.VOKO_A2A_DEVICE_TOKEN || '');
-    const gatewayPublicKey = Buffer.from(String(env.VOKO_A2A_GATEWAY_PUBLIC_KEY_B64 || ''), 'base64').toString('utf8');
+    const storedRow = this.options.database.prepare("SELECT value FROM a2a_settings WHERE key='bridge_config_v1'").get() as { value: string } | undefined;
+    const stored = storedRow ? JSON.parse(storedRow.value) : {};
+    const baseUrl = String(env.VOKO_A2A_MAILBOX_URL || stored.mailboxUrl || ''); const token = String(env.VOKO_A2A_DEVICE_TOKEN || stored.token || '');
+    const gatewayPublicKey = Buffer.from(String(env.VOKO_A2A_GATEWAY_PUBLIC_KEY_B64 || stored.gatewayPublicKeyB64 || ''), 'base64').toString('utf8');
     if (!baseUrl || !token || !gatewayPublicKey) throw new Error('A2A Bridge configuration is incomplete');
     const client = new A2AMailboxClient({ baseUrl, token }); const store = new A2ALocalTaskStore(this.options.database);
     const identity = new A2AIdentityStore(this.options.database).getOrCreate();

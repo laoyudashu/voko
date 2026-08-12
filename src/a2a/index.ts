@@ -15,3 +15,4 @@ export type { A2ALocalIdentity } from './identity-store';
 export { A2AEventOutboxWorker } from './event-outbox-worker';
 export { A2ATaskProcessor } from './task-processor';
 export { A2ABridgeRuntime } from './bridge-runtime';
+export { A2ARegistrationService } from './registration';
