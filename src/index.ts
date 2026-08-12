@@ -2016,6 +2016,8 @@ async function startMcpServer(args?: any, core?: any) {
     getToolList: () => getToolList(mcpServer),
     webSessions,
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
+    a2aModule,
+    a2aMailboxClient,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

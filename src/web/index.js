@@ -515,6 +515,23 @@ function createWebRouter(handlers, db, opts={}){
     ? opts.refreshUserProfiles
     : uids=>refreshUserProfiles(db,uids);
 
+  R.get('/a2a-tasks',async(req,res)=>{
+    const T=req.t||makeT(req.locale||'zh');
+    if(!opts.a2aModule?.running)return res.send(renderPage(req,'A2A Tasks','<nav><a href="/">'+esc(T('common.nav.home'))+'</a> › A2A Tasks</nav><h1>A2A Tasks</h1><div class="card"><p>A2A Mailbox is not enabled.</p></div>'));
+    try{
+      const a2aDb=opts.a2aModule.getDatabase();
+      const inbound=a2aDb.prepare(`SELECT gateway_task_id AS task_id,agent_id,standard_state,delivery_state,updated_at FROM a2a_local_tasks ORDER BY updated_at DESC LIMIT 100`).all()
+        .map(row=>({...row,direction:'Inbound'}));
+      const outbound=opts.a2aMailboxClient?await opts.a2aMailboxClient.listOutboundTasks():[];
+      const rows=inbound.concat(outbound.map(row=>({task_id:row.gateway_task_id,agent_id:row.local_agent_id,standard_state:row.standard_state,
+        delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Outbound'}))).sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
+      const body=rows.length?'<div class="table-wrap"><table><thead><tr><th>Direction</th><th>Agent</th><th>Task</th><th>Task state</th><th>Delivery</th><th>Updated</th></tr></thead><tbody>'
+        +rows.map(row=>'<tr><td>'+esc(row.direction)+'</td><td>'+esc(row.agent_id)+'</td><td><code>'+esc(String(row.task_id).slice(0,12))+'…</code></td><td>'+esc(row.standard_state)+'</td><td>'+esc(row.delivery_state)+'</td><td>'+esc(fmtTime(row.updated_at))+'</td></tr>').join('')+'</tbody></table></div>'
+        :'<div class="card"><p>No A2A tasks yet.</p></div>';
+      res.send(renderPage(req,'A2A Tasks','<nav><a href="/">'+esc(T('common.nav.home'))+'</a> › A2A Tasks</nav><h1>A2A Tasks</h1><p class="meta">A2A tasks are isolated from visitor conversations. Provider sessions, credentials, prompts and envelope contents are not displayed.</p>'+body));
+    }catch(error){res.status(500).send(renderPage(req,'A2A Tasks','<h1>A2A Tasks</h1><div class="card error">'+esc(error.message)+'</div>'));}
+  });
+
   // locale 检测 + 注入 req.t / req.locale（每请求按 ?lang → Cookie → Accept-Language 决定）
   // P0 兼容期：路由暂未消费 req.t（不改任何渲染行为，页面仍中文）；P2 SSR 试点起逐步接 req.t
   R.use((req, res, next) => {
@@ -816,6 +833,7 @@ function createWebRouter(handlers, db, opts={}){
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
           +'<a href="/audit-rules" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.audit')+'</a>'
+          +'<a href="/a2a-tasks" class="op-card" data-agent-kind="link" data-agent="nav_card">A2A Tasks</a>'
           +'<a href="/payments" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.payments')+'</a>'
           +'<a href="/voko-im.log" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.logs')+'</a>'
           +'</div>'

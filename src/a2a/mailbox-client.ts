@@ -56,6 +56,9 @@ class A2AMailboxClient {
   async getOutboundTask(taskId: string): Promise<any> {
     return this.get(`/outbound/tasks/${encodeURIComponent(taskId)}`);
   }
+  async listOutboundTasks(): Promise<any[]> {
+    const result = await this.get('/outbound/tasks'); return Array.isArray(result?.tasks) ? result.tasks : [];
+  }
 }
 
 export { A2AMailboxClient, normalizeMailboxBaseUrl };
