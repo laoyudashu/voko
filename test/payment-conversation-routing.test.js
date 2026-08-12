@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createDatabaseAPI, initDatabase } = require('../build/core/database');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { AgentWorkerManager } = require('../build/core/worker-manager');
@@ -21,6 +24,22 @@ test('payment orders persist their routing conversation column', () => {
     assert.equal(db.prepare('SELECT routing_conversation_id FROM payment_orders WHERE id=?')
       .get('payment-route-1').routing_conversation_id, 'conversation-pay');
   } finally { db.close(); }
+});
+
+test('existing schema 8 databases receive the payment routing column on startup', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-payment-schema8-'));
+  const dbPath = path.join(dir, 'voko.db');
+  try {
+    let db = initDatabase(dbPath, { silent: true });
+    db.exec('ALTER TABLE payment_orders DROP COLUMN routing_conversation_id');
+    db.close();
+    db = initDatabase(dbPath, { silent: true });
+    assert.ok(db.prepare('PRAGMA table_info(payment_orders)').all()
+      .some(row => row.name === 'routing_conversation_id'));
+    db.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('payment system notifications create an active route in the selected conversation', async () => {

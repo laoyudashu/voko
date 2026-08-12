@@ -304,6 +304,15 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
       throw error;
     }
   }
+  const paymentOrderTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payment_orders'",
+  ).get();
+  if (paymentOrderTable) {
+    const paymentOrderColumns = db.prepare('PRAGMA table_info(payment_orders)').all() as TableInfoRow[];
+    if (!paymentOrderColumns.some((column) => column.name === 'routing_conversation_id')) {
+      db.exec('ALTER TABLE payment_orders ADD COLUMN routing_conversation_id TEXT');
+    }
+  }
   // Earlier schema-8 development builds left Web-created conversations in
   // pending forever while waiting for a Provider Session that human peers do
   // not have. An acknowledged outbound route is sufficient to activate the
@@ -1092,7 +1101,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       status TEXT DEFAULT 'pending',
       result TEXT,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      routing_conversation_id TEXT
     )
   `);
 
