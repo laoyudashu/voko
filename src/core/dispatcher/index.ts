@@ -991,9 +991,9 @@ ${body}
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
       const result = await deliveryExecutor.execute({
         next: (excluded: Set<DispatcherProvider>) => {
-          const strictAdapter = baseProviderPayload.providerBinding?.strictSessionRoute
-            ? baseProviderPayload.providerBinding.adapterType
-            : String((payload as any).preferredAdapter || '') || null;
+          const strictAdapter = isolated
+            ? String((payload as any).preferredAdapter || baseProviderPayload.providerBinding?.adapterType || '') || null
+            : null;
           const nextRoute = strictAdapter
             ? _routeProviderEntryExact(agentId, 'push', strictAdapter, excluded)
             : _routeProviderEntry(agentId, 'push', excluded);
