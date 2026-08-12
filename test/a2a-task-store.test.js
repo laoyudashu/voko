@@ -43,3 +43,11 @@ test('outbox deduplicates producer sequence and uses expiring leases', (t) => {
   assert.equal(reclaimed[0].lease_owner, 'worker-b');
   assert.equal(reclaimed[0].attempt_count, 2);
 });
+test('later task events wait until the previous event is acknowledged', (t) => {
+  const { db, store } = fixture(t);
+  store.enqueueEvent('event-1', 'task-1', 1, 'accepted', {});
+  store.enqueueEvent('event-2', 'task-1', 2, 'working', {});
+  assert.deepEqual(store.claimEvents('worker').map(row => row.event_id), ['event-1']);
+  store.finishOutboxEvent('event-1', 'acked');
+  assert.deepEqual(store.claimEvents('worker').map(row => row.event_id), ['event-2']);
+});

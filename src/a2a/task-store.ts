@@ -84,7 +84,11 @@ class A2ALocalTaskStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const rows = this.db.prepare(`SELECT event_id FROM a2a_local_outbox WHERE
-        (status='pending' AND next_attempt_at<=?) OR (status='leased' AND lease_expires_at<=?)
+        ((status='pending' AND next_attempt_at<=?) OR (status='leased' AND lease_expires_at<=?))
+        AND NOT EXISTS (SELECT 1 FROM a2a_local_outbox previous
+          WHERE previous.gateway_task_id=a2a_local_outbox.gateway_task_id
+            AND previous.producer_sequence<a2a_local_outbox.producer_sequence
+            AND previous.status<>'acked')
         ORDER BY created_at LIMIT ?`).all(now, now, limit) as Array<{ event_id: string }>;
       const update = this.db.prepare(`UPDATE a2a_local_outbox SET status='leased',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=? WHERE event_id=?`);
       for (const row of rows) update.run(owner, now + leaseMs, now, row.event_id);
