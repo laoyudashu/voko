@@ -8,7 +8,7 @@ class A2ARegistrationService {
   constructor(private readonly options: RegistrationOptions) {}
   async ensureRegistered(): Promise<Record<string, any>> {
     const identity = new A2AIdentityStore(this.options.a2aDb).getOrCreate();
-    const agents = this.options.mainDb.prepare(`SELECT agent_id FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=? ORDER BY agent_id`)
+    const agents: Array<{ publicAgentId: string; localAgentId: string }> = this.options.mainDb.prepare(`SELECT agent_id FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=? ORDER BY agent_id`)
       .all(this.options.ownerEmail.toLowerCase()).map((row: any) => ({ publicAgentId: row.agent_id, localAgentId: row.agent_id }));
     if (!agents.length) throw new Error('A2A requires at least one published Agent');
     let deviceId = (this.options.a2aDb.prepare("SELECT value FROM a2a_meta WHERE key='device_id'").get() as any)?.value;
@@ -22,7 +22,9 @@ class A2ARegistrationService {
     if (!response.ok) throw new Error(`A2A device registration failed (${response.status})`);
     const result: any = await response.json();
     const config = { fingerprint, deviceId, token: result.token, mailboxUrl: `${baseUrl}${result.mailboxPath}`,
-      gatewayKeyId: result.gatewayKeyId, gatewayPublicKeyB64: Buffer.from(result.gatewayPublicKey).toString('base64') };
+      gatewayKeyId: result.gatewayKeyId, gatewayPublicKeyB64: Buffer.from(result.gatewayPublicKey).toString('base64'),
+      registeredAgentIds: Array.isArray(result.registeredAgentIds) ? result.registeredAgentIds : agents.map((agent) => agent.publicAgentId),
+      rejectedAgentIds: Array.isArray(result.rejectedAgentIds) ? result.rejectedAgentIds : [] };
     this.options.a2aDb.prepare(`INSERT INTO a2a_settings(key,value,updated_at) VALUES('bridge_config_v1',?,?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(JSON.stringify(config), Date.now());
     return config;
