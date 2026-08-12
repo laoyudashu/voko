@@ -10,7 +10,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { A2ASafetyGate } from './safety-gate';
 import { A2AOutboundResultWorker } from './outbound-result-worker';
 
-interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv; delay?: (ms: number) => Promise<void> }
+interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv;
+  delay?: (ms: number) => Promise<void>; onError?: (code: string) => void }
 class A2ABridgeRuntime {
   private stopped = false;
   constructor(private readonly options: A2ABridgeRuntimeOptions) {}
@@ -34,7 +35,7 @@ class A2ABridgeRuntime {
     void (async () => {
       while (!this.stopped) {
         try { await outbox.flushOnce(); await outboundResults.pollOnce(); const result = await worker.pollOnce(); if (result.claimed === 0) await delay(2000); }
-        catch (_) { if (!this.stopped) await delay(5000); }
+        catch (error) { this.options.onError?.(error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'); if (!this.stopped) await delay(5000); }
       }
     })();
     return () => { this.stopped = true; };
