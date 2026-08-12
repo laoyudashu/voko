@@ -298,6 +298,11 @@ type McpContext = Omit<LiteContext,
   getEnabledChannel?(): DynamicRow | null;
   enqueueOwnerIntervention?(record: DynamicRow): unknown;
   processPaymentOrder?(order: DynamicRow): Promise<unknown>;
+  a2aMailboxClient?: {
+    discoverRemote(cardUrl: string, credential?: string): Promise<DynamicRow>;
+    sendOutbound(input: DynamicRow): Promise<DynamicRow>;
+    getOutboundTask(taskId: string): Promise<DynamicRow>;
+  };
   wukongim?: {
     getCurrentUid?(agentId?: string): string;
   };
@@ -525,6 +530,8 @@ interface McpToolParams {
   code?: string;
   contact_phone?: string;
   content?: string;
+  cardUrl?: string;
+  credential?: string;
   contentType?: number | string;
   description?: string;
   direction?: string;
@@ -591,6 +598,8 @@ interface McpToolParams {
   deliveryModes?: string[];
   conversationId?: string;
   replyToMessageId?: string;
+  remoteAgentKey?: string;
+  idempotencyKey?: string;
   webRequest?: boolean;
   visibility?: number;
   visitorId?: string;
@@ -1649,6 +1658,27 @@ function createToolHandlers(cx: McpContext) {
         return result;
       }
       return { success: true };
+    },
+
+    async a2a_discover_agent(p: McpToolParams = {}) {
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.cardUrl) return { success: false, code: 'A2A_DISCOVERY_FAILED', error: 'cardUrl is required' };
+      try { return { success: true, ...(await cx.a2aMailboxClient.discoverRemote(p.cardUrl, p.credential)) }; }
+      catch (error: any) { return { success: false, code: 'A2A_DISCOVERY_FAILED', error: error.message }; }
+    },
+    async a2a_send_message(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      try { return { success: true, task: await cx.a2aMailboxClient.sendOutbound({ localAgentId: p.agentId,
+        remoteAgentKey: p.remoteAgentKey, text: p.content, messageId: p.messageId, idempotencyKey: p.idempotencyKey }) }; }
+      catch (error: any) { return { success: false, code: 'A2A_SEND_FAILED', error: error.message }; }
+    },
+    async a2a_get_task(p: McpToolParams = {}) {
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.taskId) return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: 'taskId is required' };
+      try { const task = await cx.a2aMailboxClient.getOutboundTask(p.taskId);
+        if (p.agentId && task.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
+        return { success: true, task }; } catch (error: any) { return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: error.message }; }
     },
 
     // ─── 8. 消息 ───

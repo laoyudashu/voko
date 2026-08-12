@@ -1597,6 +1597,7 @@ async function startMcpServer(args?: any, core?: any) {
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
   const { A2AModule } = require('./a2a');
   const a2aModule = new A2AModule();
+  let a2aMailboxClient: any = null;
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
@@ -1691,7 +1692,9 @@ async function startMcpServer(args?: any, core?: any) {
         if (userEmail && ownerToken) {
           const registration = new A2ARegistrationService({ mainDb: db, a2aDb: a2aModule.getDatabase(),
             apiBaseUrl: endpoints.api.baseUrl, ownerEmail: userEmail, userAccessToken: ownerToken });
-          await registration.ensureRegistered();
+          const bridgeConfig = await registration.ensureRegistered();
+          const { A2AMailboxClient } = require('./a2a');
+          a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
         }
         const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), mainDatabase: db, dispatcher });
         await taskManager.start('a2a-bridge', () => a2aRuntime.start());
@@ -1956,6 +1959,7 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
+  (cx as any).a2aMailboxClient = a2aMailboxClient;
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,

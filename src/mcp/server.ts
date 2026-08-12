@@ -50,6 +50,17 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     version: options.version || pkg.version,
   });
 
+  server.tool('voko_a2a_discover_agent', 'Discover and validate a remote A2A 1.0 Agent Card through the VOKO A2A Gateway.', {
+    cardUrl: z.string().url(), credential: z.string().max(4096).optional(),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_discover_agent(params)) }] }));
+  server.tool('voko_a2a_send_message', 'Send a task from this VOKO Agent to a previously discovered remote A2A Agent.', {
+    agentId: z.string(), remoteAgentKey: z.string().regex(/^[a-f0-9]{64}$/), content: z.string().min(1).max(6144),
+    messageId: z.string().max(128).optional(), idempotencyKey: z.string().max(128).optional(),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_send_message(params)) }] }));
+  server.tool('voko_a2a_get_task', 'Get the latest state of an outbound A2A task.', {
+    agentId: z.string().optional(), taskId: z.string().max(128),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_get_task(params)) }] }), { readOnlyHint: true });
+
   // ─── 统一注册编排（Web / MCP / CLI 共用状态机）───
   server.tool(
     'voko_manage_agent_registration',

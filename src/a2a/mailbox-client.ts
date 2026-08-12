@@ -47,6 +47,15 @@ class A2AMailboxClient {
   async findEvent(eventId: string): Promise<{ found: boolean; taskId?: string; gatewaySequence?: number }> {
     return this.get(`/events/${encodeURIComponent(eventId)}`);
   }
+  async discoverRemote(cardUrl: string, credential?: string): Promise<any> {
+    return this.post('/remote/discover', { cardUrl, ...(credential ? { credential } : {}) });
+  }
+  async sendOutbound(input: { localAgentId: string; remoteAgentKey: string; text: string; messageId?: string; idempotencyKey?: string }): Promise<any> {
+    return this.post('/outbound/send', input);
+  }
+  async getOutboundTask(taskId: string): Promise<any> {
+    return this.get(`/outbound/tasks/${encodeURIComponent(taskId)}`);
+  }
 }
 
 export { A2AMailboxClient, normalizeMailboxBaseUrl };
