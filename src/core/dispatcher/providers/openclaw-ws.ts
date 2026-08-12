@@ -1430,6 +1430,40 @@ class OpenClawWsProvider {
     });
   }
 
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    if (!this.connected) return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    const sessionKey = `agent:${agentId}:loopback-${challenge}`;
+    return await new Promise<Record<string, unknown>>((resolve) => {
+      const finish = (result: Record<string, unknown>) => {
+        clearTimeout(timer);
+        this.off('session.message', handler);
+        resolve(result);
+      };
+      const handler = (msg: ProtocolMessage) => {
+        const identity = this._replyIdentity(msg, sessionKey);
+        if (identity.turnId && identity.turnId !== challenge) return;
+        const raw = msg.payload?.message?.content;
+        const text = Array.isArray(raw)
+          ? raw.filter((item: any) => item?.type === 'text').map((item: any) => item.text || '').join('')
+          : typeof raw === 'string' ? raw : '';
+        if (!text || text.includes('VOKO isolated loopback test')) return;
+        const matched = text.trim() === challenge;
+        finish({ ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+          detail: matched ? 'OpenClaw WebSocket loopback verified' : 'OpenClaw WebSocket did not return the exact challenge',
+          loopbackSessionId: sessionKey });
+      };
+      const timer = setTimeout(() => finish({ ok: false, code: 'LOOPBACK_TIMEOUT' }), 60000);
+      this.on('session.message', handler);
+      this.sendToSession(sessionKey,
+        `VOKO isolated loopback test. Do not use tools. Reply with exactly: ${challenge}`,
+        { messageId: challenge, turnId: challenge }).catch((error: unknown) =>
+        finish({ ok: false, code: 'LOOPBACK_FAILED', detail: error instanceof Error ? error.message : String(error) }));
+    });
+  }
+
   // ─────────────────────────────────────────────
   // PushProvider 接口（供 dispatcher 统一调度）
   // 本类自带事件机制（eventListeners Map），故不继承 PushProvider，仅实现接口（duck typing）。

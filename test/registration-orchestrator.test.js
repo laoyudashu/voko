@@ -22,6 +22,7 @@ function createDb() {
     JSON.stringify([
       { value: 'openclaw', label: 'OpenClaw' },
       { value: 'hermes', label: 'Hermes' },
+      { value: 'qwen-office', label: 'Qwen Office' },
       { value: 'others', label: 'Others' },
     ]),
     Date.now(),
@@ -290,6 +291,7 @@ describe('shared registration orchestrator', () => {
     let sendCount = 0;
     let verifyCount = 0;
     const { db, service } = createService({
+      qwenOfficeRuntimeAvailable: () => true,
       getLoggedEmail: () => '',
       sendCode: async () => { sendCount++; return { success: true }; },
       loginByCode: async ({ code }) => {
@@ -639,22 +641,26 @@ describe('shared registration orchestrator', () => {
 
   it('never runs a model-backed loopback without explicit cost acknowledgement', async () => {
     let calls = 0;
+    let received = null;
     const { db, service } = createService({
-      runLoopbackTest: async ({ challenge }) => {
+      runLoopbackTest: async (request) => {
         calls++;
-        return { success: true, challengeMatched: true, detail: challenge };
+        received = request;
+        return { success: true, challengeMatched: true, detail: request.challenge };
       },
     });
     try {
       const started = await service.start({ email: 'owner@example.com' });
       service.setBasicInfo(started.registrationId, { agentName: 'Loopback Agent' });
-      service.selectProvider(started.registrationId, { providerType: 'others' });
-      const denied = await service.loopbackTest(started.registrationId, { mode: 'pull' });
+      service.selectProvider(started.registrationId, { providerType: 'qwen-office' });
+      const denied = await service.loopbackTest(started.registrationId, { mode: 'cli', providerId: 'qwen-office-cli' });
       assert.strictEqual(denied.code, 'LOOPBACK_CONFIRMATION_REQUIRED');
       assert.strictEqual(calls, 0);
-      const allowed = await service.loopbackTest(started.registrationId, { mode: 'pull', acknowledgeCost: true });
+      const allowed = await service.loopbackTest(started.registrationId, { mode: 'cli', providerId: 'qwen-office-cli', acknowledgeCost: true });
       assert.strictEqual(allowed.status, 'loopback_verified');
       assert.strictEqual(calls, 1);
+      assert.strictEqual(received.providerId, 'qwen-office-cli');
+      assert.strictEqual(received.mode, 'cli');
     } finally {
       db.close();
     }

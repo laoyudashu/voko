@@ -48,6 +48,12 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   }), true);
 });
 
+test('QwenWork CLI provider exposes an explicitly acknowledged safe loopback test', async () => {
+  const provider = new QwenOfficeCliProvider({ binPath: 'C:\\tools\\qoderclicn.exe' });
+  assert.equal((await provider.runLoopbackTest('agent-1', {})).code, 'LOOPBACK_CONFIRMATION_REQUIRED');
+  assert.equal((await provider.runLoopbackTest('agent-1', { acknowledgeCost: true, challenge: 'unsafe' })).code, 'LOOPBACK_CHALLENGE_INVALID');
+});
+
 test('Trae ACP provider uses the separate traecli ACP server and never the desktop launcher', () => {
   const provider = new TraeAcpProvider({ binPath: 'C:\\tools\\traecli.exe' });
   assert.equal(provider._adapterType, 'traecli-acp');

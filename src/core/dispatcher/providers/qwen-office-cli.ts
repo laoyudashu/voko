@@ -1,5 +1,8 @@
 const os = require('os');
 const { CliAdapter } = require('../../adapters/cli-adapter');
+const { runCli } = require('../../adapters/cli-spawner');
+const { createParser } = require('../../adapters/cli-parsers');
+const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
 const { resolveQwenOfficeCommand, qwenOfficeRuntimeRequest } = require('../qwen-office-command');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
@@ -62,6 +65,52 @@ class QwenOfficeCliProvider extends CliAdapter {
       && binding.deliveryMode === 'cli'
       && typeof binding.nativeSessionId === 'string'
       && binding.nativeSessionId.length > 0;
+  }
+
+  async runLoopbackTest(_agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    }
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
+    }
+    const runtime = this._resolveRuntime();
+    if (!runtime.available || !runtime.executable) {
+      return { ok: false, status: 'unavailable', code: 'QWEN_OFFICE_CLI_UNAVAILABLE', detail: runtime.reason || 'QwenWork CLI is unavailable' };
+    }
+
+    let reply = '';
+    const parser = createParser({
+      format: 'gemini-stream-json',
+      onText: (text: string) => { reply += text; },
+      onDone: () => {},
+    });
+    const prompt = `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`;
+    const result = await runCli({
+      cmd: runtime.executable,
+      args: [...runtime.argvPrefix, ...this._args],
+      stdinInput: JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+      }),
+      cwd: this._cwd || os.tmpdir(),
+      env: withRuntimePath({ ...this._env }, runtime),
+      tag: 'qwen-office-cli-loopback',
+      timeout: 120000,
+      logOutput: false,
+      onStdoutLine: (line: string) => parser.handleLine(line),
+    });
+    parser.finish();
+    const matched = result.code === 0 && reply.trim() === challenge;
+    return {
+      ok: matched,
+      status: matched ? 'loopback_verified' : 'failed',
+      challengeMatched: matched,
+      detail: matched
+        ? 'QwenWork CLI loopback verified'
+        : (result.stderr.trim() || 'QwenWork CLI did not return the expected challenge'),
+    };
   }
 }
 

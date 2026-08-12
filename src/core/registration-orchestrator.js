@@ -23,7 +23,7 @@ const {
   getQwenOfficeReadiness,
 } = require('./dispatcher/qwen-office-command');
 const { resolveTraeCliCommand, isTraeCliAvailable } = require('./dispatcher/trae-command');
-const { getProviderFamily } = require('./dispatcher/provider-catalog');
+const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -721,6 +721,19 @@ class RegistrationOrchestrator {
     const capabilities = this._deliveryCapabilities(type, gatewayStatus);
     const family = getProviderFamily(type);
     if (!family) return capabilities;
+    const transports = listProviderTransports(type);
+    for (const item of capabilities) {
+      if (item.mode === 'pull') {
+        item.providerId = null;
+        item.supportsLoopback = false;
+        item.verificationType = 'preflight';
+        continue;
+      }
+      const target = transports.find((transport) => transport.mode === item.mode) || null;
+      item.providerId = target?.id || null;
+      item.supportsLoopback = target?.supportsLoopback === true;
+      item.verificationType = item.supportsLoopback ? 'loopback' : 'preflight';
+    }
     const order = new Map(family.defaultDeliveryModes.map((mode, index) => [mode, index]));
     return capabilities.sort((a, b) => (order.get(a.mode) ?? 999) - (order.get(b.mode) ?? 999));
   }
@@ -1325,25 +1338,35 @@ class RegistrationOrchestrator {
       return { success: false, code: 'LOOPBACK_UNAVAILABLE', error: '当前 Provider 尚未提供安全的真实闭环测试' };
     }
     const mode = cleanText(input.mode, 40);
+    const providerId = cleanText(input.providerId, 80);
+    const readiness = session.deliveryModes.find((item) => item.mode === mode && item.providerId === providerId);
+    if (!mode || !providerId || !readiness || readiness.supportsLoopback !== true) {
+      return { success: false, code: 'LOOPBACK_UNSUPPORTED', error: '所选消息通道不支持真实闭环测试' };
+    }
     const challenge = `voko-${crypto.randomBytes(12).toString('hex')}`;
     const tested = await this.options.runLoopbackTest({
       agentId: session.result?.agentId || null,
       provider: session.provider,
       mode,
+      providerId,
       challenge,
       acknowledgeCost: true,
     });
     const verified = tested?.success === true && tested?.challengeMatched === true;
     session.deliveryModes = session.deliveryModes.map((item) => item.mode === mode
-      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: { ok: verified, at: now() } }
+      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: {
+          ok: verified, at: now(), providerId, loopbackSessionId: tested?.loopbackSessionId || null,
+        } }
       : item);
     this._save(session);
     return {
       success: verified,
       registrationId: session.id,
       mode,
+      providerId,
       status: verified ? 'loopback_verified' : 'failed',
-      detail: cleanText(tested?.detail, 500),
+      detail: cleanText(tested?.detail || (verified ? `${providerId} 真实闭环测试通过` : `${providerId} 真实闭环测试失败`), 500),
+      loopbackSessionId: tested?.loopbackSessionId || null,
       mayCreateModelCost: true,
     };
   }
@@ -1353,10 +1376,20 @@ class RegistrationOrchestrator {
     if (typeof this.options.cleanupLoopbackSession !== 'function') {
       return { success: true, registrationId: session.id, cleaned: false };
     }
+    const mode = cleanText(input.mode, 40);
+    const providerId = cleanText(input.providerId, 80);
+    const target = session.deliveryModes.find((item) => item.mode === mode
+      && item.providerId === providerId && item.lastLoopback?.providerId === providerId);
+    if (!target) return { success: false, code: 'LOOPBACK_SESSION_NOT_FOUND', cleaned: false };
+    const requestedSessionId = cleanText(input.loopbackSessionId, 200);
+    const loopbackSessionId = target.lastLoopback?.loopbackSessionId || null;
+    if (requestedSessionId && requestedSessionId !== loopbackSessionId) {
+      return { success: false, code: 'LOOPBACK_SESSION_MISMATCH', cleaned: false };
+    }
     const cleaned = await this.options.cleanupLoopbackSession({
       agentId: session.result?.agentId || null,
       provider: session.provider,
-      mode: cleanText(input.mode, 40),
+      mode, providerId, loopbackSessionId,
     });
     return { success: cleaned?.success !== false, registrationId: session.id, cleaned: cleaned?.cleaned === true };
   }
@@ -1401,6 +1434,9 @@ class RegistrationOrchestrator {
         selected: !!mode.selected,
         status: mode.status || 'unavailable',
         detail: mode.lastPreflight?.detail || null,
+        providerId: mode.providerId || null,
+        supportsLoopback: mode.supportsLoopback === true,
+        verificationType: mode.supportsLoopback === true ? 'loopback' : 'preflight',
       })),
       unresolvedConfiguration: session.deliveryModes
         .filter((mode) => mode.mode !== 'pull' && ['configuration_required', 'unavailable', 'failed'].includes(mode.status))

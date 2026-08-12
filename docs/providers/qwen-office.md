@@ -41,6 +41,18 @@ CLI 使用以下安全参数：
 --tools ""
 ```
 
+### 创建与验证
+
+在 VOKO 的“添加 Agent”流程中选择“千问办公（QwenWork）”，消息接收顺序保持：
+
+```text
+QwenWork CLI 自动交付 → 主动获取
+```
+
+创建完成后，点击“验证消息链路”。该操作会实际执行一次无工具模型调用，并校验 VOKO 生成的随机 challenge 是否经 `qoderclicn` 原样返回。验证过程中可能产生少量模型费用和一个本地测试会话；验证成功后按钮显示绿色“验证成功”。
+
+“验证消息链路”与运行时预检不同：运行时预检只确认可执行文件和 CLI 登录状态，不调用模型；消息链路验证同时覆盖运行时解析、stdin stream-json 输入、模型调用、stdout 解析和 challenge 校验。
+
 访客文本通过 stdin 作为 JSON 消息传入，不拼接到 shell 命令；工具和权限请求默认关闭。成功建立会话后，Provider 保存 QwenWork 原生 `session_id`，后续消息优先续接同一会话。`not_delivered` 才允许进入 Pull；认证失败、结果未知或业务拒绝不会跨通道重复发送。
 
 QwenWork 的 `qoderclicn` 属于当前安装包提供的本地运行时，不是公开稳定 API。升级 QwenWork 后应重新执行版本、帮助和非交互协议探测；如安装位置不同，可设置：
@@ -90,6 +102,18 @@ qoderclicn.exe status --output json
 - `automaticReadyModes=["cli"]`：CLI 可用，消息按 CLI → Pull 顺序投递。
 - `automaticReadyModes=[]`：当前只保留 Pull；消息仍持久化，不会丢失。
 - 不要启动 `QwenWorkCN.exe` GUI 来模拟 Push，也不要通过桌面自动化或 shell 注入访客文本。
+
+## 已验证能力
+
+Windows 真机已使用 QwenWork `qoderclicn` 1.0.47 完成以下验收：
+
+- 注册页“验证消息链路”成功，随机 challenge 精确匹配。
+- 已创建的 `qwen-office` Agent 通过真实 VOKOVOKO/WuKongIM 接收另一 Agent 的单聊消息。
+- 消息经 QwenWork CLI 自动交付并生成回复，回复成功写入本地数据库并通过真实 IM 返回对端。
+- 入站和出站消息均收到 SENDACK；数据库各只保存一份，无丢失或重复。
+- Agent-to-Agent 对话触发既有收敛机制后停止，没有形成无限自动回复循环。
+
+该结果证明 `IM → VOKO → qoderclicn → QwenWork → VOKO → IM` 完整生产链路可用。QwenWork 或 `qoderclicn` 升级后，仍应重新执行“验证消息链路”。
 
 ## 安全边界
 

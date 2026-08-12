@@ -186,6 +186,53 @@ class CliAdapter extends PushProvider {
     return this._available;
   }
 
+  /** Model-backed isolated probe. Catalog capability gating decides which subclasses may expose it. */
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    const prompt = `VOKO isolated loopback test. Do not use tools or modify files. Reply with exactly: ${challenge}`;
+    const configuredArgs = this._argsForSession ? this._argsForSession(null, true) : this._args;
+    const payload = { agentId, fromUid: `loopback-${challenge}`, content: prompt,
+      messageId: challenge, turnId: challenge, channelId: `loopback-${challenge}`, channelType: 1 } as PushPayload;
+    const preparedInvocation = this._prepareInvocation?.(payload, prompt) || null;
+    const invocationArgs = preparedInvocation?.args || configuredArgs;
+    let useStdin = preparedInvocation ? preparedInvocation.stdinInput !== undefined : !invocationArgs.includes('{prompt}');
+    let stdinInput: string | undefined = useStdin ? prompt : undefined;
+    let cleanupPrompt: (() => void) | null = null;
+    let args: string[];
+    if (this._preparePrompt) {
+      const prepared = this._preparePrompt(prompt, { agentId, fromUid: payload.fromUid,
+        nativeSessionId: null, configuredArgs: [...configuredArgs] });
+      args = [...(prepared.args || [])].map((arg: string) => arg.replace('{prompt}', () => prompt));
+      useStdin = prepared.useStdin ?? !args.includes('{prompt}');
+      stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
+      cleanupPrompt = prepared.cleanup || null;
+    } else {
+      args = useStdin ? [...invocationArgs] : invocationArgs.map((arg: string) => arg.replace('{prompt}', () => prompt));
+    }
+    const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
+    if (runtime && (!runtime.available || !runtime.executable)) return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    const cmd = runtime?.available && runtime.executable ? runtime.executable : this._cmd;
+    if (runtime?.available) args.unshift(...runtime.argvPrefix);
+    let reply = '';
+    const parser = createParser({ format: this._parserName, parserOpts: this._parserOpts,
+      onText: (text: string) => { reply += text; }, onDone: () => {} });
+    try {
+      const result = await runCli({ cmd, args, stdinInput: preparedInvocation?.stdinInput ?? stdinInput,
+        cwd: this._cwd || undefined, tag: `${this._name}-loopback`, timeout: this._timeout,
+        env: withRuntimePath({ ...this._env }, runtime), logOutput: false,
+        onStdoutLine: (line: string) => parser.handleLine(line) });
+      parser.finish();
+      const matched = result.code === 0 && reply.trim() === challenge;
+      return { ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+        detail: matched ? `${this._name} CLI loopback verified` : `${this._name} CLI did not return the exact challenge` };
+    } finally {
+      try { cleanupPrompt?.(); } catch (_) {}
+      try { preparedInvocation?.afterRun?.(); } catch (_) {}
+    }
+  }
+
   _resolveRuntime(): ResolvedRuntime {
     return this._runtimeResolver.resolve(this._runtimeRequest);
   }

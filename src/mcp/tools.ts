@@ -15,6 +15,7 @@ const { t } = require('../core/i18n');
 const { normalizeBackendType } = require('../core/agent-backend-types');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
+const { getProviderTransport } = require('../core/dispatcher/provider-catalog');
 const { getProviderCaller } = require('../core/registration-caller-context');
 const { ProviderSessionCoordinator } = require('../core/provider-session-coordinator');
 const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
@@ -3521,32 +3522,31 @@ function createToolHandlers(cx: McpContext) {
     },
     runLoopbackTest: async (request: DynamicRow) => {
       const agentId = String(request.agentId || '');
-      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
-      if (!agentId || candidates.length === 0) {
+      const providerId = String(request.providerId || '');
+      const mode = String(request.mode || '');
+      const definition = getProviderTransport(providerId);
+      const provider = (global as any).__dispatcher?.resolveProviderTransport?.(agentId, providerId, mode) || null;
+      if (!agentId || !providerId || !mode || !definition?.supportsLoopback || !provider) {
         return { success: false, detail: 'No safe loopback adapter is available' };
       }
-      for (const provider of candidates) {
-        if (!provider?.runLoopbackTest) continue;
-        const result = await provider.runLoopbackTest(agentId, request);
-        if (result?.code === 'LOOPBACK_UNSUPPORTED') continue;
-        return {
-          success: result?.ok === true,
-          challengeMatched: result?.challengeMatched === true,
-          detail: result?.detail || null,
-        };
-      }
-      return { success: false, detail: 'No safe loopback adapter is available' };
+      const result = await provider.runLoopbackTest(agentId, request);
+      return {
+        success: result?.ok === true,
+        challengeMatched: result?.challengeMatched === true,
+        detail: result?.detail || null,
+        providerId,
+        mode,
+        loopbackSessionId: result?.loopbackSessionId || null,
+      };
     },
     cleanupLoopbackSession: async (request: DynamicRow) => {
       const agentId = String(request.agentId || '');
-      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
-      let cleaned = false;
-      for (const provider of candidates) {
-        if (!provider?.cleanupLoopbackSession) continue;
-        const result = await provider.cleanupLoopbackSession(agentId);
-        cleaned = cleaned || result?.cleaned === true;
-      }
-      return { success: true, cleaned };
+      const providerId = String(request.providerId || '');
+      const mode = String(request.mode || '');
+      const provider = (global as any).__dispatcher?.resolveProviderTransport?.(agentId, providerId, mode) || null;
+      if (!provider?.cleanupLoopbackSession) return { success: false, cleaned: false };
+      const result = await provider.cleanupLoopbackSession(agentId, String(request.loopbackSessionId || '') || undefined);
+      return { success: result?.ok !== false, cleaned: result?.cleaned === true };
     },
   });
   handlers.manage_agent_registration = async (params: McpToolParams = {}) =>

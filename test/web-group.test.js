@@ -349,3 +349,14 @@ it('uses styled dialogs instead of native browser confirm prompts', () => {
   assert.match(indexWeb, /function showVokoConfirm\(/);
   assert.match(groupWeb, /id="quit-dlg"/);
 });
+
+it('places capability declaration on the Agent detail page before discovery', () => {
+  const source = require('node:fs').readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const detailStart = source.indexOf("const aclOps=");
+  const caps = source.indexOf("/caps", detailStart);
+  const discover = source.indexOf("/capabilities?agentId=", detailStart);
+  assert.ok(caps > detailStart && caps < discover);
+  const homeActionStart = source.indexOf("var actionHtml=");
+  const homeActionEnd = source.indexOf("rows.push", homeActionStart);
+  assert.doesNotMatch(source.slice(homeActionStart, homeActionEnd), /\/caps/);
+});

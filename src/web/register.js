@@ -98,6 +98,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .priority-list{margin:8px 0 0;padding-left:22px}.result-card{padding:18px;border:1px solid #a8ddbf;border-radius:12px;background:#ecf8f1}
 .result-grid{display:grid;grid-template-columns:105px 1fr;gap:7px 12px;margin-top:15px;padding:13px;background:#fff;border-radius:9px}.result-grid dt{color:#667085}.result-grid dd{margin:0;font-weight:600}
 .security-notice{margin-top:16px;padding:12px 13px;border:1px solid #edcf92;border-radius:9px;background:#fff6e3;color:#704600}
+.loopback-tests>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.result-loopback.success{background:#0f9d58;border-color:#0b8043}.result-loopback.failed{background:#d93025;border-color:#b71c1c}.loopback-feedback{flex-basis:100%;min-height:18px;color:#0f7a43;font-size:13px}.loopback-feedback.error{color:#b42318}
 .registration-tabs{display:grid;grid-template-columns:1fr 1fr;padding:8px;background:#f4f6f9;border-bottom:1px solid #e3e7ee;gap:8px}.registration-tab{margin:0;background:transparent;color:#667085;border:0;border-radius:9px;padding:10px 14px}.registration-tab:hover{background:#fff;color:#1a73e8;transform:none}.registration-tab.active{background:#fff;color:#1a73e8;box-shadow:0 1px 5px rgba(20,40,80,.09)}.registration-pane[hidden]{display:none}.agent-register-pane{padding:30px 34px}.agent-register-pane h2{margin:0 0 6px}.agent-prompt{width:100%;min-height:360px;resize:vertical;background:#f8fafc;font-family:Consolas,'SFMono-Regular',monospace;font-size:13px;line-height:1.65}.agent-copy-row{display:flex;align-items:center;gap:12px;margin-top:12px}.agent-copy-row button{margin:0}
 @media(max-width:600px){.wizard-head,.wizard-body,.wizard-footer{padding-left:18px;padding-right:18px}.wizard-step{font-size:0}.wizard-step b{font-size:12px}.result-grid{grid-template-columns:82px 1fr}}`;
 
@@ -313,7 +314,7 @@ function wizardJs(t) {
     configure: t('register.flow.configure'), test: t('register.flow.test'),
     configuring: t('register.flow.configuring'), configured: t('register.flow.configured'),
     testing: t('register.flow.testing'), testOk: t('register.flow.test_ok'), testFailed: t('register.flow.test_failed'),
-    loopback: t('register.flow.loopback'), loopbackConfirm: t('register.flow.loopback_confirm'),
+    loopback: t('register.flow.loopback'), preflightOnly: t('register.flow.preflight_only'),
     configureDesc: t('register.flow.configure.desc'), configureConfirm: t('register.flow.configure.confirm'),
     create: t('register.add.create_btn'), creating: t('register.add.creating'),
     created: t('register.flow.done.created'), deliveryOrder: t('register.flow.delivery.order'),
@@ -347,7 +348,7 @@ function wizardJs(t) {
   tabs.forEach(function(tab){tab.addEventListener('click',function(){activateRegistrationTab(tab.dataset.registrationTab)})});
   try{activateRegistrationTab(sessionStorage.getItem(tabModeKey)==='agent'?'agent':'human')}catch(_){activateRegistrationTab('human')}
   document.getElementById('copy-agent-registration').addEventListener('click',async function(){var prompt=document.getElementById('agent-registration-prompt').value,status=document.getElementById('copy-agent-registration-status');try{await navigator.clipboard.writeText(prompt)}catch(_){var area=document.getElementById('agent-registration-prompt');area.focus();area.select();document.execCommand('copy')}status.textContent=I.copied});
-  function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||I.error);return d})}
+  function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||d.detail||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}
   function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value}}
@@ -412,7 +413,7 @@ function wizardJs(t) {
   document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment)}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
     var disabled=m.required||m.status!=='ready', checked=m.required||m.selected;
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:I.testFailed)+'</span>'+(m.action?'<button type="button" class="method-action" data-action="'+escHtml(m.action)+'" data-mode="'+escHtml(m.mode)+'">'+escHtml(m.action==='configure'?I.configure:I.test)+'</button>':'')+'</span></span></label>'
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:I.testFailed)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
   }
   function renderDeliveries(d){
     state=d;var modes=d.deliveryModes||[],html='';
@@ -451,14 +452,14 @@ function wizardJs(t) {
   renderResult=function(d){
     renderResultBase(d);
     var r=d.result||{},target=document.querySelector('#wf-result .result-card');
-    var readiness=(r.deliveryReadiness||[]).filter(function(item){return item.mode!=='pull'});
+    var readiness=(r.deliveryReadiness||[]).filter(function(item){return item.selected&&item.mode!=='pull'});
     if(target&&readiness.length){
       var section=document.createElement('div');section.className='loopback-tests';
-      section.innerHTML=readiness.map(function(item){return '<div><span>'+escHtml(item.label||item.mode)+'</span> <span class="tag">'+escHtml(item.status||'unavailable')+'</span> <button type="button" class="result-loopback" data-mode="'+escHtml(item.mode)+'">'+escHtml(I.loopback)+'</button></div>'}).join('');
+      section.innerHTML=readiness.map(function(item){var control=item.supportsLoopback&&item.providerId?'<button type="button" class="result-loopback" data-mode="'+escHtml(item.mode)+'" data-provider-id="'+escHtml(item.providerId)+'">'+escHtml(I.loopback)+'</button>':'<span class="tag">'+escHtml(I.preflightOnly)+'</span>';return '<div><span>'+escHtml(item.label||item.mode)+'</span>'+control+'<span class="loopback-feedback" role="status" aria-live="polite"></span></div>'}).join('');
       target.insertBefore(section,target.querySelector('.security-notice'));
     }
   };
-  document.getElementById('wf-result').addEventListener('click',function(e){var b=e.target.closest('.result-loopback');if(!b)return;if(!window.confirm(I.loopbackConfirm))return;b.disabled=true;b.textContent=I.testing;api('loopback_test',{mode:b.dataset.mode,acknowledgeCost:true}).then(function(r){b.textContent=r.success?I.testOk:I.testFailed;b.disabled=false}).catch(function(err){b.textContent=I.testFailed;b.disabled=false;fail(err)})});
+  document.getElementById('wf-result').addEventListener('click',function(e){var b=e.target.closest('.result-loopback');if(!b||b.disabled)return;var feedback=b.parentElement.querySelector('.loopback-feedback');b.disabled=true;b.classList.remove('success','failed');b.textContent=I.testing;if(feedback){feedback.textContent='';feedback.classList.remove('error')}api('loopback_test',{mode:b.dataset.mode,providerId:b.dataset.providerId,acknowledgeCost:true}).then(function(r){b.textContent=I.testOk;b.classList.add('success');if(feedback)feedback.textContent=r.detail||''}).catch(function(err){b.textContent=I.testFailed;b.classList.add('failed');if(feedback){feedback.textContent=err.message||I.testFailed;feedback.classList.add('error')}}).finally(function(){b.disabled=false})});
   start();
 })();
 </script>`;

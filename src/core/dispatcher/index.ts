@@ -491,6 +491,21 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return routeResolver.resolve({ agentId, operation, meta, providers }).map((item: any) => item.provider);
   }
 
+  /** Resolve one explicitly requested transport. Never falls back to another mode. */
+  function resolveProviderTransport(agentId: string, providerId: string, mode: string): DispatcherProvider | null {
+    const definition = getProviderTransport(providerId);
+    const provider = providers[providerId];
+    if (!definition || !provider || definition.mode !== mode) return null;
+    const meta = _metaOf(agentId);
+    const family = getProviderFamily(meta.backend_type);
+    if (!family || family.type !== definition.family) return null;
+    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(mode)) return null;
+    try {
+      if (typeof provider.match !== 'function' || !provider.match(agentId, meta)) return null;
+    } catch (_) { return null; }
+    return provider;
+  }
+
   /**
    * Read-only delivery diagnostics. This must never start a gateway, invoke a model,
    * or mutate provider configuration; it only evaluates persisted selection and
@@ -1221,7 +1236,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, getRoutingStats,
+  return { dispatch, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };

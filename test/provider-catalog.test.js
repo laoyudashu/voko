@@ -27,6 +27,15 @@ test('Qwen Office and Trae expose headless Push transports with Pull fallback', 
   assert.equal(getProviderFamily('trae-ide').type, 'trae');
 });
 
+test('loopback capability is explicit and special transports stay preflight-only', () => {
+  for (const id of ['claude-cli', 'codex-cli', 'cline-acp', 'traecli-acp', 'hermes-cli', 'hermes-http', 'openclaw-ws', 'zeroclaw-ws', 'qwen-office-cli']) {
+    assert.equal(getProviderTransport(id).supportsLoopback, true, `${id} should expose a real loopback`);
+  }
+  for (const id of ['openclaw-cli', 'opencode-attach', 'goose-cli']) {
+    assert.equal(getProviderTransport(id).supportsLoopback, false, `${id} must remain preflight-only`);
+  }
+});
+
 test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
   const calls = [];
   const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];

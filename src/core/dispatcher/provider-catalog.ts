@@ -26,6 +26,7 @@ export interface ProviderTransportDefinition {
   capabilities: ProviderCapabilities;
   create(context: ProviderFactoryContext): any;
   testOnly?: boolean;
+  supportsLoopback?: boolean;
   preflight?: (provider: any, agentId: string) => Promise<unknown>;
   loopback?: (provider: any, agentId: string) => Promise<unknown>;
 }
@@ -88,6 +89,7 @@ type TransportInput = Omit<ProviderTransportDefinition, 'capabilities' | 'create
 function transport(input: TransportInput): ProviderTransportDefinition {
   return {
     ...input,
+    supportsLoopback: input.supportsLoopback === true,
     capabilities: capabilities(input.capabilities),
     create: input.create || ((context: ProviderFactoryContext) => {
       const loaded = require(input.modulePath);
@@ -105,25 +107,27 @@ const cli = (id: string, modulePath: string, exportName?: string, sandboxPolicyI
   id, mode: 'cli', priority: 1, operations: ['push', 'steer'], modulePath, exportName,
   safetyProfile: 'restricted-cli', sandboxPolicyId, capabilities: { sessionResume: true },
   options: context => context.getProviderConfig?.(id) || {},
+  supportsLoopback: true,
 });
 const acp = (id: string, modulePath: string, exportName?: string): ProviderTransportDefinition => transport({
   id, mode: 'acp', priority: 10, operations: ['push', 'steer'], modulePath, exportName,
   safetyProfile: 'isolated-acp', sandboxPolicyId: 'acp-deny-permission',
   capabilities: { streaming: true, sessionResume: true, cancel: true, progress: true, humanApproval: true },
   options: context => context.getProviderConfig?.(id) || {},
+  supportsLoopback: true,
 });
 
 export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'openclaw', aliases: [], label: 'OpenClaw', requiresInstance: true, defaultDeliveryModes: ['websocket', 'cli', 'pull'], transports: [
-    transport({ id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', capabilities: { streaming: true, asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/openclaw-ws'); return new Ctor(context.db, null); } }),
-    cli('openclaw-cli', './providers/openclaw-cli'),
+    transport({ id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/openclaw-ws'); return new Ctor(context.db, null); } }),
+    { ...cli('openclaw-cli', './providers/openclaw-cli'), supportsLoopback: false },
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
-    transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', capabilities: { asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
-    cli('hermes-cli', './providers/hermes-cli'),
+    transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
+    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true },
   ] },
   { type: 'zeroclaw', aliases: [], label: 'ZeroClaw', requiresInstance: true, defaultDeliveryModes: ['acp_ws', 'acp', 'cli', 'pull'], transports: [
-    transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),
+    transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),
     acp('zeroclaw-acp', './providers/zeroclaw-acp', 'ZeroClawAcpProvider'),
     cli('zeroclaw-cli', './providers/zeroclaw-cli', 'ZeroClawCliProvider'),
   ] },
@@ -143,7 +147,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
     acp('cline-acp', './providers/cline-acp', 'ClineAcpProvider'), cli('cline-cli', './providers/cline-cli', 'ClineCliProvider', 'cline-command-deny'),
   ] },
   { type: 'goose', aliases: ['goose-ai', 'acp-goose'], label: 'Goose', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
-    acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), cli('goose-cli', './providers/goose-cli'),
+    acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false },
   ] },
   { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools')] },
   { type: 'codex', aliases: [], label: 'Codex', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly')] },
@@ -151,7 +155,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
-    cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'),
+    { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true },
   ] },
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider', 'aider-dry-run')] },
@@ -188,8 +192,10 @@ for (const family of PROVIDER_CATALOG) {
       const sandbox = provider.getSandboxStatus?.(agentId) || null;
       return readiness && typeof readiness === 'object' ? { ...readiness, sandbox } : { status: readiness, sandbox };
     };
-    transport.loopback ||= async (provider: any, agentId: string) => provider.runLoopbackTest?.(agentId)
-      ?? { status: 'unavailable' };
+    if (transport.supportsLoopback) {
+      transport.loopback ||= async (provider: any, agentId: string) => provider.runLoopbackTest?.(agentId)
+        ?? { status: 'unavailable' };
+    }
     if (transportsById.has(transport.id)) {
       const existing = transportsById.get(transport.id)!;
       if (existing.mode !== transport.mode) throw new Error(`Provider transport mode conflict: ${transport.id}`);
@@ -231,7 +237,7 @@ export function validateProviderCatalog(): string[] {
       if (typeof transport.create !== 'function') errors.push(`${transport.id}: create missing`);
       if (!transport.capabilities) errors.push(`${transport.id}: capabilities missing`);
       if (typeof transport.preflight !== 'function') errors.push(`${transport.id}: preflight missing`);
-      if (typeof transport.loopback !== 'function') errors.push(`${transport.id}: loopback missing`);
+      if (transport.supportsLoopback && typeof transport.loopback !== 'function') errors.push(`${transport.id}: loopback missing`);
     }
   }
   return errors;
@@ -259,6 +265,7 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     return { ...versionProbe };
   };
   Object.defineProperty(instance, 'sandboxPolicyId', { value: definition.sandboxPolicyId, enumerable: true });
+  Object.defineProperty(instance, 'supportsLoopback', { value: definition.supportsLoopback === true, enumerable: true });
   Object.defineProperty(instance, 'providerCapabilities', { value: Object.freeze({ ...definition.capabilities }), enumerable: true });
   instance.getSandboxStatus = (agentId?: string) => {
     const { evaluateProviderSandbox } = require('../provider-sandbox');

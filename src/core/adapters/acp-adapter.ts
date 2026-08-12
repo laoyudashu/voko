@@ -38,6 +38,7 @@ export interface AcpAdapterOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
+  loopbackTimeout?: number;
   matchType?: string;
   bindingProviderType?: string;
   adapterType?: string;
@@ -481,6 +482,63 @@ class AcpAdapter extends PushProvider {
       }
     }
     return result;
+  }
+
+  /** Isolated ACP newSession/prompt probe; never enters business session caches or stores. */
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    if (!this.isAvailable(agentId)) return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    const state = await this._ensureAgent(agentId);
+    if (!state.agentCtx) return { ok: false, code: 'LOOPBACK_CONNECTION_UNAVAILABLE' };
+    const session = await state.agentCtx.buildSession({ cwd: this._cwd, mcpServers: [],
+      ...(this.options.sessionRequest?.(agentId) || {}) }).start();
+    let reply = '';
+    const timeoutMs = Number(this.options.loopbackTimeout || 120000);
+    const deadline = Date.now() + timeoutMs;
+    try {
+      const prompt = session.prompt(`VOKO isolated loopback test. Do not use tools or modify files. Reply with exactly: ${challenge}`);
+      const promptFailure = prompt.then<never, null>(
+        () => new Promise<never>(() => {}),
+        () => null,
+      );
+      for (;;) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error(`${this._logPrefix} ACP loopback timed out`);
+        let timer: NodeJS.Timeout | null = null;
+        const update = await Promise.race([
+          session.nextUpdate(),
+          promptFailure,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${this._logPrefix} ACP loopback timed out`)), remaining);
+          }),
+        ]).finally(() => { if (timer) clearTimeout(timer); });
+        if (update === null) {
+          await prompt;
+          break;
+        }
+        if (update.kind === 'stop') break;
+        const body = update.update || update.notification?.update;
+        if (body?.sessionUpdate === 'agent_message_chunk' && body.content?.text) reply += body.content.text;
+        if (reply.length > MAX_REPLY_CHARS) break;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`${this._logPrefix} ACP loopback timed out`);
+      let promptTimer: NodeJS.Timeout | null = null;
+      await Promise.race([
+        prompt,
+        new Promise<never>((_, reject) => {
+          promptTimer = setTimeout(() => reject(new Error(`${this._logPrefix} ACP loopback timed out`)), remaining);
+        }),
+      ]).finally(() => { if (promptTimer) clearTimeout(promptTimer); });
+      const matched = reply.trim() === challenge;
+      return { ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+        detail: matched ? `${this._logPrefix} ACP loopback verified` : `${this._logPrefix} ACP did not return the exact challenge`,
+        loopbackSessionId: session.sessionId };
+    } finally {
+      try { session.dispose(); } catch (_) {}
+    }
   }
 
   // ── ACP 路径 ──────────────────────────────────────────────────────

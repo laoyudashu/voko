@@ -781,6 +781,27 @@ class HermesHttpProvider extends PushProvider {
       deliveryMode: 'http', adapterType: 'hermes-http' };
   }
 
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    const profileId = this._profileForAgent(agentId);
+    if (!profileId || !(await this._ensureGatewayRunning(profileId)) || !this.client) {
+      return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    }
+    const visitorId = `loopback-${challenge}`;
+    const sessionKey = `hermes:${agentId}:${visitorId}`;
+    const structured = JSON.stringify({ type: 'message',
+      content: `VOKO isolated loopback test. Do not use tools. Reply with exactly: ${challenge}`,
+      fromUid: visitorId, channelId: visitorId, channelType: 1, contentType: 1,
+      messageId: challenge, timestamp: Math.floor(Date.now() / 1000) });
+    const result = await this.client.chat(profileId, sessionKey, visitorId, structured);
+    const matched = String(result.reply || '').trim() === challenge;
+    return { ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+      detail: matched ? 'Hermes HTTP loopback verified' : 'Hermes HTTP did not return the exact challenge',
+      loopbackSessionId: sessionKey };
+  }
+
   useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 }
 

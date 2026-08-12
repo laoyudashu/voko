@@ -70,6 +70,19 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('explicit transport resolution never substitutes another mode', () => {
+  const http = provider('http', 100, []);
+  const cli = provider('cli', 10, []);
+  const dispatcher = createDispatcher({
+    db: dbFor(['http', 'cli', 'pull'], 'hermes'),
+    providers: { 'hermes-http': http, 'hermes-cli': cli },
+  });
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-http', 'http'), http);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-http', 'cli'), null);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-cli', 'http'), null);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'openclaw-ws', 'websocket'), null);
+});
+
 test('delivery policy changes take effect on the next message after scoped invalidation', async () => {
   const calls = [];
   let modes = ['websocket', 'cli', 'pull'];
