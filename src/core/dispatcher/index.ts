@@ -105,6 +105,8 @@ interface DispatcherOptions {
 interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
+  sourceType?: 'agent_peer' | 'owner';
+  executionScope?: 'a2a_mailbox' | 'owner_link';
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -640,6 +642,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return selected;
   }
 
+  function _routeProviderEntryExact(agentId: string, operation: RouteOperation, providerId: string,
+    excluded: Set<DispatcherProvider>): RouteCacheEntry | null {
+    const provider = providers[providerId];
+    if (!provider || excluded.has(provider) || typeof provider[operation] !== 'function'
+      || !_providerEligible(providerId, agentId)) return null;
+    try { if (!provider.isAvailable?.(agentId)) return null; } catch (_) { return null; }
+    return { providerId, provider, generation: _generationOf(providerId, agentId, operation), selectedAt: Date.now() };
+  }
+
   function _routeProvider(
     agentId: string,
     operation: RouteOperation,
@@ -928,7 +939,10 @@ ${body}
       const routedPayload = payload.channelType === 2
         ? { ...payload, turnId: payload.turnId || payload.messageId, senderUid: payload.senderUid || payload.fromUid, fromUid: payload.sessionTarget || `group:${payload.channelId}` }
         : { ...payload, turnId: payload.turnId || payload.messageId };
-      const sourceType = a2aContext?.a2aManaged ? 'agent_peer' : 'visitor';
+      const executionScope = String((payload as any).executionScope || '');
+      const sourceType = executionScope === 'owner_link'
+        ? 'owner'
+        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged) ? 'agent_peer' : 'visitor';
       const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
@@ -949,13 +963,17 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      const isolated = (payload as any).executionScope === 'a2a_mailbox';
+      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
       const result = await deliveryExecutor.execute({
         next: (excluded: Set<DispatcherProvider>) => {
-          const nextRoute = _routeProviderEntry(agentId, 'push', excluded);
+          const strictAdapter = baseProviderPayload.providerBinding?.strictSessionRoute
+            ? baseProviderPayload.providerBinding.adapterType : null;
+          const nextRoute = strictAdapter
+            ? _routeProviderEntryExact(agentId, 'push', strictAdapter, excluded)
+            : _routeProviderEntry(agentId, 'push', excluded);
           if (!nextRoute) return null;
           routeByProvider.set(nextRoute.provider, nextRoute);
           return {
@@ -1037,23 +1055,32 @@ ${body}
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
-    const turnId = `a2a-${crypto.randomUUID()}`;
+    const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
+    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
+    if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
+    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    const turnId = `${prefix}-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
     let resolveReply!: (reply: ProviderReply) => void;
     let rejectReply!: (error: Error) => void;
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
-    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('A2A Provider reply timed out')); }, options.timeoutMs || 120_000);
+    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error(`${prefix} Provider reply timed out`)); }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
       const delivery = await _doRoute(options.agentId, {
-        agentId: options.agentId, fromUid: `a2a:${options.contextId}`, senderUid: 'a2a-mailbox',
+        agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
         channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
         content: options.content, rawContent: options.content, providerBinding: options.binding || null,
-        executionScope: 'a2a_mailbox', onDeliveryReceipt: (value: unknown) => { receipt = value; },
+        executionScope, sourceType, onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
-      if (delivery?.outcome !== 'delivered') throw new Error(`A2A Provider delivery ${delivery?.outcome || 'failed'}`);
+      if (delivery?.outcome !== 'delivered') {
+        const error = new Error(`${prefix} Provider delivery ${delivery?.outcome || 'failed'}`);
+        (error as any).deliveryOutcome = delivery?.outcome || 'outcome_unknown';
+        (error as any).code = delivery?.errorCode || 'ISOLATED_PROVIDER_DELIVERY_FAILED';
+        throw error;
+      }
       return { reply: await replyPromise, receipt };
     } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
   }
