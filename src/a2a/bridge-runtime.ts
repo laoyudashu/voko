@@ -32,13 +32,15 @@ class A2ABridgeRuntime {
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
     const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
-    void (async () => {
+    const runLoop = (work: () => Promise<boolean>, idleMs: number) => void (async () => {
       while (!this.stopped) {
-        try { await outbox.drain(); await outboundResults.pollOnce(); const result = await worker.pollOnce();
-          if (result.claimed > 0) await outbox.drain(); else await delay(2000); }
+        try { if (!await work()) await delay(idleMs); }
         catch (error) { this.options.onError?.(error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'); if (!this.stopped) await delay(5000); }
       }
     })();
+    runLoop(async () => (await worker.pollOnce()).claimed > 0, 2000);
+    runLoop(async () => (await outbox.drain()).sent > 0, 500);
+    runLoop(async () => (await outboundResults.pollOnce()).claimed > 0, 2000);
     return () => { this.stopped = true; };
   }
 }
