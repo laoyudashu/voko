@@ -110,6 +110,52 @@ class OwnerLinkStore {
       .map((row) => row.message_id);
   }
 
+  claimNextForPull(agentId: string, leaseOwner: string, leaseMs = 5 * 60_000, now = Date.now()): any | null {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(`SELECT * FROM owner_link_commands
+        WHERE agent_id=? AND state IN ('PERSISTED','FAILED_NOT_DELIVERED') AND expires_at>?
+        ORDER BY sequence,created_at LIMIT 1`).get(agentId, now) as any;
+      if (!row) { this.db.exec('COMMIT'); return null; }
+      const result = this.db.prepare(`UPDATE owner_link_commands SET state='DISPATCH_RESERVED',lease_owner=?,
+        lease_version=lease_version+1,lease_expires_at=?,error_code=NULL,updated_at=?
+        WHERE message_id=? AND state=? AND expires_at>?`)
+        .run(leaseOwner, now + Math.max(30_000, leaseMs), now, row.message_id, row.state, now) as any;
+      if (Number(result.changes || 0) !== 1) { this.db.exec('ROLLBACK'); return null; }
+      this.event(row.message_id, row.state, 'DISPATCH_RESERVED', 'OWNER_PULL_CLAIMED', now);
+      this.db.exec('COMMIT');
+      return this.getCommand(row.message_id);
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  acceptPullLease(messageId: string, leaseOwner: string, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_commands SET state='PROVIDER_ACCEPTED',
+      provider_accepted_at=?,updated_at=? WHERE message_id=? AND state='DISPATCH_RESERVED' AND lease_owner=?`)
+      .run(now, now, messageId, leaseOwner) as any;
+    if (Number(result.changes || 0) === 1) this.event(messageId, 'DISPATCH_RESERVED', 'PROVIDER_ACCEPTED', 'OWNER_PULL_ACCEPTED', now);
+    return Number(result.changes || 0) === 1;
+  }
+
+  completePullLease(messageId: string, leaseOwner: string, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_commands SET state='COMPLETED',completed_at=?,
+      lease_owner=NULL,lease_expires_at=NULL,updated_at=?
+      WHERE message_id=? AND state='PROVIDER_ACCEPTED' AND lease_owner=?`).run(now, now, messageId, leaseOwner) as any;
+    if (Number(result.changes || 0) === 1) this.event(messageId, 'PROVIDER_ACCEPTED', 'COMPLETED', 'OWNER_PULL_COMPLETED', now);
+    return Number(result.changes || 0) === 1;
+  }
+
+  failPullLease(messageId: string, leaseOwner: string, code: string, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_commands SET state='FAILED_NOT_DELIVERED',error_code=?,
+      lease_owner=NULL,lease_expires_at=NULL,updated_at=?
+      WHERE message_id=? AND state='PROVIDER_ACCEPTED' AND lease_owner=?`)
+      .run(String(code || 'OWNER_PULL_FAILED').slice(0, 128), now, messageId, leaseOwner) as any;
+    if (Number(result.changes || 0) === 1) this.event(messageId, 'PROVIDER_ACCEPTED', 'FAILED_NOT_DELIVERED', code, now);
+    return Number(result.changes || 0) === 1;
+  }
+
   getActiveProviderBinding(ownerConversationId: string): any {
     return this.db.prepare(`SELECT * FROM owner_link_provider_bindings
       WHERE owner_conversation_id=? AND status='active' LIMIT 1`).get(ownerConversationId) || null;
@@ -279,16 +325,20 @@ class OwnerLinkStore {
   }
 
   recoverReservedCommands(now = Date.now()): number {
-    const rows = this.db.prepare("SELECT message_id FROM owner_link_commands WHERE state='DISPATCH_RESERVED' AND COALESCE(lease_expires_at,0)<=?")
+    const rows = this.db.prepare(`SELECT message_id,state FROM owner_link_commands
+      WHERE state IN ('DISPATCH_RESERVED','PROVIDER_ACCEPTED') AND lease_owner IS NOT NULL
+        AND COALESCE(lease_expires_at,0)<=?`)
       .all(now) as Array<{ message_id: string }>;
     let changed = 0;
     for (const row of rows) {
+      const current = this.getCommand(row.message_id);
       const result = this.db.prepare(`UPDATE owner_link_commands SET state='OUTCOME_UNKNOWN',lease_owner=NULL,
         lease_expires_at=NULL,error_code='OWNER_DISPATCH_INTERRUPTED',updated_at=?
-        WHERE message_id=? AND state='DISPATCH_RESERVED' AND COALESCE(lease_expires_at,0)<=?`)
+        WHERE message_id=? AND state IN ('DISPATCH_RESERVED','PROVIDER_ACCEPTED') AND lease_owner IS NOT NULL
+          AND COALESCE(lease_expires_at,0)<=?`)
         .run(now, row.message_id, now) as any;
       if (Number(result.changes || 0) === 1) {
-        this.event(row.message_id, 'DISPATCH_RESERVED', 'OUTCOME_UNKNOWN', 'OWNER_DISPATCH_INTERRUPTED', now);
+        this.event(row.message_id, current?.state || 'DISPATCH_RESERVED', 'OUTCOME_UNKNOWN', 'OWNER_DISPATCH_INTERRUPTED', now);
         changed += 1;
       }
     }

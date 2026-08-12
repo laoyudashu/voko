@@ -1,5 +1,6 @@
 export * from './database';
 export * from './bridge';
+export * from './caller-authorization';
 export * from './envelope';
 export * from './event-envelope';
 export * from './lifecycle';
@@ -8,4 +9,5 @@ export * from './key-store';
 export * from './ingress';
 export * from './paths';
 export * from './processor';
+export * from './pull-service';
 export * from './store';

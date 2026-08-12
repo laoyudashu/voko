@@ -1601,10 +1601,11 @@ async function startMcpServer(args?: any, core?: any) {
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
-  const { OwnerCommandProcessor, OwnerEventOutbox, OwnerGatewayKeyStore, OwnerLinkBridge,
-    OwnerLinkIngress, OwnerLinkModule } = require('./owner-link');
+  const { createOwnerPullCallerAuthorizer, OwnerCommandProcessor, OwnerEventOutbox, OwnerGatewayKeyStore,
+    OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule, OwnerPullService } = require('./owner-link');
   const ownerLinkModule = new OwnerLinkModule();
   let ownerLinkBridge: any = null;
+  let ownerPullService: any = null;
   if (ownerLinkModule.enabled) {
     try {
       await taskManager.start('owner-link-module', () => ownerLinkModule.start());
@@ -1736,6 +1737,12 @@ async function startMcpServer(args?: any, core?: any) {
       return !liveUid || liveUid === identity.imUid;
     });
     await taskManager.start('owner-link-outbox', () => ownerOutbox.start());
+    const { getProviderCaller } = require('./core/registration-caller-context');
+    ownerPullService = new OwnerPullService({
+      store: ownerLinkBridge.store,
+      resolveAgentIdentity: resolveOwnerAgentIdentity,
+      authorizeAgent: createOwnerPullCallerAuthorizer(db, getProviderCaller),
+    });
   }
 
   let ownerInterventionNotifier: any = null; // 在后面创建，供 callback 闭包引用
@@ -1992,6 +1999,7 @@ async function startMcpServer(args?: any, core?: any) {
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
   (cx as any).a2aMailboxClient = a2aMailboxClient;
+  (cx as any).ownerPullService = ownerPullService;
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,

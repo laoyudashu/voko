@@ -621,6 +621,24 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { readOnlyHint: true }
   );
 
+  server.tool(
+    'voko_owner_command',
+    T('mcp.tool.owner_command.desc'),
+    {
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      action: z.enum(['fetch', 'complete', 'fail']).describe(T('mcp.tool.owner_command.p.action')),
+      messageId: z.string().optional().describe(T('mcp.tool.owner_command.p.messageId')),
+      claimId: z.string().optional().describe(T('mcp.tool.owner_command.p.claimId')),
+      content: z.string().optional().describe(T('mcp.tool.owner_command.p.content')),
+      reason: z.string().optional().describe(T('mcp.tool.owner_command.p.reason')),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.owner_command(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { destructiveHint: false }
+  );
+
   // ─── 27. 白名单管理 ───
   server.tool(
     'voko_manage_whitelist',

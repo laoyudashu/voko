@@ -303,6 +303,11 @@ type McpContext = Omit<LiteContext,
     sendOutbound(input: DynamicRow): Promise<DynamicRow>;
     getOutboundTask(taskId: string): Promise<DynamicRow>;
   };
+  ownerPullService?: {
+    fetch(agentId: string): DynamicRow;
+    complete(agentId: string, messageId: string, claimId: string, content?: string): DynamicRow;
+    fail(agentId: string, messageId: string, claimId: string, errorCode?: string): DynamicRow;
+  };
   wukongim?: {
     getCurrentUid?(agentId?: string): string;
   };
@@ -521,6 +526,7 @@ interface McpToolParams {
   blockTimeout?: number;
   category?: string;
   challenge?: string;
+  claimId?: string;
   channelId?: string;
   channelType?: number | 'all' | 'direct' | 'group';
   /** MCP 客户端自报身份（如 'zcode'/'codex'/'cursor'），用于游标隔离，避免多客户端互抢消息。 */
@@ -3071,6 +3077,21 @@ function createToolHandlers(cx: McpContext) {
 
       const filtered = this._a2aPreparePull(p.agentId, allRows);
       return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursorByChannel, clientId: _publicClientId(clientId) });
+    },
+
+    async owner_command(p: McpToolParams = {}) {
+      if (!cx.ownerPullService) return { success: false, code: 'OWNER_LINK_UNAVAILABLE' };
+      const agentId = String(p.agentId || '');
+      if (!agentId) return { success: false, code: 'AGENT_ID_REQUIRED' };
+      if (p.action === 'fetch') return cx.ownerPullService.fetch(agentId);
+      if (!p.messageId || !p.claimId) return { success: false, code: 'OWNER_PULL_CLAIM_REQUIRED' };
+      if (p.action === 'complete') {
+        return cx.ownerPullService.complete(agentId, p.messageId, p.claimId, String(p.content || ''));
+      }
+      if (p.action === 'fail') {
+        return cx.ownerPullService.fail(agentId, p.messageId, p.claimId, String(p.reason || 'OWNER_PULL_EXECUTION_FAILED'));
+      }
+      return { success: false, code: 'OWNER_COMMAND_ACTION_INVALID' };
     },
 
     /**
