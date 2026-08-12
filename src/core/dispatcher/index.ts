@@ -1013,7 +1013,7 @@ ${body}
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
           _cacheRouteIfCurrent(agentId, 'push', selectedRoute);
           if (isolated && typeof (payload as any).onDeliveryReceipt === 'function') {
-            (payload as any).onDeliveryReceipt(deliveryReceipt, candidate);
+            (payload as any).onDeliveryReceipt({ deliveryReceipt, provider: candidate });
           }
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {

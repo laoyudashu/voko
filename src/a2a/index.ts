@@ -9,3 +9,4 @@ export { A2AMailboxClient, normalizeMailboxBaseUrl } from './mailbox-client';
 export type { A2AMailboxClientOptions, MailboxClaim, MailboxItem } from './mailbox-client';
 export { A2ABridgeWorker } from './bridge-worker';
 export type { A2ABridgeWorkerOptions } from './bridge-worker';
+export { A2AExecutionService } from './execution-service';

@@ -14,7 +14,7 @@ test('isolated execution captures reply without ordinary reply callback or bindi
   const provider = new Provider(); const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply: reply => ordinary.push(reply) });
   const result = await dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'task-1', contextId: 'context-1', content: 'hello', timeoutMs: 1000 });
-  assert.equal(result.reply.content, 'isolated-result'); assert.equal(result.receipt.nativeSessionId, 'native-a2a-session');
+  assert.equal(result.reply.content, 'isolated-result'); assert.equal(result.receipt.deliveryReceipt.nativeSessionId, 'native-a2a-session');
   assert.equal(ordinary.length, 0); assert.equal(provider.payload.executionScope, 'a2a_mailbox');
   assert.equal(provider.payload.providerBinding, null);
 });

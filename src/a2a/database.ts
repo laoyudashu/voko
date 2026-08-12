@@ -56,6 +56,12 @@ function initA2ADatabase(
           CHECK (standard_state IN ('SUBMITTED','WORKING','INPUT_REQUIRED','AUTH_REQUIRED','COMPLETED','FAILED','CANCELED','REJECTED')),
           CHECK (delivery_state IN ('QUEUED_OFFLINE','SENDING','IM_ACCEPTED','DELIVERED','EXECUTING','DELIVERY_UNKNOWN','DEAD_LETTER'))
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS a2a_local_contexts (
+          agent_id TEXT NOT NULL, context_id TEXT NOT NULL, provider_family TEXT,
+          provider_instance_id TEXT, delivery_mode TEXT, adapter_type TEXT, native_session_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          PRIMARY KEY (agent_id, context_id), CHECK (status IN ('active','stale','unavailable'))
+        ) STRICT;
         CREATE TABLE IF NOT EXISTS a2a_local_inbox (
           event_id TEXT PRIMARY KEY, gateway_task_id TEXT NOT NULL REFERENCES a2a_local_tasks(gateway_task_id) ON DELETE CASCADE,
           command_sequence INTEGER NOT NULL, operation TEXT NOT NULL, status TEXT NOT NULL,

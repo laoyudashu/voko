@@ -16,6 +16,21 @@ class A2ALocalTaskStore {
       input.gatewayTaskId, input.contextId, input.executionId, input.agentId, input.gatewayUid, now, now);
     return Number(result.changes) === 1;
   }
+  getContext(agentId: string, contextId: string): Record<string, any> | null {
+    return (this.db.prepare('SELECT * FROM a2a_local_contexts WHERE agent_id=? AND context_id=? AND status=\'active\'')
+      .get(agentId, contextId) as Record<string, any> | undefined) || null;
+  }
+  saveContext(input: { agentId: string; contextId: string; providerFamily: string; providerInstanceId?: string | null;
+    deliveryMode: string; adapterType: string; nativeSessionId: string }): void {
+    const now = Date.now();
+    this.db.prepare(`INSERT INTO a2a_local_contexts
+      (agent_id,context_id,provider_family,provider_instance_id,delivery_mode,adapter_type,native_session_id,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(agent_id,context_id) DO UPDATE SET
+      provider_family=excluded.provider_family,provider_instance_id=excluded.provider_instance_id,
+      delivery_mode=excluded.delivery_mode,adapter_type=excluded.adapter_type,native_session_id=excluded.native_session_id,
+      status='active',updated_at=excluded.updated_at`).run(input.agentId, input.contextId, input.providerFamily,
+      input.providerInstanceId || null, input.deliveryMode, input.adapterType, input.nativeSessionId, now, now);
+  }
   updateState(taskId: string, standardState: StandardTaskState, deliveryState: DeliveryState): boolean {
     const row = this.db.prepare('SELECT standard_state FROM a2a_local_tasks WHERE gateway_task_id=?').get(taskId) as { standard_state: StandardTaskState } | undefined;
     if (!row || (TERMINAL_STATES.has(row.standard_state) && row.standard_state !== standardState)) return false;
