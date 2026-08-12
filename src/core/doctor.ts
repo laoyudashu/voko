@@ -12,6 +12,9 @@ const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { getProviderFamily, getProviderVersionCommand } = require('./dispatcher/provider-catalog');
 const { evaluateProviderSandbox, probeProviderVersion } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
+const { A2A_SCHEMA_VERSION } = require('../a2a/database');
+const { isA2AEnabled } = require('../a2a/lifecycle');
+const { resolveA2ADatabasePath } = require('../a2a/paths');
 const ENDPOINTS = require('../endpoints.json');
 
 const MIN_NODE_VERSION = '22.5.0';
@@ -164,6 +167,35 @@ function inspectDatabase(dbPath: string, checks: any[]): { db: any | null; agent
     try { db?.close(); } catch {}
     return { db: null, agents: [], runtime: {}, config: {} };
   }
+}
+
+function inspectA2A(options: any, checks: any[]): void {
+  const env = options.env || process.env;
+  if (!isA2AEnabled(env)) {
+    addCheck(checks, 'a2a-mailbox', 'A2A Mailbox', 'skip', 'disabled');
+    return;
+  }
+  const databasePath = String(options.a2aDbPath || resolveA2ADatabasePath({ env, platform: options.platform, homeDir: options.homeDir }));
+  if (!fs.existsSync(databasePath)) {
+    addCheck(checks, 'a2a-mailbox', 'A2A Mailbox', 'error', 'enabled but its isolated database is unavailable');
+    return;
+  }
+  let db: any;
+  try {
+    db = new DatabaseSync(databasePath, { readOnly: true });
+    const version = Number(db.prepare('PRAGMA user_version').get()?.user_version || 0);
+    const configured = !!db.prepare("SELECT 1 FROM a2a_settings WHERE key='bridge_config_v1' LIMIT 1").get();
+    const pendingEvents = Number(db.prepare("SELECT COUNT(*) count FROM a2a_local_outbox WHERE status IN ('pending','leased','outcome_unknown')").get()?.count || 0);
+    const pendingCommands = Number(db.prepare("SELECT COUNT(*) count FROM a2a_local_inbox WHERE status IN ('received','processing')").get()?.count || 0);
+    const status = version > A2A_SCHEMA_VERSION || !configured ? 'error' : version < A2A_SCHEMA_VERSION || pendingEvents > 0 || pendingCommands > 0 ? 'warn' : 'ok';
+    const detail = version > A2A_SCHEMA_VERSION ? `schema ${version} is newer than supported ${A2A_SCHEMA_VERSION}`
+      : !configured ? 'enabled but Gateway registration is incomplete'
+      : `schema ${version}; bridge configured; ${pendingCommands} pending command(s), ${pendingEvents} pending event(s)`;
+    addCheck(checks, 'a2a-mailbox', 'A2A Mailbox', status, detail, { schemaVersion: version, supportedSchemaVersion: A2A_SCHEMA_VERSION,
+      bridgeConfigured: configured, pendingCommands, pendingEvents });
+  } catch {
+    addCheck(checks, 'a2a-mailbox', 'A2A Mailbox', 'error', 'enabled but its isolated database cannot be inspected');
+  } finally { try { db?.close(); } catch {} }
 }
 
 function inspectAuthentication(config: Record<string, any>, checks: any[]): void {
@@ -508,6 +540,7 @@ async function runDoctor(options: any = {}): Promise<any> {
     );
   }
   inspectMcpConfigFiles(options, checks);
+  inspectA2A(options, checks);
   const inspected = inspectDatabase(dbPath, checks);
   if (inspected.db) {
     inspectAuthentication(inspected.config, checks);

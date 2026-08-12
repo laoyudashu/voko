@@ -9,6 +9,7 @@ const test = require('node:test');
 
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
 const { runDoctor, formatDoctor } = require('../build/core/doctor');
+const { initA2ADatabase } = require('../build/a2a');
 
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-doctor-test-'));
@@ -69,6 +70,16 @@ test('doctor reports a missing database with a machine-readable error code', asy
   assert.equal(result.exitCode, 2);
   assert.equal(result.success, false);
   assert.equal(result.checks.find((check) => check.id === 'database')?.status, 'error');
+});
+test('doctor reports the isolated A2A bridge without exposing its token or database path', async (t) => {
+  const fixture = makeFixture(); const a2aDbPath = path.join(fixture.dir, 'private-a2a.db'); const a2aDb = initA2ADatabase(a2aDbPath);
+  a2aDb.prepare("INSERT INTO a2a_settings(key,value,updated_at) VALUES('bridge_config_v1',?,?)")
+    .run(JSON.stringify({ mailboxUrl: 'https://did.example/private', token: 'a2a-secret-token' }), Date.now()); a2aDb.close();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const result = await runDoctor({ dbPath: fixture.dbPath, a2aDbPath, env: { VOKO_A2A_ENABLED: 'true' }, mcpConfigPaths: [] });
+  const check = result.checks.find((item) => item.id === 'a2a-mailbox');
+  assert.equal(check.status, 'ok'); assert.equal(check.data.bridgeConfigured, true); assert.equal(check.data.schemaVersion, 2);
+  assert.doesNotMatch(JSON.stringify(check), /a2a-secret-token|private-a2a\.db|did\.example/);
 });
 
 test('doctor deep mode probes configured endpoints without starting a provider', async (t) => {
