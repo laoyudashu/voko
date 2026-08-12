@@ -1666,6 +1666,11 @@ async function startMcpServer(args?: any, core?: any) {
     openclawHandler = hcResult.openclawHandler;
     hermesHandler = hcResult.hermesHandler;
     dispatcher = hcResult.dispatcher;
+    if (a2aModule.enabled && dispatcher) {
+      const { A2ABridgeRuntime } = require('./a2a');
+      const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), dispatcher });
+      await taskManager.start('a2a-bridge', () => a2aRuntime.start());
+    }
   } catch (e: any) {
     console.error('[Lite] 创建后端处理器失败:', e.message);
   }

@@ -30,6 +30,10 @@ class A2AModule {
   get running(): boolean {
     return this.database !== null;
   }
+  getDatabase(): DatabaseSync {
+    if (!this.database) throw new Error('A2A module is not running');
+    return this.database;
+  }
 
   start(): (() => void) | undefined {
     if (!this.enabled) return undefined;
