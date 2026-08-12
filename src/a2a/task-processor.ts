@@ -3,6 +3,7 @@ import { signEnvelope } from './envelope';
 import type { A2AExecutionService } from './execution-service';
 import type { A2ALocalIdentity } from './identity-store';
 import type { A2ALocalTaskStore, DeliveryState, StandardTaskState } from './task-store';
+import { A2ASafetyRejection } from './safety-gate';
 
 class A2ATaskProcessor {
   constructor(private readonly store: A2ALocalTaskStore, private readonly execution: A2AExecutionService,
@@ -23,8 +24,16 @@ class A2ATaskProcessor {
   async process(request: A2AEnvelope): Promise<void> {
     this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
     this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
-    const result = await this.execution.execute(request);
-    this.event(request, 'completed', { text: result.content }, 'COMPLETED', 'DELIVERED');
+    try {
+      const result = await this.execution.execute(request);
+      this.event(request, 'completed', { text: result.content }, 'COMPLETED', 'DELIVERED');
+    } catch (error) {
+      if (error instanceof A2ASafetyRejection) {
+        this.event(request, 'rejected', { reasonCode: error.reasonCode }, 'REJECTED', 'DELIVERED');
+        return;
+      }
+      throw error;
+    }
   }
 }
 export { A2ATaskProcessor };

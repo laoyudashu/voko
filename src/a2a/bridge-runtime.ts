@@ -7,8 +7,9 @@ import { A2AMailboxClient } from './mailbox-client';
 import { A2ALocalTaskStore } from './task-store';
 import { A2ATaskProcessor } from './task-processor';
 import type { DatabaseSync } from 'node:sqlite';
+import { A2ASafetyGate } from './safety-gate';
 
-interface A2ABridgeRuntimeOptions { database: DatabaseSync; dispatcher: any; env?: NodeJS.ProcessEnv; delay?: (ms: number) => Promise<void> }
+interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv; delay?: (ms: number) => Promise<void> }
 class A2ABridgeRuntime {
   private stopped = false;
   constructor(private readonly options: A2ABridgeRuntimeOptions) {}
@@ -21,7 +22,8 @@ class A2ABridgeRuntime {
     if (!baseUrl || !token || !gatewayPublicKey) throw new Error('A2A Bridge configuration is incomplete');
     const client = new A2AMailboxClient({ baseUrl, token }); const store = new A2ALocalTaskStore(this.options.database);
     const identity = new A2AIdentityStore(this.options.database).getOrCreate();
-    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher), identity);
+    const safety = this.options.mainDatabase ? new A2ASafetyGate(this.options.mainDatabase) : undefined;
+    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety), identity);
     const worker = new A2ABridgeWorker({ client, store, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
     }, execute: (envelope) => processor.process(envelope) });

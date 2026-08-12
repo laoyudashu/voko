@@ -2,11 +2,14 @@ import type { A2AEnvelope } from './envelope';
 import type { A2ALocalTaskStore } from './task-store';
 
 interface IsolatedDispatcher { executeIsolated(options: Record<string, unknown>): Promise<{ reply: any; receipt?: any }> }
+interface SafetyGate { assertAllowed(content: string, direction: 'inbound' | 'outbound'): Promise<void> }
 class A2AExecutionService {
-  constructor(private readonly store: A2ALocalTaskStore, private readonly dispatcher: IsolatedDispatcher) {}
+  constructor(private readonly store: A2ALocalTaskStore, private readonly dispatcher: IsolatedDispatcher,
+    private readonly safety?: SafetyGate) {}
   async execute(envelope: A2AEnvelope): Promise<{ content: string }> {
     const content = String((envelope.payload as any)?.text || '');
     if (!content || Buffer.byteLength(content, 'utf8') > 6144) throw new Error('Invalid A2A text payload');
+    await this.safety?.assertAllowed(content, 'inbound');
     const context = this.store.getContext(envelope.agentId, envelope.contextId);
     const binding = context?.native_session_id ? { id: `a2a:${envelope.contextId}`, bindingVersion: 1,
       providerType: context.provider_family, providerInstanceId: context.provider_instance_id,
@@ -24,7 +27,9 @@ class A2AExecutionService {
       deliveryMode: provider.deliveryMode || deliveryReceipt.deliveryMode || binding?.deliveryMode,
       adapterType: provider.providerId || deliveryReceipt.adapterType || binding?.adapterType,
       nativeSessionId: deliveryReceipt.nativeSessionId });
-    return { content: String(result.reply?.content || '') };
+    const replyContent = String(result.reply?.content || '');
+    await this.safety?.assertAllowed(replyContent, 'outbound');
+    return { content: replyContent };
   }
 }
 export { A2AExecutionService };

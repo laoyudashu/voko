@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict'); const crypto = require('node:crypto'); const fs = require('node:fs');
 const os = require('node:os'); const path = require('node:path'); const test = require('node:test');
 const { A2AIdentityStore, A2ALocalTaskStore, A2ATaskProcessor, initA2ADatabase, verifyEnvelope } = require('../build/a2a');
+const { A2ASafetyRejection } = require('../build/a2a');
 function setup(t) { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-processor-')); const db = initA2ADatabase(path.join(dir, 'a.db'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }); const store = new A2ALocalTaskStore(db);
   store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', gatewayUid: 'gateway' }); return { db, store }; }
@@ -23,4 +24,11 @@ test('Provider failure never fabricates a failed event', async t => {
   await assert.rejects(() => processor.process(request()), /outcome unknown/);
   const operations = db.prepare('SELECT operation FROM a2a_local_outbox ORDER BY producer_sequence').all().map(row => row.operation);
   assert.deepEqual(operations, ['accepted', 'working']); assert.equal(operations.includes('failed'), false);
+});
+test('known safety rejection produces a standard rejected event without unsafe body', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
+  const processor = new A2ATaskProcessor(store, { async execute() { throw new A2ASafetyRejection('explicit_prompt_injection'); } }, identity);
+  await processor.process(request()); const last = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence DESC LIMIT 1').get();
+  assert.equal(last.operation, 'rejected'); const envelope = JSON.parse(last.envelope_json);
+  assert.equal(envelope.payload.reasonCode, 'explicit_prompt_injection'); assert.equal(JSON.stringify(envelope).includes('Ignore all'), false);
 });
