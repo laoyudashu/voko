@@ -1676,9 +1676,11 @@ function createToolHandlers(cx: McpContext) {
     async a2a_send_message(p: McpToolParams = {}) {
       const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
       if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
-      try { return { success: true, task: await cx.a2aMailboxClient.sendOutbound({ localAgentId: p.agentId,
+      if (!p.content) return { success: false, code: 'A2A_SEND_FAILED', error: 'content is required' };
+      try { const { A2ASafetyGate } = require('../a2a'); await new A2ASafetyGate(cx.db).assertAllowed(p.content, 'outbound');
+        return { success: true, task: await cx.a2aMailboxClient.sendOutbound({ localAgentId: p.agentId,
         remoteAgentKey: p.remoteAgentKey, text: p.content, messageId: p.messageId, idempotencyKey: p.idempotencyKey }) }; }
-      catch (error: any) { return { success: false, code: 'A2A_SEND_FAILED', error: error.message }; }
+      catch (error: any) { return { success: false, code: error?.reasonCode ? 'A2A_SAFETY_REJECTED' : 'A2A_SEND_FAILED', error: error?.reasonCode || error.message }; }
     },
     async a2a_get_task(p: McpToolParams = {}) {
       if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
