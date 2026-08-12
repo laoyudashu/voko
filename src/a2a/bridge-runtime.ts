@@ -8,6 +8,7 @@ import { A2ALocalTaskStore } from './task-store';
 import { A2ATaskProcessor } from './task-processor';
 import type { DatabaseSync } from 'node:sqlite';
 import { A2ASafetyGate } from './safety-gate';
+import { A2AOutboundResultWorker } from './outbound-result-worker';
 
 interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv; delay?: (ms: number) => Promise<void> }
 class A2ABridgeRuntime {
@@ -27,11 +28,12 @@ class A2ABridgeRuntime {
     const worker = new A2ABridgeWorker({ client, store, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
     }, execute: (envelope) => processor.process(envelope) });
-    const outbox = new A2AEventOutboxWorker(store, client); const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
+    const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
+    const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
     void (async () => {
       while (!this.stopped) {
-        try { await outbox.flushOnce(); const result = await worker.pollOnce(); if (result.claimed === 0) await delay(2000); }
+        try { await outbox.flushOnce(); await outboundResults.pollOnce(); const result = await worker.pollOnce(); if (result.claimed === 0) await delay(2000); }
         catch (_) { if (!this.stopped) await delay(5000); }
       }
     })();

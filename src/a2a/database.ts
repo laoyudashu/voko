@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const A2A_SCHEMA_VERSION = 1;
+const A2A_SCHEMA_VERSION = 2;
 
 interface InitA2ADatabaseOptions {
   createParent?: boolean;
@@ -78,6 +78,11 @@ function initA2ADatabase(
         ) STRICT;
         CREATE INDEX IF NOT EXISTS idx_a2a_local_outbox_ready
           ON a2a_local_outbox(status, next_attempt_at, lease_expires_at);
+        CREATE TABLE IF NOT EXISTS a2a_remote_task_results (
+          gateway_task_id TEXT PRIMARY KEY, result_sequence INTEGER NOT NULL,
+          standard_state TEXT NOT NULL, delivery_state TEXT NOT NULL, response_json TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        ) STRICT;
       `);
       db.prepare(`
         INSERT INTO a2a_meta (key, value, updated_at)

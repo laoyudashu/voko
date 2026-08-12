@@ -1,5 +1,6 @@
 interface MailboxItem { eventId: string; taskId: string; envelope: unknown }
 interface MailboxClaim { leaseId: string; items: MailboxItem[] }
+interface OutboundResultItem { eventId: string; taskId: string; sequence: number; payload: any }
 interface A2AMailboxClientOptions { baseUrl: string; token: string; fetchImpl?: typeof fetch }
 
 function normalizeMailboxBaseUrl(value: string): string {
@@ -59,7 +60,13 @@ class A2AMailboxClient {
   async listOutboundTasks(): Promise<any[]> {
     const result = await this.get('/outbound/tasks'); return Array.isArray(result?.tasks) ? result.tasks : [];
   }
+  async claimOutboundResults(limit = 20): Promise<{ leaseId: string; items: OutboundResultItem[] }> {
+    return this.post('/outbound/results/claim', { limit });
+  }
+  async acknowledgeOutboundResult(leaseId: string, eventId: string): Promise<void> {
+    await this.post('/outbound/results/ack', { leaseId, eventId });
+  }
 }
 
 export { A2AMailboxClient, normalizeMailboxBaseUrl };
-export type { A2AMailboxClientOptions, MailboxClaim, MailboxItem };
+export type { A2AMailboxClientOptions, MailboxClaim, MailboxItem, OutboundResultItem };

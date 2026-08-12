@@ -105,6 +105,18 @@ class A2ALocalTaskStore {
     this.db.prepare(`UPDATE a2a_local_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code=?,updated_at=? WHERE event_id=?`)
       .run(status, errorCode || null, Date.now(), eventId);
   }
+  saveOutboundResult(item: { taskId: string; sequence: number; payload: any }): boolean {
+    const payload = item.payload || {}; const result = this.db.prepare(`INSERT INTO a2a_remote_task_results
+      (gateway_task_id,result_sequence,standard_state,delivery_state,response_json,updated_at) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(gateway_task_id) DO UPDATE SET result_sequence=excluded.result_sequence,standard_state=excluded.standard_state,
+      delivery_state=excluded.delivery_state,response_json=excluded.response_json,updated_at=excluded.updated_at
+      WHERE excluded.result_sequence>a2a_remote_task_results.result_sequence`).run(item.taskId, item.sequence,
+      String(payload.standardState || 'SUBMITTED'), String(payload.deliveryState || 'DELIVERY_UNKNOWN'), JSON.stringify(payload.response || {}), Date.now());
+    return Number(result.changes) === 1;
+  }
+  getOutboundResult(taskId: string): Record<string, unknown> | null {
+    return (this.db.prepare('SELECT * FROM a2a_remote_task_results WHERE gateway_task_id=?').get(taskId) as Record<string, unknown> | undefined) || null;
+  }
 }
 
 export { A2ALocalTaskStore, TERMINAL_STATES };

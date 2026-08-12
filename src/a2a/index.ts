@@ -17,3 +17,4 @@ export { A2ATaskProcessor } from './task-processor';
 export { A2ABridgeRuntime } from './bridge-runtime';
 export { A2ARegistrationService } from './registration';
 export { A2ASafetyGate, A2ASafetyRejection } from './safety-gate';
+export { A2AOutboundResultWorker } from './outbound-result-worker';
