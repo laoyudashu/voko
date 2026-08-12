@@ -299,7 +299,7 @@ type McpContext = Omit<LiteContext,
   enqueueOwnerIntervention?(record: DynamicRow): unknown;
   processPaymentOrder?(order: DynamicRow): Promise<unknown>;
   a2aMailboxClient?: {
-    discoverRemote(cardUrl: string, credential?: string): Promise<DynamicRow>;
+    discoverRemote(localAgentId: string, cardUrl: string, credential?: string): Promise<DynamicRow>;
     sendOutbound(input: DynamicRow): Promise<DynamicRow>;
     getOutboundTask(taskId: string): Promise<DynamicRow>;
   };
@@ -1667,9 +1667,10 @@ function createToolHandlers(cx: McpContext) {
     },
 
     async a2a_discover_agent(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
       if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
-      if (!p.cardUrl) return { success: false, code: 'A2A_DISCOVERY_FAILED', error: 'cardUrl is required' };
-      try { return { success: true, ...(await cx.a2aMailboxClient.discoverRemote(p.cardUrl, p.credential)) }; }
+      if (!p.agentId || !p.cardUrl) return { success: false, code: 'A2A_DISCOVERY_FAILED', error: 'agentId and cardUrl are required' };
+      try { return { success: true, ...(await cx.a2aMailboxClient.discoverRemote(p.agentId, p.cardUrl, p.credential)) }; }
       catch (error: any) { return { success: false, code: 'A2A_DISCOVERY_FAILED', error: error.message }; }
     },
     async a2a_send_message(p: McpToolParams = {}) {

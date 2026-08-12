@@ -51,7 +51,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
   });
 
   server.tool('voko_a2a_discover_agent', 'Discover and validate a remote A2A 1.0 Agent Card through the VOKO A2A Gateway.', {
-    cardUrl: z.string().url(), credential: z.string().max(4096).optional(),
+    agentId: z.string(), cardUrl: z.string().url(), credential: z.string().max(4096).optional(),
   }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_discover_agent(params)) }] }));
   server.tool('voko_a2a_send_message', 'Send a task from this VOKO Agent to a previously discovered remote A2A Agent.', {
     agentId: z.string(), remoteAgentKey: z.string().regex(/^[a-f0-9]{64}$/), content: z.string().min(1).max(6144),
