@@ -247,6 +247,52 @@ class OwnerLinkStore {
     }
   }
 
+  transitionAndEnqueueSignedEvent(input: {
+    messageId: string;
+    from: Extract<OwnerCommandState, 'DISPATCH_RESERVED'|'PROVIDER_ACCEPTED'>;
+    to: Extract<OwnerCommandState, 'COMPLETED'|'FAILED_NOT_DELIVERED'|'REJECTED'>;
+    leaseOwner?: string | null;
+    code?: string | null;
+    kind?: 'receipt'|'event';
+    build: (sequence: number) => { eventId: string; rawEnvelope: string };
+    now?: number;
+  }): string {
+    const now = input.now || Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const command = this.db.prepare('SELECT conversation_id,state,lease_owner FROM owner_link_commands WHERE message_id=?')
+        .get(input.messageId) as { conversation_id?: string; state?: string; lease_owner?: string | null } | undefined;
+      if (!command?.conversation_id || command.state !== input.from
+          || (input.leaseOwner != null && command.lease_owner !== input.leaseOwner)) {
+        throw new OwnerLinkSecurityError('OWNER_STATE_CONFLICT');
+      }
+      const row = this.db.prepare(`SELECT COALESCE(MAX(o.producer_sequence),0) sequence
+        FROM owner_link_outbox o JOIN owner_link_commands c ON c.message_id=o.message_id
+        WHERE c.conversation_id=?`).get(command.conversation_id) as { sequence?: number } | undefined;
+      const sequence = Number(row?.sequence || 0) + 1;
+      const event = input.build(sequence);
+      if (!event.eventId || event.eventId.length > 128 || Buffer.byteLength(event.rawEnvelope, 'utf8') > 8192) {
+        throw new OwnerLinkSecurityError('OWNER_EVENT_INVALID');
+      }
+      this.db.prepare(`INSERT INTO owner_link_outbox
+        (event_id,message_id,kind,producer_sequence,payload_json,status,attempt_count,next_attempt_at,created_at,updated_at)
+        VALUES(?,?,?,?,?,'pending',0,?,?,?)`).run(event.eventId, input.messageId, input.kind || 'event', sequence,
+          event.rawEnvelope, now, now, now);
+      const result = this.db.prepare(`UPDATE owner_link_commands SET state=?,error_code=?,
+        completed_at=CASE WHEN ?='COMPLETED' THEN ? ELSE completed_at END,
+        lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE message_id=? AND state=?
+          AND (? IS NULL OR lease_owner=?)`).run(input.to, input.code || null, input.to, now, now,
+          input.messageId, input.from, input.leaseOwner || null, input.leaseOwner || null) as any;
+      if (Number(result.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_STATE_CONFLICT');
+      this.event(input.messageId, input.from, input.to, input.code || null, now);
+      this.db.exec('COMMIT');
+      return event.eventId;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
   claimOutbox(leaseOwner: string, limit = 10, leaseMs = 30_000, now = Date.now()): any[] {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 100));
     this.db.exec('BEGIN IMMEDIATE');

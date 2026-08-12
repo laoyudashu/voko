@@ -141,3 +141,26 @@ test('Owner database upgrades a v1 database without losing verified commands', (
     assert.ok(db2.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_link_provider_bindings'").get());
   } finally { db2.close(); }
 });
+
+test('terminal state and signed outbox event commit or roll back together', () => {
+  const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-atomic-')), 'owner.db'));
+  try {
+    const store = new OwnerLinkStore(db); store.persistVerified(fixture().envelope, 'owner-im-1');
+    assert.equal(store.acquireDispatchLease('omsg-1', 'worker-a'), true);
+    assert.equal(store.markProviderAccepted('omsg-1', 'worker-a'), true);
+    assert.throws(() => store.transitionAndEnqueueSignedEvent({
+      messageId: 'omsg-1', from: 'PROVIDER_ACCEPTED', to: 'COMPLETED', build: () => ({
+        eventId: 'event-too-large', rawEnvelope: 'x'.repeat(8193),
+      }),
+    }), /OWNER_EVENT_INVALID/);
+    assert.equal(store.getCommand('omsg-1').state, 'PROVIDER_ACCEPTED');
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM owner_link_outbox').get().count, 0);
+    store.transitionAndEnqueueSignedEvent({
+      messageId: 'omsg-1', from: 'PROVIDER_ACCEPTED', to: 'COMPLETED', build: sequence => ({
+        eventId: 'event-ok', rawEnvelope: JSON.stringify({ messageId: 'event-ok', sequence }),
+      }),
+    });
+    assert.equal(store.getCommand('omsg-1').state, 'COMPLETED');
+    assert.equal(db.prepare('SELECT COUNT(*) count FROM owner_link_outbox').get().count, 1);
+  } finally { db.close(); }
+});

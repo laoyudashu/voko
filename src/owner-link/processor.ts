@@ -99,17 +99,17 @@ class OwnerCommandProcessor {
         });
       }
       this.enqueueStatus(command, identity, 'working');
-      this.options.store.complete(messageId);
-      const eventId = this.enqueueStatus(command, identity, 'completed', { content: String(result.reply?.content || '') });
+      const eventId = this.finalizeStatus(command, identity, 'PROVIDER_ACCEPTED', 'COMPLETED',
+        'completed', { content: String(result.reply?.content || '') });
       return { status: 'completed', eventId };
     } catch (error: any) {
       const outcome = String(error?.deliveryOutcome || 'outcome_unknown');
       const code = String(error?.code || 'OWNER_PROVIDER_EXECUTION_FAILED').slice(0, 128);
-      if (outcome === 'not_delivered') this.options.store.markFailedNotDelivered(messageId, leaseOwner, code);
-      else if (outcome === 'rejected') this.options.store.markRejected(messageId, leaseOwner, code);
-      else this.options.store.markOutcomeUnknown(messageId, leaseOwner, code);
       if (outcome === 'not_delivered' || outcome === 'rejected') {
-        this.enqueueStatus(command, identity, 'failed', { errorCode: code });
+        this.finalizeStatus(command, identity, 'DISPATCH_RESERVED',
+          outcome === 'rejected' ? 'REJECTED' : 'FAILED_NOT_DELIVERED', 'failed', { errorCode: code }, leaseOwner, code);
+      } else {
+        this.options.store.markOutcomeUnknown(messageId, leaseOwner, code);
       }
       return { status: outcome };
     }
@@ -122,6 +122,19 @@ class OwnerCommandProcessor {
       const envelope = createOwnerEventEnvelope({ command, operation, payload, sequence,
         privateKey: identity.privateKey, keyId: identity.keyId, kind });
       return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+    });
+  }
+
+  private finalizeStatus(command: any, identity: { privateKey: string; keyId?: string },
+    from: 'DISPATCH_RESERVED'|'PROVIDER_ACCEPTED', to: 'COMPLETED'|'FAILED_NOT_DELIVERED'|'REJECTED',
+    operation: 'completed'|'failed', payload: Record<string, unknown>, leaseOwner: string | null = null,
+    code: string | null = null): string {
+    return this.options.store.transitionAndEnqueueSignedEvent({
+      messageId: command.message_id, from, to, leaseOwner, code, kind: 'event', build: (sequence) => {
+        const envelope = createOwnerEventEnvelope({ command, operation, payload, sequence,
+          privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
+        return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+      },
     });
   }
 }

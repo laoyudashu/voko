@@ -78,13 +78,16 @@ class OwnerPullService {
     const safeCode = String(errorCode || 'OWNER_PULL_EXECUTION_FAILED').replace(/[^A-Z0-9_]/g, '_').slice(0, 128);
     try {
       this.enqueue(command, identity, 'working');
-      this.enqueue(command, identity, operation, operation === 'completed'
-        ? { content: safeContent }
-        : { errorCode: safeCode });
-      const changed = operation === 'completed'
-        ? this.options.store.completePullLease(messageId, claimId)
-        : this.options.store.failPullLease(messageId, claimId, safeCode);
-      return changed ? { success: true, status: operation } : { success: false, code: 'OWNER_PULL_STATE_CONFLICT' };
+      this.options.store.transitionAndEnqueueSignedEvent({
+        messageId, from: 'PROVIDER_ACCEPTED', to: operation === 'completed' ? 'COMPLETED' : 'FAILED_NOT_DELIVERED',
+        leaseOwner: claimId, code: operation === 'failed' ? safeCode : null, kind: 'event', build: (sequence) => {
+          const envelope = createOwnerEventEnvelope({ command, operation,
+            payload: operation === 'completed' ? { content: safeContent } : { errorCode: safeCode }, sequence,
+            privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
+          return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+        },
+      });
+      return { success: true, status: operation };
     } catch (_) {
       return { success: false, code: 'OWNER_PULL_RESULT_PERSIST_FAILED' };
     }
