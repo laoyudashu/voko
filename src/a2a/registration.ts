@@ -13,7 +13,7 @@ class A2ARegistrationService {
     if (!agents.length) throw new Error('A2A requires at least one published Agent');
     let deviceId = (this.options.a2aDb.prepare("SELECT value FROM a2a_meta WHERE key='device_id'").get() as any)?.value;
     if (!deviceId) { deviceId = crypto.randomUUID(); this.options.a2aDb.prepare("INSERT INTO a2a_meta(key,value,updated_at) VALUES('device_id',?,?)").run(deviceId, Date.now()); }
-    const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ agents, keyId: identity.keyId })).digest('hex');
+    const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ registrationVersion: 2, agents, keyId: identity.keyId })).digest('hex');
     const existingRow = this.options.a2aDb.prepare("SELECT value FROM a2a_settings WHERE key='bridge_config_v1'").get() as any;
     if (existingRow) { const existing = JSON.parse(existingRow.value); if (existing.fingerprint === fingerprint) return existing; }
     const baseUrl = this.options.apiBaseUrl.replace(/\/+$/, ''); const response = await (this.options.fetchImpl || fetch)(`${baseUrl}/api/a2a/v1/devices/register`, {
