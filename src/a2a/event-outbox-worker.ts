@@ -28,5 +28,13 @@ class A2AEventOutboxWorker {
     }
     return { sent, uncertain };
   }
+  async drain(owner = `lite-${process.pid}`, maxBatches = 100): Promise<{ sent: number; uncertain: number }> {
+    let sent = 0; let uncertain = 0;
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const result = await this.flushOnce(owner); sent += result.sent; uncertain += result.uncertain;
+      if (result.sent === 0) break;
+    }
+    return { sent, uncertain };
+  }
 }
 export { A2AEventOutboxWorker };

@@ -34,7 +34,8 @@ class A2ABridgeRuntime {
     this.stopped = false;
     void (async () => {
       while (!this.stopped) {
-        try { await outbox.flushOnce(); await outboundResults.pollOnce(); const result = await worker.pollOnce(); if (result.claimed === 0) await delay(2000); }
+        try { await outbox.drain(); await outboundResults.pollOnce(); const result = await worker.pollOnce();
+          if (result.claimed > 0) await outbox.drain(); else await delay(2000); }
         catch (error) { this.options.onError?.(error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'); if (!this.stopped) await delay(5000); }
       }
     })();
