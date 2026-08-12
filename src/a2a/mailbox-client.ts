@@ -35,6 +35,9 @@ class A2AMailboxClient {
   async acknowledge(leaseId: string, eventId: string): Promise<void> {
     await this.post('/ack', { leaseId, eventId });
   }
+  async sendEvent(envelope: unknown): Promise<{ status: string; gatewaySequence?: number }> {
+    return this.post('/events', envelope);
+  }
 }
 
 export { A2AMailboxClient, normalizeMailboxBaseUrl };

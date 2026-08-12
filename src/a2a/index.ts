@@ -10,3 +10,6 @@ export type { A2AMailboxClientOptions, MailboxClaim, MailboxItem } from './mailb
 export { A2ABridgeWorker } from './bridge-worker';
 export type { A2ABridgeWorkerOptions } from './bridge-worker';
 export { A2AExecutionService } from './execution-service';
+export { A2AIdentityStore } from './identity-store';
+export type { A2ALocalIdentity } from './identity-store';
+export { A2AEventOutboxWorker } from './event-outbox-worker';
