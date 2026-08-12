@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { parseApprovedExecutePayload } from './approval';
+import type { ApprovalBinding } from './approval';
 import { createOwnerEventEnvelope } from './event-envelope';
 import { OwnerLinkStore } from './store';
 
@@ -6,7 +8,7 @@ interface OwnerPullIdentity { privateKey: string; keyId?: string; imUid: string 
 
 interface OwnerPullServiceOptions {
   store: OwnerLinkStore;
-  authorizeAgent: (agentId: string) => boolean;
+  authorizeAgent: (agentId: string) => (ApprovalBinding & { evidence?: string }) | null | false;
   resolveAgentIdentity: (agentId: string) => OwnerPullIdentity | null;
   claimTtlMs?: number;
 }
@@ -15,8 +17,7 @@ function commandText(command: any): string {
   if (command?.operation !== 'execute') return '';
   try {
     const payload = JSON.parse(String(command.payload_json || '{}'));
-    const text = String(payload.text || '').trim();
-    return text && Buffer.byteLength(text, 'utf8') <= 6144 ? text : '';
+    return parseApprovedExecutePayload(payload, Date.now(), Number(command.expires_at)).action.text;
   } catch (_) { return ''; }
 }
 
@@ -27,11 +28,12 @@ class OwnerPullService {
   }
 
   fetch(agentId: string): Record<string, unknown> {
-    if (!this.options.authorizeAgent(agentId)) return { success: false, code: 'OWNER_PULL_CALLER_UNVERIFIED' };
+    const authorization = this.options.authorizeAgent(agentId);
+    if (!authorization) return { success: false, code: 'OWNER_PULL_CALLER_UNVERIFIED' };
     const identity = this.options.resolveAgentIdentity(agentId);
     if (!identity?.privateKey || !identity.imUid) return { success: false, code: 'OWNER_AGENT_IDENTITY_UNAVAILABLE' };
     const claimId = `owner-pull-${crypto.randomUUID()}`;
-    const command = this.options.store.claimNextForPull(agentId, claimId, this.claimTtlMs);
+    const command = this.options.store.claimNextForPull(agentId, claimId, authorization, this.claimTtlMs);
     if (!command) return { success: true, command: null };
     const text = commandText(command);
     if (!text) {
@@ -69,7 +71,8 @@ class OwnerPullService {
 
   private finish(agentId: string, messageId: string, claimId: string, operation: 'completed'|'failed',
     content: string, errorCode: string | null): Record<string, unknown> {
-    if (!this.options.authorizeAgent(agentId)) return { success: false, code: 'OWNER_PULL_CALLER_UNVERIFIED' };
+    const authorization = this.options.authorizeAgent(agentId);
+    if (!authorization) return { success: false, code: 'OWNER_PULL_CALLER_UNVERIFIED' };
     const identity = this.options.resolveAgentIdentity(agentId);
     const command = this.options.store.getCommand(messageId);
     if (!identity?.privateKey || !command || command.agent_id !== agentId || command.lease_owner !== claimId
@@ -85,7 +88,7 @@ class OwnerPullService {
             payload: operation === 'completed' ? { content: safeContent } : { errorCode: safeCode }, sequence,
             privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
           return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
-        },
+        }, approvalBinding: authorization, approvalDisposition: 'consumed',
       });
       return { success: true, status: operation };
     } catch (_) {

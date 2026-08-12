@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const OWNER_LINK_SCHEMA_VERSION = 2;
+const OWNER_LINK_SCHEMA_VERSION = 3;
 
 interface InitOwnerLinkDatabaseOptions { createParent?: boolean }
 
@@ -139,6 +139,7 @@ function initOwnerLinkDatabase(
             adapter_type TEXT,
             delivery_mode TEXT,
             binding_version INTEGER,
+            native_session_digest TEXT,
             enforcement TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             expires_at INTEGER NOT NULL,
@@ -150,6 +151,13 @@ function initOwnerLinkDatabase(
             CHECK (status IN ('pending','claimed','consumed','expired','rejected'))
           ) STRICT;
         `);
+      }
+      if (version < 3) {
+        const approvalColumns = new Set((db.prepare('PRAGMA table_info(owner_link_approvals)').all() as Array<{ name?: string }>)
+          .map((column) => String(column.name || '')));
+        if (!approvalColumns.has('native_session_digest')) {
+          db.exec('ALTER TABLE owner_link_approvals ADD COLUMN native_session_digest TEXT');
+        }
       }
       db.prepare(`INSERT INTO owner_link_meta(key,value,updated_at) VALUES('schema_version',?,?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)

@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { createOwnerPullCallerAuthorizer, OwnerLinkStore, OwnerPullService,
-  initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+  actionDigest, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 const { AgentIdentityBindingStore } = require('../build/core/provider-agent-identity');
 const { initDatabase } = require('../build/core/database');
 
@@ -13,11 +13,14 @@ function fixture() {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-pull-')), 'owner.db'));
   const store = new OwnerLinkStore(db); const gateway = crypto.generateKeyPairSync('ed25519');
   const agent = crypto.generateKeyPairSync('ed25519'); const now = Date.now();
+  const expiresAt = new Date(now + 60_000).toISOString();
+  const action = { type: 'message', text: 'Summarize the current status.' };
   const command = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'command-pull-1',
     ownerConversationId: 'conversation-pull-1', ownerIdentityId: 'identity-pull-1', ownerImUid: 'owner_pull-1',
     agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
-    payload: { text: 'Summarize the current status.' }, keyId: 'gateway-key',
-    createdAt: new Date(now - 1000).toISOString(), expiresAt: new Date(now + 60_000).toISOString() }, gateway.privateKey);
+    payload: { action, approval: { approvalId: 'owa_command-pull-1', actionDigest: actionDigest(action), expiresAt,
+      enforcement: 'required_before_execute' } }, keyId: 'gateway-key',
+    createdAt: new Date(now - 1000).toISOString(), expiresAt }, gateway.privateKey);
   store.persistVerified(command, command.ownerImUid, now);
   const identity = { privateKey: agent.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     keyId: 'agent-key', imUid: 'agent-im-1' };
@@ -37,7 +40,9 @@ test('Pull requires an exact verified Agent caller and does not expose a command
 test('Pull claim shares the dispatch lease and produces signed accepted/working/completed events', () => {
   const f = fixture();
   try {
-    const service = new OwnerPullService({ store: f.store, authorizeAgent: id => id === 'agent-1',
+    const service = new OwnerPullService({ store: f.store, authorizeAgent: id => id === 'agent-1' ? ({
+      providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'owner-pull', deliveryMode: 'pull',
+      bindingVersion: 0, nativeSessionId: 'thread-1' }) : null,
       resolveAgentIdentity: () => f.identity });
     const fetched = service.fetch('agent-1');
     assert.equal(fetched.success, true);
@@ -55,7 +60,9 @@ test('Pull claim shares the dispatch lease and produces signed accepted/working/
 test('a Pull command can only be completed by its original claim', () => {
   const f = fixture();
   try {
-    const service = new OwnerPullService({ store: f.store, authorizeAgent: () => true,
+    const service = new OwnerPullService({ store: f.store, authorizeAgent: () => ({ providerType: 'codex',
+      providerInstanceId: 'instance-1', adapterType: 'owner-pull', deliveryMode: 'pull', bindingVersion: 0,
+      nativeSessionId: 'thread-1' }),
       resolveAgentIdentity: () => f.identity });
     const fetched = service.fetch('agent-1');
     assert.deepEqual(service.complete('agent-1', f.command.messageId, 'wrong-claim', 'ignored'),
@@ -70,7 +77,9 @@ test('a Pull command can only be completed by its original claim', () => {
 test('expired Pull lease becomes outcome unknown and is never offered again', () => {
   const f = fixture();
   try {
-    const service = new OwnerPullService({ store: f.store, authorizeAgent: () => true,
+    const service = new OwnerPullService({ store: f.store, authorizeAgent: () => ({ providerType: 'codex',
+      providerInstanceId: 'instance-1', adapterType: 'owner-pull', deliveryMode: 'pull', bindingVersion: 0,
+      nativeSessionId: 'thread-1' }),
       resolveAgentIdentity: () => f.identity, claimTtlMs: 30_000 });
     const fetched = service.fetch('agent-1');
     const command = f.store.getCommand(f.command.messageId);
@@ -89,11 +98,12 @@ test('Pull caller authorization requires one exact Provider session binding', ()
       nativeSessionId: 'thread-1', evidenceType: 'test' });
     let caller = { providerType: 'codex', providerInstanceId: 'instance-1', nativeSessionId: 'thread-1', evidence: 'hook' };
     const authorize = createOwnerPullCallerAuthorizer(db, () => caller);
-    assert.equal(authorize('agent-1'), true);
-    assert.equal(authorize('agent-2'), false);
+    assert.deepEqual(authorize('agent-1'), { providerType: 'codex', providerInstanceId: 'instance-1',
+      adapterType: 'owner-pull', deliveryMode: 'pull', bindingVersion: 0, nativeSessionId: 'thread-1', evidence: 'hook' });
+    assert.equal(authorize('agent-2'), null);
     caller = { providerType: 'codex', providerInstanceId: 'instance-1', nativeSessionId: 'thread-other', evidence: 'hook' };
-    assert.equal(authorize('agent-1'), false);
+    assert.equal(authorize('agent-1'), null);
     caller = { providerType: 'codex', providerInstanceId: 'instance-1', nativeSessionId: 'thread-1' };
-    assert.equal(authorize('agent-1'), false);
+    assert.equal(authorize('agent-1'), null);
   } finally { db.close(); }
 });

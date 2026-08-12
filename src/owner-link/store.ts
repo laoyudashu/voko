@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { nativeSessionDigest, parseApprovedExecutePayload } from './approval';
+import type { ApprovalBinding } from './approval';
 import { canonicalJson } from './envelope';
 import type { VokoOwnerEnvelope } from './envelope';
 
@@ -21,6 +23,11 @@ class OwnerLinkStore {
 
   persistVerified(envelope: VokoOwnerEnvelope, observedImUid: string, now = Date.now()): PersistResult {
     if (!observedImUid || observedImUid.length > 192) throw new OwnerLinkSecurityError('OWNER_IM_UID_INVALID');
+    let approvedExecute: ReturnType<typeof parseApprovedExecutePayload> | null = null;
+    if (envelope.operation === 'execute') {
+      try { approvedExecute = parseApprovedExecutePayload(envelope.payload, now, Date.parse(envelope.expiresAt)); }
+      catch (error: any) { throw new OwnerLinkSecurityError(String(error?.message || 'OWNER_APPROVAL_INVALID')); }
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const byMessage = this.db.prepare('SELECT state,payload_digest FROM owner_link_commands WHERE message_id=?')
@@ -36,6 +43,10 @@ class OwnerLinkStore {
         .get(envelope.ownerConversationId, envelope.sequence) as { message_id: string; payload_digest: string } | undefined;
       if (sequenceOwner) {
         throw new OwnerLinkSecurityError('OWNER_SEQUENCE_CONFLICT');
+      }
+      if (approvedExecute && this.db.prepare('SELECT 1 FROM owner_link_approvals WHERE approval_id=? LIMIT 1')
+        .get(approvedExecute.approval.approvalId)) {
+        throw new OwnerLinkSecurityError('OWNER_APPROVAL_REUSED');
       }
       const sequenceRow = this.db.prepare('SELECT COALESCE(MAX(sequence),0) max_sequence FROM owner_link_commands WHERE conversation_id=?')
         .get(envelope.ownerConversationId) as { max_sequence?: number } | undefined;
@@ -63,6 +74,12 @@ class OwnerLinkStore {
         envelope.sequence, envelope.agentId, envelope.payloadDigest, canonicalJson(envelope.payload),
         Date.parse(envelope.expiresAt), now, now, envelope.operation, envelope.ownerIdentityId, observedImUid,
         envelope.ownershipEpoch, envelope.conversationEpoch);
+      if (approvedExecute) {
+        this.db.prepare(`INSERT INTO owner_link_approvals
+          (approval_id,message_id,action_digest,enforcement,status,expires_at,created_at,updated_at)
+          VALUES(?,?,?,'voko_enforced','pending',?,?,?)`).run(approvedExecute.approval.approvalId,
+          envelope.messageId, approvedExecute.approval.actionDigest, Date.parse(approvedExecute.approval.expiresAt), now, now);
+      }
       this.transition(envelope.messageId, 'RECEIVED', 'VERIFIED', null, now);
       this.transition(envelope.messageId, 'VERIFIED', 'PERSISTED', null, now);
       this.db.exec('COMMIT');
@@ -80,6 +97,39 @@ class OwnerLinkStore {
       WHERE message_id=? AND state='PERSISTED' AND expires_at>?`).run(leaseOwner, now + leaseMs, now, messageId, now) as any;
     if (Number(result.changes || 0) === 1) this.event(messageId, 'PERSISTED', 'DISPATCH_RESERVED', null, now);
     return Number(result.changes || 0) === 1;
+  }
+
+  acquireApprovedDispatchLease(messageId: string, leaseOwner: string, binding: ApprovalBinding,
+    leaseMs = 30_000, now = Date.now()): boolean {
+    this.assertApprovalBinding(binding);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const command = this.db.prepare(`SELECT c.state,c.expires_at,a.status approval_status,a.expires_at approval_expires_at
+        FROM owner_link_commands c JOIN owner_link_approvals a ON a.message_id=c.message_id
+        WHERE c.message_id=?`).get(messageId) as any;
+      if (!command || command.state !== 'PERSISTED' || command.approval_status !== 'pending'
+          || Number(command.expires_at) <= now || Number(command.approval_expires_at) <= now) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      const commandResult = this.db.prepare(`UPDATE owner_link_commands SET state='DISPATCH_RESERVED',lease_owner=?,
+        lease_version=lease_version+1,lease_expires_at=?,updated_at=?
+        WHERE message_id=? AND state='PERSISTED' AND expires_at>?`)
+        .run(leaseOwner, now + leaseMs, now, messageId, now) as any;
+      const approvalResult = this.db.prepare(`UPDATE owner_link_approvals SET status='claimed',provider_type=?,
+        provider_instance_id=?,adapter_type=?,delivery_mode=?,binding_version=?,native_session_digest=?,claimed_at=?,updated_at=?
+        WHERE message_id=? AND status='pending' AND expires_at>?`).run(binding.providerType,
+          binding.providerInstanceId || '', binding.adapterType, binding.deliveryMode, binding.bindingVersion,
+          nativeSessionDigest(binding.nativeSessionId), now, now, messageId, now) as any;
+      if (Number(commandResult.changes || 0) !== 1 || Number(approvalResult.changes || 0) !== 1) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      this.event(messageId, 'PERSISTED', 'DISPATCH_RESERVED', 'OWNER_APPROVAL_CLAIMED', now);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
   }
 
   markProviderAccepted(messageId: string, leaseOwner: string, now = Date.now()): boolean {
@@ -110,18 +160,28 @@ class OwnerLinkStore {
       .map((row) => row.message_id);
   }
 
-  claimNextForPull(agentId: string, leaseOwner: string, leaseMs = 5 * 60_000, now = Date.now()): any | null {
+  claimNextForPull(agentId: string, leaseOwner: string, binding: ApprovalBinding,
+    leaseMs = 5 * 60_000, now = Date.now()): any | null {
+    this.assertApprovalBinding(binding);
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const row = this.db.prepare(`SELECT * FROM owner_link_commands
-        WHERE agent_id=? AND state IN ('PERSISTED','FAILED_NOT_DELIVERED') AND expires_at>?
-        ORDER BY sequence,created_at LIMIT 1`).get(agentId, now) as any;
+      const row = this.db.prepare(`SELECT c.* FROM owner_link_commands c
+        JOIN owner_link_approvals a ON a.message_id=c.message_id
+        WHERE c.agent_id=? AND c.state IN ('PERSISTED','FAILED_NOT_DELIVERED') AND c.expires_at>?
+          AND a.status='pending' AND a.expires_at>?
+        ORDER BY c.sequence,c.created_at LIMIT 1`).get(agentId, now, now) as any;
       if (!row) { this.db.exec('COMMIT'); return null; }
       const result = this.db.prepare(`UPDATE owner_link_commands SET state='DISPATCH_RESERVED',lease_owner=?,
         lease_version=lease_version+1,lease_expires_at=?,error_code=NULL,updated_at=?
         WHERE message_id=? AND state=? AND expires_at>?`)
         .run(leaseOwner, now + Math.max(30_000, leaseMs), now, row.message_id, row.state, now) as any;
       if (Number(result.changes || 0) !== 1) { this.db.exec('ROLLBACK'); return null; }
+      const approvalResult = this.db.prepare(`UPDATE owner_link_approvals SET status='claimed',provider_type=?,
+        provider_instance_id=?,adapter_type=?,delivery_mode=?,binding_version=?,native_session_digest=?,claimed_at=?,updated_at=?
+        WHERE message_id=? AND status='pending' AND expires_at>?`).run(binding.providerType,
+          binding.providerInstanceId || '', binding.adapterType, binding.deliveryMode, binding.bindingVersion,
+          nativeSessionDigest(binding.nativeSessionId), now, now, row.message_id, now) as any;
+      if (Number(approvalResult.changes || 0) !== 1) { this.db.exec('ROLLBACK'); return null; }
       this.event(row.message_id, row.state, 'DISPATCH_RESERVED', 'OWNER_PULL_CLAIMED', now);
       this.db.exec('COMMIT');
       return this.getCommand(row.message_id);
@@ -255,6 +315,8 @@ class OwnerLinkStore {
     code?: string | null;
     kind?: 'receipt'|'event';
     build: (sequence: number) => { eventId: string; rawEnvelope: string };
+    approvalBinding?: ApprovalBinding;
+    approvalDisposition?: 'consumed'|'rejected';
     now?: number;
   }): string {
     const now = input.now || Date.now();
@@ -284,6 +346,9 @@ class OwnerLinkStore {
           AND (? IS NULL OR lease_owner=?)`).run(input.to, input.code || null, input.to, now, now,
           input.messageId, input.from, input.leaseOwner || null, input.leaseOwner || null) as any;
       if (Number(result.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_STATE_CONFLICT');
+      if (input.approvalBinding) {
+        this.settleApproval(input.messageId, input.approvalBinding, input.approvalDisposition || 'consumed', now);
+      }
       this.event(input.messageId, input.from, input.to, input.code || null, now);
       this.db.exec('COMMIT');
       return event.eventId;
@@ -376,19 +441,84 @@ class OwnerLinkStore {
         AND COALESCE(lease_expires_at,0)<=?`)
       .all(now) as Array<{ message_id: string }>;
     let changed = 0;
-    for (const row of rows) {
-      const current = this.getCommand(row.message_id);
-      const result = this.db.prepare(`UPDATE owner_link_commands SET state='OUTCOME_UNKNOWN',lease_owner=NULL,
-        lease_expires_at=NULL,error_code='OWNER_DISPATCH_INTERRUPTED',updated_at=?
-        WHERE message_id=? AND state IN ('DISPATCH_RESERVED','PROVIDER_ACCEPTED') AND lease_owner IS NOT NULL
-          AND COALESCE(lease_expires_at,0)<=?`)
-        .run(now, row.message_id, now) as any;
-      if (Number(result.changes || 0) === 1) {
-        this.event(row.message_id, current?.state || 'DISPATCH_RESERVED', 'OUTCOME_UNKNOWN', 'OWNER_DISPATCH_INTERRUPTED', now);
-        changed += 1;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows) {
+        const current = this.getCommand(row.message_id);
+        const result = this.db.prepare(`UPDATE owner_link_commands SET state='OUTCOME_UNKNOWN',lease_owner=NULL,
+          lease_expires_at=NULL,error_code='OWNER_DISPATCH_INTERRUPTED',updated_at=?
+          WHERE message_id=? AND state IN ('DISPATCH_RESERVED','PROVIDER_ACCEPTED') AND lease_owner IS NOT NULL
+            AND COALESCE(lease_expires_at,0)<=?`).run(now, row.message_id, now) as any;
+        if (Number(result.changes || 0) === 1) {
+          this.db.prepare(`UPDATE owner_link_approvals SET status='consumed',consumed_at=?,updated_at=?
+            WHERE message_id=? AND status='claimed'`).run(now, now, row.message_id);
+          this.event(row.message_id, current?.state || 'DISPATCH_RESERVED', 'OUTCOME_UNKNOWN', 'OWNER_DISPATCH_INTERRUPTED', now);
+          changed += 1;
+        }
       }
+      this.db.exec('COMMIT');
+      return changed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
     }
-    return changed;
+  }
+
+  getApproval(messageId: string): any {
+    return this.db.prepare('SELECT * FROM owner_link_approvals WHERE message_id=?').get(messageId) || null;
+  }
+
+  settleClaimedApproval(messageId: string, binding: ApprovalBinding, disposition: 'consumed'|'rejected',
+    now = Date.now()): boolean {
+    this.assertApprovalBinding(binding);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.settleApproval(messageId, binding, disposition, now);
+      this.db.exec('COMMIT'); return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      if (error instanceof OwnerLinkSecurityError && error.code === 'OWNER_APPROVAL_BINDING_MISMATCH') return false;
+      throw error;
+    }
+  }
+
+  promoteClaimedApprovalBinding(messageId: string, selected: ApprovalBinding, actual: ApprovalBinding,
+    now = Date.now()): boolean {
+    this.assertApprovalBinding(selected); this.assertApprovalBinding(actual);
+    if (selected.bindingVersion !== 0 || selected.nativeSessionId
+        || actual.bindingVersion < 1 || !actual.nativeSessionId
+        || selected.providerType !== actual.providerType
+        || (selected.providerInstanceId && String(selected.providerInstanceId) !== String(actual.providerInstanceId || ''))
+        || selected.adapterType !== actual.adapterType || selected.deliveryMode !== actual.deliveryMode) return false;
+    const result = this.db.prepare(`UPDATE owner_link_approvals SET provider_instance_id=?,binding_version=?,native_session_digest=?,updated_at=?
+      WHERE message_id=? AND status='claimed' AND provider_type=? AND provider_instance_id=?
+        AND adapter_type=? AND delivery_mode=? AND binding_version=0 AND native_session_digest IS NULL`)
+      .run(actual.providerInstanceId || '', actual.bindingVersion, nativeSessionDigest(actual.nativeSessionId), now, messageId, selected.providerType,
+        selected.providerInstanceId || '', selected.adapterType, selected.deliveryMode) as any;
+    return Number(result.changes || 0) === 1;
+  }
+
+  markOutcomeUnknownAndSettleApproval(messageId: string, leaseOwner: string, binding: ApprovalBinding,
+    code: string, now = Date.now()): boolean {
+    this.assertApprovalBinding(binding);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.db.prepare(`SELECT state,lease_owner FROM owner_link_commands
+        WHERE message_id=? AND state IN ('DISPATCH_RESERVED','PROVIDER_ACCEPTED')`).get(messageId) as any;
+      if (!current || (current.lease_owner && current.lease_owner !== leaseOwner)) {
+        this.db.exec('ROLLBACK'); return false;
+      }
+      this.settleApproval(messageId, binding, 'consumed', now);
+      const result = this.db.prepare(`UPDATE owner_link_commands SET state='OUTCOME_UNKNOWN',error_code=?,
+        lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE message_id=? AND state=?`)
+        .run(String(code || 'OWNER_OUTCOME_UNKNOWN').slice(0, 128), now, messageId, current.state) as any;
+      if (Number(result.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_STATE_CONFLICT');
+      this.event(messageId, current.state, 'OUTCOME_UNKNOWN', code, now);
+      this.db.exec('COMMIT'); return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
   }
 
   private casFromLease(messageId: string, leaseOwner: string, to: OwnerCommandState, code: string | null, now: number, accepted: boolean): boolean {
@@ -397,6 +527,27 @@ class OwnerLinkStore {
       WHERE message_id=? AND state='DISPATCH_RESERVED' AND lease_owner=?`).run(to, code, accepted ? 1 : 0, now, now, messageId, leaseOwner) as any;
     if (Number(result.changes || 0) === 1) this.event(messageId, 'DISPATCH_RESERVED', to, code, now);
     return Number(result.changes || 0) === 1;
+  }
+  private assertApprovalBinding(binding: ApprovalBinding): void {
+    const values = [binding.providerType, binding.adapterType, binding.deliveryMode];
+    if (values.some((value) => !value || String(value).length > 192)
+        || !Number.isInteger(binding.bindingVersion) || binding.bindingVersion < 0
+        || String(binding.providerInstanceId || '').length > 192
+        || String(binding.nativeSessionId || '').length > 512) {
+      throw new OwnerLinkSecurityError('OWNER_APPROVAL_BINDING_INVALID');
+    }
+  }
+  private settleApproval(messageId: string, binding: ApprovalBinding, disposition: 'consumed'|'rejected', now: number): void {
+    this.assertApprovalBinding(binding);
+    const digest = nativeSessionDigest(binding.nativeSessionId);
+    const result = this.db.prepare(`UPDATE owner_link_approvals SET status=?,consumed_at=?,updated_at=?,
+      native_session_digest=COALESCE(native_session_digest,?)
+      WHERE message_id=? AND status='claimed' AND provider_type=? AND provider_instance_id=?
+        AND adapter_type=? AND delivery_mode=? AND binding_version=?
+        AND (native_session_digest IS NULL OR native_session_digest=?)`).run(disposition, disposition === 'consumed' ? now : null,
+          now, digest, messageId, binding.providerType, binding.providerInstanceId || '', binding.adapterType,
+          binding.deliveryMode, binding.bindingVersion, digest) as any;
+    if (Number(result.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_APPROVAL_BINDING_MISMATCH');
   }
 
   private transition(messageId: string, from: OwnerCommandState, to: OwnerCommandState, code: string | null, now: number): void {

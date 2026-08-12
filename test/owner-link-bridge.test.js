@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { OwnerLinkBridge, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+const { OwnerLinkBridge, actionDigest, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
 function createFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-bridge-'));
@@ -12,12 +12,15 @@ function createFixture() {
   const keys = crypto.generateKeyPairSync('ed25519');
   const now = Date.now();
   const make = (overrides = {}) => {
-    const payload = overrides.payload || { text: 'Report status.' };
-    return signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'owner-msg-1',
+    const messageId = overrides.messageId || 'owner-msg-1'; const expiresAt = new Date(now + 60_000).toISOString();
+    const action = { type: 'message', text: 'Report status.' };
+    const payload = overrides.payload || { action, approval: { approvalId: `owa_${messageId}`,
+      actionDigest: actionDigest(action), expiresAt, enforcement: 'required_before_execute' } };
+    return signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId,
       ownerConversationId: 'owner-conversation-1', ownerIdentityId: 'owner-identity-1',
       ownerImUid: 'owner_abcdefgh', agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1,
       sequence: 1, operation: 'execute', createdAt: new Date(now - 1000).toISOString(),
-      expiresAt: new Date(now + 60_000).toISOString(), payload, keyId: 'owner-key-1', ...overrides }, keys.privateKey);
+      expiresAt, payload, keyId: 'owner-key-1', ...overrides }, keys.privateKey);
   };
   const bridge = new OwnerLinkBridge({ database: db, now: () => now,
     resolvePublicKey: (id) => id === 'owner-key-1' ? keys.publicKey : null });
@@ -109,5 +112,20 @@ test('new Owner commands notify the processor once while replay remains idempote
     assert.equal(f.bridge.handleInbound('agent-1', message).accepted, true);
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(handled, [envelope.messageId]);
+  } finally { f.close(); }
+});
+
+test('a gateway-signed execute command with mismatched approval digest is rejected before persistence', () => {
+  const f = createFixture();
+  try {
+    const action = { type: 'message', text: 'Report status.' };
+    const envelope = f.make({ payload: { action, approval: { approvalId: 'owa_bad-digest',
+      actionDigest: '0'.repeat(64), expiresAt: new Date(f.now + 60_000).toISOString(),
+      enforcement: 'required_before_execute' } } });
+    const result = f.bridge.handleInbound('agent-1', { fromUid: envelope.ownerImUid,
+      clientMsgNo: envelope.messageId, content: wire(envelope) });
+    assert.equal(result.accepted, false);
+    assert.equal(result.code, 'OWNER_APPROVAL_DIGEST_MISMATCH');
+    assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_commands').get().count, 0);
   } finally { f.close(); }
 });

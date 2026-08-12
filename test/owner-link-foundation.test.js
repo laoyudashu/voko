@@ -10,15 +10,19 @@ const { OwnerLinkModule, OwnerLinkSecurityError, OwnerLinkStore, digestPayload, 
 
 function fixture(now = Date.now(), overrides = {}) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
-  const payload = overrides.payload || { text: 'Read the current status only.' };
+  const messageId = overrides.messageId || 'omsg-1';
+  const expiresAt = new Date(now + 60_000).toISOString();
+  const action = { type: 'message', text: 'Read the current status only.' };
+  const payload = overrides.payload || { action, approval: { approvalId: `owa_${messageId.replace(/[^A-Za-z0-9_-]/g, '_')}`,
+    actionDigest: digestPayload(action), expiresAt, enforcement: 'required_before_execute' } };
   const unsigned = {
     version: 'voko.owner/1', kind: overrides.kind || 'command',
-    messageId: overrides.messageId || 'omsg-1', ownerConversationId: overrides.ownerConversationId || 'oconv-1',
+    messageId, ownerConversationId: overrides.ownerConversationId || 'oconv-1',
     ownerIdentityId: overrides.ownerIdentityId || 'oid-1', ownerImUid: overrides.ownerImUid || 'owner_im-1',
     agentId: overrides.agentId || 'agent-1', operation: overrides.operation || 'execute',
     ownershipEpoch: overrides.ownershipEpoch || 1, conversationEpoch: overrides.conversationEpoch || 1,
     sequence: overrides.sequence || 1, createdAt: new Date(now - 1000).toISOString(),
-    expiresAt: new Date(now + 60_000).toISOString(), payload, keyId: 'owner-key-1',
+    expiresAt, payload, keyId: 'owner-key-1',
   };
   return { envelope: signOwnerEnvelope(unsigned, privateKey), privateKey, publicKey, now };
 }
@@ -75,7 +79,9 @@ test('store rejects conflicting message IDs, sequence reuse and observed IM iden
     const store = new OwnerLinkStore(db);
     const first = fixture();
     store.persistVerified(first.envelope, 'owner-im-1');
-    const changed = fixture(first.now, { payload: { text: 'different' } }).envelope;
+    const changed = fixture(first.now, { payload: (() => { const action = { type: 'message', text: 'different' }; return {
+      action, approval: { approvalId: 'owa_omsg-1', actionDigest: digestPayload(action),
+        expiresAt: new Date(first.now + 60_000).toISOString(), enforcement: 'required_before_execute' } }; })() }).envelope;
     assert.throws(() => store.persistVerified(changed, 'owner-im-1'), (error) => error instanceof OwnerLinkSecurityError && error.code === 'OWNER_MESSAGE_ID_DIGEST_CONFLICT');
     const sameSequence = fixture(first.now, { messageId: 'omsg-2' }).envelope;
     assert.throws(() => store.persistVerified(sameSequence, 'owner-im-1'), /OWNER_SEQUENCE_CONFLICT/);
@@ -137,9 +143,23 @@ test('Owner database upgrades a v1 database without losing verified commands', (
   db1.close();
   const db2 = initOwnerLinkDatabase(databasePath);
   try {
-    assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 3);
     assert.ok(db2.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_link_provider_bindings'").get());
   } finally { db2.close(); }
+});
+
+test('approved action digest, expiry and one-time approval are enforced before dispatch', () => {
+  const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-approval-')), 'owner.db'));
+  try {
+    const store = new OwnerLinkStore(db); const first = fixture();
+    store.persistVerified(first.envelope, 'owner-im-1', first.now);
+    const binding = { providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'codex-cli',
+      deliveryMode: 'cli', bindingVersion: 1, nativeSessionId: 'thread-1' };
+    assert.equal(store.acquireApprovedDispatchLease('omsg-1', 'worker-a', binding), true);
+    assert.equal(store.acquireApprovedDispatchLease('omsg-1', 'worker-b', binding), false);
+    const second = fixture(first.now, { messageId: 'omsg-2', sequence: 2, payload: first.envelope.payload }).envelope;
+    assert.throws(() => store.persistVerified(second, 'owner-im-1', first.now), /OWNER_APPROVAL_REUSED/);
+  } finally { db.close(); }
 });
 
 test('terminal state and signed outbox event commit or roll back together', () => {

@@ -1,4 +1,5 @@
 import type { DatabaseLike } from '../types/database';
+import type { ApprovalBinding } from './approval';
 
 const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
 
@@ -10,16 +11,24 @@ interface OwnerPullCaller {
   evidence?: string;
 }
 
+type OwnerPullAuthorization = ApprovalBinding & { evidence: string };
+
 function createOwnerPullCallerAuthorizer(db: DatabaseLike, getCaller: () => OwnerPullCaller | null) {
   const bindings = new AgentIdentityBindingStore(db);
-  return (agentId: string): boolean => {
+  return (agentId: string): OwnerPullAuthorization | null => {
     const caller = getCaller();
-    if (!caller?.providerType || !caller.nativeSessionId || !caller.evidence) return false;
+    if (!caller?.providerType || !caller.nativeSessionId || !caller.evidence) return null;
     const matches = bindings.resolve(caller.providerType,
       caller.providerInstanceId || caller.instanceId || '', caller.nativeSessionId);
-    return matches.length === 1 && matches[0] === agentId;
+    if (matches.length !== 1 || matches[0] !== agentId) return null;
+    return {
+      providerType: caller.providerType,
+      providerInstanceId: caller.providerInstanceId || caller.instanceId || '',
+      adapterType: 'owner-pull', deliveryMode: 'pull', bindingVersion: 0,
+      nativeSessionId: caller.nativeSessionId, evidence: caller.evidence,
+    };
   };
 }
 
 export { createOwnerPullCallerAuthorizer };
-export type { OwnerPullCaller };
+export type { OwnerPullAuthorization, OwnerPullCaller };

@@ -4,16 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { OwnerEventOutbox, OwnerLinkStore, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+const { OwnerEventOutbox, OwnerLinkStore, actionDigest, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
 function fixture() {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-outbox-')), 'owner.db'));
   const store = new OwnerLinkStore(db); const keys = crypto.generateKeyPairSync('ed25519'); const now = Date.now();
+  const expiresAt = new Date(now + 60_000).toISOString(); const action = { type: 'message', text: 'status' };
   const command = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'command-1',
     ownerConversationId: 'conversation-1', ownerIdentityId: 'identity-1', ownerImUid: 'owner_remote-1',
     agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
-    payload: { text: 'status' }, keyId: 'gateway-key', createdAt: new Date(now - 1_000).toISOString(),
-    expiresAt: new Date(now + 60_000).toISOString() }, keys.privateKey);
+    payload: { action, approval: { approvalId: 'owa_command-1', actionDigest: actionDigest(action), expiresAt,
+      enforcement: 'required_before_execute' } }, keyId: 'gateway-key', createdAt: new Date(now - 1_000).toISOString(),
+    expiresAt }, keys.privateKey);
   store.persistVerified(command, command.ownerImUid, now);
   store.enqueueSignedEvent(command.messageId, 'receipt', sequence => ({ eventId: 'event-1',
     rawEnvelope: JSON.stringify({ messageId: 'event-1', sequence }) }));

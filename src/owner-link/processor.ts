@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import type { PushPayload } from '../core/dispatcher/types';
+import { parseApprovedExecutePayload } from './approval';
+import type { ApprovalBinding } from './approval';
 import { createOwnerEventEnvelope } from './event-envelope';
 import { OwnerLinkStore } from './store';
 
@@ -7,6 +9,7 @@ interface OwnerDispatcher {
   resolveTrustedOwnerTransport(agentId: string): {
     providerId: string;
     providerType: string;
+    providerInstanceId: string | null;
     deliveryMode: string;
   } | null;
   executeIsolated(options: Record<string, unknown>): Promise<{ reply: any; receipt?: any }>;
@@ -23,8 +26,16 @@ interface OwnerCommandProcessorOptions {
 function contentOf(command: any): string {
   if (command.operation !== 'execute') return '';
   const payload = JSON.parse(String(command.payload_json || '{}'));
-  const content = String(payload.text || '').trim();
-  return content && Buffer.byteLength(content, 'utf8') <= 6144 ? content : '';
+  try { return parseApprovedExecutePayload(payload, Date.now(), Number(command.expires_at)).action.text; }
+  catch (_) { return ''; }
+}
+
+function approvalBindingOf(row: any): ApprovalBinding {
+  return {
+    providerType: String(row.provider_type), providerInstanceId: row.provider_instance_id || '',
+    adapterType: String(row.adapter_type), deliveryMode: String(row.delivery_mode),
+    bindingVersion: Number(row.binding_version), nativeSessionId: row.native_session_id || null,
+  };
 }
 
 function bindingSnapshot(row: any): PushPayload['providerBinding'] {
@@ -61,15 +72,23 @@ class OwnerCommandProcessor {
     const identity = this.options.resolveAgentIdentity?.(command.agent_id) || null;
     if (!identity?.privateKey || !identity.imUid) return { status: 'signing_identity_required' };
     const leaseOwner = `owner-dispatch-${crypto.randomUUID()}`;
-    if (!this.options.store.acquireDispatchLease(messageId, leaseOwner, this.timeoutMs + 30_000)) {
-      return { status: String(this.options.store.getCommand(messageId)?.state || 'not_claimed') };
-    }
     const existing = this.options.store.getActiveProviderBinding(command.conversation_id);
     const trusted = existing ? null : this.options.dispatcher.resolveTrustedOwnerTransport(command.agent_id);
     if (!existing && !trusted) {
-      this.options.store.markFailedNotDelivered(messageId, leaseOwner, 'OWNER_SAFE_TRANSPORT_UNAVAILABLE');
+      if (this.options.store.acquireDispatchLease(messageId, leaseOwner, this.timeoutMs + 30_000)) {
+        this.options.store.markFailedNotDelivered(messageId, leaseOwner, 'OWNER_SAFE_TRANSPORT_UNAVAILABLE');
+      }
       return { status: 'pull_required' };
     }
+    const claimedBinding: ApprovalBinding = existing ? approvalBindingOf(existing) : {
+      providerType: String(trusted?.providerType), providerInstanceId: trusted?.providerInstanceId || '',
+      adapterType: String(trusted?.providerId), deliveryMode: String(trusted?.deliveryMode),
+      bindingVersion: 0, nativeSessionId: null,
+    };
+    if (!this.options.store.acquireApprovedDispatchLease(messageId, leaseOwner, claimedBinding, this.timeoutMs + 30_000)) {
+      return { status: String(this.options.store.getCommand(messageId)?.state || 'approval_not_claimed') };
+    }
+    let settlementBinding = claimedBinding;
     try {
       this.enqueueStatus(command, identity, 'accepted', {}, 'receipt');
       const result = await this.options.dispatcher.executeIsolated({
@@ -83,33 +102,55 @@ class OwnerCommandProcessor {
         executionScope: 'owner_link',
         timeoutMs: this.timeoutMs,
       });
-      if (!this.options.store.markProviderAccepted(messageId, leaseOwner)) return { status: 'state_conflict' };
       const deliveryReceipt = result.receipt?.deliveryReceipt || result.receipt || {};
       const provider = result.receipt?.provider || {};
-      if (!existing && deliveryReceipt.nativeSessionId && (provider.providerId || trusted?.providerId)) {
-        this.options.store.saveProviderBinding({
+      if (!existing) {
+        const actualProviderId = String(provider.providerId || trusted?.providerId || '');
+        const actualProviderType = String(provider.providerType || trusted?.providerType || '');
+        const actualMode = String(provider.deliveryMode || deliveryReceipt.deliveryMode || trusted?.deliveryMode || '');
+        const actualInstance = String(deliveryReceipt.providerInstanceId || trusted?.providerInstanceId || '');
+        if (actualProviderId !== trusted?.providerId || actualProviderType !== trusted?.providerType
+            || actualMode !== trusted?.deliveryMode
+            || (trusted?.providerInstanceId && actualInstance !== trusted.providerInstanceId)) {
+          const mismatch: any = new Error('OWNER_PROVIDER_ROUTE_CHANGED');
+          mismatch.code = 'OWNER_PROVIDER_ROUTE_CHANGED'; mismatch.deliveryOutcome = 'outcome_unknown';
+          throw mismatch;
+        }
+        if (deliveryReceipt.nativeSessionId) {
+          const saved = this.options.store.saveProviderBinding({
           ownerConversationId: command.conversation_id,
           agentId: command.agent_id,
-          providerType: provider.providerType || trusted?.providerType,
-          providerInstanceId: deliveryReceipt.providerInstanceId || null,
-          adapterType: provider.providerId || trusted?.providerId,
-          deliveryMode: provider.deliveryMode || deliveryReceipt.deliveryMode || trusted?.deliveryMode,
+          providerType: actualProviderType, providerInstanceId: actualInstance || null,
+          adapterType: actualProviderId, deliveryMode: actualMode,
           nativeSessionId: deliveryReceipt.nativeSessionId,
           expectedVersion: 0,
         });
+          const actualBinding = approvalBindingOf(saved);
+          if (!this.options.store.promoteClaimedApprovalBinding(messageId, claimedBinding, actualBinding)) {
+            const mismatch: any = new Error('OWNER_PROVIDER_BINDING_PROMOTION_FAILED');
+            mismatch.code = 'OWNER_PROVIDER_BINDING_PROMOTION_FAILED'; mismatch.deliveryOutcome = 'outcome_unknown';
+            throw mismatch;
+          }
+          settlementBinding = actualBinding;
+        }
       }
       this.enqueueStatus(command, identity, 'working');
+      if (!this.options.store.markProviderAccepted(messageId, leaseOwner)) return { status: 'state_conflict' };
       const eventId = this.finalizeStatus(command, identity, 'PROVIDER_ACCEPTED', 'COMPLETED',
-        'completed', { content: String(result.reply?.content || '') });
+        'completed', { content: String(result.reply?.content || '') }, settlementBinding);
       return { status: 'completed', eventId };
     } catch (error: any) {
       const outcome = String(error?.deliveryOutcome || 'outcome_unknown');
       const code = String(error?.code || 'OWNER_PROVIDER_EXECUTION_FAILED').slice(0, 128);
+      const currentState = String(this.options.store.getCommand(messageId)?.state || 'DISPATCH_RESERVED') as
+        'DISPATCH_RESERVED'|'PROVIDER_ACCEPTED';
       if (outcome === 'not_delivered' || outcome === 'rejected') {
-        this.finalizeStatus(command, identity, 'DISPATCH_RESERVED',
-          outcome === 'rejected' ? 'REJECTED' : 'FAILED_NOT_DELIVERED', 'failed', { errorCode: code }, leaseOwner, code);
+        this.finalizeStatus(command, identity, currentState,
+          outcome === 'rejected' ? 'REJECTED' : 'FAILED_NOT_DELIVERED', 'failed', { errorCode: code },
+          settlementBinding, currentState === 'DISPATCH_RESERVED' ? leaseOwner : null, code,
+          outcome === 'rejected' ? 'consumed' : 'rejected');
       } else {
-        this.options.store.markOutcomeUnknown(messageId, leaseOwner, code);
+        this.options.store.markOutcomeUnknownAndSettleApproval(messageId, leaseOwner, settlementBinding, code);
       }
       return { status: outcome };
     }
@@ -127,14 +168,15 @@ class OwnerCommandProcessor {
 
   private finalizeStatus(command: any, identity: { privateKey: string; keyId?: string },
     from: 'DISPATCH_RESERVED'|'PROVIDER_ACCEPTED', to: 'COMPLETED'|'FAILED_NOT_DELIVERED'|'REJECTED',
-    operation: 'completed'|'failed', payload: Record<string, unknown>, leaseOwner: string | null = null,
-    code: string | null = null): string {
+    operation: 'completed'|'failed', payload: Record<string, unknown>, approvalBinding: ApprovalBinding,
+    leaseOwner: string | null = null, code: string | null = null,
+    approvalDisposition: 'consumed'|'rejected' = 'consumed'): string {
     return this.options.store.transitionAndEnqueueSignedEvent({
       messageId: command.message_id, from, to, leaseOwner, code, kind: 'event', build: (sequence) => {
         const envelope = createOwnerEventEnvelope({ command, operation, payload, sequence,
           privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
         return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
-      },
+      }, approvalBinding, approvalDisposition,
     });
   }
 }

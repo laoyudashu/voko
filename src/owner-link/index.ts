@@ -1,4 +1,5 @@
 export * from './database';
+export * from './approval';
 export * from './bridge';
 export * from './caller-authorization';
 export * from './envelope';

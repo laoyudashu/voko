@@ -679,7 +679,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return _routeProvider(agentId, 'push');
   }
 
-  function resolveTrustedOwnerTransport(agentId: string): { providerId: string; providerType: string; deliveryMode: string } | null {
+  function resolveTrustedOwnerTransport(agentId: string): {
+    providerId: string; providerType: string; providerInstanceId: string | null; deliveryMode: string;
+  } | null {
+    const providerInstanceId = _metaOf(agentId).backend_instance_id || null;
     for (const provider of resolveProviders(agentId, 'push')) {
       const providerId = _providerIdOf(provider);
       if (!providerId || typeof (provider as any).getSandboxStatus !== 'function') continue;
@@ -690,7 +693,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           && ['blocked','read_only','sandbox_scoped'].includes(String(dimensions.filesystem))
           && ['blocked','allowlisted','proxied','not_applicable'].includes(String(dimensions.network))
           && ['disabled','sandboxed'].includes(String(dimensions.commandExecution));
-        if (safe) return { providerId, providerType: _providerFamily(providerId), deliveryMode: _providerMode(providerId) };
+        if (safe) return { providerId, providerType: _providerFamily(providerId), providerInstanceId,
+          deliveryMode: _providerMode(providerId) };
       } catch (_) {}
     }
     return null;

@@ -4,18 +4,21 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { OwnerCommandProcessor, OwnerLinkStore, canonicalJson, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+const { OwnerCommandProcessor, OwnerLinkStore, actionDigest, canonicalJson, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
 function setup() {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-processor-')), 'owner.db'));
   const store = new OwnerLinkStore(db);
   const keys = crypto.generateKeyPairSync('ed25519');
   const now = Date.now();
+  const expiresAt = new Date(now + 60_000).toISOString();
+  const action = { type: 'message', text: 'Report status only.' };
   const envelope = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'owner-message-1',
     ownerConversationId: 'owner-conversation-1', ownerIdentityId: 'owner-identity-1', ownerImUid: 'owner_im-1',
     agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
-    payload: { text: 'Report status only.' }, keyId: 'owner-key-1',
-    createdAt: new Date(now - 1_000).toISOString(), expiresAt: new Date(now + 60_000).toISOString() }, keys.privateKey);
+    payload: { action, approval: { approvalId: 'owa_owner-message-1', actionDigest: actionDigest(action), expiresAt,
+      enforcement: 'required_before_execute' } }, keyId: 'owner-key-1',
+    createdAt: new Date(now - 1_000).toISOString(), expiresAt }, keys.privateKey);
   store.persistVerified(envelope, envelope.ownerImUid, now);
   return { db, store, envelope, keys, identity: { privateKey: keys.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     keyId: 'agent-key-1', imUid: 'agent-im-1' } };
@@ -35,7 +38,8 @@ test('Owner command uses one verified safe transport and persists its exact nati
   const f = setup(); const calls = [];
   try {
     const dispatcher = {
-      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' }),
+      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex',
+        providerInstanceId: 'codex-instance', deliveryMode: 'cli' }),
       async executeIsolated(options) { calls.push(options); return { reply: { content: 'All systems normal.' }, receipt: {
         deliveryReceipt: { nativeSessionId: 'native-owner-session', providerInstanceId: 'codex-instance' },
         provider: { providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' } } }; },
@@ -70,7 +74,8 @@ test('unknown Provider outcome is terminal for automatic retry and never changes
   const f = setup(); let calls = 0;
   try {
     const dispatcher = {
-      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' }),
+      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex',
+        providerInstanceId: 'codex-instance', deliveryMode: 'cli' }),
       async executeIsolated() { calls += 1; const error = new Error('connection closed'); error.deliveryOutcome = 'outcome_unknown'; throw error; },
     };
     const processor = new OwnerCommandProcessor({ store: f.store, dispatcher, dispatchEnabled: true,
@@ -99,7 +104,8 @@ test('missing Agent DID signing identity prevents automatic Provider execution',
   const f = setup(); let invoked = false;
   try {
     const processor = new OwnerCommandProcessor({ store: f.store, dispatcher: {
-      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' }),
+      resolveTrustedOwnerTransport: () => ({ providerId: 'codex-cli', providerType: 'codex',
+        providerInstanceId: 'codex-instance', deliveryMode: 'cli' }),
       async executeIsolated() { invoked = true; },
     }, dispatchEnabled: true, resolveAgentIdentity: () => null });
     assert.equal((await processor.process(f.envelope.messageId)).status, 'signing_identity_required');
