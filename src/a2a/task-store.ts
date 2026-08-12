@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 
 type StandardTaskState = 'SUBMITTED' | 'WORKING' | 'INPUT_REQUIRED' | 'AUTH_REQUIRED' | 'COMPLETED' | 'FAILED' | 'CANCELED' | 'REJECTED';
 type DeliveryState = 'QUEUED_OFFLINE' | 'SENDING' | 'IM_ACCEPTED' | 'DELIVERED' | 'EXECUTING' | 'DELIVERY_UNKNOWN' | 'DEAD_LETTER';
@@ -60,6 +61,23 @@ class A2ALocalTaskStore {
       (event_id,gateway_task_id,producer_sequence,operation,envelope_json,status,next_attempt_at,created_at,updated_at)
       VALUES (?,?,?,?,?,'pending',?,?,?)`).run(eventId, taskId, sequence, operation, JSON.stringify(envelope), now, now, now);
     return Number(result.changes) === 1;
+  }
+  enqueueTaskEvent(taskId: string, operation: string, standardState: StandardTaskState,
+    deliveryState: DeliveryState, build: (sequence: number, eventId: string) => unknown): unknown {
+    const now = Date.now(); const eventId = crypto.randomUUID();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT last_producer_sequence,standard_state FROM a2a_local_tasks WHERE gateway_task_id=?')
+        .get(taskId) as { last_producer_sequence: number; standard_state: StandardTaskState } | undefined;
+      if (!row || (TERMINAL_STATES.has(row.standard_state) && row.standard_state !== standardState)) throw new Error('Invalid local A2A task transition');
+      const sequence = row.last_producer_sequence + 1; const envelope = build(sequence, eventId);
+      this.db.prepare(`UPDATE a2a_local_tasks SET last_producer_sequence=?,standard_state=?,delivery_state=?,updated_at=? WHERE gateway_task_id=?`)
+        .run(sequence, standardState, deliveryState, now, taskId);
+      this.db.prepare(`INSERT INTO a2a_local_outbox
+        (event_id,gateway_task_id,producer_sequence,operation,envelope_json,status,next_attempt_at,created_at,updated_at)
+        VALUES (?,?,?,?,?,'pending',?,?,?)`).run(eventId, taskId, sequence, operation, JSON.stringify(envelope), now, now, now);
+      this.db.exec('COMMIT'); return envelope;
+    } catch (error) { try { this.db.exec('ROLLBACK'); } catch (_) {} throw error; }
   }
   claimEvents(owner: string, limit = 10, leaseMs = 30_000): Array<Record<string, unknown>> {
     const now = Date.now();

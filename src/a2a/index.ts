@@ -13,3 +13,4 @@ export { A2AExecutionService } from './execution-service';
 export { A2AIdentityStore } from './identity-store';
 export type { A2ALocalIdentity } from './identity-store';
 export { A2AEventOutboxWorker } from './event-outbox-worker';
+export { A2ATaskProcessor } from './task-processor';
