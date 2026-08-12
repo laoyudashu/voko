@@ -28,6 +28,17 @@ class A2ALocalTaskStore {
       .run(eventId, taskId, sequence, operation, Date.now());
     return Number(result.changes) === 1 ? 'accepted' : 'duplicate';
   }
+  commandStatus(eventId: string): string | null {
+    const row = this.db.prepare('SELECT status FROM a2a_local_inbox WHERE event_id=?').get(eventId) as { status: string } | undefined;
+    return row?.status || null;
+  }
+  beginCommand(eventId: string): boolean {
+    return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing' WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
+  }
+  finishCommand(eventId: string, status: 'processed' | 'outcome_unknown', errorCode?: string): void {
+    this.db.prepare('UPDATE a2a_local_inbox SET status=?,processed_at=?,error_code=? WHERE event_id=?')
+      .run(status, Date.now(), errorCode || null, eventId);
+  }
   enqueueEvent(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_outbox
