@@ -6,24 +6,24 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { OwnerLinkModule, OwnerLinkSecurityError, OwnerLinkStore, digestPayload, initOwnerLinkDatabase,
-  parseOwnerWire, resolveOwnerLinkDatabasePath, signOwnerEnvelope, verifyOwnerEnvelope } = require('../build/owner-link');
+  parseOwnerEnvelopeJson, resolveOwnerLinkDatabasePath, signOwnerEnvelope, verifyOwnerEnvelope } = require('../build/owner-link');
 
 function fixture(now = Date.now(), overrides = {}) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const payload = overrides.payload || { text: 'Read the current status only.' };
   const unsigned = {
-    version: 'voko.owner/1', kind: overrides.kind || 'instruction',
-    messageId: overrides.messageId || 'omsg-1', conversationId: overrides.conversationId || 'oconv-1',
-    ownerIdentityId: overrides.ownerIdentityId || 'oid-1', agentId: overrides.agentId || 'agent-1',
+    version: 'voko.owner/1', kind: overrides.kind || 'command',
+    messageId: overrides.messageId || 'omsg-1', ownerConversationId: overrides.ownerConversationId || 'oconv-1',
+    ownerIdentityId: overrides.ownerIdentityId || 'oid-1', ownerImUid: overrides.ownerImUid || 'owner_im-1',
+    agentId: overrides.agentId || 'agent-1', operation: overrides.operation || 'execute',
     ownershipEpoch: overrides.ownershipEpoch || 1, conversationEpoch: overrides.conversationEpoch || 1,
-    sequence: overrides.sequence || 1, issuedAt: new Date(now - 1000).toISOString(),
-    expiresAt: new Date(now + 60_000).toISOString(), payload, payloadDigest: digestPayload(payload),
-    keyId: 'owner-key-1', algorithm: 'Ed25519',
+    sequence: overrides.sequence || 1, createdAt: new Date(now - 1000).toISOString(),
+    expiresAt: new Date(now + 60_000).toISOString(), payload, keyId: 'owner-key-1',
   };
   return { envelope: signOwnerEnvelope(unsigned, privateKey), privateKey, publicKey, now };
 }
 
-function wire(envelope) { return JSON.stringify({ _voko: { owner: envelope } }); }
+function wire(envelope) { return JSON.stringify(envelope); }
 
 test('Owner Link is disabled by default and does not create its database', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-disabled-'));
@@ -43,16 +43,16 @@ test('Owner Link uses a separate cross-platform database path', () => {
 test('strict parser rejects duplicate keys and unknown fields', () => {
   const { envelope } = fixture();
   const duplicate = wire(envelope).replace('"messageId":"omsg-1"', '"messageId":"omsg-1","messageId":"omsg-2"');
-  assert.throws(() => parseOwnerWire(duplicate), /OWNER_JSON_DUPLICATE_KEY/);
-  assert.throws(() => parseOwnerWire(JSON.stringify({ _voko: { owner: { ...envelope, extra: true } } })), /OWNER_ENVELOPE_ADDITIONAL_PROPERTY/);
+  assert.throws(() => parseOwnerEnvelopeJson(duplicate), /OWNER_JSON_DUPLICATE_KEY/);
+  assert.throws(() => parseOwnerEnvelopeJson(JSON.stringify({ ...envelope, extra: true })), /OWNER_ENVELOPE_ADDITIONAL_PROPERTY/);
 });
 
 test('signature covers payload digest, identity, epoch and algorithm', () => {
   const { envelope, publicKey, now } = fixture();
-  assert.equal(verifyOwnerEnvelope(parseOwnerWire(wire(envelope), { now }), () => publicKey, { now }), true);
-  assert.throws(() => parseOwnerWire(wire({ ...envelope, payload: { text: 'changed' } }), { now }), /OWNER_DIGEST_MISMATCH/);
+  assert.equal(verifyOwnerEnvelope(parseOwnerEnvelopeJson(wire(envelope), { now }), () => publicKey, { now }), true);
+  assert.throws(() => parseOwnerEnvelopeJson(wire({ ...envelope, payload: { text: 'changed' } }), { now }), /OWNER_DIGEST_MISMATCH/);
   assert.equal(verifyOwnerEnvelope({ ...envelope, ownershipEpoch: 2 }, () => publicKey, { now }), false);
-  assert.throws(() => parseOwnerWire(wire({ ...envelope, algorithm: 'none' }), { now }), /OWNER_ALGORITHM_UNSUPPORTED/);
+  assert.throws(() => parseOwnerEnvelopeJson(wire({ ...envelope, algorithm: 'none' }), { now }), /OWNER_ALGORITHM_UNSUPPORTED/);
 });
 
 test('store persists receipt before dispatch and treats same digest as idempotent', () => {

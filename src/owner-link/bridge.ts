@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { parseOwnerWire, verifyOwnerEnvelope } from './envelope';
-import type { OwnerEnvelope } from './envelope';
+import { parseOwnerEnvelopeJson, verifyOwnerEnvelope } from './envelope';
+import type { VokoOwnerEnvelope } from './envelope';
 import { OwnerLinkSecurityError, OwnerLinkStore } from './store';
 
-const OWNER_IM_UID_PATTERN = /^voko_owner_[A-Za-z0-9_-]{8,160}$/;
+const OWNER_IM_UID_PATTERN = /^owner_[A-Za-z0-9._:-]{1,122}$/;
+const OWNER_COMMAND_OPERATIONS = new Set(['execute', 'cancel', 'approve', 'reject']);
 
 interface OwnerLinkInboundMessage {
   fromUid?: string;
@@ -52,10 +53,14 @@ class OwnerLinkBridge {
     const fromUid = String(message.fromUid || '');
     if (!this.isReservedOwnerSender(fromUid)) return { handled: false };
     const now = this.now();
-    let envelope: OwnerEnvelope | null = null;
+    let envelope: VokoOwnerEnvelope | null = null;
     try {
-      envelope = parseOwnerWire(String(message.content || ''), { now });
+      envelope = parseOwnerEnvelopeJson(String(message.content || ''), { now });
+      if (envelope.kind !== 'command' || !OWNER_COMMAND_OPERATIONS.has(envelope.operation)) {
+        throw new OwnerLinkSecurityError('OWNER_DIRECTION_INVALID');
+      }
       if (envelope.agentId !== agentId) throw new OwnerLinkSecurityError('OWNER_AGENT_MISMATCH');
+      if (envelope.ownerImUid !== fromUid) throw new OwnerLinkSecurityError('OWNER_IM_UID_MISMATCH');
       if (message.clientMsgNo && envelope.messageId !== message.clientMsgNo) {
         throw new OwnerLinkSecurityError('OWNER_TRANSPORT_MESSAGE_ID_MISMATCH');
       }
@@ -71,7 +76,7 @@ class OwnerLinkBridge {
       this.store.recordSecurityEvent({
         code,
         messageId: envelope?.messageId || (typeof message.messageId === 'string' ? message.messageId : null),
-        conversationId: envelope?.conversationId,
+        conversationId: envelope?.ownerConversationId,
         agentId,
         details: { code, fromUidHash: crypto.createHash('sha256').update(fromUid).digest('hex') },
         now,

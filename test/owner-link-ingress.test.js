@@ -4,7 +4,7 @@ const { OwnerLinkIngress } = require('../build/owner-link');
 
 test('disabled Owner Link still hard-rejects reserved Owner identities', () => {
   const ingress = new OwnerLinkIngress(null);
-  assert.deepEqual(ingress.handle('agent-1', { fromUid: 'voko_owner_abcdefgh', content: 'not signed' }),
+  assert.deepEqual(ingress.handle('agent-1', { fromUid: 'owner_abcdefgh', content: 'not signed' }),
     { handled: true, accepted: false, code: 'OWNER_LINK_DISABLED' });
 });
 

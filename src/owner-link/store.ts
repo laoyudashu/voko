@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { canonicalJson } from './envelope';
-import type { OwnerEnvelope } from './envelope';
+import type { VokoOwnerEnvelope } from './envelope';
 
 type OwnerCommandState = 'RECEIVED'|'VERIFIED'|'PERSISTED'|'DISPATCH_RESERVED'|'PROVIDER_ACCEPTED'|
   'COMPLETED'|'REJECTED'|'EXPIRED'|'FAILED_NOT_DELIVERED'|'OUTCOME_UNKNOWN';
 
-interface PersistResult { status: 'inserted'|'duplicate'|'revoked'; state: OwnerCommandState }
+interface PersistResult { status: 'inserted'|'duplicate'; state: OwnerCommandState }
 
 class OwnerLinkSecurityError extends Error {
   constructor(readonly code: string) { super(code); this.name = 'OwnerLinkSecurityError'; }
@@ -19,7 +19,7 @@ function digestDetails(value: unknown): string {
 class OwnerLinkStore {
   constructor(private readonly db: DatabaseSync) {}
 
-  persistVerified(envelope: OwnerEnvelope, observedImUid: string, now = Date.now()): PersistResult {
+  persistVerified(envelope: VokoOwnerEnvelope, observedImUid: string, now = Date.now()): PersistResult {
     if (!observedImUid || observedImUid.length > 192) throw new OwnerLinkSecurityError('OWNER_IM_UID_INVALID');
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -33,22 +33,22 @@ class OwnerLinkStore {
         return { status: 'duplicate', state: byMessage.state };
       }
       const sequenceOwner = this.db.prepare('SELECT message_id,payload_digest FROM owner_link_commands WHERE conversation_id=? AND sequence=?')
-        .get(envelope.conversationId, envelope.sequence) as { message_id: string; payload_digest: string } | undefined;
+        .get(envelope.ownerConversationId, envelope.sequence) as { message_id: string; payload_digest: string } | undefined;
       if (sequenceOwner) {
         throw new OwnerLinkSecurityError('OWNER_SEQUENCE_CONFLICT');
       }
       const sequenceRow = this.db.prepare('SELECT COALESCE(MAX(sequence),0) max_sequence FROM owner_link_commands WHERE conversation_id=?')
-        .get(envelope.conversationId) as { max_sequence?: number } | undefined;
+        .get(envelope.ownerConversationId) as { max_sequence?: number } | undefined;
       const maxSequence = Number(sequenceRow?.max_sequence || 0);
       if (envelope.sequence > maxSequence + 32 || (maxSequence > 32 && envelope.sequence <= maxSequence - 32)) {
         throw new OwnerLinkSecurityError('OWNER_SEQUENCE_WINDOW_EXCEEDED');
       }
       const binding = this.db.prepare('SELECT * FROM owner_link_identity_bindings WHERE conversation_id=?')
-        .get(envelope.conversationId) as any;
+        .get(envelope.ownerConversationId) as any;
       if (!binding) {
         this.db.prepare(`INSERT INTO owner_link_identity_bindings
           (conversation_id,owner_identity_id,agent_id,observed_im_uid,ownership_epoch,conversation_epoch,status,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,'active',?,?)`).run(envelope.conversationId, envelope.ownerIdentityId,
+          VALUES(?,?,?,?,?,?,'active',?,?)`).run(envelope.ownerConversationId, envelope.ownerIdentityId,
           envelope.agentId, observedImUid, envelope.ownershipEpoch, envelope.conversationEpoch, now, now);
       } else if (binding.status !== 'active' || binding.owner_identity_id !== envelope.ownerIdentityId
         || binding.agent_id !== envelope.agentId || binding.observed_im_uid !== observedImUid
@@ -56,19 +56,15 @@ class OwnerLinkStore {
         || Number(binding.conversation_epoch) !== envelope.conversationEpoch) {
         throw new OwnerLinkSecurityError('OWNER_BINDING_MISMATCH');
       }
-      if (envelope.kind === 'control' && (envelope.payload as any).action === 'revoke_binding') {
-        this.db.prepare("UPDATE owner_link_identity_bindings SET status='revoked',updated_at=? WHERE conversation_id=? AND status='active'")
-          .run(now, envelope.conversationId);
-      }
       this.db.prepare(`INSERT INTO owner_link_commands
         (message_id,conversation_id,sequence,agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?)`).run(envelope.messageId, envelope.conversationId,
+        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
         envelope.sequence, envelope.agentId, envelope.payloadDigest, canonicalJson(envelope.payload),
         Date.parse(envelope.expiresAt), now, now);
       this.transition(envelope.messageId, 'RECEIVED', 'VERIFIED', null, now);
       this.transition(envelope.messageId, 'VERIFIED', 'PERSISTED', null, now);
       this.db.exec('COMMIT');
-      return { status: envelope.kind === 'control' ? 'revoked' : 'inserted', state: 'PERSISTED' };
+      return { status: 'inserted', state: 'PERSISTED' };
     } catch (error) {
       try { this.db.exec('ROLLBACK'); } catch (_) {}
       if (error instanceof OwnerLinkSecurityError) this.securityEvent(error.code, envelope, now);
@@ -154,10 +150,10 @@ class OwnerLinkStore {
     this.db.prepare('INSERT INTO owner_link_command_events(message_id,from_state,to_state,reason_code,created_at) VALUES(?,?,?,?,?)')
       .run(messageId, from, to, code, now);
   }
-  private securityEvent(code: string, envelope: OwnerEnvelope, now: number): void {
+  private securityEvent(code: string, envelope: VokoOwnerEnvelope, now: number): void {
     this.db.prepare(`INSERT INTO owner_link_security_events(code,message_id,conversation_id,agent_id,details_digest,created_at)
-      VALUES(?,?,?,?,?,?)`).run(code, envelope.messageId, envelope.conversationId, envelope.agentId,
-      digestDetails({ code, messageId: envelope.messageId, conversationId: envelope.conversationId }), now);
+      VALUES(?,?,?,?,?,?)`).run(code, envelope.messageId, envelope.ownerConversationId, envelope.agentId,
+      digestDetails({ code, messageId: envelope.messageId, conversationId: envelope.ownerConversationId }), now);
   }
 }
 

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { OwnerLinkBridge, digestPayload, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+const { OwnerLinkBridge, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
 function createFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-bridge-'));
@@ -13,18 +13,18 @@ function createFixture() {
   const now = Date.now();
   const make = (overrides = {}) => {
     const payload = overrides.payload || { text: 'Report status.' };
-    return signOwnerEnvelope({ version: 'voko.owner/1', kind: 'instruction', messageId: 'owner-msg-1',
-      conversationId: 'owner-conversation-1', ownerIdentityId: 'owner-identity-1', agentId: 'agent-1',
-      ownershipEpoch: 1, conversationEpoch: 1, sequence: 1,
-      issuedAt: new Date(now - 1000).toISOString(), expiresAt: new Date(now + 60_000).toISOString(),
-      payload, payloadDigest: digestPayload(payload), keyId: 'owner-key-1', algorithm: 'Ed25519', ...overrides }, keys.privateKey);
+    return signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'owner-msg-1',
+      ownerConversationId: 'owner-conversation-1', ownerIdentityId: 'owner-identity-1',
+      ownerImUid: 'owner_abcdefgh', agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1,
+      sequence: 1, operation: 'execute', createdAt: new Date(now - 1000).toISOString(),
+      expiresAt: new Date(now + 60_000).toISOString(), payload, keyId: 'owner-key-1', ...overrides }, keys.privateKey);
   };
   const bridge = new OwnerLinkBridge({ database: db, now: () => now,
     resolvePublicKey: (id) => id === 'owner-key-1' ? keys.publicKey : null });
   return { db, bridge, make, now, close: () => db.close() };
 }
 
-function wire(envelope) { return JSON.stringify({ _voko: { owner: envelope } }); }
+function wire(envelope) { return JSON.stringify(envelope); }
 
 test('ordinary visitor messages are not consumed by Owner Link', () => {
   const f = createFixture();
@@ -36,7 +36,7 @@ test('valid reserved Owner message is verified and persisted before acknowledgem
   const f = createFixture();
   try {
     const envelope = f.make();
-    assert.deepEqual(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', clientMsgNo: envelope.messageId,
+    assert.deepEqual(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', clientMsgNo: envelope.messageId,
       content: wire(envelope) }), { handled: true, accepted: true, state: 'PERSISTED' });
     assert.equal(f.db.prepare('SELECT state FROM owner_link_commands WHERE message_id=?').get(envelope.messageId).state, 'PERSISTED');
   } finally { f.close(); }
@@ -45,7 +45,7 @@ test('valid reserved Owner message is verified and persisted before acknowledgem
 test('unsigned or malformed messages from reserved Owner identities are hard rejected', () => {
   const f = createFixture();
   try {
-    const result = f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', content: 'visitor-like text' });
+    const result = f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: 'visitor-like text' });
     assert.equal(result.handled, true);
     assert.equal(result.accepted, false);
     assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_commands').get().count, 0);
@@ -57,8 +57,8 @@ test('owner envelope cannot target another local Agent or change transport messa
   const f = createFixture();
   try {
     const envelope = f.make();
-    assert.equal(f.bridge.handleInbound('agent-2', { fromUid: 'voko_owner_abcdefgh', content: wire(envelope) }).code, 'OWNER_AGENT_MISMATCH');
-    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', clientMsgNo: 'other', content: wire(envelope) }).code,
+    assert.equal(f.bridge.handleInbound('agent-2', { fromUid: 'owner_abcdefgh', content: wire(envelope) }).code, 'OWNER_AGENT_MISMATCH');
+    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', clientMsgNo: 'other', content: wire(envelope) }).code,
       'OWNER_TRANSPORT_MESSAGE_ID_MISMATCH');
   } finally { f.close(); }
 });
@@ -68,11 +68,11 @@ test('tampered signature, unknown key and expired envelope never fall through', 
   try {
     const envelope = f.make();
     const tampered = { ...envelope, signature: Buffer.alloc(64, 1).toString('base64') };
-    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', content: wire(tampered) }).handled, true);
+    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: wire(tampered) }).handled, true);
     const unknown = { ...envelope, keyId: 'unknown-key' };
-    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', content: wire(unknown) }).code, 'OWNER_KEY_UNKNOWN');
-    const expired = f.make({ issuedAt: new Date(f.now - 120_000).toISOString(), expiresAt: new Date(f.now - 60_000).toISOString() });
-    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', content: wire(expired) }).handled, true);
+    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: wire(unknown) }).code, 'OWNER_KEY_UNKNOWN');
+    const expired = f.make({ createdAt: new Date(f.now - 120_000).toISOString(), expiresAt: new Date(f.now - 60_000).toISOString() });
+    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: wire(expired) }).handled, true);
   } finally { f.close(); }
 });
 
@@ -81,11 +81,11 @@ test('sequence window is bounded while limited out-of-order delivery remains val
   try {
     for (const sequence of [1, 3, 2]) {
       const envelope = f.make({ messageId: `owner-msg-${sequence}`, sequence });
-      assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', clientMsgNo: envelope.messageId,
+      assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', clientMsgNo: envelope.messageId,
         content: wire(envelope) }).accepted, true);
     }
     const far = f.make({ messageId: 'owner-msg-99', sequence: 99 });
-    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', clientMsgNo: far.messageId,
+    assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', clientMsgNo: far.messageId,
       content: wire(far) }).code, 'OWNER_SEQUENCE_WINDOW_EXCEEDED');
   } finally { f.close(); }
 });
@@ -95,6 +95,6 @@ test('database failures are NACK candidates rather than security-drop acknowledg
   try {
     f.db.close();
     const envelope = f.make();
-    assert.throws(() => f.bridge.handleInbound('agent-1', { fromUid: 'voko_owner_abcdefgh', content: wire(envelope) }));
+    assert.throws(() => f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: wire(envelope) }));
   } finally { try { f.close(); } catch (_) {} }
 });
