@@ -150,6 +150,13 @@ const POLICIES: Record<string, ProviderSandboxPolicy> = {
       workingDirectory: 'isolated_temp', humanApproval: 'denied',
     },
   },
+  'qwen-office-restricted': {
+    id: 'qwen-office-restricted', platforms: ALL_PLATFORMS, support: 'enforced', failurePolicy: 'best_effort',
+    verification: ['windows_real', 'static'], evidence: ['official_flag'], dimensions: {
+      filesystem: 'blocked', network: 'unknown', commandExecution: 'disabled',
+      workingDirectory: 'isolated_temp', humanApproval: 'denied',
+    }, reasonCode: 'NETWORK_POLICY_NOT_VERIFIED',
+  },
   'pi-no-tools': {
     id: 'pi-no-tools', platforms: ALL_PLATFORMS, support: 'enforced', failurePolicy: 'best_effort',
     verification: ['windows_real', 'linux_real', 'static'], evidence: ['official_flag'], dimensions: {

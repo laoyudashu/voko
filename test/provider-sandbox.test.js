@@ -46,6 +46,19 @@ test('sandbox policies model all five dimensions without leaking paths', () => {
   }
 });
 
+test('Qwen Office policy reflects its no-tools unattended invocation', () => {
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const policy = getProviderSandboxPolicy('qwen-office-restricted', platform);
+    assert.ok(policy);
+    assert.equal(policy.failurePolicy, 'best_effort');
+    assert.equal(policy.dimensions.filesystem, 'blocked');
+    assert.equal(policy.dimensions.commandExecution, 'disabled');
+    assert.equal(policy.dimensions.humanApproval, 'denied');
+    assert.equal(policy.dimensions.workingDirectory, 'isolated_temp');
+    assert.equal(policy.dimensions.network, 'unknown');
+  }
+});
+
 test('rollout is disabled by default and environment kill switch wins', () => {
   assert.deepEqual(getProviderSandboxRollout(dbWith(null), {}), {
     enabled: false, mode: 'observe', providerFamilies: [], transportIds: [], platforms: [], killedByEnvironment: false,
