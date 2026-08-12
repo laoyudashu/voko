@@ -1600,6 +1600,23 @@ async function startMcpServer(args?: any, core?: any) {
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
+  const { OwnerGatewayKeyStore, OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule } = require('./owner-link');
+  const ownerLinkModule = new OwnerLinkModule();
+  let ownerLinkBridge: any = null;
+  if (ownerLinkModule.enabled) {
+    try {
+      await taskManager.start('owner-link-module', () => ownerLinkModule.start());
+      const ownerKeyStore = new OwnerGatewayKeyStore(ownerLinkModule.getDatabase());
+      ownerKeyStore.configureFromEnvironment(process.env);
+      ownerLinkBridge = new OwnerLinkBridge({
+        database: ownerLinkModule.getDatabase(),
+        resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
+      });
+    } catch (error: any) {
+      console.error('[Owner Link] 安全入口初始化失败，Owner 专用消息将被拒绝:', error.message);
+    }
+  }
+  const ownerLinkIngress = new OwnerLinkIngress(ownerLinkBridge);
   const userEmail = getCurrentUserEmail(db);
   const litePort = parseInt(args.port, 10) || 3100;
 
@@ -1764,6 +1781,14 @@ async function startMcpServer(args?: any, core?: any) {
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      const ownerResult = ownerLinkIngress.handle(msg.agentId, data);
+      if (ownerResult.handled) {
+        if (!ownerResult.accepted) {
+          console.warn(`[Owner Link] 已拒绝 Owner 专用消息: ${ownerResult.code || 'OWNER_ENVELOPE_REJECTED'}`);
+        }
+        data?.ack?.();
+        return;
+      }
       if (messageHandler) {
         messageHandler.handleAgentMessage(msg.agentId, data);
       } else {

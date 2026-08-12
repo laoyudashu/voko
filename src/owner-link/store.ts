@@ -37,6 +37,12 @@ class OwnerLinkStore {
       if (sequenceOwner) {
         throw new OwnerLinkSecurityError('OWNER_SEQUENCE_CONFLICT');
       }
+      const sequenceRow = this.db.prepare('SELECT COALESCE(MAX(sequence),0) max_sequence FROM owner_link_commands WHERE conversation_id=?')
+        .get(envelope.conversationId) as { max_sequence?: number } | undefined;
+      const maxSequence = Number(sequenceRow?.max_sequence || 0);
+      if (envelope.sequence > maxSequence + 32 || (maxSequence > 32 && envelope.sequence <= maxSequence - 32)) {
+        throw new OwnerLinkSecurityError('OWNER_SEQUENCE_WINDOW_EXCEEDED');
+      }
       const binding = this.db.prepare('SELECT * FROM owner_link_identity_bindings WHERE conversation_id=?')
         .get(envelope.conversationId) as any;
       if (!binding) {
@@ -95,6 +101,40 @@ class OwnerLinkStore {
   }
 
   getCommand(messageId: string): any { return this.db.prepare('SELECT * FROM owner_link_commands WHERE message_id=?').get(messageId); }
+
+  isKnownOwnerImUid(imUid: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM owner_link_identity_bindings WHERE observed_im_uid=? AND status='active' LIMIT 1").get(imUid);
+  }
+
+  recordSecurityEvent(input: {
+    code: string;
+    messageId?: string | null;
+    conversationId?: string | null;
+    agentId?: string | null;
+    details?: unknown;
+    now?: number;
+  }): void {
+    this.db.prepare(`INSERT INTO owner_link_security_events(code,message_id,conversation_id,agent_id,details_digest,created_at)
+      VALUES(?,?,?,?,?,?)`).run(input.code, input.messageId || null, input.conversationId || null,
+      input.agentId || null, input.details == null ? null : digestDetails(input.details), input.now || Date.now());
+  }
+
+  recoverReservedCommands(now = Date.now()): number {
+    const rows = this.db.prepare("SELECT message_id FROM owner_link_commands WHERE state='DISPATCH_RESERVED' AND COALESCE(lease_expires_at,0)<=?")
+      .all(now) as Array<{ message_id: string }>;
+    let changed = 0;
+    for (const row of rows) {
+      const result = this.db.prepare(`UPDATE owner_link_commands SET state='OUTCOME_UNKNOWN',lease_owner=NULL,
+        lease_expires_at=NULL,error_code='OWNER_DISPATCH_INTERRUPTED',updated_at=?
+        WHERE message_id=? AND state='DISPATCH_RESERVED' AND COALESCE(lease_expires_at,0)<=?`)
+        .run(now, row.message_id, now) as any;
+      if (Number(result.changes || 0) === 1) {
+        this.event(row.message_id, 'DISPATCH_RESERVED', 'OUTCOME_UNKNOWN', 'OWNER_DISPATCH_INTERRUPTED', now);
+        changed += 1;
+      }
+    }
+    return changed;
+  }
 
   private casFromLease(messageId: string, leaseOwner: string, to: OwnerCommandState, code: string | null, now: number, accepted: boolean): boolean {
     const result = this.db.prepare(`UPDATE owner_link_commands SET state=?,error_code=?,lease_owner=NULL,lease_expires_at=NULL,
