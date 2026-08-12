@@ -1595,6 +1595,11 @@ async function startMcpServer(args?: any, core?: any) {
   const { TaskManager } = require('./core/task-manager');
   const taskManager = new TaskManager();
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
+  const { A2AModule } = require('./a2a');
+  const a2aModule = new A2AModule();
+  if (a2aModule.enabled) {
+    await taskManager.start('a2a-module', () => a2aModule.start());
+  }
   const userEmail = getCurrentUserEmail(db);
   const litePort = parseInt(args.port, 10) || 3100;
 

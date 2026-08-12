@@ -1,0 +1,55 @@
+import type { DatabaseSync } from 'node:sqlite';
+
+type StandardTaskState = 'SUBMITTED' | 'WORKING' | 'INPUT_REQUIRED' | 'AUTH_REQUIRED' | 'COMPLETED' | 'FAILED' | 'CANCELED' | 'REJECTED';
+type DeliveryState = 'QUEUED_OFFLINE' | 'SENDING' | 'IM_ACCEPTED' | 'DELIVERED' | 'EXECUTING' | 'DELIVERY_UNKNOWN' | 'DEAD_LETTER';
+const TERMINAL_STATES = new Set<StandardTaskState>(['COMPLETED', 'FAILED', 'CANCELED', 'REJECTED']);
+
+interface CreateLocalTaskInput { gatewayTaskId: string; contextId: string; executionId: string; agentId: string; gatewayUid: string }
+
+class A2ALocalTaskStore {
+  constructor(private readonly db: DatabaseSync) {}
+  createTask(input: CreateLocalTaskInput): boolean {
+    const now = Date.now();
+    const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_tasks
+      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,standard_state,delivery_state,created_at,updated_at)
+      VALUES (?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?)`).run(
+      input.gatewayTaskId, input.contextId, input.executionId, input.agentId, input.gatewayUid, now, now);
+    return Number(result.changes) === 1;
+  }
+  updateState(taskId: string, standardState: StandardTaskState, deliveryState: DeliveryState): boolean {
+    const row = this.db.prepare('SELECT standard_state FROM a2a_local_tasks WHERE gateway_task_id=?').get(taskId) as { standard_state: StandardTaskState } | undefined;
+    if (!row || (TERMINAL_STATES.has(row.standard_state) && row.standard_state !== standardState)) return false;
+    return Number(this.db.prepare('UPDATE a2a_local_tasks SET standard_state=?,delivery_state=?,updated_at=? WHERE gateway_task_id=?')
+      .run(standardState, deliveryState, Date.now(), taskId).changes) === 1;
+  }
+  acceptCommand(eventId: string, taskId: string, sequence: number, operation: string): 'accepted' | 'duplicate' {
+    const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_inbox
+      (event_id,gateway_task_id,command_sequence,operation,status,received_at) VALUES (?,?,?,?,'received',?)`)
+      .run(eventId, taskId, sequence, operation, Date.now());
+    return Number(result.changes) === 1 ? 'accepted' : 'duplicate';
+  }
+  enqueueEvent(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown): boolean {
+    const now = Date.now();
+    const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_outbox
+      (event_id,gateway_task_id,producer_sequence,operation,envelope_json,status,next_attempt_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,'pending',?,?,?)`).run(eventId, taskId, sequence, operation, JSON.stringify(envelope), now, now, now);
+    return Number(result.changes) === 1;
+  }
+  claimEvents(owner: string, limit = 10, leaseMs = 30_000): Array<Record<string, unknown>> {
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`SELECT event_id FROM a2a_local_outbox WHERE
+        (status='pending' AND next_attempt_at<=?) OR (status='leased' AND lease_expires_at<=?)
+        ORDER BY created_at LIMIT ?`).all(now, now, limit) as Array<{ event_id: string }>;
+      const update = this.db.prepare(`UPDATE a2a_local_outbox SET status='leased',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=? WHERE event_id=?`);
+      for (const row of rows) update.run(owner, now + leaseMs, now, row.event_id);
+      this.db.exec('COMMIT');
+      const select = this.db.prepare('SELECT * FROM a2a_local_outbox WHERE event_id=?');
+      return rows.map((row) => select.get(row.event_id) as Record<string, unknown>);
+    } catch (error) { try { this.db.exec('ROLLBACK'); } catch (_) {} throw error; }
+  }
+}
+
+export { A2ALocalTaskStore, TERMINAL_STATES };
+export type { CreateLocalTaskInput, DeliveryState, StandardTaskState };
