@@ -97,6 +97,10 @@ class A2ALocalTaskStore {
       return rows.map((row) => select.get(row.event_id) as Record<string, unknown>);
     } catch (error) { try { this.db.exec('ROLLBACK'); } catch (_) {} throw error; }
   }
+  uncertainEvents(limit = 10): Array<Record<string, unknown>> {
+    return this.db.prepare("SELECT * FROM a2a_local_outbox WHERE status='outcome_unknown' ORDER BY updated_at LIMIT ?")
+      .all(limit) as Array<Record<string, unknown>>;
+  }
   finishOutboxEvent(eventId: string, status: 'acked' | 'dead' | 'outcome_unknown', errorCode?: string): void {
     this.db.prepare(`UPDATE a2a_local_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code=?,updated_at=? WHERE event_id=?`)
       .run(status, errorCode || null, Date.now(), eventId);

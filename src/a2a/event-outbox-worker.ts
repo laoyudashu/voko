@@ -3,7 +3,16 @@ import type { A2ALocalTaskStore } from './task-store';
 class A2AEventOutboxWorker {
   constructor(private readonly store: A2ALocalTaskStore, private readonly client: A2AMailboxClient) {}
   async flushOnce(owner = `lite-${process.pid}`): Promise<{ sent: number; uncertain: number }> {
-    const events = this.store.claimEvents(owner); let sent = 0; let uncertain = 0;
+    let sent = 0; let uncertain = 0;
+    for (const event of this.store.uncertainEvents()) {
+      try {
+        const result = await this.client.findEvent(String(event.event_id));
+        if (result.found && result.taskId === String(event.gateway_task_id)) {
+          this.store.finishOutboxEvent(String(event.event_id), 'acked'); sent += 1;
+        } else uncertain += 1;
+      } catch (_) { uncertain += 1; }
+    }
+    const events = this.store.claimEvents(owner);
     for (const event of events) {
       try {
         await this.client.sendEvent(JSON.parse(String(event.envelope_json)));

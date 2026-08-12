@@ -13,15 +13,23 @@ test('local Ed25519 identity is stable and can sign without exposing native sess
 test('event outbox marks successful delivery acked', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true });
-  const worker = new A2AEventOutboxWorker(store, { async sendEvent() { return { status: 'accepted' }; } });
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { return { status: 'accepted' }; } });
   assert.deepEqual(await worker.flushOnce('worker'), { sent: 1, uncertain: 0 });
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'acked');
 });
 test('unknown delivery result is quarantined and never automatically claimed again', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true });
-  const worker = new A2AEventOutboxWorker(store, { async sendEvent() { throw new Error('connection reset'); } });
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw new Error('connection reset'); } });
   assert.deepEqual(await worker.flushOnce('worker'), { sent: 0, uncertain: 1 });
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'outcome_unknown');
   assert.deepEqual(store.claimEvents('other'), []);
+});
+test('unknown event is acknowledged only after the Gateway confirms the same task', async t => {
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true }); store.finishOutboxEvent('event-1', 'outcome_unknown');
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: true, taskId: 'task-1', gatewaySequence: 2 }; },
+    async sendEvent() { throw new Error('must not resend'); } });
+  assert.deepEqual(await worker.flushOnce('worker'), { sent: 1, uncertain: 0 });
+  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'acked');
 });

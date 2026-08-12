@@ -27,6 +27,12 @@ class A2AMailboxClient {
     if (!response.ok) { const error = new Error(`A2A Mailbox request failed (${response.status})`); (error as any).status = response.status; throw error; }
     return response.json();
   }
+  private async get(path: string): Promise<any> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, { method: 'GET',
+      headers: { authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) { const error = new Error(`A2A Mailbox request failed (${response.status})`); (error as any).status = response.status; throw error; }
+    return response.json();
+  }
   async claim(limit = 20): Promise<MailboxClaim> {
     const result = await this.post('/claim', { limit });
     if (!result || typeof result.leaseId !== 'string' || !Array.isArray(result.items)) throw new Error('Invalid A2A Mailbox claim');
@@ -37,6 +43,9 @@ class A2AMailboxClient {
   }
   async sendEvent(envelope: unknown): Promise<{ status: string; gatewaySequence?: number }> {
     return this.post('/events', envelope);
+  }
+  async findEvent(eventId: string): Promise<{ found: boolean; taskId?: string; gatewaySequence?: number }> {
+    return this.get(`/events/${encodeURIComponent(eventId)}`);
   }
 }
 

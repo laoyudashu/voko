@@ -21,3 +21,10 @@ test('mailbox errors expose status but never the device token', async () => {
     fetchImpl: async () => ({ ok: false, status: 401 }) });
   await assert.rejects(() => client.claim(), error => error.status === 401 && !error.message.includes(token));
 });
+test('event reconciliation uses the authenticated mailbox endpoint', async () => {
+  const calls = []; const client = new A2AMailboxClient({ baseUrl: 'https://did.example/mailbox', token: 'x'.repeat(32),
+    fetchImpl: async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200,
+      async json() { return { found: true, taskId: 'task-1', gatewaySequence: 3 }; } }; } });
+  assert.deepEqual(await client.findEvent('event:1'), { found: true, taskId: 'task-1', gatewaySequence: 3 });
+  assert.equal(calls[0].url, 'https://did.example/mailbox/events/event%3A1'); assert.equal(calls[0].options.method, 'GET');
+});
