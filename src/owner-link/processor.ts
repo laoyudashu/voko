@@ -66,7 +66,8 @@ class OwnerCommandProcessor {
     const command = this.options.store.getCommand(messageId);
     if (!command) return { status: 'not_found' };
     if (!this.options.dispatchEnabled) return { status: 'held' };
-    if (command.operation !== 'execute') return { status: 'pending_control' };
+    if (command.operation === 'cancel') return this.processCancel(command);
+    if (command.operation !== 'execute') return { status: 'rejected_invalid_operation' };
     const content = contentOf(command);
     if (!content) return { status: 'rejected_invalid_payload' };
     const identity = this.options.resolveAgentIdentity?.(command.agent_id) || null;
@@ -154,6 +155,34 @@ class OwnerCommandProcessor {
       }
       return { status: outcome };
     }
+  }
+
+  private processCancel(command: any): { status: string; eventId?: string } {
+    const identity = this.options.resolveAgentIdentity?.(command.agent_id) || null;
+    if (!identity?.privateKey || !identity.imUid) return { status: 'signing_identity_required' };
+    try {
+      const result = this.options.store.settleLocalCancel({ cancelMessageId: command.message_id,
+        buildCancelAccepted: (cancel, sequence) => {
+          const envelope = createOwnerEventEnvelope({ command: cancel, operation: 'accepted', payload: {}, sequence,
+            privateKey: identity.privateKey, keyId: identity.keyId, kind: 'receipt' });
+          return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+        },
+        buildTargetCanceled: (target, sequence) => {
+          const envelope = createOwnerEventEnvelope({ command: target, operation: 'canceled', payload: {}, sequence,
+            privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
+          return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+        },
+        buildCancelTerminal: (cancel, sequence, outcome, code) => {
+          const envelope = createOwnerEventEnvelope({ command: cancel,
+            operation: outcome === 'canceled' ? 'completed' : 'failed',
+            payload: outcome === 'canceled' ? { targetMessageId: cancel.target_message_id }
+              : { errorCode: code || 'OWNER_CANCEL_TOO_LATE' }, sequence,
+            privateKey: identity.privateKey, keyId: identity.keyId, kind: 'event' });
+          return { eventId: envelope.messageId, rawEnvelope: JSON.stringify(envelope) };
+        },
+      });
+      return { status: result.status === 'canceled' ? 'completed' : result.status, eventId: result.eventId };
+    } catch (_) { return { status: 'state_conflict' }; }
   }
 
   private enqueueStatus(command: any, identity: { privateKey: string; keyId?: string },

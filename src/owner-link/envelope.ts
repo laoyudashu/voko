@@ -10,7 +10,7 @@ const ENVELOPE_KEYS = new Set(['version','kind','messageId','ownerConversationId
   'agentId','ownershipEpoch','conversationEpoch','sequence','operation','payload','payloadDigest','keyId',
   'algorithm','createdAt','expiresAt','signature']);
 const KINDS = new Set(['command','receipt','event']);
-const OPERATIONS = new Set(['execute','cancel','approve','reject','accepted','working','completed','failed','canceled']);
+const OPERATIONS = new Set(['execute','cancel','accepted','working','completed','failed','canceled']);
 
 class StrictJsonParser {
   private index = 0;

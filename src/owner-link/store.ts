@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { nativeSessionDigest, parseApprovedExecutePayload } from './approval';
 import type { ApprovalBinding } from './approval';
+import { parseOwnerCancelPayload } from './cancel';
 import { canonicalJson } from './envelope';
 import type { VokoOwnerEnvelope } from './envelope';
 
@@ -24,9 +25,13 @@ class OwnerLinkStore {
   persistVerified(envelope: VokoOwnerEnvelope, observedImUid: string, now = Date.now()): PersistResult {
     if (!observedImUid || observedImUid.length > 192) throw new OwnerLinkSecurityError('OWNER_IM_UID_INVALID');
     let approvedExecute: ReturnType<typeof parseApprovedExecutePayload> | null = null;
+    let cancelTargetMessageId: string | null = null;
     if (envelope.operation === 'execute') {
       try { approvedExecute = parseApprovedExecutePayload(envelope.payload, now, Date.parse(envelope.expiresAt)); }
       catch (error: any) { throw new OwnerLinkSecurityError(String(error?.message || 'OWNER_APPROVAL_INVALID')); }
+    } else if (envelope.operation === 'cancel') {
+      try { cancelTargetMessageId = parseOwnerCancelPayload(envelope.payload).targetMessageId; }
+      catch (error: any) { throw new OwnerLinkSecurityError(String(error?.message || 'OWNER_CANCEL_PAYLOAD_INVALID')); }
     }
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -47,6 +52,15 @@ class OwnerLinkStore {
       if (approvedExecute && this.db.prepare('SELECT 1 FROM owner_link_approvals WHERE approval_id=? LIMIT 1')
         .get(approvedExecute.approval.approvalId)) {
         throw new OwnerLinkSecurityError('OWNER_APPROVAL_REUSED');
+      }
+      if (cancelTargetMessageId) {
+        const target = this.db.prepare(`SELECT state FROM owner_link_commands
+          WHERE message_id=? AND conversation_id=? AND agent_id=? AND operation='execute' LIMIT 1`)
+          .get(cancelTargetMessageId, envelope.ownerConversationId, envelope.agentId) as { state?: string } | undefined;
+        if (!target) throw new OwnerLinkSecurityError('OWNER_CANCEL_TARGET_NOT_FOUND');
+        if (['COMPLETED','REJECTED','EXPIRED'].includes(String(target.state || ''))) {
+          throw new OwnerLinkSecurityError('OWNER_CANCEL_TOO_LATE');
+        }
       }
       const sequenceRow = this.db.prepare('SELECT COALESCE(MAX(sequence),0) max_sequence FROM owner_link_commands WHERE conversation_id=?')
         .get(envelope.ownerConversationId) as { max_sequence?: number } | undefined;
@@ -69,10 +83,10 @@ class OwnerLinkStore {
       }
       this.db.prepare(`INSERT INTO owner_link_commands
         (message_id,conversation_id,sequence,agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at,
-         operation,owner_identity_id,observed_im_uid,ownership_epoch,conversation_epoch)
-        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?,?,?,?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
+         operation,target_message_id,owner_identity_id,observed_im_uid,ownership_epoch,conversation_epoch)
+        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?,?,?,?,?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
         envelope.sequence, envelope.agentId, envelope.payloadDigest, canonicalJson(envelope.payload),
-        Date.parse(envelope.expiresAt), now, now, envelope.operation, envelope.ownerIdentityId, observedImUid,
+        Date.parse(envelope.expiresAt), now, now, envelope.operation, cancelTargetMessageId, envelope.ownerIdentityId, observedImUid,
         envelope.ownershipEpoch, envelope.conversationEpoch);
       if (approvedExecute) {
         this.db.prepare(`INSERT INTO owner_link_approvals
@@ -152,6 +166,66 @@ class OwnerLinkStore {
   }
 
   getCommand(messageId: string): any { return this.db.prepare('SELECT * FROM owner_link_commands WHERE message_id=?').get(messageId); }
+
+  settleLocalCancel(input: {
+    cancelMessageId: string;
+    buildCancelAccepted: (command: any, sequence: number) => { eventId: string; rawEnvelope: string };
+    buildCancelTerminal: (command: any, sequence: number, outcome: 'canceled'|'unsupported'|'too_late', code?: string) =>
+      { eventId: string; rawEnvelope: string };
+    buildTargetCanceled: (command: any, sequence: number) => { eventId: string; rawEnvelope: string };
+    now?: number;
+  }): { status: 'canceled'|'unsupported'|'too_late'; eventId: string } {
+    const now = input.now || Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const cancel = this.getCommand(input.cancelMessageId);
+      if (!cancel || cancel.operation !== 'cancel' || cancel.state !== 'PERSISTED' || !cancel.target_message_id) {
+        throw new OwnerLinkSecurityError('OWNER_CANCEL_STATE_CONFLICT');
+      }
+      const target = this.getCommand(cancel.target_message_id);
+      if (!target || target.operation !== 'execute' || target.conversation_id !== cancel.conversation_id
+          || target.agent_id !== cancel.agent_id) throw new OwnerLinkSecurityError('OWNER_CANCEL_TARGET_NOT_FOUND');
+      const outcome = Number(target.expires_at) <= now ? 'too_late'
+        : ['PERSISTED','FAILED_NOT_DELIVERED'].includes(target.state) ? 'canceled'
+        : ['DISPATCH_RESERVED','PROVIDER_ACCEPTED','OUTCOME_UNKNOWN'].includes(target.state) ? 'unsupported' : 'too_late';
+      const code = outcome === 'unsupported' ? 'OWNER_CANCEL_UNSUPPORTED'
+        : outcome === 'too_late' ? 'OWNER_CANCEL_TOO_LATE' : undefined;
+      const sequenceRow = this.db.prepare(`SELECT COALESCE(MAX(o.producer_sequence),0) sequence
+        FROM owner_link_outbox o JOIN owner_link_commands c ON c.message_id=o.message_id
+        WHERE c.conversation_id=?`).get(cancel.conversation_id) as { sequence?: number } | undefined;
+      let sequence = Number(sequenceRow?.sequence || 0);
+      const events: Array<{ command: any; kind: 'receipt'|'event'; eventId: string; rawEnvelope: string; sequence: number }> = [];
+      const acceptedSequence = ++sequence; const accepted = input.buildCancelAccepted(cancel, acceptedSequence);
+      events.push({ command: cancel, kind: 'receipt', sequence: acceptedSequence, ...accepted });
+      if (outcome === 'canceled') {
+        const targetSequence = ++sequence; const targetEvent = input.buildTargetCanceled(target, targetSequence);
+        events.push({ command: target, kind: 'event', sequence: targetSequence, ...targetEvent });
+        const targetResult = this.db.prepare(`UPDATE owner_link_commands SET state='REJECTED',
+          error_code='OWNER_CANCELED_BEFORE_DISPATCH',completed_at=?,updated_at=?
+          WHERE message_id=? AND state=?`).run(now, now, target.message_id, target.state) as any;
+        if (Number(targetResult.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_CANCEL_STATE_CONFLICT');
+        this.db.prepare(`UPDATE owner_link_approvals SET status='rejected',updated_at=?
+          WHERE message_id=? AND status='pending'`).run(now, target.message_id);
+        this.event(target.message_id, target.state, 'REJECTED', 'OWNER_CANCELED_BEFORE_DISPATCH', now);
+      }
+      const terminalSequence = ++sequence; const terminal = input.buildCancelTerminal(cancel, terminalSequence, outcome, code);
+      events.push({ command: cancel, kind: 'event', sequence: terminalSequence, ...terminal });
+      for (const event of events) this.insertOutboxEvent(event.command.message_id, event.kind,
+        event.eventId, event.rawEnvelope, event.sequence, now);
+      const cancelState = outcome === 'canceled' ? 'COMPLETED' : 'REJECTED';
+      const cancelResult = this.db.prepare(`UPDATE owner_link_commands SET state=?,error_code=?,
+        completed_at=CASE WHEN ?='COMPLETED' THEN ? ELSE completed_at END,updated_at=?
+        WHERE message_id=? AND state='PERSISTED'`).run(cancelState, code || null, cancelState, now, now,
+          cancel.message_id) as any;
+      if (Number(cancelResult.changes || 0) !== 1) throw new OwnerLinkSecurityError('OWNER_CANCEL_STATE_CONFLICT');
+      this.event(cancel.message_id, 'PERSISTED', cancelState, code || null, now);
+      this.db.exec('COMMIT');
+      return { status: outcome, eventId: terminal.eventId };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
 
   listProcessableCommands(now = Date.now(), limit = 100): string[] {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
@@ -536,6 +610,14 @@ class OwnerLinkStore {
         || String(binding.nativeSessionId || '').length > 512) {
       throw new OwnerLinkSecurityError('OWNER_APPROVAL_BINDING_INVALID');
     }
+  }
+  private insertOutboxEvent(messageId: string, kind: 'receipt'|'event', eventId: string,
+    rawEnvelope: string, sequence: number, now: number): void {
+    if (!eventId || eventId.length > 128 || !Number.isInteger(sequence) || sequence < 1
+        || Buffer.byteLength(rawEnvelope, 'utf8') > 8192) throw new OwnerLinkSecurityError('OWNER_EVENT_INVALID');
+    this.db.prepare(`INSERT INTO owner_link_outbox
+      (event_id,message_id,kind,producer_sequence,payload_json,status,attempt_count,next_attempt_at,created_at,updated_at)
+      VALUES(?,?,?,?,?,'pending',0,?,?,?)`).run(eventId, messageId, kind, sequence, rawEnvelope, now, now, now);
   }
   private settleApproval(messageId: string, binding: ApprovalBinding, disposition: 'consumed'|'rejected', now: number): void {
     this.assertApprovalBinding(binding);

@@ -49,5 +49,5 @@ test('trusted Owner bootstrap accepts only an exact-version full sandbox transpo
     filesystem: 'read_only', network: 'blocked', commandExecution: 'sandboxed' } });
   const dispatcher = createDispatcher({ db: db(), providers: { 'unsafe-cli': unsafe, 'codex-cli': safe }, onAgentReply() {} });
   assert.deepEqual(dispatcher.resolveTrustedOwnerTransport('agent-1'), {
-    providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' });
+    providerId: 'codex-cli', providerType: 'codex', providerInstanceId: null, deliveryMode: 'cli' });
 });

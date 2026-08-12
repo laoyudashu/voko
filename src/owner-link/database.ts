@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const OWNER_LINK_SCHEMA_VERSION = 3;
+const OWNER_LINK_SCHEMA_VERSION = 4;
 
 interface InitOwnerLinkDatabaseOptions { createParent?: boolean }
 
@@ -157,6 +157,13 @@ function initOwnerLinkDatabase(
           .map((column) => String(column.name || '')));
         if (!approvalColumns.has('native_session_digest')) {
           db.exec('ALTER TABLE owner_link_approvals ADD COLUMN native_session_digest TEXT');
+        }
+      }
+      if (version < 4) {
+        const commandColumns = new Set((db.prepare('PRAGMA table_info(owner_link_commands)').all() as Array<{ name?: string }>)
+          .map((column) => String(column.name || '')));
+        if (!commandColumns.has('target_message_id')) {
+          db.exec('ALTER TABLE owner_link_commands ADD COLUMN target_message_id TEXT');
         }
       }
       db.prepare(`INSERT INTO owner_link_meta(key,value,updated_at) VALUES('schema_version',?,?)

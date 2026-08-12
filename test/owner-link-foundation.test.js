@@ -143,7 +143,7 @@ test('Owner database upgrades a v1 database without losing verified commands', (
   db1.close();
   const db2 = initOwnerLinkDatabase(databasePath);
   try {
-    assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 4);
     assert.ok(db2.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_link_provider_bindings'").get());
   } finally { db2.close(); }
 });

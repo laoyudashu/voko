@@ -6,22 +6,39 @@ const path = require('node:path');
 const test = require('node:test');
 const { OwnerCommandProcessor, OwnerLinkStore, actionDigest, canonicalJson, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
-function setup() {
+function setup(messageId = 'owner-message-1') {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-processor-')), 'owner.db'));
   const store = new OwnerLinkStore(db);
   const keys = crypto.generateKeyPairSync('ed25519');
   const now = Date.now();
   const expiresAt = new Date(now + 60_000).toISOString();
   const action = { type: 'message', text: 'Report status only.' };
-  const envelope = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'owner-message-1',
+  const envelope = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId,
     ownerConversationId: 'owner-conversation-1', ownerIdentityId: 'owner-identity-1', ownerImUid: 'owner_im-1',
     agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
-    payload: { action, approval: { approvalId: 'owa_owner-message-1', actionDigest: actionDigest(action), expiresAt,
+    payload: { action, approval: { approvalId: `owa_${messageId}`, actionDigest: actionDigest(action), expiresAt,
       enforcement: 'required_before_execute' } }, keyId: 'owner-key-1',
     createdAt: new Date(now - 1_000).toISOString(), expiresAt }, keys.privateKey);
   store.persistVerified(envelope, envelope.ownerImUid, now);
   return { db, store, envelope, keys, identity: { privateKey: keys.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     keyId: 'agent-key-1', imUid: 'agent-im-1' } };
+}
+
+function cancelFixture(targetState = 'PERSISTED') {
+  const f = setup('owm_target'); const now = Date.now();
+  if (targetState === 'PROVIDER_ACCEPTED') {
+    const binding = { providerType: 'codex', providerInstanceId: 'codex-instance', adapterType: 'codex-cli',
+      deliveryMode: 'cli', bindingVersion: 1, nativeSessionId: 'thread-active' };
+    assert.equal(f.store.acquireApprovedDispatchLease('owm_target', 'target-worker', binding), true);
+    assert.equal(f.store.markProviderAccepted('owm_target', 'target-worker'), true);
+  }
+  const cancel = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'owm_cancel',
+    ownerConversationId: f.envelope.ownerConversationId, ownerIdentityId: f.envelope.ownerIdentityId,
+    ownerImUid: f.envelope.ownerImUid, agentId: f.envelope.agentId, ownershipEpoch: 1, conversationEpoch: 1,
+    sequence: 2, operation: 'cancel', payload: { targetMessageId: 'owm_target' }, keyId: 'owner-key-1',
+    createdAt: new Date(now - 1_000).toISOString(), expiresAt: new Date(now + 60_000).toISOString() }, f.keys.privateKey);
+  f.store.persistVerified(cancel, cancel.ownerImUid, now);
+  return { ...f, cancel };
 }
 
 test('disabled Owner Provider dispatch leaves a persisted command claimable by Pull', async () => {
@@ -111,5 +128,49 @@ test('missing Agent DID signing identity prevents automatic Provider execution',
     assert.equal((await processor.process(f.envelope.messageId)).status, 'signing_identity_required');
     assert.equal(invoked, false);
     assert.equal(f.store.getCommand(f.envelope.messageId).state, 'PERSISTED');
+  } finally { f.db.close(); }
+});
+
+test('cancel before Provider dispatch atomically prevents target execution and reports both commands', async () => {
+  const f = cancelFixture(); let invoked = false;
+  try {
+    const processor = new OwnerCommandProcessor({ store: f.store, dispatcher: {
+      resolveTrustedOwnerTransport: () => null, async executeIsolated() { invoked = true; },
+    }, dispatchEnabled: true, resolveAgentIdentity: () => f.identity });
+    assert.equal((await processor.process(f.cancel.messageId)).status, 'completed');
+    assert.equal(invoked, false);
+    assert.equal(f.store.getCommand('owm_target').state, 'REJECTED');
+    assert.equal(f.store.getCommand('owm_cancel').state, 'COMPLETED');
+    assert.equal(f.store.getApproval('owm_target').status, 'rejected');
+    assert.deepEqual(f.db.prepare('SELECT payload_json FROM owner_link_outbox ORDER BY producer_sequence').all()
+      .map(row => JSON.parse(row.payload_json).operation), ['accepted', 'canceled', 'completed']);
+  } finally { f.db.close(); }
+});
+
+test('cancel of a possibly running Provider command fails without changing target state', async () => {
+  const f = cancelFixture('PROVIDER_ACCEPTED');
+  try {
+    const processor = new OwnerCommandProcessor({ store: f.store, dispatcher: {}, dispatchEnabled: true,
+      resolveAgentIdentity: () => f.identity });
+    assert.equal((await processor.process(f.cancel.messageId)).status, 'unsupported');
+    assert.equal(f.store.getCommand('owm_target').state, 'PROVIDER_ACCEPTED');
+    assert.equal(f.store.getCommand('owm_cancel').state, 'REJECTED');
+    assert.deepEqual(f.db.prepare('SELECT payload_json FROM owner_link_outbox ORDER BY producer_sequence').all()
+      .map(row => JSON.parse(row.payload_json).operation), ['accepted', 'failed']);
+  } finally { f.db.close(); }
+});
+
+test('cancel target state and all signed events roll back together on persistence failure', () => {
+  const f = cancelFixture();
+  try {
+    assert.throws(() => f.store.settleLocalCancel({ cancelMessageId: f.cancel.messageId,
+      buildCancelAccepted: (_command, sequence) => ({ eventId: 'cancel-accepted', rawEnvelope: JSON.stringify({ sequence }) }),
+      buildTargetCanceled: () => ({ eventId: 'target-canceled', rawEnvelope: 'x'.repeat(8193) }),
+      buildCancelTerminal: (_command, sequence) => ({ eventId: 'cancel-terminal', rawEnvelope: JSON.stringify({ sequence }) }),
+    }), /OWNER_EVENT_INVALID/);
+    assert.equal(f.store.getCommand('owm_target').state, 'PERSISTED');
+    assert.equal(f.store.getCommand('owm_cancel').state, 'PERSISTED');
+    assert.equal(f.store.getApproval('owm_target').status, 'pending');
+    assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_outbox').get().count, 0);
   } finally { f.db.close(); }
 });

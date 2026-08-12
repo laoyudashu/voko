@@ -129,3 +129,12 @@ test('a gateway-signed execute command with mismatched approval digest is reject
     assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_commands').get().count, 0);
   } finally { f.close(); }
 });
+
+test('approve and reject are Portal-only operations and never enter the IM command path', () => {
+  const f = createFixture();
+  try {
+    for (const operation of ['approve', 'reject']) {
+      assert.throws(() => f.make({ operation }), /OWNER_ENVELOPE_UNSUPPORTED/);
+    }
+  } finally { f.close(); }
+});

@@ -1,6 +1,6 @@
 export type OwnerEnvelopeKind = 'command' | 'receipt' | 'event';
 export type OwnerOperation =
-  | 'execute' | 'cancel' | 'approve' | 'reject'
+  | 'execute' | 'cancel'
   | 'accepted' | 'working' | 'completed' | 'failed' | 'canceled';
 
 export interface VokoOwnerEnvelope<TPayload = Record<string, unknown>> {
@@ -23,6 +23,8 @@ export interface VokoOwnerEnvelope<TPayload = Record<string, unknown>> {
   expiresAt: string;
   signature: string;
 }
+
+export interface OwnerCancelPayload { targetMessageId: string; }
 
 export interface OwnerSessionCreated {
   csrfToken: string;

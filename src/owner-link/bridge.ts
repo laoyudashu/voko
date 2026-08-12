@@ -5,7 +5,7 @@ import type { VokoOwnerEnvelope } from './envelope';
 import { OwnerLinkSecurityError, OwnerLinkStore } from './store';
 
 const OWNER_IM_UID_PATTERN = /^owner_[A-Za-z0-9._:-]{1,122}$/;
-const OWNER_COMMAND_OPERATIONS = new Set(['execute', 'cancel', 'approve', 'reject']);
+const OWNER_COMMAND_OPERATIONS = new Set(['execute', 'cancel']);
 
 interface OwnerLinkInboundMessage {
   fromUid?: string;
