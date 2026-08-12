@@ -98,3 +98,16 @@ test('database failures are NACK candidates rather than security-drop acknowledg
     assert.throws(() => f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', content: wire(envelope) }));
   } finally { try { f.close(); } catch (_) {} }
 });
+
+test('new Owner commands notify the processor once while replay remains idempotent', async () => {
+  const f = createFixture(); const handled = [];
+  try {
+    f.bridge.setCommandHandler(messageId => handled.push(messageId));
+    const envelope = f.make();
+    const message = { fromUid: envelope.ownerImUid, clientMsgNo: envelope.messageId, content: wire(envelope) };
+    assert.equal(f.bridge.handleInbound('agent-1', message).accepted, true);
+    assert.equal(f.bridge.handleInbound('agent-1', message).accepted, true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(handled, [envelope.messageId]);
+  } finally { f.close(); }
+});

@@ -40,3 +40,14 @@ test('trusted Owner execution uses owner security context and an exact transport
   assert.equal(primary.payload.providerBinding.sourceScope, 'trusted_owner');
   assert.equal(fallback.payload, undefined);
 });
+
+test('trusted Owner bootstrap accepts only an exact-version full sandbox transport', async () => {
+  const safe = new Provider(); const unsafe = new Provider();
+  safe.getSandboxStatus = () => ({ effective: true, versionState: 'verified', coverage: 'full', dimensions: {
+    filesystem: 'read_only', network: 'blocked', commandExecution: 'sandboxed' } });
+  unsafe.getSandboxStatus = () => ({ effective: true, versionState: 'known_unverified', coverage: 'full', dimensions: {
+    filesystem: 'read_only', network: 'blocked', commandExecution: 'sandboxed' } });
+  const dispatcher = createDispatcher({ db: db(), providers: { 'unsafe-cli': unsafe, 'codex-cli': safe }, onAgentReply() {} });
+  assert.deepEqual(dispatcher.resolveTrustedOwnerTransport('agent-1'), {
+    providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' });
+});

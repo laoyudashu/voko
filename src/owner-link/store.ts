@@ -91,6 +91,9 @@ class OwnerLinkStore {
   markOutcomeUnknown(messageId: string, leaseOwner: string, code: string, now = Date.now()): boolean {
     return this.casFromLease(messageId, leaseOwner, 'OUTCOME_UNKNOWN', code, now, false);
   }
+  markRejected(messageId: string, leaseOwner: string, code: string, now = Date.now()): boolean {
+    return this.casFromLease(messageId, leaseOwner, 'REJECTED', code, now, false);
+  }
   complete(messageId: string, now = Date.now()): boolean {
     const result = this.db.prepare(`UPDATE owner_link_commands SET state='COMPLETED',completed_at=?,updated_at=?
       WHERE message_id=? AND state='PROVIDER_ACCEPTED'`).run(now, now, messageId) as any;
@@ -99,6 +102,13 @@ class OwnerLinkStore {
   }
 
   getCommand(messageId: string): any { return this.db.prepare('SELECT * FROM owner_link_commands WHERE message_id=?').get(messageId); }
+
+  listProcessableCommands(now = Date.now(), limit = 100): string[] {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+    return (this.db.prepare(`SELECT message_id FROM owner_link_commands
+      WHERE state='PERSISTED' AND expires_at>? ORDER BY created_at LIMIT ?`).all(now, safeLimit) as Array<{ message_id: string }>)
+      .map((row) => row.message_id);
+  }
 
   getActiveProviderBinding(ownerConversationId: string): any {
     return this.db.prepare(`SELECT * FROM owner_link_provider_bindings
@@ -159,6 +169,95 @@ class OwnerLinkStore {
     const result = this.db.prepare(`UPDATE owner_link_provider_bindings SET status='unavailable',updated_at=?
       WHERE owner_conversation_id=? AND binding_version=? AND status='active'`)
       .run(now, ownerConversationId, expectedVersion) as any;
+    return Number(result.changes || 0) === 1;
+  }
+
+  enqueueSignedEvent(messageId: string, kind: 'receipt'|'event', build: (sequence: number) => {
+    eventId: string;
+    rawEnvelope: string;
+  }, now = Date.now()): string {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const command = this.db.prepare('SELECT conversation_id FROM owner_link_commands WHERE message_id=?')
+        .get(messageId) as { conversation_id?: string } | undefined;
+      if (!command?.conversation_id) throw new OwnerLinkSecurityError('OWNER_COMMAND_NOT_FOUND');
+      const row = this.db.prepare(`SELECT COALESCE(MAX(o.producer_sequence),0) sequence
+        FROM owner_link_outbox o JOIN owner_link_commands c ON c.message_id=o.message_id
+        WHERE c.conversation_id=?`).get(command.conversation_id) as { sequence?: number } | undefined;
+      const sequence = Number(row?.sequence || 0) + 1;
+      const event = build(sequence);
+      if (!event.eventId || event.eventId.length > 128 || Buffer.byteLength(event.rawEnvelope, 'utf8') > 8192) {
+        throw new OwnerLinkSecurityError('OWNER_EVENT_INVALID');
+      }
+      this.db.prepare(`INSERT INTO owner_link_outbox
+        (event_id,message_id,kind,producer_sequence,payload_json,status,attempt_count,next_attempt_at,created_at,updated_at)
+        VALUES(?,?,?,?,?,'pending',0,?,?,?)`)
+        .run(event.eventId, messageId, kind, sequence, event.rawEnvelope, now, now, now);
+      this.db.exec('COMMIT');
+      return event.eventId;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  claimOutbox(leaseOwner: string, limit = 10, leaseMs = 30_000, now = Date.now()): any[] {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 100));
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`SELECT o.*,c.agent_id,c.conversation_id,c.observed_im_uid
+        FROM owner_link_outbox o JOIN owner_link_commands c ON c.message_id=o.message_id
+        WHERE ((o.status='pending' AND o.next_attempt_at<=?)
+          OR (o.status='leased' AND COALESCE(o.lease_expires_at,0)<=?))
+        AND NOT EXISTS (
+          SELECT 1 FROM owner_link_outbox earlier
+          JOIN owner_link_commands earlier_command ON earlier_command.message_id=earlier.message_id
+          WHERE earlier_command.conversation_id=c.conversation_id
+            AND earlier.producer_sequence<o.producer_sequence
+            AND earlier.status NOT IN ('sent','acked')
+        )
+        ORDER BY o.created_at,o.producer_sequence LIMIT ?`).all(now, now, safeLimit) as any[];
+      const claimed: any[] = [];
+      for (const row of rows) {
+        const result = this.db.prepare(`UPDATE owner_link_outbox SET status='leased',lease_owner=?,lease_expires_at=?,updated_at=?
+          WHERE event_id=? AND ((status='pending' AND next_attempt_at<=?) OR (status='leased' AND COALESCE(lease_expires_at,0)<=?))`)
+          .run(leaseOwner, now + leaseMs, now, row.event_id, now, now) as any;
+        if (Number(result.changes || 0) === 1) claimed.push({ ...row, lease_owner: leaseOwner, lease_expires_at: now + leaseMs });
+      }
+      this.db.exec('COMMIT');
+      return claimed;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  markOutboxSent(eventId: string, leaseOwner: string, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_outbox SET status='sent',lease_owner=NULL,lease_expires_at=NULL,
+      attempt_count=attempt_count+1,updated_at=? WHERE event_id=? AND status='leased' AND lease_owner=?`)
+      .run(now, eventId, leaseOwner) as any;
+    return Number(result.changes || 0) === 1;
+  }
+
+  markOutboxDead(eventId: string, leaseOwner: string, code: string, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_outbox SET status='dead',lease_owner=NULL,lease_expires_at=NULL,
+      attempt_count=attempt_count+1,last_error_code=?,updated_at=?
+      WHERE event_id=? AND status='leased' AND lease_owner=?`)
+      .run(String(code || 'OWNER_EVENT_AUTHORIZATION_REVOKED').slice(0, 128), now, eventId, leaseOwner) as any;
+    return Number(result.changes || 0) === 1;
+  }
+
+  releaseOutbox(eventId: string, leaseOwner: string, input: { code: string; outcomeUnknown?: boolean }, now = Date.now()): boolean {
+    const status = input.outcomeUnknown ? 'outcome_unknown' : 'pending';
+    const current = this.db.prepare('SELECT attempt_count FROM owner_link_outbox WHERE event_id=? AND status=\'leased\' AND lease_owner=?')
+      .get(eventId, leaseOwner) as { attempt_count?: number } | undefined;
+    if (!current) return false;
+    const attempts = Number(current.attempt_count || 0) + 1;
+    const delay = Math.min(300_000, 1_000 * (2 ** Math.min(attempts, 8)));
+    const result = this.db.prepare(`UPDATE owner_link_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,
+      attempt_count=?,next_attempt_at=?,last_error_code=?,updated_at=? WHERE event_id=? AND status='leased' AND lease_owner=?`)
+      .run(status, attempts, now + delay, String(input.code || 'OWNER_EVENT_SEND_FAILED').slice(0, 128),
+        now, eventId, leaseOwner) as any;
     return Number(result.changes || 0) === 1;
   }
 

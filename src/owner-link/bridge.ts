@@ -20,6 +20,7 @@ interface OwnerLinkBridgeOptions {
   database: DatabaseSync;
   resolvePublicKey: (keyId: string) => crypto.KeyLike | null;
   now?: () => number;
+  onCommand?: (messageId: string) => void | Promise<void>;
 }
 
 interface OwnerLinkInboundResult {
@@ -38,10 +39,16 @@ function safeCode(error: unknown): string {
 class OwnerLinkBridge {
   readonly store: OwnerLinkStore;
   private readonly now: () => number;
+  private onCommand: ((messageId: string) => void | Promise<void>) | null;
   constructor(private readonly options: OwnerLinkBridgeOptions) {
     this.store = new OwnerLinkStore(options.database);
     this.now = options.now || Date.now;
+    this.onCommand = options.onCommand || null;
     this.store.recoverReservedCommands(this.now());
+  }
+
+  setCommandHandler(handler: ((messageId: string) => void | Promise<void>) | null): void {
+    this.onCommand = handler;
   }
 
   isReservedOwnerSender(fromUid: unknown): boolean {
@@ -68,6 +75,10 @@ class OwnerLinkBridge {
         throw new OwnerLinkSecurityError('OWNER_SIGNATURE_INVALID');
       }
       const persisted = this.store.persistVerified(envelope, fromUid, now);
+      if (persisted.status === 'inserted' && this.onCommand) {
+        const messageId = envelope.messageId;
+        queueMicrotask(() => void Promise.resolve(this.onCommand?.(messageId)).catch(() => {}));
+      }
       return { handled: true, accepted: true, state: persisted.state };
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : '';

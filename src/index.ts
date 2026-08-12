@@ -1601,7 +1601,8 @@ async function startMcpServer(args?: any, core?: any) {
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
-  const { OwnerGatewayKeyStore, OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule } = require('./owner-link');
+  const { OwnerCommandProcessor, OwnerEventOutbox, OwnerGatewayKeyStore, OwnerLinkBridge,
+    OwnerLinkIngress, OwnerLinkModule } = require('./owner-link');
   const ownerLinkModule = new OwnerLinkModule();
   let ownerLinkBridge: any = null;
   if (ownerLinkModule.enabled) {
@@ -1704,6 +1705,37 @@ async function startMcpServer(args?: any, core?: any) {
     }
   } catch (e: any) {
     console.error('[Lite] 创建后端处理器失败:', e.message);
+  }
+
+  if (ownerLinkBridge && ownerLinkModule.dispatchEnabled && dispatcher) {
+    const resolveOwnerAgentIdentity = (agentId: string) => {
+      const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+      if (!currentOwner) return null;
+      const row = db.prepare(`SELECT agent_id,did,imUid,private_key,owner_email,publish_status
+        FROM agents WHERE agent_id=? LIMIT 1`).get(agentId);
+      if (!row || String(row.owner_email || '').trim().toLowerCase() !== currentOwner
+          || row.publish_status !== 'published' || !row.imUid || !row.private_key) return null;
+      return { privateKey: row.private_key, keyId: row.did || row.agent_id, imUid: row.imUid };
+    };
+    const ownerProcessor = new OwnerCommandProcessor({
+      store: ownerLinkBridge.store,
+      dispatcher,
+      dispatchEnabled: true,
+      resolveAgentIdentity: resolveOwnerAgentIdentity,
+    });
+    ownerLinkBridge.setCommandHandler((messageId: string) => ownerProcessor.process(messageId));
+    for (const messageId of ownerLinkBridge.store.listProcessableCommands()) {
+      queueMicrotask(() => void ownerProcessor.process(messageId).catch((error: any) => {
+        console.error('[Owner Link] 待处理命令恢复失败:', error?.code || 'OWNER_COMMAND_PROCESS_FAILED');
+      }));
+    }
+    const ownerOutbox = new OwnerEventOutbox(ownerLinkBridge.store, { deliver }, 2_000, (row: any) => {
+      const identity = resolveOwnerAgentIdentity(String(row.agent_id || ''));
+      if (!identity) return false;
+      const liveUid = agentManager.getStatus?.(String(row.agent_id || ''))?.uid;
+      return !liveUid || liveUid === identity.imUid;
+    });
+    await taskManager.start('owner-link-outbox', () => ownerOutbox.start());
   }
 
   let ownerInterventionNotifier: any = null; // 在后面创建，供 callback 闭包引用

@@ -107,6 +107,7 @@ interface IsolatedExecutionOptions {
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
   sourceType?: 'agent_peer' | 'owner';
   executionScope?: 'a2a_mailbox' | 'owner_link';
+  preferredAdapter?: string;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -678,6 +679,23 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return _routeProvider(agentId, 'push');
   }
 
+  function resolveTrustedOwnerTransport(agentId: string): { providerId: string; providerType: string; deliveryMode: string } | null {
+    for (const provider of resolveProviders(agentId, 'push')) {
+      const providerId = _providerIdOf(provider);
+      if (!providerId || typeof (provider as any).getSandboxStatus !== 'function') continue;
+      try {
+        const sandbox = (provider as any).getSandboxStatus(agentId) || {};
+        const dimensions = sandbox.dimensions || {};
+        const safe = sandbox.effective === true && sandbox.versionState === 'verified' && sandbox.coverage === 'full'
+          && ['blocked','read_only','sandbox_scoped'].includes(String(dimensions.filesystem))
+          && ['blocked','allowlisted','proxied','not_applicable'].includes(String(dimensions.network))
+          && ['disabled','sandboxed'].includes(String(dimensions.commandExecution));
+        if (safe) return { providerId, providerType: _providerFamily(providerId), deliveryMode: _providerMode(providerId) };
+      } catch (_) {}
+    }
+    return null;
+  }
+
   /** A2A scope key：私聊与每个群完全隔离，同一 scope 内按无序 Agent 对收敛。 */
   function _scopeKey(imUidA: string, imUidB: string, scope = 'direct'): string {
     return `${scope}::${[imUidA, imUidB].sort().join('::')}`;
@@ -970,7 +988,8 @@ ${body}
       const result = await deliveryExecutor.execute({
         next: (excluded: Set<DispatcherProvider>) => {
           const strictAdapter = baseProviderPayload.providerBinding?.strictSessionRoute
-            ? baseProviderPayload.providerBinding.adapterType : null;
+            ? baseProviderPayload.providerBinding.adapterType
+            : String((payload as any).preferredAdapter || '') || null;
           const nextRoute = strictAdapter
             ? _routeProviderEntryExact(agentId, 'push', strictAdapter, excluded)
             : _routeProviderEntry(agentId, 'push', excluded);
@@ -1073,7 +1092,8 @@ ${body}
         agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
         channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
         content: options.content, rawContent: options.content, providerBinding: options.binding || null,
-        executionScope, sourceType, onDeliveryReceipt: (value: unknown) => { receipt = value; },
+        executionScope, sourceType, preferredAdapter: options.preferredAdapter,
+        onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {
         const error = new Error(`${prefix} Provider delivery ${delivery?.outcome || 'failed'}`);
@@ -1304,7 +1324,8 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport, getAgentDeliveryStatus, getRoutingStats,
+  return { dispatch, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+    resolveTrustedOwnerTransport, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
