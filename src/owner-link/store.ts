@@ -57,10 +57,12 @@ class OwnerLinkStore {
         throw new OwnerLinkSecurityError('OWNER_BINDING_MISMATCH');
       }
       this.db.prepare(`INSERT INTO owner_link_commands
-        (message_id,conversation_id,sequence,agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
+        (message_id,conversation_id,sequence,agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at,
+         operation,owner_identity_id,observed_im_uid,ownership_epoch,conversation_epoch)
+        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?,?,?,?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
         envelope.sequence, envelope.agentId, envelope.payloadDigest, canonicalJson(envelope.payload),
-        Date.parse(envelope.expiresAt), now, now);
+        Date.parse(envelope.expiresAt), now, now, envelope.operation, envelope.ownerIdentityId, observedImUid,
+        envelope.ownershipEpoch, envelope.conversationEpoch);
       this.transition(envelope.messageId, 'RECEIVED', 'VERIFIED', null, now);
       this.transition(envelope.messageId, 'VERIFIED', 'PERSISTED', null, now);
       this.db.exec('COMMIT');
@@ -97,6 +99,68 @@ class OwnerLinkStore {
   }
 
   getCommand(messageId: string): any { return this.db.prepare('SELECT * FROM owner_link_commands WHERE message_id=?').get(messageId); }
+
+  getActiveProviderBinding(ownerConversationId: string): any {
+    return this.db.prepare(`SELECT * FROM owner_link_provider_bindings
+      WHERE owner_conversation_id=? AND status='active' LIMIT 1`).get(ownerConversationId) || null;
+  }
+
+  saveProviderBinding(input: {
+    ownerConversationId: string;
+    agentId: string;
+    providerType: string;
+    providerInstanceId?: string | null;
+    adapterType: string;
+    deliveryMode: string;
+    nativeSessionId: string;
+    expectedVersion?: number | null;
+    now?: number;
+  }): any {
+    const values = [input.ownerConversationId, input.agentId, input.providerType, input.adapterType,
+      input.deliveryMode, input.nativeSessionId];
+    if (values.some((value) => !value || String(value).length > 192)) throw new OwnerLinkSecurityError('OWNER_PROVIDER_BINDING_INVALID');
+    const now = input.now || Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.db.prepare('SELECT * FROM owner_link_provider_bindings WHERE owner_conversation_id=?')
+        .get(input.ownerConversationId) as any;
+      if (input.expectedVersion != null && Number(current?.binding_version || 0) !== input.expectedVersion) {
+        throw new OwnerLinkSecurityError('OWNER_PROVIDER_BINDING_VERSION_CONFLICT');
+      }
+      const conflict = this.db.prepare(`SELECT owner_conversation_id FROM owner_link_provider_bindings
+        WHERE provider_type=? AND provider_instance_id=? AND adapter_type=?
+          AND native_session_id=? AND status='active' AND owner_conversation_id<>? LIMIT 1`)
+        .get(input.providerType, input.providerInstanceId || '', input.adapterType,
+          input.nativeSessionId, input.ownerConversationId);
+      if (conflict) throw new OwnerLinkSecurityError('OWNER_NATIVE_SESSION_ALREADY_BOUND');
+      const nextVersion = Number(current?.binding_version || 0) + 1;
+      this.db.prepare(`INSERT INTO owner_link_provider_bindings
+        (owner_conversation_id,agent_id,provider_type,provider_instance_id,adapter_type,delivery_mode,
+         native_session_id,binding_version,status,created_at,updated_at,last_used_at)
+        VALUES(?,?,?,?,?,?,?,?,'active',?,?,?)
+        ON CONFLICT(owner_conversation_id) DO UPDATE SET
+          agent_id=excluded.agent_id,provider_type=excluded.provider_type,
+          provider_instance_id=excluded.provider_instance_id,adapter_type=excluded.adapter_type,
+          delivery_mode=excluded.delivery_mode,native_session_id=excluded.native_session_id,
+          binding_version=excluded.binding_version,status='active',updated_at=excluded.updated_at,
+          last_used_at=excluded.last_used_at`)
+        .run(input.ownerConversationId, input.agentId, input.providerType, input.providerInstanceId || '',
+          input.adapterType, input.deliveryMode, input.nativeSessionId, nextVersion,
+          Number(current?.created_at || now), now, now);
+      this.db.exec('COMMIT');
+      return this.getActiveProviderBinding(input.ownerConversationId);
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  markProviderBindingUnavailable(ownerConversationId: string, expectedVersion: number, now = Date.now()): boolean {
+    const result = this.db.prepare(`UPDATE owner_link_provider_bindings SET status='unavailable',updated_at=?
+      WHERE owner_conversation_id=? AND binding_version=? AND status='active'`)
+      .run(now, ownerConversationId, expectedVersion) as any;
+    return Number(result.changes || 0) === 1;
+  }
 
   isKnownOwnerImUid(imUid: string): boolean {
     return !!this.db.prepare("SELECT 1 FROM owner_link_identity_bindings WHERE observed_im_uid=? AND status='active' LIMIT 1").get(imUid);

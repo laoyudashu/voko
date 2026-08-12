@@ -100,3 +100,44 @@ test('CAS lease permits one dispatcher and prevents retry after unknown outcome'
     assert.equal(store.getCommand('omsg-1').state, 'OUTCOME_UNKNOWN');
   } finally { db.close(); }
 });
+
+test('Owner Provider binding is exact, versioned and cannot be reused by another conversation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-binding-'));
+  const db = initOwnerLinkDatabase(path.join(dir, 'owner.db'));
+  try {
+    const store = new OwnerLinkStore(db);
+    const first = store.saveProviderBinding({ ownerConversationId: 'oconv-1', agentId: 'agent-1',
+      providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'codex-cli',
+      deliveryMode: 'cli', nativeSessionId: 'native-session-1', expectedVersion: 0 });
+    assert.equal(first.binding_version, 1);
+    assert.equal(first.provider_instance_id, 'instance-1');
+    assert.throws(() => store.saveProviderBinding({ ownerConversationId: 'oconv-2', agentId: 'agent-1',
+      providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'codex-cli',
+      deliveryMode: 'cli', nativeSessionId: 'native-session-1', expectedVersion: 0 }),
+      /OWNER_NATIVE_SESSION_ALREADY_BOUND/);
+    assert.throws(() => store.saveProviderBinding({ ownerConversationId: 'oconv-1', agentId: 'agent-1',
+      providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'codex-cli',
+      deliveryMode: 'cli', nativeSessionId: 'native-session-2', expectedVersion: 0 }),
+      /OWNER_PROVIDER_BINDING_VERSION_CONFLICT/);
+    const second = store.saveProviderBinding({ ownerConversationId: 'oconv-1', agentId: 'agent-1',
+      providerType: 'codex', providerInstanceId: 'instance-1', adapterType: 'codex-cli',
+      deliveryMode: 'cli', nativeSessionId: 'native-session-2', expectedVersion: 1 });
+    assert.equal(second.binding_version, 2);
+    assert.equal(store.markProviderBindingUnavailable('oconv-1', 1), false);
+    assert.equal(store.markProviderBindingUnavailable('oconv-1', 2), true);
+  } finally { db.close(); }
+});
+
+test('Owner database upgrades a v1 database without losing verified commands', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-upgrade-'));
+  const databasePath = path.join(dir, 'owner.db');
+  const db1 = initOwnerLinkDatabase(databasePath);
+  db1.prepare('PRAGMA user_version=1').run();
+  db1.exec('DROP TABLE owner_link_approvals; DROP TABLE owner_link_provider_bindings');
+  db1.close();
+  const db2 = initOwnerLinkDatabase(databasePath);
+  try {
+    assert.equal(db2.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.ok(db2.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_link_provider_bindings'").get());
+  } finally { db2.close(); }
+});

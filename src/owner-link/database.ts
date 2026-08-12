@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const OWNER_LINK_SCHEMA_VERSION = 1;
+const OWNER_LINK_SCHEMA_VERSION = 2;
 
 interface InitOwnerLinkDatabaseOptions { createParent?: boolean }
 
@@ -100,6 +100,57 @@ function initOwnerLinkDatabase(
           created_at INTEGER NOT NULL
         ) STRICT;
       `);
+      if (version < 2) {
+        const commandColumns = new Set((db.prepare('PRAGMA table_info(owner_link_commands)').all() as Array<{ name?: string }>)
+          .map((column) => String(column.name || '')));
+        const addCommandColumn = (name: string, declaration: string) => {
+          if (!commandColumns.has(name)) db.exec(`ALTER TABLE owner_link_commands ADD COLUMN ${name} ${declaration}`);
+        };
+        addCommandColumn('operation', 'TEXT');
+        addCommandColumn('owner_identity_id', 'TEXT');
+        addCommandColumn('observed_im_uid', 'TEXT');
+        addCommandColumn('ownership_epoch', 'INTEGER');
+        addCommandColumn('conversation_epoch', 'INTEGER');
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS owner_link_provider_bindings (
+            owner_conversation_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            provider_type TEXT NOT NULL,
+            provider_instance_id TEXT NOT NULL DEFAULT '',
+            adapter_type TEXT NOT NULL,
+            delivery_mode TEXT NOT NULL,
+            native_session_id TEXT NOT NULL,
+            binding_version INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_used_at INTEGER NOT NULL,
+            CHECK (status IN ('active','stale','unavailable')),
+            UNIQUE (provider_type, provider_instance_id, adapter_type, native_session_id)
+          ) STRICT;
+          CREATE INDEX idx_owner_link_provider_bindings_agent
+            ON owner_link_provider_bindings(agent_id, status);
+          CREATE TABLE IF NOT EXISTS owner_link_approvals (
+            approval_id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL REFERENCES owner_link_commands(message_id) ON DELETE CASCADE,
+            action_digest TEXT NOT NULL,
+            provider_type TEXT,
+            provider_instance_id TEXT,
+            adapter_type TEXT,
+            delivery_mode TEXT,
+            binding_version INTEGER,
+            enforcement TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            expires_at INTEGER NOT NULL,
+            claimed_at INTEGER,
+            consumed_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            CHECK (enforcement IN ('voko_enforced','provider_enforced','not_enforceable')),
+            CHECK (status IN ('pending','claimed','consumed','expired','rejected'))
+          ) STRICT;
+        `);
+      }
       db.prepare(`INSERT INTO owner_link_meta(key,value,updated_at) VALUES('schema_version',?,?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
         .run(String(OWNER_LINK_SCHEMA_VERSION), Date.now());
