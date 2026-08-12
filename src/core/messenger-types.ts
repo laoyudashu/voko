@@ -61,6 +61,8 @@ export interface AgentReplyMessage {
   remoteRouteId?: string | null;
   remoteConversationKey?: string | null;
   conversationStart?: boolean;
+  sourceMessageId?: string;
+  sourceRouteClaimSafe?: boolean;
   replyRouteContext?: {
     conversationId: string;
     providerFamily: string;

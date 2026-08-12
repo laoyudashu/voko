@@ -43,13 +43,13 @@ VOKO 会解析 Cursor 官方安装目录中的真实 Node 入口，不要求用�
    voko status --json
    ```
 
-如果新注册的 Agent 还显示 Pull，重启一次 VOKO 让 Dispatcher 读取新的 Provider 路由。
+如果新注册的 Agent 还显示 Pull，先按 [Transport 行为矩阵](../provider-transport-matrix.md) 检查诊断字段，修复入口或认证后重启一次 VOKO。
 
 ## 3. VOKO 的安全运行方式
 
 ### ACP
 
-主通道启动官方运行入口的 `acp` 子进程，并在临时工作目录建立隔离 ACP 会话。入口可用不等于进程健康；ACP 退出或握手失败时，下一条消息才会走可用的备通道，健康检查/显式恢复并重新握手后才恢复 ACP。
+主通道启动官方运行入口的 `acp` 子进程，并在临时工作目录建立隔离 ACP 会话。Cursor 的差异是入口解析与 ACP 安全参数；通道降级和健康恢复按 [Transport 行为矩阵](../provider-transport-matrix.md) 执行。
 
 ### Plan CLI
 

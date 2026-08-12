@@ -43,7 +43,7 @@ kiro-cli login
    voko status --json
    ```
 
-如果注册后运行中的 VOKO 仍只显示 Pull，重启一次 VOKO 以刷新路由缓存。
+如果注册后运行中的 VOKO 仍只显示 Pull，按 [Transport 行为矩阵](../provider-transport-matrix.md) 的诊断字段确认 CLI 状态，修复入口或认证后重启一次 VOKO。
 
 ## 3. VOKO 的无交互安全边界
 

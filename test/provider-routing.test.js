@@ -108,6 +108,18 @@ test('web pending conversation is unique and can merge back into its active pare
   } finally { fixture.close(); }
 });
 
+test('wire conversation keys resolve only inside the exact Agent/channel scope', () => {
+  const fixture = database();
+  try {
+    const conversations = new RoutingConversationStore(fixture.db);
+    const conversation = conversations.createPending({ agentId: 'agent-wire', channelId: 'peer-wire', channelType: 1 });
+    assert.equal(conversations.getForWireKey('agent-wire', 'peer-wire', 1, conversation.wireConversationKey).id, conversation.id);
+    assert.equal(conversations.getForWireKey('other-agent', 'peer-wire', 1, conversation.wireConversationKey), null);
+    assert.equal(conversations.getForWireKey('agent-wire', 'other-peer', 1, conversation.wireConversationKey), null);
+    assert.equal(conversations.getForWireKey('agent-wire', 'peer-wire', 2, conversation.wireConversationKey), null);
+  } finally { fixture.close(); }
+});
+
 test('current schema activates legacy Web conversations after an acknowledged outbound route', () => {
   const fixture = database();
   const dbPath = fixture.dbPath;

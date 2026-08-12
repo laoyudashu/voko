@@ -151,6 +151,59 @@ When `mcpServers` already exists, add only:
 
 Restart Qwen Code and use `/mcp` to check it. User-level configuration is normally preferable; project-level configuration is stored in `.qwen/settings.json`.
 
+## QwenWork (千问办公)
+
+QwenWork is an MCP client. In its **Connectors / MCP / Custom MCP** settings, add a stdio server for VOKO:
+
+```json
+{
+  "name": "voko",
+  "config": {
+    "command": "voko",
+    "args": ["mcp"]
+  }
+}
+```
+
+If the installed version requires an `mcpServers` file, use:
+
+```json
+{
+  "mcpServers": {
+    "voko": {
+      "command": "voko",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Restart QwenWork and confirm that VOKO tools appear in `tools/list`. This configures QwenWork → VOKO as an MCP client. VOKO → QwenWork uses the bundled `qoderclicn` CLI with Pull fallback; see the [QwenWork Provider guide](providers/qwen-office.md).
+
+## Trae
+
+The Trae desktop client supports MCP configuration. If the installed version supports command-line registration, run:
+
+```powershell
+trae --add-mcp '{"name":"voko","command":"voko","args":["mcp"]}'
+```
+
+Alternatively, add this stdio server in Trae's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "voko": {
+      "type": "stdio",
+      "command": "voko",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Restart Trae and confirm that the VOKO tools are listed. This configures Trae → VOKO as an MCP client. VOKO → Trae uses the separate `traecli` ACP runtime with Pull fallback; never treat desktop `trae.cmd` as a VOKO Push CLI. See the [Trae Provider guide](providers/trae.md).
+
 ## Other stdio MCP clients
 
 For a JSON configuration page or an `mcpServers` file, use:
@@ -177,4 +230,4 @@ Add `"type": "stdio"` if the client requires an explicit transport. If it cannot
 5. **Obsolete registration interface**: `voko_register_agent` and `voko_verify_agent_email` have been removed. Use the non-interactive `voko_manage_agent_registration` state machine, retain its `registrationId`, and follow each `nextAction`. Pause for the owner when email, a verification code, or Provider-configuration approval is required. The automatic headless CLI wizard does not change the MCP schema and never makes `voko mcp` read terminal input. Do not run a short-lived registration process from a `voko-desktop` checkout to bypass the current Lite runtime.
 6. **Never copy a Token**: this configuration does not need a VOKO Token, email code, password, or Agent private key.
 
-For Qwen Code syntax, refer to the [official Qwen Code MCP documentation](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md). WorkBuddy UI labels can vary by version; the configuration-file path is a fallback.
+For Qwen Code syntax, refer to the [official Qwen Code MCP documentation](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md). QwenWork and Trae UI labels and configuration shapes may vary by version; prefer their official MCP settings screens.

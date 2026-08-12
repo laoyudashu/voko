@@ -816,6 +816,34 @@ class MessageHandler extends EventEmitter {
       ? routeMetadata.replyToRouteId : null;
     const remoteRouteId = routeMetadata?.protocolVersion === 1 && typeof routeMetadata.routeId === 'string'
       ? routeMetadata.routeId : null;
+    // Chatroom has emitted both names over the lifetime of protocol v1.  Treat
+    // them as aliases, then resolve only within this Agent/channel scope so a
+    // visitor cannot point an inbound message at another conversation.
+    const remoteConversationKeys = routeMetadata?.protocolVersion === 1
+      ? [...new Set([routeMetadata.conversationKey, routeMetadata.canonicalConversationKey]
+        .filter((key): key is string => typeof key === 'string' && key.trim().length > 0))]
+      : [];
+    let remoteConversationKey: string | null = remoteConversationKeys[0] || null;
+    let remoteRoutingConversation: RoutingConversation | null = null;
+    if (remoteConversationKeys.length && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
+      try {
+        for (const candidate of remoteConversationKeys) {
+          remoteRoutingConversation = this._routingConversations.getForWireKey(
+            agentId, channelId, channelType || 1, candidate,
+          );
+          if (remoteRoutingConversation) {
+            remoteConversationKey = candidate;
+            break;
+          }
+        }
+        if (remoteRoutingConversation?.status === 'pending') {
+          this._routingConversations.activate(remoteRoutingConversation.id);
+          remoteRoutingConversation = this._routingConversations.getForScope(
+            remoteRoutingConversation.id, agentId, channelId, channelType || 1,
+          );
+        }
+      } catch (_) { remoteRoutingConversation = null; }
+    }
     let hasGroupRoutingConversation = false;
     if (isGroup && !replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       try {
@@ -832,7 +860,13 @@ class MessageHandler extends EventEmitter {
     }
     if (remoteRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       try { this._messageRoutes.recordInbound({ messageId, remoteRouteId, agentId, peerUid: fromUid,
-        channelId, channelType: channelType || 1 }); } catch (_) {}
+        conversationId: remoteRoutingConversation?.id || null, channelId, channelType: channelType || 1 }); } catch (_) {}
+    }
+    if (remoteRoutingConversation?.providerFamily && remoteRoutingConversation.nativeSessionId) {
+      replyRouteContext = { conversationId: remoteRoutingConversation.id,
+        providerFamily: remoteRoutingConversation.providerFamily,
+        providerInstanceKey: remoteRoutingConversation.providerInstanceKey || '',
+        nativeSessionId: remoteRoutingConversation.nativeSessionId, strictSessionRoute: true };
     }
     if (replyToRouteId && isRoutingFeatureEnabled(this.db, 'routing_conversation_shadow_v1', true)) {
       try {
@@ -865,7 +899,7 @@ class MessageHandler extends EventEmitter {
       channelType: channelType || 1, contentType: contentType || 1,
       messageId, timestamp, mention: isGroup ? mention : null, replyRouteContext,
       remoteRouteId,
-      remoteConversationKey: routeMetadata?.conversationKey,
+      remoteConversationKey,
       conversationStart: routeMetadata?.conversationStart === true,
     });
   }
@@ -1136,6 +1170,15 @@ class MessageHandler extends EventEmitter {
       let conversation = data.replyRouteContext?.conversationId
         ? this._routingConversations.getForScope(data.replyRouteContext.conversationId, agentId, replyChannelId, replyChannelType)
         : null;
+      // A Web/Chatroom conversation is a logical scope even when it has no
+      // Provider-native session yet.  Prefer its scoped wire key over the
+      // session fallback so the visitor message and the Agent reply stay in
+      // the same Web tab.
+      if (!conversation && data.remoteConversationKey) {
+        conversation = this._routingConversations.getForWireKey(
+          agentId, replyChannelId, replyChannelType, data.remoteConversationKey,
+        );
+      }
       if (!conversation && data.sessionKey) {
         const backend = this.db.prepare('SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
           .get<BackendRow>(agentId);
@@ -1148,6 +1191,13 @@ class MessageHandler extends EventEmitter {
         if (data.conversationStart === true) conversationDisposition = existed ? 'reused' : 'created';
       }
       routingConversation = conversation;
+      if (conversation && replyChannelType === 1 && data.sourceRouteClaimSafe === true && data.sourceMessageId) {
+        const source = this.db.prepare(`SELECT 1 AS found FROM messages
+          WHERE id=? AND agent_id=? AND channel_id=? AND channel_type=1 AND from_uid=? AND is_me=0 LIMIT 1`)
+          .get<{ found: number }>(data.sourceMessageId, agentId, replyChannelId, replyChannelId);
+        if (source) this._messageRoutes.claimInbound({ messageId: data.sourceMessageId, conversationId: conversation.id,
+          agentId, peerUid: replyChannelId, channelId: replyChannelId, channelType: 1 });
+      }
       if (conversation) outboundRouteId = this._messageRoutes.createPending({ messageId: msgId,
         conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
         channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });

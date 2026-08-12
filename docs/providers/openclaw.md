@@ -92,20 +92,13 @@ agent:<openclaw-agent-id>:<visitor-id>
 
 ## 4. WebSocket、CLI 降级和 Pull
 
-正常情况下 VOKO 优先使用 OpenClaw WebSocket：
-
-1. WebSocket 健康时，访客消息实时推送到对应 session。
-2. Gateway 断开、认证失败或 WebSocket 被健康检查标记不可用时，下一条消息降级到 OpenClaw CLI。
-3. WebSocket 恢复并重新完成握手后，后续消息再次升级到 WebSocket。
-4. 两个自动通道都不可用时，消息保留在 VOKO，Agent 通过 Pull 读取。
-
-降级只切换投递通道，不改变 VOKO 会话边界；不会因为 WebSocket → CLI → WebSocket 自动重复回复。查看当前状态：
+通用通道顺序、降级次数、结果分类和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。OpenClaw 的差异是：WebSocket 使用 Gateway profile/session，CLI 使用 Runtime Resolver 解析的 `openclaw agent --local --json`；两者不能把 VOKO Agent ID、workspace 名或最近 session 当成实例证据。查看当前状态：
 
 ```bash
 voko status --json
 ```
 
-关注 Agent 的 `activeMode`、`availableModes` 和 `deliveryStatus`。如果显示 `websocket`，不要因为初始化期间短暂延迟而手动改成 CLI；Dispatcher 会根据健康事件刷新路由缓存。
+关注 Agent 的 `activeAutomaticMode`、`automaticReadyModes` 和 `deliveryStatus.methods`。如果显示 `websocket`，不要因为初始化期间短暂延迟而手动改成 CLI；通用升级/降级规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。
 
 ## 5. OpenClaw 作为 MCP 客户端
 
@@ -157,5 +150,5 @@ openclaw mcp probe voko
 - 环境：Ubuntu 24.04.4 LTS；Voko 0.4.3 由当前源码构建；实测 OpenClaw 2026.6.1。
 - Gateway 自动启动并完成 WebSocket 认证；Voko 注册、CLI 首条消息和同一访客续接均通过。
 - 本轮 Agent 注册为 `CLI → Pull`，所以 Dispatcher 实际使用 OpenClaw CLI；Gateway WS 在线不等于该 Agent 已选择 WS。
-- 若要使用 WS，注册时显式保留对应 WebSocket 模式，并以 `voko doctor --deep` 的 active mode 检查；WS 异常时路由缓存会降级 CLI。
+- 若要使用 WS，注册时显式保留对应 WebSocket 模式，并以 `voko doctor --deep` 的 `activeAutomaticMode` 检查；WS 异常时按行为矩阵降级 CLI。
 - [完整 Linux 验收矩阵](linux-real-test-2026-08.md)

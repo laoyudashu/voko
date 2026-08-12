@@ -11,7 +11,7 @@ Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契�
 - **Agent → VOKO 注册**：优先调用 MCP 工具 `voko_manage_agent_registration`；MCP 不可用时使用 `voko manage_agent_registration --action start --registration-mode agent`。
 - **主人通过界面注册**：使用 VOKO Web UI 或有 TTY 的 `voko manage_agent_registration --interactive`，适合邮箱验证码、Provider 配置批准和人工选择。
 - **VOKO → Cline 接收**：注册 Provider 类型 `cline`，推荐 `ACP → CLI → Pull`。ACP 是实时主通道，CLI 是受限 Plan 备通道，Pull 始终保留。
-- 只选择注册预检标记为 `ready` 的方式；修改 Cline 登录、PATH 或配置后重启 VOKO，再检查 `activeMode` 和 `availableModes`。
+- 只选择注册预检标记为 `ready` 的方式；修改 Cline 登录、PATH 或配置后重启 VOKO，再检查 `activeAutomaticMode`、`automaticReadyModes` 和 `deliveryStatus.methods`。
 
 ## 1. 安装、版本和登录
 
@@ -70,15 +70,11 @@ VOKO 还会使用命令权限策略拒绝外部访客触发 Shell、文件修改
 
 ### Pull 兜底
 
-ACP 和 CLI 都不可用时，消息保留在 VOKO。Cline 或其 MCP 客户端可以通过 `voko_fetch_new_messages` 主动读取；Pull 是可靠的接收方式，不代表消息已经丢失。
+Pull 的保留和消费规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准；Cline 侧只需确认 `voko_fetch_new_messages` 能读取待处理消息。
 
 ## 4. 会话、降级和恢复
 
-- ACP 使用 VOKO 为 `(Agent、私聊/群聊、访客会话)` 保存的会话绑定；不同 Agent、访客、私聊和群聊不会共享会话。
-- ACP → CLI → ACP 只切换投递通道，不改变会话边界，不应重复回复同一条消息。
-- ACP 入口存在不等于 ACP 进程健康。`healthCheck()` 或显式恢复完成握手并发布可用事件后，下一条消息才会重新升级到 ACP。
-- 原生会话无法恢复时，VOKO 会将绑定标记为 stale 并创建隔离的新会话；不会猜测 Cline 最近会话，也不会对结果不明确的投递自动重试。
-- 发送后不要因为等待较久就并行再次发送；先查看状态或使用 Pull 确认。
+通用 Session、降级、结果分类和恢复规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Cline 的差异是：ACP 使用 `cline --acp`，CLI 使用 Plan/JSONL 且拒绝访客工具权限；ACP 进程恢复后才重新升级，原生会话无法恢复时不得猜测 Cline 最近会话。
 
 ## 5. 最小验收
 
@@ -97,7 +93,7 @@ ACP 和 CLI 都不可用时，消息保留在 VOKO。Cline 或其 MCP 客户端�
 
 - **注册后只有 Pull**：确认 `cline --version`、`cline auth` 和 `voko doctor --deep`，检查注册时是否选择了 ready 的 ACP/CLI，然后重启 VOKO。
 - **ACP 连接后立即退出**：先单独运行 Cline 的 ACP/认证检查，确认模型凭据和用户配置，再让 VOKO 重试；不要通过放开工具权限绕过问题。
-- **CLI 有回复但 ACP 没有升级**：检查 `activeMode`、ACP 进程健康和恢复事件；路由缓存会在事件到达时刷新，必要时完全重启 VOKO。
+- **CLI 有回复但 ACP 没有升级**：检查 `activeAutomaticMode`、ACP 进程健康和恢复事件；通用缓存行为以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准，必要时完全重启 VOKO。
 - **Cline 能调用 VOKO MCP，但 VOKO 推不进 Cline**：这是两个方向，分别检查 Cline 的 MCP 配置和 VOKO Agent 的 ACP/CLI 预检。
 
 ## Ubuntu Linux 实机验收（2026-08-07）

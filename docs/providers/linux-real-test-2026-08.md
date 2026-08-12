@@ -1,12 +1,14 @@
 # Ubuntu Linux Provider 实机验收矩阵（2026-08-07）
 
+本页只记录 Linux 实机证据；通用 Transport 行为以 [Provider Transport 行为矩阵](../provider-transport-matrix.md) 为准。
+
 这份记录补充各 Provider 专属指南中的 Windows 验收信息。测试机为 Ubuntu 24.04.4 LTS，使用当前源码构建的 VOKO Lite 0.4.3 npm 包；Voko 服务实际使用 Node 24.14.0，交互式 shell 的 Node 版本可能不同。所有 Agent 均在同一个 Voko 实例中完成注册、首条消息、同一访客第二条消息和消息持久化检查；日志只检查脱敏状态、通道和耗时，不记录 Token、完整访客提示词或原生 session ID。
 
 ## 结果总览
 
 | Provider | Ubuntu 版本 | 注册与首条消息 | 同一会话续接 | 实际推荐通道 | Linux 特别说明 |
 | --- | --- | --- | --- | --- | --- |
-| OpenHands | CLI 1.14.0 / SDK 1.16.1 | 通过 | 通过 | ACP → CLI → Pull | headless ACP 可用；CLI 作为降级 |
+| OpenHands | CLI 1.14.0 / SDK 1.16.1 | 通过 | 通过 | Pull（当前 Catalog） | ACP/CLI 适配器曾完成验证，但当前未注册自动 Push transport |
 | Goose | 1.45.0 | 通过 | 通过 | CLI → Pull | 使用 Goose 原生 session；不要设置 `GOOSE_PATH_ROOT` 冒充实例 |
 | Codex | 0.145.0 | 通过 | 通过 | CLI → Pull | 先完成 `codex login`，保持只读无交互调用 |
 | Claude Code | 2.1.220 | 通过 | 通过 | CLI → Pull | 先完成 `claude` 登录；非交互 shell 要继承同一用户环境 |
@@ -28,7 +30,7 @@
 ## 通道和恢复规则
 
 - 注册时应以 `voko register_agent`/MCP 预检返回的 `providerType`、`deliveryModes` 为准；不要手写或猜测 instance/session 字段。
-- Voko 按注册的优先级使用已发布 Agent 的 Push 通道：ACP/HTTP/WebSocket 健康时优先，失败后按已配置顺序降级到 CLI，最后保留 Pull。健康事件会刷新 Dispatcher 路由缓存，下一条消息再升级，不重复投递。
+- 本轮实测观察到：已注册的 Push 通道按配置顺序运行，健康事件后下一条消息可恢复，未出现重复投递；规范仍以 [Provider Transport 行为矩阵](../provider-transport-matrix.md) 为准。
 - CLI Provider 的连续消息使用 Voko 保存的原生会话绑定；原生会话失效时只创建一次新会话，结果不明确时不自动重发。
 - Gemini 是已验证的例外：当前 CLI 不提供可复用的原生 session ID，Voko 使用 context-window 历史续接；超时或上游 503 时不要立即重复发送。
 - OpenClaw 的 Gateway WS、Hermes 的 HTTP profile 属于独立能力。运行时在线不代表当前 Agent 已选择该通道，须以 `voko doctor --deep` 的 active mode 为准。

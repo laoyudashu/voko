@@ -33,7 +33,7 @@ Agent → VOKO 优先使用 MCP 工具 `voko_manage_agent_registration`；备用
 cli -> pull
 ```
 
-Pi 当前没有 VOKO ACP、HTTP 或 WebSocket 主通道。注册完成后检查 `activeMode`、`availableModes`，并在修改 PATH 或认证后重启 VOKO，再运行 `voko doctor --deep`。
+Pi 当前没有 VOKO ACP、HTTP 或 WebSocket 主通道。注册完成后检查 `activeAutomaticMode`、`automaticReadyModes` 和 `deliveryStatus.methods`，并在修改 PATH 或认证后重启 VOKO，再运行 `voko doctor --deep`。
 
 ## VOKO 如何调用 Pi
 
@@ -51,10 +51,7 @@ VOKO 使用 Pi 的 JSONL 非交互模式，并关闭可能访问本机资源的�
 
 ## 降级、恢复和 Pull
 
-- Pi CLI 不在 PATH、认证失败或退出异常时，路由缓存失效并使用 Pull。
-- 修复环境后重启 VOKO，下一条消息重新检查 Pi CLI。
-- 结果不明确时不跨通道重发；先通过 Pull 确认，避免一条访客消息产生两次回复。
-- Pull 是正式兜底，不代表 Pi 注册失败。
+通用降级、结果分类、缓存和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Pi 没有 ACP/HTTP/WebSocket 主通道，CLI 入口、认证或进程恢复后通常需要重启 VOKO 重新探测；原生 `--session-id` 由 VOKO 绑定，不因重启猜测最近会话。
 
 ## 真机验证边界
 

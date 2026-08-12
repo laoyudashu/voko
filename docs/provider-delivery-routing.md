@@ -1,8 +1,10 @@
 # Provider 注册、消息投递与路由恢复指南
 
-[文档索引](README.md) · [Provider 指南索引](providers/README.md) · [兼容性矩阵](provider-compatibility.md) · [MCP消息与精确Conversation接口](mcp-message-conversations.md) · [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)
+[文档索引](README.md) · [Transport 行为矩阵（架构真相源）](provider-transport-matrix.md) · [Provider 指南索引](providers/README.md) · [兼容性矩阵](provider-compatibility.md) · [MCP消息与精确Conversation接口](mcp-message-conversations.md) · [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)
 
 本文是 VOKO 的通用操作约定。它说明 Agent 如何注册到 VOKO、VOKO 如何把访客消息交给不同类型的 Agent，以及自动通道失效、恢复和路由缓存刷新时会发生什么。
+
+本文面向 Agent 和操作者；通道不变量、Binding 所有权、结果分类和缓存 generation 只以 [Provider Transport 行为矩阵](provider-transport-matrix.md) 为准，本页不另行定义架构规则。
 
 已完成相应真机或功能验收的 Provider，才会在 [Provider 专属指南](providers/README.md) 中提供具体安装、登录和操作步骤。尚未完成验收的 Provider 不应根据本页的通用能力描述推断为“已支持自动推送”。
 
@@ -14,7 +16,7 @@
 2. 除 `start` 外始终复用同一个 `registrationId`，按照每次响应的 `nextAction` 继续。
 3. 先执行环境检测，再选择 VOKO 识别出的 `providerType`；不要自行猜测 Provider 类型或伪造 `instanceId`。
 4. 只选择状态为 `ready` 的自动接收方式，并始终保留 `pull`。
-5. 注册完成后检查 `activeMode`、`availableModes` 和连接状态；如果刚修改 PATH、登录状态或 Provider 配置，重启 VOKO 后再测试。
+5. 注册完成后检查 `activeAutomaticMode`、`automaticReadyModes`、`deliveryStatus.methods` 和 IM 连接状态；如果刚修改 PATH、登录状态或 Provider 配置，重启 VOKO 后再测试。
 6. 发送测试消息时不要并行重试。若结果不明确，先查看状态或通过 Pull 读取，避免同一访客消息重复投递。
 7. 回复具体消息优先传`replyToMessageId`；只有主动续接或多Session选择时才显式传VOKO `conversationId`。接口兼容与返回字段见[消息接口契约](mcp-message-conversations.md)。
 
@@ -49,7 +51,7 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 
 ## 3. 已验收 Provider 的推荐注册顺序
 
-下表是已完成相应真机或功能验收的 Provider 的推荐值。实际运行仍以注册预检结果和数据库中的 `delivery_modes` 为准；用户明确选择 Pull-only 后，VOKO 不会自动替用户重新开启 Push。
+下表是当前 Catalog 的推荐顺序和已知前置条件；实际运行仍以注册预检结果和数据库中的 `delivery_modes` 为准。未完成登录或本机运行时验收时，Push 不会被标记为可用；用户明确选择 Pull-only 后，VOKO 不会自动替用户重新开启 Push。
 
 | Provider 类型 | 推荐 `deliveryModes` | 什么时候选择其他顺序 |
 | --- | --- | --- |
@@ -57,7 +59,7 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 | Hermes | `http → cli → pull` | HTTP Gateway/profile 尚未准备好时先用 `cli → pull`。 |
 | Goose (`acp-goose`) | `acp → cli → pull` | 需要只用 CLI 时选择 `goose` 类型的 `cli → pull`。 |
 | Cline | `acp → cli → pull` | ACP 未登录或无法握手时先用 `cli → pull`，不要放开工具权限。 |
-| OpenHands | `acp → cli → pull` | ACP 不健康时使用受限 headless JSON CLI；OpenHands CLI 1.16.0 / SDK 1.21.0 已完成 Windows ACP→CLI→ACP 验证。 |
+| OpenHands | `pull` | 当前 Catalog 未注册 Push transport；ACP/CLI 仅有适配器验证记录，待迁移完成后再启用自动通道。 |
 | OpenCode | `acp → attach → cli → pull` | 仅使用已配置 Attach 服务或稳定 CLI 时，按预检结果减少通道。 |
 | Cursor | `acp → cli → pull` | ACP 不可用时先使用 Plan CLI；不要把 workspace 名称当作 Instance。 |
 | GitHub Copilot | `acp → cli → pull` | 优先 ACP；CLI 是受 ACP Provider 管理的受限备用通道。 |
@@ -71,6 +73,8 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 | Aider | `cli → pull` | 使用 ask/dry-run/no-git 只读问答；模型 API 未就绪时先保留 Pull。 |
 | Reasonix | `cli → pull` | 使用 stdin、stream-json、dontAsk；不要在参数末尾添加 `-`。 |
 | Gemini CLI | `cli → pull` | 需要 Docker sandbox；headless 调用使用 `--skip-trust`，连续消息由 VOKO context window 续接。 |
+| 千问办公（QwenWork） | `cli → pull` | 使用安装包内 `qoderclicn` 的 stream-json CLI；未登录、运行时缺失或明确未送达时回退 Pull。 |
+| Trae | `acp → pull` | 使用独立 `traecli acp serve`；桌面 `trae.cmd` 仅作为 MCP 客户端，未安装 `traecli` 时 ACP 标记不可用。 |
 
 不同 Agent、不同访客、私聊和群聊会分别保存会话绑定。不要在注册描述、MCP 参数或日志中填写或传播原生 session ID、Token 或私密配置路径。
 
@@ -127,7 +131,9 @@ VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测�
 - [Aider](providers/aider.md)
 - [Reasonix](providers/reasonix.md)
 - [Gemini CLI](providers/gemini.md)
+- [千问办公](providers/qwen-office.md)
+- [Trae](providers/trae.md)
 
-Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
+Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。千问办公和 Trae 的运行时前置条件与本机验收记录见上方链接；Push 是否启用以注册预检为准。其他环境请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
 
 Ubuntu 18 个已验收 Provider 的版本和实机边界见 [Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)。

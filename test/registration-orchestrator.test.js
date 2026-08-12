@@ -69,6 +69,8 @@ describe('shared registration orchestrator', () => {
     assert.strictEqual(currentAgentTypeFromProcessRows(['WorkBuddy.exe --mcp']), 'workbuddy');
     assert.strictEqual(currentAgentTypeFromProcessRows(['Doubao.exe agent']), 'doubao');
     assert.strictEqual(currentAgentTypeFromProcessRows(['zcode.exe mcp']), 'zcode');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['QwenWorkCN.exe --background']), 'qwen-office');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['Trae.exe --extensions-dir C:\\tmp']), 'trae');
   });
 
   it('recognizes gateway-based Agents from safe execution markers', () => {
@@ -173,6 +175,38 @@ describe('shared registration orchestrator', () => {
       assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
       assert.strictEqual(provider.deliveryModes[0].required, true);
     }
+  });
+
+  it('detects Qwen Office and Trae desktop installs while keeping headless readiness separate', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: () => false,
+      qwenOfficeRuntimeAvailable: () => false,
+      traeCliAvailable: () => false,
+      installedApplications: () => ['千问办公 0.1.6', 'Trae (User) 3.5.81'],
+      detectCurrentAgentType: () => null,
+    });
+    const environment = service.inspectEnvironment();
+    for (const type of ['qwen-office', 'trae']) {
+      const provider = environment.detected.find((item) => item.type === type);
+      assert.ok(provider, `${type} should be detected from the installed-app inventory`);
+      assert.deepEqual(provider.instances, []);
+      assert.deepEqual(provider.deliveryModes.map((mode) => mode.mode), type === 'trae' ? ['acp', 'pull'] : ['cli', 'pull']);
+      assert.equal(provider.deliveryModes.at(-1).selected, true);
+      assert.equal(provider.deliveryModes[0].status, 'unavailable');
+    }
+    assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
+  });
+
+  it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
+    const service = new RegistrationOrchestrator({
+      qwenOfficeRuntimeAvailable: () => true,
+      traeCliAvailable: () => true,
+    });
+    assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
   });
 
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {

@@ -13,6 +13,20 @@ test('Provider Catalog has valid explicit transports and instance requirements',
   assert.ok(PROVIDER_CATALOG.every(family => family.defaultDeliveryModes.includes('pull')));
 });
 
+test('Qwen Office and Trae expose headless Push transports with Pull fallback', () => {
+  for (const [type, label] of [['qwen-office', '千问办公 (QwenWork)'], ['trae', 'Trae']]) {
+    const family = getProviderFamily(type);
+    assert.ok(family, `${type} should be registered in the catalog`);
+    assert.equal(family.label, label);
+    assert.ok(family.defaultDeliveryModes.includes('pull'));
+    assert.ok(family.transports.length > 0);
+  }
+  assert.equal(getProviderTransport('qwen-office-cli').mode, 'cli');
+  assert.equal(getProviderTransport('traecli-acp').mode, 'acp');
+  assert.equal(getProviderFamily('qwenwork').type, 'qwen-office');
+  assert.equal(getProviderFamily('trae-ide').type, 'trae');
+});
+
 test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
   const calls = [];
   const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];

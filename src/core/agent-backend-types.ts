@@ -44,6 +44,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'opencode', label: 'OpenCode' },
   { value: 'pi', label: 'Pi Coding Agent' },
   { value: 'qwen-code', label: 'Qwen Code' },
+  { value: 'qwen-office', label: '千问办公 (QwenWork)' },
   { value: 'kiro', label: 'Kiro CLI' },
   { value: 'github-copilot', label: 'GitHub Copilot CLI' },
   { value: 'openhands', label: 'OpenHands' },
@@ -54,14 +55,15 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
   { value: 'doubao', label: '豆包' },
+  { value: 'trae', label: 'Trae' },
   { value: 'others', label: '其他' },
 ];
 
 const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
     'zeroclaw',
-    'qwen-code', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
-    'zcode', 'workbuddy', 'doubao', 'cline', 'reasonix',
+    'qwen-code', 'qwen-office', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
+    'zcode', 'workbuddy', 'doubao', 'trae', 'cline', 'reasonix',
   ].includes(type.value),
 );
 
@@ -86,6 +88,11 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   qwen: 'qwen-code',
   'qwen-cli': 'qwen-code',
   'qwen-code-cli': 'qwen-code',
+  qwenwork: 'qwen-office',
+  'qwen-work': 'qwen-office',
+  qwenworkcn: 'qwen-office',
+  'qwen-office': 'qwen-office',
+  '千问办公': 'qwen-office',
   'kiro-cli': 'kiro',
   copilot: 'github-copilot',
   'copilot-cli': 'github-copilot',
@@ -94,6 +101,9 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'aider-cli': 'aider',
   'cline-cli': 'cline',
   'amazon-q-cli': 'amazon-q',
+  'trae-ide': 'trae',
+  'trae-work': 'trae',
+  'trae-solo': 'trae',
 };
 
 /**

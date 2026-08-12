@@ -36,6 +36,14 @@ test('pluralRule keeps the existing locale behavior', () => {
   assert.equal(pluralRule('ja', 1), 'other');
 });
 
+test('desktop Provider aliases normalize to the canonical family types', () => {
+  assert.equal(backendTypes.normalizeBackendType('千问办公'), 'qwen-office');
+  assert.equal(backendTypes.normalizeBackendType('qwenworkcn'), 'qwen-office');
+  assert.equal(backendTypes.normalizeBackendType('trae-ide'), 'trae');
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'qwen-office'));
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'trae'));
+});
+
 test('IPC frame keeps new and legacy wire formats compatible', () => {
   const request = frame.req('worker.send', { channelId: 'visitor-1' }, 'req-1');
   assert.equal(request.type, 'req');

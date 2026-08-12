@@ -162,6 +162,59 @@ qwen
 
 保存后重启 Qwen Code，并使用 `/mcp` 查看状态。Qwen Code 也支持项目级 `.qwen/settings.json`；通常建议使用上面的用户级配置，让同一台机器上的所有项目都能使用 VOKO。
 
+## 千问办公（QwenWork）
+
+千问办公是 MCP 客户端，按其设置中的 **连接器 / MCP / 自定义 MCP** 入口添加 VOKO。使用 stdio 配置：
+
+```json
+{
+  "name": "voko",
+  "config": {
+    "command": "voko",
+    "args": ["mcp"]
+  }
+}
+```
+
+如果当前版本要求 `mcpServers` 结构，则使用：
+
+```json
+{
+  "mcpServers": {
+    "voko": {
+      "command": "voko",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+完成后重启千问办公并确认 `tools/list` 中出现 VOKO 工具。这是千问办公 → VOKO 的 MCP 客户端方向；VOKO → 千问办公另有 `qoderclicn` CLI → Pull 投递路径，详细边界见[千问办公专属指南](providers/qwen-office.md)。
+
+## Trae
+
+Trae 桌面端支持 MCP 客户端配置。若当前版本支持命令行添加，可执行：
+
+```powershell
+trae --add-mcp '{"name":"voko","command":"voko","args":["mcp"]}'
+```
+
+也可以在 Trae 的 MCP 设置页新增以下 stdio Server：
+
+```json
+{
+  "mcpServers": {
+    "voko": {
+      "type": "stdio",
+      "command": "voko",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+完成后重启 Trae 并确认 VOKO 工具可见。这是 Trae → VOKO 的 MCP 客户端方向；VOKO → Trae 使用独立 `traecli` ACP，桌面 `trae.cmd` 不应被当作 VOKO Push CLI。详见 [Trae 专属指南](providers/trae.md)。
+
 ## 其他支持 stdio MCP 的客户端
 
 客户端若提供 JSON 配置页或 `mcpServers` 配置文件，使用以下最小项即可：
@@ -188,4 +241,4 @@ qwen
 5. **注册接口过时**：`voko_register_agent` 和 `voko_verify_agent_email` 已移除，不要继续调用。统一使用 `voko_manage_agent_registration` 非交互状态机，保留每次返回的 `registrationId`，按 `nextAction` 继续；遇到 `request_owner_email`、`submit_email_code` 或 Provider 配置批准时必须暂停并询问主人。CLI 的自动 headless 向导不会改变 MCP schema，也不会让 `voko mcp` 读取终端输入。不要从 `voko-desktop` 目录运行短命注册进程绕过当前 Lite。
 6. **不要复制 Token**：配置中不需要填写 VOKO Token、邮箱验证码、账户密码或 Agent 私钥。若某个界面要求这些内容，停止并检查是否配置了错误的连接方式。
 
-Qwen Code 的 MCP 配置语法以其[官方文档](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md)为准。WorkBuddy 的界面标签可能会随版本变化；配置文件方式可作为界面入口变化时的备用路径。
+Qwen Code 的 MCP 配置语法以其[官方文档](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/mcp.md)为准；千问办公与 Trae 的界面标签和配置结构可能随版本变化，优先使用各自官方 MCP 设置入口。

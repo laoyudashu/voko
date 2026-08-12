@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { initDatabase } = require('../build/core/database');
 const { MessageHandler } = require('../build/core/messenger');
+const { RoutingConversationStore } = require('../build/core/provider-routing');
 
 function createFixture(overrides = {}) {
   const db = initDatabase(':memory:', { silent: true });
@@ -92,6 +93,68 @@ describe('Lite Messenger contract smoke', () => {
       assert.equal(fixture.dispatched[0].agentId, 'agent-1');
       assert.equal(fixture.dispatched[0].payload.messageId, 'incoming-1');
       assert.equal(fixture.dispatched[0].payload.channelType, 1);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('keeps a Chatroom canonical conversation key on the same Web conversation', async () => {
+    const fixture = createFixture();
+    try {
+      const store = new RoutingConversationStore(fixture.db);
+      const pending = store.createPending({ agentId: 'agent-1', channelId: 'visitor-1', channelType: 1 });
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        messageId: 'canonical-inbound-1',
+        clientMsgNo: 'canonical-client-1',
+        _voko: { protocolVersion: 1, routeId: 'canonical-route-12345678901234567890',
+          canonicalConversationKey: pending.wireConversationKey },
+      }));
+
+      const inboundRoute = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
+        WHERE message_id='canonical-inbound-1' AND direction='inbound'`).get();
+      assert.equal(inboundRoute.conversation_id, pending.id);
+      assert.equal(inboundRoute.status, 'active');
+      assert.equal(fixture.dispatched[0].payload.remoteConversationKey, pending.wireConversationKey);
+
+      await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'visitor-1',
+        channelId: 'visitor-1', channelType: 1, content: 'canonical reply',
+        remoteConversationKey: pending.wireConversationKey, remoteRouteId: 'canonical-route-12345678901234567890' });
+      const outboundRoute = fixture.db.prepare(`SELECT conversation_id FROM provider_message_routes
+        WHERE direction='outbound' ORDER BY created_at DESC LIMIT 1`).get();
+      assert.equal(outboundRoute.conversation_id, pending.id);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('binds the exact triggering inbound message after the Provider turn confirms its conversation', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'trigger-exact' }));
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'trigger-ambiguous', clientMsgNo: 'client-2' }));
+      const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
+        agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
+        nativeSessionId: 'agent:agent-1:session-exact', channelId: 'visitor-1', channelType: 1,
+      });
+
+      await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'visitor-1',
+        channelId: 'visitor-1', channelType: 1, content: 'exact reply', sourceMessageId: 'trigger-exact',
+        sourceRouteClaimSafe: true, replyRouteContext: { conversationId: conversation.id,
+          providerFamily: 'openclaw', providerInstanceKey: '', nativeSessionId: 'agent:agent-1:session-exact',
+          strictSessionRoute: true } });
+      await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'visitor-1',
+        channelId: 'visitor-1', channelType: 1, content: 'ambiguous reply', sourceMessageId: 'trigger-ambiguous',
+        sourceRouteClaimSafe: false, replyRouteContext: { conversationId: conversation.id,
+          providerFamily: 'openclaw', providerInstanceKey: '', nativeSessionId: 'agent:agent-1:session-exact',
+          strictSessionRoute: true } });
+
+      const exact = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
+        WHERE message_id='trigger-exact' AND direction='inbound'`).get();
+      const ambiguous = fixture.db.prepare(`SELECT conversation_id FROM provider_message_routes
+        WHERE message_id='trigger-ambiguous' AND direction='inbound'`).get();
+      assert.equal(exact.conversation_id, conversation.id);
+      assert.equal(exact.status, 'active');
+      assert.equal(ambiguous, undefined);
     } finally {
       fixture.db.close();
     }

@@ -33,7 +33,7 @@ Agent → VOKO 优先使用 MCP 工具 `voko_manage_agent_registration`；备用
 cli -> pull
 ```
 
-Aider 当前没有 VOKO ACP、HTTP 或 WebSocket 主通道。注册后检查 `activeMode`、`availableModes`，修改 PATH、环境变量或模型配置后重启 VOKO。
+Aider 当前没有 VOKO ACP、HTTP 或 WebSocket 主通道。注册后检查 `activeAutomaticMode`、`automaticReadyModes` 和 `deliveryStatus.methods`，修改 PATH、环境变量或模型配置后重启 VOKO。
 
 ## VOKO 如何调用 Aider
 
@@ -56,10 +56,7 @@ Aider 的会话历史由 VOKO 按会话 ID 做 SHA-256 文件名隔离，保存�
 
 ## 降级、恢复和 Pull
 
-- Aider 入口、模型凭证或进程失败时，Dispatcher 刷新路由缓存并使用 Pull。
-- Aider 的 CLI 没有可用的 ACP 恢复事件；修复环境并重启 VOKO 后下一条消息重新探测。
-- 结果不明确时不自动重发，因为 Aider 可能已经写入历史文件并生成回复。
-- `dry-run` 只限制 Aider 的写入动作，不等于可以把不可信访客消息交给完整开发工作流；VOKO 仍通过提示词和参数关闭浏览、Shell 建议及自动测试。
+通用降级、结果分类、缓存和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Aider 的差异只有：没有 ACP/HTTP/WebSocket 恢复事件，修复 CLI、模型凭证或环境后通常需要重启 VOKO；结果不明确时不能重发，因为 Aider 可能已经写入托管历史文件。`dry-run` 只限制 Aider 写入，不等于放开浏览、Shell 建议或自动测试。
 
 ## 真机验证边界
 

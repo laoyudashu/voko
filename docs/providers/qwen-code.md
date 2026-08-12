@@ -41,7 +41,7 @@ Provider 类型选择 `qwen-code`，推荐接收顺序为：
 cli -> pull
 ```
 
-Qwen Code 当前在 VOKO 中没有 ACP、HTTP 或 WebSocket 主通道。`pull` 始终保留，是自动 CLI 不可用时的可靠兜底。注册后查看 `activeMode`、`availableModes`，并用 `voko doctor --deep` 或 `voko status --json` 确认 `qwen` 入口可用。
+Qwen Code 当前在 VOKO 中没有 ACP、HTTP 或 WebSocket 主通道。`pull` 始终保留，是自动 CLI 不可用时的可靠兜底。注册后查看 `activeAutomaticMode`、`automaticReadyModes` 和 `deliveryStatus.methods`，并用 `voko doctor --deep` 或 `voko status --json` 确认 `qwen` 入口可用。
 
 ## VOKO 如何调用 Qwen Code
 
@@ -62,10 +62,7 @@ VOKO 通过 stdin 传入访客消息，并启用受限的 JSON 流输出。核�
 
 ## 降级、恢复和 Pull
 
-- CLI 入口不可用、认证失败或进程异常时，Dispatcher 刷新路由缓存并使用 `pull`。
-- 修复 PATH、认证或模型配置并重启 VOKO 后，下一条消息重新检查 CLI。
-- 投递结果不明确时不自动跨通道重发；先通过 Pull 确认，避免重复回复。
-- 路由缓存按 Agent 保存；入口存在不等于当前进程健康。
+通用降级、结果分类、缓存和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Qwen Code 只有 CLI/Pull；修复 PATH、认证或模型配置并重启 VOKO 后才重新探测，原生 session 只由 VOKO 绑定并通过 `--resume` 续接。
 
 ## 真机验证边界
 

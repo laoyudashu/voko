@@ -68,13 +68,7 @@ VOKO 为每个以下组合保存独立绑定：
 
 ## 4. ACP、CLI 降级和恢复
 
-选择 `acp-goose` 时，路由行为是：
-
-1. ACP 健康：消息走 Goose ACP。
-2. ACP 进程退出、握手失败或被健康检查标记不可用：下一条消息走 Goose CLI。
-3. ACP 健康检查或显式恢复成功：后续消息重新走 ACP。
-
-切换只改变活动投递通道，不改变原生 session ID；不会因为 ACP → CLI → ACP 而重复回复。若 ACP 和 CLI 都不可用，消息保留在 VOKO，可由 Agent 通过 MCP/CLI 主动 Pull。
+通用通道顺序、降级次数、结果分类和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Goose 的差异是：`acp-goose` 使用 ACP/CLI 共用的 Goose 原生 session ID；ACP 进程恢复后才重新升级，CLI 不得猜测最近 session。若 Goose 只注册为 `goose`，则仅保留 CLI/Pull。
 
 ## 5. MCP 配置的方向说明
 

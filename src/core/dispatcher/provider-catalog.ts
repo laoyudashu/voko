@@ -66,6 +66,7 @@ const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
   'claude-cli': 'claude', 'codex-cli': 'codex', 'gemini-cli': 'gemini',
   'pi-cli': 'pi', 'qwen-cli': 'qwen', 'kiro-cli': 'kiro-cli',
   'aider-cli': 'aider', 'grok-cli': 'grok', 'reasonix-cli': 'reasonix',
+  'qwen-office-cli': 'qoderclicn', 'traecli-acp': 'traecli',
 };
 
 export function getProviderVersionCommand(transportId: unknown): string | null {
@@ -149,6 +150,9 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container')] },
   { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
+  { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
+    cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'),
+  ] },
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider', 'aider-dry-run')] },
   { type: 'grok', aliases: [], label: 'Grok', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('grok-cli', './providers/grok-cli', 'GrokCliProvider', 'grok-plan-no-tools')] },
@@ -158,6 +162,9 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'zcode', aliases: [], label: 'ZCode', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'workbuddy', aliases: [], label: 'WorkBuddy', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'doubao', aliases: [], label: '豆包', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
+  { type: 'trae', aliases: ['trae-ide', 'trae-work', 'trae-solo'], label: 'Trae', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [
+    acp('traecli-acp', './providers/trae-acp', 'TraeAcpProvider'),
+  ] },
   { type: 'others', aliases: [], label: 'Others', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'mock', aliases: [], label: 'Mock Echo', requiresInstance: false, defaultDeliveryModes: ['mock', 'pull'], transports: [
     transport({ id: 'mock-echo', mode: 'mock', priority: 99, operations: ['push', 'steer'], modulePath: './providers/mock-echo', exportName: 'MockEchoProvider', safetyProfile: 'test-only', sandboxPolicyId: 'provider-managed-local', testOnly: true }),

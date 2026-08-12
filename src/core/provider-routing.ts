@@ -196,6 +196,21 @@ export class RoutingConversationStore {
       .get(clean(id, 128), clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1));
   }
 
+  /**
+   * Resolve a wire conversation key only inside the caller's Agent/channel
+   * scope.  Chatroom may use either conversationKey or its canonical alias;
+   * both identify the same local logical conversation, but neither is trusted
+   * outside this exact scope.
+   */
+  getForWireKey(agentId: string, channelId: string, channelType: number, wireConversationKey: string): RoutingConversation | null {
+    const key = clean(wireConversationKey, 128);
+    if (!key) return null;
+    return conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
+      WHERE agent_id=? AND channel_id=? AND channel_type=? AND wire_conversation_key=?
+        AND status IN ('pending','active') LIMIT 1`)
+      .get(clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1, key));
+  }
+
   listForScope(agentId: string, channelId: string, channelType = 1): RoutingConversation[] {
     return this.db.prepare(`SELECT * FROM provider_routing_conversations
       WHERE agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active')

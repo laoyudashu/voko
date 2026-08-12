@@ -90,6 +90,8 @@ interface ReplyContext {
   a2aTurn?: number;
   turnId?: string;
   interventionResume?: boolean;
+  sourceMessageId?: string;
+  sourceRouteClaimSafe?: boolean;
   rememberedAt?: number;
   [key: string]: unknown;
 }
@@ -278,11 +280,12 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const context = reply.turnId
       ? _replyContextsByTurn.get(`${reply.agentId || ''}::${reply.turnId}`)
       : queue?.[0];
+    const sourceRouteClaimSafe = !!context && (reply.turnId ? context === exact : queue?.length === 1);
     if (context && reply?.done !== false) {
       if (context.turnId) _replyContextsByTurn.delete(`${reply.agentId || ''}::${context.turnId}`);
       _removeReplyContext(context);
     }
-    return context ? { ...reply, ...context } : reply;
+    return context ? { ...reply, ...context, sourceRouteClaimSafe } : reply;
   }
   function _finalReplyKey(reply: ProviderReply): string | null {
     const identity = reply.turnId || reply.replyId;
@@ -906,6 +909,7 @@ ${body}
       const replyContext = {
         agentId,
         turnId: baseProviderPayload.turnId,
+        sourceMessageId: payload.messageId,
         channelType: payload.channelType || 1,
         channelId: payload.channelId || baseProviderPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,

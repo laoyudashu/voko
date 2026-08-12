@@ -6,7 +6,17 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { migrateMcpConfigs } = require('../build/core/mcp-config-diagnostics');
+const { migrateMcpConfigs, candidates } = require('../build/core/mcp-config-diagnostics');
+
+test('MCP diagnostics include QwenWork and Trae configuration candidates', () => {
+  const list = candidates({
+    homeDir: 'C:\\Users\\tester',
+    platform: 'win32',
+    appData: 'C:\\Users\\tester\\AppData\\Roaming',
+  });
+  assert.ok(list.some((item) => item.client === 'QwenWork' && item.path.endsWith('\\.qwenworkcn\\mcp.json')));
+  assert.ok(list.some((item) => item.client === 'Trae' && item.path.endsWith('\\Trae\\User\\mcp.json')));
+});
 
 test('MCP migration repairs JSON, TOML, and Goose YAML VOKO entries with backups', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-mcp-migration-'));

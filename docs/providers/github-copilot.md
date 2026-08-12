@@ -55,7 +55,7 @@ copilot --acp --no-custom-instructions --disable-builtin-mcps --no-remote --no-r
 
 这组参数的目的，是让外部访客消息只能得到文字回复，不加载项目指令、不启用内置/远程 MCP、不导出会话、不让 Agent 等待用户确认工具。不要在 Provider 配置里改成 `--allow-all`、`--yolo` 或 `--allow-all-tools`。
 
-当 ACP 明确确认未投递时，VOKO 可以尝试受限 Copilot CLI；ACP 进程健康状态变化会刷新 Dispatcher 路由。结果不明确时不会跨通道重发同一条消息，最终保留 Pull。
+Copilot 的差异是：只有 ACP 明确确认 `not_delivered` 时才允许尝试受限 CLI；其余结果分类、缓存刷新和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。
 
 ## 4. 会话恢复
 
