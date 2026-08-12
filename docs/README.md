@@ -11,6 +11,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)：安装、`voko setup`/`voko doctor`、Web UI、MCP stdio、本地数据库和无图形运行。
 - [MCP 消息与 Conversation 契约](mcp-message-conversations.md)：频道发现、精确 Conversation、历史/Pull/发送/附件和主人介入。
 - [MCP 客户端配置](mcp-client-setup.md)：WorkBuddy、Qwen Code、千问办公、Trae 和通用 stdio 配置。
+- [A2A Mailbox Gateway 与 Lite Bridge](a2a-mailbox.md)：公网 A2A 1.0 映射、外部 Agent 发现/调用、独立 Task UI、状态语义与安全边界。
 - [Provider 注册、投递与路由恢复](provider-delivery-routing.md)：注册入口、推荐通道、Pull 兜底和用户侧排障。
 - [Provider 兼容性矩阵](provider-compatibility.md)：已验证版本、平台边界和实测证据。
 - [Provider 专属指南](providers/README.md)：某个框架的安装、登录、配置和特殊排障。

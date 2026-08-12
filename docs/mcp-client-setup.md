@@ -6,6 +6,8 @@
 
 完成连接后，消息类工具的参数、返回值、`conversationId`兼容规则和推荐回复顺序见[MCP消息与精确Conversation接口契约](mcp-message-conversations.md)。
 
+若要通过 AgentDID 发现和调用公网 A2A 1.0 Agent，请使用 `voko_a2a_discover_agent`、`voko_a2a_send_message`、`voko_a2a_get_task` 和 `voko_a2a_cancel_task`；启用条件、权限隔离和结果未知语义见 [A2A Mailbox Gateway 与 Lite Bridge](a2a-mailbox.md)。这些工具不通过普通 IM 发消息。
+
 > 这与“由 VOKO 调用某个 Provider 的 CLI”是两件事。下文是把 Agent 应用作为 **MCP 客户端** 接入 VOKO；Qwen Code 作为 VOKO Provider 时，只需在 Web UI 中添加 Qwen Code，并确保 `qwen` 已安装、登录且位于 `PATH` 中，无需在 Qwen Code 中再配置 VOKO MCP。
 
 ## 先启动 VOKO
