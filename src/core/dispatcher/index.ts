@@ -102,6 +102,11 @@ interface DispatcherOptions {
   onAgentReply?: (reply: ProviderReply) => void;
 }
 
+interface IsolatedExecutionOptions {
+  agentId: string; content: string; taskId: string; contextId: string;
+  binding?: PushPayload['providerBinding']; timeoutMs?: number;
+}
+
 interface AgentMetaRow extends AgentMeta {
   imUid?: string | null;
 }
@@ -228,6 +233,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _processedFinalReplies = new Map<string, number>();
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
+  const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
   function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
     if (!_providerEventGate.accept(event)) return false;
     const key = `${event.providerId}:${event.type}`;
@@ -332,6 +338,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
             type: 'reply', providerId, agentId: String(reply.agentId || ''),
             turnId: reply.turnId, occurredAt: Date.now(), terminal: false, payload: reply,
           });
+          const isolatedSink = reply.turnId
+            ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+            : undefined;
+          if (isolatedSink) {
+            if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
+            isolatedSink(reply);
+            if (reply.done !== false) _isolatedReplySinks.delete(`${reply.agentId || ''}::${reply.turnId}`);
+            return;
+          }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
           if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
           const contextualized = _contextualizeReply(reply);
@@ -903,7 +918,7 @@ ${body}
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
-  ): Promise<void> {
+  ): Promise<any> {
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
@@ -934,7 +949,8 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
+      const isolated = (payload as any).executionScope === 'a2a_mailbox';
+      if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
       const result = await deliveryExecutor.execute({
@@ -978,7 +994,7 @@ ${body}
         onSuccess: (candidate: any, deliveryReceipt: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
           const providerPayload = payloadByProvider.get(candidate.target);
-          if (providerPayload && deliveryReceipt?.nativeSessionId) {
+          if (!isolated && providerPayload && deliveryReceipt?.nativeSessionId) {
             try {
               _commitProviderSession({
                 agentId,
@@ -996,6 +1012,9 @@ ${body}
           }
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
           _cacheRouteIfCurrent(agentId, 'push', selectedRoute);
+          if (isolated && typeof (payload as any).onDeliveryReceipt === 'function') {
+            (payload as any).onDeliveryReceipt(deliveryReceipt, candidate);
+          }
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'push', candidate.target);
@@ -1005,11 +1024,11 @@ ${body}
           console.error(`[Dispatcher] push 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
         },
       });
-      if (result.outcome === 'delivered') return;
+      if (result.outcome === 'delivered') return result;
       if (baseProviderPayload.providerBinding?.strictSessionRoute) {
         countRouting(result.outcome === 'not_delivered' ? 'precise_fallback_pull' : `precise_${result.outcome}`);
       }
-      _removeReplyContext(replyContext);
+      if (!isolated) _removeReplyContext(replyContext);
       if (result.outcome === 'not_delivered') console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
@@ -1017,6 +1036,28 @@ ${body}
   }
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
+  async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    const turnId = `a2a-${crypto.randomUUID()}`;
+    const sinkKey = `${options.agentId}::${turnId}`;
+    let receipt: unknown;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
+    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('A2A Provider reply timed out')); }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const delivery = await _doRoute(options.agentId, {
+        agentId: options.agentId, fromUid: `a2a:${options.contextId}`, senderUid: 'a2a-mailbox',
+        channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
+        content: options.content, rawContent: options.content, providerBinding: options.binding || null,
+        executionScope: 'a2a_mailbox', onDeliveryReceipt: (value: unknown) => { receipt = value; },
+      });
+      if (delivery?.outcome !== 'delivered') throw new Error(`A2A Provider delivery ${delivery?.outcome || 'failed'}`);
+      return { reply: await replyPromise, receipt };
+    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+  }
+
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
     if (!provider) {
@@ -1236,7 +1277,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport, getAgentDeliveryStatus, getRoutingStats,
+  return { dispatch, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
