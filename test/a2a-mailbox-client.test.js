@@ -28,3 +28,11 @@ test('event reconciliation uses the authenticated mailbox endpoint', async () =>
   assert.deepEqual(await client.findEvent('event:1'), { found: true, taskId: 'task-1', gatewaySequence: 3 });
   assert.equal(calls[0].url, 'https://did.example/mailbox/events/event%3A1'); assert.equal(calls[0].options.method, 'GET');
 });
+test('outbound cancellation remains scoped to one local Agent', async () => {
+  const calls = []; const client = new A2AMailboxClient({ baseUrl: 'https://did.example/mailbox', token: 'x'.repeat(32),
+    fetchImpl: async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return { ok: true, status: 200,
+      async json() { return { cancelOutcome: 'accepted' }; } }; } });
+  await client.cancelOutboundTask('agent-1', 'task-1');
+  assert.equal(calls[0].url, 'https://did.example/mailbox/outbound/tasks/task-1:cancel');
+  assert.deepEqual(calls[0].body, { localAgentId: 'agent-1' });
+});

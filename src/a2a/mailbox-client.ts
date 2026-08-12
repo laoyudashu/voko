@@ -57,6 +57,9 @@ class A2AMailboxClient {
   async getOutboundTask(taskId: string): Promise<any> {
     return this.get(`/outbound/tasks/${encodeURIComponent(taskId)}`);
   }
+  async cancelOutboundTask(localAgentId: string, taskId: string): Promise<any> {
+    return this.post(`/outbound/tasks/${encodeURIComponent(taskId)}:cancel`, { localAgentId });
+  }
   async listOutboundTasks(): Promise<any[]> {
     const result = await this.get('/outbound/tasks'); return Array.isArray(result?.tasks) ? result.tasks : [];
   }

@@ -105,6 +105,7 @@ test('A2A database has its own version and no ordinary messaging tables', (t) =>
     'a2a_local_outbox',
     'a2a_local_tasks',
     'a2a_meta',
+    'a2a_remote_task_results',
     'a2a_settings',
   ]);
   assert.equal(tables.includes('messages'), false);

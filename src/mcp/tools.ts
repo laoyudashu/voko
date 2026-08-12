@@ -302,6 +302,7 @@ type McpContext = Omit<LiteContext,
     discoverRemote(localAgentId: string, cardUrl: string, credential?: string): Promise<DynamicRow>;
     sendOutbound(input: DynamicRow): Promise<DynamicRow>;
     getOutboundTask(taskId: string): Promise<DynamicRow>;
+    cancelOutboundTask(localAgentId: string, taskId: string): Promise<DynamicRow>;
   };
   ownerPullService?: {
     fetch(agentId: string): DynamicRow;
@@ -1683,11 +1684,20 @@ function createToolHandlers(cx: McpContext) {
       catch (error: any) { return { success: false, code: error?.reasonCode ? 'A2A_SAFETY_REJECTED' : 'A2A_SEND_FAILED', error: error?.reasonCode || error.message }; }
     },
     async a2a_get_task(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
       if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
-      if (!p.taskId) return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: 'taskId is required' };
+      if (!p.agentId || !p.taskId) return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: 'agentId and taskId are required' };
       try { const task = await cx.a2aMailboxClient.getOutboundTask(p.taskId);
-        if (p.agentId && task.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
+        if (task.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
         return { success: true, task }; } catch (error: any) { return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: error.message }; }
+    },
+    async a2a_cancel_task(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.agentId || !p.taskId) return { success: false, code: 'A2A_CANCEL_FAILED', error: 'agentId and taskId are required' };
+      try { const result = await cx.a2aMailboxClient.cancelOutboundTask(p.agentId, p.taskId);
+        if (result?.task?.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
+        return { success: true, ...result }; } catch (error: any) { return { success: false, code: 'A2A_CANCEL_FAILED', error: error.message }; }
     },
 
     // ─── 8. 消息 ───
