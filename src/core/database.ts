@@ -1712,21 +1712,27 @@ function createDatabaseAPI(db: DatabaseSync) {
     saveOwnerIntervention: (intervention: OwnerInterventionInput) => {
       try {
         let routingConversationId = intervention.routingConversationId || null;
+        const explicitlyRouted = !!routingConversationId;
         if (!routingConversationId) {
           routingConversationId = db.prepare('SELECT routing_conversation_id FROM owner_interventions WHERE id=? LIMIT 1')
             .get(intervention.id)?.routing_conversation_id || null;
         }
-        if (!routingConversationId && intervention.sourceMessageId && intervention.agentId) {
-          const route = db.prepare(`SELECT conversation_id FROM provider_message_routes
-            WHERE message_id=? AND agent_id=? AND status='active' ORDER BY created_at DESC LIMIT 1`)
-            .get(intervention.sourceMessageId, intervention.agentId);
-          routingConversationId = route?.conversation_id || null;
-        }
-        if (!routingConversationId && intervention.agentId && intervention.targetChannelId) {
-          const candidates = db.prepare(`SELECT id FROM provider_routing_conversations
-            WHERE agent_id=? AND channel_id=? AND channel_type=? AND status='active' LIMIT 2`)
-            .all(intervention.agentId, intervention.targetChannelId, intervention.targetChannelType || 1);
-          if (candidates.length === 1) routingConversationId = candidates[0].id;
+        if (intervention.agentId) {
+          const { resolveOwnerInterventionConversation } = require('./owner-intervention-routing');
+          const resolution = resolveOwnerInterventionConversation(db, { agentId: intervention.agentId,
+            channelId: intervention.targetChannelId || intervention.visitorId,
+            channelType: intervention.targetChannelType || 1,
+            sourceMessageId: intervention.sourceMessageId || null,
+            conversationId: routingConversationId });
+          if (resolution.status === 'resolved') routingConversationId = resolution.conversationId;
+          else if (!intervention.skipReply && resolution.status === 'selection_required') {
+            return { success: false, code: 'CONVERSATION_REQUIRED',
+              candidateConversationIds: resolution.candidateConversationIds,
+              error: 'Multiple Provider conversations are available; select conversationId' };
+          } else if (!intervention.skipReply && explicitlyRouted) {
+            return { success: false, code: 'ROUTING_CONVERSATION_INVALID',
+              error: 'The source message or Conversation cannot be routed in this channel' };
+          }
         }
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO owner_interventions

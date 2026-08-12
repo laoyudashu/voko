@@ -620,6 +620,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.visitorId')),
       id: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.id')),
       reason: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.reason')),
+      conversationId: z.string().optional().describe(T('mcp.param.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.param.replyToMessageId')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_whitelist(params);
@@ -638,6 +640,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.visitorId')),
       id: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.id')),
       reason: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.reason')),
+      conversationId: z.string().optional().describe(T('mcp.param.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.param.replyToMessageId')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_blacklist(params);

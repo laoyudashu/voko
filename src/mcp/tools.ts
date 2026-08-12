@@ -21,6 +21,7 @@ const { AgentIdentityBindingStore } = require('../core/provider-agent-identity')
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
+const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
@@ -732,6 +733,19 @@ function createToolHandlers(cx: McpContext) {
       if (cx.query("SELECT 1 AS found FROM messages WHERE channel_id=? AND channel_type=2 LIMIT 1", [channelId]).length > 0) return 2;
     } catch (_) { /* inference is best-effort; direct chat remains the safe fallback */ }
     return 1;
+  };
+  const resolveStatusNotificationRoute = (p: McpToolParams) => {
+    const resolution = resolveOwnerInterventionConversation(cx.db, {
+      agentId: p.agentId,
+      channelId: p.visitorId,
+      channelType: 1,
+      caller: getProviderCaller(),
+      sourceMessageId: p.replyToMessageId || null,
+      conversationId: p.conversationId || null,
+    });
+    return resolution.status === 'resolved'
+      ? { route: { conversationId: resolution.conversationId }, resolution }
+      : { route: null, resolution };
   };
   // cx: { db, query, exec, sendMessage, sendSystemMessage, startAgentWorker, stopAgentWorker,
   //        getAgentStatus, registerCapabilities, searchCapabilities, updateAgentProfile, setAgentStatus,
@@ -2235,25 +2249,15 @@ function createToolHandlers(cx: McpContext) {
       const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
       const sourceMessageId = p.replyToMessageId || p.messageId || null;
-      let routingConversationId: string | null = null;
-      if (sourceMessageId) {
-        try {
-          const route = messageRoutes.getByMessage(sourceMessageId, p.agentId);
-          if (route?.channel_id === targetChannelId && Number(route.channel_type) === targetChannelType) {
-            routingConversationId = route.conversation_id || null;
-          }
-        } catch (_) {}
-      } else if (p.conversationId) {
-        try { routingConversationId = routingConversations.getForScope(
-          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
-        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
-      } else {
-        try {
-          const candidates = routingConversations.listForScope(p.agentId, targetChannelId, targetChannelType)
-            .filter((conversation: RoutingConversation) => conversation.status === 'active');
-          if (candidates.length === 1) routingConversationId = candidates[0].id;
-        } catch (_) {}
-      }
+      const resolution = resolveOwnerInterventionConversation(cx.db, { agentId: p.agentId,
+        channelId: targetChannelId, channelType: targetChannelType, caller: getProviderCaller(),
+        sourceMessageId, conversationId: p.conversationId || null });
+      if (resolution.status === 'selection_required') return { success: false, code: 'CONVERSATION_REQUIRED',
+        error: 'Multiple Provider conversations are available; select conversationId',
+        candidateConversationIds: resolution.candidateConversationIds };
+      if (resolution.status === 'unavailable' && p.conversationId) return { success: false,
+        code: 'ROUTING_CONVERSATION_INVALID', error: 'The source message or Conversation cannot be routed in this channel' };
+      const routingConversationId = resolution.status === 'resolved' ? resolution.conversationId : null;
 
       // 根据 backend 类型决定 session_key 前缀
       const backendRow = cx.query ? cx.query(`SELECT backend_type FROM agents WHERE agent_id=?`, [p.agentId]) : [];
@@ -3119,8 +3123,13 @@ function createToolHandlers(cx: McpContext) {
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
       const result = ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason });
       if (!result.success) return result;
+      const statusRoute = resolveStatusNotificationRoute(p);
+      if (!statusRoute.route && statusRoute.resolution.status === 'selection_required') {
+        return { ...result, notificationStatus: 'skipped', notificationReason: 'conversation_required',
+          candidateConversationIds: statusRoute.resolution.candidateConversationIds };
+      }
       const notification = cx.sendSystemMessage
-        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000))
+        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000), statusRoute.route || undefined)
         : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
       return { ...result, ...notification };
     },
@@ -3135,8 +3144,13 @@ function createToolHandlers(cx: McpContext) {
         const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
         const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');
         if (!r.success || !__wasBlk) return r;
+        const statusRoute = resolveStatusNotificationRoute(p);
+        if (!statusRoute.route && statusRoute.resolution.status === 'selection_required') {
+          return { ...r, notificationStatus: 'skipped', notificationReason: 'conversation_required',
+            candidateConversationIds: statusRoute.resolution.candidateConversationIds };
+        }
         const notification = cx.sendSystemMessage
-          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000))
+          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000), statusRoute.route || undefined)
           : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
         return { ...r, ...notification };
       }

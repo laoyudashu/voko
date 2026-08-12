@@ -65,8 +65,7 @@ interface PaymentDeps {
   endpoints: { payment: { baseUrl: string } };
   notifyUI?: (type: string, data: Record<string, unknown>) => void;
   payLog?: (data: Record<string, unknown>) => void;
-  hermesHandler?: { connected?: boolean; steer(sessionKey: string, content: string): unknown };
-  openclawHandler?: { connected?: boolean; sendToSession(sessionKey: string, content: string): unknown };
+  resumeProviderConversation?: (conversationId: string, agentId: string, visitorId: string, content: string) => Promise<unknown>;
   sendSystemMessage?: (agentId: string, visitorId: string, key: string, params: Record<string, unknown>, timestamp?: number, route?: { conversationId?: string | null }) => unknown;
   ownerInterventionNotifier?: { enqueue(data: Record<string, unknown>): unknown };
 }
@@ -268,14 +267,13 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
  * @param {object} deps.databaseAPI
  * @param {object} deps.agentWorkers - Map<agentId, {worker}>
  * @param {object} deps.endpoints - { payment: { baseUrl } }
- * @param {object} deps.hermesHandler
- * @param {object} deps.openclawHandler
+ * @param {Function} deps.resumeProviderConversation - 恢复订单绑定的精确 Provider Conversation
  * @param {Function} deps.sendSystemMessage - (agentId, visitorId, content) => {}
  * @param {Function} deps.payLog - (data) => {}
  * @param {object} deps.ownerInterventionNotifier - 可选
  */
 function startPaymentPolling(deps: PaymentDeps): () => void {
-  const { db, databaseAPI, agentWorkers, endpoints, hermesHandler, openclawHandler, sendSystemMessage, payLog, ownerInterventionNotifier } = deps;
+  const { db, databaseAPI, agentWorkers, endpoints, resumeProviderConversation, sendSystemMessage, payLog, ownerInterventionNotifier } = deps;
   const _log = payLog || (() => {});
   const _sendMsg = sendSystemMessage || (() => {});
 
@@ -366,8 +364,6 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
 
             // 通知 agent
             try {
-              const payAgent = db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<{ backend_type?: string }>(order.agent_id);
-              const payBackend = payAgent?.backend_type || 'openclaw';
               const payMsg2 = paymentText('errors.payment.agent_notification', {
                 visitorId: order.visitor_id,
                 amount: order.amount.toFixed(2),
@@ -375,10 +371,10 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
                 orderNo: order.order_no || '-',
                 transactionNo: paidData.transactionNo || '-',
               });
-              if (payBackend === 'hermes' && hermesHandler?.connected) {
-                hermesHandler.steer(`hermes:${order.agent_id}:${order.visitor_id}`, payMsg2);
-              } else if (openclawHandler?.connected) {
-                openclawHandler.sendToSession(`agent:${order.agent_id}:${order.visitor_id}`, payMsg2);
+              if (order.routing_conversation_id && resumeProviderConversation) {
+                await resumeProviderConversation(order.routing_conversation_id, order.agent_id, order.visitor_id, payMsg2);
+              } else {
+                console.warn('[Payment] payment succeeded without an exact Provider conversation; Agent will observe it through Pull/payment status');
               }
             } catch (e: unknown) { console.error('[Payment] 通知 agent 失败:', errorMessage(e)); }
 
@@ -392,13 +388,13 @@ function startPaymentPolling(deps: PaymentDeps): () => void {
               });
               const ownerSuggestion = paymentText('errors.payment.owner_suggestion');
               const payPrefix = (db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<{ backend_type?: string }>(order.agent_id)?.backend_type) === 'hermes' ? 'hermes' : 'agent';
-              databaseAPI.saveOwnerIntervention({
+              const saved: any = databaseAPI.saveOwnerIntervention({
                 id: oiId, visitorId: order.visitor_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id,
                 problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2,
                 status: 'pending', channelType: 'voko', createdAt: now2, updatedAt: now2, agentId: order.agent_id,
                 skipReply: 1, routingConversationId: order.routing_conversation_id || null,
               });
-              if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue({ id: oiId, visitorId: order.visitor_id, agentId: order.agent_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id, problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2, skipReply: 1 });
+              if (saved?.success !== false && ownerInterventionNotifier) ownerInterventionNotifier.enqueue({ id: oiId, visitorId: order.visitor_id, agentId: order.agent_id, sessionKey: payPrefix + ':' + order.agent_id + ':' + order.visitor_id, problem: ownerMsg, agentSuggestion: ownerSuggestion, askTime: now2, skipReply: 1, routingConversationId: order.routing_conversation_id || null });
             } catch (e: unknown) { console.error('[Payment] 通知主人失败:', errorMessage(e)); }
           } else if (queryResult.success && queryResult.data?.status === 2) {
             const wasExpired = order.status === 'expired';

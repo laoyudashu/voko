@@ -1076,8 +1076,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!intervention || !intervention.id) return res.json({ success: false, error: '缺少 intervention.id' });
       if (!currentOwnsAgent(String(intervention.agentId || intervention.agent_id || ''))) return res.status(403).json({ success: false, error: '无权保存该介入记录' });
       const { createDatabaseAPI } = require('./core/database');
-      createDatabaseAPI(db).saveOwnerIntervention(intervention);
-      res.json({ success: true, id: intervention.id });
+      const saved = createDatabaseAPI(db).saveOwnerIntervention(intervention);
+      if (saved?.success === false) return res.status(saved.code === 'CONVERSATION_REQUIRED' ? 409 : 400).json(saved);
+      res.json({ success: true, id: intervention.id, conversationId: intervention.routingConversationId || null });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1702,7 +1703,33 @@ async function startMcpServer(args?: any, core?: any) {
         const bus = require('./core/lite-bus');
         bus.emit('owner-intervention:new');
       },
-      createPendingPayment: () => {},
+      createPendingPayment: (agentId: string, visitorId: string, fromUid: string, pricing: any, _timestamp: number, sourceMessageId?: string) => {
+        void (async () => {
+          const { resolveOwnerInterventionConversation } = require('./core/owner-intervention-routing');
+          const resolution = resolveOwnerInterventionConversation(db, {
+            agentId, channelId: visitorId, channelType: 1, sourceMessageId: sourceMessageId || null,
+          });
+          if (resolution.status === 'selection_required') {
+            console.warn('[Payment] timed order requires an explicit Conversation; order was not created');
+            return;
+          }
+          const now = Date.now();
+          const order = {
+            id: `timed_${now}_${Math.random().toString(36).slice(2, 8)}`,
+            agent_id: agentId, visitor_id: visitorId, from_uid: fromUid,
+            amount: Number(pricing.price || 0),
+            description: `Timed service (${Number(pricing.duration_minutes || 0)} minutes)`,
+            type: 'timed', status: 'pending', created_at: now, updated_at: now,
+            routing_conversation_id: resolution.status === 'resolved' ? resolution.conversationId : null,
+          };
+          const saved = databaseAPI.savePaymentOrder(order);
+          if ((saved as any)?.success === false) throw new Error((saved as any).error || 'payment order persistence failed');
+          await require('./core/payment').processPendingPaymentOrder(order, {
+            db, databaseAPI, agentWorkers: agentManager.workers, deliver, sendMessage,
+            endpoints: require('./endpoints.json'),
+          });
+        })().catch((error: any) => console.error('[Payment] timed order creation failed:', error.message));
+      },
       getGroupInfo: (agentId: string, channelId: string) =>
         groupClient.getInfo(groupRouteContext, { agentId, channelId }),
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
@@ -1818,8 +1845,6 @@ async function startMcpServer(args?: any, core?: any) {
     ownerInterventionNotifier = new OwnerInterventionNotifier({
       databaseAPI, registry, db,
       getEnabledChannel: databaseAPI.getEnabledChannel,
-      getOpenclawHandler: () => openclawHandler,
-      getHermesHandler: () => hermesHandler,
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
@@ -1844,7 +1869,12 @@ async function startMcpServer(args?: any, core?: any) {
         agentWorkers: agentManager.workers,
         deliver,
         endpoints: ENDPOINTS,
-        hermesHandler, openclawHandler,
+        resumeProviderConversation: (conversationId: string, agentId: string, visitorId: string, content: string) =>
+          createResumeOwnerIntervention(dispatcher, db)({
+            id: `payment_${Date.now()}`, agentId, visitorId,
+            sourceSenderUid: visitorId, targetChannelId: visitorId, targetChannelType: 1,
+            routingConversationId: conversationId,
+          }, content),
         sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
         payLog: () => {},
         ownerInterventionNotifier,

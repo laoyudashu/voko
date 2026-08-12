@@ -185,7 +185,8 @@ function triggerManualSendAuditIntervention(data, auditResult, db, databaseAPI, 
       problem, agentSuggestion: 'Review the outbound safety decision.', askTime: now, expireTime: null,
       status: 'pending', ownerReply: null, replyTime: null, parentMessageId: null, channelType: 'voko',
       resolvedAt: null, createdAt: now, updatedAt: now, agentId: data.agentId };
-    databaseAPI.saveOwnerIntervention(record);
+    const saved = databaseAPI.saveOwnerIntervention({ ...record, skipReply: true });
+    if (saved?.success === false) return saved;
     db.prepare('UPDATE owner_interventions SET skip_reply = 1 WHERE id = ?').run(oiId);
     if (enqueueIntervention) enqueueIntervention({ ...record, skipReply: 1 });
   } catch (error) {

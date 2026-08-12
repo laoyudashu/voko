@@ -181,6 +181,7 @@ export interface MessageHandlerOptions {
     code: string,
     params?: Record<string, unknown>,
     timestamp?: number,
+    route?: { conversationId?: string | null },
   ) => unknown;
   deliver?: Deliver;
   checkAuditRules?: (content: string, direction: AuditDirection) => AuditResult;
@@ -201,6 +202,7 @@ export interface MessageHandlerOptions {
     toUid: string | undefined,
     pricing: Record<string, unknown>,
     timestamp: number,
+    sourceMessageId?: string | null,
   ) => unknown;
   onOwnerInterventionNew?: () => unknown;
   getGroupInfo?: (agentId: string, channelId: string) => Promise<{

@@ -394,7 +394,8 @@ describe('Lite Messenger contract smoke', () => {
 
   it('delegates friend-request approval through the configured access-control boundary', () => {
     const calls = [];
-    const sendSystemMessage = () => {};
+    const notifications = [];
+    const sendSystemMessage = (...args) => { notifications.push(args); };
     const fixture = createFixture({
       sendSystemMessage,
       ac: {
@@ -408,7 +409,7 @@ describe('Lite Messenger contract smoke', () => {
       },
     });
     try {
-      const intervention = { id: 'friend-request-1', visitorId: 'visitor-1' };
+      const intervention = { id: 'friend-request-1', visitorId: 'visitor-1', routingConversationId: 'conversation-1' };
       const result = fixture.handler.autoApproveWhitelistIfFriendRequest(
         intervention,
         '同意',
@@ -416,7 +417,8 @@ describe('Lite Messenger contract smoke', () => {
       assert.deepEqual(result, { approved: true });
       assert.equal(calls.length, 1);
       assert.equal(calls[0][0], fixture.db);
-      assert.equal(calls[0][1], sendSystemMessage);
+      calls[0][1]('agent-1', 'visitor-1', 'whitelist_enabled', {}, 1);
+      assert.equal(notifications[0][5].conversationId, 'conversation-1');
       assert.equal(calls[0][2], intervention);
       assert.equal(calls[0][3], '同意');
     } finally {

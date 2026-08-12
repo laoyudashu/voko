@@ -184,6 +184,30 @@ class MessageHandler extends EventEmitter {
     this._caseMap = new Map<string, string>();
   }
 
+  _resolveInboundConversation(agentId: string, visitorId: string, channelId: string,
+    channelType: number, messageId: string, metadata: InboundMessage['_voko']): string | null {
+    try {
+      const existing = this._messageRoutes.getByMessage(messageId, agentId);
+      if (existing?.conversation_id) return existing.conversation_id;
+      let conversation: RoutingConversation | null = null;
+      const wireKey = metadata?.conversationKey || metadata?.canonicalConversationKey;
+      if (wireKey) conversation = this._routingConversations.getForWireKey(agentId, channelId, channelType, wireKey);
+      if (!conversation && metadata?.replyToRouteId && channelType === 1) {
+        conversation = this._messageRoutes.resolvePrivateReply({ replyToRouteId: metadata.replyToRouteId,
+          agentId, peerUid: visitorId, channelId, channelType })?.conversation || null;
+      }
+      if (!conversation) {
+        const candidates = this._routingConversations.listForScope(agentId, channelId, channelType)
+          .filter((item: RoutingConversation) => item.status === 'active');
+        if (candidates.length === 1) conversation = candidates[0];
+      }
+      if (conversation && metadata?.routeId) this._messageRoutes.recordInbound({ messageId,
+        remoteRouteId: metadata.routeId, conversationId: conversation.id, agentId, peerUid: visitorId,
+        channelId, channelType });
+      return conversation?.id || null;
+    } catch (_) { return null; }
+  }
+
   /** 设置 Hermes 处理器（延迟初始化） */
   setHermesHandler(handler: BackendHandlerLike) { this.hermesHandler = handler; }
   /** 设置 OpenClaw 处理器（延迟初始化） */
@@ -392,12 +416,15 @@ class MessageHandler extends EventEmitter {
     if (!isMe) {
       try { notifyNewMessage(agentId, fromUid, content, timestamp); } catch {}
     }
+    const inboundConversationId = this._resolveInboundConversation(agentId, fromUid, channelId,
+      channelType || 1, messageId, data._voko || null);
+    const systemRoute = inboundConversationId ? { conversationId: inboundConversationId } : undefined;
 
     // 检查发布状态
     const agentStatusRow = this.db.prepare(`SELECT publish_status, owner_email, access_mode FROM agents WHERE agent_id = ?`).get<AgentStatusRow>(agentId);
     if (agentStatusRow && agentStatusRow.publish_status !== 'published' && agentStatusRow.publish_status !== 'private') {
       const ownerEmail = agentStatusRow.owner_email || '管理员';
-      this._sendSystemMessage(agentId, fromUid, 'agent_unpublished', { ownerEmail }, timestamp);
+      this._sendSystemMessage(agentId, fromUid, 'agent_unpublished', { ownerEmail }, timestamp, systemRoute);
       return;
     }
 
@@ -406,15 +433,15 @@ class MessageHandler extends EventEmitter {
     // 黑白名单检查
     if (agentStatusRow && this.ac) {
       if (this.ac.isBlacklisted(this.db, agentId, fromUid)) {
-        this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp);
+        this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp, systemRoute);
         return;
       }
       if (agentStatusRow.access_mode === 'private') {
         const whitelisted = this.ac.isWhitelisted(this.db, agentId, fromUid);
         if (!whitelisted) {
           if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
-            this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp);
-            this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp);
+            this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp, systemRoute);
+            this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp, messageId, inboundConversationId);
             return;
           }
         }
@@ -433,39 +460,39 @@ class MessageHandler extends EventEmitter {
           if ((paidCount?.c ?? 0) === 0) {
             const expireAt = Date.now() + pricingRow.trial_minutes * 60 * 1000;
             this.db.prepare('UPDATE conversations SET session_status=?, session_expire_at=? WHERE user_uid=? AND channel_id=?').run('active', expireAt, toUid, channelId);
-            this._sendSystemMessage(agentId, fromUid, 'trial_welcome', { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp);
+            this._sendSystemMessage(agentId, fromUid, 'trial_welcome', { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           } else {
-            this._sendSystemMessage(agentId, fromUid, 'paid_welcome_back', { price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp);
+            this._sendSystemMessage(agentId, fromUid, 'paid_welcome_back', { price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
             return;
           }
         } else {
           if (isBuyCmd) {
-            this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp);
+            this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp, messageId);
           } else {
             const paidSysCode = pricingRow.trial_minutes > 0 ? 'trial_welcome' : 'paid_required';
-            this._sendSystemMessage(agentId, fromUid, paidSysCode, { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp);
+            this._sendSystemMessage(agentId, fromUid, paidSysCode, { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           }
           return;
         }
       } else if (conv.session_status === 'active') {
         if (conv.session_expire_at && conv.session_expire_at > Date.now()) {
           if (conv.session_expire_at - Date.now() < 60000) {
-            this._sendSystemMessage(agentId, fromUid, 'expiring_soon', {}, timestamp);
+            this._sendSystemMessage(agentId, fromUid, 'expiring_soon', {}, timestamp, systemRoute);
           }
         } else {
           this.db.prepare('UPDATE conversations SET session_status=? WHERE user_uid=? AND channel_id=?').run('expired', toUid, channelId);
           if (isBuyCmd) {
-            this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp);
+            this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp, messageId);
           } else {
-            this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp);
+            this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
           }
           return;
         }
       } else if (conv.session_status === 'expired') {
         if (isBuyCmd) {
-          this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp);
+          this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp, messageId);
         } else {
-          this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp);
+          this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
         }
         return;
       }
@@ -477,11 +504,11 @@ class MessageHandler extends EventEmitter {
       if (auditResult.action === 'hard_deny') {
         const matchedRule = auditResult.matchedRule || {};
         if (matchedRule.prompt_key) {
-          this._sendSystemMessage(agentId, fromUid, matchedRule.prompt_key, { keyword: auditResult.matchedKeyword }, timestamp);
+          this._sendSystemMessage(agentId, fromUid, matchedRule.prompt_key, { keyword: auditResult.matchedKeyword }, timestamp, systemRoute);
         } else if (matchedRule.prompt) {
           // 用户自定义规则（裸 prompt）
           const prompt = this._substitutePromptVariables(matchedRule.prompt, { keyword: auditResult.matchedKeyword, visitorId: fromUid, agentId });
-          if (prompt) this._sendSystemMessage(agentId, fromUid, 'audit_custom', { prompt }, timestamp);
+          if (prompt) this._sendSystemMessage(agentId, fromUid, 'audit_custom', { prompt }, timestamp, systemRoute);
         }
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: fromUid, messageId, data: { ruleId: auditResult.matchedKeyword, direction: 'inbound', action: auditResult.action } });
         this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
@@ -634,26 +661,34 @@ class MessageHandler extends EventEmitter {
   // ==========================================
   // 好友申请介入
   // ==========================================
-  _triggerFriendRequestIntervention(agentId: string, visitorId: string, content: string, timestamp: number): void {
+  _triggerFriendRequestIntervention(agentId: string, visitorId: string, content: string, timestamp: number, sourceMessageId?: string | null, routingConversationId?: string | null): void {
     if (!this.ac || !this.databaseAPI) return;
     const now = Date.now();
     const oiId = `private_req_${now}_${Math.random().toString(36).substr(2, 6)}`;
     const backendRow = this.db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<BackendRow>(agentId);
     const prefix = backendRow?.backend_type === 'hermes' ? 'hermes' : 'agent';
     const visitorName = visitorId;
-    this.databaseAPI.saveOwnerIntervention({
+    const saved = this.databaseAPI.saveOwnerIntervention({
       id: oiId, visitorId, sessionKey: `${prefix}:${agentId}:${visitorId}`,
       problem: `访客 "${visitorName}"(${visitorId}) 申请添加好友\n消息内容: "${content}"`,
       agentSuggestion: '如同意请回复 "同意"，主人回复后将自动添加该访客到白名单并通知访客。',
       askTime: now, expireTime: null, status: 'pending',
       ownerReply: null, replyTime: null, parentMessageId: null,
-      channelType: 'voko', resolvedAt: null, createdAt: now, updatedAt: now, agentId
-    });
+      channelType: 'voko', resolvedAt: null, createdAt: now, updatedAt: now, agentId,
+      sourceSenderUid: visitorId, targetChannelId: visitorId, targetChannelType: 1,
+      sourceMessageId: sourceMessageId || null, routingConversationId: routingConversationId || null,
+    }) as { success?: boolean; error?: string } | undefined;
+    if (saved?.success === false) {
+      console.error('[FriendRequest] owner intervention persistence failed:', saved.error || 'unknown error');
+      return;
+    }
     this._enqueueIntervention({
       id: oiId, visitorId, agentId, sessionKey: `${prefix}:${agentId}:${visitorId}`,
       problem: `访客 "${visitorName}"(${visitorId}) 申请添加好友\n消息内容: "${content}"`,
       agentSuggestion: '如同意请回复 "同意"，主人回复后将自动添加该访客到白名单并通知访客。',
-      askTime: now, skipReply: 0,
+      askTime: now, skipReply: 0, sourceSenderUid: visitorId,
+      targetChannelId: visitorId, targetChannelType: 1,
+      sourceMessageId: sourceMessageId || null, routingConversationId: routingConversationId || null,
     });
     this._onOwnerInterventionNew();
   }
@@ -680,7 +715,7 @@ class MessageHandler extends EventEmitter {
     const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : targetChannelId;
     const actionLabel = auditResult.action === 'hard_deny' ? '系统已拒绝，自动回复提示语。' : '已转发给 Agent，请关注。';
     if (this.databaseAPI) {
-      this.databaseAPI.saveOwnerIntervention({
+      const saved = this.databaseAPI.saveOwnerIntervention({
         id: oiId, visitorId, sessionKey: `${prefix}:${agentId}:${sessionTarget}`,
         problem: `访客消息: "${content}"\n命中敏感词: "${auditResult.matchedKeyword}"\n${actionLabel}`,
         agentSuggestion: '出站/入站关键词拦截提醒，无需回复',
@@ -688,8 +723,9 @@ class MessageHandler extends EventEmitter {
         ownerReply: null, replyTime: null, parentMessageId: null,
         channelType: 'voko', resolvedAt: null, createdAt: now, updatedAt: now, agentId,
         sourceSenderUid, targetChannelId, targetChannelType,
-        sourceMessageId: messageId || null
-      });
+        sourceMessageId: messageId || null, skipReply: true,
+      }) as { success?: boolean } | undefined;
+      if (saved?.success === false) return;
     }
     this.db.prepare('UPDATE owner_interventions SET skip_reply = 1 WHERE id = ?').run(oiId);
     this._enqueueIntervention({
@@ -725,7 +761,7 @@ class MessageHandler extends EventEmitter {
       ? `Agent 回复被拦截: "${content}"\n命中敏感词: "${auditResult.matchedKeyword}"\n系统已拦截，未发送给访客。`
       : `Agent 回复命中软规则: "${content}"\n命中敏感词: "${auditResult.matchedKeyword}"\n已放行发送，请关注。`;
     if (this.databaseAPI) {
-      this.databaseAPI.saveOwnerIntervention({
+      const saved = this.databaseAPI.saveOwnerIntervention({
         id: oiId, visitorId,
         sessionKey: `${prefix}:${agentId}:${sessionTarget}`,
         problem,
@@ -734,8 +770,9 @@ class MessageHandler extends EventEmitter {
         ownerReply: null, replyTime: null, parentMessageId: null,
         channelType: 'voko', resolvedAt: null, createdAt: now, updatedAt: now, agentId,
         sourceSenderUid, targetChannelId, targetChannelType,
-        sourceMessageId: messageId || null
-      });
+        sourceMessageId: messageId || null, skipReply: true,
+      }) as { success?: boolean } | undefined;
+      if (saved?.success === false) return;
     }
     this.db.prepare('UPDATE owner_interventions SET skip_reply = 1 WHERE id = ?').run(oiId);
     this._enqueueIntervention({
@@ -755,7 +792,10 @@ class MessageHandler extends EventEmitter {
   // ==========================================
   autoApproveWhitelistIfFriendRequest(intervention: Record<string, unknown>, ownerReply: string): unknown {
     if (!this.ac) return;
-    return this.ac.autoApproveIfFriendRequest(this.db, this._sendSystemMessage, intervention, ownerReply);
+    const sendScopedStatus = (agentId: string, visitorId: string, key: string, params: Record<string, unknown>, timestamp?: number) =>
+      this._sendSystemMessage(agentId, visitorId, key, params, timestamp,
+        { conversationId: String(intervention.routingConversationId || intervention.routing_conversation_id || '') || null });
+    return this.ac.autoApproveIfFriendRequest(this.db, sendScopedStatus, intervention, ownerReply);
   }
 
   // ==========================================
@@ -778,6 +818,10 @@ class MessageHandler extends EventEmitter {
       console.error(`[转发] dispatcher 未初始化，agent=${agentId} 消息留库等 pull`);
       return;
     }
+    const inboundConversationId = this._resolveInboundConversation(
+      agentId, fromUid, channelId, Number(channelType) === 2 ? 2 : 1, messageId, routeMetadata,
+    );
+    const inboundSystemRoute = inboundConversationId ? { conversationId: inboundConversationId } : undefined;
     if (!modelReviewed && this._classifyAuditDecision) {
       const deterministic = this._checkAuditRules(content, 'inbound');
       if (deterministic.verdict === 'uncertain' || deterministic.action === 'soft_deny') {
@@ -787,7 +831,7 @@ class MessageHandler extends EventEmitter {
               { channelId, channelType: channelType || 1, senderUid: fromUid });
             if (reviewed.action === 'hard_deny' && channelType !== 2) {
               this._sendSystemMessage(agentId, fromUid, 'audit.default.sensitive_keyword',
-                { keyword: reviewed.matchedKeyword || reviewed.reasonCode || 'security policy' }, timestamp);
+                { keyword: reviewed.matchedKeyword || reviewed.reasonCode || 'security policy' }, timestamp, inboundSystemRoute);
             }
             return;
           }

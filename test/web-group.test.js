@@ -340,3 +340,12 @@ it('keeps every server-paginated Web view on the current document', () => {
   assert.match(groupWeb, /form\[data-group-ajax\]/);
   assert.match(indexWeb, /form\[data-voko-access-list\]/);
 });
+
+it('uses styled dialogs instead of native browser confirm prompts', () => {
+  const indexWeb = require('node:fs').readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const groupWeb = require('node:fs').readFileSync(path.join(__dirname, '..', 'src', 'web', 'group.js'), 'utf8');
+  assert.doesNotMatch(indexWeb, /\b(?:window\.)?confirm\s*\(/);
+  assert.doesNotMatch(groupWeb, /\b(?:window\.)?confirm\s*\(/);
+  assert.match(indexWeb, /function showVokoConfirm\(/);
+  assert.match(groupWeb, /id="quit-dlg"/);
+});
