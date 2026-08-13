@@ -25,10 +25,16 @@ test('home access entry distinguishes visitor, owner and A2A actions', () => {
   assert.match(source, /data-role="gen-owner-link"/);
   assert.match(source, /ownerLinkDialog\(\)/);
   assert.match(source, /e\.target\.closest\?e\.target\.closest\("\[data-role\]"\)/);
-  assert.match(source, /data-voko-copy-target="#owner-link-url"/);
   assert.match(source, /data-role="confirm-owner-link"/);
+  assert.match(source, /max-width:350px/);
+  assert.match(source, /class="btn-sm" data-role="confirm-owner-link"/);
+  assert.match(source, /button class="btn-sm btn-outline" value="cancel"/);
   assert.match(source, /openOwnerLinkDialog\(t\)/);
   assert.doesNotMatch(source, /id="owner-link-open"/);
+  assert.doesNotMatch(source, /id="owner-link-url"/);
+  assert.doesNotMatch(source, /id="owner-link-expiry"/);
+  assert.match(source, /dlg\.close\(\)/);
+  assert.match(source, /btn btn-sm btn-outline home-access-action home-owner-action/);
   assert.match(source, /ownerLinkSessionKey="voko\.owner-links\.v1"/);
   assert.match(source, /sessionStorage\.setItem\(ownerLinkSessionKey/);
   assert.match(source, /data-owner-link-value/);
