@@ -70,13 +70,15 @@ class OwnerCommandProcessor {
     if (command.operation !== 'execute') return { status: 'rejected_invalid_operation' };
     const content = contentOf(command);
     if (!content) return { status: 'rejected_invalid_payload' };
-    const identity = this.options.resolveAgentIdentity?.(command.agent_id) || null;
+    const localAgentId = String(command.local_agent_id || command.agent_id);
+    const identity = this.options.resolveAgentIdentity?.(localAgentId) || null;
     if (!identity?.privateKey || !identity.imUid) return { status: 'signing_identity_required' };
     const leaseOwner = `owner-dispatch-${crypto.randomUUID()}`;
     const existing = this.options.store.getActiveProviderBinding(command.conversation_id);
-    const trusted = existing ? null : this.options.dispatcher.resolveTrustedOwnerTransport(command.agent_id);
+    const trusted = existing ? null : this.options.dispatcher.resolveTrustedOwnerTransport(localAgentId);
     if (!existing && !trusted) {
       if (this.options.store.acquireDispatchLease(messageId, leaseOwner, this.timeoutMs + 30_000)) {
+        this.enqueueStatus(command, identity, 'accepted', {}, 'receipt');
         this.options.store.markFailedNotDelivered(messageId, leaseOwner, 'OWNER_SAFE_TRANSPORT_UNAVAILABLE');
       }
       return { status: 'pull_required' };
@@ -93,7 +95,7 @@ class OwnerCommandProcessor {
     try {
       this.enqueueStatus(command, identity, 'accepted', {}, 'receipt');
       const result = await this.options.dispatcher.executeIsolated({
-        agentId: command.agent_id,
+        agentId: localAgentId,
         taskId: command.message_id,
         contextId: command.conversation_id,
         content,
@@ -120,7 +122,7 @@ class OwnerCommandProcessor {
         if (deliveryReceipt.nativeSessionId) {
           const saved = this.options.store.saveProviderBinding({
           ownerConversationId: command.conversation_id,
-          agentId: command.agent_id,
+          agentId: localAgentId,
           providerType: actualProviderType, providerInstanceId: actualInstance || null,
           adapterType: actualProviderId, deliveryMode: actualMode,
           nativeSessionId: deliveryReceipt.nativeSessionId,
@@ -158,7 +160,7 @@ class OwnerCommandProcessor {
   }
 
   private processCancel(command: any): { status: string; eventId?: string } {
-    const identity = this.options.resolveAgentIdentity?.(command.agent_id) || null;
+    const identity = this.options.resolveAgentIdentity?.(String(command.local_agent_id || command.agent_id)) || null;
     if (!identity?.privateKey || !identity.imUid) return { status: 'signing_identity_required' };
     try {
       const result = this.options.store.settleLocalCancel({ cancelMessageId: command.message_id,

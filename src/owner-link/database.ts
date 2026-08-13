@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const OWNER_LINK_SCHEMA_VERSION = 4;
+const OWNER_LINK_SCHEMA_VERSION = 5;
 
 interface InitOwnerLinkDatabaseOptions { createParent?: boolean }
 
@@ -48,6 +48,7 @@ function initOwnerLinkDatabase(
           conversation_id TEXT NOT NULL REFERENCES owner_link_identity_bindings(conversation_id),
           sequence INTEGER NOT NULL,
           agent_id TEXT NOT NULL,
+          local_agent_id TEXT,
           payload_digest TEXT NOT NULL,
           payload_json TEXT,
           state TEXT NOT NULL,
@@ -165,6 +166,14 @@ function initOwnerLinkDatabase(
         if (!commandColumns.has('target_message_id')) {
           db.exec('ALTER TABLE owner_link_commands ADD COLUMN target_message_id TEXT');
         }
+      }
+      if (version < 5) {
+        const commandColumns = new Set((db.prepare('PRAGMA table_info(owner_link_commands)').all() as Array<{ name?: string }>)
+          .map((column) => String(column.name || '')));
+        if (!commandColumns.has('local_agent_id')) {
+          db.exec('ALTER TABLE owner_link_commands ADD COLUMN local_agent_id TEXT');
+        }
+        db.exec('CREATE INDEX IF NOT EXISTS idx_owner_link_commands_local_agent ON owner_link_commands(local_agent_id,state,expires_at)');
       }
       db.prepare(`INSERT INTO owner_link_meta(key,value,updated_at) VALUES('schema_version',?,?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)

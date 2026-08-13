@@ -9,7 +9,7 @@ const { createOwnerPullCallerAuthorizer, OwnerLinkStore, OwnerPullService,
 const { AgentIdentityBindingStore } = require('../build/core/provider-agent-identity');
 const { initDatabase } = require('../build/core/database');
 
-function fixture() {
+function fixture(options = {}) {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-pull-')), 'owner.db'));
   const store = new OwnerLinkStore(db); const gateway = crypto.generateKeyPairSync('ed25519');
   const agent = crypto.generateKeyPairSync('ed25519'); const now = Date.now();
@@ -17,11 +17,11 @@ function fixture() {
   const action = { type: 'message', text: 'Summarize the current status.' };
   const command = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'command-pull-1',
     ownerConversationId: 'conversation-pull-1', ownerIdentityId: 'identity-pull-1', ownerImUid: 'owner_pull-1',
-    agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
+    agentId: options.remoteAgentId || 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
     payload: { action, approval: { approvalId: 'owa_command-pull-1', actionDigest: actionDigest(action), expiresAt,
       enforcement: 'required_before_execute' } }, keyId: 'gateway-key',
     createdAt: new Date(now - 1000).toISOString(), expiresAt }, gateway.privateKey);
-  store.persistVerified(command, command.ownerImUid, now);
+  store.persistVerified(command, command.ownerImUid, now, options.localAgentId || command.agentId);
   const identity = { privateKey: agent.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     keyId: 'agent-key', imUid: 'agent-im-1' };
   return { db, store, command, identity };
@@ -54,6 +54,22 @@ test('Pull claim shares the dispatch lease and produces signed accepted/working/
     assert.equal(f.store.getCommand(f.command.messageId).state, 'COMPLETED');
     assert.deepEqual(f.db.prepare('SELECT payload_json FROM owner_link_outbox ORDER BY producer_sequence').all()
       .map(row => JSON.parse(row.payload_json).operation), ['accepted', 'working', 'completed']);
+  } finally { f.db.close(); }
+});
+
+test('Pull addresses the local Agent while returning events for the remote AgentDID identity', () => {
+  const remoteAgentId = '2b4a3c62-efba-4c97-add9-6f09ee092462';
+  const f = fixture({ remoteAgentId, localAgentId: 'gym' });
+  try {
+    const service = new OwnerPullService({ store: f.store, authorizeAgent: id => id === 'gym' ? ({
+      providerType: 'openclaw', providerInstanceId: 'main', adapterType: 'owner-pull', deliveryMode: 'pull',
+      bindingVersion: 0, nativeSessionId: 'thread-gym' }) : null,
+      resolveAgentIdentity: id => id === 'gym' ? f.identity : null });
+    const fetched = service.fetch('gym');
+    assert.equal(fetched.success, true); assert.equal(fetched.command.messageId, f.command.messageId);
+    assert.equal(service.complete('gym', f.command.messageId, fetched.command.claimId, 'done').success, true);
+    assert.ok(f.db.prepare('SELECT payload_json FROM owner_link_outbox').all()
+      .every(row => JSON.parse(row.payload_json).agentId === remoteAgentId));
   } finally { f.db.close(); }
 });
 

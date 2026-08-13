@@ -75,7 +75,7 @@ class OwnerPullService {
     if (!authorization) return { success: false, code: 'OWNER_PULL_CALLER_UNVERIFIED' };
     const identity = this.options.resolveAgentIdentity(agentId);
     const command = this.options.store.getCommand(messageId);
-    if (!identity?.privateKey || !command || command.agent_id !== agentId || command.lease_owner !== claimId
+    if (!identity?.privateKey || !command || String(command.local_agent_id || command.agent_id) !== agentId || command.lease_owner !== claimId
         || command.state !== 'PROVIDER_ACCEPTED') return { success: false, code: 'OWNER_PULL_CLAIM_INVALID' };
     const safeContent = String(content || '').slice(0, 6144);
     const safeCode = String(errorCode || 'OWNER_PULL_EXECUTION_FAILED').replace(/[^A-Z0-9_]/g, '_').slice(0, 128);

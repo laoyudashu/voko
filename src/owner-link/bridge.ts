@@ -86,7 +86,7 @@ class OwnerLinkBridge {
       if (!verifyOwnerEnvelope(envelope, this.options.resolvePublicKey, { now })) {
         throw new OwnerLinkSecurityError('OWNER_SIGNATURE_INVALID');
       }
-      const persisted = this.store.persistVerified(envelope, fromUid, now);
+      const persisted = this.store.persistVerified(envelope, fromUid, now, agentId);
       if (persisted.status === 'inserted' && this.onCommand) {
         const messageId = envelope.messageId;
         queueMicrotask(() => void Promise.resolve(this.onCommand?.(messageId)).catch(() => {}));

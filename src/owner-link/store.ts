@@ -22,8 +22,9 @@ function digestDetails(value: unknown): string {
 class OwnerLinkStore {
   constructor(private readonly db: DatabaseSync) {}
 
-  persistVerified(envelope: VokoOwnerEnvelope, observedImUid: string, now = Date.now()): PersistResult {
+  persistVerified(envelope: VokoOwnerEnvelope, observedImUid: string, now = Date.now(), localAgentId = envelope.agentId): PersistResult {
     if (!observedImUid || observedImUid.length > 192) throw new OwnerLinkSecurityError('OWNER_IM_UID_INVALID');
+    if (!localAgentId || localAgentId.length > 128) throw new OwnerLinkSecurityError('OWNER_LOCAL_AGENT_ID_INVALID');
     let approvedExecute: ReturnType<typeof parseApprovedExecutePayload> | null = null;
     let cancelTargetMessageId: string | null = null;
     if (envelope.operation === 'execute') {
@@ -82,10 +83,10 @@ class OwnerLinkStore {
         throw new OwnerLinkSecurityError('OWNER_BINDING_MISMATCH');
       }
       this.db.prepare(`INSERT INTO owner_link_commands
-        (message_id,conversation_id,sequence,agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at,
+        (message_id,conversation_id,sequence,agent_id,local_agent_id,payload_digest,payload_json,state,expires_at,created_at,updated_at,
          operation,target_message_id,owner_identity_id,observed_im_uid,ownership_epoch,conversation_epoch)
-        VALUES(?,?,?,?,?,?,'RECEIVED',?,?,?,?,?,?,?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
-        envelope.sequence, envelope.agentId, envelope.payloadDigest, canonicalJson(envelope.payload),
+        VALUES(?,?,?,?,?,?,?,'RECEIVED',?,?,?,?,?,?,?,?,?)`).run(envelope.messageId, envelope.ownerConversationId,
+        envelope.sequence, envelope.agentId, localAgentId, envelope.payloadDigest, canonicalJson(envelope.payload),
         Date.parse(envelope.expiresAt), now, now, envelope.operation, cancelTargetMessageId, envelope.ownerIdentityId, observedImUid,
         envelope.ownershipEpoch, envelope.conversationEpoch);
       if (approvedExecute) {
@@ -241,7 +242,7 @@ class OwnerLinkStore {
     try {
       const row = this.db.prepare(`SELECT c.* FROM owner_link_commands c
         JOIN owner_link_approvals a ON a.message_id=c.message_id
-        WHERE c.agent_id=? AND c.state IN ('PERSISTED','FAILED_NOT_DELIVERED') AND c.expires_at>?
+        WHERE COALESCE(c.local_agent_id,c.agent_id)=? AND c.state IN ('PERSISTED','FAILED_NOT_DELIVERED') AND c.expires_at>?
           AND a.status='pending' AND a.expires_at>?
         ORDER BY c.sequence,c.created_at LIMIT 1`).get(agentId, now, now) as any;
       if (!row) { this.db.exec('COMMIT'); return null; }
