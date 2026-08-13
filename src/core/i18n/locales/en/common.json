@@ -74,7 +74,7 @@
   "common.home.processing": "Processing…",
   "common.home.remove_prefix": "Remove",
   "common.home.confirm_remove": "Confirm remove?",
-  "common.home.confirm_delete_audit": "Confirm delete this audit rule?",
+  "common.home.confirm_delete_audit": "Confirm delete this security rule?",
   "common.home.submitting": "Submitting…",
   "common.home.success": "Success",
   "common.home.submit": "Submit"

@@ -62,6 +62,8 @@ function serverAgentIdFromDid(did: unknown): string | null {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toLowerCase();
 }
 
+export { serverAgentIdFromDid };
+
 function getAgentToken(db: DatabaseLike, agentId: string): { token: string; email: string; serverAgentId: string } {
   const agent = db.prepare('SELECT agent_id, owner_email, did FROM agents WHERE agent_id=?')
     .get<AgentRow>(agentId);

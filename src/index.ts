@@ -2065,7 +2065,7 @@ async function startMcpServer(args?: any, core?: any) {
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
     a2aModule,
     a2aMailboxClient,
-    syncA2ARegistration: () => a2aRegistration?.ensureRegistered(),
+    syncA2ARegistration: a2aRegistration ? () => a2aRegistration.ensureRegistered() : undefined,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

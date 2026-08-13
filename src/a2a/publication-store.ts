@@ -3,10 +3,14 @@ import type { DatabaseSync } from 'node:sqlite';
 class A2APublicationStore {
   constructor(private readonly db: DatabaseSync) {}
 
-  isPublicEnabled(agentId: string): boolean {
+  getPublicEnabled(agentId: string): boolean | null {
     const row = this.db.prepare('SELECT public_enabled FROM a2a_agent_publication WHERE agent_id=?')
       .get(agentId) as { public_enabled: number } | undefined;
-    return row ? row.public_enabled === 1 : true;
+    return row ? row.public_enabled === 1 : null;
+  }
+
+  isPublicEnabled(agentId: string): boolean {
+    return this.getPublicEnabled(agentId) === true;
   }
 
   setPublicEnabled(agentId: string, enabled: boolean): void {

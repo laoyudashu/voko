@@ -74,7 +74,7 @@
   "common.home.processing": "处理中…",
   "common.home.remove_prefix": "移出",
   "common.home.confirm_remove": "确认移除？",
-  "common.home.confirm_delete_audit": "确认删除此审核规则？",
+  "common.home.confirm_delete_audit": "确认删除此安全规则？",
   "common.home.submitting": "提交中…",
   "common.home.success": "操作成功",
   "common.home.submit": "提交"

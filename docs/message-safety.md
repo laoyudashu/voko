@@ -25,7 +25,8 @@ technical and payment discussions while still blocking likely disclosures.
 
 ## Configuring model assistance
 
-Open `http://localhost:3100/audit-rules` and use **LLM Safety Assistance**.
+Open **Security Rules** at `http://localhost:3100/audit-rules` and use
+**LLM Safety Assistance**.
 Configuration is optional and disabled by default.
 
 - Configure an OpenAI-compatible or Anthropic-compatible endpoint, model and
