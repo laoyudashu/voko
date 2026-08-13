@@ -23,6 +23,7 @@ function createFixture() {
       expiresAt, payload, keyId: 'owner-key-1', ...overrides }, keys.privateKey);
   };
   const bridge = new OwnerLinkBridge({ database: db, now: () => now,
+    trustedGatewayImUids: ['owner_abcdefgh'],
     resolvePublicKey: (id) => id === 'owner-key-1' ? keys.publicKey : null });
   return { db, bridge, make, now, close: () => db.close() };
 }
@@ -54,6 +55,29 @@ test('unsigned or malformed messages from reserved Owner identities are hard rej
     assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_commands').get().count, 0);
     assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_security_events').get().count, 1);
   } finally { f.close(); }
+});
+
+test('only configured Owner gateway IM identities can reach envelope verification', () => {
+  const f = createFixture();
+  try {
+    const envelope = f.make({ ownerImUid: 'owner_not_allowed' });
+    const result = f.bridge.handleInbound('agent-1', { fromUid: envelope.ownerImUid,
+      clientMsgNo: envelope.messageId, content: wire(envelope) });
+    assert.deepEqual({ handled: result.handled, accepted: result.accepted, code: result.code },
+      { handled: true, accepted: false, code: 'OWNER_GATEWAY_IM_UID_UNTRUSTED' });
+    assert.equal(f.db.prepare('SELECT COUNT(*) count FROM owner_link_commands').get().count, 0);
+  } finally { f.close(); }
+});
+
+test('Owner gateway IM identity configuration is mandatory and fail closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-config-'));
+  const db = initOwnerLinkDatabase(path.join(dir, 'owner.db'));
+  try {
+    assert.throws(() => new OwnerLinkBridge({ database: db, env: {}, resolvePublicKey: () => null }),
+      /OWNER_GATEWAY_IM_UID_CONFIG_INVALID/);
+    assert.throws(() => new OwnerLinkBridge({ database: db, trustedGatewayImUids: ['visitor-1'], resolvePublicKey: () => null }),
+      /OWNER_GATEWAY_IM_UID_CONFIG_INVALID/);
+  } finally { db.close(); }
 });
 
 test('owner envelope cannot target another local Agent or change transport message ID', () => {
