@@ -105,8 +105,8 @@ interface DispatcherOptions {
 interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
-  sourceType?: 'agent_peer' | 'owner';
-  executionScope?: 'a2a_mailbox' | 'owner_link';
+  sourceType?: 'agent_peer' | 'owner' | 'owner_chat';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat';
   preferredAdapter?: string;
 }
 
@@ -985,7 +985,7 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link';
+      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link' || executionScope === 'owner_chat';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1078,10 +1078,12 @@ ${body}
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
-    const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
-    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
+    const executionScope = options.executionScope === 'owner_link' ? 'owner_link'
+      : options.executionScope === 'owner_chat' ? 'owner_chat' : 'a2a_mailbox';
+    const sourceType = executionScope === 'owner_link' ? 'owner'
+      : executionScope === 'owner_chat' ? 'owner_chat' : 'agent_peer';
     if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
-    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    const prefix = executionScope === 'owner_link' ? 'owner' : executionScope === 'owner_chat' ? 'owner-chat' : 'a2a';
     const turnId = `${prefix}-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;

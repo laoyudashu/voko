@@ -154,5 +154,5 @@ function verifyOwnerEnvelope(envelope: VokoOwnerEnvelope, resolvePublicKey: (key
     Buffer.from(envelope.signature, 'base64'));
 }
 
-export { OWNER_VERSION, canonicalJson, digestPayload, parseOwnerEnvelopeJson, signOwnerEnvelope, validateOwnerEnvelope, verifyOwnerEnvelope };
+export { OWNER_VERSION, StrictJsonParser, canonicalJson, digestPayload, parseOwnerEnvelopeJson, signOwnerEnvelope, validateOwnerEnvelope, verifyOwnerEnvelope };
 export type { OwnerOperation, VokoOwnerEnvelope };

@@ -1612,6 +1612,7 @@ async function startMcpServer(args?: any, core?: any) {
     OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule, OwnerPullService, matchesLocalAgentIdentity } = require('./owner-link');
   const ownerLinkModule = new OwnerLinkModule();
   let ownerLinkBridge: any = null;
+  let ownerChatBridge: any = null;
   let ownerPullService: any = null;
   if (ownerLinkModule.enabled) {
     try {
@@ -1619,6 +1620,18 @@ async function startMcpServer(args?: any, core?: any) {
       const ownerKeyStore = new OwnerGatewayKeyStore(ownerLinkModule.getDatabase());
       ownerKeyStore.configureFromEnvironment(process.env);
       ownerLinkBridge = new OwnerLinkBridge({
+        database: ownerLinkModule.getDatabase(),
+        resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
+        matchesAgentId: (localAgentId: string, envelopeAgentId: string) => {
+          const row = db.prepare('SELECT did,owner_email,publish_status FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId);
+          const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+          return !!currentOwner && String(row?.owner_email || '').trim().toLowerCase() === currentOwner
+            && row?.publish_status === 'published' && matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
+        },
+      });
+      const { initOwnerChatSchema, OwnerChatBridge } = require('./owner-chat');
+      initOwnerChatSchema(ownerLinkModule.getDatabase());
+      ownerChatBridge = new OwnerChatBridge({
         database: ownerLinkModule.getDatabase(),
         resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
         matchesAgentId: (localAgentId: string, envelopeAgentId: string) => {
@@ -1752,6 +1765,24 @@ async function startMcpServer(args?: any, core?: any) {
     });
   }
 
+  if (ownerChatBridge && ownerLinkModule.dispatchEnabled && dispatcher) {
+    const { OwnerChatOutbox, OwnerChatProcessor } = require('./owner-chat');
+    const resolveOwnerChatAgentIdentity = (agentId: string) => {
+      const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+      if (!currentOwner) return null;
+      const row = db.prepare(`SELECT agent_id,did,imUid,private_key,owner_email,publish_status
+        FROM agents WHERE agent_id=? LIMIT 1`).get(agentId);
+      if (!row || String(row.owner_email || '').trim().toLowerCase() !== currentOwner
+          || row.publish_status !== 'published' || !row.imUid || !row.private_key) return null;
+      return { privateKey: row.private_key, keyId: row.did || row.agent_id, imUid: row.imUid };
+    };
+    const ownerChatProcessor = new OwnerChatProcessor({ database: ownerLinkModule.getDatabase(), dispatcher,
+      resolveAgentIdentity: resolveOwnerChatAgentIdentity });
+    ownerChatBridge.setMessageHandler((messageId: string) => ownerChatProcessor.process(messageId));
+    const ownerChatOutbox = new OwnerChatOutbox(ownerLinkModule.getDatabase(), { deliver });
+    await taskManager.start('owner-chat-outbox', () => ownerChatOutbox.start());
+  }
+
   let ownerInterventionNotifier: any = null; // 在后面创建，供 callback 闭包引用
 
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
@@ -1830,6 +1861,12 @@ async function startMcpServer(args?: any, core?: any) {
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      const ownerChatResult = ownerChatBridge?.handle(msg.agentId, data);
+      if (ownerChatResult?.handled) {
+        if (!ownerChatResult.accepted) console.warn(`[Owner Chat] 已拒绝可信聊天消息: ${ownerChatResult.code || 'OWNER_CHAT_REJECTED'}`);
+        data?.ack?.();
+        return;
+      }
       const ownerResult = ownerLinkIngress.handle(msg.agentId, data);
       if (ownerResult.handled) {
         if (!ownerResult.accepted) {

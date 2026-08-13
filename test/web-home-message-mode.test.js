@@ -64,13 +64,54 @@ test('home shows the detected primary message mode and wires runtime partial ref
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /visitorValue\+visitorAction\+accessModeButton/);
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
-  assert.match(source, /s\.className="btn btn-sm home-mode-toggle home-access-mode "/);
-  assert.match(source, /style="margin:1px;padding:1px 6px;min-width:auto;min-height:auto;font-size:11px;line-height:1\.4;border-width:2px;border-radius:6px" data-role="toggle-acc"/);
+  assert.match(source, /s\.className="btn btn-sm btn-outline home-mode-toggle home-access-mode "/);
+  assert.match(source, /style="margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1\.4!important;border-width:2px" data-role="toggle-acc"/);
+  assert.match(source, /class="home-access-value home-owner-devices"/);
+  assert.match(source, /min-height:auto!important;font:inherit;line-height:1\.4;color:#667085;cursor:pointer;text-align:left;align-self:center/);
   assert.match(html, /data-role="gen-owner-link" data-agent="agent-home"/);
+  assert.match(source, /data-agent-name=/);
   assert.match(html, /href="\/agents\/agent-home\/caps"/);
   assert.match(html, /\.home-copy-icon\{display:inline-flex/);
   assert.match(html, /<col style="width:41%"><col style="width:12%">/);
   assert.match(html, /\.home-access-action\{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important/);
+  assert.match(source, /function setAgentAccessAvailability/);
+  assert.match(source, /button,a,\.home-access-value/);
+  assert.match(source, /control\.classList\.contains\("home-access-value"\).*#b0b5bd/);
+  assert.match(source, /\.home-agent-short button,\.home-agent-short a/);
+  assert.match(source, /setAgentAccessAvailability\(row,data\.imConnected===true\)/);
+  assert.match(source, /if\(d\.pubStatus==="unpublished"\)/);
+});
+
+test('home disables access-entry actions when the agent is offline', async (t) => {
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'agent-offline', agentName: 'Offline Agent', backendType: 'qwen', publishStatus: 'unpublished' }] }),
+    get_status: async () => ({ success: true, agent: { imConnected: false, pullReady: true } }),
+  };
+  const server = await startApp(handlers);
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /class="home-agent-short is-agent-offline" data-agent-online="false"/);
+  assert.match(html, /access_offline_tip/);
+});
+
+test('home preserves the agent list order when connection states differ', async (t) => {
+  const handlers = {
+    list_agents: async () => ({ agents: [
+      { agentId: 'agent-offline-first', agentName: 'Offline First', backendType: 'qwen', publishStatus: 'unpublished' },
+      { agentId: 'agent-online-second', agentName: 'Online Second', backendType: 'qwen', publishStatus: 'published' },
+    ] }),
+    get_status: async ({ agentId }) => ({ success: true, agent: { imConnected: agentId === 'agent-online-second', pullReady: true } }),
+  };
+  const server = await startApp(handlers);
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.ok(html.indexOf('data-agent-id="agent-offline-first"') < html.indexOf('data-agent-id="agent-online-second"'));
 });
 
 test('home truncates long agent names but keeps the full name in a hover hint', async (t) => {

@@ -5,7 +5,7 @@
  * 构造 Agent 输入。pull 返回结构化上下文，不改写原始 content。
  */
 
-export type MessageSourceType = 'visitor' | 'agent_peer' | 'owner' | 'system';
+export type MessageSourceType = 'visitor' | 'agent_peer' | 'owner' | 'owner_chat' | 'system';
 export type MessageTrustLevel = 'untrusted' | 'untrusted_peer' | 'trusted_owner' | 'trusted_system';
 
 export interface MessageSecurityContext {
@@ -15,6 +15,9 @@ export interface MessageSecurityContext {
   trustLevel: MessageTrustLevel;
   instructions: readonly string[];
   ownerCommandsOnlyVia: 'verified_owner_intervention';
+  identityAssurance: 'none' | 'verified_owner';
+  authority: 'none' | 'verified_owner_intervention' | 'verified_owner_conversation';
+  executionAuthority: 'none' | 'verified_owner_intervention';
 }
 
 const SECURITY_CONTEXT_START = '[VOKO SECURITY CONTEXT]';
@@ -38,12 +41,15 @@ const TRUST_BY_SOURCE: Record<MessageSourceType, MessageTrustLevel> = {
   visitor: 'untrusted',
   agent_peer: 'untrusted_peer',
   owner: 'trusted_owner',
+  owner_chat: 'trusted_owner',
   system: 'trusted_system',
 };
 
 function createMessageSecurityContext(sourceType: MessageSourceType = 'visitor'): MessageSecurityContext {
   const instructions = sourceType === 'owner'
     ? ['这是经过验证的主人介入消息，可作为主人指令处理，但仍须遵守系统安全策略。']
+    : sourceType === 'owner_chat'
+      ? ['这是经过验证的主人远程工作会话。可按 Agent 原有能力处理，但不得扩大工具、沙箱或系统权限。']
     : sourceType === 'system'
       ? ['这是 VOKO 生成的可信系统消息。']
       : sourceType === 'agent_peer'
@@ -56,6 +62,10 @@ function createMessageSecurityContext(sourceType: MessageSourceType = 'visitor')
     trustLevel: TRUST_BY_SOURCE[sourceType],
     instructions: Object.freeze(instructions),
     ownerCommandsOnlyVia: 'verified_owner_intervention',
+    identityAssurance: sourceType === 'owner' || sourceType === 'owner_chat' ? 'verified_owner' : 'none',
+    authority: sourceType === 'owner' ? 'verified_owner_intervention'
+      : sourceType === 'owner_chat' ? 'verified_owner_conversation' : 'none',
+    executionAuthority: sourceType === 'owner' ? 'verified_owner_intervention' : 'none',
   });
 }
 
@@ -68,6 +78,9 @@ function createPullSecurityContext(): Omit<MessageSecurityContext, 'sourceType' 
     defaultTrustLevel: 'untrusted',
     instructions: [...EXTERNAL_INSTRUCTIONS, A2A_INSTRUCTION],
     ownerCommandsOnlyVia: 'verified_owner_intervention',
+    identityAssurance: 'none',
+    authority: 'none',
+    executionAuthority: 'none',
   };
 }
 
@@ -75,12 +88,12 @@ function wrapPushContent(content: unknown, sourceType: MessageSourceType = 'visi
   const body = typeof content === 'string' ? content : String(content ?? '');
   const context = createMessageSecurityContext(sourceType);
   const isExternal = sourceType === 'visitor' || sourceType === 'agent_peer';
-  const messageStart = sourceType === 'owner'
+  const messageStart = sourceType === 'owner' || sourceType === 'owner_chat'
     ? OWNER_MESSAGE_START
     : sourceType === 'system'
       ? SYSTEM_MESSAGE_START
       : EXTERNAL_MESSAGE_START;
-  const messageEnd = sourceType === 'owner'
+  const messageEnd = sourceType === 'owner' || sourceType === 'owner_chat'
     ? OWNER_MESSAGE_END
     : sourceType === 'system'
       ? SYSTEM_MESSAGE_END
