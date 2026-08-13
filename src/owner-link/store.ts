@@ -437,7 +437,7 @@ class OwnerLinkStore {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 100));
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const rows = this.db.prepare(`SELECT o.*,c.agent_id,c.conversation_id,c.observed_im_uid
+      const rows = this.db.prepare(`SELECT o.*,c.agent_id,c.local_agent_id,c.conversation_id,c.observed_im_uid
         FROM owner_link_outbox o JOIN owner_link_commands c ON c.message_id=o.message_id
         WHERE ((o.status='pending' AND o.next_attempt_at<=?)
           OR (o.status='leased' AND COALESCE(o.lease_expires_at,0)<=?))

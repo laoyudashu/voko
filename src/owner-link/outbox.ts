@@ -36,7 +36,8 @@ class OwnerEventOutbox {
             this.store.markOutboxDead(row.event_id, leaseOwner, 'OWNER_EVENT_AUTHORIZATION_REVOKED');
             continue;
           }
-          const result = await this.transport.deliver(row.agent_id, row.observed_im_uid, row.payload_json,
+          const localAgentId = String(row.local_agent_id || row.agent_id);
+          const result = await this.transport.deliver(localAgentId, row.observed_im_uid, row.payload_json,
             'text', 1, null, row.event_id);
           if (result?.success) {
             if (this.store.markOutboxSent(row.event_id, leaseOwner)) sent += 1;

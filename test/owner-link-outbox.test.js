@@ -6,17 +6,17 @@ const path = require('node:path');
 const test = require('node:test');
 const { OwnerEventOutbox, OwnerLinkStore, actionDigest, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
 
-function fixture() {
+function fixture(options = {}) {
   const db = initOwnerLinkDatabase(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'owner-outbox-')), 'owner.db'));
   const store = new OwnerLinkStore(db); const keys = crypto.generateKeyPairSync('ed25519'); const now = Date.now();
   const expiresAt = new Date(now + 60_000).toISOString(); const action = { type: 'message', text: 'status' };
   const command = signOwnerEnvelope({ version: 'voko.owner/1', kind: 'command', messageId: 'command-1',
     ownerConversationId: 'conversation-1', ownerIdentityId: 'identity-1', ownerImUid: 'owner_remote-1',
-    agentId: 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
+    agentId: options.remoteAgentId || 'agent-1', ownershipEpoch: 1, conversationEpoch: 1, sequence: 1, operation: 'execute',
     payload: { action, approval: { approvalId: 'owa_command-1', actionDigest: actionDigest(action), expiresAt,
       enforcement: 'required_before_execute' } }, keyId: 'gateway-key', createdAt: new Date(now - 1_000).toISOString(),
     expiresAt }, keys.privateKey);
-  store.persistVerified(command, command.ownerImUid, now);
+  store.persistVerified(command, command.ownerImUid, now, options.localAgentId || command.agentId);
   store.enqueueSignedEvent(command.messageId, 'receipt', sequence => ({ eventId: 'event-1',
     rawEnvelope: JSON.stringify({ messageId: 'event-1', sequence }) }));
   return { db, store };
@@ -34,6 +34,17 @@ test('Owner event outbox sends raw envelope from the Agent IM identity with stab
     assert.equal(f.db.prepare('SELECT status FROM owner_link_outbox').get().status, 'sent');
     assert.equal(await outbox.flush(), 0);
     assert.equal(calls.length, 1);
+  } finally { f.db.close(); }
+});
+
+test('Owner event outbox authorizes and sends through the bound local Agent ID', async () => {
+  const f = fixture({ remoteAgentId: '2b4a3c62-efba-4c97-add9-6f09ee092462', localAgentId: 'gym' });
+  const authorized = []; const calls = [];
+  try {
+    const outbox = new OwnerEventOutbox(f.store, { async deliver(...args) { calls.push(args); return { success: true }; } },
+      2_000, row => { authorized.push(row.local_agent_id); return row.local_agent_id === 'gym'; });
+    assert.equal(await outbox.flush(), 1);
+    assert.deepEqual(authorized, ['gym']); assert.equal(calls[0][0], 'gym'); assert.equal(calls[0][1], 'owner_remote-1');
   } finally { f.db.close(); }
 });
 

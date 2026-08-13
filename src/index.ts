@@ -1737,9 +1737,10 @@ async function startMcpServer(args?: any, core?: any) {
       }));
     }
     const ownerOutbox = new OwnerEventOutbox(ownerLinkBridge.store, { deliver }, 2_000, (row: any) => {
-      const identity = resolveOwnerAgentIdentity(String(row.agent_id || ''));
+      const localAgentId = String(row.local_agent_id || row.agent_id || '');
+      const identity = resolveOwnerAgentIdentity(localAgentId);
       if (!identity) return false;
-      const liveUid = agentManager.getStatus?.(String(row.agent_id || ''))?.uid;
+      const liveUid = agentManager.getStatus?.(localAgentId)?.uid;
       return !liveUid || liveUid === identity.imUid;
     });
     await taskManager.start('owner-link-outbox', () => ownerOutbox.start());
