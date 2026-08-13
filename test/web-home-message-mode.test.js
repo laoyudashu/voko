@@ -59,6 +59,18 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /"message_modes":\s*\{[^}]*"pull"/);
   assert.match(html, /messageModeDetected/);
   assert.match(html, /updateAgentRow/);
+  assert.match(html, /class="home-access-stack"/);
+  assert.match(html, /class="home-access-row home-access-visitor-row"/);
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(source, /visitorValue\+visitorAction\+accessModeButton/);
+  assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
+  assert.match(source, /s\.className="btn btn-sm home-mode-toggle home-access-mode "/);
+  assert.match(source, /style="margin:1px;padding:1px 6px;min-width:auto;min-height:auto;font-size:11px;line-height:1\.4;border-width:2px;border-radius:6px" data-role="toggle-acc"/);
+  assert.match(html, /data-role="gen-owner-link" data-agent="agent-home"/);
+  assert.match(html, /href="\/agents\/agent-home\/caps"/);
+  assert.match(html, /\.home-copy-icon\{display:inline-flex/);
+  assert.match(html, /<col style="width:41%"><col style="width:12%">/);
+  assert.match(html, /\.home-access-action\{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important/);
 });
 
 test('home truncates long agent names but keeps the full name in a hover hint', async (t) => {

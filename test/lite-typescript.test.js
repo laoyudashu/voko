@@ -626,8 +626,11 @@ test('agent actions return to the same agent subpage and conversation controls u
   assert.doesNotMatch(source, /confirm\(I\.gen_security_tip\)/);
   assert.match(source, /id="dlg-short-link-security"/);
   assert.match(source, /data-role="confirm-gen-link"/);
-  assert.match(source, /class="home-short-link"/);
-  assert.match(source, /\.home-short-link\{display:flex;[^}]*white-space:nowrap/);
+  assert.match(source, /class="home-access-stack"/);
+  assert.match(source, /web\.home\.access\.visitor/);
+  assert.match(source, /data-role="gen-owner-link"/);
+  assert.match(source, /web\.home\.access\.a2a_published/);
+  assert.match(source, /home-copy-icon/);
   assert.match(source, /<button type="button" class="btn btn-sm home-mode-toggle /);
   assert.match(source, /data-role="toggle-pub"/);
   assert.match(source, /data-role="toggle-acc"/);
