@@ -13,6 +13,7 @@ const { getClientBundle } = require('../core/i18n');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderSystemFooter } = require('./footer');
+const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -111,7 +112,7 @@ function page(title, body, tFn, locale, db, opts) {
   // 登录/切换用户等未登录页面（opts.footer===false）不渲染系统 footer，
   // 避免暴露运行时状态（IM 连接、PID、端口）与“错误上报”入口。
   const footer = opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc);
-  return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + '\n</body>\n</html>';
+  return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + UI_CONTROL_CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + copyControlScript() + '\n</body>\n</html>';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -298,7 +299,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<section class="registration-pane agent-register-pane" id="registration-agent-pane" hidden>'
     + '<h2>' + esc(t('register.agent.title')) + '</h2><p class="meta">' + esc(t('register.agent.desc')) + '</p>'
     + '<textarea class="agent-prompt" id="agent-registration-prompt" readonly>' + esc(agentPrompt) + '</textarea>'
-    + '<div class="agent-copy-row"><button type="button" id="copy-agent-registration">' + esc(t('register.agent.copy')) + '</button><span class="meta" id="copy-agent-registration-status" aria-live="polite"></span></div></section>'
+    + '<div class="agent-copy-row">' + copyButton({ esc, label: t('register.agent.copy'), attrs: 'id="copy-agent-registration" data-voko-copy-target="#agent-registration-prompt"' }) + '</div></section>'
     + '</main>';
 }
 
@@ -347,7 +348,6 @@ function wizardJs(t) {
   function activateRegistrationTab(mode){var agent=mode==='agent';tabs.forEach(function(item){item.classList.toggle('active',item.dataset.registrationTab===mode)});humanPane.hidden=agent;agentPane.hidden=!agent;try{sessionStorage.setItem(tabModeKey,mode)}catch(_){}}
   tabs.forEach(function(tab){tab.addEventListener('click',function(){activateRegistrationTab(tab.dataset.registrationTab)})});
   try{activateRegistrationTab(sessionStorage.getItem(tabModeKey)==='agent'?'agent':'human')}catch(_){activateRegistrationTab('human')}
-  document.getElementById('copy-agent-registration').addEventListener('click',async function(){var prompt=document.getElementById('agent-registration-prompt').value,status=document.getElementById('copy-agent-registration-status');try{await navigator.clipboard.writeText(prompt)}catch(_){var area=document.getElementById('agent-registration-prompt');area.focus();area.select();document.execCommand('copy')}status.textContent=I.copied});
   function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||d.detail||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}

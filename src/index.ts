@@ -1595,10 +1595,16 @@ async function startMcpServer(args?: any, core?: any) {
   const { TaskManager } = require('./core/task-manager');
   const taskManager = new TaskManager();
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
-  const { A2AModule } = require('./a2a');
+  const userEmail = getCurrentUserEmail(db);
+  const { A2AModule, A2ARegistrationService } = require('./a2a');
   const a2aModule = new A2AModule();
   let a2aMailboxClient: any = null;
-  let a2aRegistration: any = null;
+  const a2aOwnerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
+  const syncA2ARegistration = userEmail && a2aOwnerToken ? () => a2aModule.withDatabase((a2aDb: any) => {
+    const endpoints = require('./endpoints.json');
+    return new A2ARegistrationService({ mainDb: db, a2aDb, apiBaseUrl: endpoints.api.baseUrl,
+      ownerEmail: userEmail, userAccessToken: a2aOwnerToken }).ensureRegistered();
+  }) : undefined;
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
@@ -1625,7 +1631,6 @@ async function startMcpServer(args?: any, core?: any) {
     }
   }
   const ownerLinkIngress = new OwnerLinkIngress(ownerLinkBridge);
-  const userEmail = getCurrentUserEmail(db);
   const litePort = parseInt(args.port, 10) || 3100;
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
@@ -1693,14 +1698,9 @@ async function startMcpServer(args?: any, core?: any) {
     dispatcher = hcResult.dispatcher;
     if (a2aModule.enabled && dispatcher) {
       try {
-        const { A2ABridgeRuntime, A2ARegistrationService } = require('./a2a');
-        const endpoints = require('./endpoints.json');
-        const ownerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
-        if (userEmail && ownerToken) {
-          const registration = new A2ARegistrationService({ mainDb: db, a2aDb: a2aModule.getDatabase(),
-            apiBaseUrl: endpoints.api.baseUrl, ownerEmail: userEmail, userAccessToken: ownerToken });
-          a2aRegistration = registration;
-          const bridgeConfig = await registration.ensureRegistered();
+        const { A2ABridgeRuntime } = require('./a2a');
+        if (syncA2ARegistration) {
+          const bridgeConfig = await syncA2ARegistration();
           const { A2AMailboxClient } = require('./a2a');
           a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
         }
@@ -2065,7 +2065,7 @@ async function startMcpServer(args?: any, core?: any) {
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
     a2aModule,
     a2aMailboxClient,
-    syncA2ARegistration: a2aRegistration ? () => a2aRegistration.ensureRegistered() : undefined,
+    syncA2ARegistration,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

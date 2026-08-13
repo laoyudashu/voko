@@ -21,6 +21,13 @@ test('registration fingerprint includes the mailbox protocol revision', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'a2a', 'registration.ts'), 'utf8');
   assert.match(source, /registrationVersion: 4/);
 });
+test('public registration remains available when the A2A message bridge is disabled', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const syncDeclaration = source.indexOf('const syncA2ARegistration =');
+  const bridgeGuard = source.indexOf('if (a2aModule.enabled && dispatcher)');
+  assert.ok(syncDeclaration >= 0 && syncDeclaration < bridgeGuard);
+  assert.match(source, /syncA2ARegistration,\s*\n/);
+});
 test('registration carries the independently persisted public A2A choice', async t => {
   const a2aDb = setup(t); new A2APublicationStore(a2aDb).setPublicEnabled('agent-1', false); let body;
   const service = new A2ARegistrationService({ a2aDb, ownerEmail: 'owner@example.com', userAccessToken: 'ut_secret', apiBaseUrl: 'https://did.example',

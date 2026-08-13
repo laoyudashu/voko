@@ -19,6 +19,7 @@ const { defaultGroupName } = require('../core/group-client');
 const { MESSAGE_CONTENT_CSS, createMessageRenderer, messageLabels, messageRendererScript } = require('./message-content');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const ENDPOINTS = require('../endpoints.json');
+const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
 
 const GROUP_TIP_CONTENT_TYPE = 12; // 与 core/messenger.js CONTENT_TYPE_GROUP_TIP 一致
 
@@ -56,7 +57,7 @@ function page(title,body,opt={},tFn,locale){
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
-  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+ajaxPaginationScript()+'\n</body>\n</html>'
+  return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+EXTRA_CSS+UI_CONTROL_CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main data-voko-page-region aria-live="polite" aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+copyControlScript()+ajaxPaginationScript()+'\n</body>\n</html>'
 }
 
 function agentNav(aid,aname,tFn){const home=tFn?tFn('common.nav.home'):'首页';return'<a href="/">'+esc(home)+'</a> › <a href="/agents/'+esc(aid)+'">'+esc(aname||aid)+'</a>'}
@@ -413,7 +414,7 @@ function createGroupRouter(handlers, db) {
         +'<label style="margin:0;font-size:13px">'+L('web.group.invite.link_max_uses')+' <select id="invite-max-uses" style="width:auto;max-width:none;margin:0;font-size:13px;padding:6px 8px"><option value="0">'+L('web.group.invite.link_max_unlimited')+'</option><option value="1">1</option><option value="5">5</option><option value="10">10</option><option value="50">50</option><option value="100">100</option></select></label>'
         +'<label style="margin:0;font-size:13px">'+L('web.group.invite.link_expires')+' <select id="invite-expires" style="width:auto;max-width:none;margin:0;font-size:13px;padding:6px 8px"><option value="0">'+L('web.group.invite.link_never')+'</option><option value="3600">'+L('web.group.invite.link_1h')+'</option><option value="86400">'+L('web.group.invite.link_24h')+'</option><option value="604800">'+L('web.group.invite.link_7d')+'</option></select></label>'
         +'<button type="button" class="btn-sm" style="margin:0" id="gen-link-btn" onclick="generateInviteLink()">'+L('web.group.invite.link_create_btn')+'</button>'
-        +'<button type="button" class="btn-sm" id="copy-link-btn" disabled style="margin:0;opacity:0.55" onclick="copyInviteLink()">'+L('web.group.invite.link_copy')+'</button>'
+        +copyButton({esc,label:L('web.group.invite.link_copy'),attrs:'id="copy-link-btn" data-voko-copy-target="#invite-link-text" disabled'})
         +'</div>'
         +'<div id="link-result" style="display:none">'
         +'<textarea id="invite-link-text" readonly style="width:100%;max-width:600px;height:80px;font-size:14px;margin:0 0 8px 0;resize:vertical;font-family:inherit;line-height:1.6" onclick="this.select()"></textarea>'
@@ -425,8 +426,6 @@ function createGroupRouter(handlers, db) {
         +'var _inviteLinkPrefix='+JSON.stringify(linkPrefixText)+';'
         +'var _inviteExpiresAt='+JSON.stringify(L('web.group.invite.link_expires_at'))+';'
         +'var _inviteErrFailed='+JSON.stringify(esc(T('common.action.failed')))+';'
-        +'var _inviteCopied='+JSON.stringify(esc(T('web.group.invite.link_copied')))+';'
-        +'var _inviteCopy='+JSON.stringify(esc(T('web.group.invite.link_copy')))+';'
         +'var _inviteCreateUrl="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/create-invite-link";'
         +'function generateInviteLink(){var b=document.getElementById("gen-link-btn");var e=document.getElementById("link-err");var r=document.getElementById("link-result");var t=document.getElementById("invite-link-text");b.disabled=true;b.textContent="...";e.style.display="none";r.style.display="none";'
         +'var maxUses=document.getElementById("invite-max-uses").value;var expires=document.getElementById("invite-expires").value;'
@@ -439,7 +438,6 @@ function createGroupRouter(handlers, db) {
         +'text+="\\n"+'+JSON.stringify(ENDPOINTS.api.baseUrl + '/join/')+'+d.code;'
         +'t.value=text;r.style.display="block";var cb2=document.getElementById("copy-link-btn");cb2.disabled=false;cb2.style.opacity="1"})'
         +'.catch(function(err){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.invite.link_create_btn'))+';e.textContent=err.message;e.style.display="inline";var cb3=document.getElementById("copy-link-btn");cb3.disabled=true;cb3.style.opacity="0.55"})}'
-        +'function copyInviteLink(){var t=document.getElementById("invite-link-text");t.select();navigator.clipboard.writeText(t.value);var b=document.getElementById("copy-link-btn");b.textContent=_inviteCopied;setTimeout(function(){b.textContent=_inviteCopy},2000)}'
         +'</script>';
 
       // 两个 Tab：邀请好友 / 邀请链接
