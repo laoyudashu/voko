@@ -6,6 +6,8 @@ import { OwnerLinkSecurityError, OwnerLinkStore } from './store';
 
 const OWNER_IM_UID_PATTERN = /^owner_[A-Za-z0-9._:-]{1,122}$/;
 const OWNER_COMMAND_OPERATIONS = new Set(['execute', 'cancel']);
+const AGENT_UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const AGENT_DID_PATTERN = /^did:wba:[^\s:]+(?::[^\s:]+)*:([a-f0-9]{32})$/i;
 
 interface OwnerLinkInboundMessage {
   fromUid?: string;
@@ -19,6 +21,7 @@ interface OwnerLinkInboundMessage {
 interface OwnerLinkBridgeOptions {
   database: DatabaseSync;
   resolvePublicKey: (keyId: string) => crypto.KeyLike | null;
+  matchesAgentId?: (localAgentId: string, envelopeAgentId: string) => boolean;
   now?: () => number;
   onCommand?: (messageId: string) => void | Promise<void>;
 }
@@ -34,6 +37,13 @@ function safeCode(error: unknown): string {
   if (error instanceof OwnerLinkSecurityError) return error.code;
   const message = error instanceof Error ? error.message : String(error);
   return /^OWNER_[A-Z0-9_]+$/.test(message) ? message : 'OWNER_ENVELOPE_REJECTED';
+}
+
+function matchesLocalAgentIdentity(localAgentId: string, localDid: unknown, envelopeAgentId: string): boolean {
+  if (localAgentId === envelopeAgentId) return true;
+  if (!AGENT_UUID_PATTERN.test(envelopeAgentId)) return false;
+  const didMatch = String(localDid || '').match(AGENT_DID_PATTERN);
+  return !!didMatch && didMatch[1].toLowerCase() === envelopeAgentId.replace(/-/g, '').toLowerCase();
 }
 
 class OwnerLinkBridge {
@@ -66,7 +76,9 @@ class OwnerLinkBridge {
       if (envelope.kind !== 'command' || !OWNER_COMMAND_OPERATIONS.has(envelope.operation)) {
         throw new OwnerLinkSecurityError('OWNER_DIRECTION_INVALID');
       }
-      if (envelope.agentId !== agentId) throw new OwnerLinkSecurityError('OWNER_AGENT_MISMATCH');
+      const matchesAgentId = this.options.matchesAgentId
+        ? this.options.matchesAgentId(agentId, envelope.agentId) : envelope.agentId === agentId;
+      if (!matchesAgentId) throw new OwnerLinkSecurityError('OWNER_AGENT_MISMATCH');
       if (envelope.ownerImUid !== fromUid) throw new OwnerLinkSecurityError('OWNER_IM_UID_MISMATCH');
       if (message.clientMsgNo && envelope.messageId !== message.clientMsgNo) {
         throw new OwnerLinkSecurityError('OWNER_TRANSPORT_MESSAGE_ID_MISMATCH');
@@ -97,5 +109,5 @@ class OwnerLinkBridge {
   }
 }
 
-export { OWNER_IM_UID_PATTERN, OwnerLinkBridge };
+export { OWNER_IM_UID_PATTERN, OwnerLinkBridge, matchesLocalAgentIdentity };
 export type { OwnerLinkBridgeOptions, OwnerLinkInboundMessage, OwnerLinkInboundResult };

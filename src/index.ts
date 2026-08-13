@@ -1603,7 +1603,7 @@ async function startMcpServer(args?: any, core?: any) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
   const { createOwnerPullCallerAuthorizer, OwnerCommandProcessor, OwnerEventOutbox, OwnerGatewayKeyStore,
-    OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule, OwnerPullService } = require('./owner-link');
+    OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule, OwnerPullService, matchesLocalAgentIdentity } = require('./owner-link');
   const ownerLinkModule = new OwnerLinkModule();
   let ownerLinkBridge: any = null;
   let ownerPullService: any = null;
@@ -1615,6 +1615,10 @@ async function startMcpServer(args?: any, core?: any) {
       ownerLinkBridge = new OwnerLinkBridge({
         database: ownerLinkModule.getDatabase(),
         resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
+        matchesAgentId: (localAgentId: string, envelopeAgentId: string) => {
+          const row = db.prepare('SELECT did FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId);
+          return matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
+        },
       });
     } catch (error: any) {
       console.error('[Owner Link] 安全入口初始化失败，Owner 专用消息将被拒绝:', error.message);

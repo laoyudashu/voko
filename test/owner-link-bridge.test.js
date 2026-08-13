@@ -4,9 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { OwnerLinkBridge, actionDigest, initOwnerLinkDatabase, signOwnerEnvelope } = require('../build/owner-link');
+const { OwnerLinkBridge, actionDigest, initOwnerLinkDatabase, matchesLocalAgentIdentity, signOwnerEnvelope } = require('../build/owner-link');
 
-function createFixture() {
+function createFixture(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-bridge-'));
   const db = initOwnerLinkDatabase(path.join(dir, 'owner.db'));
   const keys = crypto.generateKeyPairSync('ed25519');
@@ -23,7 +23,7 @@ function createFixture() {
       expiresAt, payload, keyId: 'owner-key-1', ...overrides }, keys.privateKey);
   };
   const bridge = new OwnerLinkBridge({ database: db, now: () => now,
-    resolvePublicKey: (id) => id === 'owner-key-1' ? keys.publicKey : null });
+    resolvePublicKey: (id) => id === 'owner-key-1' ? keys.publicKey : null, ...options });
   return { db, bridge, make, now, close: () => db.close() };
 }
 
@@ -64,6 +64,29 @@ test('owner envelope cannot target another local Agent or change transport messa
     assert.equal(f.bridge.handleInbound('agent-1', { fromUid: 'owner_abcdefgh', clientMsgNo: 'other', content: wire(envelope) }).code,
       'OWNER_TRANSPORT_MESSAGE_ID_MISMATCH');
   } finally { f.close(); }
+});
+
+test('an injected authoritative mapping can match local Agent ID to AgentDID UUID', () => {
+  const remoteAgentId = '2b4a3c62-efba-4c97-add9-6f09ee092462';
+  const f = createFixture({ matchesAgentId: (localAgentId, envelopeAgentId) =>
+    localAgentId === 'gym' && envelopeAgentId === remoteAgentId });
+  try {
+    const envelope = f.make({ agentId: remoteAgentId });
+    assert.equal(f.bridge.handleInbound('gym', { fromUid: envelope.ownerImUid,
+      clientMsgNo: envelope.messageId, content: wire(envelope) }).accepted, true);
+    assert.equal(f.bridge.handleInbound('other-local-agent', { fromUid: envelope.ownerImUid,
+      clientMsgNo: envelope.messageId, content: wire(envelope) }).code, 'OWNER_AGENT_MISMATCH');
+  } finally { f.close(); }
+});
+
+test('Agent identity mapping only accepts the exact UUID encoded by the local DID', () => {
+  const agentId = '2b4a3c62-efba-4c97-add9-6f09ee092462';
+  assert.equal(matchesLocalAgentIdentity('gym', 'did:wba:example.test:2b4a3c62efba4c97add96f09ee092462', agentId), true);
+  assert.equal(matchesLocalAgentIdentity(agentId, null, agentId), true);
+  assert.equal(matchesLocalAgentIdentity('gym', 'did:wba:example.test:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', agentId), false);
+  assert.equal(matchesLocalAgentIdentity('gym', 'not-a-did:2b4a3c62efba4c97add96f09ee092462', agentId), false);
+  assert.equal(matchesLocalAgentIdentity('gym', 'did:wba:example.test:2b4a3c62efba4c97add96f09ee092462', 'gym'), true);
+  assert.equal(matchesLocalAgentIdentity('gym', 'did:wba:example.test:2b4a3c62efba4c97add96f09ee092462', 'other'), false);
 });
 
 test('tampered signature, unknown key and expired envelope never fall through', () => {
