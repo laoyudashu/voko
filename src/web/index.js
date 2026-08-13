@@ -1395,9 +1395,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       const T=req.t;
       const{agentId}=req.params;const agent=await getAgentInfo(handlers,agentId);if(!agent)return res.redirect('/');
       const raw=Number(agent.visibilityType);const visibility=[0,1,2].includes(raw)?raw:0;
-      const descriptions={0:T('web.agent.visibility.private_desc'),1:T('web.agent.visibility.public_desc'),2:T('web.agent.visibility.hidden_desc')};
       res.send(renderAgentFormPage(T('web.agent.visibility.title'),agentId,agent.agentName||agentId,
-        '<p>'+T('web.agent.visibility.current')+'：<strong>'+esc(descriptions[visibility])+'</strong></p><p class="meta">'+esc(T('web.agent.visibility.hint'))+'</p>'+actionForm(agentId,'set_visibility',[
+        '<p class="meta">'+esc(T('web.agent.visibility.hint'))+'</p>'+actionForm(agentId,'set_visibility',[
           {id:'av',name:'visibility',label:T('web.agent.visibility.label'),type:'select',options:{0:T('web.agent.visibility.private_opt'),1:T('web.agent.visibility.public_opt'),2:T('web.agent.visibility.hidden_opt')},val:String(visibility)},
         ],T('common.btn.save'),null,'agent.visibility.set'),req.t,req.locale));
     }catch(e){next(e)}
