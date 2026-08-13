@@ -19,8 +19,6 @@ interface OwnerLinkInboundMessage {
 interface OwnerLinkBridgeOptions {
   database: DatabaseSync;
   resolvePublicKey: (keyId: string) => crypto.KeyLike | null;
-  trustedGatewayImUids?: string[];
-  env?: NodeJS.ProcessEnv;
   now?: () => number;
   onCommand?: (messageId: string) => void | Promise<void>;
 }
@@ -38,25 +36,13 @@ function safeCode(error: unknown): string {
   return /^OWNER_[A-Z0-9_]+$/.test(message) ? message : 'OWNER_ENVELOPE_REJECTED';
 }
 
-function resolveTrustedGatewayImUids(options: Pick<OwnerLinkBridgeOptions, 'trustedGatewayImUids'|'env'>): Set<string> {
-  const configured = options.trustedGatewayImUids ?? String((options.env || process.env).VOKO_OWNER_GATEWAY_IM_UIDS || '')
-    .split(',').map((value) => value.trim()).filter(Boolean);
-  if (configured.length < 1 || configured.length > 2 || new Set(configured).size !== configured.length
-      || configured.some((uid) => !OWNER_IM_UID_PATTERN.test(uid))) {
-    throw new Error('OWNER_GATEWAY_IM_UID_CONFIG_INVALID');
-  }
-  return new Set(configured);
-}
-
 class OwnerLinkBridge {
   readonly store: OwnerLinkStore;
   private readonly now: () => number;
-  private readonly trustedGatewayImUids: Set<string>;
   private onCommand: ((messageId: string) => void | Promise<void>) | null;
   constructor(private readonly options: OwnerLinkBridgeOptions) {
     this.store = new OwnerLinkStore(options.database);
     this.now = options.now || Date.now;
-    this.trustedGatewayImUids = resolveTrustedGatewayImUids(options);
     this.onCommand = options.onCommand || null;
     this.store.recoverReservedCommands(this.now());
   }
@@ -76,9 +62,6 @@ class OwnerLinkBridge {
     const now = this.now();
     let envelope: VokoOwnerEnvelope | null = null;
     try {
-      if (!this.trustedGatewayImUids.has(fromUid)) {
-        throw new OwnerLinkSecurityError('OWNER_GATEWAY_IM_UID_UNTRUSTED');
-      }
       envelope = parseOwnerEnvelopeJson(String(message.content || ''), { now });
       if (envelope.kind !== 'command' || !OWNER_COMMAND_OPERATIONS.has(envelope.operation)) {
         throw new OwnerLinkSecurityError('OWNER_DIRECTION_INVALID');
@@ -114,5 +97,5 @@ class OwnerLinkBridge {
   }
 }
 
-export { OWNER_IM_UID_PATTERN, OwnerLinkBridge, resolveTrustedGatewayImUids };
+export { OWNER_IM_UID_PATTERN, OwnerLinkBridge };
 export type { OwnerLinkBridgeOptions, OwnerLinkInboundMessage, OwnerLinkInboundResult };
