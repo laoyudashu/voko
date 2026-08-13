@@ -335,7 +335,7 @@ class HermesHttpProvider extends PushProvider {
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
       const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
-        stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
+        stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32', env: cleanEnv
       });
       child.on('error', (err: Error) => {
         this.addLog(`❌ gateway 进程启动失败 (${profileId}): ${err.message}`);
@@ -377,7 +377,7 @@ class HermesHttpProvider extends PushProvider {
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
       const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
-        stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv
+        stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32', env: cleanEnv
       });
       child.on('error', (err: Error) => this.addLog(`❌ 重启 spawn 失败 (${profileId}): ${err.message}`));
       child.unref();
@@ -810,7 +810,9 @@ function _killTree(pid?: number): void {
   if (!pid) return;
   try {
     if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore', timeout: 3000, windowsHide: true,
+      });
     } else {
       try { process.kill(-pid, 'SIGKILL'); } catch (_) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
     }

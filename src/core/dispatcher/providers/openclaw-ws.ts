@@ -447,11 +447,9 @@ class OpenClawWsProvider {
         try {
           child = spawn(cmd, args, {
             stdio: 'ignore',
-            detached: true,
+            detached: process.platform !== 'win32',
             windowsHide: true,
             shell,
-            // Windows: 直接 spawn node 时不创建控制台窗口
-            ...(process.platform === 'win32' && !shell ? { creationFlags: 0x08000000 } : {}),
           });
           child.unref();
           this._gatewayChild = child;  // 记录，供 stop() 清理，避免 detached gateway 泄漏
@@ -1572,7 +1570,9 @@ function _killTree(pid?: number): void {
   if (!pid) return;
   try {
     if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore', timeout: 3000, windowsHide: true,
+      });
     } else {
       try { process.kill(-pid, 'SIGKILL'); } catch (_) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
     }

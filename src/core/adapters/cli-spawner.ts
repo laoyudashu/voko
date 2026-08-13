@@ -73,7 +73,9 @@ function _makeLogger(tag: string): (message: string) => void {
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore', timeout: 3000, windowsHide: true,
+      });
     } else {
       // runCli/OpenCode 在 Unix 下以 detached 创建独立进程组；负 PID 可一次终止整个树。
       try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
