@@ -35,6 +35,12 @@ class A2AModule {
     return this.database;
   }
 
+  withDatabase<T>(operation: (database: DatabaseSync) => T): T {
+    if (this.database) return operation(this.database);
+    const database = this.openDatabase(this.databasePath);
+    try { return operation(database); } finally { database.close(); }
+  }
+
   start(): (() => void) | undefined {
     if (!this.enabled) return undefined;
     if (!this.database) this.database = this.openDatabase(this.databasePath);

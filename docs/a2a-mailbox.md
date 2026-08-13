@@ -28,6 +28,8 @@ Lite 使用独立的 `voko-a2a.db`，不会在主 `voko.db` 中创建 A2A Task �
 
 Web UI 的 `/a2a-tasks` 是独立任务页。A2A Task 不进入普通访客会话列表，也不会自动创建好友关系。
 
+每个已发布 Agent 可在 `/agents/{agentId}/caps` 独立控制公网发布。能力始终发布到 VOKO；“发布为公网 A2A Agent”默认开启，取消后公网 Agent Card 和新的入站 A2A Task 会立即关闭，但本地 Agent 仍可通过 Mailbox 主动发现和调用外部 A2A Agent。能力名称、描述和标签会映射为 A2A 1.0 `AgentSkill`；Skill ID 由 VOKO 稳定生成，文字 MVP 的输入输出模式固定为 `text/plain`。
+
 ## 本地 Agent 调用外部 Agent
 
 通过 MCP 按以下顺序调用：

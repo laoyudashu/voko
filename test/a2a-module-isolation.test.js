@@ -100,6 +100,7 @@ test('A2A database has its own version and no ordinary messaging tables', (t) =>
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     .all().map(row => row.name);
   assert.deepEqual(tables, [
+    'a2a_agent_publication',
     'a2a_local_contexts',
     'a2a_local_inbox',
     'a2a_local_outbox',

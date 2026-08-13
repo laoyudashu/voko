@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const A2A_SCHEMA_VERSION = 2;
+const A2A_SCHEMA_VERSION = 3;
 
 interface InitA2ADatabaseOptions {
   createParent?: boolean;
@@ -44,6 +44,12 @@ function initA2ADatabase(
         CREATE TABLE IF NOT EXISTS a2a_settings (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        ) STRICT;
+
+        CREATE TABLE IF NOT EXISTS a2a_agent_publication (
+          agent_id TEXT PRIMARY KEY,
+          public_enabled INTEGER NOT NULL DEFAULT 1 CHECK (public_enabled IN (0,1)),
           updated_at INTEGER NOT NULL
         ) STRICT;
 

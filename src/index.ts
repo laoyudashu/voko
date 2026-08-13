@@ -1598,6 +1598,7 @@ async function startMcpServer(args?: any, core?: any) {
   const { A2AModule } = require('./a2a');
   const a2aModule = new A2AModule();
   let a2aMailboxClient: any = null;
+  let a2aRegistration: any = null;
   if (a2aModule.enabled) {
     await taskManager.start('a2a-module', () => a2aModule.start());
   }
@@ -1694,6 +1695,7 @@ async function startMcpServer(args?: any, core?: any) {
         if (userEmail && ownerToken) {
           const registration = new A2ARegistrationService({ mainDb: db, a2aDb: a2aModule.getDatabase(),
             apiBaseUrl: endpoints.api.baseUrl, ownerEmail: userEmail, userAccessToken: ownerToken });
+          a2aRegistration = registration;
           const bridgeConfig = await registration.ensureRegistered();
           const { A2AMailboxClient } = require('./a2a');
           a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
@@ -2058,6 +2060,7 @@ async function startMcpServer(args?: any, core?: any) {
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
     a2aModule,
     a2aMailboxClient,
+    syncA2ARegistration: () => a2aRegistration?.ensureRegistered(),
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 
