@@ -18,12 +18,14 @@ test('processor atomically queues signed accepted, working and completed events'
   for (const row of rows) assert.equal(verifyEnvelope(JSON.parse(row.envelope_json), identity.publicKey), true);
   assert.equal(JSON.parse(rows[2].envelope_json).payload.text, 'answer');
 });
-test('Provider failure never fabricates a failed event', async t => {
+test('Provider uncertainty is persisted without fabricating a failed event or retry', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
   const processor = new A2ATaskProcessor(store, { async execute() { throw new Error('outcome unknown'); } }, identity);
-  await assert.rejects(() => processor.process(request()), /outcome unknown/);
+  await processor.process(request());
   const operations = db.prepare('SELECT operation FROM a2a_local_outbox ORDER BY producer_sequence').all().map(row => row.operation);
-  assert.deepEqual(operations, ['accepted', 'working']); assert.equal(operations.includes('failed'), false);
+  assert.deepEqual(operations, ['accepted', 'working', 'working']); assert.equal(operations.includes('failed'), false);
+  const task = db.prepare("SELECT standard_state,delivery_state FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
+  assert.equal(task.standard_state, 'WORKING'); assert.equal(task.delivery_state, 'DELIVERY_UNKNOWN');
 });
 test('known safety rejection produces a standard rejected event without unsafe body', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();

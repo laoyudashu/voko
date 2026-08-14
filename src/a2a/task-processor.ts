@@ -39,7 +39,8 @@ class A2ATaskProcessor {
         this.event(request, 'rejected', { reasonCode: error.reasonCode }, 'REJECTED', 'DELIVERED');
         return;
       }
-      throw error;
+      this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'PROVIDER_OUTCOME_UNKNOWN' },
+        'WORKING', 'DELIVERY_UNKNOWN');
     }
   }
 }
