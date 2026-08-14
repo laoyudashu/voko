@@ -564,6 +564,42 @@ function createWebRouter(handlers, db, opts={}){
     ? opts.refreshUserProfiles
     : uids=>refreshUserProfiles(db,uids);
 
+  const loadA2ATaskRows=async agentId=>{
+    const selectedAgent=String(agentId||'').trim();let inbound=[];
+    if(opts.a2aMailboxClient){try{inbound=(await opts.a2aMailboxClient.listInboundTasks(selectedAgent||undefined)).map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Inbound',principal_kind:row.principal_kind,principal_name:row.display_name,principal_display_id:row.principal_display_id,trust_level:row.trust_level}))}catch{}}
+    if(!inbound.length&&opts.a2aModule?.running)inbound=opts.a2aModule.getDatabase().prepare(`SELECT gateway_task_id AS task_id,context_id,agent_id,standard_state,delivery_state,updated_at FROM a2a_local_tasks WHERE (?='' OR agent_id=?) ORDER BY updated_at DESC LIMIT 100`).all(selectedAgent,selectedAgent).map(row=>({...row,direction:'Inbound',principal_kind:'unknown'}));
+    let outbound=[];if(opts.a2aMailboxClient){try{outbound=(await opts.a2aMailboxClient.listOutboundTasks()).filter(row=>!selectedAgent||row.local_agent_id===selectedAgent)}catch{}}
+    return inbound.concat(outbound.map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Outbound'}))).sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
+  };
+  const renderA2ATaskRows=(rows,{showAgent=true,T=key=>key}={})=>{
+    if(!rows.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
+    const principalLabel=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'))+(row.principal_name?' · '+row.principal_name:'')+(row.principal_display_id?' · '+row.principal_display_id:'');
+    const direction=row=>T('web.agent.a2a.direction.'+(String(row.direction).toLowerCase()==='outbound'?'outbound':'inbound'));
+    const state=value=>T('web.agent.a2a.state.'+String(value||'unknown').toLowerCase());
+    const delivery=value=>T('web.agent.a2a.delivery.'+String(value||'unknown').toLowerCase());
+    return '<div class="table-wrap"><table><thead><tr><th>'+esc(T('web.agent.a2a.col.counterparty'))+'</th><th>'+esc(T('web.agent.a2a.col.task'))+'</th>'+(showAgent?'<th>'+esc(T('web.agent.a2a.col.agent'))+'</th>':'')+'<th style="text-align:center">'+esc(T('web.agent.a2a.col.direction'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.status'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.time'))+'</th></tr></thead><tbody>'+rows.map(row=>'<tr><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(principalLabel(row))+'</td><td style="white-space:normal;word-break:break-word"><a href="/a2a-tasks/'+encodeURIComponent(row.task_id)+'"><code>'+esc(String(row.task_id).slice(0,12))+'…</code></a><div class="meta">'+esc(T('web.agent.a2a.context'))+': '+esc(String(row.context_id||'').slice(0,12))+'…</div></td>'+(showAgent?'<td>'+esc(row.agent_id)+'</td>':'')+'<td style="text-align:center;white-space:nowrap">'+esc(direction(row))+'</td><td style="text-align:center;white-space:nowrap"><strong>'+esc(state(row.standard_state))+'</strong><div class="meta">'+esc(delivery(row.delivery_state))+'</div></td><td class="meta" style="text-align:center;white-space:nowrap">'+timeTag(row.updated_at)+'</td></tr>').join('')+'</tbody></table></div>';
+  };
+  const renderA2APrincipalRows=(rows,agentId,T=key=>key)=>{
+    if(!rows.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
+    const inbound=rows.filter(row=>String(row.direction).toLowerCase()!=='outbound'),groups=new Map();
+    inbound.forEach(row=>{
+      // Only a server-issued pseudonymous principal ID is safe to group. Unknown callers stay separate.
+      const principalId=String(row.principal_display_id||'').trim();
+      const key=principalId||('task:'+String(row.task_id));
+      if(!groups.has(key))groups.set(key,{principalId,rows:[]});
+      groups.get(key).rows.push(row);
+    });
+    const principalType=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'));
+    const state=value=>T('web.agent.a2a.state.'+String(value||'unknown').toLowerCase());
+    const items=Array.from(groups.values()).sort((a,b)=>new Date(b.rows[0]?.updated_at||0)-new Date(a.rows[0]?.updated_at||0));
+    if(!items.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
+    return '<div class="table-wrap"><table><thead><tr><th>'+esc(T('web.agent.a2a.col.counterparty'))+'</th><th>'+esc(T('web.agent.a2a.col.latest_task'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.task_count'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.status'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.time'))+'</th></tr></thead><tbody>'+items.map(group=>{
+      const latest=group.rows[0],label=group.principalId?group.principalId:principalType(latest)+(latest.principal_name?' · '+latest.principal_name:'');
+      const href=group.principalId?'/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(group.principalId):'/a2a-tasks/'+encodeURIComponent(latest.task_id);
+      return '<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="'+href+'"><strong>'+esc(label)+'</strong></a></td><td><code>'+esc(String(latest.task_id).slice(0,12))+'…</code></td><td style="text-align:center">'+esc(group.rows.length)+'</td><td style="text-align:center"><strong>'+esc(state(latest.standard_state))+'</strong></td><td class="meta" style="text-align:center;white-space:nowrap">'+timeTag(latest.updated_at)+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+  };
+
   R.get('/a2a-tasks',async(req,res)=>{
     const T=req.t||makeT(req.locale||'zh');
     if(!currentOwnerEmail())return res.redirect('/login');
@@ -598,16 +634,42 @@ function createWebRouter(handlers, db, opts={}){
     if(!session)return false;
     return !csrf||opts.webSessions.verifyCsrf(req,session);
   };
-  R.get('/a2a-tasks/:taskId',async(req,res)=>{
+  R.get('/agents/:agentId/a2a/:principalDisplayId',async(req,res)=>{
+    const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
+    const agentId=String(req.params.agentId||''),principalDisplayId=String(req.params.principalDisplayId||'');
+    const notFound=()=>res.status(404).send(renderPage(req,T('web.a2a_principal.title'),'<div class="card error">'+L('web.a2a_principal.not_found')+'</div>',{showTitle:false,footer:renderFooter(T,locale)}));
+    if(!ownsA2AAgent(agentId)||!/^ext-[0-9a-f]{8}$/i.test(principalDisplayId))return notFound();
     try{
-      if(!opts.a2aMailboxClient)return res.status(503).send(renderPage(req,'A2A Task','<h1>A2A Task</h1><div class="card error">A2A service is unavailable.</div>'));
+      const rows=(await loadA2ATaskRows(agentId)).filter(row=>String(row.direction).toLowerCase()!=='outbound'&&String(row.principal_display_id||'')===principalDisplayId);
+      if(!rows.length||!opts.a2aMailboxClient)return notFound();
+      const requested=String(req.query.taskId||''),selected=rows.find(row=>String(row.task_id)===requested)||rows[0];
+      const task=await opts.a2aMailboxClient.getInboundTask(selected.task_id);
+      if(!task||String(task.local_agent_id)!==agentId||String(task.principal_display_id||'')!==principalDisplayId)return notFound();
+      const agent=await getAgentInfo(handlers,agentId),latest=rows[0];
+      const principalType=T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[latest.principal_kind]||'external'));
+      const counterpartyLabel=principalType+(latest.principal_name?' · '+latest.principal_name:'')+' ('+principalDisplayId+')';
+      const taskState=value=>L('web.agent.a2a.state.'+String(value||'unknown').toLowerCase()),deliveryState=value=>L('web.agent.a2a.delivery.'+String(value||'unknown').toLowerCase());
+      const eventLabel=value=>L('web.a2a_task.event.'+String(value||'unknown').toLowerCase()),events=Array.isArray(task.events)?task.events:[];
+      const timeline=events.length?'<ol>'+events.map(event=>'<li><strong>'+eventLabel(event.event_type)+'</strong> <span class="meta">'+esc(fmtTime(event.created_at))+' · #'+esc(event.gateway_sequence)+'</span></li>').join('')+'</ol>':'<p class="meta">'+L('web.a2a_task.no_events')+'</p>';
+      const tabs='<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell"><button type="button" class="conversation-tab-arrow" id="a2a-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'">‹</button><div class="conversation-tab-rail" id="a2a-task-tab-rail" role="tablist">'+rows.map((row,index)=>'<a class="conversation-tab-card'+(row.task_id===selected.task_id?' active':'')+'" role="tab" aria-selected="'+(row.task_id===selected.task_id)+'" href="/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalDisplayId)+'?taskId='+encodeURIComponent(row.task_id)+'" title="'+esc(row.task_id)+'">'+esc(T('web.a2a_principal.task_tab',{index:index+1}))+' · '+esc(String(row.task_id).slice(0,8))+'…</a>').join('')+'</div><button type="button" class="conversation-tab-arrow" id="a2a-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'">›</button></div>';
+      const tabScript='<script>(function(){var rail=document.getElementById("a2a-task-tab-rail"),prev=document.getElementById("a2a-tabs-prev"),next=document.getElementById("a2a-tabs-next");function state(){if(!rail)return;var max=Math.max(0,rail.scrollWidth-rail.clientWidth);prev.disabled=rail.scrollLeft<2;next.disabled=rail.scrollLeft>=max-2}function move(dir){rail.scrollBy({left:dir*Math.max(180,rail.clientWidth*.7),behavior:"smooth"})}prev.onclick=function(){move(-1)};next.onclick=function(){move(1)};rail.addEventListener("scroll",state,{passive:true});window.addEventListener("resize",state);var active=rail.querySelector(".conversation-tab-card.active");if(active)active.scrollIntoView({inline:"center",block:"nearest"});state()})();</script>';
+      const body=tabs+'<div class="card"><dl><dt>'+L('web.a2a_task.context')+'</dt><dd><code>'+esc(task.context_id)+'</code></dd><dt>'+L('web.a2a_task.state')+'</dt><dd>'+taskState(task.standard_state)+'</dd><dt>'+L('web.a2a_task.delivery')+'</dt><dd>'+deliveryState(task.delivery_state)+'</dd></dl></div><section class="card"><h2>'+L('web.a2a_task.timeline')+'</h2>'+timeline+'</section>';
+      res.send(renderPage(req,T('web.a2a_principal.title'),body,{showTitle:false,nav:agentNav(agentId,agent?.agentName||agentId,T)+' › '+esc(counterpartyLabel),footer:renderFooter(T,locale)+tabScript}));
+    }catch(_){return notFound()}
+  });
+  R.get('/a2a-tasks/:taskId',async(req,res)=>{
+    const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
+    const taskState=value=>L('web.agent.a2a.state.'+String(value||'unknown').toLowerCase()),deliveryState=value=>L('web.agent.a2a.delivery.'+String(value||'unknown').toLowerCase());
+    const eventLabel=value=>L('web.a2a_task.event.'+String(value||'unknown').toLowerCase());
+    try{
+      if(!opts.a2aMailboxClient)return res.status(503).send(renderPage(req,T('web.a2a_task.title'),'<h1>'+L('web.a2a_task.title')+'</h1><div class="card error">'+L('web.a2a_task.unavailable')+'</div>',{footer:renderFooter(T,locale)}));
       const task=await opts.a2aMailboxClient.getInboundTask(req.params.taskId);
-      if(!task||!ownsA2AAgent(task.local_agent_id))return res.status(404).send(renderPage(req,'A2A Task','<h1>A2A Task</h1><div class="card error">Task not found.</div>'));
+      if(!task||!ownsA2AAgent(task.local_agent_id))return res.status(404).send(renderPage(req,T('web.a2a_task.title'),'<h1>'+L('web.a2a_task.title')+'</h1><div class="card error">'+L('web.a2a_task.not_found')+'</div>',{footer:renderFooter(T,locale)}));
       const events=Array.isArray(task.events)?task.events:[];
-      const timeline=events.length?'<ol>'+events.map(event=>'<li><strong>'+esc(event.event_type)+'</strong> <span class="meta">'+esc(fmtTime(event.created_at))+' · #'+esc(event.gateway_sequence)+'</span></li>').join('')+'</ol>':'<p class="meta">No events are available.</p>';
-      const body='<nav><a href="/a2a-tasks?agentId='+encodeURIComponent(task.local_agent_id)+'">A2A Tasks</a> › Task</nav><h1>A2A Task</h1><div class="card"><dl><dt>Agent</dt><dd>'+esc(task.local_agent_id)+'</dd><dt>Context</dt><dd><code>'+esc(task.context_id)+'</code></dd><dt>Task state</dt><dd>'+esc(task.standard_state)+'</dd><dt>Delivery</dt><dd>'+esc(task.delivery_state)+'</dd></dl></div><section class="card"><h2>Event timeline</h2>'+timeline+'</section>';
-      res.send(renderPage(req,'A2A Task',body));
-    }catch(_){res.status(404).send(renderPage(req,'A2A Task','<h1>A2A Task</h1><div class="card error">Task not found.</div>'))}
+      const timeline=events.length?'<ol>'+events.map(event=>'<li><strong>'+eventLabel(event.event_type)+'</strong> <span class="meta">'+esc(fmtTime(event.created_at))+' · #'+esc(event.gateway_sequence)+'</span></li>').join('')+'</ol>':'<p class="meta">'+L('web.a2a_task.no_events')+'</p>';
+      const body='<nav><a href="/agents/'+encodeURIComponent(task.local_agent_id)+'?tab=a2a">'+L('web.agent.tab.a2a_tasks')+'</a> › '+L('web.a2a_task.breadcrumb')+'</nav><h1>'+L('web.a2a_task.title')+'</h1><div class="card"><dl><dt>'+L('web.a2a_task.agent')+'</dt><dd>'+esc(task.local_agent_id)+'</dd><dt>'+L('web.a2a_task.context')+'</dt><dd><code>'+esc(task.context_id)+'</code></dd><dt>'+L('web.a2a_task.state')+'</dt><dd>'+taskState(task.standard_state)+'</dd><dt>'+L('web.a2a_task.delivery')+'</dt><dd>'+deliveryState(task.delivery_state)+'</dd></dl></div><section class="card"><h2>'+L('web.a2a_task.timeline')+'</h2>'+timeline+'</section>';
+      res.send(renderPage(req,T('web.a2a_task.title'),body,{footer:renderFooter(T,locale)}));
+    }catch(_){res.status(404).send(renderPage(req,T('web.a2a_task.title'),'<h1>'+L('web.a2a_task.title')+'</h1><div class="card error">'+L('web.a2a_task.not_found')+'</div>',{footer:renderFooter(T,locale)}))}
   });
   R.get('/api/a2a/tasks',async(req,res)=>{
     try{if(!authorizeA2AApi(req))return res.status(401).json({error:'WEB_AUTH_REQUIRED'});const agentId=String(req.query.agentId||'');if(agentId&&!ownsA2AAgent(agentId))return res.status(404).json({error:'A2A_TASK_NOT_FOUND'});
@@ -938,7 +1000,6 @@ function createWebRouter(handlers, db, opts={}){
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
           +'<a href="/trusted-remote" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.trusted_remote')+'</a>'
           +'<a href="/audit-rules" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.audit')+'</a>'
-          +'<a href="/a2a-tasks" class="op-card" data-agent-kind="link" data-agent="nav_card">A2A Tasks</a>'
           +'<a href="/payments" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.payments')+'</a>'
           +'<a href="/voko-im.log" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.logs')+'</a>'
           +'</div>'
@@ -1008,7 +1069,8 @@ function createWebRouter(handlers, db, opts={}){
       let ownerConversations=[],ownerTotal=0,ownerPages=0;
       try{if(opts.ownerChatReadStore){ownerTotal=opts.ownerChatReadStore.countForAgent(agentId);ownerPages=Math.ceil(ownerTotal/limit);ownerConversations=opts.ownerChatReadStore.listForAgent(agentId,limit,ooffset)}}catch{}
       if(activeTab==='owner'&&!ownerTotal)activeTab='conv';
-      let a2aTotal=0;try{if(opts.a2aMailboxClient){const inbound=await opts.a2aMailboxClient.listInboundTasks(agentId);const outbound=(await opts.a2aMailboxClient.listOutboundTasks()).filter(row=>row.local_agent_id===agentId);a2aTotal=inbound.length+outbound.length}else if(opts.a2aModule?.running)a2aTotal=Number(opts.a2aModule.getDatabase().prepare('SELECT COUNT(*) count FROM a2a_local_tasks WHERE agent_id=?').get(agentId)?.count||0)}catch{try{if(opts.a2aModule?.running)a2aTotal=Number(opts.a2aModule.getDatabase().prepare('SELECT COUNT(*) count FROM a2a_local_tasks WHERE agent_id=?').get(agentId)?.count||0)}catch{}}
+      let a2aRows=[];try{a2aRows=await loadA2ATaskRows(agentId)}catch{}
+      const a2aTotal=a2aRows.length;
       if(activeTab==='conv'&&convs.length){try{await refreshProfiles(convs.map(c=>c.channelId))}catch(_){}}
 
       // 群列表（群 Tab，来自服务端，分页，不在本地持久化）
@@ -1170,7 +1232,7 @@ function createWebRouter(handlers, db, opts={}){
       const convPanel='<div id="tab-conv" style="'+(activeTab==='conv'?'':'display:none')+'">'+searchHtml+convHtml+pgBar+aclOps+'</div>';
       const groupPanel='<div id="tab-group" style="'+(activeTab==='group'?'':'display:none')+'">'+groupHtml+gPgBar+groupOps+'</div>';
       const ownerPanel=ownerTotal?'<div id="tab-owner" style="'+(activeTab==='owner'?'':'display:none')+'">'+ownerHtml+'</div>':'';
-      const a2aPanel='<div id="tab-a2a" style="'+(activeTab==='a2a'?'':'display:none')+'"><div class="card"><p>'+(a2aTotal?'This Agent has '+a2aTotal+' A2A task(s).':'No A2A tasks yet.')+'</p><a class="btn-sm" href="/a2a-tasks?agentId='+encodeURIComponent(agentId)+'">View A2A Tasks</a> <a class="btn-sm btn-outline" href="/agents/'+encodeURIComponent(agentId)+'/caps">Agent Card</a></div></div>';
+      const a2aPanel='<div id="tab-a2a" style="'+(activeTab==='a2a'?'':'display:none')+'">'+renderA2APrincipalRows(a2aRows,agentId,T)+'</div>';
       const body=infoBar+'<div id="agent-tabs-root">'+tabBar+convPanel+groupPanel+ownerPanel+a2aPanel+'</div><p><a href="/">← '+L('common.btn.home')+'</a></p>';
 
       const tabScript='<script>(function(){function setTab(t){["conv","group","owner","a2a"].forEach(function(id){var panel=document.getElementById("tab-"+id);if(panel)panel.style.display=(t===id?"":"none")});document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group"||t==="owner"||t==="a2a")u.searchParams.set("tab",t);else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
