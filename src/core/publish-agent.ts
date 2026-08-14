@@ -169,6 +169,7 @@ async function publishAgent(opts?: PublishOptions): Promise<PublishResult> {
         if (fresh?.tags) fields.tags = fresh.tags;
         if (fresh?.category) fields.category = fresh.category;
         if (fresh?.icon_url) fields.icon_url = fresh.icon_url;
+        if (fresh?.backend_type) fields.backendType = fresh.backend_type;
         if (Object.keys(fields).length) {
           await updateAgentProfile({ agentId, ...fields });
         }

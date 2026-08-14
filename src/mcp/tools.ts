@@ -1442,7 +1442,7 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 检查是否有需要同步服务端的字段
-      const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone];
+      const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone, p.backendType];
       if (serverFields.some((v?: any) => v !== undefined)) {
         const result = await cx.updateAgentProfile({
           db: cx.db,
@@ -1455,6 +1455,7 @@ function createToolHandlers(cx: McpContext) {
           icon_url: p.iconUrl,
           address: p.address,
           contact_phone: p.contact_phone,
+          backendType: p.backendType === undefined ? undefined : targetBackendType,
         });
         // 资料同步不影响运行时绑定；如有 backend/instance 变更已在上文触发 rebind
         if (backendRebindResult.length) (result as any).runtimeRebind = backendRebindResult[backendRebindResult.length - 1];
