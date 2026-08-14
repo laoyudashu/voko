@@ -964,12 +964,15 @@ ${body}
       const executionScope = String((payload as any).executionScope || '');
       const sourceType = executionScope === 'owner_link'
         ? 'owner'
+        : executionScope === 'owner_chat'
+          ? 'owner_chat'
         : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged) ? 'agent_peer' : 'visitor';
+      const isOwnerChat = sourceType === 'owner_chat';
       const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
-        content: wrapPushContent(routedPayload.content, sourceType),
-        securityContext: createMessageSecurityContext(sourceType),
+        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, sourceType),
+        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(sourceType) }),
         providerBinding: payload.providerBinding ?? null,
       };
       const replyContext = {

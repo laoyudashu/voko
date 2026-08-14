@@ -41,6 +41,22 @@ test('trusted Owner execution uses owner security context and an exact transport
   assert.equal(fallback.payload, undefined);
 });
 
+test('trusted Owner Chat forwards raw content without Provider security restrictions', async () => {
+  const provider = new Provider();
+  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply() {} });
+  const content = 'continue the local work session';
+  const result = await dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'owner-chat-message',
+    contextId: 'owner-chat-conversation', content, sourceType: 'owner_chat',
+    executionScope: 'owner_chat', timeoutMs: 1000 });
+  assert.equal(result.reply.content, 'isolated-result');
+  assert.equal(provider.payload.content, content);
+  assert.equal(provider.payload.rawContent, content);
+  assert.equal(provider.payload.securityContext, undefined);
+  assert.equal(provider.payload.executionScope, 'owner_chat');
+  assert.equal(provider.payload.content.includes('[VOKO SECURITY CONTEXT]'), false);
+  assert.equal(provider.payload.content.includes('[VOKO VERIFIED OWNER MESSAGE]'), false);
+});
+
 test('trusted Owner bootstrap accepts only an exact-version full sandbox transport', async () => {
   const safe = new Provider(); const unsafe = new Provider();
   safe.getSandboxStatus = () => ({ effective: true, versionState: 'verified', coverage: 'full', dimensions: {
