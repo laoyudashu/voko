@@ -19,7 +19,7 @@ class A2AEventOutboxWorker {
         this.store.finishOutboxEvent(String(event.event_id), 'acked'); sent += 1;
       } catch (error) {
         const status = Number((error as any)?.status || 0);
-        if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        if (status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429) {
           this.store.finishOutboxEvent(String(event.event_id), 'dead', `HTTP_${status}`);
         } else {
           this.store.finishOutboxEvent(String(event.event_id), 'outcome_unknown', 'DELIVERY_OUTCOME_UNKNOWN'); uncertain += 1;

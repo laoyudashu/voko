@@ -25,6 +25,14 @@ test('unknown delivery result is quarantined and never automatically claimed aga
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'outcome_unknown');
   assert.deepEqual(store.claimEvents('other'), []);
 });
+test('sequence-gap conflict remains uncertain until durable server projection is observable', async t => {
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  store.enqueueEvent('event-gap', 'task-1', 1, 'working', { signed: true });
+  const error = Object.assign(new Error('gap'), { status: 409 });
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw error; } });
+  await worker.flushOnce('worker');
+  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-gap'").get().status, 'outcome_unknown');
+});
 test('unknown event is acknowledged only after the Gateway confirms the same task', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true }); store.finishOutboxEvent('event-1', 'outcome_unknown');

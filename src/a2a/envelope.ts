@@ -32,6 +32,27 @@ function unsignedEnvelope(envelope: A2AEnvelope): A2AEnvelope {
   return unsigned as A2AEnvelope;
 }
 
+function validatePayload(envelope: A2AEnvelope): void {
+  const payload = envelope.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+    || Buffer.byteLength(JSON.stringify(payload), 'utf8') > 7168) throw new Error('Invalid A2A payload');
+  if (envelope.operation === 'cancel_ack' && !['accepted', 'unsupported', 'too_late'].includes(String(payload.result || '')))
+    throw new Error('Invalid A2A cancellation result');
+  if (envelope.operation !== 'artifact') return;
+  const artifact = (payload.artifact || payload) as Record<string, any>;
+  const index = Number(payload.index || 0);
+  if (!ID_PATTERN.test(String(artifact.artifactId || '')) || !Number.isSafeInteger(index) || index < 0
+    || !Array.isArray(artifact.parts) || artifact.parts.length === 0) throw new Error('Invalid A2A artifact');
+  for (const part of artifact.parts) {
+    if (typeof part?.text === 'string' && part.text && Buffer.byteLength(part.text, 'utf8') <= 6144) continue;
+    const file = part?.file; let url: URL;
+    try { url = new URL(String(file?.uri || '')); } catch (_) { throw new Error('Invalid A2A artifact part'); }
+    if (url.protocol !== 'https:' || String(file.uri).length > 2048 || !/^[a-f0-9]{64}$/i.test(String(file.sha256 || ''))
+      || !Number.isSafeInteger(Number(file.size)) || Number(file.size) < 0 || Number(file.size) > 100 * 1024 * 1024
+      || typeof file.mimeType !== 'string' || file.mimeType.length > 128) throw new Error('Invalid A2A artifact part');
+  }
+}
+
 function validateEnvelope(value: unknown, options: { now?: number } = {}): A2AEnvelope {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid A2A envelope');
   const envelope = value as A2AEnvelope;
@@ -39,6 +60,7 @@ function validateEnvelope(value: unknown, options: { now?: number } = {}): A2AEn
   for (const id of [envelope.eventId, envelope.gatewayTaskId, envelope.contextId, envelope.gatewayMessageId,
     envelope.executionId, envelope.agentId]) if (!ID_PATTERN.test(id || '')) throw new Error('Invalid A2A identifier');
   if (!Number.isSafeInteger(envelope.sequence) || envelope.sequence < 1) throw new Error('Invalid A2A sequence');
+  validatePayload(envelope);
   for (const revision of [envelope.bindingGeneration, envelope.ownerEpoch, envelope.policyRevision]) {
     if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 1)) throw new Error('Invalid A2A policy snapshot');
   }
