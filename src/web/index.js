@@ -645,9 +645,8 @@ function createWebRouter(handlers, db, opts={}){
       const requested=String(req.query.taskId||''),selected=rows.find(row=>String(row.task_id)===requested)||rows[0];
       const task=await opts.a2aMailboxClient.getInboundTask(selected.task_id);
       if(!task||String(task.local_agent_id)!==agentId||String(task.principal_display_id||'')!==principalDisplayId)return notFound();
-      const agent=await getAgentInfo(handlers,agentId),latest=rows[0];
-      const principalType=T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[latest.principal_kind]||'external'));
-      const counterpartyLabel=principalType+(latest.principal_name?' · '+latest.principal_name:'')+' ('+principalDisplayId+')';
+      const agent=await getAgentInfo(handlers,agentId);
+      const pageTitle=T('web.a2a_principal.conversation_title',{id:principalDisplayId});
       const taskState=value=>L('web.agent.a2a.state.'+String(value||'unknown').toLowerCase()),deliveryState=value=>L('web.agent.a2a.delivery.'+String(value||'unknown').toLowerCase());
       const eventLabel=value=>L('web.a2a_task.event.'+String(value||'unknown').toLowerCase()),events=Array.isArray(task.events)?task.events:[];
       const timeline=events.length?'<ol>'+events.map(event=>'<li><strong>'+eventLabel(event.event_type)+'</strong> <span class="meta">'+esc(fmtTime(event.created_at))+' · #'+esc(event.gateway_sequence)+'</span></li>').join('')+'</ol>':'<p class="meta">'+L('web.a2a_task.no_events')+'</p>';

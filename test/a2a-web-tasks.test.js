@@ -15,6 +15,9 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /principal_display_id/);
   assert.match(source, /R\.get\('\/agents\/:agentId\/a2a\/:principalDisplayId'/);
   assert.match(source, /web\.a2a_principal\.task_tab/);
+  assert.match(source, /web\.a2a_principal\.conversation_title/);
+  assert.match(source, /agentNav\(agentId,agent\?\.agentName\|\|agentId,T\)\+' › '\+esc\(principalDisplayId\)/);
+  assert.doesNotMatch(source, /const counterpartyLabel=/);
   assert.match(source, /taskId='\+encodeURIComponent\(row\.task_id\)/);
   assert.match(source, /const key=principalId\|\|\('task:'\+String\(row\.task_id\)\)/);
   assert.match(source, /nav:agentNav\(agentId,agent\?\.agentName\|\|agentId,T\)/);
