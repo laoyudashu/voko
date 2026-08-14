@@ -23,3 +23,7 @@ test('expired and oversized-lifetime envelopes fail closed', () => {
   const value = envelope(); value.timestamps.expiresAt = new Date(now + 86_400_001).toISOString();
   assert.throws(() => validateEnvelope(value, { now }), /Expired/);
 });
+test('binding and policy snapshots must be positive safe integers', () => {
+  const value = envelope(); value.bindingGeneration = 0;
+  assert.throws(() => validateEnvelope(value, { now }), /policy snapshot/);
+});

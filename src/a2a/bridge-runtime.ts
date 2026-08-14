@@ -25,8 +25,29 @@ class A2ABridgeRuntime {
     const client = new A2AMailboxClient({ baseUrl, token }); const store = new A2ALocalTaskStore(this.options.database);
     const identity = new A2AIdentityStore(this.options.database).getOrCreate();
     const safety = this.options.mainDatabase ? new A2ASafetyGate(this.options.mainDatabase) : undefined;
-    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety), identity);
-    const worker = new A2ABridgeWorker({ client, store, verify: (value) => {
+    const assertDispatchAllowed = this.options.mainDatabase ? (agentId: string) => {
+      const row = this.options.mainDatabase.prepare("SELECT publish_status FROM agents WHERE agent_id=? LIMIT 1").get(agentId) as { publish_status?: string } | undefined;
+      if (!row || row.publish_status !== 'published') throw new Error('A2A_AGENT_NOT_AVAILABLE');
+    } : undefined;
+    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety, assertDispatchAllowed), identity);
+    const bindingGenerations = new Map<string, number>((Array.isArray(stored.agentBindings) ? stored.agentBindings : [])
+      .map((item: any) => [String(item.localAgentId), Number(item.bindingGeneration || 1)]));
+    const availability = () => {
+      if (!this.options.mainDatabase) return [];
+      const rows = this.options.mainDatabase.prepare("SELECT agent_id FROM agents WHERE publish_status='published'").all() as Array<{ agent_id: string }>;
+      return rows.filter(row => bindingGenerations.has(row.agent_id)).map(row => {
+        const key = `availability_sequence:${row.agent_id}`;
+        const existing = this.options.database.prepare('SELECT value FROM a2a_meta WHERE key=?').get(key) as { value?: string } | undefined;
+        const sequence = Number(existing?.value || 0) + 1;
+        this.options.database.prepare(`INSERT INTO a2a_meta(key,value,updated_at) VALUES(?,?,?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(key, String(sequence), Date.now());
+        const status = this.options.dispatcher.getAgentDeliveryStatus?.(row.agent_id);
+        const state = status?.automaticDeliveryReady ? (status.activeAutomaticMode ? 'available' : 'degraded')
+          : status?.pullReady ? 'queueing' : 'unavailable';
+        return { localAgentId: row.agent_id, bindingGeneration: bindingGenerations.get(row.agent_id), snapshotSequence: sequence, state };
+      });
+    };
+    const worker = new A2ABridgeWorker({ client, store, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
     }, execute: (envelope) => processor.process(envelope) });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);

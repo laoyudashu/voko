@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const A2A_SCHEMA_VERSION = 3;
+const A2A_SCHEMA_VERSION = 4;
 
 interface InitA2ADatabaseOptions {
   createParent?: boolean;
@@ -58,7 +58,8 @@ function initA2ADatabase(
           agent_id TEXT NOT NULL, gateway_uid TEXT NOT NULL, standard_state TEXT NOT NULL,
           delivery_state TEXT NOT NULL, last_command_sequence INTEGER NOT NULL DEFAULT 0,
           last_producer_sequence INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
+          binding_generation INTEGER NOT NULL DEFAULT 1, owner_epoch INTEGER NOT NULL DEFAULT 1,
+          policy_revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
           CHECK (standard_state IN ('SUBMITTED','WORKING','INPUT_REQUIRED','AUTH_REQUIRED','COMPLETED','FAILED','CANCELED','REJECTED')),
           CHECK (delivery_state IN ('QUEUED_OFFLINE','SENDING','IM_ACCEPTED','DELIVERED','EXECUTING','DELIVERY_UNKNOWN','DEAD_LETTER'))
         ) STRICT;
@@ -71,7 +72,7 @@ function initA2ADatabase(
         CREATE TABLE IF NOT EXISTS a2a_local_inbox (
           event_id TEXT PRIMARY KEY, gateway_task_id TEXT NOT NULL REFERENCES a2a_local_tasks(gateway_task_id) ON DELETE CASCADE,
           command_sequence INTEGER NOT NULL, operation TEXT NOT NULL, status TEXT NOT NULL,
-          received_at INTEGER NOT NULL, processed_at INTEGER, error_code TEXT,
+          envelope_json TEXT, received_at INTEGER NOT NULL, processed_at INTEGER, error_code TEXT,
           UNIQUE (gateway_task_id, command_sequence)
         ) STRICT;
         CREATE TABLE IF NOT EXISTS a2a_local_outbox (
@@ -89,6 +90,19 @@ function initA2ADatabase(
           standard_state TEXT NOT NULL, delivery_state TEXT NOT NULL, response_json TEXT NOT NULL,
           updated_at INTEGER NOT NULL
         ) STRICT;
+      `);
+      if (currentVersion < 4) {
+        const columns = (table: string) => new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(row => row.name));
+        const taskColumns = columns('a2a_local_tasks');
+        if (!taskColumns.has('binding_generation')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN binding_generation INTEGER NOT NULL DEFAULT 1');
+        if (!taskColumns.has('owner_epoch')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 1');
+        if (!taskColumns.has('policy_revision')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 1');
+        if (!columns('a2a_local_inbox').has('envelope_json')) db.exec('ALTER TABLE a2a_local_inbox ADD COLUMN envelope_json TEXT');
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_agent_updated ON a2a_local_tasks(agent_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_agent_state_updated ON a2a_local_tasks(agent_id, standard_state, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_context_updated ON a2a_local_tasks(context_id, updated_at);
       `);
       db.prepare(`
         INSERT INTO a2a_meta (key, value, updated_at)

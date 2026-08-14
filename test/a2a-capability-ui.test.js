@@ -3,8 +3,7 @@ const assert = require('node:assert/strict'); const fs = require('node:fs'); con
 test('capability UI follows the A2A 1.0 Agent Card and Skill field hierarchy', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   const route = source.match(/R\.get\('\/agents\/:agentId\/caps'[\s\S]*?\n  \}\);/)[0];
-  assert.match(route, /publish_voko/); assert.match(route, /publish_a2a/); assert.match(route, /name="publishA2A"/);
-  assert.match(route, /a2a-publication-options/); assert.match(route, /name="publishA2A"/);
+  assert.doesNotMatch(route, /publish_voko/); assert.doesNotMatch(route, /publish_a2a/); assert.doesNotMatch(route, /name="publishA2A"/);
   assert.match(route, /capsValidationScript/); assert.match(route, /caps\.no_changes/); assert.match(route, /event\.preventDefault/);
   assert.match(route, /name="agentDescription"/);
   assert.match(route, /web\.agent\.caps\.protocol_version/); assert.match(route, /web\.agent\.caps\.default_input_modes/);

@@ -18,8 +18,8 @@ function temporaryDirectory(t) {
   return directory;
 }
 
-test('A2A remains disabled unless explicitly enabled', () => {
-  assert.equal(isA2AEnabled({}), false);
+test('A2A is enabled by default with an explicit emergency disable', () => {
+  assert.equal(isA2AEnabled({}), true);
   assert.equal(isA2AEnabled({ VOKO_A2A_ENABLED: 'false' }), false);
   assert.equal(isA2AEnabled({ VOKO_A2A_ENABLED: '0' }), false);
   assert.equal(isA2AEnabled({ VOKO_A2A_ENABLED: 'true' }), true);
@@ -112,6 +112,26 @@ test('A2A database has its own version and no ordinary messaging tables', (t) =>
   assert.equal(tables.includes('messages'), false);
   assert.equal(tables.includes('conversations'), false);
   db.close();
+});
+
+test('A2A schema 3 upgrades in place and preserves recoverable inbox commands', (t) => {
+  const directory = temporaryDirectory(t); const databasePath = path.join(directory, 'voko-a2a.db');
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`CREATE TABLE a2a_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL) STRICT;
+    CREATE TABLE a2a_local_tasks (gateway_task_id TEXT PRIMARY KEY,context_id TEXT NOT NULL,execution_id TEXT NOT NULL UNIQUE,
+      agent_id TEXT NOT NULL,gateway_uid TEXT NOT NULL,standard_state TEXT NOT NULL,delivery_state TEXT NOT NULL,
+      last_command_sequence INTEGER NOT NULL DEFAULT 0,last_producer_sequence INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL) STRICT;
+    CREATE TABLE a2a_local_inbox (event_id TEXT PRIMARY KEY,gateway_task_id TEXT NOT NULL,command_sequence INTEGER NOT NULL,
+      operation TEXT NOT NULL,status TEXT NOT NULL,received_at INTEGER NOT NULL,processed_at INTEGER,error_code TEXT,
+      UNIQUE(gateway_task_id,command_sequence)) STRICT;
+    PRAGMA user_version=3;`);
+  legacy.close();
+  const upgraded = initA2ADatabase(databasePath);
+  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 4);
+  const taskColumns = upgraded.prepare('PRAGMA table_info(a2a_local_tasks)').all().map(row => row.name);
+  assert.ok(taskColumns.includes('binding_generation')); assert.ok(taskColumns.includes('owner_epoch')); assert.ok(taskColumns.includes('policy_revision'));
+  assert.ok(upgraded.prepare('PRAGMA table_info(a2a_local_inbox)').all().some(row => row.name === 'envelope_json'));
+  upgraded.close();
 });
 
 test('A2A source does not depend on the IM or ordinary conversation pipeline', () => {

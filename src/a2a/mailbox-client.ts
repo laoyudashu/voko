@@ -1,6 +1,8 @@
 interface MailboxItem { eventId: string; taskId: string; envelope: unknown }
 interface MailboxClaim { leaseId: string; items: MailboxItem[] }
 interface OutboundResultItem { eventId: string; taskId: string; sequence: number; payload: any }
+interface AgentAvailabilitySnapshot { localAgentId: string; bindingGeneration: number; snapshotSequence: number;
+  state: 'available' | 'degraded' | 'queueing' | 'unavailable' | 'unknown' }
 interface A2AMailboxClientOptions { baseUrl: string; token: string; fetchImpl?: typeof fetch }
 
 function normalizeMailboxBaseUrl(value: string): string {
@@ -34,8 +36,8 @@ class A2AMailboxClient {
     if (!response.ok) { const error = new Error(`A2A Mailbox request failed (${response.status})`); (error as any).status = response.status; throw error; }
     return response.json();
   }
-  async claim(limit = 20): Promise<MailboxClaim> {
-    const result = await this.post('/claim', { limit });
+  async claim(limit = 20, agentStatuses: AgentAvailabilitySnapshot[] = []): Promise<MailboxClaim> {
+    const result = await this.post('/claim', { limit, agentStatuses });
     if (!result || typeof result.leaseId !== 'string' || !Array.isArray(result.items)) throw new Error('Invalid A2A Mailbox claim');
     return result;
   }
@@ -63,6 +65,16 @@ class A2AMailboxClient {
   async listOutboundTasks(): Promise<any[]> {
     const result = await this.get('/outbound/tasks'); return Array.isArray(result?.tasks) ? result.tasks : [];
   }
+  async listInboundTasks(localAgentId?: string): Promise<any[]> {
+    const query = localAgentId ? `?localAgentId=${encodeURIComponent(localAgentId)}` : '';
+    const result = await this.get(`/tasks${query}`); return Array.isArray(result?.tasks) ? result.tasks : [];
+  }
+  async getInboundTask(taskId: string): Promise<any> {
+    const result = await this.get(`/tasks/${encodeURIComponent(taskId)}`); return result?.task || null;
+  }
+  async cancelInboundTask(taskId: string): Promise<any> {
+    return this.post(`/tasks/${encodeURIComponent(taskId)}:cancel`, {});
+  }
   async claimOutboundResults(limit = 20): Promise<{ leaseId: string; items: OutboundResultItem[] }> {
     return this.post('/outbound/results/claim', { limit });
   }
@@ -72,4 +84,4 @@ class A2AMailboxClient {
 }
 
 export { A2AMailboxClient, normalizeMailboxBaseUrl };
-export type { A2AMailboxClientOptions, MailboxClaim, MailboxItem, OutboundResultItem };
+export type { A2AMailboxClientOptions, AgentAvailabilitySnapshot, MailboxClaim, MailboxItem, OutboundResultItem };

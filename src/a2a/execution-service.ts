@@ -5,8 +5,9 @@ interface IsolatedDispatcher { executeIsolated(options: Record<string, unknown>)
 interface SafetyGate { assertAllowed(content: string, direction: 'inbound' | 'outbound'): Promise<void> }
 class A2AExecutionService {
   constructor(private readonly store: A2ALocalTaskStore, private readonly dispatcher: IsolatedDispatcher,
-    private readonly safety?: SafetyGate) {}
+    private readonly safety?: SafetyGate, private readonly assertDispatchAllowed?: (agentId: string) => void) {}
   async execute(envelope: A2AEnvelope): Promise<{ content: string }> {
+    this.assertDispatchAllowed?.(envelope.agentId);
     const content = String((envelope.payload as any)?.text || '');
     if (!content || Buffer.byteLength(content, 'utf8') > 6144) throw new Error('Invalid A2A text payload');
     await this.safety?.assertAllowed(content, 'inbound');

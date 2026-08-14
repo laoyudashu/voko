@@ -589,6 +589,7 @@
   "web.agent.tab.conversations": "会话列表",
   "web.agent.tab.groups": "群列表",
   "web.agent.tab.owner_chats": "主人会话",
+  "web.agent.tab.a2a_tasks": "A2A任务",
   "web.owner_chat.title": "主人会话：{name}",
   "web.owner_chat.conversation_name": "远程可信会话",
   "web.owner_chat.readonly_notice": "这是独立的主人可信会话。继续对话请使用远程可信入口。",

@@ -9,6 +9,7 @@ const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 interface A2AEnvelope { version: 'voko.a2a/1'; kind: string; operation: string; eventId: string;
   gatewayTaskId: string; contextId: string; gatewayMessageId: string; executionId: string;
   sequence: number; agentId: string; caller: Record<string, unknown>; payload: Record<string, unknown>;
+  bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number;
   trace: { correlationId: string }; timestamps: { createdAt: string; expiresAt: string };
   signature?: { keyId: string; algorithm: 'Ed25519'; value: string } }
 
@@ -38,6 +39,9 @@ function validateEnvelope(value: unknown, options: { now?: number } = {}): A2AEn
   for (const id of [envelope.eventId, envelope.gatewayTaskId, envelope.contextId, envelope.gatewayMessageId,
     envelope.executionId, envelope.agentId]) if (!ID_PATTERN.test(id || '')) throw new Error('Invalid A2A identifier');
   if (!Number.isSafeInteger(envelope.sequence) || envelope.sequence < 1) throw new Error('Invalid A2A sequence');
+  for (const revision of [envelope.bindingGeneration, envelope.ownerEpoch, envelope.policyRevision]) {
+    if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 1)) throw new Error('Invalid A2A policy snapshot');
+  }
   const createdAt = Date.parse(envelope.timestamps?.createdAt);
   const expiresAt = Date.parse(envelope.timestamps?.expiresAt);
   const now = options.now ?? Date.now();

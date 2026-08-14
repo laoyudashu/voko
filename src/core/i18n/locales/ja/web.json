@@ -605,6 +605,7 @@
   "web.trusted_remote.security": "セキュリティの説明",
   "web.trusted_remote.security_text": "ログインには所有者メールの確認が必要です。端末セッションは最長30日、7日間利用がない場合は失効します。端末を切断すると、すべての所有 Agent へのアクセスが直ちに失われます。信頼済みリモート入口は所有者と Agent の個別対話専用で、グループチャットや承認には使用しません。",
   "web.agent.tab.owner_chats": "オーナー会話",
+  "web.agent.tab.a2a_tasks": "A2Aタスク",
   "web.owner_chat.title": "オーナー会話：{name}",
   "web.owner_chat.conversation_name": "リモート信頼会話",
   "web.owner_chat.readonly_notice": "これは独立した信頼済みオーナー会話です。会話の続行にはリモート信頼ポータルを使用してください。",

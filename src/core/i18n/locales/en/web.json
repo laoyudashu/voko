@@ -589,6 +589,7 @@
   "web.agent.tab.conversations": "Conversations",
   "web.agent.tab.groups": "Groups",
   "web.agent.tab.owner_chats": "Owner Chats",
+  "web.agent.tab.a2a_tasks": "A2A Tasks",
   "web.owner_chat.title": "Owner Chat: {name}",
   "web.owner_chat.conversation_name": "Trusted remote chat",
   "web.owner_chat.readonly_notice": "This is an isolated trusted owner chat. Continue the conversation through the Trusted Remote Portal.",

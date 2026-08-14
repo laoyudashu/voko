@@ -24,6 +24,14 @@ test('task creation and inbox commands are idempotent', (t) => {
   assert.equal(store.acceptCommand('event-2', 'task-1', 1, 'execute'), 'duplicate');
 });
 
+test('inbox persists the verified envelope before execution and clears it after success', (t) => {
+  const { db, store } = fixture(t); const envelope = { version: 'voko.a2a/1', payload: { text: 'hello' } };
+  assert.equal(store.acceptCommand('event-envelope', 'task-1', 2, 'execute', envelope), 'accepted');
+  assert.deepEqual(JSON.parse(db.prepare("SELECT envelope_json FROM a2a_local_inbox WHERE event_id='event-envelope'").get().envelope_json), envelope);
+  store.finishCommand('event-envelope', 'processed');
+  assert.equal(db.prepare("SELECT envelope_json FROM a2a_local_inbox WHERE event_id='event-envelope'").get().envelope_json, null);
+});
+
 test('terminal task state cannot be changed', (t) => {
   const { store } = fixture(t);
   assert.equal(store.updateState('task-1', 'WORKING', 'EXECUTING'), true);

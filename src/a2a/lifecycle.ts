@@ -11,7 +11,7 @@ interface A2AModuleOptions {
 
 function isA2AEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = String(env.VOKO_A2A_ENABLED || '').trim().toLowerCase();
-  return value === '1' || value === 'true';
+  return value !== '0' && value !== 'false';
 }
 
 class A2AModule {

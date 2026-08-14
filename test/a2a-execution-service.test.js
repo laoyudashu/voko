@@ -19,3 +19,9 @@ test('oversized task text is rejected before Provider execution', async t => {
   const value = envelope(); value.payload.text = 'x'.repeat(6145);
   await assert.rejects(() => service.execute(value), /Invalid/); assert.equal(called, false);
 });
+test('Provider dispatch rechecks that the local Agent is still eligible', async t => {
+  const store = setup(t); let called = false;
+  const service = new A2AExecutionService(store, { async executeIsolated() { called = true; } }, undefined,
+    () => { throw new Error('A2A_AGENT_NOT_AVAILABLE'); });
+  await assert.rejects(() => service.execute(envelope()), /A2A_AGENT_NOT_AVAILABLE/); assert.equal(called, false);
+});
