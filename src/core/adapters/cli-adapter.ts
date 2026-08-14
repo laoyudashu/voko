@@ -264,7 +264,7 @@ class CliAdapter extends PushProvider {
       } catch (_) {}
     }
 
-    const contextPrompt = _buildContextPrompt(agentId, fromUid, content, contextMsgs);
+    const contextPrompt = (payload as any).__ownerRaw === true ? content : _buildContextPrompt(agentId, fromUid, content, contextMsgs);
     const prompt = this._promptTemplate
       ? this._promptTemplate.replace('{prompt}', () => contextPrompt)
       : contextPrompt;
@@ -474,6 +474,11 @@ class CliAdapter extends PushProvider {
     this.notifyProviderEvent({ type: 'completed', agentId, messageId, turnId,
       nativeSessionId: observedSessionId, terminal: true });
     return receipt;
+  }
+
+  /** Dedicated owner driver hook. Subclasses must opt in explicitly. */
+  protected pushOwnerRaw(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
+    return this.push({ ...payload, __ownerRaw: true } as PushPayload);
   }
 
   async steer(

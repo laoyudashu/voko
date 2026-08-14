@@ -48,3 +48,16 @@ test('drain sends ordered task events before returning to long polling', async t
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent(event) { sent.push(event.sequence); return { status: 'accepted' }; } });
   assert.deepEqual(await worker.drain('worker'), { sent: 3, uncertain: 0 }); assert.deepEqual(sent, [1, 2, 3]);
 });
+
+test('A2A logs contain only message-level summaries and never stream payload details', async t => {
+  const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  store.enqueueEvent('event-1', 'task-1', 1, 'working', { secret: 'stream-detail' });
+  store.enqueueEvent('event-2', 'task-1', 2, 'completed', { text: 'private-reply' });
+  const logs = []; const original = console.log; console.log = (...args) => logs.push(args.join(' '));
+  try {
+    const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { return { status: 'accepted' }; } });
+    await worker.drain('worker');
+  } finally { console.log = original; }
+  assert.deepEqual(logs, ['[A2A] 回复了 A2A 消息']);
+  assert.doesNotMatch(logs.join('\n'), /stream-detail|private-reply/);
+});

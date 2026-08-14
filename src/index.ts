@@ -1772,7 +1772,7 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   if (ownerChatBridge && ownerLinkModule.dispatchEnabled && dispatcher) {
-    const { OwnerChatOutbox, OwnerChatProcessor } = require('./owner-chat');
+    const { OwnerChatInboxRecovery, OwnerChatOutbox, OwnerChatProcessor } = require('./owner-chat');
     const resolveOwnerChatAgentIdentity = (agentId: string) => {
       const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
       if (!currentOwner) return null;
@@ -1794,6 +1794,16 @@ async function startMcpServer(args?: any, core?: any) {
       try { return await ownerChatProcessor.process(messageId); }
       finally { emitOwnerChatUpdate(messageId); }
     });
+    ownerChatBridge.setControlHandler(async (control: any) => {
+      if (control.operation === 'approval') {
+        return dispatcher.respondOwnerApproval(control.localAgentId,String(control.payload?.approvalId||''),control.payload?.decision);
+      }
+      if (control.operation === 'cancel') return dispatcher.cancelOwnerTurn(control.localAgentId,control.conversationId);
+      return false;
+    });
+    const ownerChatRecovery = new OwnerChatInboxRecovery(ownerChatDatabase, ownerChatProcessor, 2000,
+      (event: any) => require('./core/lite-bus').emit('owner-chat:updated', event));
+    await taskManager.start('owner-chat-inbox-recovery', () => ownerChatRecovery.start());
     const ownerChatOutbox = new OwnerChatOutbox(ownerChatDatabase, { deliver }, 2000,
       (event: any) => require('./core/lite-bus').emit('owner-chat:updated', event));
     await taskManager.start('owner-chat-outbox', () => ownerChatOutbox.start());
@@ -2120,6 +2130,7 @@ async function startMcpServer(args?: any, core?: any) {
     a2aMailboxClient,
     syncA2ARegistration,
     ownerChatReadStore,
+    ownerChatDatabase: ownerLinkModule?.getDatabase?.() || null,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

@@ -31,6 +31,7 @@ interface DispatcherProvider {
   match?(agentId: string, meta: AgentMeta): boolean;
   isAvailable?(agentId: string): boolean;
   push?(payload: PushPayload): unknown;
+  pushOwner?(payload: PushPayload, context: unknown): unknown;
   steer?(agentId: string, visitorId: string, content: string, metadata?: { turnId: string }): unknown;
   start?(): unknown;
   stop?(): unknown;
@@ -41,7 +42,7 @@ interface DispatcherProvider {
   removeListener?(event: string, handler: (payload: any) => void): unknown;
 }
 
-type RouteOperation = 'push' | 'steer';
+type RouteOperation = 'push' | 'steer' | 'owner_push';
 type DeliveryOutcome = 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 interface AvailabilityEvent {
@@ -68,6 +69,10 @@ interface RouteInvalidation {
   operation?: RouteOperation;
   available?: boolean;
   reason?: string;
+}
+
+function providerSupportsOperation(provider: DispatcherProvider, operation: RouteOperation): boolean {
+  return operation === 'owner_push' ? typeof provider.pushOwner === 'function' : typeof provider[operation] === 'function';
 }
 
 interface ProviderReply {
@@ -108,6 +113,8 @@ interface IsolatedExecutionOptions {
   sourceType?: 'agent_peer' | 'owner' | 'owner_chat';
   executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat';
   preferredAdapter?: string;
+  ownerExecutionContext?: Readonly<Record<string, unknown>>;
+  onProviderAccepted?: (receipt: unknown) => void;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -320,6 +327,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   }
   const attachedReplyProviders = new Set<DispatcherProvider>();
   const attachedEventProviders = new Set<DispatcherProvider>();
+  const _ownerIoSubscribers = new Set<(event: Record<string, unknown>) => void>();
   const _providerIds = new Map<DispatcherProvider, string>();
   for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
   function attachProviderEvents(p: DispatcherProvider): void {
@@ -327,6 +335,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     attachedEventProviders.add(p);
     p.on('provider.event', (event: ProviderCoreEvent) => {
       _acceptProviderEvent(event);
+    });
+    p.on('owner.io-event', (event: Record<string, unknown>) => {
+      for (const subscriber of _ownerIoSubscribers) { try { subscriber(event); } catch (_) {} }
     });
   }
   function attachReplyProvider(p: DispatcherProvider): void {
@@ -506,7 +517,30 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
 
   function resolveProviders(agentId: string, operation: RouteOperation = 'push'): DispatcherProvider[] {
     const meta = _metaOf(agentId);
-    return routeResolver.resolve({ agentId, operation, meta, providers }).map((item: any) => item.provider);
+    const resolverOperation = operation === 'owner_push' ? 'push' : operation;
+    return routeResolver.resolve({ agentId, operation: resolverOperation, meta, providers }).map((item: any) => item.provider);
+  }
+
+  function _ownerRouteEntry(agentId: string, excluded: Set<DispatcherProvider> = new Set()): RouteCacheEntry | null {
+    const cacheKey = `owner_push:${agentId}`;
+    const cached = _routeCache.get(cacheKey);
+    if (cached && !excluded.has(cached.provider) && Date.now() - cached.selectedAt < ROUTE_CACHE_TTL) {
+      try {
+        if (cached.generation === _generationOf(cached.providerId, agentId, 'owner_push')
+          && cached.provider.isAvailable?.(agentId) && typeof cached.provider.pushOwner === 'function') return cached;
+      } catch (_) {}
+      _bumpScoped(cached.providerId, agentId, 'owner_push'); _routeCache.delete(cacheKey);
+    }
+    const trusted = resolveTrustedOwnerTransport(agentId);
+    if (!trusted) return null;
+    const ownerCapability = getProviderTransport(trusted.providerId)?.owner;
+    if (!ownerCapability?.enabled || !ownerCapability.platforms.includes(process.platform as any)
+      || !['voko_enforced','provider_enforced'].includes(ownerCapability.isolation)) return null;
+    const provider = providers[trusted.providerId];
+    if (!provider || excluded.has(provider) || typeof provider.pushOwner !== 'function') return null;
+    const selected = { providerId: trusted.providerId, provider,
+      generation: _generationOf(trusted.providerId, agentId, 'owner_push'), selectedAt: Date.now() };
+    _routeCache.set(cacheKey, selected); return selected;
   }
 
   /** Resolve one explicitly requested transport. Never falls back to another mode. */
@@ -618,7 +652,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       try {
         if (cached.generation === _generationOf(cached.providerId, agentId, operation)
           && cached.provider.isAvailable?.(agentId)
-          && typeof cached.provider[operation] === 'function') return cached;
+          && providerSupportsOperation(cached.provider, operation)) return cached;
       } catch (_) {}
       _bumpScoped(cached.providerId, agentId, operation);
       _routeCache.delete(cacheKey);
@@ -628,7 +662,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     }
 
     const provider = resolveProviders(agentId, operation).find(candidate => (
-      !excluded.has(candidate) && typeof candidate[operation] === 'function'
+      !excluded.has(candidate) && providerSupportsOperation(candidate, operation)
     )) || null;
     if (!provider) return null;
     const providerId = _providerIdOf(provider);
@@ -646,7 +680,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   function _routeProviderEntryExact(agentId: string, operation: RouteOperation, providerId: string,
     excluded: Set<DispatcherProvider>): RouteCacheEntry | null {
     const provider = providers[providerId];
-    if (!provider || excluded.has(provider) || typeof provider[operation] !== 'function'
+    if (!provider || excluded.has(provider) || !providerSupportsOperation(provider, operation)
       || !_providerEligible(providerId, agentId)) return null;
     try { if (!provider.isAvailable?.(agentId)) return null; } catch (_) { return null; }
     return { providerId, provider, generation: _generationOf(providerId, agentId, operation), selectedAt: Date.now() };
@@ -679,25 +713,53 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return _routeProvider(agentId, 'push');
   }
 
+  function subscribeOwnerIoEvents(handler: (event: Record<string, unknown>) => void): () => void {
+    _ownerIoSubscribers.add(handler); return () => { _ownerIoSubscribers.delete(handler); };
+  }
+
+  async function cancelOwnerTurn(agentId: string, conversationId: string): Promise<boolean> {
+    const route = _ownerRouteEntry(agentId); const cancel = (route?.provider as any)?.cancelOwnerTurn;
+    return typeof cancel === 'function' ? !!await cancel.call(route!.provider, conversationId) : false;
+  }
+
+  function respondOwnerApproval(agentId: string, approvalId: string, decision: 'accept'|'decline'|'cancel'): boolean {
+    const route = _ownerRouteEntry(agentId); const respond = (route?.provider as any)?.respondOwnerApproval;
+    return typeof respond === 'function' ? !!respond.call(route!.provider, approvalId, decision) : false;
+  }
+
   function resolveTrustedOwnerTransport(agentId: string): {
     providerId: string; providerType: string; providerInstanceId: string | null; deliveryMode: string;
   } | null {
-    const providerInstanceId = _metaOf(agentId).backend_instance_id || null;
-    for (const provider of resolveProviders(agentId, 'push')) {
-      const providerId = _providerIdOf(provider);
-      if (!providerId || typeof (provider as any).getSandboxStatus !== 'function') continue;
+    const meta = _metaOf(agentId); const family = getProviderFamily(meta.backend_type);
+    const providerInstanceId = meta.backend_instance_id || null;
+    const candidates = (family?.transports || []).filter((definition: any) => definition.owner?.enabled && definition.owner?.nativeIoBridge)
+      .sort((a: any, b: any) => Number(b.priority || 0) - Number(a.priority || 0));
+    for (const definition of candidates) {
+      const provider = providers[definition.id];
+      if (!provider || typeof provider.pushOwner !== 'function') continue;
       try {
-        const sandbox = (provider as any).getSandboxStatus(agentId) || {};
-        const dimensions = sandbox.dimensions || {};
-        const safe = sandbox.effective === true && sandbox.versionState === 'verified' && sandbox.coverage === 'full'
-          && ['blocked','read_only','sandbox_scoped'].includes(String(dimensions.filesystem))
-          && ['blocked','allowlisted','proxied','not_applicable'].includes(String(dimensions.network))
-          && ['disabled','sandboxed'].includes(String(dimensions.commandExecution));
-        if (safe) return { providerId, providerType: _providerFamily(providerId), providerInstanceId,
-          deliveryMode: _providerMode(providerId) };
+        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)) continue;
+        return { providerId: definition.id, providerType: family?.type || String(meta.backend_type || ''),
+          providerInstanceId, deliveryMode: definition.mode };
       } catch (_) {}
     }
     return null;
+  }
+
+  function getOwnerTransportStatus(agentId: string): Record<string, unknown> {
+    const selected = resolveTrustedOwnerTransport(agentId);
+    if (!selected) return { available: false, code: 'OWNER_WORKSPACE_ISOLATION_UNAVAILABLE' };
+    const definition = getProviderTransport(selected.providerId); const owner = definition?.owner;
+    if (!owner?.enabled || !owner.nativeIoBridge || !owner.platforms.includes(process.platform as any)) {
+      return { available: false, code: 'OWNER_RUNTIME_UNSUPPORTED' };
+    }
+    const provider = providers[selected.providerId];
+    if (!provider || typeof provider.pushOwner !== 'function') return { available: false, code: 'OWNER_RUNTIME_UNSUPPORTED' };
+    const snapshot = { providerId: selected.providerId, providerType: selected.providerType,
+      providerInstanceId: selected.providerInstanceId, deliveryMode: selected.deliveryMode,
+      execution: owner.execution, isolation: owner.isolation, platform: process.platform };
+    return { available: true, ...snapshot,
+      configDigest: crypto.createHash('sha256').update(JSON.stringify(snapshot),'utf8').digest('hex') };
   }
 
   /** A2A scope key：私聊与每个群完全隔离，同一 scope 内按无序 Agent 对收敛。 */
@@ -1080,19 +1142,70 @@ ${body}
   }
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
+  async function executeOwner(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    const context = options.ownerExecutionContext;
+    if (!context || context.sourceType !== 'owner_chat' || context.authority !== 'verified_owner_conversation'
+      || context.executionScope !== 'owner_chat' || context.ownerConversationId !== options.contextId
+      || context.commandMessageId !== options.taskId) throw new Error('OWNER_EXECUTION_CONTEXT_INVALID');
+    const currentOwnerTransport = getOwnerTransportStatus(options.agentId);
+    if (!currentOwnerTransport.available || context.configDigest !== currentOwnerTransport.configDigest
+      || context.providerId !== currentOwnerTransport.providerId) {
+      const error = new Error('Owner Provider policy changed'); (error as any).deliveryOutcome = 'not_delivered';
+      (error as any).code = String(currentOwnerTransport.code || 'OWNER_POLICY_CHANGED'); throw error;
+    }
+    const turnId = `owner-chat-${crypto.randomUUID()}`; const sinkKey = `${options.agentId}::${turnId}`;
+    let resolveReply!: (reply: ProviderReply) => void; let rejectReply!: (error: Error) => void; let receipt: unknown;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, reply => {
+      if (reply.done === false) return;
+      if (reply.error) { const error: any=new Error(String(reply.error));error.code=String((reply as any).errorCode||'OWNER_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome='rejected';rejectReply(error);return; }
+      resolveReply(reply);
+    });
+    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const route = _ownerRouteEntry(options.agentId);
+      if (!route) { const error = new Error('Owner Provider transport is not supported or safely verified');
+        (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_RUNTIME_UNSUPPORTED'; throw error; }
+      const selectedBinding = _bindingForRoute(options.agentId, options.binding || null, route);
+      if (options.binding?.strictSessionRoute && !selectedBinding) { const error = new Error('Owner Provider cannot restore the precise session');
+        (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error; }
+      if (selectedBinding?.strictSessionRoute) {
+        const restore = (route.provider as any).canRestoreExactSession;
+        if (typeof restore !== 'function' || !await restore.call(route.provider, selectedBinding, options.agentId)) {
+          const error = new Error('Owner Provider exact-session restore probe failed');
+          (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error;
+        }
+      }
+      const providerPayload = { agentId: options.agentId, fromUid: `owner-chat:${options.contextId}`, senderUid: 'owner-chat-mailbox',
+        channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
+        content: options.content, rawContent: options.content, providerBinding: selectedBinding,
+        executionScope: 'owner_chat', sourceType: 'owner_chat' } as PushPayload;
+      try { receipt = await route.provider.pushOwner!(providerPayload, context); options.onProviderAccepted?.(receipt);
+        _cacheRouteIfCurrent(options.agentId, 'owner_push', route); }
+      catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
+      return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
+        provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
+    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+  }
+
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
-    const executionScope = options.executionScope === 'owner_link' ? 'owner_link'
-      : options.executionScope === 'owner_chat' ? 'owner_chat' : 'a2a_mailbox';
-    const sourceType = executionScope === 'owner_link' ? 'owner'
-      : executionScope === 'owner_chat' ? 'owner_chat' : 'agent_peer';
+    if (options.executionScope === 'owner_chat' || options.sourceType === 'owner_chat') {
+      throw new Error('OWNER_CHAT_REQUIRES_NATIVE_IO_BRIDGE');
+    }
+    const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
+    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
     if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
-    const prefix = executionScope === 'owner_link' ? 'owner' : executionScope === 'owner_chat' ? 'owner-chat' : 'a2a';
+    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
     const turnId = `${prefix}-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
     let resolveReply!: (reply: ProviderReply) => void;
     let rejectReply!: (error: Error) => void;
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
     _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
     const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error(`${prefix} Provider reply timed out`)); }, options.timeoutMs || 120_000);
     timeout.unref?.();
@@ -1333,8 +1446,9 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
-    resolveTrustedOwnerTransport, getAgentDeliveryStatus, getRoutingStats,
+  return { dispatch, executeOwner, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+    subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
+    resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };

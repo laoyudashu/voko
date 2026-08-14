@@ -17,6 +17,7 @@ class A2AEventOutboxWorker {
       try {
         await this.client.sendEvent(JSON.parse(String(event.envelope_json)));
         this.store.finishOutboxEvent(String(event.event_id), 'acked'); sent += 1;
+        if (['completed', 'failed', 'rejected'].includes(String(event.operation))) console.log('[A2A] 回复了 A2A 消息');
       } catch (error) {
         const status = Number((error as any)?.status || 0);
         if (status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429) {

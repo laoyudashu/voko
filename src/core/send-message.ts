@@ -53,6 +53,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function debugIm(message: string): void {
+  if (process.env.VOKO_IM_DEBUG === '1') console.log(message);
+}
+
 /**
  * 创建统一投递函数 deliver(agentId, channelId, content, messageType)
  *
@@ -66,14 +70,14 @@ function createDeliver({ transportManager }: {
 }): Deliver {
   return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null, metadata: unknown = null) {
     const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
-    console.log(
+    debugIm(
       `[IM 发送] agent=${agentId} channel=${channelId} channelType=${channelType}`
       + ` type=${messageType} messageId=${lmId} contentLength=${String(content ?? '').length}`,
     );
     try {
       const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId, metadata);
       if (result?.success !== false) {
-        console.log(
+        debugIm(
           `[IM SENDACK] agent=${agentId} channel=${channelId} messageId=${result?.messageId || lmId}`
           + ` seq=${result?.messageSeq ?? '-'} clientMsgNo=${result?.clientMsgNo || lmId}`,
         );

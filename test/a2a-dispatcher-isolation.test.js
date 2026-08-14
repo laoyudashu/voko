@@ -43,11 +43,18 @@ test('trusted Owner execution uses owner security context and an exact transport
 
 test('trusted Owner Chat forwards raw content without Provider security restrictions', async () => {
   const provider = new Provider();
-  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply() {} });
+  provider.pushOwner = function(payload, context) { this.payload=payload;this.ownerContext=context;
+    setImmediate(() => this.emit('agent.reply',{agentId:payload.agentId,visitorId:payload.fromUid,turnId:payload.turnId,
+      replyId:'owner-chat-reply',content:'isolated-result',done:true}));return{nativeSessionId:'owner-native'}; };
+  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-app-server': provider }, onAgentReply() {} });
   const content = 'continue the local work session';
-  const result = await dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'owner-chat-message',
+  const transport=dispatcher.getOwnerTransportStatus('agent-1');
+  const ownerExecutionContext={sourceType:'owner_chat',authority:'verified_owner_conversation',executionScope:'owner_chat',
+    ownerConversationId:'owner-chat-conversation',commandMessageId:'owner-chat-message',ownershipEpoch:1,
+    conversationEpoch:1,policyEpoch:1,configDigest:transport.configDigest,providerId:transport.providerId};
+  const result = await dispatcher.executeOwner({ agentId: 'agent-1', taskId: 'owner-chat-message',
     contextId: 'owner-chat-conversation', content, sourceType: 'owner_chat',
-    executionScope: 'owner_chat', timeoutMs: 1000 });
+    executionScope: 'owner_chat', ownerExecutionContext, timeoutMs: 1000 });
   assert.equal(result.reply.content, 'isolated-result');
   assert.equal(provider.payload.content, content);
   assert.equal(provider.payload.rawContent, content);
@@ -55,15 +62,32 @@ test('trusted Owner Chat forwards raw content without Provider security restrict
   assert.equal(provider.payload.executionScope, 'owner_chat');
   assert.equal(provider.payload.content.includes('[VOKO SECURITY CONTEXT]'), false);
   assert.equal(provider.payload.content.includes('[VOKO VERIFIED OWNER MESSAGE]'), false);
+  assert.equal(provider.ownerContext,ownerExecutionContext);
 });
 
-test('trusted Owner bootstrap accepts only an exact-version full sandbox transport', async () => {
-  const safe = new Provider(); const unsafe = new Provider();
-  safe.getSandboxStatus = () => ({ effective: true, versionState: 'verified', coverage: 'full', dimensions: {
-    filesystem: 'read_only', network: 'blocked', commandExecution: 'sandboxed' } });
-  unsafe.getSandboxStatus = () => ({ effective: true, versionState: 'known_unverified', coverage: 'full', dimensions: {
-    filesystem: 'read_only', network: 'blocked', commandExecution: 'sandboxed' } });
-  const dispatcher = createDispatcher({ db: db(), providers: { 'unsafe-cli': unsafe, 'codex-cli': safe }, onAgentReply() {} });
+test('Owner Chat never falls back to an ordinary visitor push transport',async()=>{
+  const provider=new Provider();
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const context={sourceType:'owner_chat',authority:'verified_owner_conversation',executionScope:'owner_chat',ownerConversationId:'c',commandMessageId:'m',configDigest:'x',providerId:'codex-cli'};
+  await assert.rejects(dispatcher.executeOwner({agentId:'agent-1',taskId:'m',contextId:'c',content:'hello',ownerExecutionContext:context,timeoutMs:100}),
+    error=>error.code==='OWNER_WORKSPACE_ISOLATION_UNAVAILABLE');
+  assert.equal(provider.payload,undefined);
+});
+
+test('isolated reply timeout is handled while Provider delivery is still pending', async () => {
+  const provider = new Provider();
+  provider.push = async function (payload) { this.payload = payload; await new Promise(resolve => setTimeout(resolve, 30));
+    return { nativeSessionId: 'slow-native-session' }; };
+  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply() {} });
+  await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
+    contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
+    executionScope: 'a2a_mailbox', timeoutMs: 10 }), /Provider reply timed out/);
+});
+
+test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {
+  const safe = new Provider(); safe.pushOwner = () => {};
+  const unsafe = new Provider();
+  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': unsafe, 'codex-app-server': safe }, onAgentReply() {} });
   assert.deepEqual(dispatcher.resolveTrustedOwnerTransport('agent-1'), {
-    providerId: 'codex-cli', providerType: 'codex', providerInstanceId: null, deliveryMode: 'cli' });
+    providerId: 'codex-app-server', providerType: 'codex', providerInstanceId: null, deliveryMode: 'owner_io' });
 });

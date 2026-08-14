@@ -29,11 +29,19 @@ function fixture(now = Date.now(), overrides = {}) {
 
 function wire(envelope) { return JSON.stringify(envelope); }
 
-test('Owner Link is disabled by default and does not create its database', () => {
+test('Owner Link is enabled by default and can be explicitly disabled', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-disabled-'));
   const databasePath = path.join(dir, 'owner.db');
-  const module = new OwnerLinkModule({ databasePath, env: {} });
+  const enabled = new OwnerLinkModule({ databasePath, env: {} });
+  assert.equal(enabled.enabled, true);
+  assert.equal(enabled.dispatchEnabled, true);
+  enabled.stop();
+  const module = new OwnerLinkModule({ databasePath, env: {
+    VOKO_OWNER_LINK_VERIFY_ENABLED: '0',
+    VOKO_OWNER_PROVIDER_DISPATCH_ENABLED: '0',
+  } });
   assert.equal(module.enabled, false);
+  assert.equal(module.dispatchEnabled, false);
   assert.equal(module.start(), undefined);
   assert.equal(fs.existsSync(databasePath), false);
 });

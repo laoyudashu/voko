@@ -10,14 +10,15 @@ interface OwnerLinkModuleOptions {
   openDatabase?: (databasePath: string) => DatabaseSync;
 }
 
-function parseFlag(value: unknown): boolean {
-  return ['1','true','yes','on'].includes(String(value || '').trim().toLowerCase());
+function parseFlag(value: unknown, defaultValue = false): boolean {
+  if (value === undefined || value === null || String(value).trim() === '') return defaultValue;
+  return ['1','true','yes','on'].includes(String(value).trim().toLowerCase());
 }
 
 function ownerLinkFlags(env: NodeJS.ProcessEnv = process.env): { verifyRoute: boolean; providerDispatch: boolean } {
   return {
-    verifyRoute: parseFlag(env.VOKO_OWNER_LINK_VERIFY_ENABLED),
-    providerDispatch: parseFlag(env.VOKO_OWNER_PROVIDER_DISPATCH_ENABLED),
+    verifyRoute: parseFlag(env.VOKO_OWNER_LINK_VERIFY_ENABLED, true),
+    providerDispatch: parseFlag(env.VOKO_OWNER_PROVIDER_DISPATCH_ENABLED, true),
   };
 }
 

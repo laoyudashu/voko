@@ -24,6 +24,16 @@ export interface ProviderTransportDefinition {
   safetyProfile: string;
   sandboxPolicyId: string;
   capabilities: ProviderCapabilities;
+  owner?: {
+    enabled: boolean;
+    execution: 'chat_only' | 'workspace_write';
+    isolation: 'voko_enforced' | 'provider_enforced' | 'advisory_only' | 'unsupported';
+    platforms: Array<'win32' | 'linux' | 'darwin'>;
+    exactSessionRecovery: boolean;
+    safeCancellation: boolean;
+    reliableNotDelivered: boolean;
+    nativeIoBridge?: boolean;
+  };
   create(context: ProviderFactoryContext): any;
   testOnly?: boolean;
   supportsLoopback?: boolean;
@@ -150,7 +160,17 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
     acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false },
   ] },
   { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools')] },
-  { type: 'codex', aliases: [], label: 'Codex', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly')] },
+  { type: 'codex', aliases: [], label: 'Codex', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
+    cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly'),
+    transport({ id: 'codex-app-server', mode: 'owner_io', priority: 100, operations: ['push'],
+      modulePath: './providers/codex-app-server', exportName: 'CodexAppServerProvider',
+      safetyProfile: 'provider-native-control-plane', sandboxPolicyId: 'provider-managed-local',
+      capabilities: { streaming: true, sessionResume: true, cancel: true, progress: true, toolCall: true, humanApproval: true },
+      owner: { enabled: true, execution: 'workspace_write', isolation: 'provider_enforced', platforms: ['win32','linux','darwin'],
+        exactSessionRecovery: true, safeCancellation: true, reliableNotDelivered: true, nativeIoBridge: true },
+      options: context => context.getProviderConfig?.('codex-app-server') || {},
+    }),
+  ] },
   { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container')] },
   { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
@@ -258,8 +278,13 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
   instance.getProviderVersion = () => {
     if (versionProbe) return { ...versionProbe };
     const { probeProviderVersion } = require('../provider-sandbox');
-    const command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
-    versionProbe = command ? probeProviderVersion(command) : {
+    let command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
+    let args: string[]|undefined;
+    try {
+      const runtime = typeof instance._resolveRuntime === 'function' ? instance._resolveRuntime() : null;
+      if (runtime?.available && runtime.executable) { command=runtime.executable;args=[...(runtime.argvPrefix||[]),'--version']; }
+    } catch (_) {}
+    versionProbe = command ? probeProviderVersion(command,{args}) : {
       version: null, source: 'unknown', observedAt: new Date().toISOString(), result: 'unknown', errorCode: 'failed',
     };
     return { ...versionProbe };

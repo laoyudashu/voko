@@ -43,6 +43,7 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    env: { VOKO_A2A_ENABLED: 'false' },
     mcpConfigPaths: [],
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
@@ -88,6 +89,7 @@ test('doctor deep mode probes configured endpoints without starting a provider',
   const calls = [];
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    env: { VOKO_A2A_ENABLED: 'false' },
     mcpConfigPaths: [],
     deep: true,
     deps: {

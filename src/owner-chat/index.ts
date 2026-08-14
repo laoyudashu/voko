@@ -3,4 +3,8 @@ export * from './database';
 export * from './bridge';
 export * from './processor';
 export * from './outbox';
+export * from './recovery';
 export * from './read-store';
+export * from './execution';
+export * from './policy';
+export * from './codex-config';

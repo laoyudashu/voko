@@ -65,3 +65,13 @@ test('DeliveryExecutor never retries outcome_unknown or rejected', async () => {
     assert.deepEqual(calls, ['primary']);
   }
 });
+
+test('Owner transports are opt-in and Codex uses its native control plane',()=>{
+  const transports=PROVIDER_CATALOG.flatMap(family=>family.transports);
+  const enabled=transports.filter(item=>item.owner?.enabled);
+  assert.deepEqual(enabled.map(item=>item.id),['codex-app-server']);
+  assert.equal(enabled[0].owner.execution,'workspace_write');
+  assert.equal(enabled[0].owner.isolation,'provider_enforced');
+  assert.equal(enabled[0].owner.nativeIoBridge,true);
+  assert.equal(transports.find(item=>item.id==='openclaw-cli').owner,undefined);
+});

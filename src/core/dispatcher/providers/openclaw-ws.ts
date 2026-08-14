@@ -508,7 +508,10 @@ class OpenClawWsProvider {
     if (this.logs.length > this.maxLogSize) {
       this.logs.shift();
     }
-    console.log(`[OpenClaw WS] ${msg}`);
+  }
+
+  debugLog(...args: any[]): void {
+    if (process.env.VOKO_PROVIDER_DEBUG === '1') console.log('[OpenClaw WS]', ...args);
   }
 
   on(event: string, handler: EventHandler): void {
@@ -672,7 +675,7 @@ class OpenClawWsProvider {
           const eventStr = msg.type + ' ' + (msg.event || msg.method || '');
           const isNoise = hideEvents.some((eventName: string) => eventStr.includes(eventName));
           if (!isNoise) {
-            console.log('[OpenClaw WS] 📩 收到:', msg.type, msg.event || msg.method || msg.payload?.type);
+            this.debugLog('📩 收到:', msg.type, msg.event || msg.method || msg.payload?.type);
             this.addLog(`📩 收到: ${msg.type} ${msg.event || msg.method || msg.payload?.type || ''}`);
           }
 
@@ -874,7 +877,7 @@ class OpenClawWsProvider {
           this.processMessageQueue();
         }
       } else if (msg.payload?.type !== 'hello-ok') {
-        console.log(`[OpenClaw WS] 📩 收到 res id=${msg.id} type=${msg.payload?.type || 'unknown'}`);
+        this.debugLog(`📩 收到 res id=${msg.id} type=${msg.payload?.type || 'unknown'}`);
       }
     }
 
@@ -969,7 +972,7 @@ class OpenClawWsProvider {
         this.ws.send(data);
         // chat.send 的详细日志在 sendChatSend 中，这里只记录其他方法
         if (msg.method !== 'chat.send') {
-          console.log('[OpenClaw WS] 📤 发送:', msg.type, msg.method || msg.event);
+          this.debugLog('📤 发送:', msg.type, msg.method || msg.event);
         }
       } catch (err) {
         console.error('[OpenClaw WS] 发送失败:', errorMessage(err));
@@ -1255,7 +1258,7 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null,
   ): Promise<void> {
     const now = Date.now();
-    console.log(`[OpenClaw WS] 🚀 sendToSession t=${now}`);
+    this.debugLog(`🚀 sendToSession t=${now}`);
     this._evictStalePendingSubscriptions();
     if (!this._supportsSessionSubscribe()) {
       if (!this.connected || this.connecting) {
@@ -1339,7 +1342,7 @@ class OpenClawWsProvider {
       messageId: extraData?.messageId || '',
       timestamp: extraData?.timestamp || Math.floor((sendTimestamp || Date.now()) / 1000)
     });
-    console.log(`[OpenClaw WS] 📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
+    this.debugLog(`📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
 
     this.send({
       type: 'req',

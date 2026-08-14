@@ -22,6 +22,9 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /const key=principalId\|\|\('task:'\+String\(row\.task_id\)\)/);
   assert.match(source, /nav:agentNav\(agentId,agent\?\.agentName\|\|agentId,T\)/);
   assert.match(source, /CONVERSATION_TAB_CSS/);
+  assert.match(source, /renderA2ATaskConversation\(task,principalDisplayId,T\)/);
+  assert.match(source, /web\.a2a_task\.no_content/);
+  assert.match(source, /type==='task_submitted'/);
   const route = source.match(/R\.get\('\/a2a-tasks'[\s\S]*?\n  \}\);/)[0];
   assert.match(source, /isolated from visitor conversations/); assert.doesNotMatch(route, /FROM messages|FROM conversations|INSERT INTO messages/);
 });
