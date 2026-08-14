@@ -32,3 +32,13 @@ test('known safety rejection produces a standard rejected event without unsafe b
   assert.equal(last.operation, 'rejected'); const envelope = JSON.parse(last.envelope_json);
   assert.equal(envelope.payload.reasonCode, 'explicit_prompt_injection'); assert.equal(JSON.stringify(envelope).includes('Ignore all'), false);
 });
+test('cancel control never starts Provider execution and reports unsupported safely', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate(); let executions = 0;
+  store.updateState('task-1', 'WORKING', 'EXECUTING');
+  const processor = new A2ATaskProcessor(store, { async execute() { executions += 1; return { content: 'wrong' }; } }, identity);
+  const control = { ...request(), kind: 'control', operation: 'cancel', eventId: 'cancel-1', sequence: 2 };
+  await processor.process(control);
+  const last = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence DESC LIMIT 1').get();
+  assert.equal(executions, 0); assert.equal(last.operation, 'cancel_ack');
+  assert.equal(JSON.parse(last.envelope_json).payload.result, 'unsupported');
+});

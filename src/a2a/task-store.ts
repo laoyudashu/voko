@@ -40,6 +40,11 @@ class A2ALocalTaskStore {
     return Number(this.db.prepare('UPDATE a2a_local_tasks SET standard_state=?,delivery_state=?,updated_at=? WHERE gateway_task_id=?')
       .run(standardState, deliveryState, Date.now(), taskId).changes) === 1;
   }
+  getTaskState(taskId: string): StandardTaskState | null {
+    const row = this.db.prepare('SELECT standard_state FROM a2a_local_tasks WHERE gateway_task_id=?')
+      .get(taskId) as { standard_state: StandardTaskState } | undefined;
+    return row?.standard_state || null;
+  }
   acceptCommand(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown = {}): 'accepted' | 'duplicate' {
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_inbox
       (event_id,gateway_task_id,command_sequence,operation,envelope_json,status,received_at) VALUES (?,?,?,?,?,'received',?)`)

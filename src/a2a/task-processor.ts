@@ -22,6 +22,13 @@ class A2ATaskProcessor {
     });
   }
   async process(request: A2AEnvelope): Promise<void> {
+    if (request.kind === 'control' && request.operation === 'cancel') {
+      const state = this.store.getTaskState(request.gatewayTaskId);
+      const result = state && ['COMPLETED', 'FAILED', 'CANCELED', 'REJECTED'].includes(state) ? 'too_late' : 'unsupported';
+      this.event(request, 'cancel_ack', { result }, state || 'SUBMITTED', state === 'WORKING' ? 'EXECUTING' : 'DELIVERED');
+      return;
+    }
+    if (request.kind !== 'request' || !['execute', 'continue'].includes(request.operation)) throw new Error('Unsupported A2A command');
     this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
     this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
     try {
