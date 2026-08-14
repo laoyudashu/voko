@@ -3,3 +3,4 @@ export * from './database';
 export * from './bridge';
 export * from './processor';
 export * from './outbox';
+export * from './read-store';

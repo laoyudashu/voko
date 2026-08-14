@@ -3,7 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 
 class OwnerChatOutbox {
   private timer: NodeJS.Timeout|null = null; private running = false;
-  constructor(private readonly db: DatabaseSync, private readonly deliver: any, private readonly intervalMs = 2000) {}
+  constructor(private readonly db: DatabaseSync, private readonly deliver: any, private readonly intervalMs = 2000,
+    private readonly onUpdate?: (event: { agentId: string; conversationId: string }) => void) {}
   start(): () => void { if (!this.timer) { this.timer=setInterval(()=>void this.flush(),this.intervalMs); this.timer.unref?.(); void this.flush(); } return ()=>this.stop(); }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer=null; }
   async flush(): Promise<number> {
@@ -18,6 +19,7 @@ class OwnerChatOutbox {
           if (result?.success) { this.db.prepare("UPDATE owner_chat_outbox SET status='sent',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(Date.now(),row.event_id,lease); sent++; }
           else this.db.prepare("UPDATE owner_chat_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(result?.outcomeUnknown?'outcome_unknown':'pending',Date.now(),row.event_id,lease);
         } catch (error: any) { this.db.prepare("UPDATE owner_chat_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(error?.outcomeUnknown?'outcome_unknown':'pending',Date.now(),row.event_id,lease); }
+        this.onUpdate?.({ agentId: row.local_agent_id, conversationId: row.conversation_id });
       }
       return sent;
     } finally { this.running=false; }

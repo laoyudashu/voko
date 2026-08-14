@@ -1492,7 +1492,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     'agent-delivery:status',
     'owner-intervention:new', 'owner-intervention:email-reply',
     'owner-intervention:updated', 'channels:test-success',
-    'wechat:session-expired', 'owner-reply', 'voko:notification', 'user:switched'];
+    'wechat:session-expired', 'owner-reply', 'owner-chat:updated', 'voko:notification', 'user:switched'];
   for (const evt of WS_EVENTS) {
     bus.on(evt, (data?: any) => broadcast(evt, data));
   }
@@ -1613,6 +1613,7 @@ async function startMcpServer(args?: any, core?: any) {
   const ownerLinkModule = new OwnerLinkModule();
   let ownerLinkBridge: any = null;
   let ownerChatBridge: any = null;
+  let ownerChatReadStore: any = null;
   let ownerPullService: any = null;
   if (ownerLinkModule.enabled) {
     try {
@@ -1629,8 +1630,9 @@ async function startMcpServer(args?: any, core?: any) {
             && row?.publish_status === 'published' && matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
         },
       });
-      const { initOwnerChatSchema, OwnerChatBridge } = require('./owner-chat');
+      const { initOwnerChatSchema, OwnerChatBridge, OwnerChatReadStore } = require('./owner-chat');
       initOwnerChatSchema(ownerLinkModule.getDatabase());
+      ownerChatReadStore = new OwnerChatReadStore(ownerLinkModule.getDatabase());
       ownerChatBridge = new OwnerChatBridge({
         database: ownerLinkModule.getDatabase(),
         resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
@@ -1638,6 +1640,10 @@ async function startMcpServer(args?: any, core?: any) {
           const row = db.prepare('SELECT did FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId);
           return matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
         },
+      });
+      ownerChatBridge.setMessageHandler((messageId: string) => {
+        const row = ownerLinkModule.getDatabase().prepare('SELECT local_agent_id,conversation_id FROM owner_chat_messages WHERE message_id=? LIMIT 1').get(messageId);
+        if (row) require('./core/lite-bus').emit('owner-chat:updated', { agentId: row.local_agent_id, conversationId: row.conversation_id });
       });
     } catch (error: any) {
       console.error('[Owner Link] 安全入口初始化失败，Owner 专用消息将被拒绝:', error.message);
@@ -1778,8 +1784,18 @@ async function startMcpServer(args?: any, core?: any) {
     };
     const ownerChatProcessor = new OwnerChatProcessor({ database: ownerLinkModule.getDatabase(), dispatcher,
       resolveAgentIdentity: resolveOwnerChatAgentIdentity });
-    ownerChatBridge.setMessageHandler((messageId: string) => ownerChatProcessor.process(messageId));
-    const ownerChatOutbox = new OwnerChatOutbox(ownerLinkModule.getDatabase(), { deliver });
+    const ownerChatDatabase = ownerLinkModule.getDatabase();
+    const emitOwnerChatUpdate = (messageId: string) => {
+      const row = ownerChatDatabase.prepare('SELECT local_agent_id,conversation_id FROM owner_chat_messages WHERE message_id=? LIMIT 1').get(messageId);
+      if (row) require('./core/lite-bus').emit('owner-chat:updated', { agentId: row.local_agent_id, conversationId: row.conversation_id });
+    };
+    ownerChatBridge.setMessageHandler(async (messageId: string) => {
+      emitOwnerChatUpdate(messageId);
+      try { return await ownerChatProcessor.process(messageId); }
+      finally { emitOwnerChatUpdate(messageId); }
+    });
+    const ownerChatOutbox = new OwnerChatOutbox(ownerChatDatabase, { deliver }, 2000,
+      (event: any) => require('./core/lite-bus').emit('owner-chat:updated', event));
     await taskManager.start('owner-chat-outbox', () => ownerChatOutbox.start());
   }
 
@@ -2103,6 +2119,7 @@ async function startMcpServer(args?: any, core?: any) {
     a2aModule,
     a2aMailboxClient,
     syncA2ARegistration,
+    ownerChatReadStore,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

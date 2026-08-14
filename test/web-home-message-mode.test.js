@@ -66,13 +66,12 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
   assert.match(source, /s\.className="btn btn-sm btn-outline home-mode-toggle home-access-mode "/);
   assert.match(source, /style="margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1\.4!important;border-width:2px" data-role="toggle-acc"/);
-  assert.match(source, /class="home-access-value home-owner-devices"/);
-  assert.match(source, /min-height:auto!important;font:inherit;line-height:1\.4;color:#667085;cursor:pointer;text-align:left;align-self:center/);
-  assert.match(html, /data-role="gen-owner-link" data-agent="agent-home"/);
-  assert.match(source, /data-agent-name=/);
+  assert.doesNotMatch(html, /data-role="gen-owner-link"/);
+  assert.doesNotMatch(html, /data-owner-agent/);
+  assert.match(html, /href="\/trusted-remote"/);
   assert.match(html, /href="\/agents\/agent-home\/caps"/);
   assert.match(html, /\.home-copy-icon\{display:inline-flex/);
-  assert.match(html, /<col style="width:41%"><col style="width:12%">/);
+  assert.match(html, /<col style="width:35%"><col style="width:13%">/);
   assert.match(html, /\.home-access-action\{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important/);
   assert.match(source, /function setAgentAccessAvailability/);
   assert.match(source, /button,a,\.home-access-value/);
