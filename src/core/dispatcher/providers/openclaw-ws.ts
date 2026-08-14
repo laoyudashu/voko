@@ -887,7 +887,6 @@ class OpenClawWsProvider {
     if (msg.type === 'event' && msg.event === 'session.message') {
       // 始终保留内部兼容事件（连接自检等仍使用）；是否形成业务回复由握手能力决定。
       this.emit('session.message', msg);
-      if (this._replyProtocol === 'chat') return;
 
       // payload 结构: {sessionKey, message: {role, content, done}, ...}
       const innerMsg = msg.payload?.message;
