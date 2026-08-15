@@ -85,6 +85,7 @@
   "web.agent.info.id_copy_failed": "复制失败，请重试",
   "web.agent.no_conversations": "暂无会话",
   "web.agent.a2a.empty": "暂无 A2A 任务",
+  "web.agent.a2a.search_ph": "搜索对方、任务或上下文...",
   "web.agent.a2a.col.counterparty": "对方",
   "web.agent.a2a.col.task": "任务",
   "web.agent.a2a.col.latest_task": "最新任务",

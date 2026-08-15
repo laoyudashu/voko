@@ -136,7 +136,7 @@ function ajaxPaginationScript(){
 }
 
 function ajaxListFilterScript(){
-  return '<script>(function(){document.addEventListener("submit",function(event){var form=event.target;if(form.tagName!=="FORM"||String(form.method).toLowerCase()!=="get"||!form.querySelector("[name=keyword],[name=q]"))return;var region=document.querySelector("main[data-voko-page-region]");if(!region)return;event.preventDefault();var url=new URL(form.action||location.href,location.origin),data=new FormData(form);data.forEach(function(value,key){if(value)url.searchParams.set(key,value);else url.searchParams.delete(key)});region.setAttribute("aria-busy","true");fetch(url,{headers:{"X-Requested-With":"voko-filter"}}).then(function(r){if(!r.ok)throw new Error("filter failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("filter region missing");region.replaceWith(next);history.pushState(null,"",url)}).catch(function(){location.assign(url)})})})();</script>'
+  return '<script>(function(){document.addEventListener("submit",function(event){var form=event.target;if(form.tagName!=="FORM"||String(form.method).toLowerCase()!=="get"||!form.querySelector("[name=keyword],[name=q],[name=a2aKeyword]"))return;var region=document.querySelector("main[data-voko-page-region]");if(!region)return;event.preventDefault();var url=new URL(form.action||location.href,location.origin),data=new FormData(form);data.forEach(function(value,key){if(value)url.searchParams.set(key,value);else url.searchParams.delete(key)});region.setAttribute("aria-busy","true");fetch(url,{headers:{"X-Requested-With":"voko-filter"}}).then(function(r){if(!r.ok)throw new Error("filter failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("filter region missing");region.replaceWith(next);history.pushState(null,"",url)}).catch(function(){location.assign(url)})})})();</script>'
 }
 
 function ajaxAccessListScript(){
@@ -595,8 +595,7 @@ function createWebRouter(handlers, db, opts={}){
     const delivery=value=>T('web.agent.a2a.delivery.'+String(value||'unknown').toLowerCase());
     return '<div class="table-wrap"><table><thead><tr><th>'+esc(T('web.agent.a2a.col.counterparty'))+'</th><th>'+esc(T('web.agent.a2a.col.task'))+'</th>'+(showAgent?'<th>'+esc(T('web.agent.a2a.col.agent'))+'</th>':'')+'<th style="text-align:center">'+esc(T('web.agent.a2a.col.direction'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.status'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.time'))+'</th></tr></thead><tbody>'+rows.map(row=>'<tr><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(principalLabel(row))+'</td><td style="white-space:normal;word-break:break-word"><a href="/a2a-tasks/'+encodeURIComponent(row.task_id)+'"><code>'+esc(String(row.task_id).slice(0,12))+'…</code></a><div class="meta">'+esc(T('web.agent.a2a.context'))+': '+esc(String(row.context_id||'').slice(0,12))+'…</div></td>'+(showAgent?'<td>'+esc(row.agent_id)+'</td>':'')+'<td style="text-align:center;white-space:nowrap">'+esc(direction(row))+'</td><td style="text-align:center;white-space:nowrap"><strong>'+esc(state(row.standard_state))+'</strong><div class="meta">'+esc(delivery(row.delivery_state))+'</div></td><td class="meta" style="text-align:center;white-space:nowrap">'+timeTag(row.updated_at)+'</td></tr>').join('')+'</tbody></table></div>';
   };
-  const renderA2APrincipalRows=(rows,agentId,T=key=>key)=>{
-    if(!rows.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
+  const buildA2APrincipalGroups=(rows,T=key=>key,keyword='')=>{
     const inbound=rows.filter(row=>String(row.direction).toLowerCase()!=='outbound'),groups=new Map();
     inbound.forEach(row=>{
       // Only a server-issued pseudonymous principal ID is safe to group. Unknown callers stay separate.
@@ -606,8 +605,26 @@ function createWebRouter(handlers, db, opts={}){
       groups.get(key).rows.push(row);
     });
     const principalType=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'));
+    const needle=String(keyword||'').trim().toLocaleLowerCase();
+    return Array.from(groups.values()).filter(group=>!needle||group.rows.some(row=>[
+      group.principalId,row.principal_name,row.principal_kind,principalType(row),row.task_id,row.context_id,
+      row.standard_state,row.delivery_state,row.direction,
+    ].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))).sort((a,b)=>new Date(b.rows[0]?.updated_at||0)-new Date(a.rows[0]?.updated_at||0));
+  };
+  const filterA2ATaskRows=(rows,T=key=>key,keyword='')=>{
+    const principalType=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'));
+    const needle=String(keyword||'').trim().toLocaleLowerCase();
+    return rows.filter(row=>!needle||[
+      row.principal_display_id,row.principal_name,row.principal_kind,principalType(row),row.task_id,row.context_id,
+      row.standard_state,row.delivery_state,row.direction,
+    ].some(value=>String(value||'').toLocaleLowerCase().includes(needle)))
+      .sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
+  };
+  const renderA2APrincipalRows=(rows,agentId,T=key=>key)=>{
+    if(!rows.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
+    const principalType=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'));
     const state=value=>T('web.agent.a2a.state.'+String(value||'unknown').toLowerCase());
-    const items=Array.from(groups.values()).sort((a,b)=>new Date(b.rows[0]?.updated_at||0)-new Date(a.rows[0]?.updated_at||0));
+    const items=buildA2APrincipalGroups(rows,T);
     if(!items.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
     return '<div class="table-wrap"><table><thead><tr><th>'+esc(T('web.agent.a2a.col.counterparty'))+'</th><th>'+esc(T('web.agent.a2a.col.latest_task'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.task_count'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.status'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.time'))+'</th></tr></thead><tbody>'+items.map(group=>{
       const latest=group.rows[0],label=group.principalId?group.principalId:principalType(latest)+(latest.principal_name?' · '+latest.principal_name:'');
@@ -982,8 +999,8 @@ function createWebRouter(handlers, db, opts={}){
       if(keyword){const kw=keyword.toLowerCase();filtered=agents.filter(a=>(a.agentName||'').toLowerCase().includes(kw)||(a.agentId||'').toLowerCase().includes(kw))}
       const limit=20,totalPages=Math.ceil(filtered.length/limit);
       const pageAgents=filtered.slice((page-1)*limit,page*limit);
-      const rows=[];const jd=[];const a2aPublicByAgent=new Map();
-      if(opts.a2aModule){try{opts.a2aModule.withDatabase(function(a2aDb){const row=a2aDb.prepare("SELECT value FROM a2a_settings WHERE key='bridge_config_v1'").get();const config=row?JSON.parse(row.value):null;for(const item of pageAgents){const local=db.prepare('SELECT did,publish_status FROM agents WHERE agent_id=?').get(item.agentId);const{serverAgentIdFromDid}=require('../core/agent-invitations');const publicId=serverAgentIdFromDid(local?.did)||item.agentId;const published=local?.publish_status==='published'&&Array.isArray(config?.registeredAgentIds)&&config.registeredAgentIds.includes(publicId);a2aPublicByAgent.set(item.agentId,{published,publicId})}})}catch{}}
+      const rows=[];const jd=[];const a2aPublicByAgent=new Map(),a2aRuntimeEnabled=!!opts.a2aModule?.enabled;
+      for(const item of pageAgents){try{const local=db.prepare('SELECT did,publish_status FROM agents WHERE agent_id=?').get(item.agentId);const{serverAgentIdFromDid}=require('../core/agent-invitations');const publicId=serverAgentIdFromDid(local?.did)||item.agentId;const published=a2aRuntimeEnabled&&local?.publish_status==='published';a2aPublicByAgent.set(item.agentId,{published,publicId})}catch{}}
 
       for(const a of pageAgents){
         let connStatus='<span class="unknown">'+L('common.status.unknown')+'</span>';
@@ -1083,7 +1100,7 @@ function createWebRouter(handlers, db, opts={}){
 
   // ────────── Agent 看板页（短页面） ──────────
 
-  const ownerChatLiveScript=(agentId,selector,conversationId='',fragmentUrl='')=>'<script>(function(){var aid='+jsonForInlineScript(agentId)+',cid='+jsonForInlineScript(conversationId)+',selector='+jsonForInlineScript(selector)+',fragmentUrl='+jsonForInlineScript(fragmentUrl)+',busy=false,timer=null;function refresh(){if(busy)return;busy=true;fetch(fragmentUrl||location.href,{headers:{"Accept":"text/html","X-Requested-With":"voko-owner-chat"},cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var doc=new DOMParser().parseFromString(html,"text/html"),fresh=doc.querySelector(selector),current=document.querySelector(selector);if(fresh&&current){var scroller=current.querySelector(".owner-chat-transcript"),nearBottom=!scroller||scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;current.replaceWith(fresh);var next=document.querySelector(selector+" .owner-chat-transcript");if(next&&nearBottom)next.scrollTop=next.scrollHeight}}).catch(function(){}).finally(function(){busy=false})}function queue(){clearTimeout(timer);timer=setTimeout(refresh,120)}function connect(){try{var protocol=location.protocol==="https:"?"wss://":"ws://",ws=new WebSocket(protocol+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data),data=d.data||{};if(d.event==="owner-chat:updated"&&data.agentId===aid&&(!cid||!data.conversationId||data.conversationId===cid))queue()}catch(_){}};ws.onclose=function(){setTimeout(connect,3000)}}catch(_){setTimeout(connect,5000)}}connect()})();</script>';
+  const ownerChatLiveScript=(agentId,selector,conversationId='',fragmentUrl='')=>'<script>(function(){var aid='+jsonForInlineScript(agentId)+',cid='+jsonForInlineScript(conversationId)+',selector='+jsonForInlineScript(selector)+',fragmentUrl='+jsonForInlineScript(fragmentUrl)+',busy=false,timer=null;function scrollToLatest(){var scroller=document.querySelector(selector+" .owner-chat-transcript");if(scroller)scroller.scrollTop=scroller.scrollHeight}requestAnimationFrame(scrollToLatest);window.addEventListener("load",scrollToLatest,{once:true});function refresh(){if(busy)return;busy=true;fetch(fragmentUrl||location.href,{headers:{"Accept":"text/html","X-Requested-With":"voko-owner-chat"},cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var doc=new DOMParser().parseFromString(html,"text/html"),fresh=doc.querySelector(selector),current=document.querySelector(selector);if(fresh&&current){var scroller=current.querySelector(".owner-chat-transcript"),nearBottom=!scroller||scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;current.replaceWith(fresh);var next=document.querySelector(selector+" .owner-chat-transcript");if(next&&nearBottom)next.scrollTop=next.scrollHeight}}).catch(function(){}).finally(function(){busy=false})}function queue(){clearTimeout(timer);timer=setTimeout(refresh,120)}function connect(){try{var protocol=location.protocol==="https:"?"wss://":"ws://",ws=new WebSocket(protocol+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data),data=d.data||{};if(d.event==="owner-chat:updated"&&data.agentId===aid&&(!cid||!data.conversationId||data.conversationId===cid))queue()}catch(_){}};ws.onclose=function(){setTimeout(connect,3000)}}catch(_){setTimeout(connect,5000)}}connect()})();</script>';
 
   R.get('/agents/:agentId',async(req,res,next)=>{
     try{
@@ -1111,8 +1128,27 @@ function createWebRouter(handlers, db, opts={}){
       try{if(opts.ownerChatReadStore){ownerTotal=opts.ownerChatReadStore.countForAgent(agentId);ownerPages=Math.ceil(ownerTotal/limit);ownerConversations=opts.ownerChatReadStore.listForAgent(agentId,limit,ooffset)}}catch{}
       if(requestedTab==='owner'&&ownerTotal&&ownerConversations[0])return res.redirect('/agents/'+encodeURIComponent(agentId)+'/owner-chats/'+encodeURIComponent(ownerConversations[0].conversationId));
       if(activeTab==='owner'&&!ownerTotal)activeTab='conv';
-      let a2aRows=[];try{a2aRows=await loadA2ATaskRows(agentId)}catch{}
-      const a2aTotal=a2aRows.length;
+       let a2aRows=[];let a2aReadAvailable=true;
+       try{a2aRows=await loadA2ATaskRows(agentId)}catch{a2aReadAvailable=false}
+       const a2aTotal=a2aRows.length;
+       const showA2ATab=a2aReadAvailable&&a2aTotal>0;
+       if(requestedTab==='a2a'&&!showA2ATab){
+         if(a2aReadAvailable)return res.redirect('/agents/'+encodeURIComponent(agentId));
+         activeTab='conv';
+       }
+       const a2aKeyword=String(req.query.a2aKeyword||'').trim();
+       const a2aPageRequested=Math.max(1,parseInt(req.query.a2aPage,10)||1),a2aLimit=10;
+       const a2aGroups=buildA2APrincipalGroups(a2aRows,T,a2aKeyword);
+       const hasInboundA2A=a2aRows.some(row=>String(row.direction).toLowerCase()!=='outbound');
+       const hasOutboundA2A=a2aRows.some(row=>String(row.direction).toLowerCase()==='outbound');
+       const mixedA2A=hasInboundA2A&&hasOutboundA2A;
+       // Principal grouping is useful for inbound-only tasks. Outbound-only and
+       // mixed traffic must remain visible as individual tasks as well.
+       const taskTableA2A=!hasInboundA2A||mixedA2A;
+       const filteredA2ATasks=taskTableA2A?filterA2ATaskRows(a2aRows,T,a2aKeyword):[];
+       const a2aPageCount=taskTableA2A?filteredA2ATasks.length:a2aGroups.length;
+       const a2aPages=Math.ceil(a2aPageCount/a2aLimit),a2aPage=Math.min(a2aPageRequested,Math.max(1,a2aPages||1));
+       const a2aPanelRows=taskTableA2A?filteredA2ATasks.slice((a2aPage-1)*a2aLimit,a2aPage*a2aLimit):a2aGroups.slice((a2aPage-1)*a2aLimit,a2aPage*a2aLimit).flatMap(group=>group.rows);
       if(activeTab==='conv'&&convs.length){try{await refreshProfiles(convs.map(c=>c.channelId))}catch(_){}}
 
       // 群列表（群 Tab，来自服务端，分页，不在本地持久化）
@@ -1271,11 +1307,16 @@ function createWebRouter(handlers, db, opts={}){
       const ownerLabel=L('web.agent.tab.owner_chats')+' ('+ownerTotal+')';
       const a2aLabel=L('web.agent.tab.a2a_tasks')+(a2aTotal?' ('+a2aTotal+')':'');
       const ownerDirectTab=ownerTotal&&ownerConversations[0]?'<a href="/agents/'+aId+'/owner-chats/'+encodeURIComponent(ownerConversations[0].conversationId)+'" style="display:inline-flex;align-self:flex-end;align-items:center;height:50px;box-sizing:border-box;background:transparent;border:none;border-bottom:3px solid transparent;color:#666;font:inherit;font-size:16px;font-weight:600;line-height:27.2px;padding:10px 20px;margin:0 0 -2px;text-decoration:none">'+ownerLabel+'</a>':'';
-      const tabBar='<div style="display:flex;gap:4px;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'+tabBtn('conv',convLabel,activeTab==='conv')+tabBtn('group',groupLabel,activeTab==='group')+ownerDirectTab+tabBtn('a2a',a2aLabel,activeTab==='a2a')+'</div>';
+      const tabBar='<div style="display:flex;gap:4px;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'+tabBtn('conv',convLabel,activeTab==='conv')+tabBtn('group',groupLabel,activeTab==='group')+ownerDirectTab+(showA2ATab?tabBtn('a2a',a2aLabel,activeTab==='a2a'):'')+'</div>';
       const convPanel='<div id="tab-conv" style="'+(activeTab==='conv'?'':'display:none')+'">'+searchHtml+convHtml+pgBar+aclOps+'</div>';
       const groupPanel='<div id="tab-group" style="'+(activeTab==='group'?'':'display:none')+'">'+groupHtml+gPgBar+groupOps+'</div>';
       const ownerPanel=ownerTotal?'<div id="tab-owner" style="'+(activeTab==='owner'?'':'display:none')+'">'+ownerHtml+'</div>':'';
-      const a2aPanel='<div id="tab-a2a" style="'+(activeTab==='a2a'?'':'display:none')+'">'+renderA2APrincipalRows(a2aRows,agentId,T)+'</div>';
+      const a2aKeywordEsc=esc(a2aKeyword),a2aKeywordParam=a2aKeyword?'&a2aKeyword='+encodeURIComponent(a2aKeyword):'';
+      const a2aSearchHtml='<form method="GET" action="/agents/'+aId+'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px"><input type="hidden" name="tab" value="a2a"><input type="search" name="a2aKeyword" value="'+a2aKeywordEsc+'" placeholder="'+esc(T('web.agent.a2a.search_ph'))+'" style="width:220px;max-width:100%;margin:0;font-size:14px;padding:6px 10px"><button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.a2a.search">'+L('web.agent.search_btn')+'</button>'+(a2aKeyword?'<a href="/agents/'+aId+'?tab=a2a" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'</form>';
+      let a2aPgBar='';
+      if(a2aPages>1){a2aPgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(a2aPage>1)a2aPgBar+='<a href="/agents/'+aId+'?tab=a2a&a2aPage='+(a2aPage-1)+a2aKeywordParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';a2aPgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:a2aPage,total:a2aPages}))+'</span>';if(a2aPage<a2aPages)a2aPgBar+='<a href="/agents/'+aId+'?tab=a2a&a2aPage='+(a2aPage+1)+a2aKeywordParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';a2aPgBar+='</div>'}
+      const a2aContent=taskTableA2A?renderA2ATaskRows(a2aPanelRows,{showAgent:false,T}):renderA2APrincipalRows(a2aPanelRows,agentId,T);
+      const a2aPanel=showA2ATab?'<div id="tab-a2a" style="'+(activeTab==='a2a'?'':'display:none')+'">'+a2aSearchHtml+a2aContent+a2aPgBar+'</div>':'';
       const body=infoBar+'<div id="agent-tabs-root">'+tabBar+convPanel+groupPanel+ownerPanel+a2aPanel+'</div><p><a href="/">← '+L('common.btn.home')+'</a></p>';
 
       const tabScript='<script>(function(){function setTab(t){["conv","group","owner","a2a"].forEach(function(id){var panel=document.getElementById("tab-"+id);if(panel)panel.style.display=(t===id?"":"none")});document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group"||t==="owner"||t==="a2a")u.searchParams.set("tab",t);else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
@@ -1955,10 +1996,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
             const capsPath='/agents/'+encodeURIComponent(agentId)+'/caps';
             if(r.success===false||r.error)return res.redirect(actionResultLocation(capsPath,'err',r.error||req.t('common.action.failed')));
             if(!opts.syncA2ARegistration)return res.redirect(actionResultLocation(capsPath,'warn',req.t('web.agent.caps.voko_only')));
-            try{const sync=await opts.syncA2ARegistration();
-              const row=db.prepare('SELECT did FROM agents WHERE agent_id=?').get(agentId);const{serverAgentIdFromDid}=require('../core/agent-invitations');const publicId=serverAgentIdFromDid(row?.did)||agentId;
-              if(Array.isArray(sync?.registeredAgentIds)&&!sync.registeredAgentIds.includes(publicId))return res.redirect(actionResultLocation(capsPath,'warn',req.t('web.agent.caps.voko_only')))
-            }catch(error){console.error('[A2A] capability registration sync failed:',error.message);return res.redirect(actionResultLocation(capsPath,'warn',req.t('web.agent.caps.voko_only')))}
+             try{await opts.syncA2ARegistration();
+             }catch(error){console.error('[A2A] capability registration sync failed:',error.message);return res.redirect(actionResultLocation(capsPath,'warn',req.t('web.agent.caps.voko_only')))}
             return res.redirect(actionResultLocation(capsPath,'ok',req.t('web.agent.caps.declared_a2a')))
           }
           case'set_pricing':await handleAction(req,res,handlers.agent_pricing({

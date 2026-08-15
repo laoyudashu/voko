@@ -25,7 +25,7 @@ Linux/macOS 使用相同变量名。不要把 Token、Gateway 公钥配置或数
 
 Lite 使用独立的 `voko-a2a.db`，不会在主 `voko.db` 中创建 A2A Task 表。运行 `voko doctor` 可检查：模块是否启用、专用 Schema、Bridge 是否完成注册，以及待处理命令/事件数量；Doctor 不输出 Token、Mailbox URL、完整 ID、Provider Session 或本机数据库路径。
 
-Web UI 的 `/a2a-tasks` 是独立任务页，也可以从 Agent 详情页的“A2A 任务”Tab进入并自动筛选当前 Agent。A2A Task 不进入普通访客会话列表，也不会自动创建好友关系。完整 Task/Event 历史以 AgentDID 为准；服务端不可用时，页面只显示 Lite 独立数据库中的恢复摘要。
+Web UI 的 `/a2a-tasks` 是独立任务页，也可以从 Agent 详情页的“A2A 任务”Tab进入并自动筛选当前 Agent。A2A Task 不进入普通访客会话列表，也不会自动创建好友关系。没有任务时，Agent 详情页隐藏“A2A 任务”Tab；读取服务暂时不可用时不会把故障误判为空任务。完整 Task/Event 历史以 AgentDID 为准；服务端不可用时，页面只显示 Lite 独立数据库中的恢复摘要。
 
 发布到 VOKO、审核通过且主人有效的 Agent 自动获得 A2A 1.0 Agent Card 和 Endpoint，不再设置单独的 A2A 发布开关。`/agents/{agentId}/caps` 只维护业务资料和技能；空的 `skills` 合法。能力名称、描述和标签会映射为 A2A 1.0 `AgentSkill`；Skill ID 由 VOKO 稳定生成，文字 MVP 的输入输出模式固定为 `text/plain`。公开 Agent 可进入公开目录；私密 Agent 的匿名 Card 只暴露最小信息，完整资料需要认证并满足白名单策略；隐藏、下架、审核或主人状态无效时统一不可发现。
 

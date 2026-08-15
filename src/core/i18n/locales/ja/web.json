@@ -83,6 +83,7 @@
   "web.agent.info.id_copy_failed": "コピーに失敗しました。もう一度お試しください",
   "web.agent.no_conversations": "暂无会话",
   "web.agent.a2a.empty": "A2A タスクはありません",
+  "web.agent.a2a.search_ph": "相手・タスク・コンテキストを検索...",
   "web.agent.a2a.col.counterparty": "相手",
   "web.agent.a2a.col.task": "タスク",
   "web.agent.a2a.col.latest_task": "最新タスク",

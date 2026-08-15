@@ -19,7 +19,7 @@ test('registration binds published owner Agents and reuses unchanged configurati
 });
 test('registration fingerprint includes the mailbox protocol revision', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'a2a', 'registration.ts'), 'utf8');
-  assert.match(source, /registrationVersion: 5/);
+  assert.match(source, /registrationVersion: 6/);
 });
 test('public registration remains available when the A2A message bridge is disabled', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');

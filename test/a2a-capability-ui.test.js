@@ -14,7 +14,7 @@ test('capability UI follows the A2A 1.0 Agent Card and Skill field hierarchy', (
   assert.doesNotMatch(route, /<p>'\+T\('web\.agent\.caps\.intro'\)/);
   const post = source.match(/case'declare_caps':[\s\S]*?case'set_pricing'/)[0];
   assert.match(post, /update_agent_profile/); assert.match(post, /agentDescription/);
-  assert.match(post, /\/agents\/.*\/caps/); assert.match(post, /registeredAgentIds/); assert.match(post, /declared_a2a/);
+  assert.match(post, /\/agents\/.*\/caps/); assert.match(post, /syncA2ARegistration/); assert.doesNotMatch(post, /registeredAgentIds/); assert.match(post, /declared_a2a/);
 });
 
 test('basic Agent edit page does not render the Agent Card description field', () => {

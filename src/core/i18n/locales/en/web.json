@@ -85,6 +85,7 @@
   "web.agent.info.id_copy_failed": "Copy failed. Please try again.",
   "web.agent.no_conversations": "No conversations",
   "web.agent.a2a.empty": "No A2A tasks",
+  "web.agent.a2a.search_ph": "Search caller, task or context...",
   "web.agent.a2a.col.counterparty": "Counterparty",
   "web.agent.a2a.col.task": "Task",
   "web.agent.a2a.col.latest_task": "Latest task",
