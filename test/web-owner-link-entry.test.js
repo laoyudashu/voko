@@ -60,7 +60,7 @@ test('trusted remote page renders an account-level Agent count', async t => {
       { agentId: 'b', publishStatus: 'published' },
       { agentId: 'c', publishStatus: 'unpublished' },
     ] }),
-  }, { prepare: () => ({ get: () => null, all: () => [] }) }));
+  }, { prepare: () => ({ get: () => null, all: () => [] }) }, { trustedRemoteEnabled: true }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);

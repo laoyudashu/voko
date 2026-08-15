@@ -30,7 +30,7 @@ function createDb() {
 
 async function startApp(handlers) {
   const app = express();
-  app.use(createWebRouter(handlers, createDb()));
+  app.use(createWebRouter(handlers, createDb(), { trustedRemoteEnabled: true }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);

@@ -1887,6 +1887,19 @@ async function startMcpServer(args?: any, core?: any) {
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      // When trusted remote is parked, reject both owner protocols before the
+      // ordinary visitor handler. This keeps stale/forged owner payloads from
+      // being interpreted as normal visitor messages.
+      let ownerProtocol = '';
+      try {
+        const content = typeof data?.content === 'object' ? data.content : JSON.parse(String(data?.content || ''));
+        ownerProtocol = String(content?.version || '');
+      } catch (_) { /* ordinary text */ }
+      if (!ownerLinkModule.enabled && (ownerProtocol === 'voko.owner/1' || ownerProtocol === 'voko.owner.chat/1')) {
+        console.warn('[Owner Remote] 已停用，拒绝 Owner 专用消息');
+        data?.ack?.();
+        return;
+      }
       const ownerChatResult = ownerChatBridge?.handle(msg.agentId, data);
       if (ownerChatResult?.handled) {
         if (!ownerChatResult.accepted) console.warn(`[Owner Chat] 已拒绝可信聊天消息: ${ownerChatResult.code || 'OWNER_CHAT_REJECTED'}`);
@@ -2129,8 +2142,9 @@ async function startMcpServer(args?: any, core?: any) {
     a2aModule,
     a2aMailboxClient,
     syncA2ARegistration,
+    trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
     ownerChatReadStore,
-    ownerChatDatabase: ownerLinkModule?.getDatabase?.() || null,
+    ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

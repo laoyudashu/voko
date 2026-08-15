@@ -29,14 +29,26 @@ function fixture(now = Date.now(), overrides = {}) {
 
 function wire(envelope) { return JSON.stringify(envelope); }
 
-test('Owner Link is enabled by default and can be explicitly disabled', () => {
+test('Owner Link is disabled by default and requires the trusted-remote master switch', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-owner-disabled-'));
   const databasePath = path.join(dir, 'owner.db');
   const enabled = new OwnerLinkModule({ databasePath, env: {} });
-  assert.equal(enabled.enabled, true);
-  assert.equal(enabled.dispatchEnabled, true);
-  enabled.stop();
+  assert.equal(enabled.enabled, false);
+  assert.equal(enabled.dispatchEnabled, false);
+  assert.equal(enabled.start(), undefined);
+  assert.equal(fs.existsSync(databasePath), false);
+  const active = new OwnerLinkModule({ databasePath, env: { VOKO_TRUSTED_REMOTE_ENABLED: '1' } });
+  assert.equal(active.enabled, true);
+  assert.equal(active.dispatchEnabled, true);
+  active.stop();
+  const legacyOnly = new OwnerLinkModule({ databasePath, env: {
+    VOKO_OWNER_LINK_VERIFY_ENABLED: '1',
+    VOKO_OWNER_PROVIDER_DISPATCH_ENABLED: '1',
+  } });
+  assert.equal(legacyOnly.enabled, false);
+  assert.equal(legacyOnly.dispatchEnabled, false);
   const module = new OwnerLinkModule({ databasePath, env: {
+    VOKO_TRUSTED_REMOTE_ENABLED: '1',
     VOKO_OWNER_LINK_VERIFY_ENABLED: '0',
     VOKO_OWNER_PROVIDER_DISPATCH_ENABLED: '0',
   } });

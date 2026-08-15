@@ -514,6 +514,7 @@ function ajaxRowRemove(url,body,row){fetch(url,{method:"POST",headers:{"Content-
 
 function createWebRouter(handlers, db, opts={}){
   const R=Router();
+  const trustedRemoteEnabled=opts.trustedRemoteEnabled===true;
   const routingConversations=new RoutingConversationStore(db);
   const messageRoutes=new MessageRouteStore(db);
   R.use(rateLimit({
@@ -523,6 +524,21 @@ function createWebRouter(handlers, db, opts={}){
     legacyHeaders: false,
     message: { success: false, error: 'Too many requests' },
   }));
+  // Trusted remote is parked independently from the email owner-intervention
+  // flow. Hide its UI and deny direct access before authentication or proxy
+  // handlers can reveal whether a session/link exists.
+  R.use((req,res,next)=>{
+    if(trustedRemoteEnabled)return next();
+    const path=(String(req.path||'').replace(/\/$/,'')||'/').toLowerCase();
+    const parked=path==='/trusted-remote'
+      ||path==='/api/owner-link'||path.startsWith('/api/owner-link/')
+      ||path==='/api/owner-chat'||path.startsWith('/api/owner-chat/')
+      ||path==='/api/owner-codex-config'||path.startsWith('/api/owner-codex-config/')
+      ||/\/owner-chats(?:\/|$)/.test(path);
+    if(!parked)return next();
+    if(String(req.get('accept')||'').includes('application/json')||req.query.json==='1')return res.status(404).json({success:false,error:'Not Found'});
+    return res.status(404).send('Not Found');
+  });
   const currentOwnerEmail=()=>{
     try{
       const selected=db.prepare("SELECT data FROM config WHERE type='current_user_email'").get();
@@ -1010,7 +1026,7 @@ function createWebRouter(handlers, db, opts={}){
           :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
-          +'<a href="/trusted-remote" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.trusted_remote')+'</a>'
+          +(trustedRemoteEnabled?'<a href="/trusted-remote" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.trusted_remote')+'</a>':'')
           +'<a href="/audit-rules" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.audit')+'</a>'
           +'<a href="/payments" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.payments')+'</a>'
           +'<a href="/voko-im.log" class="op-card" data-agent-kind="link" data-agent="nav_card">'+L('web.home.op.logs')+'</a>'

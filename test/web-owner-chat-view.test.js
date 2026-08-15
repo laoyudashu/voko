@@ -20,7 +20,7 @@ const handlers = {
 
 async function startApp(t, ownerChatReadStore, ownerChatDatabase=null) {
   const app = express();
-  app.use(express.json());app.use(createWebRouter(handlers, db, { ownerChatReadStore,ownerChatDatabase }));
+  app.use(express.json());app.use(createWebRouter(handlers, db, { ownerChatReadStore,ownerChatDatabase,trustedRemoteEnabled:true }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
