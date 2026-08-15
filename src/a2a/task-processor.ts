@@ -37,6 +37,8 @@ class A2ATaskProcessor {
     if (request.kind !== 'request' || !['execute', 'continue'].includes(request.operation)) throw new Error('Unsupported A2A command');
     if (!this.store.hasOperationEvent(request.gatewayTaskId, 'accepted'))
       this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
+    if (!this.store.hasOperationEvent(request.gatewayTaskId, 'working'))
+      this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
     try {
       const result = await this.execution.execute(request);
       this.event(request, 'completed', result.noReply ? { noReply: true } : { text: result.content }, 'COMPLETED', 'DELIVERED');
