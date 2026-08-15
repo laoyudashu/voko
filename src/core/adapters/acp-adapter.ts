@@ -929,7 +929,7 @@ class AcpAdapter extends PushProvider {
     visitorId: string,
     payload: PushPayload,
   ): Promise<AcpSession> {
-    const channelId = payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, '');
+    const channelId = String((payload as any).sessionScopeId || payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, ''));
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     let binding = payload.providerBinding?.providerType === this._bindingProviderType
       ? payload.providerBinding

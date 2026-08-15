@@ -55,6 +55,11 @@ events.jsonl
 staged-update/
 provider-sessions/
 
+# Local A2A scope keys (generated next to custom databases).
+*.db.scope-key-v1
+*.sqlite.scope-key-v1
+*.sqlite3.scope-key-v1
+
 .DS_Store
 Thumbs.db
 .idea/

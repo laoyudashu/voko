@@ -11,14 +11,14 @@ test('local Ed25519 identity is stable and can sign without exposing native sess
   assert.doesNotMatch(JSON.stringify({ keyId: first.keyId, publicKey: first.publicKey }), /nativeSession/i);
 });
 test('event outbox marks successful delivery acked', async t => {
-  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true });
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { return { status: 'accepted' }; } });
   assert.deepEqual(await worker.flushOnce('worker'), { sent: 1, uncertain: 0 });
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'acked');
 });
 test('unknown delivery result is quarantined and never automatically claimed again', async t => {
-  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true });
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw new Error('connection reset'); } });
   assert.deepEqual(await worker.flushOnce('worker'), { sent: 0, uncertain: 1 });
@@ -26,7 +26,7 @@ test('unknown delivery result is quarantined and never automatically claimed aga
   assert.deepEqual(store.claimEvents('other'), []);
 });
 test('sequence-gap conflict remains uncertain until durable server projection is observable', async t => {
-  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-gap', 'task-1', 1, 'working', { signed: true });
   const error = Object.assign(new Error('gap'), { status: 409 });
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw error; } });
@@ -34,7 +34,7 @@ test('sequence-gap conflict remains uncertain until durable server projection is
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-gap'").get().status, 'outcome_unknown');
 });
 test('unknown event is acknowledged only after the Gateway confirms the same task', async t => {
-  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true }); store.finishOutboxEvent('event-1', 'outcome_unknown');
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: true, taskId: 'task-1', gatewaySequence: 2 }; },
     async sendEvent() { throw new Error('must not resend'); } });
@@ -42,7 +42,7 @@ test('unknown event is acknowledged only after the Gateway confirms the same tas
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'acked');
 });
 test('drain sends ordered task events before returning to long polling', async t => {
-  const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'accepted', { sequence: 1 }); store.enqueueEvent('event-2', 'task-1', 2, 'working', { sequence: 2 });
   store.enqueueEvent('event-3', 'task-1', 3, 'completed', { sequence: 3 }); const sent = [];
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent(event) { sent.push(event.sequence); return { status: 'accepted' }; } });
@@ -50,7 +50,7 @@ test('drain sends ordered task events before returning to long polling', async t
 });
 
 test('A2A logs contain only message-level summaries and never stream payload details', async t => {
-  const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway' });
+  const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { secret: 'stream-detail' });
   store.enqueueEvent('event-2', 'task-1', 2, 'completed', { text: 'private-reply' });
   const logs = []; const original = console.log; console.log = (...args) => logs.push(args.join(' '));

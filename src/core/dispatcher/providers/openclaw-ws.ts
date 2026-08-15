@@ -1532,7 +1532,7 @@ class OpenClawWsProvider {
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
+      : buildOpenClawSessionKey(targetAgentId, agentId, String((payload as any).sessionScopeId || fromUid));
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {

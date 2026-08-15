@@ -24,6 +24,10 @@ export interface ProviderTransportDefinition {
   safetyProfile: string;
   sandboxPolicyId: string;
   capabilities: ProviderCapabilities;
+  exactSession?: {
+    nativeSessionNamespace: string;
+    restoreCompatibilityGroup: string;
+  };
   owner?: {
     enabled: boolean;
     execution: 'chat_only' | 'workspace_write';
@@ -118,6 +122,7 @@ const cli = (id: string, modulePath: string, exportName?: string, sandboxPolicyI
   safetyProfile: 'restricted-cli', sandboxPolicyId, capabilities: { sessionResume: true },
   options: context => context.getProviderConfig?.(id) || {},
   supportsLoopback: true,
+  exactSession: { nativeSessionNamespace: id, restoreCompatibilityGroup: id },
 });
 const acp = (id: string, modulePath: string, exportName?: string): ProviderTransportDefinition => transport({
   id, mode: 'acp', priority: 10, operations: ['push', 'steer'], modulePath, exportName,
@@ -125,11 +130,12 @@ const acp = (id: string, modulePath: string, exportName?: string): ProviderTrans
   capabilities: { streaming: true, sessionResume: true, cancel: true, progress: true, humanApproval: true },
   options: context => context.getProviderConfig?.(id) || {},
   supportsLoopback: true,
+  exactSession: { nativeSessionNamespace: id, restoreCompatibilityGroup: id },
 });
 
 export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'openclaw', aliases: [], label: 'OpenClaw', requiresInstance: true, defaultDeliveryModes: ['websocket', 'cli', 'pull'], transports: [
-    transport({ id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/openclaw-ws'); return new Ctor(context.db, null); } }),
+    transport({ id: 'openclaw-ws', mode: 'websocket', priority: 10, operations: ['push', 'steer'], modulePath: './providers/openclaw-ws', safetyProfile: 'local-authenticated-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true }, exactSession: { nativeSessionNamespace: 'openclaw-ws', restoreCompatibilityGroup: 'openclaw-ws' }, create(context) { const Ctor = require('./providers/openclaw-ws'); return new Ctor(context.db, null); } }),
     { ...cli('openclaw-cli', './providers/openclaw-cli'), supportsLoopback: false },
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [

@@ -243,7 +243,8 @@ class CliAdapter extends PushProvider {
     if (!(payload as any).__vokoManagedRetry) {
       this.notifyProviderEvent({ type: 'accepted', agentId, messageId, turnId, terminal: false });
     }
-    const sessionKey = `cli:${agentId}:${fromUid}`;
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
+    const sessionKey = `cli:${agentId}:${sessionIdentity}`;
     const binding = this.acceptsBinding(payload.providerBinding, agentId)
       ? payload.providerBinding
       : null;

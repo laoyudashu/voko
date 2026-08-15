@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const A2A_SCHEMA_VERSION = 4;
+const A2A_SCHEMA_VERSION = 5;
 
 interface InitA2ADatabaseOptions {
   createParent?: boolean;
@@ -30,6 +30,10 @@ function initA2ADatabase(
       throw new Error(
         `A2A database schema ${currentVersion} is newer than supported ${A2A_SCHEMA_VERSION}`,
       );
+    }
+    if (currentVersion > 0 && currentVersion < A2A_SCHEMA_VERSION) {
+      const backupPath = `${resolvedPath}.pre-schema-v${A2A_SCHEMA_VERSION}.bak`;
+      if (!fs.existsSync(backupPath)) db.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
     }
 
     db.exec('BEGIN IMMEDIATE');
@@ -99,10 +103,47 @@ function initA2ADatabase(
         if (!taskColumns.has('policy_revision')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 1');
         if (!columns('a2a_local_inbox').has('envelope_json')) db.exec('ALTER TABLE a2a_local_inbox ADD COLUMN envelope_json TEXT');
       }
+      if (currentVersion < 5) {
+        const columns = (table: string) => new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(row => row.name));
+        const taskColumns = columns('a2a_local_tasks');
+        if (!taskColumns.has('principal_scope')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN principal_scope TEXT');
+        if (!taskColumns.has('scope_version')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN scope_version INTEGER');
+        if (!taskColumns.has('scope_key_id')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN scope_key_id TEXT');
+        db.exec(`
+          ALTER TABLE a2a_local_contexts RENAME TO a2a_local_contexts_v4;
+          CREATE TABLE a2a_local_contexts (
+            agent_id TEXT NOT NULL, principal_scope TEXT NOT NULL, context_id TEXT NOT NULL,
+            session_scope_id TEXT NOT NULL, scope_version INTEGER NOT NULL, scope_key_id TEXT NOT NULL,
+            binding_generation INTEGER NOT NULL, provider_family TEXT, provider_instance_id TEXT,
+            delivery_mode TEXT, adapter_type TEXT, native_session_namespace TEXT,
+            restore_compatibility_group TEXT, native_session_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            PRIMARY KEY (agent_id, principal_scope, context_id),
+            UNIQUE (session_scope_id),
+            CHECK (status IN ('active','stale','unavailable','legacy_stale','session_lost'))
+          ) STRICT;
+          CREATE TABLE a2a_legacy_contexts AS SELECT *, 'legacy_stale' AS migration_status FROM a2a_local_contexts_v4;
+          DROP TABLE a2a_local_contexts_v4;
+          CREATE UNIQUE INDEX idx_a2a_context_native_session
+            ON a2a_local_contexts(provider_family,provider_instance_id,native_session_namespace,native_session_id)
+            WHERE status='active' AND native_session_id IS NOT NULL;
+          CREATE TABLE a2a_session_leases (
+            session_scope_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, lease_token TEXT NOT NULL,
+            lease_expires_at INTEGER NOT NULL, accepted_by_provider INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+          ) STRICT;
+        `);
+        const inboxColumns = columns('a2a_local_inbox');
+        if (!inboxColumns.has('receipt_state')) db.exec("ALTER TABLE a2a_local_inbox ADD COLUMN receipt_state TEXT NOT NULL DEFAULT 'pending'");
+        if (!inboxColumns.has('execution_state')) db.exec("ALTER TABLE a2a_local_inbox ADD COLUMN execution_state TEXT NOT NULL DEFAULT 'queued'");
+        if (!inboxColumns.has('next_attempt_at')) db.exec('ALTER TABLE a2a_local_inbox ADD COLUMN next_attempt_at INTEGER');
+        if (!inboxColumns.has('attempt_count')) db.exec('ALTER TABLE a2a_local_inbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0');
+      }
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_agent_updated ON a2a_local_tasks(agent_id, updated_at);
         CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_agent_state_updated ON a2a_local_tasks(agent_id, standard_state, updated_at);
         CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_context_updated ON a2a_local_tasks(context_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_scope_context ON a2a_local_tasks(agent_id, principal_scope, context_id, updated_at);
       `);
       db.prepare(`
         INSERT INTO a2a_meta (key, value, updated_at)

@@ -66,6 +66,8 @@ export interface PushPayload {
     channelType: number;
     sourceScope?: 'conversation' | 'trusted_owner' | 'a2a';
     strictSessionRoute?: boolean;
+    nativeSessionNamespace?: string;
+    restoreCompatibilityGroup?: string;
   } | null;
   [key: string]: unknown;
 }

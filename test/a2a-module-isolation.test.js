@@ -101,12 +101,14 @@ test('A2A database has its own version and no ordinary messaging tables', (t) =>
     .all().map(row => row.name);
   assert.deepEqual(tables, [
     'a2a_agent_publication',
+    'a2a_legacy_contexts',
     'a2a_local_contexts',
     'a2a_local_inbox',
     'a2a_local_outbox',
     'a2a_local_tasks',
     'a2a_meta',
     'a2a_remote_task_results',
+    'a2a_session_leases',
     'a2a_settings',
   ]);
   assert.equal(tables.includes('messages'), false);
@@ -127,10 +129,11 @@ test('A2A schema 3 upgrades in place and preserves recoverable inbox commands', 
     PRAGMA user_version=3;`);
   legacy.close();
   const upgraded = initA2ADatabase(databasePath);
-  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 5);
   const taskColumns = upgraded.prepare('PRAGMA table_info(a2a_local_tasks)').all().map(row => row.name);
   assert.ok(taskColumns.includes('binding_generation')); assert.ok(taskColumns.includes('owner_epoch')); assert.ok(taskColumns.includes('policy_revision'));
   assert.ok(upgraded.prepare('PRAGMA table_info(a2a_local_inbox)').all().some(row => row.name === 'envelope_json'));
+  assert.equal(fs.existsSync(`${databasePath}.pre-schema-v5.bak`), true);
   upgraded.close();
 });
 

@@ -12,13 +12,13 @@ function fixture(t) {
   const db = initA2ADatabase(path.join(dir, 'a2a.db'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const store = new A2ALocalTaskStore(db);
-  store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', gatewayUid: 'gateway-1' });
+  store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', gatewayUid: 'gateway-1',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   return { db, store };
 }
 
 test('task creation and inbox commands are idempotent', (t) => {
   const { store } = fixture(t);
-  assert.equal(store.createTask({ gatewayTaskId: 'task-1', contextId: 'other', executionId: 'other', agentId: 'other', gatewayUid: 'other' }), false);
+  assert.equal(store.createTask({ gatewayTaskId: 'task-1', contextId: 'other', executionId: 'other', agentId: 'other', gatewayUid: 'other',principalScope:'scope-2',scopeVersion:1,scopeKeyId:'key-1' }), false);
   assert.equal(store.acceptCommand('event-1', 'task-1', 1, 'execute'), 'accepted');
   assert.equal(store.acceptCommand('event-1', 'task-1', 1, 'execute'), 'duplicate');
   assert.equal(store.acceptCommand('event-2', 'task-1', 1, 'execute'), 'duplicate');

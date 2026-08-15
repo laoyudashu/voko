@@ -34,8 +34,8 @@ class A2ATaskProcessor {
       return;
     }
     if (request.kind !== 'request' || !['execute', 'continue'].includes(request.operation)) throw new Error('Unsupported A2A command');
-    this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
-    this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
+    if (!this.store.hasOperationEvent(request.gatewayTaskId, 'accepted'))
+      this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
     try {
       const result = await this.execution.execute(request);
       this.event(request, 'completed', result.noReply ? { noReply: true } : { text: result.content }, 'COMPLETED', 'DELIVERED');
@@ -44,6 +44,7 @@ class A2ATaskProcessor {
         this.event(request, 'rejected', { reasonCode: error.reasonCode }, 'REJECTED', 'DELIVERED');
         return;
       }
+      if ((error as any)?.deliveryOutcome === 'not_delivered') throw error;
       this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'PROVIDER_OUTCOME_UNKNOWN' },
         'WORKING', 'DELIVERY_UNKNOWN');
     }

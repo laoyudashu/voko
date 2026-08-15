@@ -6,6 +6,7 @@ type DeliveryState = 'QUEUED_OFFLINE' | 'SENDING' | 'IM_ACCEPTED' | 'DELIVERED' 
 const TERMINAL_STATES = new Set<StandardTaskState>(['COMPLETED', 'FAILED', 'CANCELED', 'REJECTED']);
 
 interface CreateLocalTaskInput { gatewayTaskId: string; contextId: string; executionId: string; agentId: string; gatewayUid: string;
+  principalScope: string; scopeVersion: number; scopeKeyId: string;
   bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number }
 
 class A2ALocalTaskStore {
@@ -13,26 +14,63 @@ class A2ALocalTaskStore {
   createTask(input: CreateLocalTaskInput): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_tasks
-      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,standard_state,delivery_state,binding_generation,owner_epoch,policy_revision,created_at,updated_at)
-      VALUES (?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
+      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,principal_scope,scope_version,scope_key_id,
+       standard_state,delivery_state,binding_generation,owner_epoch,policy_revision,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
       input.gatewayTaskId, input.contextId, input.executionId, input.agentId, input.gatewayUid,
-      input.bindingGeneration || 1, input.ownerEpoch || 1, input.policyRevision || 1, now, now);
+      input.principalScope, input.scopeVersion, input.scopeKeyId, input.bindingGeneration || 1,
+      input.ownerEpoch || 1, input.policyRevision || 1, now, now);
     return Number(result.changes) === 1;
   }
-  getContext(agentId: string, contextId: string): Record<string, any> | null {
-    return (this.db.prepare('SELECT * FROM a2a_local_contexts WHERE agent_id=? AND context_id=? AND status=\'active\'')
-      .get(agentId, contextId) as Record<string, any> | undefined) || null;
+  getContext(agentId: string, principalScope: string, contextId: string, scopeVersion: number, scopeKeyId: string): Record<string, any> | null {
+    if (!principalScope || !scopeKeyId) throw new Error('A2A_PRINCIPAL_SCOPE_REQUIRED');
+    return (this.db.prepare(`SELECT * FROM a2a_local_contexts
+      WHERE agent_id=? AND principal_scope=? AND context_id=? AND scope_version=? AND scope_key_id=? AND status='active'`)
+      .get(agentId, principalScope, contextId, scopeVersion, scopeKeyId) as Record<string, any> | undefined) || null;
   }
-  saveContext(input: { agentId: string; contextId: string; providerFamily: string; providerInstanceId?: string | null;
-    deliveryMode: string; adapterType: string; nativeSessionId: string }): void {
+  saveContext(input: { agentId: string; principalScope: string; contextId: string; sessionScopeId: string;
+    scopeVersion: number; scopeKeyId: string; bindingGeneration: number; providerFamily: string;
+    providerInstanceId?: string | null; deliveryMode: string; adapterType: string; nativeSessionNamespace: string;
+    restoreCompatibilityGroup: string; nativeSessionId: string }): void {
     const now = Date.now();
     this.db.prepare(`INSERT INTO a2a_local_contexts
-      (agent_id,context_id,provider_family,provider_instance_id,delivery_mode,adapter_type,native_session_id,status,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(agent_id,context_id) DO UPDATE SET
+      (agent_id,principal_scope,context_id,session_scope_id,scope_version,scope_key_id,binding_generation,
+       provider_family,provider_instance_id,delivery_mode,adapter_type,native_session_namespace,
+       restore_compatibility_group,native_session_id,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?) ON CONFLICT(agent_id,principal_scope,context_id) DO UPDATE SET
       provider_family=excluded.provider_family,provider_instance_id=excluded.provider_instance_id,
       delivery_mode=excluded.delivery_mode,adapter_type=excluded.adapter_type,native_session_id=excluded.native_session_id,
-      status='active',updated_at=excluded.updated_at`).run(input.agentId, input.contextId, input.providerFamily,
-      input.providerInstanceId || null, input.deliveryMode, input.adapterType, input.nativeSessionId, now, now);
+      native_session_namespace=excluded.native_session_namespace,restore_compatibility_group=excluded.restore_compatibility_group,
+      binding_generation=excluded.binding_generation,
+      status='active',updated_at=excluded.updated_at`).run(input.agentId, input.principalScope, input.contextId,
+      input.sessionScopeId, input.scopeVersion, input.scopeKeyId, input.bindingGeneration,
+      input.providerFamily, input.providerInstanceId || null, input.deliveryMode, input.adapterType,
+      input.nativeSessionNamespace, input.restoreCompatibilityGroup, input.nativeSessionId, now, now);
+  }
+  markContextSessionLost(agentId: string, principalScope: string, contextId: string): void {
+    this.db.prepare("UPDATE a2a_local_contexts SET status='session_lost',updated_at=? WHERE agent_id=? AND principal_scope=? AND context_id=?")
+      .run(Date.now(), agentId, principalScope, contextId);
+  }
+  acquireSessionLease(sessionScopeId: string, taskId: string, leaseMs = 180_000): string | null {
+    const now = Date.now(); const token = crypto.randomUUID();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM a2a_session_leases WHERE session_scope_id=? AND lease_expires_at<=? AND accepted_by_provider=0')
+        .run(sessionScopeId, now);
+      const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_session_leases
+        (session_scope_id,task_id,lease_token,lease_expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?)`)
+        .run(sessionScopeId, taskId, token, now + leaseMs, now, now);
+      this.db.exec('COMMIT');
+      return Number(result.changes) === 1 ? token : null;
+    } catch (error) { try { this.db.exec('ROLLBACK'); } catch (_) {} throw error; }
+  }
+  markLeaseAccepted(sessionScopeId: string, token: string): void {
+    this.db.prepare('UPDATE a2a_session_leases SET accepted_by_provider=1,updated_at=? WHERE session_scope_id=? AND lease_token=?')
+      .run(Date.now(), sessionScopeId, token);
+  }
+  releaseSessionLease(sessionScopeId: string, token: string, allowAccepted = false): void {
+    this.db.prepare(`DELETE FROM a2a_session_leases WHERE session_scope_id=? AND lease_token=? ${allowAccepted ? '' : 'AND accepted_by_provider=0'}`)
+      .run(sessionScopeId, token);
   }
   updateState(taskId: string, standardState: StandardTaskState, deliveryState: DeliveryState): boolean {
     const row = this.db.prepare('SELECT standard_state FROM a2a_local_tasks WHERE gateway_task_id=?').get(taskId) as { standard_state: StandardTaskState } | undefined;
@@ -51,16 +89,28 @@ class A2ALocalTaskStore {
       .run(eventId, taskId, sequence, operation, JSON.stringify(envelope), Date.now());
     return Number(result.changes) === 1 ? 'accepted' : 'duplicate';
   }
+  markReceiptAcknowledged(eventId: string): void {
+    this.db.prepare("UPDATE a2a_local_inbox SET receipt_state='acked' WHERE event_id=?").run(eventId);
+  }
   commandStatus(eventId: string): string | null {
     const row = this.db.prepare('SELECT status FROM a2a_local_inbox WHERE event_id=?').get(eventId) as { status: string } | undefined;
     return row?.status || null;
   }
   beginCommand(eventId: string): boolean {
-    return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing' WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
+    return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing',execution_state='processing',attempt_count=attempt_count+1 WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
   }
   listProcessingCommands(): Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }> {
     return this.db.prepare("SELECT event_id,gateway_task_id,envelope_json FROM a2a_local_inbox WHERE status='processing' ORDER BY received_at")
       .all() as Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }>;
+  }
+  listReadyRetryCommands(limit = 10): Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }> {
+    return this.db.prepare(`SELECT event_id,gateway_task_id,envelope_json FROM a2a_local_inbox
+      WHERE status='received' AND execution_state='retry' AND next_attempt_at<=? ORDER BY received_at LIMIT ?`)
+      .all(Date.now(), limit) as Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }>;
+  }
+  hasOperationEvent(taskId: string, operation: string): boolean {
+    return !!this.db.prepare('SELECT 1 AS found FROM a2a_local_outbox WHERE gateway_task_id=? AND operation=? LIMIT 1')
+      .get(taskId, operation);
   }
   hasTerminalEvent(taskId: string): boolean {
     const row = this.db.prepare("SELECT 1 AS found FROM a2a_local_outbox WHERE gateway_task_id=? AND operation IN ('completed','failed','rejected') LIMIT 1")
@@ -76,8 +126,13 @@ class A2ALocalTaskStore {
     });
   }
   finishCommand(eventId: string, status: 'processed' | 'outcome_unknown', errorCode?: string): void {
-    this.db.prepare('UPDATE a2a_local_inbox SET status=?,processed_at=?,error_code=?,envelope_json=CASE WHEN ?=\'processed\' THEN NULL ELSE envelope_json END WHERE event_id=?')
-      .run(status, Date.now(), errorCode || null, status, eventId);
+    this.db.prepare(`UPDATE a2a_local_inbox SET status=?,execution_state=?,processed_at=?,error_code=?,
+      envelope_json=CASE WHEN ?='processed' THEN NULL ELSE envelope_json END WHERE event_id=?`)
+      .run(status, status, Date.now(), errorCode || null, status, eventId);
+  }
+  retryCommand(eventId: string, errorCode: string, delayMs = 2_000): void {
+    this.db.prepare("UPDATE a2a_local_inbox SET status='received',execution_state='retry',next_attempt_at=?,error_code=? WHERE event_id=?")
+      .run(Date.now() + delayMs, errorCode, eventId);
   }
   enqueueEvent(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown): boolean {
     const now = Date.now();

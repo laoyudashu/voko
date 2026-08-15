@@ -14,12 +14,29 @@ function db() { return { prepare(sql) { return { get: () => sql.includes('FROM a
 test('isolated execution captures reply without ordinary reply callback or binding commit', async () => {
   const provider = new Provider(); const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply: reply => ordinary.push(reply) });
-  const result = await dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'task-1', contextId: 'context-1', content: 'hello', timeoutMs: 1000 });
+  const result = await dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'task-1', contextId: 'context-1', content: 'hello', timeoutMs: 1000,
+    executionScope:'a2a_mailbox',principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'context-1',bindingGeneration:1 });
   assert.equal(result.reply.content, 'isolated-result'); assert.equal(result.receipt.deliveryReceipt.nativeSessionId, 'native-a2a-session');
   assert.equal(ordinary.length, 0); assert.equal(provider.payload.executionScope, 'a2a_mailbox');
   assert.equal(provider.payload.securityContext.sourceType, 'agent_peer');
   assert.match(provider.payload.content, /普通问候、问题和任务请求仍应正常回复/);
   assert.equal(provider.payload.providerBinding, null);
+});
+test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
+  const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'same',content:'x',executionScope:'a2a_mailbox'}),
+    error=>error.code==='A2A_PRINCIPAL_SCOPE_REQUIRED');
+  assert.equal(provider.payload,undefined);
+});
+test('A2A exact routing rejects an incompatible native session namespace without fallback',async()=>{
+  const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const binding={id:'a2a-binding',bindingVersion:1,providerType:'codex',providerInstanceId:null,deliveryMode:'cli',adapterType:'codex-cli',
+    nativeSessionId:'native-old',nativeSessionNamespace:'other-cli',restoreCompatibilityGroup:'other-cli',sessionOrigin:'voko_managed',
+    channelId:'session-scope-1',channelType:1,sourceScope:'a2a',strictSessionRoute:true};
+  await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'ctx',content:'x',binding,
+    executionScope:'a2a_mailbox',principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'ctx',bindingGeneration:1}),
+    error=>['not_delivered','outcome_unknown'].includes(error.deliveryOutcome));
+  assert.equal(provider.payload,undefined);
 });
 
 test('trusted Owner execution uses owner security context and an exact transport without fallback', async () => {
@@ -82,7 +99,7 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply() {} });
   await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
     contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
-    executionScope: 'a2a_mailbox', timeoutMs: 10 }), /Provider reply timed out/);
+    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 10 }), /Provider reply timed out/);
 });
 
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {

@@ -9,6 +9,7 @@ import { A2ATaskProcessor } from './task-processor';
 import type { DatabaseSync } from 'node:sqlite';
 import { A2ASafetyGate } from './safety-gate';
 import { A2AOutboundResultWorker } from './outbound-result-worker';
+import { A2AScopeResolver } from './scope';
 
 interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv;
   delay?: (ms: number) => Promise<void>; onError?: (code: string) => void }
@@ -23,13 +24,14 @@ class A2ABridgeRuntime {
     const gatewayPublicKey = Buffer.from(String(env.VOKO_A2A_GATEWAY_PUBLIC_KEY_B64 || stored.gatewayPublicKeyB64 || ''), 'base64').toString('utf8');
     if (!baseUrl || !token || !gatewayPublicKey) throw new Error('A2A Bridge configuration is incomplete');
     const client = new A2AMailboxClient({ baseUrl, token }); const store = new A2ALocalTaskStore(this.options.database);
+    const scopes = new A2AScopeResolver(this.options.database);
     const identity = new A2AIdentityStore(this.options.database).getOrCreate();
     const safety = this.options.mainDatabase ? new A2ASafetyGate(this.options.mainDatabase) : undefined;
     const assertDispatchAllowed = this.options.mainDatabase ? (agentId: string) => {
       const row = this.options.mainDatabase.prepare("SELECT publish_status FROM agents WHERE agent_id=? LIMIT 1").get(agentId) as { publish_status?: string } | undefined;
       if (!row || row.publish_status !== 'published') throw new Error('A2A_AGENT_NOT_AVAILABLE');
     } : undefined;
-    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety, assertDispatchAllowed), identity);
+    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety, assertDispatchAllowed, scopes), identity);
     const bindingGenerations = new Map<string, number>((Array.isArray(stored.agentBindings) ? stored.agentBindings : [])
       .map((item: any) => [String(item.localAgentId), Number(item.bindingGeneration || 1)]));
     const availability = () => {
@@ -47,7 +49,7 @@ class A2ABridgeRuntime {
         return { localAgentId: row.agent_id, bindingGeneration: bindingGenerations.get(row.agent_id), snapshotSequence: sequence, state };
       });
     };
-    const worker = new A2ABridgeWorker({ client, store, availability, verify: (value) => {
+    const worker = new A2ABridgeWorker({ client, store, scopes, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
     }, execute: (envelope) => processor.process(envelope) });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);

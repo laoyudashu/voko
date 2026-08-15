@@ -115,6 +115,10 @@ interface IsolatedExecutionOptions {
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
+  sessionScopeId?: string;
+  principalScope?: string;
+  protocolContextId?: string;
+  bindingGeneration?: number;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -1073,11 +1077,30 @@ ${body}
         },
         invoke: async (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          if (executionScope === 'a2a_mailbox') {
+            const exact = getProviderTransport(selectedRoute.providerId)?.exactSession;
+            if (!exact || typeof (selectedRoute.provider as any).canRestoreExactSession !== 'function') {
+              const error = new Error('A2A Provider does not support exact session routing');
+              (error as any).deliveryOutcome = 'not_delivered';
+              (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
+              throw error;
+            }
+          }
           const selectedBinding = _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute);
           if (baseProviderPayload.providerBinding?.strictSessionRoute && !selectedBinding) {
             const error = new Error('Provider cannot restore the precise session');
             (error as any).deliveryOutcome = 'not_delivered';
             throw error;
+          }
+          if (selectedBinding?.strictSessionRoute && executionScope === 'a2a_mailbox') {
+            const exact = getProviderTransport(selectedRoute.providerId)?.exactSession;
+            if (!exact || exact.nativeSessionNamespace !== selectedBinding.nativeSessionNamespace
+              || exact.restoreCompatibilityGroup !== selectedBinding.restoreCompatibilityGroup) {
+              const error = new Error('Provider exact-session namespace is incompatible');
+              (error as any).deliveryOutcome = 'not_delivered';
+              (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
+              throw error;
+            }
           }
           if (selectedBinding?.strictSessionRoute) {
             const restore = (selectedRoute.provider as any).canRestoreExactSession;
@@ -1135,7 +1158,10 @@ ${body}
         countRouting(result.outcome === 'not_delivered' ? 'precise_fallback_pull' : `precise_${result.outcome}`);
       }
       if (!isolated) _removeReplyContext(replyContext);
-      if (result.outcome === 'not_delivered') console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+      if (result.outcome === 'not_delivered') {
+        if (isolated) console.log(`[Dispatcher] isolated delivery unavailable agent=${agentId} scope=${executionScope}; retained by source queue`);
+        else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+      }
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
     }
@@ -1199,6 +1225,12 @@ ${body}
     const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
     if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
     const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    if (executionScope === 'a2a_mailbox'
+      && (!options.principalScope || !options.sessionScopeId || !options.protocolContextId
+        || !Number.isSafeInteger(options.bindingGeneration) || Number(options.bindingGeneration) < 1)) {
+      const error: any = new Error('A2A_PRINCIPAL_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'A2A_PRINCIPAL_SCOPE_REQUIRED'; throw error;
+    }
     const turnId = `${prefix}-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
@@ -1215,6 +1247,8 @@ ${body}
         channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
         content: options.content, rawContent: options.content, providerBinding: options.binding || null,
         executionScope, sourceType, preferredAdapter: options.preferredAdapter,
+        sessionScopeId: options.sessionScopeId, principalScope: options.principalScope,
+        protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {
@@ -1223,6 +1257,7 @@ ${body}
         (error as any).code = delivery?.errorCode || 'ISOLATED_PROVIDER_DELIVERY_FAILED';
         throw error;
       }
+      options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
     } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
   }

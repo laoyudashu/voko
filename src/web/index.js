@@ -582,7 +582,7 @@ function createWebRouter(handlers, db, opts={}){
 
   const loadA2ATaskRows=async agentId=>{
     const selectedAgent=String(agentId||'').trim();let inbound=[];
-    if(opts.a2aMailboxClient){try{inbound=(await opts.a2aMailboxClient.listInboundTasks(selectedAgent||undefined)).map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Inbound',principal_kind:row.principal_kind,principal_name:row.display_name,principal_display_id:row.principal_display_id,trust_level:row.trust_level}))}catch{}}
+    if(opts.a2aMailboxClient){try{inbound=(await opts.a2aMailboxClient.listInboundTasks(selectedAgent||undefined)).map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,created_at:row.created_at,direction:'Inbound',principal_kind:row.principal_kind,principal_name:row.display_name,principal_display_id:row.principal_display_id,principal_view_id:row.principal_view_id,trust_level:row.trust_level}))}catch{}}
     if(!inbound.length&&opts.a2aModule?.running)inbound=opts.a2aModule.getDatabase().prepare(`SELECT gateway_task_id AS task_id,context_id,agent_id,standard_state,delivery_state,updated_at FROM a2a_local_tasks WHERE (?='' OR agent_id=?) ORDER BY updated_at DESC LIMIT 100`).all(selectedAgent,selectedAgent).map(row=>({...row,direction:'Inbound',principal_kind:'unknown'}));
     let outbound=[];if(opts.a2aMailboxClient){try{outbound=(await opts.a2aMailboxClient.listOutboundTasks()).filter(row=>!selectedAgent||row.local_agent_id===selectedAgent)}catch{}}
     return inbound.concat(outbound.map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Outbound'}))).sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
@@ -599,9 +599,9 @@ function createWebRouter(handlers, db, opts={}){
     const inbound=rows.filter(row=>String(row.direction).toLowerCase()!=='outbound'),groups=new Map();
     inbound.forEach(row=>{
       // Only a server-issued pseudonymous principal ID is safe to group. Unknown callers stay separate.
-      const principalId=String(row.principal_display_id||'').trim();
-      const key=principalId||('task:'+String(row.task_id));
-      if(!groups.has(key))groups.set(key,{principalId,rows:[]});
+      const principalId=String(row.principal_display_id||'').trim(),principalViewId=String(row.principal_view_id||'').trim();
+      const key=principalViewId||('task:'+String(row.task_id));
+      if(!groups.has(key))groups.set(key,{principalId,principalViewId,rows:[]});
       groups.get(key).rows.push(row);
     });
     const principalType=row=>T('web.agent.a2a.principal.'+({voko_agent:'voko_agent',did:'did',oauth:'oauth',api_client:'api_client',card_key:'card_key',anonymous_guest:'anonymous_guest'}[row.principal_kind]||'external'));
@@ -628,22 +628,27 @@ function createWebRouter(handlers, db, opts={}){
     if(!items.length)return '<p class="meta">'+esc(T('web.agent.a2a.empty'))+'</p>';
     return '<div class="table-wrap"><table><thead><tr><th>'+esc(T('web.agent.a2a.col.counterparty'))+'</th><th>'+esc(T('web.agent.a2a.col.latest_task'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.task_count'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.status'))+'</th><th style="text-align:center">'+esc(T('web.agent.a2a.col.time'))+'</th></tr></thead><tbody>'+items.map(group=>{
       const latest=group.rows[0],label=group.principalId?group.principalId:principalType(latest)+(latest.principal_name?' · '+latest.principal_name:'');
-      const href=group.principalId?'/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(group.principalId):'/a2a-tasks/'+encodeURIComponent(latest.task_id);
+      const href=group.principalViewId?'/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(group.principalViewId):'/a2a-tasks/'+encodeURIComponent(latest.task_id);
       return '<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="'+href+'"><strong>'+esc(label)+'</strong></a></td><td><code>'+esc(String(latest.task_id).slice(0,12))+'…</code></td><td style="text-align:center">'+esc(group.rows.length)+'</td><td style="text-align:center"><strong>'+esc(state(latest.standard_state))+'</strong></td><td class="meta" style="text-align:center;white-space:nowrap">'+timeTag(latest.updated_at)+'</td></tr>';
     }).join('')+'</tbody></table></div>';
   };
   const parseA2AEventPayload=event=>{try{return typeof event?.payload_json==='string'?JSON.parse(event.payload_json):(event?.payload_json||{})}catch{return{}}};
   const renderA2ATaskConversation=(task,counterparty,T=key=>key)=>{
-    const events=Array.isArray(task?.events)?task.events:[],messages=[];let noReply=false;
+    const events=Array.isArray(task?.events)?task.events:[],messages=[],artifacts=[];let noReply=false;
     events.forEach(event=>{
       const payload=parseA2AEventPayload(event),type=String(event.event_type||''),text=typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:'';
       if(type==='completed'&&payload.noReply===true)noReply=true;
+      if(type==='artifact'){
+        const artifact=payload.artifact||payload;
+        artifacts.push({name:String(artifact.name||artifact.artifactId||T('web.a2a_task.artifact')),createdAt:event.created_at});
+      }
       if(!text)return;
       if(type==='task_submitted')messages.push({sender:counterparty,isAgent:false,text,createdAt:event.created_at});
       else if(['message','completed','input_required','auth_required'].includes(type))messages.push({sender:T('web.conversation.from.agent'),isAgent:true,text,createdAt:event.created_at});
     });
     const body=messages.length?messages.map(message=>'<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(message.isAgent?'#0f9d58':'#1a73e8')+';background:'+(message.isAgent?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(message.sender)+'</strong> <span style="color:#888;font-size:13px">['+timeTag(message.createdAt)+']</span><br>'+esc(message.text).replace(/\n/g,'<br>')+'</div>').join(''):noReply?'<p class="meta">'+esc(T('web.a2a_task.no_reply'))+'</p>':'<p class="meta">'+esc(T('web.a2a_task.no_content'))+'</p>';
-    return '<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px"><span class="meta">'+esc(T('web.a2a_task.message_count',{count:messages.length}))+'</span></div><div class="a2a-task-messages" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+body+'</div>';
+    const artifactBody=artifacts.length?'<ul class="meta">'+artifacts.map(item=>'<li>'+esc(item.name)+' · '+timeTag(item.createdAt)+'</li>').join('')+'</ul>':'';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px"><span class="meta">'+esc(T('web.a2a_task.message_count',{count:messages.length}))+'</span></div><div class="a2a-task-messages" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+body+artifactBody+'</div>';
   };
 
   R.get('/a2a-tasks',async(req,res)=>{
@@ -680,7 +685,32 @@ function createWebRouter(handlers, db, opts={}){
     if(!session)return false;
     return !csrf||opts.webSessions.verifyCsrf(req,session);
   };
-  R.get('/agents/:agentId/a2a/:principalDisplayId',async(req,res)=>{
+  R.get('/agents/:agentId/a2a/:principalViewId',async(req,res)=>{
+    const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
+    const agentId=String(req.params.agentId||''),principalViewId=String(req.params.principalViewId||'');
+    const notFound=()=>res.status(404).send(renderPage(req,T('web.a2a_principal.title'),'<div class="card error">'+L('web.a2a_principal.not_found')+'</div>',{showTitle:false,footer:renderFooter(T,locale)}));
+    if(!ownsA2AAgent(agentId)||!/^pv_[0-9a-f]{32}$/i.test(principalViewId))return notFound();
+    try{
+      const rows=(await loadA2ATaskRows(agentId)).filter(row=>String(row.direction).toLowerCase()!=='outbound'&&String(row.principal_view_id||'')===principalViewId);
+      if(!rows.length||!opts.a2aMailboxClient)return notFound();
+      const principalDisplayId=String(rows[0].principal_display_id||'A2A');
+      const contexts=Array.from(rows.reduce((map,row)=>{const id=String(row.context_id||'');if(!map.has(id))map.set(id,[]);map.get(id).push(row);return map},new Map()).entries())
+        .map(([id,tasks])=>({id,tasks:tasks.sort((a,b)=>new Date(a.created_at||a.updated_at||0)-new Date(b.created_at||b.updated_at||0)),updatedAt:Math.max(...tasks.map(item=>new Date(item.updated_at||0).getTime()))}))
+        .sort((a,b)=>b.updatedAt-a.updatedAt);
+      const requestedContext=String(req.query.contextId||''),selectedContext=contexts.find(item=>item.id===requestedContext)||contexts[0];
+      const requestedTask=String(req.query.taskId||'');
+      if(requestedTask&&!selectedContext.tasks.some(row=>String(row.task_id)===requestedTask))return notFound();
+      const details=[];
+      for(const row of selectedContext.tasks){const task=await opts.a2aMailboxClient.getInboundTask(row.task_id);if(!task||String(task.local_agent_id)!==agentId||String(task.principal_view_id||'')!==principalViewId||String(task.context_id||'')!==selectedContext.id)return notFound();details.push(task)}
+      const agent=await getAgentInfo(handlers,agentId);
+      const tabs=contexts.length>1?'<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell"><button type="button" class="conversation-tab-arrow" id="a2a-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'">‹</button><div class="conversation-tab-rail" id="a2a-context-tab-rail" role="tablist">'+contexts.map((context,index)=>'<a class="conversation-tab-card'+(context.id===selectedContext.id?' active':'')+'" role="tab" aria-selected="'+(context.id===selectedContext.id)+'" href="/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(context.id)+'" title="'+esc(context.id)+'">'+esc(T('web.a2a_principal.context_tab',{index:index+1}))+' ('+esc(context.tasks.length)+')</a>').join('')+'</div><button type="button" class="conversation-tab-arrow" id="a2a-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'">›</button></div>':'';
+      const contextHeader='<div class="meta" style="margin:10px 0">'+L('web.a2a_task.context')+': <code>'+esc(selectedContext.id)+'</code> · '+esc(T('web.agent.a2a.col.task_count'))+': '+esc(selectedContext.tasks.length)+'</div>';
+      const taskCards=details.map((task,index)=>'<section class="card" id="task-'+esc(task.gateway_task_id)+'"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><strong>'+esc(T('web.a2a_principal.task_tab',{index:index+1}))+'</strong><a class="meta" href="/a2a-tasks/'+encodeURIComponent(task.gateway_task_id)+'"><code>'+esc(task.gateway_task_id)+'</code></a></div>'+renderA2ATaskConversation(task,principalDisplayId,T)+'<div class="meta">'+esc(String(task.standard_state||''))+' · '+esc(String(task.delivery_state||''))+'</div></section>').join('');
+      const tabScript=contexts.length>1?'<script>(function(){var rail=document.getElementById("a2a-context-tab-rail"),prev=document.getElementById("a2a-tabs-prev"),next=document.getElementById("a2a-tabs-next");function state(){var max=Math.max(0,rail.scrollWidth-rail.clientWidth);prev.disabled=rail.scrollLeft<2;next.disabled=rail.scrollLeft>=max-2}prev.onclick=function(){rail.scrollBy({left:-Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};next.onclick=function(){rail.scrollBy({left:Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};rail.addEventListener("scroll",state,{passive:true});var active=rail.querySelector(".active");if(active)active.scrollIntoView({inline:"center",block:"nearest"});state()})();</script>':'';
+      res.send(renderPage(req,T('web.a2a_principal.conversation_title',{id:principalDisplayId}),tabs+contextHeader+taskCards,{showTitle:false,nav:agentNav(agentId,agent?.agentName||agentId,T)+' › '+esc(principalDisplayId),footer:renderFooter(T,locale)+tabScript}));
+    }catch(_){return notFound()}
+  });
+  R.get('/__legacy/agents/:agentId/a2a/:principalDisplayId',async(req,res)=>{
     const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
     const agentId=String(req.params.agentId||''),principalDisplayId=String(req.params.principalDisplayId||'');
     const notFound=()=>res.status(404).send(renderPage(req,T('web.a2a_principal.title'),'<div class="card error">'+L('web.a2a_principal.not_found')+'</div>',{showTitle:false,footer:renderFooter(T,locale)}));
@@ -727,9 +757,13 @@ function createWebRouter(handlers, db, opts={}){
       if(!task||!ownsA2AAgent(task.local_agent_id))return res.status(404).json({error:'A2A_TASK_NOT_FOUND'});res.json({task})
     }catch(_){res.status(404).json({error:'A2A_TASK_NOT_FOUND'})}
   });
-  R.get('/api/a2a/contexts/:contextId',async(req,res)=>{
-    try{if(!authorizeA2AApi(req))return res.status(401).json({error:'WEB_AUTH_REQUIRED'});if(!opts.a2aMailboxClient)return res.status(503).json({error:'A2A_SERVICE_UNAVAILABLE'});const tasks=await opts.a2aMailboxClient.listInboundTasks();
-      const scoped=tasks.filter(task=>String(task.context_id)===String(req.params.contextId)&&ownsA2AAgent(task.local_agent_id));if(!scoped.length)return res.status(404).json({error:'A2A_CONTEXT_NOT_FOUND'});res.json({contextId:req.params.contextId,tasks:scoped})
+  R.get('/api/a2a/agents/:agentId/principals/:principalViewId/contexts/:contextId',async(req,res)=>{
+    try{if(!authorizeA2AApi(req))return res.status(401).json({error:'WEB_AUTH_REQUIRED'});if(!opts.a2aMailboxClient)return res.status(503).json({error:'A2A_SERVICE_UNAVAILABLE'});
+      const agentId=String(req.params.agentId||''),principalViewId=String(req.params.principalViewId||''),contextId=String(req.params.contextId||'');
+      if(!ownsA2AAgent(agentId)||!/^pv_[0-9a-f]{32}$/i.test(principalViewId))return res.status(404).json({error:'A2A_CONTEXT_NOT_FOUND'});
+      const tasks=await opts.a2aMailboxClient.listInboundTasks(agentId);
+      const scoped=tasks.filter(task=>String(task.local_agent_id)===agentId&&String(task.principal_view_id||'')===principalViewId&&String(task.context_id)===contextId);
+      if(!scoped.length)return res.status(404).json({error:'A2A_CONTEXT_NOT_FOUND'});res.json({contextId,tasks:scoped})
     }catch(_){res.status(503).json({error:'A2A_SERVICE_UNAVAILABLE'})}
   });
   R.post('/api/a2a/tasks/:taskId/cancel',async(req,res)=>{

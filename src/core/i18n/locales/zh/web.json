@@ -108,6 +108,8 @@
   "web.a2a_principal.conversation_title": "与 {id} 的 A2A 会话",
   "web.a2a_principal.counterparty": "对方",
   "web.a2a_principal.task_tab": "任务 {index}",
+  "web.a2a_principal.context_tab": "对话 {index}",
+  "web.a2a_task.artifact": "产物",
   "web.a2a_principal.not_found": "调用方或任务不存在，或无权访问",
   "web.agent.a2a.state.submitted": "已提交",
   "web.agent.a2a.state.working": "处理中",
