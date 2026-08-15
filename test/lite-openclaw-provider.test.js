@@ -90,6 +90,17 @@ describe('Lite OpenClaw WS provider', () => {
     assert.equal(receipt.providerInstanceId, 'instance-new');
   });
 
+  it('accepts an exact A2A session only for the connected matching OpenClaw instance', async () => {
+    const provider = createProvider(); provider.connected = true;
+    const binding = {
+      strictSessionRoute: true, providerType: 'openclaw', providerInstanceId: 'agent-a',
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws', nativeSessionId: 'agent:agent-a:voko-session:a2a:ctx-1',
+    };
+    assert.equal(await provider.canRestoreExactSession(binding, 'agent-a'), true);
+    assert.equal(await provider.canRestoreExactSession({ ...binding, providerInstanceId: 'other' }, 'agent-a'), false);
+    assert.equal(await provider.canRestoreExactSession({ ...binding, nativeSessionId: 'agent:other:voko-session:a2a:ctx-1' }, 'agent-a'), false);
+  });
+
   it('同一 session 在订阅中按发送顺序共享订阅结果', async () => {
     const provider = createProvider();
     const requests = [];

@@ -8,7 +8,7 @@ function setup(t, execute) {
   const envelope = { eventId: 'event-1', gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', sequence: 1, operation: 'execute' };
   const acknowledgements = []; const client = { async claim() { return { leaseId: 'lease-1', items: [{ eventId: 'event-1', taskId: 'task-1', envelope }] }; },
     async acknowledge(lease, event) { acknowledgements.push([lease, event]); } };
-  return { worker: new A2ABridgeWorker({ client, store: new A2ALocalTaskStore(db), verify: value => value, execute }), acknowledgements };
+  return { worker: new A2ABridgeWorker({ client, store: new A2ALocalTaskStore(db), verify: value => value, execute }), store: new A2ALocalTaskStore(db), acknowledgements };
 }
 test('bridge persists command before execution and ACKs only after success', async t => {
   let calls = 0; const f = setup(t, async () => { calls += 1; });
@@ -22,6 +22,13 @@ test('unknown execution outcome is not ACKed or executed again', async t => {
   assert.deepEqual(await f.worker.pollOnce(), { claimed: 1, processed: 0, uncertain: 1 });
   assert.equal(calls, 1); assert.deepEqual(f.acknowledgements, []);
 });
+test('received but not started command is safely re-delivered after restart', async t => {
+  let calls = 0; const f = setup(t, async () => { calls += 1; });
+  f.store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', gatewayUid: 'gateway' });
+  f.store.acceptCommand('event-1', 'task-1', 1, 'execute', { eventId: 'event-1' });
+  assert.deepEqual(await f.worker.pollOnce(), { claimed: 1, processed: 1, uncertain: 0 });
+  assert.equal(calls, 1); assert.deepEqual(f.acknowledgements, [['lease-1', 'event-1']]);
+});
 test('claim identity mismatch fails before persistence or execution', async t => {
   const f = setup(t, async () => assert.fail('must not execute'));
   f.worker.options = f.worker.options;
@@ -33,6 +40,7 @@ test('A2A receive log is a single message-level summary', async t => {
   const f = setup(t, async () => {}); const logs = []; const original = console.log;
   console.log = (...args) => logs.push(args.join(' '));
   try { await f.worker.pollOnce(); } finally { console.log = original; }
-  assert.deepEqual(logs, ['[A2A] 收到 A2A 消息']);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] /);
   assert.doesNotMatch(logs.join('\n'), /payload|content|secret/i);
 });

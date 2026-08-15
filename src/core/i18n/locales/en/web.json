@@ -135,6 +135,7 @@
   "web.a2a_task.timeline": "Event timeline",
   "web.a2a_task.no_events": "No events are available",
   "web.a2a_task.no_content": "No task messages are available",
+  "web.a2a_task.no_reply": "The Agent determined that no reply was needed",
   "web.a2a_task.message_count": "{count} messages",
   "web.a2a_task.not_found": "Task not found or access denied",
   "web.a2a_task.unavailable": "The A2A service is unavailable",

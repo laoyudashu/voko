@@ -58,6 +58,7 @@ test('A2A logs contain only message-level summaries and never stream payload det
     const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { return { status: 'accepted' }; } });
     await worker.drain('worker');
   } finally { console.log = original; }
-  assert.deepEqual(logs, ['[A2A] 回复了 A2A 消息']);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] /);
   assert.doesNotMatch(logs.join('\n'), /stream-detail|private-reply/);
 });

@@ -3,10 +3,11 @@ import type { A2ALocalTaskStore } from './task-store';
 
 interface IsolatedDispatcher { executeIsolated(options: Record<string, unknown>): Promise<{ reply: any; receipt?: any }> }
 interface SafetyGate { assertAllowed(content: string, direction: 'inbound' | 'outbound'): Promise<void> }
+const INTERNAL_NO_REPLY = new Set(['NO_REPLY', 'HEARTBEAT_OK', 'ANNOUNCE_SKIP']);
 class A2AExecutionService {
   constructor(private readonly store: A2ALocalTaskStore, private readonly dispatcher: IsolatedDispatcher,
     private readonly safety?: SafetyGate, private readonly assertDispatchAllowed?: (agentId: string) => void) {}
-  async execute(envelope: A2AEnvelope): Promise<{ content: string }> {
+  async execute(envelope: A2AEnvelope): Promise<{ content: string; noReply?: boolean }> {
     this.assertDispatchAllowed?.(envelope.agentId);
     const content = String((envelope.payload as any)?.text || '');
     if (!content || Buffer.byteLength(content, 'utf8') > 6144) throw new Error('Invalid A2A text payload');
@@ -29,8 +30,9 @@ class A2AExecutionService {
       adapterType: provider.providerId || deliveryReceipt.adapterType || binding?.adapterType,
       nativeSessionId: deliveryReceipt.nativeSessionId });
     const replyContent = String(result.reply?.content || '');
+    if (INTERNAL_NO_REPLY.has(replyContent.trim())) return { content: '', noReply: true };
     await this.safety?.assertAllowed(replyContent, 'outbound');
     return { content: replyContent };
   }
 }
-export { A2AExecutionService };
+export { A2AExecutionService, INTERNAL_NO_REPLY };

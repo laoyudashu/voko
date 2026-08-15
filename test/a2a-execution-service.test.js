@@ -25,3 +25,11 @@ test('Provider dispatch rechecks that the local Agent is still eligible', async 
     () => { throw new Error('A2A_AGENT_NOT_AVAILABLE'); });
   await assert.rejects(() => service.execute(envelope()), /A2A_AGENT_NOT_AVAILABLE/); assert.equal(called, false);
 });
+test('internal no-reply sentinels never become A2A response text', async t => {
+  const store = setup(t); const seen = [];
+  const service = new A2AExecutionService(store, {
+    async executeIsolated() { return { reply: { content: 'NO_REPLY' }, receipt: { provider: {} } }; },
+  }, { async assertAllowed(content, direction) { seen.push([content, direction]); } });
+  assert.deepEqual(await service.execute(envelope()), { content: '', noReply: true });
+  assert.deepEqual(seen, [['hello', 'inbound']]);
+});

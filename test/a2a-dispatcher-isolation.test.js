@@ -18,6 +18,7 @@ test('isolated execution captures reply without ordinary reply callback or bindi
   assert.equal(result.reply.content, 'isolated-result'); assert.equal(result.receipt.deliveryReceipt.nativeSessionId, 'native-a2a-session');
   assert.equal(ordinary.length, 0); assert.equal(provider.payload.executionScope, 'a2a_mailbox');
   assert.equal(provider.payload.securityContext.sourceType, 'agent_peer');
+  assert.match(provider.payload.content, /普通问候、问题和任务请求仍应正常回复/);
   assert.equal(provider.payload.providerBinding, null);
 });
 

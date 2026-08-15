@@ -18,10 +18,19 @@ class A2ABridgeWorker {
         bindingGeneration: Number((envelope as any).bindingGeneration || 1), ownerEpoch: Number((envelope as any).ownerEpoch || 1),
         policyRevision: Number((envelope as any).policyRevision || 1) });
       const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId, envelope.sequence, envelope.operation, envelope);
-      if (accepted !== 'duplicate') console.log('[A2A] 收到 A2A 消息');
+      if (accepted !== 'duplicate') console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] 收到 A2A 消息`);
       if (accepted === 'duplicate') {
-        if (this.options.store.commandStatus(envelope.eventId) === 'processed') await this.options.client.acknowledge(claim.leaseId, item.eventId);
-        else uncertain += 1;
+        const status = this.options.store.commandStatus(envelope.eventId);
+        if (status === 'processed') await this.options.client.acknowledge(claim.leaseId, item.eventId);
+        else if (status === 'received' && this.options.store.beginCommand(envelope.eventId)) {
+          try {
+            await this.options.execute(envelope);
+            this.options.store.finishCommand(envelope.eventId, 'processed');
+            await this.options.client.acknowledge(claim.leaseId, item.eventId); processed += 1;
+          } catch (error) {
+            this.options.store.finishCommand(envelope.eventId, 'outcome_unknown', 'EXECUTION_OUTCOME_UNKNOWN'); uncertain += 1;
+          }
+        } else uncertain += 1;
         continue;
       }
       if (!this.options.store.beginCommand(envelope.eventId)) { uncertain += 1; continue; }

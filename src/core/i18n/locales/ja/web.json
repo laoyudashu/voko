@@ -133,6 +133,7 @@
   "web.a2a_task.timeline": "イベント履歴",
   "web.a2a_task.no_events": "イベントはありません",
   "web.a2a_task.no_content": "表示できるタスクメッセージはありません",
+  "web.a2a_task.no_reply": "Agent は返信不要と判断しました",
   "web.a2a_task.message_count": "{count} 件のメッセージ",
   "web.a2a_task.not_found": "タスクが存在しないか、アクセス権がありません",
   "web.a2a_task.unavailable": "A2A サービスを利用できません",

@@ -135,6 +135,7 @@
   "web.a2a_task.timeline": "事件时间线",
   "web.a2a_task.no_events": "暂无事件记录",
   "web.a2a_task.no_content": "暂无可显示的任务消息",
+  "web.a2a_task.no_reply": "Agent 判定无需回复",
   "web.a2a_task.message_count": "共 {count} 条消息",
   "web.a2a_task.not_found": "任务不存在或无权访问",
   "web.a2a_task.unavailable": "A2A 服务当前不可用",

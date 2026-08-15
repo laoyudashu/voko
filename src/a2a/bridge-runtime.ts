@@ -51,6 +51,20 @@ class A2ABridgeRuntime {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
     }, execute: (envelope) => processor.process(envelope) });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
+    for (const command of store.listProcessingCommands()) {
+      try {
+        if (!command.envelope_json) throw new Error('A2A interrupted command has no envelope');
+        const envelope = JSON.parse(command.envelope_json) as any;
+        if (!store.hasTerminalEvent(command.gateway_task_id)) {
+          processor.recoverInterrupted(envelope);
+        }
+        // The recovery event is durable in the outbox. A redelivered command must
+        // be ACKed without invoking the Provider a second time.
+        store.finishCommand(command.event_id, 'processed');
+      } catch (error) {
+        this.options.onError?.(error instanceof Error ? error.message : 'A2A_RECOVERY_ERROR');
+      }
+    }
     const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
     const runLoop = (work: () => Promise<boolean>, idleMs: number) => void (async () => {

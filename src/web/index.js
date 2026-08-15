@@ -634,14 +634,15 @@ function createWebRouter(handlers, db, opts={}){
   };
   const parseA2AEventPayload=event=>{try{return typeof event?.payload_json==='string'?JSON.parse(event.payload_json):(event?.payload_json||{})}catch{return{}}};
   const renderA2ATaskConversation=(task,counterparty,T=key=>key)=>{
-    const events=Array.isArray(task?.events)?task.events:[],messages=[];
+    const events=Array.isArray(task?.events)?task.events:[],messages=[];let noReply=false;
     events.forEach(event=>{
       const payload=parseA2AEventPayload(event),type=String(event.event_type||''),text=typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:'';
+      if(type==='completed'&&payload.noReply===true)noReply=true;
       if(!text)return;
       if(type==='task_submitted')messages.push({sender:counterparty,isAgent:false,text,createdAt:event.created_at});
       else if(['message','completed','input_required','auth_required'].includes(type))messages.push({sender:T('web.conversation.from.agent'),isAgent:true,text,createdAt:event.created_at});
     });
-    const body=messages.length?messages.map(message=>'<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(message.isAgent?'#0f9d58':'#1a73e8')+';background:'+(message.isAgent?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(message.sender)+'</strong> <span style="color:#888;font-size:13px">['+timeTag(message.createdAt)+']</span><br>'+esc(message.text).replace(/\n/g,'<br>')+'</div>').join(''):'<p class="meta">'+esc(T('web.a2a_task.no_content'))+'</p>';
+    const body=messages.length?messages.map(message=>'<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(message.isAgent?'#0f9d58':'#1a73e8')+';background:'+(message.isAgent?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(message.sender)+'</strong> <span style="color:#888;font-size:13px">['+timeTag(message.createdAt)+']</span><br>'+esc(message.text).replace(/\n/g,'<br>')+'</div>').join(''):noReply?'<p class="meta">'+esc(T('web.a2a_task.no_reply'))+'</p>':'<p class="meta">'+esc(T('web.a2a_task.no_content'))+'</p>';
     return '<div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px"><span class="meta">'+esc(T('web.a2a_task.message_count',{count:messages.length}))+'</span></div><div class="a2a-task-messages" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+body+'</div>';
   };
 
@@ -683,7 +684,7 @@ function createWebRouter(handlers, db, opts={}){
     const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
     const agentId=String(req.params.agentId||''),principalDisplayId=String(req.params.principalDisplayId||'');
     const notFound=()=>res.status(404).send(renderPage(req,T('web.a2a_principal.title'),'<div class="card error">'+L('web.a2a_principal.not_found')+'</div>',{showTitle:false,footer:renderFooter(T,locale)}));
-    if(!ownsA2AAgent(agentId)||!/^ext-[0-9a-f]{8}$/i.test(principalDisplayId))return notFound();
+    if(!ownsA2AAgent(agentId)||!/^A2A-[0-9a-f]{8}$/i.test(principalDisplayId))return notFound();
     try{
       const rows=(await loadA2ATaskRows(agentId)).filter(row=>String(row.direction).toLowerCase()!=='outbound'&&String(row.principal_display_id||'')===principalDisplayId);
       if(!rows.length||!opts.a2aMailboxClient)return notFound();

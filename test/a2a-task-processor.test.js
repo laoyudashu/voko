@@ -34,6 +34,31 @@ test('known safety rejection produces a standard rejected event without unsafe b
   assert.equal(last.operation, 'rejected'); const envelope = JSON.parse(last.envelope_json);
   assert.equal(envelope.payload.reasonCode, 'explicit_prompt_injection'); assert.equal(JSON.stringify(envelope).includes('Ignore all'), false);
 });
+test('no-reply completion carries a control marker instead of sentinel text', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
+  const processor = new A2ATaskProcessor(store, { async execute() { return { content: '', noReply: true }; } }, identity);
+  await processor.process(request());
+  const last = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence DESC LIMIT 1').get();
+  assert.equal(last.operation, 'completed');
+  const payload = JSON.parse(last.envelope_json).payload;
+  assert.deepEqual(payload, { noReply: true });
+  assert.equal(JSON.stringify(payload).includes('NO_REPLY'), false);
+});
+test('interrupted execution is reported as unknown without re-running the Provider', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
+  const processor = new A2ATaskProcessor(store, { async execute() { assert.fail('must not execute during recovery'); } }, identity);
+  const incoming = request(); store.acceptCommand(incoming.eventId, incoming.gatewayTaskId, incoming.sequence, incoming.operation, incoming);
+  assert.equal(store.beginCommand(incoming.eventId), true);
+  processor.recoverInterrupted(incoming); store.finishCommand(incoming.eventId, 'processed');
+  processor.recoverInterrupted(incoming);
+  const last = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence DESC LIMIT 1').get();
+  assert.equal(last.operation, 'working');
+  assert.deepEqual(JSON.parse(last.envelope_json).payload, { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'LITE_RESTART_DURING_EXECUTION' });
+  const task = db.prepare("SELECT standard_state,delivery_state FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
+  assert.equal(task.standard_state, 'WORKING'); assert.equal(task.delivery_state, 'DELIVERY_UNKNOWN');
+  assert.equal(store.commandStatus(incoming.eventId), 'processed');
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM a2a_local_outbox WHERE gateway_task_id='task-1'").get().count, 1);
+});
 test('cancel control never starts Provider execution and reports unsupported safely', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate(); let executions = 0;
   store.updateState('task-1', 'WORKING', 'EXECUTING');

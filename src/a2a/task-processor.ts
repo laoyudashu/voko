@@ -21,6 +21,11 @@ class A2ATaskProcessor {
       this.identity.keyId, this.identity.privateKey);
     });
   }
+  recoverInterrupted(request: A2AEnvelope): void {
+    if (this.store.hasTerminalEvent(request.gatewayTaskId) || this.store.hasDeliveryUnknownEvent(request.gatewayTaskId)) return;
+    this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'LITE_RESTART_DURING_EXECUTION' },
+      'WORKING', 'DELIVERY_UNKNOWN');
+  }
   async process(request: A2AEnvelope): Promise<void> {
     if (request.kind === 'control' && request.operation === 'cancel') {
       const state = this.store.getTaskState(request.gatewayTaskId);
@@ -33,7 +38,7 @@ class A2ATaskProcessor {
     this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
     try {
       const result = await this.execution.execute(request);
-      this.event(request, 'completed', { text: result.content }, 'COMPLETED', 'DELIVERED');
+      this.event(request, 'completed', result.noReply ? { noReply: true } : { text: result.content }, 'COMPLETED', 'DELIVERED');
     } catch (error) {
       if (error instanceof A2ASafetyRejection) {
         this.event(request, 'rejected', { reasonCode: error.reasonCode }, 'REJECTED', 'DELIVERED');

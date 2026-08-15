@@ -21,6 +21,7 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(detailRoute, /renderFooter\(T,locale\)/);
   assert.match(source, /principal_display_id/);
   assert.match(source, /R\.get\('\/agents\/:agentId\/a2a\/:principalDisplayId'/);
+  assert.match(source, /\^A2A-\[0-9a-f\]\{8\}\$\/i/);
   assert.match(source, /web\.a2a_principal\.task_tab/);
   assert.match(source, /web\.a2a_principal\.conversation_title/);
   assert.match(source, /agentNav\(agentId,agent\?\.agentName\|\|agentId,T\)\+' › '\+esc\(principalDisplayId\)/);
@@ -31,6 +32,8 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /CONVERSATION_TAB_CSS/);
   assert.match(source, /renderA2ATaskConversation\(task,principalDisplayId,T\)/);
   assert.match(source, /web\.a2a_task\.no_content/);
+  assert.match(source, /web\.a2a_task\.no_reply/);
+  assert.match(source, /payload\.noReply===true/);
   assert.match(source, /type==='task_submitted'/);
   const route = source.match(/R\.get\('\/a2a-tasks'[\s\S]*?\n  \}\);/)[0];
   assert.match(source, /isolated from visitor conversations/); assert.doesNotMatch(route, /FROM messages|FROM conversations|INSERT INTO messages/);

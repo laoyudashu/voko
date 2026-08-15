@@ -58,6 +58,23 @@ class A2ALocalTaskStore {
   beginCommand(eventId: string): boolean {
     return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing' WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
   }
+  listProcessingCommands(): Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }> {
+    return this.db.prepare("SELECT event_id,gateway_task_id,envelope_json FROM a2a_local_inbox WHERE status='processing' ORDER BY received_at")
+      .all() as Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }>;
+  }
+  hasTerminalEvent(taskId: string): boolean {
+    const row = this.db.prepare("SELECT 1 AS found FROM a2a_local_outbox WHERE gateway_task_id=? AND operation IN ('completed','failed','rejected') LIMIT 1")
+      .get(taskId) as { found?: number } | undefined;
+    return row?.found === 1;
+  }
+  hasDeliveryUnknownEvent(taskId: string): boolean {
+    const rows = this.db.prepare("SELECT envelope_json FROM a2a_local_outbox WHERE gateway_task_id=? AND operation='working'")
+      .all(taskId) as Array<{ envelope_json?: string }>;
+    return rows.some((row) => {
+      try { return JSON.parse(String(row.envelope_json || '{}')).payload?.deliveryState === 'DELIVERY_UNKNOWN'; }
+      catch (_) { return false; }
+    });
+  }
   finishCommand(eventId: string, status: 'processed' | 'outcome_unknown', errorCode?: string): void {
     this.db.prepare('UPDATE a2a_local_inbox SET status=?,processed_at=?,error_code=?,envelope_json=CASE WHEN ?=\'processed\' THEN NULL ELSE envelope_json END WHERE event_id=?')
       .run(status, Date.now(), errorCode || null, status, eventId);

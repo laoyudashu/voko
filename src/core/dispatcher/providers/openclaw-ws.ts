@@ -1482,6 +1482,19 @@ class OpenClawWsProvider {
     return !!this.connected;
   }
 
+  /** Read-only probe used by strict A2A/owner routes before reusing a native session. */
+  async canRestoreExactSession(binding: any, agentId: string): Promise<boolean> {
+    if (!this.connected || !binding?.strictSessionRoute
+      || binding.providerType !== 'openclaw'
+      || binding.deliveryMode !== 'websocket'
+      || binding.adapterType !== 'openclaw-ws'
+      || !binding.nativeSessionId) return false;
+    const targetAgentId = this.getInstanceId(agentId);
+    const session = String(binding.nativeSessionId);
+    return binding.providerInstanceId === targetAgentId
+      && session.toLowerCase().startsWith(`agent:${String(targetAgentId).toLowerCase()}:`);
+  }
+
   getInstanceId(agentId: string): string {
     try {
       const row = this.db?.prepare(
