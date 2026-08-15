@@ -1723,7 +1723,8 @@ async function startMcpServer(args?: any, core?: any) {
           const { A2AMailboxClient } = require('./a2a');
           a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
         }
-        const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), mainDatabase: db, dispatcher });
+        const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), mainDatabase: db, dispatcher,
+          onError: (code: string) => console.error(`[A2A Bridge] ${code}`) });
         await taskManager.start('a2a-bridge', () => a2aRuntime.start());
       } catch (error: any) {
         console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
