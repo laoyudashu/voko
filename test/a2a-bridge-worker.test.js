@@ -28,3 +28,11 @@ test('claim identity mismatch fails before persistence or execution', async t =>
   const original = f.worker.options.verify; f.worker.options.verify = value => ({ ...original(value), eventId: 'forged' });
   await assert.rejects(() => f.worker.pollOnce(), /identity mismatch/);
 });
+
+test('A2A receive log is a single message-level summary', async t => {
+  const f = setup(t, async () => {}); const logs = []; const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try { await f.worker.pollOnce(); } finally { console.log = original; }
+  assert.deepEqual(logs, ['[A2A] 收到 A2A 消息']);
+  assert.doesNotMatch(logs.join('\n'), /payload|content|secret/i);
+});

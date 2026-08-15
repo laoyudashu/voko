@@ -16,13 +16,27 @@ class OwnerChatOutbox {
         if (Number(claim.changes||0)!==1) continue;
         try {
           const result=await this.deliver.deliver(row.local_agent_id,row.owner_im_uid,row.payload_json,'text',1,null,row.event_id);
-          if (result?.success) { this.db.prepare("UPDATE owner_chat_outbox SET status='sent',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(Date.now(),row.event_id,lease); sent++; }
+          if (result?.success) {
+            this.db.prepare("UPDATE owner_chat_outbox SET status='sent',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(Date.now(),row.event_id,lease); sent++;
+            this.logReplySent(row);
+          }
           else this.db.prepare("UPDATE owner_chat_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(result?.outcomeUnknown?'outcome_unknown':'pending',Date.now(),row.event_id,lease);
         } catch (error: any) { this.db.prepare("UPDATE owner_chat_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE event_id=? AND lease_owner=?").run(error?.outcomeUnknown?'outcome_unknown':'pending',Date.now(),row.event_id,lease); }
         this.onUpdate?.({ agentId: row.local_agent_id, conversationId: row.conversation_id });
       }
       return sent;
     } finally { this.running=false; }
+  }
+
+  private logReplySent(row: any): void {
+    let envelope: any;
+    try { envelope = JSON.parse(String(row.payload_json || '')); } catch (_) { return; }
+    if (envelope?.kind !== 'reply' || envelope?.operation !== 'reply') return;
+    const shorten = (value: unknown) => {
+      const text = String(value || '');
+      return text.length > 12 ? `${text.slice(0, 12)}...` : text;
+    };
+    console.log(`[Owner Chat] 回复消息: Agent=${row.local_agent_id} Conversation=${shorten(row.conversation_id)} Message=${shorten(row.message_id)} Type=${envelope.contentType || 1} Status=sent`);
   }
 }
 
