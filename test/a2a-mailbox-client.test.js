@@ -21,6 +21,14 @@ test('mailbox errors expose status but never the device token', async () => {
     fetchImpl: async () => ({ ok: false, status: 401 }) });
   await assert.rejects(() => client.claim(), error => error.status === 401 && !error.message.includes(token));
 });
+test('mailbox errors preserve safe machine codes used by retry classification', async () => {
+  const client = new A2AMailboxClient({ baseUrl: 'https://did.example/mailbox', token: 'x'.repeat(32),
+    fetchImpl: async () => ({ ok: false, status: 409, async json() {
+      return { error: { code: 'A2A_EVENT_SEQUENCE_GAP', expectedSequence: 2 } };
+    } }) });
+  await assert.rejects(() => client.sendEvent({}), error => error.status === 409
+    && error.code === 'A2A_EVENT_SEQUENCE_GAP' && error.expectedSequence === 2);
+});
 test('event reconciliation uses the authenticated mailbox endpoint', async () => {
   const calls = []; const client = new A2AMailboxClient({ baseUrl: 'https://did.example/mailbox', token: 'x'.repeat(32),
     fetchImpl: async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200,

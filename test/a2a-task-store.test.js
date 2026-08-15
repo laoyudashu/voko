@@ -59,3 +59,12 @@ test('later task events wait until the previous event is acknowledged', (t) => {
   store.finishOutboxEvent('event-1', 'acked');
   assert.deepEqual(store.claimEvents('worker').map(row => row.event_id), ['event-2']);
 });
+test('retrying an immutable outbox event uses bounded exponential backoff', (t) => {
+  const { db, store } = fixture(t);
+  store.enqueueEvent('event-retry', 'task-1', 1, 'working', {});
+  store.claimEvents('worker');
+  const before = Date.now(); store.retryOutboxEvent('event-retry', 'NETWORK_RETRY');
+  const row = db.prepare("SELECT status,next_attempt_at,last_error_code FROM a2a_local_outbox WHERE event_id='event-retry'").get();
+  assert.equal(row.status, 'pending'); assert.equal(row.last_error_code, 'NETWORK_RETRY');
+  assert.ok(row.next_attempt_at >= before + 900 && row.next_attempt_at <= before + 2_000);
+});

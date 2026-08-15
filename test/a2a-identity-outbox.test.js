@@ -17,21 +17,29 @@ test('event outbox marks successful delivery acked', async t => {
   assert.deepEqual(await worker.flushOnce('worker'), { sent: 1, uncertain: 0 });
   assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'acked');
 });
-test('unknown delivery result is quarantined and never automatically claimed again', async t => {
+test('event upload network failure retries the same immutable event without marking Provider outcome unknown', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-1', 'task-1', 1, 'working', { signed: true });
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw new Error('connection reset'); } });
-  assert.deepEqual(await worker.flushOnce('worker'), { sent: 0, uncertain: 1 });
-  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'outcome_unknown');
+  assert.deepEqual(await worker.flushOnce('worker'), { sent: 0, uncertain: 0 });
+  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-1'").get().status, 'pending');
   assert.deepEqual(store.claimEvents('other'), []);
 });
-test('sequence-gap conflict remains uncertain until durable server projection is observable', async t => {
+test('sequence-gap conflict is deferred for ordered event retry', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
   store.enqueueEvent('event-gap', 'task-1', 1, 'working', { signed: true });
-  const error = Object.assign(new Error('gap'), { status: 409 });
+  const error = Object.assign(new Error('gap'), { status: 409, code: 'A2A_EVENT_SEQUENCE_GAP', expectedSequence: 1 });
   const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw error; } });
   await worker.flushOnce('worker');
-  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-gap'").get().status, 'outcome_unknown');
+  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-gap'").get().status, 'pending');
+});
+test('canonical event payload conflict is dead-lettered instead of retried', async t => {
+  const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
+  store.enqueueEvent('event-conflict', 'task-1', 1, 'working', { signed: true });
+  const error = Object.assign(new Error('conflict'), { status: 409, code: 'A2A_EVENT_PAYLOAD_CONFLICT' });
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent() { throw error; } });
+  await worker.flushOnce('worker');
+  assert.equal(db.prepare("SELECT status FROM a2a_local_outbox WHERE event_id='event-conflict'").get().status, 'dead');
 });
 test('unknown event is acknowledged only after the Gateway confirms the same task', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });

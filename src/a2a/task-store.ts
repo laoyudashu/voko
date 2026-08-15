@@ -184,6 +184,15 @@ class A2ALocalTaskStore {
     this.db.prepare(`UPDATE a2a_local_outbox SET status=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code=?,updated_at=? WHERE event_id=?`)
       .run(status, errorCode || null, Date.now(), eventId);
   }
+  retryOutboxEvent(eventId: string, errorCode: string): void {
+    const row = this.db.prepare('SELECT attempt_count FROM a2a_local_outbox WHERE event_id=?')
+      .get(eventId) as { attempt_count?: number } | undefined;
+    const attempt = Math.max(1, Number(row?.attempt_count || 1));
+    const delay = Math.min(60_000, 1_000 * (2 ** Math.min(6, attempt - 1)));
+    this.db.prepare(`UPDATE a2a_local_outbox SET status='pending',lease_owner=NULL,lease_expires_at=NULL,
+      next_attempt_at=?,last_error_code=?,updated_at=? WHERE event_id=?`)
+      .run(Date.now() + delay, errorCode, Date.now(), eventId);
+  }
   saveOutboundResult(item: { taskId: string; sequence: number; payload: any }): boolean {
     const payload = item.payload || {}; const result = this.db.prepare(`INSERT INTO a2a_remote_task_results
       (gateway_task_id,result_sequence,standard_state,delivery_state,response_json,updated_at) VALUES (?,?,?,?,?,?)

@@ -23,17 +23,27 @@ class A2AMailboxClient {
     this.baseUrl = normalizeMailboxBaseUrl(options.baseUrl);
     this.token = options.token; this.fetchImpl = options.fetchImpl || fetch;
   }
+  private async responseError(response: Response): Promise<Error> {
+    let payload: any = null;
+    try { payload = await response.json(); } catch (_) {}
+    const error = new Error(`A2A Mailbox request failed (${response.status})`);
+    (error as any).status = response.status;
+    (error as any).code = typeof payload?.error?.code === 'string' ? payload.error.code : undefined;
+    (error as any).expectedSequence = Number.isSafeInteger(Number(payload?.error?.expectedSequence))
+      ? Number(payload.error.expectedSequence) : undefined;
+    return error;
+  }
   private async post(path: string, body: unknown): Promise<any> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, { method: 'POST',
       headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body), signal: AbortSignal.timeout(35_000) });
-    if (!response.ok) { const error = new Error(`A2A Mailbox request failed (${response.status})`); (error as any).status = response.status; throw error; }
+    if (!response.ok) throw await this.responseError(response);
     return response.json();
   }
   private async get(path: string): Promise<any> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, { method: 'GET',
       headers: { authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) { const error = new Error(`A2A Mailbox request failed (${response.status})`); (error as any).status = response.status; throw error; }
+    if (!response.ok) throw await this.responseError(response);
     return response.json();
   }
   async claim(limit = 20, agentStatuses: AgentAvailabilitySnapshot[] = []): Promise<MailboxClaim> {
