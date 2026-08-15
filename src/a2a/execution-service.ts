@@ -19,8 +19,11 @@ class A2AExecutionService {
     const principalScope = this.scopes.principalScope({ issuer: envelope.caller.issuer || 'agentdid',
       provenance: envelope.caller.provenance, principalId: envelope.caller.principalId });
     const sessionScopeId = this.scopes.sessionScope(envelope.agentId, principalScope, envelope.contextId);
+    const bindingGeneration = Number(envelope.bindingGeneration || 0);
+    if (!Number.isSafeInteger(bindingGeneration) || bindingGeneration < 1)
+      throw new Error('A2A_BINDING_GENERATION_REQUIRED');
     const context = this.store.getContext(envelope.agentId, principalScope, envelope.contextId,
-      this.scopes.version, this.scopes.keyId);
+      this.scopes.version, this.scopes.keyId, bindingGeneration);
     const binding = context?.native_session_id ? { id: `a2a:${sessionScopeId}`, bindingVersion: context.binding_generation,
       providerType: context.provider_family, providerInstanceId: context.provider_instance_id,
       deliveryMode: context.delivery_mode, adapterType: context.adapter_type,
@@ -35,7 +38,7 @@ class A2AExecutionService {
     try {
       result = await this.dispatcher.executeIsolated({ agentId: envelope.agentId, taskId: envelope.gatewayTaskId,
         contextId: envelope.contextId, content, binding, executionScope: 'a2a_mailbox', sessionScopeId,
-        principalScope, bindingGeneration: Number(envelope.bindingGeneration || 1), protocolContextId: envelope.contextId,
+        principalScope, bindingGeneration, protocolContextId: envelope.contextId,
         onProviderAccepted: () => { accepted = true; this.store.markLeaseAccepted(sessionScopeId, leaseToken); } });
     } catch (error: any) {
       if (!accepted && error?.deliveryOutcome === 'not_delivered') this.store.releaseSessionLease(sessionScopeId, leaseToken);
@@ -48,7 +51,7 @@ class A2AExecutionService {
       const transport = getProviderTransport(provider.providerId || deliveryReceipt.adapterType || binding?.adapterType);
       this.store.saveContext({ agentId: envelope.agentId, principalScope, contextId: envelope.contextId,
       sessionScopeId, scopeVersion: this.scopes.version, scopeKeyId: this.scopes.keyId,
-      bindingGeneration: Number(envelope.bindingGeneration || 1), providerFamily,
+      bindingGeneration, providerFamily,
       providerInstanceId: deliveryReceipt.providerInstanceId || binding?.providerInstanceId,
       deliveryMode: provider.deliveryMode || deliveryReceipt.deliveryMode || binding?.deliveryMode,
       adapterType: provider.providerId || deliveryReceipt.adapterType || binding?.adapterType,

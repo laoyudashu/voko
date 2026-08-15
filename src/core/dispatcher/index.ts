@@ -1087,6 +1087,13 @@ ${body}
             }
           }
           const selectedBinding = _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute);
+          if (executionScope === 'a2a_mailbox' && selectedBinding
+            && Number(selectedBinding.bindingVersion) !== Number((payload as any).bindingGeneration)) {
+            const error = new Error('A2A Provider binding generation is stale');
+            (error as any).deliveryOutcome = 'not_delivered';
+            (error as any).code = 'A2A_BINDING_GENERATION_MISMATCH';
+            throw error;
+          }
           if (baseProviderPayload.providerBinding?.strictSessionRoute && !selectedBinding) {
             const error = new Error('Provider cannot restore the precise session');
             (error as any).deliveryOutcome = 'not_delivered';

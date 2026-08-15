@@ -38,6 +38,16 @@ test('A2A exact routing rejects an incompatible native session namespace without
     error=>['not_delivered','outcome_unknown'].includes(error.deliveryOutcome));
   assert.equal(provider.payload,undefined);
 });
+test('A2A exact routing rejects a stale binding generation before Provider execution',async()=>{
+  const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const binding={id:'a2a-binding',bindingVersion:1,providerType:'codex',providerInstanceId:null,deliveryMode:'cli',adapterType:'codex-cli',
+    nativeSessionId:'native-old',nativeSessionNamespace:'codex-cli',restoreCompatibilityGroup:'codex-cli',sessionOrigin:'voko_managed',
+    channelId:'session-scope-1',channelType:1,sourceScope:'a2a',strictSessionRoute:true};
+  await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'ctx',content:'x',binding,
+    executionScope:'a2a_mailbox',principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'ctx',bindingGeneration:2}),
+    error=>['not_delivered','outcome_unknown'].includes(error.deliveryOutcome));
+  assert.equal(provider.payload,undefined);
+});
 
 test('trusted Owner execution uses owner security context and an exact transport without fallback', async () => {
   const primary = new Provider(); const fallback = new Provider();

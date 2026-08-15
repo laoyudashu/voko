@@ -43,6 +43,16 @@ test('different principals using the same context never share a binding or sessi
   const rows=db.prepare("SELECT principal_scope,session_scope_id,native_session_id FROM a2a_local_contexts WHERE context_id='shared-context'").all();
   assert.equal(rows.length,2);assert.notEqual(rows[0].native_session_id,rows[1].native_session_id);
 });
+test('a binding generation change fails closed before Provider execution', async t => {
+  const { store, scopes } = setup(t); let calls = 0;
+  const service = new A2AExecutionService(store, { async executeIsolated(options) { calls += 1; options.onProviderAccepted?.({});
+    return { reply: { content: 'ok' }, receipt: { deliveryReceipt: { nativeSessionId: 'native-generation-1' },
+      provider: { providerId: 'codex-cli', providerType: 'codex', deliveryMode: 'cli' } } }; } }, undefined, undefined, scopes);
+  await service.execute(envelope('task-1'));
+  const changed = envelope('task-2'); changed.bindingGeneration = 2;
+  await assert.rejects(() => service.execute(changed), /BINDING_GENERATION_MISMATCH/);
+  assert.equal(calls, 1);
+});
 test('tasks sharing one principal context execute one Provider turn at a time', async t => {
   const {store,scopes}=setup(t);let release;const gate=new Promise(resolve=>{release=resolve});let calls=0;
   const service=new A2AExecutionService(store,{async executeIsolated(options){calls+=1;options.onProviderAccepted?.({});await gate;return {reply:{content:'ok'},receipt:{deliveryReceipt:{nativeSessionId:'native-serial'},provider:{providerId:'codex-cli',providerType:'codex',deliveryMode:'cli'}}}}},undefined,undefined,scopes);

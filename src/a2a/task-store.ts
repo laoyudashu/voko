@@ -22,11 +22,15 @@ class A2ALocalTaskStore {
       input.ownerEpoch || 1, input.policyRevision || 1, now, now);
     return Number(result.changes) === 1;
   }
-  getContext(agentId: string, principalScope: string, contextId: string, scopeVersion: number, scopeKeyId: string): Record<string, any> | null {
+  getContext(agentId: string, principalScope: string, contextId: string, scopeVersion: number, scopeKeyId: string,
+    bindingGeneration?: number): Record<string, any> | null {
     if (!principalScope || !scopeKeyId) throw new Error('A2A_PRINCIPAL_SCOPE_REQUIRED');
-    return (this.db.prepare(`SELECT * FROM a2a_local_contexts
+    const row = (this.db.prepare(`SELECT * FROM a2a_local_contexts
       WHERE agent_id=? AND principal_scope=? AND context_id=? AND scope_version=? AND scope_key_id=? AND status='active'`)
       .get(agentId, principalScope, contextId, scopeVersion, scopeKeyId) as Record<string, any> | undefined) || null;
+    if (row && bindingGeneration !== undefined && Number(row.binding_generation) !== bindingGeneration)
+      throw new Error('A2A_BINDING_GENERATION_MISMATCH');
+    return row;
   }
   saveContext(input: { agentId: string; principalScope: string; contextId: string; sessionScopeId: string;
     scopeVersion: number; scopeKeyId: string; bindingGeneration: number; providerFamily: string;
