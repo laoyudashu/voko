@@ -6,7 +6,7 @@ const { canonicalJson, signEnvelope, validateEnvelope, verifyEnvelope } = requir
 
 const now = Date.now();
 function envelope() { return { version: 'voko.a2a/1', kind: 'request', operation: 'execute', eventId: 'evt-1',
-  gatewayTaskId: 'task-1', contextId: 'ctx-1', gatewayMessageId: 'msg-1', executionId: 'exec-1', sequence: 1,
+  gatewayTaskId: 'task-1', contextId: 'ctx-1', gatewayMessageId: 'msg-1', executionId: 'exec-1', commandSequence: 1,
   agentId: 'agent-1', caller: { principalId: 'p-1', actorKind: 'agent', provenance: 'registered' },
   payload: { text: 'hello' }, trace: { correlationId: 'trace-1' }, timestamps: {
     createdAt: new Date(now - 1_000).toISOString(), expiresAt: new Date(now + 300_000).toISOString() } }; }
@@ -16,7 +16,14 @@ test('Ed25519 signature detects envelope tampering', () => {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const signed = signEnvelope(envelope(), 'gateway-key-1', privateKey);
   assert.equal(verifyEnvelope(signed, publicKey, { now }), true);
-  assert.equal(verifyEnvelope({ ...signed, sequence: 2 }, publicKey, { now }), false);
+  assert.equal(verifyEnvelope({ ...signed, commandSequence: 2 }, publicKey, { now }), false);
+});
+test('event envelopes require a producer identity, epoch and scoped sequence', () => {
+  const event = { ...envelope(), kind: 'event', operation: 'working', commandSequence: undefined,
+    producerId: 'producer-1', producerEpoch: 'epoch-1', producerSequence: 1 };
+  assert.equal(validateEnvelope(event, { now }).producerSequence, 1);
+  assert.throws(() => validateEnvelope({ ...event, producerEpoch: undefined }, { now }), /producer sequence/);
+  assert.throws(() => validateEnvelope({ ...envelope(), sequence: 1 }, { now }), /Legacy/);
 });
 test('expired and oversized-lifetime envelopes fail closed', () => {
   assert.throws(() => validateEnvelope(envelope(), { now: now + 300_001 }), /Expired/);

@@ -5,7 +5,7 @@ const { A2ABridgeWorker, A2ALocalTaskStore, A2AScopeResolver, initA2ADatabase } 
 function setup(t, execute) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-bridge-')); const db = initA2ADatabase(path.join(dir, 'a.db'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
-  const envelope = { eventId: 'event-1', gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', sequence: 1, operation: 'execute', caller:{principalId:'principal-1',actorKind:'agent',provenance:'guest_a2a'} };
+  const envelope = { eventId: 'event-1', gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', commandSequence: 1, operation: 'execute', caller:{principalId:'principal-1',actorKind:'agent',provenance:'guest_a2a'} };
   const acknowledgements = []; const client = { async claim() { return { leaseId: 'lease-1', items: [{ eventId: 'event-1', taskId: 'task-1', envelope }] }; },
     async acknowledge(lease, event) { acknowledgements.push([lease, event]); } };
   return { worker: new A2ABridgeWorker({ client, store: new A2ALocalTaskStore(db), scopes:new A2AScopeResolver(db), verify: value => value, execute }), store: new A2ALocalTaskStore(db), acknowledgements };

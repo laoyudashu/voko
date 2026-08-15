@@ -7,7 +7,7 @@ function setup(t) { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-proce
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }); const store = new A2ALocalTaskStore(db);
   store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' }); return { db, store }; }
 function request() { const now = Date.now(); return { version: 'voko.a2a/1', kind: 'request', operation: 'execute', eventId: 'request-1',
-  gatewayTaskId: 'task-1', contextId: 'ctx-1', gatewayMessageId: 'message-1', executionId: 'exec-1', sequence: 1,
+  gatewayTaskId: 'task-1', contextId: 'ctx-1', gatewayMessageId: 'message-1', executionId: 'exec-1', commandSequence: 1,
   agentId: 'agent-1', caller: {principalId:'principal-1',actorKind:'agent',provenance:'guest_a2a'}, payload: { text: 'hello' }, trace: { correlationId: 'trace-1' },
   timestamps: { createdAt: new Date(now - 1000).toISOString(), expiresAt: new Date(now + 300000).toISOString() } }; }
 test('processor atomically queues signed accepted and completed events', async t => {
@@ -47,7 +47,7 @@ test('no-reply completion carries a control marker instead of sentinel text', as
 test('interrupted execution is reported as unknown without re-running the Provider', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
   const processor = new A2ATaskProcessor(store, { async execute() { assert.fail('must not execute during recovery'); } }, identity);
-  const incoming = request(); store.acceptCommand(incoming.eventId, incoming.gatewayTaskId, incoming.sequence, incoming.operation, incoming);
+  const incoming = request(); store.acceptCommand(incoming.eventId, incoming.gatewayTaskId, incoming.commandSequence, incoming.operation, incoming);
   assert.equal(store.beginCommand(incoming.eventId), true);
   processor.recoverInterrupted(incoming); store.finishCommand(incoming.eventId, 'processed');
   processor.recoverInterrupted(incoming);
@@ -63,7 +63,7 @@ test('cancel control never starts Provider execution and reports unsupported saf
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate(); let executions = 0;
   store.updateState('task-1', 'WORKING', 'EXECUTING');
   const processor = new A2ATaskProcessor(store, { async execute() { executions += 1; return { content: 'wrong' }; } }, identity);
-  const control = { ...request(), kind: 'control', operation: 'cancel', eventId: 'cancel-1', sequence: 2 };
+  const control = { ...request(), kind: 'control', operation: 'cancel', eventId: 'cancel-1', commandSequence: 2 };
   await processor.process(control);
   const last = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence DESC LIMIT 1').get();
   assert.equal(executions, 0); assert.equal(last.operation, 'cancel_ack');

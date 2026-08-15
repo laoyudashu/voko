@@ -37,7 +37,8 @@ class A2ABridgeWorker {
         principalScope, scopeVersion: this.options.scopes.version, scopeKeyId: this.options.scopes.keyId,
         bindingGeneration: Number((envelope as any).bindingGeneration || 1), ownerEpoch: Number((envelope as any).ownerEpoch || 1),
         policyRevision: Number((envelope as any).policyRevision || 1) });
-      const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId, envelope.sequence, envelope.operation, envelope);
+      const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId,
+        Number(envelope.commandSequence), envelope.operation, envelope);
       if (accepted !== 'duplicate') console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] 收到 A2A 消息`);
       await this.options.client.acknowledge(claim.leaseId, item.eventId);
       this.options.store.markReceiptAcknowledged(envelope.eventId);

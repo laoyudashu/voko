@@ -51,9 +51,9 @@ test('unknown event is acknowledged only after the Gateway confirms the same tas
 });
 test('drain sends ordered task events before returning to long polling', async t => {
   const { store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
-  store.enqueueEvent('event-1', 'task-1', 1, 'accepted', { sequence: 1 }); store.enqueueEvent('event-2', 'task-1', 2, 'working', { sequence: 2 });
-  store.enqueueEvent('event-3', 'task-1', 3, 'completed', { sequence: 3 }); const sent = [];
-  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent(event) { sent.push(event.sequence); return { status: 'accepted' }; } });
+  store.enqueueEvent('event-1', 'task-1', 1, 'accepted', { producerSequence: 1 }); store.enqueueEvent('event-2', 'task-1', 2, 'working', { producerSequence: 2 });
+  store.enqueueEvent('event-3', 'task-1', 3, 'completed', { producerSequence: 3 }); const sent = [];
+  const worker = new A2AEventOutboxWorker(store, { async findEvent() { return { found: false }; }, async sendEvent(event) { sent.push(event.producerSequence); return { status: 'accepted' }; } });
   assert.deepEqual(await worker.drain('worker'), { sent: 3, uncertain: 0 }); assert.deepEqual(sent, [1, 2, 3]);
 });
 

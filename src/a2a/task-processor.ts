@@ -14,7 +14,8 @@ class A2ATaskProcessor {
       const createdAt = new Date();
       return signEnvelope({ version: 'voko.a2a/1', kind: 'event', operation, eventId,
         gatewayTaskId: request.gatewayTaskId, contextId: request.contextId,
-        gatewayMessageId: request.gatewayMessageId, executionId: request.executionId, sequence,
+        gatewayMessageId: request.gatewayMessageId, executionId: request.executionId,
+        producerId: this.identity.producerId, producerEpoch: this.identity.producerEpoch, producerSequence: sequence,
         agentId: request.agentId, caller: { principalId: request.agentId, actorKind: 'agent', provenance: 'registered' },
         payload, trace: request.trace, timestamps: { createdAt: createdAt.toISOString(),
           expiresAt: new Date(createdAt.getTime() + 3_600_000).toISOString() } } as A2AEnvelope,
