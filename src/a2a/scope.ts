@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { A2ASecretStore } from './secret-store';
 
 const SCOPE_VERSION = 1;
 
@@ -16,25 +16,21 @@ function encodeParts(parts: string[]): Buffer {
   return Buffer.concat(chunks);
 }
 
-function databasePath(db: DatabaseSync): string {
-  const rows = db.prepare('PRAGMA database_list').all() as Array<{ name: string; file: string }>;
-  const file = rows.find(row => row.name === 'main')?.file;
-  if (!file) throw new Error('A2A_SCOPE_DATABASE_PATH_UNAVAILABLE');
-  return path.resolve(file);
-}
-
 function loadOrCreateScopeKey(db: DatabaseSync): { key: Buffer; keyId: string; version: number } {
-  const keyPath = `${databasePath(db)}.scope-key-v1`;
-  let key: Buffer;
-  try {
-    key = Buffer.from(fs.readFileSync(keyPath, 'utf8').trim(), 'base64');
-  } catch (error: any) {
-    if (error?.code !== 'ENOENT') throw error;
-    key = crypto.randomBytes(32);
-    fs.writeFileSync(keyPath, key.toString('base64'), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  const secrets = new A2ASecretStore(db); const secretName = 'a2a-scope-hmac-v1.key';
+  let key = secrets.read(secretName);
+  const rows = db.prepare('PRAGMA database_list').all() as Array<{ name: string; file: string }>;
+  const legacyPath = `${rows.find(row => row.name === 'main')?.file}.scope-key-v1`;
+  if (!key && legacyPath && fs.existsSync(legacyPath)) {
+    key = Buffer.from(fs.readFileSync(legacyPath, 'utf8').trim(), 'base64');
+    secrets.create(secretName, key); fs.unlinkSync(legacyPath);
+  }
+  if (!key) {
+    const recorded = db.prepare("SELECT value FROM a2a_meta WHERE key='scope_key_id_v1'").get();
+    if (recorded) throw new Error('A2A_SCOPE_KEY_MISSING');
+    key = crypto.randomBytes(32); secrets.create(secretName, key);
   }
   if (key.length !== 32) throw new Error('A2A_SCOPE_KEY_INVALID');
-  try { fs.chmodSync(keyPath, 0o600); } catch (_) {}
   return { key, keyId: crypto.createHash('sha256').update(key).digest('hex').slice(0, 16), version: SCOPE_VERSION };
 }
 

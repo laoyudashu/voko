@@ -11,6 +11,7 @@ export { A2ABridgeWorker } from './bridge-worker';
 export type { A2ABridgeWorkerOptions } from './bridge-worker';
 export { A2AExecutionService } from './execution-service';
 export { A2AIdentityStore } from './identity-store';
+export { A2ASecretStore } from './secret-store';
 export type { A2ALocalIdentity } from './identity-store';
 export { A2AEventOutboxWorker } from './event-outbox-worker';
 export { A2ATaskProcessor } from './task-processor';
