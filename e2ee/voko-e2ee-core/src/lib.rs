@@ -37,7 +37,7 @@ pub use group_policy::{
     EncryptedGroupContent, GroupOperation, GroupOperationMetadata, GroupPolicyError, GroupRole,
 };
 pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
-pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
+pub use key_package::{KeyPackageLedger, KeyPackageLedgerError, KeyPackageReplenishmentPolicy};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
 pub use mls::{
     DirectCreatorEndpoint, DirectGroup, DirectGroupError, DirectGroupPair, DirectRecipientEndpoint,

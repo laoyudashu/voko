@@ -16,6 +16,33 @@ pub enum KeyPackageLedgerError {
     EmptyGroup,
     #[error("serialized key package is empty")]
     EmptyKeyPackage,
+    #[error("invalid key package replenishment policy")]
+    InvalidReplenishmentPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyPackageReplenishmentPolicy {
+    pub low_watermark: usize,
+    pub target: usize,
+    pub max_per_idle_cycle: usize,
+}
+
+impl KeyPackageReplenishmentPolicy {
+    pub fn new(low_watermark: usize, target: usize, max_per_idle_cycle: usize) -> Result<Self, KeyPackageLedgerError> {
+        if low_watermark == 0 || target < low_watermark || max_per_idle_cycle == 0 {
+            return Err(KeyPackageLedgerError::InvalidReplenishmentPolicy);
+        }
+        Ok(Self { low_watermark, target, max_per_idle_cycle })
+    }
+
+    /// Returns bounded work for an idle cycle. Key generation is never
+    /// scheduled on the message send path and in-flight work counts toward the
+    /// target so concurrent workers cannot create an unbounded burst.
+    pub fn plan(&self, available: usize, in_flight: usize, idle: bool) -> usize {
+        let total = available.saturating_add(in_flight);
+        if !idle || total >= self.low_watermark { return 0; }
+        self.target.saturating_sub(total).min(self.max_per_idle_cycle)
+    }
 }
 
 impl KeyPackageLedger {
@@ -55,5 +82,16 @@ mod tests {
             ledger.consume(b"key-package", b"group-b"),
             Err(KeyPackageLedgerError::Reused)
         );
+    }
+
+    #[test]
+    fn replenishment_is_idle_only_and_bounded_per_cycle() {
+        let policy = KeyPackageReplenishmentPolicy::new(4, 12, 3).unwrap();
+        assert_eq!(policy.plan(3, 0, false), 0);
+        assert_eq!(policy.plan(4, 0, true), 0);
+        assert_eq!(policy.plan(1, 0, true), 3);
+        assert_eq!(policy.plan(1, 8, true), 0);
+        assert_eq!(policy.plan(0, usize::MAX, true), 0);
+        assert_eq!(KeyPackageReplenishmentPolicy::new(0, 1, 1), Err(KeyPackageLedgerError::InvalidReplenishmentPolicy));
     }
 }

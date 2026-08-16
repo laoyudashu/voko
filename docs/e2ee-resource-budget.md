@@ -18,6 +18,7 @@ These are engineering gates, not measured production claims. PoC reports must re
 - Heartbeats, SENDACK and WebSocket control traffic never wait behind the crypto work queue.
 - Offline ciphertext is paged, grouped by conversation, serialized within a group and processed with bounded inter-group parallelism.
 - KeyPackages replenish at an idle-time low-water mark and never in an unbounded burst on the send path.
+- Replenishment planning counts in-flight generation toward the target and caps every idle cycle; a saturated counter fails to zero work rather than wrapping into a burst.
 - Attachments use 1 MiB chunks by default, a reusable buffer pool and at most two concurrent uploads and two downloads. Peak memory must scale with chunk size and concurrency, not file size.
 
 ## Required benchmarks
