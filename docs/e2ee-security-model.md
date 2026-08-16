@@ -82,6 +82,8 @@ For group messages, the minimum operation metadata is visible but authenticated:
 - User-selected reporting or email forwarding must warn that selected plaintext leaves the E2EE boundary.
 - Ordinary A2A remains TLS transport protection. A future `voko.a2a.e2ee/1` is an explicit, non-downgrading extension with its own review.
 
+The isolated `voko.a2a.e2ee/1` contract now requires bilateral Agent Card capability negotiation. A required encrypted task fails if either side lacks support; it never falls back to ordinary A2A. A separately authenticated root secret derives distinct context/task keys with HKDF-SHA-256, binding sender DID, recipient DID, context ID and task ID into both derivation and AEAD associated data. DID signatures authenticate the key agreement but are not reused as encryption keys. This contract remains isolated from the production A2A mailbox pending its own protocol audit.
+
 ## Production gate
 
 Production integration is forbidden until the independent PoC proves credentials, one-time KeyPackages, Commit acceptance, Welcome acknowledgement, bidirectional text, restart recovery, duplicate/reordered input, single-writer persistence and the resource budgets in [e2ee-resource-budget.md](e2ee-resource-budget.md).

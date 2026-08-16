@@ -2602,6 +2602,7 @@ dependencies = [
  "base64",
  "criterion",
  "getrandom 0.2.17",
+ "hkdf",
  "keyring",
  "openmls",
  "openmls_basic_credential",

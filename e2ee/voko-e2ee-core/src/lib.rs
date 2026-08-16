@@ -1,6 +1,7 @@
 //! Experimental, network-free E2EE core. This crate is not wired into the
 //! production VOKO message path.
 
+mod a2a;
 mod aad;
 mod attachment;
 mod envelope;
@@ -20,6 +21,10 @@ mod state_cache;
 mod system_key;
 mod vault;
 
+pub use a2a::{
+    negotiate as negotiate_a2a_e2ee, A2aContextKey, A2aE2eeError, A2aE2eeNegotiation,
+    A2aE2eeRequirement, A2aKeyScope, A2A_E2EE_PROTOCOL,
+};
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
 pub use attachment::{
     AttachmentError, AttachmentKey, EncryptedAttachment, ATTACHMENT_CHUNK_BYTES,
