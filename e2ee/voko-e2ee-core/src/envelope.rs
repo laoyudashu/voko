@@ -6,6 +6,7 @@ use crate::{CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
 
 pub const MAX_TEXT_CIPHERTEXT_BYTES: usize = 256 * 1024;
 const MAX_ROUTING_FIELD_BYTES: usize = 1024;
+pub const MAX_WIRE_ENVELOPE_BYTES: usize = MAX_TEXT_CIPHERTEXT_BYTES * 2 + 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -24,6 +25,8 @@ pub struct WireEnvelope {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EnvelopeError {
+    #[error("malformed or oversized E2EE envelope")]
+    Malformed,
     #[error("unsupported E2EE envelope version or content type")]
     Unsupported,
     #[error("invalid E2EE routing field: {0}")]
@@ -35,6 +38,15 @@ pub enum EnvelopeError {
 }
 
 impl WireEnvelope {
+    pub fn from_json_bounded(input: &[u8]) -> Result<Self, EnvelopeError> {
+        if input.is_empty() || input.len() > MAX_WIRE_ENVELOPE_BYTES {
+            return Err(EnvelopeError::Malformed);
+        }
+        let envelope: Self = serde_json::from_slice(input).map_err(|_| EnvelopeError::Malformed)?;
+        envelope.validate()?;
+        Ok(envelope)
+    }
+
     pub fn new(aad: &CanonicalAad, ciphertext: &[u8]) -> Result<Self, EnvelopeError> {
         let envelope = Self {
             version: "voko.e2ee/1".into(),
@@ -150,5 +162,31 @@ mod tests {
         let mut envelope = WireEnvelope::new(&aad(), b"ciphertext").unwrap();
         envelope.ciphertext = "A".repeat(MAX_TEXT_CIPHERTEXT_BYTES * 2 + 1);
         assert_eq!(envelope.validate(), Err(EnvelopeError::CiphertextTooLarge));
+    }
+
+    #[test]
+    fn bounded_parser_rejects_oversized_and_mutated_json_without_bypassing_validation() {
+        let valid = serde_json::to_vec(&WireEnvelope::new(&aad(), b"ciphertext").unwrap()).unwrap();
+        assert_eq!(WireEnvelope::from_json_bounded(&valid).unwrap().ciphertext_bytes().unwrap(), b"ciphertext");
+        assert_eq!(
+            WireEnvelope::from_json_bounded(&vec![b' '; MAX_WIRE_ENVELOPE_BYTES + 1]),
+            Err(EnvelopeError::Malformed),
+        );
+
+        let mut state = 0x7a5b_3c19_u32;
+        for iteration in 0..10_000_u32 {
+            let mut mutated = valid.clone();
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let index = state as usize % mutated.len();
+            mutated[index] ^= (iteration as u8).wrapping_add(1);
+            if let Ok(envelope) = WireEnvelope::from_json_bounded(&mutated) {
+                assert_eq!(envelope.version, "voko.e2ee/1");
+                assert_eq!(envelope.content_type, E2EE_CONTENT_TYPE);
+                assert_eq!(envelope.channel_type, 1);
+                assert!(!envelope.ciphertext_bytes().unwrap().is_empty());
+            }
+        }
     }
 }

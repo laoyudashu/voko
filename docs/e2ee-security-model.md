@@ -56,6 +56,8 @@ The creator starts a one-member RFC 9420 group, adds the recipient KeyPackage, p
 
 Outer routing is not a security boundary. Canonical binary authenticated data uses fixed field order and length-prefixed byte strings and binds protocol version, content type, group ID, epoch, target Agent DID, conversation scope, sender device key ID, message ID and channel type. Stable internal user IDs are replaced by opaque key or principal IDs. The receiver compares every outer field with authenticated data before accepting plaintext.
 
+The core exposes one bounded JSON entry point for the outer envelope. It rejects an empty or oversized body before deserialization, denies unknown fields, then validates the protocol version, content type, channel, routing-field limits and base64 ciphertext size. Deterministic mutation coverage verifies malformed inputs fail closed without panics or acceptance outside those invariants. HTTP and IM hosts must still enforce their own smaller request or frame limits before calling the core parser.
+
 All envelope fields have explicit size and nesting limits. A parsing, identity, epoch or decryption failure is rejected before the ordinary visitor path; it never falls back to plaintext.
 
 ## Atomicity and recovery

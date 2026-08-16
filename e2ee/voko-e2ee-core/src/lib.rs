@@ -32,7 +32,9 @@ pub use attachment::{
     encrypt_attachment_stream, AttachmentError, AttachmentKey, EncryptedAttachment,
     StreamingAttachmentManifest, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES,
 };
-pub use envelope::{EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES};
+pub use envelope::{
+    EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES, MAX_WIRE_ENVELOPE_BYTES,
+};
 pub use group_policy::{
     EncryptedGroupContent, GroupOperation, GroupOperationMetadata, GroupPolicyError, GroupRole,
 };
