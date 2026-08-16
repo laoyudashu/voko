@@ -2,6 +2,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryKeyEntry {
@@ -102,12 +103,30 @@ impl TransparencyLog {
 
 impl TransparencyWitness {
     pub fn new() -> Self {
+        Self::provision().0
+    }
+
+    /// Provisioning returns the seed once so an independent operator can put
+    /// it directly into an HSM or OS credential store. Prefix state is public
+    /// and persisted separately; the witness API never exports the seed later.
+    pub fn provision() -> (Self, Zeroizing<[u8; 32]>) {
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        Self {
-            signer: SigningKey::from_bytes(&seed),
-            observed_leaves: Vec::new(),
-        }
+        let persisted = Zeroizing::new(seed);
+        (Self { signer: SigningKey::from_bytes(&persisted), observed_leaves: Vec::new() }, persisted)
+    }
+
+    pub fn restore(signing_seed: &[u8], observed_leaves: Vec<[u8; 32]>) -> Result<Self, TransparencyError> {
+        let seed: &[u8; 32] = signing_seed.try_into().map_err(|_| TransparencyError::InvalidProof)?;
+        Ok(Self { signer: SigningKey::from_bytes(seed), observed_leaves })
+    }
+
+    pub fn witness_key(&self) -> [u8; 32] {
+        self.signer.verifying_key().to_bytes()
+    }
+
+    pub fn observed_prefix(&self) -> &[[u8; 32]] {
+        &self.observed_leaves
     }
 
     pub fn observe(
@@ -264,5 +283,24 @@ mod tests {
         let mut fork = TransparencyLog::new();
         fork.append(&entry(9)).unwrap();
         assert_eq!(witness.observe(&fork), Err(TransparencyError::SplitView));
+    }
+
+    #[test]
+    fn independently_persisted_witness_keeps_key_and_split_view_memory() {
+        let (mut witness, seed) = TransparencyWitness::provision();
+        let key = witness.witness_key();
+        let mut original = TransparencyLog::new();
+        original.append(&entry(1)).unwrap();
+        witness.observe(&original).unwrap();
+        let prefix = witness.observed_prefix().to_vec();
+
+        let mut restored = TransparencyWitness::restore(seed.as_ref(), prefix).unwrap();
+        assert_eq!(restored.witness_key(), key);
+        original.append(&entry(2)).unwrap();
+        assert_eq!(restored.observe(&original).unwrap().witness_key, key);
+
+        let mut fork = TransparencyLog::new();
+        fork.append(&entry(9)).unwrap();
+        assert_eq!(restored.observe(&fork), Err(TransparencyError::SplitView));
     }
 }
