@@ -378,10 +378,63 @@ impl DirectGroup {
             .map_err(|error| DirectGroupError::Mls(format!("serialize self update: {error:?}")))
     }
 
+    pub fn prepare_add_member(
+        &mut self,
+        serialized_key_package: &[u8],
+    ) -> Result<PreparedDirectAdd, DirectGroupError> {
+        let package = KeyPackageIn::tls_deserialize_exact(serialized_key_package)
+            .map_err(|error| DirectGroupError::Mls(format!("parse KeyPackage: {error:?}")))?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|error| DirectGroupError::Mls(format!("validate KeyPackage: {error:?}")))?;
+        let (commit, welcome, _) = self
+            .group
+            .add_members(&self.provider, &self.signer, &[package])
+            .map_err(|error| DirectGroupError::Mls(format!("add member: {error:?}")))?;
+        Ok(PreparedDirectAdd {
+            commit: commit.tls_serialize_detached().map_err(|error| {
+                DirectGroupError::Mls(format!("serialize Add Commit: {error:?}"))
+            })?,
+            welcome: welcome
+                .tls_serialize_detached()
+                .map_err(|error| DirectGroupError::Mls(format!("serialize Welcome: {error:?}")))?,
+        })
+    }
+
+    pub fn prepare_remove_device(
+        &mut self,
+        device_key_id: &[u8],
+    ) -> Result<Vec<u8>, DirectGroupError> {
+        let member = self
+            .group
+            .members()
+            .find_map(|member| {
+                let basic: BasicCredential = member.credential.try_into().ok()?;
+                let identity = DeviceCredentialIdentity::decode(basic.identity()).ok()?;
+                (identity.device_key_id == device_key_id).then_some(member.index)
+            })
+            .ok_or_else(|| DirectGroupError::Mls("device is not a group member".into()))?;
+        let (commit, welcome, _) = self
+            .group
+            .remove_members(&self.provider, &self.signer, &[member])
+            .map_err(|error| DirectGroupError::Mls(format!("remove member: {error:?}")))?;
+        if welcome.is_some() {
+            return Err(DirectGroupError::Mls(
+                "unexpected Welcome while removing member".into(),
+            ));
+        }
+        commit
+            .tls_serialize_detached()
+            .map_err(|error| DirectGroupError::Mls(format!("serialize Remove Commit: {error:?}")))
+    }
+
     pub fn accept_pending_self_update(&mut self) -> Result<(), DirectGroupError> {
         self.group
             .merge_pending_commit(&self.provider)
             .map_err(|error| DirectGroupError::Mls(format!("merge self update: {error:?}")))
+    }
+
+    pub fn accept_pending_commit(&mut self) -> Result<(), DirectGroupError> {
+        self.accept_pending_self_update()
     }
 
     pub fn apply_self_update(&mut self, commit: &[u8]) -> Result<(), DirectGroupError> {
@@ -401,6 +454,10 @@ impl DirectGroup {
                 .map_err(|error| DirectGroupError::Mls(format!("merge remote update: {error:?}"))),
             _ => Err(DirectGroupError::NotApplicationMessage),
         }
+    }
+
+    pub fn apply_commit(&mut self, commit: &[u8]) -> Result<(), DirectGroupError> {
+        self.apply_self_update(commit)
     }
 
     /// Serializes the complete endpoint state for host-side authenticated

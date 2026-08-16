@@ -70,6 +70,8 @@ Rollout policy is explicit and conversation-scoped. `disabled` uses the legacy t
 
 Attachment encryption uses an independent random 256-bit file key and random nonce domain for every upload. Plaintext is processed in 1 MiB AES-256-GCM chunks, each authenticated with file ID, chunk index/count and total size; the public transport manifest contains ciphertext hashes and sizes only. File name, MIME type and file key belong inside an authenticated MLS application message. The 25 MiB limit is enforced before encryption, and retries reuse stored ciphertext rather than repeating encryption with an old nonce domain.
 
+Multi-device membership uses actual MLS Add and Remove Commits. A new owner device has its own credential and KeyPackage, existing members process the same Add Commit, and the new device joins from its Welcome. Revocation produces a Remove Commit and a new epoch; retained devices can decrypt new traffic while the removed device fails closed. Device authorization and owner identity remain application-level checks around these cryptographic transitions.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.
