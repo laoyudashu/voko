@@ -7,14 +7,22 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-openmls = { version = "=0.8.1", default-features = false, features = ["openmls_rust_crypto"] }
+aes-gcm = "0.10.3"
+argon2 = "0.5.3"
+openmls = { version = "=0.8.1", default-features = false, features = ["js", "openmls_rust_crypto"] }
 openmls_basic_credential = { version = "=0.5.0", features = ["clonable"] }
 openmls_rust_crypto = "=0.5.1"
 openmls_traits = "=0.5.0"
 sha2 = "0.10.9"
+rand = "0.8.7"
 thiserror = "2.0.17"
 tls_codec = "0.4.2"
 zeroize = { version = "1.8.1", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# OpenMLS' Rust crypto provider still uses getrandom 0.2 internally. The JS
+# backend must be selected explicitly for wasm32-unknown-unknown.
+getrandom_old = { package = "getrandom", version = "0.2.17", features = ["js"] }
 
 [dev-dependencies]
 criterion = "0.7.0"

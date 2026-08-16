@@ -83,6 +83,11 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal --no-self-update
       - name: Test isolated E2EE core
         run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml
+      - name: Check browser WASM target
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-unknown-unknown --toolchain 1.97.1
+          cargo +1.97.1 check --locked --manifest-path e2ee/Cargo.toml --target wasm32-unknown-unknown
 
   security:
     runs-on: ubuntu-latest

@@ -36,3 +36,5 @@ If a gate fails, implementation may add backpressure, paging, caching limits or 
 ## Initial PoC measurement
 
 On 2026-08-16, OpenMLS 0.8.1 with Rust 1.97.1 under WSL2 x86_64 on an Intel Core Ultra 9 185H measured direct-message encryption at 27.455-27.591 microseconds in Criterion quick mode. This passes the initial 5 ms computation gate, but is not a Windows, macOS, browser WASM, storage or production latency claim.
+
+The same source tree also passed a `wasm32-unknown-unknown` compile check with OpenMLS' `js` feature and the explicit JavaScript randomness backend. This establishes build feasibility only; browser execution, bundle size, IndexedDB atomicity and multi-tab single-writer behavior remain separate gates.

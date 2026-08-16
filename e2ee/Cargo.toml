@@ -11,4 +11,3 @@ rust-version = "1.85"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-

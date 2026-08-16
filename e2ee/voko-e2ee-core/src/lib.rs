@@ -6,9 +6,13 @@ mod key_package;
 mod lifecycle;
 mod mls;
 mod outbox;
+mod state_cache;
+mod vault;
 
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
 pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
 pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
+pub use state_cache::{BoundedSecretCache, CacheError};
+pub use vault::{EncryptedVault, VaultError, VaultKdfParams};

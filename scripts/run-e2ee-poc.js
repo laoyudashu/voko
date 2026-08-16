@@ -5,12 +5,14 @@ const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const operation = process.argv[2] === 'bench' ? 'bench' : 'test';
+const requested = process.argv[2];
+const operation = requested === 'bench' ? 'bench' : requested === 'wasm' ? 'check' : 'test';
 const executable = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const localCargo = join(homedir(), '.cargo', 'bin', executable);
 const cargo = existsSync(localCargo) ? localCargo : executable;
 const args = [operation, '--manifest-path', join('e2ee', 'Cargo.toml')];
 if (operation === 'bench') args.push('--bench', 'direct_message');
+if (requested === 'wasm') args.push('--target', 'wasm32-unknown-unknown');
 
 const result = spawnSync(cargo, args, {
   cwd: join(__dirname, '..'),
