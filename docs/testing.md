@@ -79,6 +79,8 @@ or `browser:mobile` npm commands. Stability summaries are local evidence and are
 ignored by Git; only reviewed results are recorded in `e2ee/release-gates.json`.
 The recording command validates the same duration, correctness and resource
 policy before atomically changing a gate; it refuses short or failing summaries.
+The runner also requires a clean worktree, records the exact Git commit and
+platform, and fails if the worktree or HEAD changes before the run completes.
 
 ## Isolation contract
 

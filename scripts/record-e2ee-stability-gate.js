@@ -23,6 +23,8 @@ function recordStabilityGate({ gateId, summaryFile, manifestFile }) {
 
   gate.status = 'passed';
   gate.evidence = [
+    `commit=${summary.commit}`,
+    `platform=${summary.platform}/${summary.arch}`,
     `durationMs=${summary.durationMs}`,
     `messages=${summary.messages}`,
     `lost=${summary.lost}`,

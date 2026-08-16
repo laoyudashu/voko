@@ -21,6 +21,9 @@ function files(summary) {
 
 function passingSummary() {
   return {
+    commit: '0123456789abcdef0123456789abcdef01234567',
+    platform: 'win32',
+    arch: 'x64',
     passed: true,
     durationMs: 30 * 60 * 1000,
     messages: 1000,

@@ -13,6 +13,9 @@ function parseDuration(value) {
 
 function validateStabilitySummary(summary, requestedDurationMs) {
   const errors = [];
+  if (!/^[0-9a-f]{40}$/.test(summary?.commit || '')) errors.push('tested commit is missing or invalid');
+  if (typeof summary?.platform !== 'string' || !summary.platform) errors.push('platform is missing');
+  if (typeof summary?.arch !== 'string' || !summary.arch) errors.push('architecture is missing');
   if (summary?.passed !== true) errors.push('summary did not pass');
   if (!Number.isFinite(summary?.durationMs) || summary.durationMs < requestedDurationMs) errors.push('duration was shorter than requested');
   if (!Number.isSafeInteger(summary?.messages) || summary.messages < 1) errors.push('no messages were processed');
