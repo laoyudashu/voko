@@ -37,6 +37,19 @@ pub struct StateAnchor {
     pub encrypted_state_digest: [u8; 32],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyPackageBinding {
+    pub target_agent_did: String,
+    pub owner_device_key_id: String,
+    pub key_epoch: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinStatus {
+    PinnedNew,
+    Verified,
+}
+
 pub struct AtomicStateStore {
     connection: Connection,
 }
@@ -57,6 +70,18 @@ pub enum PersistenceError {
     NumericRange,
     #[error("persistent MLS state is older than its external rollback anchor")]
     RollbackDetected,
+    #[error("KeyPackage is not registered")]
+    KeyPackageNotRegistered,
+    #[error("KeyPackage is expired")]
+    KeyPackageExpired,
+    #[error("KeyPackage identity binding does not match")]
+    KeyPackageBindingMismatch,
+    #[error("KeyPackage was already consumed by another group")]
+    KeyPackageReuse,
+    #[error("credential identity changed and requires explicit verification")]
+    IdentityChanged,
+    #[error("credential epoch rolled back")]
+    CredentialRollback,
 }
 
 impl From<rusqlite::Error> for PersistenceError {
@@ -110,7 +135,24 @@ impl AtomicStateStore {
                FOREIGN KEY(group_id) REFERENCES e2ee_group_states(group_id)
              );
              CREATE INDEX IF NOT EXISTS e2ee_inbox_pending
-               ON e2ee_inbox(dispatched, lease_expires_at_ms);",
+               ON e2ee_inbox(dispatched, lease_expires_at_ms);
+             CREATE TABLE IF NOT EXISTS e2ee_key_packages (
+               key_package_ref BLOB PRIMARY KEY,
+               target_agent_did TEXT NOT NULL,
+               owner_device_key_id TEXT NOT NULL,
+               key_epoch INTEGER NOT NULL,
+               expires_at_ms INTEGER NOT NULL,
+               consumed_group_id TEXT,
+               consumed_at_ms INTEGER
+             );
+             CREATE TABLE IF NOT EXISTS e2ee_credential_pins (
+               identity_scope TEXT NOT NULL,
+               role INTEGER NOT NULL,
+               device_key_id TEXT NOT NULL,
+               key_epoch INTEGER NOT NULL,
+               credential_fingerprint BLOB NOT NULL,
+               PRIMARY KEY(identity_scope, role)
+             );",
         )?;
         Ok(Self { connection })
     }
@@ -424,6 +466,198 @@ impl AtomicStateStore {
         Ok(())
     }
 
+    pub fn register_key_package(
+        &mut self,
+        serialized_key_package: &[u8],
+        binding: &KeyPackageBinding,
+        now_ms: u64,
+        expires_at_ms: u64,
+    ) -> Result<[u8; 32], PersistenceError> {
+        const MAX_KEY_PACKAGE_LIFETIME_MS: u64 = 24 * 60 * 60 * 1000;
+        validate_key_package_binding(binding)?;
+        if serialized_key_package.is_empty()
+            || expires_at_ms <= now_ms
+            || expires_at_ms - now_ms > MAX_KEY_PACKAGE_LIFETIME_MS
+        {
+            return Err(PersistenceError::InvalidInput);
+        }
+        let reference: [u8; 32] = Sha256::digest(serialized_key_package).into();
+        let key_epoch = to_i64(binding.key_epoch)?;
+        let expires = to_i64(expires_at_ms)?;
+        let changed = self.connection.execute(
+            "INSERT OR IGNORE INTO e2ee_key_packages(
+               key_package_ref,target_agent_did,owner_device_key_id,key_epoch,expires_at_ms
+             ) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                reference.as_slice(),
+                binding.target_agent_did,
+                binding.owner_device_key_id,
+                key_epoch,
+                expires
+            ],
+        )?;
+        if changed == 0 {
+            let existing: (String, String, i64, i64) = self.connection.query_row(
+                "SELECT target_agent_did,owner_device_key_id,key_epoch,expires_at_ms
+                 FROM e2ee_key_packages WHERE key_package_ref=?1",
+                params![reference.as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            if existing
+                != (
+                    binding.target_agent_did.clone(),
+                    binding.owner_device_key_id.clone(),
+                    key_epoch,
+                    expires,
+                )
+            {
+                return Err(PersistenceError::KeyPackageBindingMismatch);
+            }
+        }
+        Ok(reference)
+    }
+
+    pub fn consume_key_package(
+        &mut self,
+        serialized_key_package: &[u8],
+        group_id: &str,
+        binding: &KeyPackageBinding,
+        now_ms: u64,
+    ) -> Result<[u8; 32], PersistenceError> {
+        validate_key_package_binding(binding)?;
+        if serialized_key_package.is_empty() || group_id.is_empty() {
+            return Err(PersistenceError::InvalidInput);
+        }
+        let reference: [u8; 32] = Sha256::digest(serialized_key_package).into();
+        let now = to_i64(now_ms)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let record: Option<(String, String, i64, i64, Option<String>)> = transaction
+            .query_row(
+                "SELECT target_agent_did,owner_device_key_id,key_epoch,expires_at_ms,consumed_group_id
+                 FROM e2ee_key_packages WHERE key_package_ref=?1",
+                params![reference.as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()?;
+        let Some((agent, device, epoch, expires, consumed_group)) = record else {
+            return Err(PersistenceError::KeyPackageNotRegistered);
+        };
+        if agent != binding.target_agent_did
+            || device != binding.owner_device_key_id
+            || from_i64(epoch)? != binding.key_epoch
+        {
+            return Err(PersistenceError::KeyPackageBindingMismatch);
+        }
+        if expires <= now {
+            return Err(PersistenceError::KeyPackageExpired);
+        }
+        if let Some(consumed_group) = consumed_group {
+            if consumed_group == group_id {
+                transaction.commit()?;
+                return Ok(reference);
+            }
+            return Err(PersistenceError::KeyPackageReuse);
+        }
+        if transaction.execute(
+            "UPDATE e2ee_key_packages SET consumed_group_id=?1,consumed_at_ms=?2
+             WHERE key_package_ref=?3 AND consumed_group_id IS NULL",
+            params![group_id, now, reference.as_slice()],
+        )? != 1
+        {
+            return Err(PersistenceError::KeyPackageReuse);
+        }
+        transaction.commit()?;
+        Ok(reference)
+    }
+
+    pub fn pin_or_verify_credential(
+        &mut self,
+        identity_scope: &str,
+        role: u8,
+        device_key_id: &str,
+        key_epoch: u64,
+        credential_public_key: &[u8],
+    ) -> Result<PinStatus, PersistenceError> {
+        validate_credential_pin(identity_scope, role, device_key_id, credential_public_key)?;
+        let epoch = to_i64(key_epoch)?;
+        let fingerprint = Sha256::digest(credential_public_key).to_vec();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing: Option<(String, i64, Vec<u8>)> = transaction
+            .query_row(
+                "SELECT device_key_id,key_epoch,credential_fingerprint
+                 FROM e2ee_credential_pins WHERE identity_scope=?1 AND role=?2",
+                params![identity_scope, role,],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        match existing {
+            None => {
+                transaction.execute(
+                    "INSERT INTO e2ee_credential_pins(
+                       identity_scope,role,device_key_id,key_epoch,credential_fingerprint
+                     ) VALUES(?1,?2,?3,?4,?5)",
+                    params![identity_scope, role, device_key_id, epoch, fingerprint],
+                )?;
+                transaction.commit()?;
+                Ok(PinStatus::PinnedNew)
+            }
+            Some((pinned_device, pinned_epoch, pinned_fingerprint)) => {
+                if epoch < pinned_epoch {
+                    return Err(PersistenceError::CredentialRollback);
+                }
+                if pinned_device != device_key_id
+                    || pinned_epoch != epoch
+                    || pinned_fingerprint != fingerprint
+                {
+                    return Err(PersistenceError::IdentityChanged);
+                }
+                transaction.commit()?;
+                Ok(PinStatus::Verified)
+            }
+        }
+    }
+
+    pub fn approve_credential_successor(
+        &mut self,
+        identity_scope: &str,
+        role: u8,
+        expected_current_fingerprint: &[u8; 32],
+        new_device_key_id: &str,
+        new_key_epoch: u64,
+        new_credential_public_key: &[u8],
+    ) -> Result<(), PersistenceError> {
+        validate_credential_pin(
+            identity_scope,
+            role,
+            new_device_key_id,
+            new_credential_public_key,
+        )?;
+        let new_epoch = to_i64(new_key_epoch)?;
+        let new_fingerprint = Sha256::digest(new_credential_public_key).to_vec();
+        let changed = self.connection.execute(
+            "UPDATE e2ee_credential_pins
+             SET device_key_id=?1,key_epoch=?2,credential_fingerprint=?3
+             WHERE identity_scope=?4 AND role=?5 AND key_epoch<?2
+               AND credential_fingerprint=?6",
+            params![
+                new_device_key_id,
+                new_epoch,
+                new_fingerprint,
+                identity_scope,
+                role,
+                expected_current_fingerprint.as_slice()
+            ],
+        )?;
+        if changed != 1 {
+            return Err(PersistenceError::IdentityChanged);
+        }
+        Ok(())
+    }
+
     pub fn claim_next(
         &mut self,
         lease_owner: &str,
@@ -530,6 +764,40 @@ fn load_delivery(
             },
         )
         .transpose()
+}
+
+fn validate_key_package_binding(binding: &KeyPackageBinding) -> Result<(), PersistenceError> {
+    if binding.target_agent_did.is_empty()
+        || binding.owner_device_key_id.is_empty()
+        || binding.target_agent_did.len() > 1024
+        || binding.owner_device_key_id.len() > 1024
+        || binding.target_agent_did.chars().any(char::is_control)
+        || binding.owner_device_key_id.chars().any(char::is_control)
+    {
+        return Err(PersistenceError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn validate_credential_pin(
+    identity_scope: &str,
+    role: u8,
+    device_key_id: &str,
+    credential_public_key: &[u8],
+) -> Result<(), PersistenceError> {
+    if identity_scope.is_empty()
+        || identity_scope.len() > 1024
+        || identity_scope.chars().any(char::is_control)
+        || role == 0
+        || device_key_id.is_empty()
+        || device_key_id.len() > 1024
+        || device_key_id.chars().any(char::is_control)
+        || credential_public_key.is_empty()
+        || credential_public_key.len() > 4096
+    {
+        return Err(PersistenceError::InvalidInput);
+    }
+    Ok(())
 }
 
 fn to_i64(value: u64) -> Result<i64, PersistenceError> {
@@ -686,5 +954,94 @@ mod tests {
             .mark_received_dispatched("message-in", "provider-worker")
             .unwrap();
         assert_eq!(store.pending_received_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn persistent_key_package_is_short_lived_bound_and_single_use() {
+        let mut store = AtomicStateStore::in_memory().unwrap();
+        let binding = KeyPackageBinding {
+            target_agent_did: "did:voko:agent-key-package".into(),
+            owner_device_key_id: "owner-device-key-package".into(),
+            key_epoch: 7,
+        };
+        store
+            .register_key_package(b"serialized-key-package", &binding, 1_000, 2_000)
+            .unwrap();
+        assert!(matches!(
+            store.consume_key_package(
+                b"serialized-key-package",
+                "group-a",
+                &KeyPackageBinding {
+                    key_epoch: 8,
+                    ..binding.clone()
+                },
+                1_100
+            ),
+            Err(PersistenceError::KeyPackageBindingMismatch)
+        ));
+        store
+            .consume_key_package(b"serialized-key-package", "group-a", &binding, 1_100)
+            .unwrap();
+        store
+            .consume_key_package(b"serialized-key-package", "group-a", &binding, 1_200)
+            .unwrap();
+        assert!(matches!(
+            store.consume_key_package(b"serialized-key-package", "group-b", &binding, 1_200),
+            Err(PersistenceError::KeyPackageReuse)
+        ));
+
+        store
+            .register_key_package(b"expired-key-package", &binding, 1_000, 1_001)
+            .unwrap();
+        assert!(matches!(
+            store.consume_key_package(b"expired-key-package", "group-expired", &binding, 1_001),
+            Err(PersistenceError::KeyPackageExpired)
+        ));
+        assert!(matches!(
+            store.register_key_package(b"too-long-lived", &binding, 0, 24 * 60 * 60 * 1000 + 1),
+            Err(PersistenceError::InvalidInput)
+        ));
+    }
+
+    #[test]
+    fn credential_change_fails_closed_until_successor_is_explicitly_approved() {
+        let mut store = AtomicStateStore::in_memory().unwrap();
+        assert_eq!(
+            store
+                .pin_or_verify_credential("owner-device-scope", 2, "device-a", 4, b"public-key-a")
+                .unwrap(),
+            PinStatus::PinnedNew
+        );
+        assert_eq!(
+            store
+                .pin_or_verify_credential("owner-device-scope", 2, "device-a", 4, b"public-key-a")
+                .unwrap(),
+            PinStatus::Verified
+        );
+        assert!(matches!(
+            store.pin_or_verify_credential("owner-device-scope", 2, "device-b", 5, b"public-key-b"),
+            Err(PersistenceError::IdentityChanged)
+        ));
+        assert!(matches!(
+            store.pin_or_verify_credential("owner-device-scope", 2, "device-a", 3, b"public-key-a"),
+            Err(PersistenceError::CredentialRollback)
+        ));
+        let old_fingerprint: [u8; 32] = Sha256::digest(b"public-key-a").into();
+        store
+            .approve_credential_successor(
+                "owner-device-scope",
+                2,
+                &old_fingerprint,
+                "device-b",
+                5,
+                b"public-key-b",
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .pin_or_verify_credential("owner-device-scope", 2, "device-b", 5, b"public-key-b")
+                .unwrap(),
+            PinStatus::Verified
+        );
     }
 }

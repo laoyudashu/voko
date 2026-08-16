@@ -28,6 +28,7 @@ pub struct DirectGroupPair {
     pub recipient: DirectGroup,
     pub state: EstablishmentState,
     pub key_package_reference: [u8; 32],
+    pub serialized_recipient_key_package: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -206,11 +207,16 @@ impl DirectGroupPair {
             },
             state,
             key_package_reference,
+            serialized_recipient_key_package: serialized_key_package,
         })
     }
 }
 
 impl DirectGroup {
+    pub fn signer_public_key(&self) -> Vec<u8> {
+        self.signer.to_public_vec()
+    }
+
     /// Serializes the complete endpoint state for host-side authenticated
     /// encryption. The returned bytes contain secrets and must never be stored
     /// or logged without Vault protection.

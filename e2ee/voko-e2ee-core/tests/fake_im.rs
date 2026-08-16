@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use voko_e2ee_core::{
-    AtomicStateStore, CanonicalAad, DirectGroupPair, KeyPackageLedger, RecordVault, WireEnvelope,
-    E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    AtomicStateStore, CanonicalAad, DirectGroupPair, KeyPackageBinding, KeyPackageLedger,
+    PinStatus, RecordVault, WireEnvelope, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
 };
 
 const VAULT_KEY: &[u8; 32] = b"fake-im-test-master-key-32-bytes";
@@ -71,6 +71,51 @@ fn fake_im_faults_never_leak_downgrade_duplicate_or_reorder_plaintext() {
     let vault = RecordVault::from_master_key(VAULT_KEY).unwrap();
     let mut provider_deliveries = Vec::new();
     let mut plaintext_fallbacks = 0;
+    let key_package_binding = KeyPackageBinding {
+        target_agent_did: "did:voko:fake-im-agent".into(),
+        owner_device_key_id: "fake-im-owner-key".into(),
+        key_epoch: 1,
+    };
+    receiver_store
+        .register_key_package(
+            &pair.serialized_recipient_key_package,
+            &key_package_binding,
+            1_000,
+            2_000,
+        )
+        .unwrap();
+    receiver_store
+        .consume_key_package(
+            &pair.serialized_recipient_key_package,
+            "fake-im-group",
+            &key_package_binding,
+            1_100,
+        )
+        .unwrap();
+    assert_eq!(
+        receiver_store
+            .pin_or_verify_credential(
+                "fake-im-browser-principal",
+                1,
+                "fake-im-browser-key",
+                1,
+                &pair.creator.signer_public_key(),
+            )
+            .unwrap(),
+        PinStatus::PinnedNew
+    );
+    assert_eq!(
+        receiver_store
+            .pin_or_verify_credential(
+                "fake-im-owner-device",
+                2,
+                "fake-im-owner-key",
+                1,
+                &pair.recipient.signer_public_key(),
+            )
+            .unwrap(),
+        PinStatus::PinnedNew
+    );
 
     let prepare = |message_id: &str,
                    plaintext: &str,
