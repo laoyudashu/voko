@@ -53,6 +53,8 @@ The Chromium IndexedDB gate now uses actual serialized WASM/OpenMLS state rather
 
 All browser fixtures now run under strict CSP and Trusted Types enforcement. The generated WASM SHA-256 digest is checked before instantiation; this detects packaging corruption but does not expand the Web client's trust boundary beyond E2EE-TOFU.
 
+The browser gate also repeats the WASM round trip with Playwright's Pixel 5 viewport and user agent while Chromium is capped to a 128 MiB V8 old-space budget. It fails if initialization exceeds 10 seconds or the observable JavaScript heap exceeds 64 MiB. This is a constrained desktop-browser regression gate; it does not replace Android Chrome, iOS WebKit or low-memory physical-device evidence.
+
 The native scale gate persists 1,000 conversation state records while keeping only 32 decrypted states in the bounded cache. A release-only 10,000-group gate uses the same fixed cache and is available as `npm run test:e2ee:scale`. This verifies bounded cache cardinality and bytes; process RSS, SQLite file size and low-memory mobile behavior remain separate measurements.
 
 The cross-platform CI compiles and tests the E2EE core on Windows, Ubuntu and macOS. Windows and macOS additionally exercise the real OS credential store by provisioning a random owner-scoped key, reopening it in a new manager, decrypting a record, revoking it and verifying it cannot be unlocked again. Headless Ubuntu runners do not provide a trustworthy Secret Service session, so Linux real-keyring lifecycle remains assigned to a dedicated desktop runner rather than being silently replaced with a file or environment variable.

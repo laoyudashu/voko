@@ -4,7 +4,7 @@ const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { readFileSync, statSync } = require('node:fs');
 const { extname, join, normalize, resolve } = require('node:path');
-const { chromium } = require('@playwright/test');
+const { chromium, devices } = require('@playwright/test');
 
 const root = resolve(__dirname, '..', 'e2ee', 'target', 'web-poc');
 const fixtureRoot = resolve(__dirname, '..', 'e2ee', 'browser-poc');
@@ -126,10 +126,28 @@ const server = http.createServer((request, response) => {
       throw new Error('browser did not restore the encrypted WASM state and fixed ciphertext');
     }
     await persistenceContext.close();
+
+    const mobileBrowser = await chromium.launch({ headless: true, args: ['--js-flags=--max-old-space-size=128'] });
+    try {
+      const mobileContext = await mobileBrowser.newContext({ ...devices['Pixel 5'] });
+      const mobile = await mobileContext.newPage();
+      const startedAt = Date.now();
+      await mobile.goto(`http://127.0.0.1:${address.port}/`);
+      await mobile.waitForFunction(() => document.body.dataset.status !== 'loading');
+      if (await mobile.getAttribute('body', 'data-status') !== 'passed') {
+        throw new Error(`mobile emulation failed: ${await mobile.textContent('body')}`);
+      }
+      const elapsedMs = Date.now() - startedAt;
+      const heapBytes = await mobile.evaluate(() => performance.memory?.usedJSHeapSize ?? null);
+      if (elapsedMs > 10_000) throw new Error(`mobile WASM initialization exceeded 10s: ${elapsedMs}ms`);
+      if (heapBytes != null && heapBytes > 64 * 1024 * 1024) throw new Error(`mobile JS heap exceeded 64MiB: ${heapBytes}`);
+      await mobileContext.close();
+    } finally { await mobileBrowser.close(); }
     console.log('E2EE browser WASM round trip passed.');
     console.log('E2EE browser single-writer lock passed.');
     console.log('E2EE browser IndexedDB atomic recovery passed.');
     console.log('E2EE browser CSP and WASM digest gate passed.');
+    console.log('E2EE constrained Pixel 5 emulation gate passed.');
   } finally {
     await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));
