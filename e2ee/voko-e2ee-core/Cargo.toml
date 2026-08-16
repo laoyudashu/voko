@@ -26,6 +26,7 @@ zeroize = { version = "1.8.1", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 keyring = "=4.1.6"
+memory-stats = "=1.2.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
