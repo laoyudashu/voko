@@ -62,6 +62,24 @@ npm run test:e2ee:platform
 
 The command provisions a random owner-scoped secret in the native Windows Credential Manager, macOS Keychain or Linux Secret Service, reopens and uses it, revokes it, then verifies it cannot be reopened. It writes the ignored `e2ee-platform-summary.json` with platform, architecture, exact commit, Cargo version and result; it never records the secret or credential slot. Linux must run inside an unlocked desktop Secret Service session—headless fallback storage is not accepted.
 
+The remaining deterministic E2EE gates use these exact entry points:
+
+```bash
+npm run test:e2ee:browser
+npm run test:e2ee:cross-process
+npm run test:e2ee:stability -- --duration=30m --output=e2ee-stability-30m-summary.json
+npm run e2ee:gate:stability -- stability_30m e2ee-stability-30m-summary.json
+npm run test:e2ee:readiness
+```
+
+`test:e2ee:browser` is one combined Chromium gate covering the WASM round trip,
+single-writer lease, IndexedDB crash recovery, CSP/WASM integrity and constrained
+mobile emulation. There are no separate `browser:persistence`, `browser:leader`
+or `browser:mobile` npm commands. Stability summaries are local evidence and are
+ignored by Git; only reviewed results are recorded in `e2ee/release-gates.json`.
+The recording command validates the same duration, correctness and resource
+policy before atomically changing a gate; it refuses short or failing summaries.
+
 ## Isolation contract
 
 Deterministic tests must not contact public VOKO, WuKongIM or OSS endpoints, inspect a user's Provider configuration, or reuse the normal VOKO database. Use `test/support/runtime.js` and injected dependencies. Every server, socket, timer, worker and database must be registered for cleanup.

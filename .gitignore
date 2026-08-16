@@ -82,6 +82,8 @@ scancode-results/
 audit-results/
 native/
 e2ee/target/
+e2ee-stability-*-summary.json
+e2ee-stability-summary.json
 
 # Local security scan output.
 .codeql-db/
