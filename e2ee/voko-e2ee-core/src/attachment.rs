@@ -4,6 +4,7 @@ use aes_gcm::{
 };
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -22,6 +23,15 @@ pub struct EncryptedAttachment {
     pub chunks: Vec<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingAttachmentManifest {
+    pub file_id: [u8; 16],
+    pub nonce_prefix: [u8; 8],
+    pub plaintext_size: u64,
+    pub chunk_size: u32,
+    pub ciphertext_hashes: Vec<[u8; 32]>,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AttachmentError {
     #[error("attachment is empty or exceeds 25 MiB")]
@@ -30,6 +40,8 @@ pub enum AttachmentError {
     InvalidManifest,
     #[error("attachment authentication failed")]
     AuthenticationFailed,
+    #[error("attachment source or ciphertext storage failed")]
+    StorageFailed,
 }
 
 impl AttachmentKey {
@@ -141,6 +153,51 @@ impl EncryptedAttachment {
     }
 }
 
+/// Encrypts a known-size source with bounded memory. The sink must persist
+/// each ciphertext chunk before returning; retries upload those same bytes.
+pub fn encrypt_attachment_stream<R, F>(
+    mut reader: R,
+    plaintext_size: usize,
+    key: &AttachmentKey,
+    mut persist_chunk: F,
+) -> Result<StreamingAttachmentManifest, AttachmentError>
+where
+    R: Read,
+    F: FnMut(usize, &[u8]) -> Result<(), AttachmentError>,
+{
+    if plaintext_size == 0 || plaintext_size > MAX_ATTACHMENT_BYTES {
+        return Err(AttachmentError::InvalidSize);
+    }
+    let mut file_id = [0u8; 16];
+    let mut nonce_prefix = [0u8; 8];
+    OsRng.fill_bytes(&mut file_id);
+    OsRng.fill_bytes(&mut nonce_prefix);
+    let chunk_count = plaintext_size.div_ceil(ATTACHMENT_CHUNK_BYTES);
+    let cipher = Aes256Gcm::new_from_slice(key.0.as_ref()).map_err(|_| AttachmentError::InvalidManifest)?;
+    let mut buffer = Zeroizing::new(vec![0u8; ATTACHMENT_CHUNK_BYTES]);
+    let mut remaining = plaintext_size;
+    let mut ciphertext_hashes = Vec::with_capacity(chunk_count);
+    for index in 0..chunk_count {
+        let length = remaining.min(ATTACHMENT_CHUNK_BYTES);
+        reader.read_exact(&mut buffer[..length]).map_err(|_| AttachmentError::StorageFailed)?;
+        let ciphertext = cipher.encrypt(
+            Nonce::from_slice(&nonce(&nonce_prefix, index)?),
+            Payload { msg: &buffer[..length], aad: &chunk_aad(&file_id, index, chunk_count, plaintext_size)? },
+        ).map_err(|_| AttachmentError::AuthenticationFailed)?;
+        persist_chunk(index, &ciphertext)?;
+        ciphertext_hashes.push(Sha256::digest(&ciphertext).into());
+        remaining -= length;
+    }
+    let mut extra = [0u8; 1];
+    if reader.read(&mut extra).map_err(|_| AttachmentError::StorageFailed)? != 0 {
+        return Err(AttachmentError::InvalidSize);
+    }
+    Ok(StreamingAttachmentManifest {
+        file_id, nonce_prefix, plaintext_size: plaintext_size as u64,
+        chunk_size: ATTACHMENT_CHUNK_BYTES as u32, ciphertext_hashes,
+    })
+}
+
 fn nonce(prefix: &[u8; 8], index: usize) -> Result<[u8; 12], AttachmentError> {
     let index = u32::try_from(index).map_err(|_| AttachmentError::InvalidManifest)?;
     let mut nonce = [0u8; 12];
@@ -202,5 +259,33 @@ mod tests {
             EncryptedAttachment::encrypt(&vec![0; MAX_ATTACHMENT_BYTES + 1], &first_key),
             Err(AttachmentError::InvalidSize)
         );
+    }
+
+    #[test]
+    fn twenty_five_mib_stream_is_bounded_and_storage_failure_stops_immediately() {
+        let key = AttachmentKey::generate();
+        let source = std::io::repeat(0x5a).take(MAX_ATTACHMENT_BYTES as u64);
+        let mut chunks = 0usize;
+        let manifest = encrypt_attachment_stream(source, MAX_ATTACHMENT_BYTES, &key, |index, ciphertext| {
+            assert_eq!(index, chunks);
+            assert!(ciphertext.len() <= ATTACHMENT_CHUNK_BYTES + 16);
+            chunks += 1;
+            Ok(())
+        }).unwrap();
+        assert_eq!(chunks, 25);
+        assert_eq!(manifest.ciphertext_hashes.len(), 25);
+
+        let mut attempted = 0usize;
+        let failure = encrypt_attachment_stream(
+            std::io::repeat(1).take((ATTACHMENT_CHUNK_BYTES * 3) as u64),
+            ATTACHMENT_CHUNK_BYTES * 3,
+            &key,
+            |index, _| {
+                attempted += 1;
+                if index == 1 { Err(AttachmentError::StorageFailed) } else { Ok(()) }
+            },
+        );
+        assert_eq!(failure, Err(AttachmentError::StorageFailed));
+        assert_eq!(attempted, 2);
     }
 }

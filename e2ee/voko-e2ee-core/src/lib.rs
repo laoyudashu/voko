@@ -29,8 +29,8 @@ pub use a2a::{
 };
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
 pub use attachment::{
-    AttachmentError, AttachmentKey, EncryptedAttachment, ATTACHMENT_CHUNK_BYTES,
-    MAX_ATTACHMENT_BYTES,
+    encrypt_attachment_stream, AttachmentError, AttachmentKey, EncryptedAttachment,
+    StreamingAttachmentManifest, ATTACHMENT_CHUNK_BYTES, MAX_ATTACHMENT_BYTES,
 };
 pub use envelope::{EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES};
 pub use group_policy::{

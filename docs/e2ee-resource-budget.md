@@ -20,6 +20,7 @@ These are engineering gates, not measured production claims. PoC reports must re
 - KeyPackages replenish at an idle-time low-water mark and never in an unbounded burst on the send path.
 - Replenishment planning counts in-flight generation toward the target and caps every idle cycle; a saturated counter fails to zero work rather than wrapping into a burst.
 - Attachments use 1 MiB chunks by default, a reusable buffer pool and at most two concurrent uploads and two downloads. Peak memory must scale with chunk size and concurrency, not file size.
+- The streaming attachment API owns one 1 MiB zeroizing plaintext buffer and one ciphertext chunk at a time. Its sink must durably persist each fixed ciphertext chunk before returning; a storage failure stops immediately, and transport retry reuses persisted bytes rather than re-encrypting.
 
 ## Required benchmarks
 
