@@ -58,6 +58,8 @@ Each group has one writer. Sending atomically persists the new MLS state, fixed 
 
 Recovery exports archive decryption material only. It excludes device signing keys, unused KeyPackage private keys, active group write state and sending generations. Restore creates a new device credential and epoch, revokes the old device and keeps old conversations read-only.
 
+The first recovery PoC deliberately exports an encrypted read-only local message archive rather than a live MLS snapshot. Its type exposes historical records and a replacement-device requirement only; it has no encrypt, send, KeyPackage or active-session API. Import requires a successor key epoch and identifies the prior device that must be revoked. This proves the non-cloning boundary but does not yet provide a production device-revocation transaction.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.
