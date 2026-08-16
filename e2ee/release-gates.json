@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "securityClaim": "experimental_e2ee_tofu",
+  "productionEnabled": false,
+  "gates": [
+    { "id": "core_protocol", "status": "passed", "evidence": "cargo test --locked --manifest-path e2ee/Cargo.toml" },
+    { "id": "agentdid_directory", "status": "passed", "evidence": "AgentDID 5cbd826; feature disabled by default" },
+    { "id": "browser_lite_cross_process", "status": "passed", "evidence": "npm run test:e2ee:cross-process" },
+    { "id": "windows_credential_store", "status": "passed", "evidence": "local Windows Credential Manager lifecycle, 2026-08-16" },
+    { "id": "macos_keychain", "status": "pending_external", "evidence": "requires macOS runner result" },
+    { "id": "linux_secret_service", "status": "pending_external", "evidence": "requires unlocked desktop Secret Service runner" },
+    { "id": "mobile_browser", "status": "pending_external", "evidence": "requires real low-memory mobile browser" },
+    { "id": "stability_30m", "status": "pending_local", "evidence": "npm run test:e2ee:stability" },
+    { "id": "stability_4h", "status": "pending_local", "evidence": "required before production canary" },
+    { "id": "independent_witnesses", "status": "pending_external", "evidence": "two independently operated Witness services" },
+    { "id": "external_security_audit", "status": "pending_external", "evidence": "independent MLS/application protocol review" }
+  ]
+}
