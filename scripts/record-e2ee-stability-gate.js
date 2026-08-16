@@ -9,6 +9,23 @@ const REQUIRED_DURATIONS = Object.freeze({
   stability_4h: 4 * 60 * 60 * 1000,
 });
 
+function formatManifest(manifest) {
+  const gates = manifest.gates.map((gate) => (
+    `    { "id": ${JSON.stringify(gate.id)}, "status": ${JSON.stringify(gate.status)}, "evidence": ${JSON.stringify(gate.evidence)} }`
+  )).join(',\n');
+  return [
+    '{',
+    `  "schemaVersion": ${JSON.stringify(manifest.schemaVersion)},`,
+    `  "securityClaim": ${JSON.stringify(manifest.securityClaim)},`,
+    `  "productionEnabled": ${JSON.stringify(manifest.productionEnabled)},`,
+    '  "gates": [',
+    gates,
+    '  ]',
+    '}',
+    '',
+  ].join('\n');
+}
+
 function recordStabilityGate({ gateId, summaryFile, manifestFile }) {
   const requiredDuration = REQUIRED_DURATIONS[gateId];
   if (!requiredDuration) throw new Error(`Unsupported stability gate: ${gateId}`);
@@ -37,7 +54,7 @@ function recordStabilityGate({ gateId, summaryFile, manifestFile }) {
   ].join('; ');
 
   const temporary = resolve(dirname(manifestFile), `.release-gates-${process.pid}.tmp`);
-  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
+  writeFileSync(temporary, formatManifest(manifest), { flag: 'wx' });
   renameSync(temporary, manifestFile);
   return gate;
 }

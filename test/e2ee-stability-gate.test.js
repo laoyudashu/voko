@@ -12,6 +12,8 @@ function files(summary) {
   const manifestFile = join(directory, 'release-gates.json');
   const summaryFile = join(directory, 'summary.json');
   writeFileSync(manifestFile, JSON.stringify({
+    schemaVersion: 1,
+    securityClaim: 'experimental_e2ee_tofu',
     productionEnabled: false,
     gates: [{ id: 'stability_30m', status: 'pending_local', evidence: 'pending' }],
   }));

@@ -11,7 +11,7 @@
     { "id": "macos_keychain", "status": "pending_external", "evidence": "requires macOS runner result" },
     { "id": "linux_secret_service", "status": "pending_external", "evidence": "requires unlocked desktop Secret Service runner" },
     { "id": "mobile_browser", "status": "pending_external", "evidence": "requires real low-memory mobile browser" },
-    { "id": "stability_30m", "status": "pending_local", "evidence": "npm run test:e2ee:stability" },
+    { "id": "stability_30m", "status": "passed", "evidence": "commit=20d9f3b8fcebe9b5ec6010a8e8732b82f2982c3f; platform=win32/x64; durationMs=1800002; messages=718082; lost=0; duplicateDeliveries=0; crossedSessions=0; rssStart=7495680; rssPeak=8556544; p95Micros=447; messagesPerSecond=398.93" },
     { "id": "stability_4h", "status": "pending_local", "evidence": "required before production canary" },
     { "id": "independent_witnesses", "status": "pending_external", "evidence": "two independently operated Witness services" },
     { "id": "external_security_audit", "status": "pending_external", "evidence": "independent MLS/application protocol review" }
