@@ -6,6 +6,7 @@ use openmls::prelude::{
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::{signatures::Signer, types::SignatureScheme, OpenMlsProvider};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use thiserror::Error;
 use tls_codec::{Deserialize, Serialize};
 
@@ -35,6 +36,15 @@ pub enum DirectGroupError {
     Mls(String),
     #[error("expected an MLS application message")]
     NotApplicationMessage,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectGroupSnapshot {
+    version: u16,
+    group_id: Vec<u8>,
+    signer_public_key: Vec<u8>,
+    storage: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 fn credential(
@@ -201,6 +211,67 @@ impl DirectGroupPair {
 }
 
 impl DirectGroup {
+    /// Serializes the complete endpoint state for host-side authenticated
+    /// encryption. The returned bytes contain secrets and must never be stored
+    /// or logged without Vault protection.
+    pub fn snapshot(&self) -> Result<Vec<u8>, DirectGroupError> {
+        let mut storage: Vec<_> = self
+            .provider
+            .storage()
+            .values
+            .read()
+            .map_err(|_| DirectGroupError::Mls("storage lock poisoned".into()))?
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        storage.sort_by(|left, right| left.0.cmp(&right.0));
+        serde_json::to_vec(&DirectGroupSnapshot {
+            version: 1,
+            group_id: self.group.group_id().as_slice().to_vec(),
+            signer_public_key: self.signer.to_public_vec(),
+            storage,
+        })
+        .map_err(|error| DirectGroupError::Mls(format!("serialize group snapshot: {error}")))
+    }
+
+    /// Restores a snapshot only after the host has authenticated and decrypted
+    /// it. Unknown versions and missing signer/group records fail closed.
+    pub fn restore(snapshot: &[u8]) -> Result<Self, DirectGroupError> {
+        let snapshot: DirectGroupSnapshot = serde_json::from_slice(snapshot)
+            .map_err(|error| DirectGroupError::Mls(format!("parse group snapshot: {error}")))?;
+        if snapshot.version != 1 || snapshot.group_id.is_empty() {
+            return Err(DirectGroupError::Mls("unsupported group snapshot".into()));
+        }
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| DirectGroupError::Mls("storage lock poisoned".into()))?;
+            for (key, value) in snapshot.storage {
+                if key.is_empty() {
+                    return Err(DirectGroupError::Mls("invalid snapshot storage key".into()));
+                }
+                values.insert(key, value);
+            }
+        }
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &snapshot.signer_public_key,
+            SignatureScheme::ED25519,
+        )
+        .ok_or_else(|| DirectGroupError::Mls("snapshot signer was not found".into()))?;
+        let group = MlsGroup::load(provider.storage(), &GroupId::from_slice(&snapshot.group_id))
+            .map_err(|error| DirectGroupError::Mls(format!("load snapshot group: {error:?}")))?
+            .ok_or_else(|| DirectGroupError::Mls("snapshot group was not found".into()))?;
+        Ok(Self {
+            provider,
+            signer,
+            group,
+        })
+    }
+
     pub fn reload_from_storage(&mut self) -> Result<(), DirectGroupError> {
         let group_id = self.group.group_id().clone();
         self.group = MlsGroup::load(self.provider.storage(), &group_id)
@@ -397,6 +468,45 @@ mod tests {
         assert_eq!(
             pair.recipient.decrypt(&route, &ciphertext).unwrap(),
             b"after reload"
+        );
+    }
+
+    #[test]
+    fn serialized_snapshot_restores_the_next_mls_generation() {
+        let mut pair = DirectGroupPair::establish(
+            b"group-snapshot",
+            b"browser-snapshot",
+            b"owner-snapshot",
+            &mut KeyPackageLedger::default(),
+        )
+        .unwrap();
+        let first_route = aad(
+            b"group-snapshot",
+            b"did:voko:agent-snapshot",
+            b"message-snapshot-1",
+            b"browser-snapshot",
+        );
+        let first = pair
+            .creator
+            .encrypt(&first_route, b"before restart")
+            .unwrap();
+        assert_eq!(
+            pair.recipient.decrypt(&first_route, &first).unwrap(),
+            b"before restart"
+        );
+
+        let snapshot = pair.creator.snapshot().unwrap();
+        let mut restored = DirectGroup::restore(&snapshot).unwrap();
+        let second_route = aad(
+            b"group-snapshot",
+            b"did:voko:agent-snapshot",
+            b"message-snapshot-2",
+            b"browser-snapshot",
+        );
+        let second = restored.encrypt(&second_route, b"after restart").unwrap();
+        assert_eq!(
+            pair.recipient.decrypt(&second_route, &second).unwrap(),
+            b"after restart"
         );
     }
 }

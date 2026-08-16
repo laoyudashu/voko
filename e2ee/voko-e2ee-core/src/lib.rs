@@ -8,6 +8,8 @@ mod key_package;
 mod lifecycle;
 mod mls;
 mod outbox;
+#[cfg(not(target_arch = "wasm32"))]
+mod persistence;
 mod state_cache;
 mod vault;
 
@@ -18,5 +20,9 @@ pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
 pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
 pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
+#[cfg(not(target_arch = "wasm32"))]
+pub use persistence::{
+    AtomicStateStore, ClaimedDelivery, PersistenceError, StateAnchor, StoredDelivery,
+};
 pub use state_cache::{BoundedSecretCache, CacheError};
 pub use vault::{EncryptedVault, VaultError, VaultKdfParams};
