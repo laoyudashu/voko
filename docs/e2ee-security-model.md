@@ -66,6 +66,8 @@ AgentDID now contains a disabled-by-default KeyPackage directory contract. An ac
 
 The native protocol test now uses independent creator and recipient endpoint objects. The recipient alone creates and retains the KeyPackage private material; the creator receives only serialized public KeyPackage bytes. After directory-side single-use consumption, the creator prepares Add Commit and Welcome, advances only after simulated Delivery Service acceptance, and the recipient independently joins from Welcome. Group establishment is acknowledged with an authenticated MLS application message before the first user message is sent.
 
+Rollout policy is explicit and conversation-scoped. `disabled` uses the legacy transport only for conversations that have never entered E2EE. `shadow` returns metadata-only routing observations and is forbidden from encrypting, relaying or duplicating real message bodies. `enabled` requires an exact Agent allowlist and both endpoint capabilities. Once a conversation is initializing or active, disabling the feature, losing capability, changing identity, revoking a device or encountering a cryptographic error locks the conversation instead of downgrading to plaintext.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.

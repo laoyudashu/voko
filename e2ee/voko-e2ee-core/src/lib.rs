@@ -12,6 +12,7 @@ mod pcs;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod recovery;
+mod rollout;
 mod state_cache;
 #[cfg(not(target_arch = "wasm32"))]
 mod system_key;
@@ -34,6 +35,9 @@ pub use persistence::{
     KeyPackageBinding, PersistenceError, PinStatus, StateAnchor, StoredDelivery,
 };
 pub use recovery::{ArchivedMessage, ReadOnlyArchive, RecoveryError, ReplacementDeviceRequirement};
+pub use rollout::{
+    ConversationSecurityState, E2eeRolloutPolicy, RolloutDecision, RolloutError, RolloutMode,
+};
 pub use state_cache::{BoundedSecretCache, CacheError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use system_key::{
