@@ -22,7 +22,10 @@ pub use envelope::{EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES};
 pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
-pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
+pub use mls::{
+    DirectCreatorEndpoint, DirectGroup, DirectGroupError, DirectGroupPair, DirectRecipientEndpoint,
+    PreparedDirectAdd,
+};
 pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
 pub use pcs::{PcsPolicyError, PcsUpdatePolicy, PcsUpdateTracker};
 #[cfg(not(target_arch = "wasm32"))]

@@ -64,6 +64,8 @@ The local persistent store records owner-scoped device epochs and revocation sta
 
 AgentDID now contains a disabled-by-default KeyPackage directory contract. An active owner with `agent:manage` may publish a package bound to an owned active Agent, owner device key and key epoch for at most 24 hours. An authenticated Guest Session may atomically reserve one package only for a searchable Agent whose exact DID matches. The service stores no private endpoint key. `VOKO_E2EE_DIRECTORY_ENABLED` remains off until the independent-endpoint and production canary gates pass; the presence of the route is not an E2EE launch.
 
+The native protocol test now uses independent creator and recipient endpoint objects. The recipient alone creates and retains the KeyPackage private material; the creator receives only serialized public KeyPackage bytes. After directory-side single-use consumption, the creator prepares Add Commit and Welcome, advances only after simulated Delivery Service acceptance, and the recipient independently joins from Welcome. Group establishment is acknowledged with an authenticated MLS application message before the first user message is sent.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.

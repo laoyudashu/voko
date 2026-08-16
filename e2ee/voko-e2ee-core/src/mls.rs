@@ -1,7 +1,8 @@
 use openmls::prelude::{
     BasicCredential, Ciphersuite, CredentialWithKey, Extensions, GroupId, KeyPackage,
-    KeyPackageBundle, LeafNodeParameters, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig,
-    MlsMessageBodyIn, MlsMessageIn, ProcessedMessageContent, ProtocolMessage, StagedWelcome,
+    KeyPackageBundle, KeyPackageIn, LeafNodeParameters, MlsGroup, MlsGroupCreateConfig,
+    MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, ProcessedMessageContent, ProtocolMessage,
+    ProtocolVersion, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -29,6 +30,28 @@ pub struct DirectGroupPair {
     pub state: EstablishmentState,
     pub key_package_reference: [u8; 32],
     pub serialized_recipient_key_package: Vec<u8>,
+}
+
+/// Independent recipient endpoint. Its KeyPackage private material never
+/// leaves this endpoint's OpenMLS provider.
+pub struct DirectRecipientEndpoint {
+    provider: OpenMlsRustCrypto,
+    signer: SignatureKeyPair,
+    serialized_key_package: Vec<u8>,
+}
+
+/// Independent creator endpoint. It receives only a public serialized
+/// KeyPackage and cannot access recipient private material.
+pub struct DirectCreatorEndpoint {
+    provider: OpenMlsRustCrypto,
+    signer: SignatureKeyPair,
+    group: MlsGroup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedDirectAdd {
+    pub commit: Vec<u8>,
+    pub welcome: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -76,6 +99,121 @@ fn key_package(
         .key_package_extensions(Extensions::default())
         .build(CIPHERSUITE, provider, signer, credential)
         .map_err(|e| DirectGroupError::Mls(format!("key package creation: {e:?}")))
+}
+
+impl DirectRecipientEndpoint {
+    pub fn new(identity: &DeviceCredentialIdentity) -> Result<Self, DirectGroupError> {
+        identity
+            .encode()
+            .map_err(|error| DirectGroupError::Mls(error.to_string()))?;
+        let provider = OpenMlsRustCrypto::default();
+        let (credential, signer) = credential(
+            &identity
+                .encode()
+                .map_err(|error| DirectGroupError::Mls(error.to_string()))?,
+            &provider,
+        )?;
+        let package = key_package(&provider, &signer, credential)?;
+        let serialized_key_package = package
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|error| DirectGroupError::Mls(format!("serialize KeyPackage: {error:?}")))?;
+        Ok(Self {
+            provider,
+            signer,
+            serialized_key_package,
+        })
+    }
+
+    pub fn serialized_key_package(&self) -> &[u8] {
+        &self.serialized_key_package
+    }
+
+    pub fn join(self, welcome: &[u8]) -> Result<DirectGroup, DirectGroupError> {
+        let welcome = match MlsMessageIn::tls_deserialize_exact(welcome)
+            .map_err(|error| DirectGroupError::Mls(format!("parse Welcome: {error:?}")))?
+            .extract()
+        {
+            MlsMessageBodyIn::Welcome(welcome) => welcome,
+            _ => return Err(DirectGroupError::Mls("expected Welcome".into())),
+        };
+        let config = MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .build();
+        let staged = StagedWelcome::new_from_welcome(&self.provider, &config, welcome, None)
+            .map_err(|error| DirectGroupError::Mls(format!("stage Welcome: {error:?}")))?;
+        let group = staged
+            .into_group(&self.provider)
+            .map_err(|error| DirectGroupError::Mls(format!("join Welcome: {error:?}")))?;
+        Ok(DirectGroup {
+            provider: self.provider,
+            signer: self.signer,
+            group,
+        })
+    }
+}
+
+impl DirectCreatorEndpoint {
+    pub fn new(
+        group_id: &[u8],
+        identity: &DeviceCredentialIdentity,
+    ) -> Result<Self, DirectGroupError> {
+        let provider = OpenMlsRustCrypto::default();
+        let encoded = identity
+            .encode()
+            .map_err(|error| DirectGroupError::Mls(error.to_string()))?;
+        let (credential, signer) = credential(&encoded, &provider)?;
+        let config = MlsGroupCreateConfig::builder()
+            .ciphersuite(CIPHERSUITE)
+            .use_ratchet_tree_extension(true)
+            .build();
+        let group = MlsGroup::new_with_group_id(
+            &provider,
+            &signer,
+            &config,
+            GroupId::from_slice(group_id),
+            credential,
+        )
+        .map_err(|error| DirectGroupError::Mls(format!("group creation: {error:?}")))?;
+        Ok(Self {
+            provider,
+            signer,
+            group,
+        })
+    }
+
+    pub fn prepare_add(
+        &mut self,
+        serialized_key_package: &[u8],
+    ) -> Result<PreparedDirectAdd, DirectGroupError> {
+        let package = KeyPackageIn::tls_deserialize_exact(serialized_key_package)
+            .map_err(|error| DirectGroupError::Mls(format!("parse KeyPackage: {error:?}")))?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|error| DirectGroupError::Mls(format!("validate KeyPackage: {error:?}")))?;
+        let (commit, welcome, _) = self
+            .group
+            .add_members(&self.provider, &self.signer, &[package])
+            .map_err(|error| DirectGroupError::Mls(format!("add member: {error:?}")))?;
+        Ok(PreparedDirectAdd {
+            commit: commit.tls_serialize_detached().map_err(|error| {
+                DirectGroupError::Mls(format!("serialize Add Commit: {error:?}"))
+            })?,
+            welcome: welcome
+                .tls_serialize_detached()
+                .map_err(|error| DirectGroupError::Mls(format!("serialize Welcome: {error:?}")))?,
+        })
+    }
+
+    pub fn accept_add(mut self) -> Result<DirectGroup, DirectGroupError> {
+        self.group
+            .merge_pending_commit(&self.provider)
+            .map_err(|error| DirectGroupError::Mls(format!("merge Add Commit: {error:?}")))?;
+        Ok(DirectGroup {
+            provider: self.provider,
+            signer: self.signer,
+            group: self.group,
+        })
+    }
 }
 
 impl DirectGroupPair {
