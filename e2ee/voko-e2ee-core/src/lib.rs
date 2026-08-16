@@ -8,6 +8,7 @@ mod key_package;
 mod lifecycle;
 mod mls;
 mod outbox;
+mod pcs;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod state_cache;
@@ -22,10 +23,11 @@ pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
 pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
 pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
+pub use pcs::{PcsPolicyError, PcsUpdatePolicy, PcsUpdateTracker};
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistence::{
-    AtomicStateStore, ClaimedDelivery, ClaimedReceived, KeyPackageBinding, PersistenceError,
-    PinStatus, StateAnchor, StoredDelivery,
+    AtomicStateStore, ClaimedDelivery, ClaimedReceived, DeliveryKind, KeyPackageBinding,
+    PersistenceError, PinStatus, StateAnchor, StoredDelivery,
 };
 pub use state_cache::{BoundedSecretCache, CacheError};
 #[cfg(not(target_arch = "wasm32"))]

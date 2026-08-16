@@ -1,7 +1,7 @@
 use openmls::prelude::{
     BasicCredential, Ciphersuite, CredentialWithKey, Extensions, GroupId, KeyPackage,
-    KeyPackageBundle, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
-    MlsMessageIn, ProcessedMessageContent, ProtocolMessage, StagedWelcome,
+    KeyPackageBundle, LeafNodeParameters, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig,
+    MlsMessageBodyIn, MlsMessageIn, ProcessedMessageContent, ProtocolMessage, StagedWelcome,
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -217,6 +217,54 @@ impl DirectGroup {
         self.signer.to_public_vec()
     }
 
+    pub fn epoch(&self) -> u64 {
+        self.group.epoch().as_u64()
+    }
+
+    /// Creates and stages a self-update. The caller must persist the pending
+    /// snapshot and fixed Commit bytes before delivery, and must not merge it
+    /// until the Delivery Service explicitly accepts that Commit.
+    pub fn prepare_self_update(&mut self) -> Result<Vec<u8>, DirectGroupError> {
+        let (commit, welcome, _) = self
+            .group
+            .self_update(&self.provider, &self.signer, LeafNodeParameters::default())
+            .map_err(|error| DirectGroupError::Mls(format!("prepare self update: {error:?}")))?
+            .into_messages();
+        if welcome.is_some() {
+            return Err(DirectGroupError::Mls(
+                "unexpected Welcome in direct self update".into(),
+            ));
+        }
+        commit
+            .tls_serialize_detached()
+            .map_err(|error| DirectGroupError::Mls(format!("serialize self update: {error:?}")))
+    }
+
+    pub fn accept_pending_self_update(&mut self) -> Result<(), DirectGroupError> {
+        self.group
+            .merge_pending_commit(&self.provider)
+            .map_err(|error| DirectGroupError::Mls(format!("merge self update: {error:?}")))
+    }
+
+    pub fn apply_self_update(&mut self, commit: &[u8]) -> Result<(), DirectGroupError> {
+        let input = MlsMessageIn::tls_deserialize_exact(commit)
+            .map_err(|error| DirectGroupError::Mls(format!("parse self update: {error:?}")))?;
+        let protocol = input
+            .try_into_protocol_message()
+            .map_err(|error| DirectGroupError::Mls(format!("expected self update: {error:?}")))?;
+        let processed = self
+            .group
+            .process_message(&self.provider, protocol)
+            .map_err(|error| DirectGroupError::Mls(format!("process self update: {error:?}")))?;
+        match processed.into_content() {
+            ProcessedMessageContent::StagedCommitMessage(staged) => self
+                .group
+                .merge_staged_commit(&self.provider, *staged)
+                .map_err(|error| DirectGroupError::Mls(format!("merge remote update: {error:?}"))),
+            _ => Err(DirectGroupError::NotApplicationMessage),
+        }
+    }
+
     /// Serializes the complete endpoint state for host-side authenticated
     /// encryption. The returned bytes contain secrets and must never be stored
     /// or logged without Vault protection.
@@ -291,6 +339,18 @@ impl DirectGroup {
         aad: &CanonicalAad,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, DirectGroupError> {
+        if self.group.pending_commit().is_some() {
+            return Err(DirectGroupError::Mls(
+                "application send blocked while a Commit is pending".into(),
+            ));
+        }
+        if aad.group_id.as_slice() != self.group.group_id().as_slice()
+            || aad.epoch != self.group.epoch().as_u64()
+        {
+            return Err(DirectGroupError::Mls(
+                "authenticated group or epoch mismatch".into(),
+            ));
+        }
         self.group.set_aad(
             aad.encode()
                 .map_err(|e| DirectGroupError::Mls(e.to_string()))?,
@@ -315,6 +375,13 @@ impl DirectGroup {
         let expected = expected_aad
             .encode()
             .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        if protocol.group_id().as_slice() != expected_aad.group_id.as_slice()
+            || protocol.epoch().as_u64() != expected_aad.epoch
+        {
+            return Err(DirectGroupError::Mls(
+                "authenticated group or epoch mismatch".into(),
+            ));
+        }
         // Application traffic is always an MLS PrivateMessage. Comparing its
         // unverified AAD before decryption is only an early rejection gate;
         // OpenMLS still authenticates the same bytes below. This prevents a
@@ -532,6 +599,53 @@ mod tests {
         assert_eq!(
             pair.recipient.decrypt(&second_route, &second).unwrap(),
             b"after restart"
+        );
+    }
+
+    #[test]
+    fn self_update_advances_only_after_delivery_acceptance_and_is_replay_safe() {
+        let mut pair = DirectGroupPair::establish(
+            b"group-pcs",
+            b"browser-pcs",
+            b"owner-pcs",
+            &mut KeyPackageLedger::default(),
+        )
+        .unwrap();
+        let prior_epoch = pair.creator.epoch();
+        assert_eq!(pair.recipient.epoch(), prior_epoch);
+        let commit = pair.creator.prepare_self_update().unwrap();
+        assert_eq!(pair.creator.epoch(), prior_epoch);
+        assert!(pair
+            .creator
+            .encrypt(
+                &aad(
+                    b"group-pcs",
+                    b"did:voko:agent-pcs",
+                    b"blocked-while-pending",
+                    b"browser-pcs",
+                ),
+                b"must wait",
+            )
+            .is_err());
+
+        pair.creator.accept_pending_self_update().unwrap();
+        pair.recipient.apply_self_update(&commit).unwrap();
+        assert_eq!(pair.creator.epoch(), prior_epoch + 1);
+        assert_eq!(pair.recipient.epoch(), prior_epoch + 1);
+        assert!(pair.recipient.apply_self_update(&commit).is_err());
+        assert_eq!(pair.recipient.epoch(), prior_epoch + 1);
+
+        let mut route = aad(
+            b"group-pcs",
+            b"did:voko:agent-pcs",
+            b"after-pcs",
+            b"browser-pcs",
+        );
+        route.epoch = pair.creator.epoch();
+        let ciphertext = pair.creator.encrypt(&route, b"new epoch").unwrap();
+        assert_eq!(
+            pair.recipient.decrypt(&route, &ciphertext).unwrap(),
+            b"new epoch"
         );
     }
 }

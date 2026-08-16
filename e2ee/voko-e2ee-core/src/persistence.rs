@@ -11,6 +11,14 @@ pub struct StoredDelivery {
     pub state_version: u64,
     pub ciphertext: Vec<u8>,
     pub sent: bool,
+    pub kind: DeliveryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DeliveryKind {
+    Application = 1,
+    Commit = 2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +109,14 @@ impl AtomicStateStore {
     }
 
     fn initialize(connection: Connection) -> Result<Self, PersistenceError> {
+        const SCHEMA_VERSION: i64 = 3;
+        let existing_version: i64 =
+            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if existing_version > SCHEMA_VERSION {
+            return Err(PersistenceError::Database(format!(
+                "E2EE schema version {existing_version} is newer than supported {SCHEMA_VERSION}"
+            )));
+        }
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
@@ -116,13 +132,12 @@ impl AtomicStateStore {
                state_version INTEGER NOT NULL,
                ciphertext BLOB NOT NULL,
                ciphertext_digest BLOB NOT NULL,
+               delivery_kind INTEGER NOT NULL,
                sent INTEGER NOT NULL DEFAULT 0,
                lease_owner TEXT,
                lease_expires_at_ms INTEGER,
                FOREIGN KEY(group_id) REFERENCES e2ee_group_states(group_id)
              );
-             CREATE INDEX IF NOT EXISTS e2ee_outbox_pending
-               ON e2ee_outbox(sent, lease_expires_at_ms);
              CREATE TABLE IF NOT EXISTS e2ee_inbox (
                message_id TEXT PRIMARY KEY,
                group_id TEXT NOT NULL,
@@ -134,8 +149,6 @@ impl AtomicStateStore {
                lease_expires_at_ms INTEGER,
                FOREIGN KEY(group_id) REFERENCES e2ee_group_states(group_id)
              );
-             CREATE INDEX IF NOT EXISTS e2ee_inbox_pending
-               ON e2ee_inbox(dispatched, lease_expires_at_ms);
              CREATE TABLE IF NOT EXISTS e2ee_key_packages (
                key_package_ref BLOB PRIMARY KEY,
                target_agent_did TEXT NOT NULL,
@@ -154,6 +167,31 @@ impl AtomicStateStore {
                PRIMARY KEY(identity_scope, role)
              );",
         )?;
+        ensure_column(
+            &connection,
+            "e2ee_outbox",
+            "delivery_kind",
+            "ALTER TABLE e2ee_outbox ADD COLUMN delivery_kind INTEGER NOT NULL DEFAULT 1",
+        )?;
+        ensure_column(
+            &connection,
+            "e2ee_inbox",
+            "lease_owner",
+            "ALTER TABLE e2ee_inbox ADD COLUMN lease_owner TEXT",
+        )?;
+        ensure_column(
+            &connection,
+            "e2ee_inbox",
+            "lease_expires_at_ms",
+            "ALTER TABLE e2ee_inbox ADD COLUMN lease_expires_at_ms INTEGER",
+        )?;
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS e2ee_outbox_pending
+               ON e2ee_outbox(sent, lease_expires_at_ms);
+             CREATE INDEX IF NOT EXISTS e2ee_inbox_pending
+               ON e2ee_inbox(dispatched, lease_expires_at_ms);",
+        )?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self { connection })
     }
 
@@ -166,6 +204,25 @@ impl AtomicStateStore {
         encrypted_state: &[u8],
         message_id: &str,
         ciphertext: &[u8],
+    ) -> Result<StoredDelivery, PersistenceError> {
+        self.commit_prepared_kind(
+            group_id,
+            expected_state_version,
+            encrypted_state,
+            message_id,
+            ciphertext,
+            DeliveryKind::Application,
+        )
+    }
+
+    pub fn commit_prepared_kind(
+        &mut self,
+        group_id: &str,
+        expected_state_version: u64,
+        encrypted_state: &[u8],
+        message_id: &str,
+        ciphertext: &[u8],
+        kind: DeliveryKind,
     ) -> Result<StoredDelivery, PersistenceError> {
         if group_id.is_empty()
             || message_id.is_empty()
@@ -196,6 +253,7 @@ impl AtomicStateStore {
                 && existing.state_version == expected_state_version + 1
                 && Sha256::digest(&existing.ciphertext).as_slice() == ciphertext_digest
                 && stored_state_digest == state_digest
+                && existing.kind == kind
             {
                 transaction.commit()?;
                 return Ok(existing);
@@ -232,9 +290,17 @@ impl AtomicStateStore {
             }
         }
         transaction.execute(
-            "INSERT INTO e2ee_outbox(message_id,group_id,state_version,ciphertext,ciphertext_digest)
-             VALUES(?1,?2,?3,?4,?5)",
-            params![message_id, group_id, next, ciphertext, ciphertext_digest],
+            "INSERT INTO e2ee_outbox(
+               message_id,group_id,state_version,ciphertext,ciphertext_digest,delivery_kind
+             ) VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                message_id,
+                group_id,
+                next,
+                ciphertext,
+                ciphertext_digest,
+                kind as u8
+            ],
         )?;
         let delivery = load_delivery(&transaction, message_id)?
             .ok_or_else(|| PersistenceError::Database("prepared delivery disappeared".into()))?;
@@ -724,13 +790,30 @@ impl AtomicStateStore {
     }
 }
 
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    migration: &str,
+) -> Result<(), PersistenceError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+    connection.execute_batch(migration)?;
+    Ok(())
+}
+
 fn load_delivery(
     connection: &Connection,
     message_id: &str,
 ) -> Result<Option<StoredDelivery>, PersistenceError> {
     connection
         .query_row(
-            "SELECT message_id,group_id,state_version,ciphertext,ciphertext_digest,sent
+            "SELECT message_id,group_id,state_version,ciphertext,ciphertext_digest,sent,delivery_kind
              FROM e2ee_outbox WHERE message_id=?1",
             params![message_id],
             |row| {
@@ -743,12 +826,13 @@ fn load_delivery(
                     row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
                     sent,
+                    row.get::<_, i64>(6)?,
                 ))
             },
         )
         .optional()?
         .map(
-            |(message_id, group_id, version, ciphertext, digest, sent)| {
+            |(message_id, group_id, version, ciphertext, digest, sent, kind)| {
                 if Sha256::digest(&ciphertext).as_slice() != digest {
                     return Err(PersistenceError::Database(
                         "ciphertext digest mismatch".into(),
@@ -760,6 +844,15 @@ fn load_delivery(
                     state_version: from_i64(version)?,
                     ciphertext,
                     sent: sent != 0,
+                    kind: match kind {
+                        1 => DeliveryKind::Application,
+                        2 => DeliveryKind::Commit,
+                        _ => {
+                            return Err(PersistenceError::Database(
+                                "invalid delivery kind".into(),
+                            ))
+                        }
+                    },
                 })
             },
         )
@@ -1043,5 +1136,63 @@ mod tests {
                 .unwrap(),
             PinStatus::Verified
         );
+    }
+
+    #[test]
+    fn legacy_schema_migrates_and_newer_schema_is_rejected() {
+        let legacy_path = std::env::temp_dir().join(format!(
+            "voko-e2ee-legacy-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        {
+            let connection = Connection::open(&legacy_path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA user_version=1;
+                     CREATE TABLE e2ee_group_states(
+                       group_id TEXT PRIMARY KEY,state_version INTEGER NOT NULL,
+                       encrypted_state BLOB NOT NULL,state_digest BLOB NOT NULL
+                     );
+                     CREATE TABLE e2ee_outbox(
+                       message_id TEXT PRIMARY KEY,group_id TEXT NOT NULL,state_version INTEGER NOT NULL,
+                       ciphertext BLOB NOT NULL,ciphertext_digest BLOB NOT NULL,sent INTEGER NOT NULL DEFAULT 0,
+                       lease_owner TEXT,lease_expires_at_ms INTEGER
+                     );
+                     CREATE TABLE e2ee_inbox(
+                       message_id TEXT PRIMARY KEY,group_id TEXT NOT NULL,state_version INTEGER NOT NULL,
+                       encrypted_payload BLOB NOT NULL,payload_digest BLOB NOT NULL,
+                       dispatched INTEGER NOT NULL DEFAULT 0
+                     );",
+                )
+                .unwrap();
+        }
+        let mut migrated = AtomicStateStore::open(&legacy_path).unwrap();
+        let delivery = migrated
+            .commit_prepared(
+                "legacy-group",
+                0,
+                b"sealed",
+                "legacy-message",
+                b"ciphertext",
+            )
+            .unwrap();
+        assert_eq!(delivery.kind, DeliveryKind::Application);
+        drop(migrated);
+        let _ = std::fs::remove_file(legacy_path);
+
+        let newer_path = std::env::temp_dir().join(format!(
+            "voko-e2ee-newer-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let connection = Connection::open(&newer_path).unwrap();
+        connection.pragma_update(None, "user_version", 99).unwrap();
+        drop(connection);
+        assert!(matches!(
+            AtomicStateStore::open(&newer_path),
+            Err(PersistenceError::Database(_))
+        ));
+        let _ = std::fs::remove_file(newer_path);
     }
 }
