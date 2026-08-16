@@ -68,6 +68,8 @@ The native protocol test now uses independent creator and recipient endpoint obj
 
 Rollout policy is explicit and conversation-scoped. `disabled` uses the legacy transport only for conversations that have never entered E2EE. `shadow` returns metadata-only routing observations and is forbidden from encrypting, relaying or duplicating real message bodies. `enabled` requires an exact Agent allowlist and both endpoint capabilities. Once a conversation is initializing or active, disabling the feature, losing capability, changing identity, revoking a device or encountering a cryptographic error locks the conversation instead of downgrading to plaintext.
 
+Attachment encryption uses an independent random 256-bit file key and random nonce domain for every upload. Plaintext is processed in 1 MiB AES-256-GCM chunks, each authenticated with file ID, chunk index/count and total size; the public transport manifest contains ciphertext hashes and sizes only. File name, MIME type and file key belong inside an authenticated MLS application message. The 25 MiB limit is enforced before encryption, and retries reuse stored ciphertext rather than repeating encryption with an old nonce domain.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.

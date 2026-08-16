@@ -2,6 +2,7 @@
 //! production VOKO message path.
 
 mod aad;
+mod attachment;
 mod envelope;
 mod identity;
 mod key_package;
@@ -19,6 +20,10 @@ mod system_key;
 mod vault;
 
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
+pub use attachment::{
+    AttachmentError, AttachmentKey, EncryptedAttachment, ATTACHMENT_CHUNK_BYTES,
+    MAX_ATTACHMENT_BYTES,
+};
 pub use envelope::{EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES};
 pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
