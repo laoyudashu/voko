@@ -15,10 +15,12 @@ mod pcs;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod recovery;
+mod release_manifest;
 mod rollout;
 mod state_cache;
 #[cfg(not(target_arch = "wasm32"))]
 mod system_key;
+mod transparency;
 mod vault;
 
 pub use a2a::{
@@ -49,6 +51,7 @@ pub use persistence::{
     KeyPackageBinding, PersistenceError, PinStatus, StateAnchor, StoredDelivery,
 };
 pub use recovery::{ArchivedMessage, ReadOnlyArchive, RecoveryError, ReplacementDeviceRequirement};
+pub use release_manifest::{ClientReleaseError, ClientReleaseManifest, SignedClientRelease};
 pub use rollout::{
     ConversationSecurityState, E2eeRolloutPolicy, RolloutDecision, RolloutError, RolloutMode,
 };
@@ -56,5 +59,9 @@ pub use state_cache::{BoundedSecretCache, CacheError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use system_key::{
     RollbackAnchorManager, SystemWrappingKeyStore, VaultKeyError, VaultKeyManager, WrappingKeyStore,
+};
+pub use transparency::{
+    verify_inclusion, verify_witnesses, DirectoryKeyEntry, TransparencyCheckpoint,
+    TransparencyError, TransparencyLog, TransparencyWitness, WitnessedCheckpoint,
 };
 pub use vault::{EncryptedVault, RecordVault, VaultError, VaultKdfParams};
