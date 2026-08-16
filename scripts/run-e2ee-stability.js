@@ -1,9 +1,10 @@
 'use strict';
 
-const { existsSync } = require('node:fs');
+const { existsSync, readFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { parseDuration, validateStabilitySummary } = require('./e2ee-stability-policy');
 
 const executable = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const localCargo = join(homedir(), '.cargo', 'bin', executable);
@@ -16,4 +17,8 @@ const result = spawnSync(cargo, [
   '--bin', 'voko-e2ee-stability', '--', ...forwarded,
 ], { cwd: join(__dirname, '..'), env: process.env, stdio: 'inherit', shell: false, windowsHide: true });
 if (result.error) throw result.error;
-process.exit(result.status ?? 1);
+if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
+const duration = forwarded.find((value) => value.startsWith('--duration=')).slice('--duration='.length);
+const output = forwarded.find((value) => value.startsWith('--output=')).slice('--output='.length);
+validateStabilitySummary(JSON.parse(readFileSync(join(__dirname, '..', output), 'utf8')), parseDuration(duration));
+console.log('E2EE stability policy gate passed.');
