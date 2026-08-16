@@ -22,7 +22,8 @@ pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
 pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistence::{
-    AtomicStateStore, ClaimedDelivery, PersistenceError, StateAnchor, StoredDelivery,
+    AtomicStateStore, ClaimedDelivery, ClaimedReceived, PersistenceError, StateAnchor,
+    StoredDelivery,
 };
 pub use state_cache::{BoundedSecretCache, CacheError};
-pub use vault::{EncryptedVault, VaultError, VaultKdfParams};
+pub use vault::{EncryptedVault, RecordVault, VaultError, VaultKdfParams};

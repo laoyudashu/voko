@@ -10,6 +10,7 @@ use zeroize::{Zeroize, Zeroizing};
 const MAGIC: &[u8; 12] = b"VOKO-VLT-001";
 const HEADER_LEN: usize = MAGIC.len() + 4 + 4 + 4 + 16 + 12;
 const AAD: &[u8] = b"voko-e2ee-vault/1";
+const RECORD_MAGIC: &[u8; 12] = b"VOKO-REC-001";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VaultKdfParams {
@@ -51,6 +52,85 @@ pub enum VaultError {
 }
 
 pub struct EncryptedVault;
+
+/// Hot-path record encryption after the Vault master key has been unlocked
+/// once. The key is zeroized on drop; Argon2 is deliberately not run per
+/// message.
+pub struct RecordVault {
+    key: Zeroizing<[u8; 32]>,
+}
+
+impl RecordVault {
+    pub fn from_master_key(master_key: &[u8]) -> Result<Self, VaultError> {
+        let key: [u8; 32] = master_key
+            .try_into()
+            .map_err(|_| VaultError::InvalidFormat)?;
+        Ok(Self {
+            key: Zeroizing::new(key),
+        })
+    }
+
+    pub fn seal(&self, context: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
+        if context.is_empty() {
+            return Err(VaultError::InvalidFormat);
+        }
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+        let cipher =
+            Aes256Gcm::new_from_slice(self.key.as_ref()).map_err(|_| VaultError::InvalidFormat)?;
+        let aad = record_aad(context)?;
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| VaultError::AuthenticationFailed)?;
+        let mut output = Vec::with_capacity(RECORD_MAGIC.len() + nonce.len() + ciphertext.len());
+        output.extend_from_slice(RECORD_MAGIC);
+        output.extend_from_slice(&nonce);
+        output.extend_from_slice(&ciphertext);
+        nonce.zeroize();
+        Ok(output)
+    }
+
+    pub fn open(
+        &self,
+        context: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
+        if ciphertext.len() <= RECORD_MAGIC.len() + 12
+            || &ciphertext[..RECORD_MAGIC.len()] != RECORD_MAGIC
+        {
+            return Err(VaultError::InvalidFormat);
+        }
+        let nonce = &ciphertext[RECORD_MAGIC.len()..RECORD_MAGIC.len() + 12];
+        let cipher =
+            Aes256Gcm::new_from_slice(self.key.as_ref()).map_err(|_| VaultError::InvalidFormat)?;
+        let aad = record_aad(context)?;
+        cipher
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload {
+                    msg: &ciphertext[RECORD_MAGIC.len() + 12..],
+                    aad: &aad,
+                },
+            )
+            .map(Zeroizing::new)
+            .map_err(|_| VaultError::AuthenticationFailed)
+    }
+}
+
+fn record_aad(context: &[u8]) -> Result<Vec<u8>, VaultError> {
+    let length = u32::try_from(context.len()).map_err(|_| VaultError::InvalidFormat)?;
+    let mut aad = Vec::with_capacity(AAD.len() + 4 + context.len());
+    aad.extend_from_slice(AAD);
+    aad.extend_from_slice(&length.to_be_bytes());
+    aad.extend_from_slice(context);
+    Ok(aad)
+}
 
 impl EncryptedVault {
     pub fn seal(
@@ -218,6 +298,22 @@ mod tests {
                 }
             ),
             Err(VaultError::WeakKdf)
+        );
+    }
+
+    #[test]
+    fn unlocked_record_key_is_randomized_and_context_bound() {
+        let vault = RecordVault::from_master_key(&[7u8; 32]).unwrap();
+        let first = vault.seal(b"group-a/state/1", b"hot state").unwrap();
+        let second = vault.seal(b"group-a/state/1", b"hot state").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            vault.open(b"group-a/state/1", &first).unwrap().as_slice(),
+            b"hot state"
+        );
+        assert_eq!(
+            vault.open(b"group-b/state/1", &first),
+            Err(VaultError::AuthenticationFailed)
         );
     }
 }

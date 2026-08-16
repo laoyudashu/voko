@@ -20,6 +20,14 @@ pub struct ClaimedDelivery {
     pub lease_expires_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedReceived {
+    pub message_id: String,
+    pub encrypted_payload: Vec<u8>,
+    pub lease_owner: String,
+    pub lease_expires_at_ms: u64,
+}
+
 /// Latest state marker that must be sealed outside the SQLite file (for
 /// example by the OS-backed Vault) to detect database rollback.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +97,20 @@ impl AtomicStateStore {
                FOREIGN KEY(group_id) REFERENCES e2ee_group_states(group_id)
              );
              CREATE INDEX IF NOT EXISTS e2ee_outbox_pending
-               ON e2ee_outbox(sent, lease_expires_at_ms);",
+               ON e2ee_outbox(sent, lease_expires_at_ms);
+             CREATE TABLE IF NOT EXISTS e2ee_inbox (
+               message_id TEXT PRIMARY KEY,
+               group_id TEXT NOT NULL,
+               state_version INTEGER NOT NULL,
+               encrypted_payload BLOB NOT NULL,
+               payload_digest BLOB NOT NULL,
+               dispatched INTEGER NOT NULL DEFAULT 0,
+               lease_owner TEXT,
+               lease_expires_at_ms INTEGER,
+               FOREIGN KEY(group_id) REFERENCES e2ee_group_states(group_id)
+             );
+             CREATE INDEX IF NOT EXISTS e2ee_inbox_pending
+               ON e2ee_inbox(dispatched, lease_expires_at_ms);",
         )?;
         Ok(Self { connection })
     }
@@ -223,6 +244,171 @@ impl AtomicStateStore {
                 })
             })
             .transpose()
+    }
+
+    pub fn has_received(&self, message_id: &str) -> Result<bool, PersistenceError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM e2ee_inbox WHERE message_id=?1",
+                params![message_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Atomically records the post-decryption MLS state and a locally encrypted
+    /// payload. Provider dispatch must happen only after this commit succeeds.
+    pub fn commit_received(
+        &mut self,
+        group_id: &str,
+        expected_state_version: u64,
+        encrypted_state: &[u8],
+        message_id: &str,
+        encrypted_payload: &[u8],
+    ) -> Result<bool, PersistenceError> {
+        if group_id.is_empty()
+            || message_id.is_empty()
+            || encrypted_state.is_empty()
+            || encrypted_payload.is_empty()
+        {
+            return Err(PersistenceError::InvalidInput);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing: Option<(String, Vec<u8>)> = transaction
+            .query_row(
+                "SELECT group_id,payload_digest FROM e2ee_inbox WHERE message_id=?1",
+                params![message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let payload_digest = Sha256::digest(encrypted_payload).to_vec();
+        if let Some((existing_group, existing_digest)) = existing {
+            if existing_group == group_id && existing_digest == payload_digest {
+                transaction.commit()?;
+                return Ok(false);
+            }
+            return Err(PersistenceError::MessageConflict);
+        }
+
+        let expected = to_i64(expected_state_version)?;
+        let next_version = expected_state_version
+            .checked_add(1)
+            .ok_or(PersistenceError::NumericRange)?;
+        let next = to_i64(next_version)?;
+        let state_digest = Sha256::digest(encrypted_state).to_vec();
+        let current: Option<i64> = transaction
+            .query_row(
+                "SELECT state_version FROM e2ee_group_states WHERE group_id=?1",
+                params![group_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match current {
+            None if expected != 0 => return Err(PersistenceError::VersionConflict),
+            Some(version) if version != expected => return Err(PersistenceError::VersionConflict),
+            None => {
+                transaction.execute(
+                    "INSERT INTO e2ee_group_states(group_id,state_version,encrypted_state,state_digest)
+                     VALUES(?1,?2,?3,?4)",
+                    params![group_id, next, encrypted_state, state_digest],
+                )?;
+            }
+            Some(_) => {
+                if transaction.execute(
+                    "UPDATE e2ee_group_states SET state_version=?1,encrypted_state=?2,state_digest=?3
+                     WHERE group_id=?4 AND state_version=?5",
+                    params![next, encrypted_state, state_digest, group_id, expected],
+                )? != 1
+                {
+                    return Err(PersistenceError::VersionConflict);
+                }
+            }
+        }
+        transaction.execute(
+            "INSERT INTO e2ee_inbox(message_id,group_id,state_version,encrypted_payload,payload_digest)
+             VALUES(?1,?2,?3,?4,?5)",
+            params![message_id, group_id, next, encrypted_payload, payload_digest],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    pub fn pending_received_count(&self) -> Result<u64, PersistenceError> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM e2ee_inbox WHERE dispatched=0",
+            [],
+            |row| row.get(0),
+        )?;
+        from_i64(count)
+    }
+
+    pub fn claim_next_received(
+        &mut self,
+        lease_owner: &str,
+        now_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Option<ClaimedReceived>, PersistenceError> {
+        if lease_owner.is_empty() || lease_duration_ms == 0 {
+            return Err(PersistenceError::InvalidInput);
+        }
+        let now = to_i64(now_ms)?;
+        let expires_at = now_ms
+            .checked_add(lease_duration_ms)
+            .ok_or(PersistenceError::NumericRange)?;
+        let expires = to_i64(expires_at)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let candidate: Option<(String, Vec<u8>)> = transaction
+            .query_row(
+                "SELECT message_id,encrypted_payload FROM e2ee_inbox
+                 WHERE dispatched=0 AND (lease_owner IS NULL OR lease_expires_at_ms<=?1)
+                 ORDER BY rowid LIMIT 1",
+                params![now],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((message_id, encrypted_payload)) = candidate else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        if transaction.execute(
+            "UPDATE e2ee_inbox SET lease_owner=?1,lease_expires_at_ms=?2
+             WHERE message_id=?3 AND dispatched=0
+               AND (lease_owner IS NULL OR lease_expires_at_ms<=?4)",
+            params![lease_owner, expires, message_id, now],
+        )? != 1
+        {
+            return Err(PersistenceError::LeaseConflict);
+        }
+        transaction.commit()?;
+        Ok(Some(ClaimedReceived {
+            message_id,
+            encrypted_payload,
+            lease_owner: lease_owner.to_owned(),
+            lease_expires_at_ms: expires_at,
+        }))
+    }
+
+    pub fn mark_received_dispatched(
+        &mut self,
+        message_id: &str,
+        lease_owner: &str,
+    ) -> Result<(), PersistenceError> {
+        if self.connection.execute(
+            "UPDATE e2ee_inbox
+             SET dispatched=1,lease_owner=NULL,lease_expires_at_ms=NULL
+             WHERE message_id=?1 AND dispatched=0 AND lease_owner=?2",
+            params![message_id, lease_owner],
+        )? != 1
+        {
+            return Err(PersistenceError::LeaseConflict);
+        }
+        Ok(())
     }
 
     pub fn verify_external_anchor(&self, anchor: &StateAnchor) -> Result<(), PersistenceError> {
@@ -458,5 +644,47 @@ mod tests {
             store.verify_external_anchor(&missing),
             Err(PersistenceError::RollbackDetected)
         ));
+    }
+
+    #[test]
+    fn received_state_and_local_payload_are_committed_once() {
+        let mut store = AtomicStateStore::in_memory().unwrap();
+        assert!(store
+            .commit_received(
+                "group-in",
+                0,
+                b"sealed-state-1",
+                "message-in",
+                b"sealed-payload"
+            )
+            .unwrap());
+        assert!(store.has_received("message-in").unwrap());
+        assert!(!store
+            .commit_received(
+                "group-in",
+                0,
+                b"ignored-on-dedup",
+                "message-in",
+                b"sealed-payload"
+            )
+            .unwrap());
+        assert_eq!(store.pending_received_count().unwrap(), 1);
+        let claimed = store
+            .claim_next_received("provider-worker", 100, 10)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.message_id, "message-in");
+        assert!(store
+            .claim_next_received("other-worker", 105, 10)
+            .unwrap()
+            .is_none());
+        assert!(matches!(
+            store.mark_received_dispatched("message-in", "other-worker"),
+            Err(PersistenceError::LeaseConflict)
+        ));
+        store
+            .mark_received_dispatched("message-in", "provider-worker")
+            .unwrap();
+        assert_eq!(store.pending_received_count().unwrap(), 0);
     }
 }

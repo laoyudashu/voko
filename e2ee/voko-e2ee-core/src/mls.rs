@@ -306,13 +306,28 @@ impl DirectGroup {
         let protocol: ProtocolMessage = input
             .try_into_protocol_message()
             .map_err(|e| DirectGroupError::Mls(format!("expected protocol message: {e:?}")))?;
+        let expected = expected_aad
+            .encode()
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        // Application traffic is always an MLS PrivateMessage. Comparing its
+        // unverified AAD before decryption is only an early rejection gate;
+        // OpenMLS still authenticates the same bytes below. This prevents a
+        // forged outer route from consuming a secret-tree generation.
+        match &protocol {
+            ProtocolMessage::PrivateMessage(message) if message.aad() == expected => {}
+            ProtocolMessage::PrivateMessage(_) => {
+                return Err(DirectGroupError::Mls(
+                    "authenticated routing mismatch".into(),
+                ));
+            }
+            ProtocolMessage::PublicMessage(_) => {
+                return Err(DirectGroupError::NotApplicationMessage);
+            }
+        }
         let processed = self
             .group
             .process_message(&self.provider, protocol)
             .map_err(|e| DirectGroupError::Mls(format!("decrypt message: {e:?}")))?;
-        let expected = expected_aad
-            .encode()
-            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
         if processed.aad() != expected {
             return Err(DirectGroupError::Mls(
                 "authenticated routing mismatch".into(),
@@ -420,6 +435,10 @@ mod tests {
             b"browser-key-2",
         );
         assert!(pair.recipient.decrypt(&wrong, &ciphertext).is_err());
+        assert_eq!(
+            pair.recipient.decrypt(&correct, &ciphertext).unwrap(),
+            b"secret"
+        );
     }
 
     #[test]

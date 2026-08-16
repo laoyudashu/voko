@@ -88,6 +88,9 @@ jobs:
         run: npm run test:e2ee:relay
         env:
           CARGO: cargo
+      - name: Test encrypted Fake IM fault recovery
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:e2ee:fake-im
       - name: Check browser WASM target
         if: matrix.os == 'ubuntu-latest'
         run: |
