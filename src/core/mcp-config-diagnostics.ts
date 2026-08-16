@@ -14,26 +14,27 @@ function candidates(options: any = {}): any[] {
   ));
   const home = homeDir(options);
   const platform = options.platform || process.platform;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
   const appData = options.appData || process.env.APPDATA;
   const result: any[] = [
-    { client: 'Claude Code', path: path.join(home, '.claude.json') },
-    { client: 'Claude Code', path: path.join(home, '.claude', 'mcp.json') },
-    { client: 'Cursor', path: path.join(home, '.cursor', 'mcp.json') },
-    { client: 'Codex', path: path.join(home, '.codex', 'config.toml') },
-    { client: 'WorkBuddy', path: path.join(home, '.workbuddy', 'mcp.json') },
-    { client: 'QwenWork', path: path.join(home, '.qwenworkcn', 'mcp.json') },
-    { client: 'OpenCode', path: path.join(home, '.config', 'opencode', 'opencode.json') },
-    { client: 'Kiro', path: path.join(home, '.kiro', 'settings', 'mcp.json') },
+    { client: 'Claude Code', path: pathApi.join(home, '.claude.json') },
+    { client: 'Claude Code', path: pathApi.join(home, '.claude', 'mcp.json') },
+    { client: 'Cursor', path: pathApi.join(home, '.cursor', 'mcp.json') },
+    { client: 'Codex', path: pathApi.join(home, '.codex', 'config.toml') },
+    { client: 'WorkBuddy', path: pathApi.join(home, '.workbuddy', 'mcp.json') },
+    { client: 'QwenWork', path: pathApi.join(home, '.qwenworkcn', 'mcp.json') },
+    { client: 'OpenCode', path: pathApi.join(home, '.config', 'opencode', 'opencode.json') },
+    { client: 'Kiro', path: pathApi.join(home, '.kiro', 'settings', 'mcp.json') },
   ];
   if (platform === 'win32' && appData) {
-    result.push({ client: 'Goose', path: path.join(appData, 'Block', 'goose', 'config', 'config.yaml') });
-    result.push({ client: 'Claude Desktop', path: path.join(appData, 'Claude', 'claude_desktop_config.json') });
-    result.push({ client: 'Cursor', path: path.join(appData, 'Cursor', 'User', 'globalStorage', 'mcp.json') });
-    result.push({ client: 'Trae', path: path.join(appData, 'Trae', 'User', 'mcp.json') });
+    result.push({ client: 'Goose', path: pathApi.join(appData, 'Block', 'goose', 'config', 'config.yaml') });
+    result.push({ client: 'Claude Desktop', path: pathApi.join(appData, 'Claude', 'claude_desktop_config.json') });
+    result.push({ client: 'Cursor', path: pathApi.join(appData, 'Cursor', 'User', 'globalStorage', 'mcp.json') });
+    result.push({ client: 'Trae', path: pathApi.join(appData, 'Trae', 'User', 'mcp.json') });
   } else if (platform === 'darwin') {
-    result.push({ client: 'Goose', path: path.join(home, 'Library', 'Application Support', 'Block', 'goose', 'config', 'config.yaml') });
+    result.push({ client: 'Goose', path: pathApi.join(home, 'Library', 'Application Support', 'Block', 'goose', 'config', 'config.yaml') });
   } else {
-    result.push({ client: 'Goose', path: path.join(home, '.config', 'goose', 'config.yaml') });
+    result.push({ client: 'Goose', path: pathApi.join(home, '.config', 'goose', 'config.yaml') });
   }
   return result;
 }

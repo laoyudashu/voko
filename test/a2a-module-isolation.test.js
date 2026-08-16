@@ -33,7 +33,7 @@ test('A2A database path is independent from the main VOKO database', () => {
       platform: 'win32',
       homeDir: 'C:\\Users\\test',
     }),
-    path.resolve('C:\\Users\\test\\AppData\\Roaming', 'voko', 'voko-a2a.db'),
+    path.win32.resolve('C:\\Users\\test\\AppData\\Roaming', 'voko', 'voko-a2a.db'),
   );
   assert.equal(
     resolveA2ADatabasePath({
@@ -41,11 +41,11 @@ test('A2A database path is independent from the main VOKO database', () => {
       platform: 'linux',
       homeDir: '/home/test',
     }),
-    path.join('/tmp/config', 'voko', 'voko-a2a.db'),
+    path.posix.join('/tmp/config', 'voko', 'voko-a2a.db'),
   );
   assert.equal(
     resolveA2ADatabasePath({ env: {}, platform: 'darwin', homeDir: '/Users/test' }),
-    path.join('/Users/test', 'Library', 'Application Support', 'voko', 'voko-a2a.db'),
+    path.posix.join('/Users/test', 'Library', 'Application Support', 'voko', 'voko-a2a.db'),
   );
 });
 

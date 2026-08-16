@@ -634,6 +634,12 @@ function createWebRouter(handlers, db, opts={}){
     }).join('')+'</tbody></table></div>';
   };
   const parseA2AEventPayload=event=>{try{return typeof event?.payload_json==='string'?JSON.parse(event.payload_json):(event?.payload_json||{})}catch{return{}}};
+  /**
+   * @param {Record<string, unknown>} task
+   * @param {string} counterparty
+   * @param {(key: string, params?: Record<string, unknown>) => string} T
+   * @param {Record<string, unknown>} options
+   */
   const renderA2ATaskConversation=(task,counterparty,T=key=>key,options={})=>{
     const events=Array.isArray(task?.events)?task.events:[],messages=[],artifacts=[];let noReply=false;
     events.forEach(event=>{
@@ -2019,7 +2025,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         switch(a){
           case'update_profile':await handleAction(req,res,handlers.update_agent_profile({
             agentId,name:req.body.name||undefined,description:req.body.description||undefined,
-            short_description:req.body.short_description||undefined,category:req.body.category||undefined,
+            short_description:Object.prototype.hasOwnProperty.call(req.body,'short_description')?req.body.short_description:undefined,category:req.body.category||undefined,
             tags:req.body.tags?JSON.stringify(req.body.tags.replace(/，/g,',').split(',').map(t=>t.trim()).filter(Boolean)):undefined,iconUrl:req.body.iconUrl||undefined,
             address:req.body.address||undefined,contact_phone:req.body.contact_phone||undefined,
             backendType:req.body.backendType||undefined,backendInstanceId:req.body.backendInstanceId

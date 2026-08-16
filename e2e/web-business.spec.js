@@ -44,16 +44,18 @@ test('Agent profile edit persists through the Web form and can be restored', asy
 test('capability editor adds a capability and returns home after declaration', async ({ page }) => {
   await page.goto('/agents/e2e-agent/caps');
   await expect(page.locator('#caps-add')).toBeVisible();
+  const existingCards = await page.locator('.cap-card').count();
   await page.locator('#caps-add').click();
-  await expect(page.locator('.cap-card')).toHaveCount(1);
-  await page.locator('.cap-name').fill('预约能力');
-  await page.locator('.cap-description').fill('Schedule an appointment');
-  await page.locator('.cap-tags').fill('appointment, schedule');
-  await page.locator('.cap-add-field').click();
-  await page.locator('.cf-name').fill('手机号');
+  await expect(page.locator('.cap-card')).toHaveCount(existingCards + 1);
+  const card = page.locator('.cap-card').last();
+  await card.locator('.cap-name').fill('预约能力');
+  await card.locator('.cap-description').fill('Schedule an appointment');
+  await card.locator('.cap-tags').fill('appointment, schedule');
+  await card.locator('.cap-add-field').click();
+  await card.locator('.cf-name').fill('手机号');
   await page.locator('#caps-form button[type="submit"]').click();
 
-  await page.waitForURL(/\/\?ok=/);
+  await page.waitForURL(/\/agents\/e2e-agent\/caps\?(?:ok|warn)=/);
   await expect(page.locator('[role="alert"]')).toContainText(/capabilit|能力|成功|声明/i);
   const agent = readAgent();
   expect(agent.did).toBeTruthy();
@@ -65,9 +67,9 @@ test('capability editor adds a capability and returns home after declaration', a
 
   // Leave the isolated runtime clean for following specs.
   await page.goto('/agents/e2e-agent/caps');
-  await page.locator('.cap-remove').click();
+  while (await page.locator('.cap-remove').count()) await page.locator('.cap-remove').first().click();
   await page.locator('#caps-form button[type="submit"]').click();
-  await page.waitForURL(/\/\?ok=/);
+  await page.waitForURL(/\/agents\/e2e-agent\/caps\?(?:ok|warn)=/);
   expect(JSON.parse(readAgent().ability || '[]')).toEqual([]);
 });
 

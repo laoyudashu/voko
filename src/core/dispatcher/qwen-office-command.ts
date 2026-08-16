@@ -65,10 +65,11 @@ function qwenOfficeRuntimeRequest(
   overrideCommand?: string,
 ) {
   const command = overrideCommand || resolveQwenOfficeCommand(env, platform);
+  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute(command) : path.posix.isAbsolute(command);
   return {
     providerId: 'qwen-office-cli',
     mode,
-    candidates: path.isAbsolute(command)
+    candidates: isAbsolute
       ? [{ kind: 'explicit', path: command }]
       : [{ kind: 'native', command }],
   };

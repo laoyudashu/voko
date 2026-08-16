@@ -24,10 +24,11 @@ function traeCliRuntimeRequest(
   overrideCommand?: string,
 ) {
   const command = overrideCommand || resolveTraeCliCommand(env, platform);
+  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute(command) : path.posix.isAbsolute(command);
   return {
     providerId: 'traecli-acp',
     mode,
-    candidates: path.isAbsolute(command)
+    candidates: isAbsolute
       ? [{ kind: 'explicit', path: command }]
       : [{ kind: 'native', command }],
   };
