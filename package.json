@@ -86,6 +86,7 @@
     "test:e2ee:browser": "node scripts/test-e2ee-wasm-browser.js",
     "test:e2ee:relay": "node scripts/test-e2ee-relay-poc.js",
     "test:e2ee:cross-process": "node scripts/test-e2ee-cross-process.js",
+    "test:e2ee:witness-processes": "node scripts/test-e2ee-witness-processes.js",
     "test:e2ee:readiness": "node scripts/check-e2ee-readiness.js",
     "e2ee:audit:prepare": "node scripts/prepare-e2ee-audit.js",
     "test:e2ee:platform": "node scripts/run-e2ee-platform-gate.js",

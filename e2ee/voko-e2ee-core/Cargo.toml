@@ -52,3 +52,7 @@ path = "src/bin/stability.rs"
 [[bin]]
 name = "voko-e2ee-lite-endpoint"
 path = "src/bin/lite_endpoint.rs"
+
+[[bin]]
+name = "voko-e2ee-witness-endpoint"
+path = "src/bin/witness_endpoint.rs"

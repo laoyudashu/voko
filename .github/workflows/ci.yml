@@ -115,6 +115,7 @@ jobs:
           npx playwright install --with-deps chromium
           npm run test:e2ee:browser
           npm run test:e2ee:cross-process
+          npm run test:e2ee:witness-processes
           npm run test:e2ee:readiness
 
   security:

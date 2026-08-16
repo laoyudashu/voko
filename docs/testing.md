@@ -67,6 +67,7 @@ The remaining deterministic E2EE gates use these exact entry points:
 ```bash
 npm run test:e2ee:browser
 npm run test:e2ee:cross-process
+npm run test:e2ee:witness-processes
 npm run test:e2ee:stability -- --duration=30m --output=e2ee-stability-30m-summary.json
 npm run e2ee:gate:stability -- stability_30m e2ee-stability-30m-summary.json
 npm run test:e2ee:readiness
