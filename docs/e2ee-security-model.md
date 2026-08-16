@@ -62,6 +62,8 @@ The first recovery PoC deliberately exports an encrypted read-only local message
 
 The local persistent store records owner-scoped device epochs and revocation state. Replacing a device atomically revokes the old device and admits only a distinct device at a higher epoch; a revoked device cannot be registered again. This is an endpoint fail-closed gate. Production recovery still requires AgentDID to perform the corresponding authoritative revocation and ownership checks before any new group is established.
 
+AgentDID now contains a disabled-by-default KeyPackage directory contract. An active owner with `agent:manage` may publish a package bound to an owned active Agent, owner device key and key epoch for at most 24 hours. An authenticated Guest Session may atomically reserve one package only for a searchable Agent whose exact DID matches. The service stores no private endpoint key. `VOKO_E2EE_DIRECTORY_ENABLED` remains off until the independent-endpoint and production canary gates pass; the presence of the route is not an E2EE launch.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.
