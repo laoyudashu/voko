@@ -72,6 +72,8 @@ Attachment encryption uses an independent random 256-bit file key and random non
 
 Multi-device membership uses actual MLS Add and Remove Commits. A new owner device has its own credential and KeyPackage, existing members process the same Add Commit, and the new device joins from its Welcome. Revocation produces a Remove Commit and a new epoch; retained devices can decrypt new traffic while the removed device fails closed. Device authorization and owner identity remain application-level checks around these cryptographic transitions.
 
+For group messages, the minimum operation metadata is visible but authenticated: conversation scope, opaque sender device key and whether the operation is a normal message or `mention_all`. The server can enforce that only an owner or administrator declares `mention_all`, while text and concrete member mentions remain encrypted. The receiver compares the decrypted structured operation with the authenticated outer metadata and rejects any mismatch. This accepts limited operation-metadata leakage and does not claim that a malicious client can be content-moderated by a server that cannot decrypt.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.

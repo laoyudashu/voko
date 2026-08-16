@@ -4,6 +4,7 @@
 mod aad;
 mod attachment;
 mod envelope;
+mod group_policy;
 mod identity;
 mod key_package;
 mod lifecycle;
@@ -25,6 +26,9 @@ pub use attachment::{
     MAX_ATTACHMENT_BYTES,
 };
 pub use envelope::{EnvelopeError, WireEnvelope, MAX_TEXT_CIPHERTEXT_BYTES};
+pub use group_policy::{
+    EncryptedGroupContent, GroupOperation, GroupOperationMetadata, GroupPolicyError, GroupRole,
+};
 pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
