@@ -1,8 +1,8 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
-    CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectGroup, DirectGroupPair,
-    KeyPackageLedger, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint, DirectGroup,
+    DirectGroupPair, KeyPackageLedger, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
 };
 use wasm_bindgen::prelude::*;
 
@@ -34,6 +34,92 @@ struct WasmPreparedRecord {
     message_id: String,
     ciphertext: String,
     state_snapshot: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WasmPreparedAdd {
+    commit: String,
+    welcome: String,
+}
+
+/// Browser-side endpoint used by the cross-process canary. Recipient private
+/// KeyPackage material is never present in this WASM instance.
+#[wasm_bindgen]
+pub struct WasmCreatorEndpoint {
+    pending: Option<DirectCreatorEndpoint>,
+    group: Option<DirectGroup>,
+    group_id: Vec<u8>,
+    target_agent_did: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl WasmCreatorEndpoint {
+    #[wasm_bindgen(constructor)]
+    pub fn new(group_id: String, target_agent_did: String) -> Result<Self, JsError> {
+        if group_id.is_empty() || target_agent_did.is_empty() {
+            return Err(JsError::new("group ID and Agent DID are required"));
+        }
+        let identity = DeviceCredentialIdentity {
+            role: DeviceRole::Browser,
+            principal_id: b"cross-process-principal".to_vec(),
+            device_key_id: b"cross-process-browser".to_vec(),
+            key_epoch: 1,
+            target_agent_did: target_agent_did.as_bytes().to_vec(),
+        };
+        let group_id_bytes = group_id.as_bytes().to_vec();
+        let pending = DirectCreatorEndpoint::new(&group_id_bytes, &identity)
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        Ok(Self { pending: Some(pending), group: None, group_id: group_id_bytes, target_agent_did: target_agent_did.into_bytes() })
+    }
+
+    pub fn prepare_add(&mut self, key_package: String) -> Result<String, JsError> {
+        let package = STANDARD_NO_PAD.decode(key_package)
+            .map_err(|_| JsError::new("invalid KeyPackage encoding"))?;
+        let prepared = self.pending.as_mut().ok_or_else(|| JsError::new("creator is not pending"))?
+            .prepare_add(&package).map_err(|error| JsError::new(&error.to_string()))?;
+        serde_json::to_string(&WasmPreparedAdd {
+            commit: STANDARD_NO_PAD.encode(prepared.commit),
+            welcome: STANDARD_NO_PAD.encode(prepared.welcome),
+        }).map_err(|error| JsError::new(&error.to_string()))
+    }
+
+    pub fn accept_add(&mut self) -> Result<(), JsError> {
+        let pending = self.pending.take().ok_or_else(|| JsError::new("creator is not pending"))?;
+        self.group = Some(pending.accept_add().map_err(|error| JsError::new(&error.to_string()))?);
+        Ok(())
+    }
+
+    pub fn decrypt_ack(&mut self, ciphertext: String) -> Result<String, JsError> {
+        self.decrypt(ciphertext, b"cross-process-owner", b"group-established-ack")
+    }
+
+    pub fn encrypt_message(&mut self, plaintext: String) -> Result<String, JsError> {
+        let aad = self.aad(b"cross-process-browser", b"application-1")?;
+        let ciphertext = self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
+            .encrypt(&aad, plaintext.as_bytes()).map_err(|error| JsError::new(&error.to_string()))?;
+        Ok(STANDARD_NO_PAD.encode(ciphertext))
+    }
+}
+
+impl WasmCreatorEndpoint {
+    fn aad(&self, sender: &[u8], message: &[u8]) -> Result<CanonicalAad, JsError> {
+        let epoch = self.group.as_ref().ok_or_else(|| JsError::new("group is not active"))?.epoch();
+        Ok(CanonicalAad {
+            protocol_version: E2EE_PROTOCOL_VERSION, content_type: E2EE_CONTENT_TYPE,
+            group_id: self.group_id.clone(), epoch, target_agent_did: self.target_agent_did.clone(),
+            conversation_scope: b"cross-process-conversation".to_vec(),
+            sender_device_key_id: sender.to_vec(), message_id: message.to_vec(), channel_type: 1,
+        })
+    }
+
+    fn decrypt(&mut self, ciphertext: String, sender: &[u8], message: &[u8]) -> Result<String, JsError> {
+        let aad = self.aad(sender, message)?;
+        let bytes = STANDARD_NO_PAD.decode(ciphertext).map_err(|_| JsError::new("invalid ciphertext encoding"))?;
+        let plaintext = self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
+            .decrypt(&aad, &bytes).map_err(|error| JsError::new(&error.to_string()))?;
+        String::from_utf8(plaintext).map_err(|_| JsError::new("decrypted ACK is not UTF-8"))
+    }
 }
 
 #[wasm_bindgen]

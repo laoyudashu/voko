@@ -114,6 +114,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
           npm run test:e2ee:browser
+          npm run test:e2ee:cross-process
 
   security:
     runs-on: ubuntu-latest

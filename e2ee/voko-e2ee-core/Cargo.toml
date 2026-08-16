@@ -47,3 +47,7 @@ path = "src/bin/relay_poc.rs"
 [[bin]]
 name = "voko-e2ee-stability"
 path = "src/bin/stability.rs"
+
+[[bin]]
+name = "voko-e2ee-lite-endpoint"
+path = "src/bin/lite_endpoint.rs"
