@@ -59,6 +59,7 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   assert.doesNotMatch(html, /type="text" id="iconUrl"/);
   assert.match(html, /"Accept":"application\/json"/);
   assert.match(html, /<dialog id="voko-auth-dialog"/);
+  assert.match(html, /form\.getAttribute\("action"\)\|\|location\.href/);
   assert.match(html, /id="voko-auth-email"/);
   assert.doesNotMatch(html, /window\.open\("\/reauth"/);
   assert.match(html, /dlg\.showModal\(\);code\.focus\(\)/);

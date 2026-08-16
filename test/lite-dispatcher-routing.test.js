@@ -4,12 +4,12 @@ const { EventEmitter } = require('node:events');
 
 const { createDispatcher } = require('../build/core/dispatcher');
 
-function dbFor(deliveryModes) {
+function dbFor(deliveryModes, backendType = 'openclaw') {
   return {
     prepare() {
       return {
         get: () => ({
-          backend_type: 'openclaw',
+          backend_type: backendType,
           backend_instance_id: 'isolated-test',
           delivery_modes: JSON.stringify(deliveryModes),
           imUid: 'agent-uid',
@@ -70,6 +70,19 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('explicit transport resolution never substitutes another mode', () => {
+  const http = provider('http', 100, []);
+  const cli = provider('cli', 10, []);
+  const dispatcher = createDispatcher({
+    db: dbFor(['http', 'cli', 'pull'], 'hermes'),
+    providers: { 'hermes-http': http, 'hermes-cli': cli },
+  });
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-http', 'http'), http);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-http', 'cli'), null);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'hermes-cli', 'http'), null);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'openclaw-ws', 'websocket'), null);
+});
+
 test('delivery policy changes take effect on the next message after scoped invalidation', async () => {
   const calls = [];
   let modes = ['websocket', 'cli', 'pull'];
@@ -124,7 +137,10 @@ test('delivery diagnostics treats configured pull as an available on-demand rece
   assert.equal(status.activeAutomaticMode, null);
   assert.deepEqual(status.automaticReadyModes, []);
   assert.equal(status.pullReady, true);
+  assert.equal(status.pullOnly, true);
   assert.equal(status.methods[0].status, 'on-demand');
+  assert.equal(status.methods[0].family, 'openclaw');
+  assert.equal(status.methods[0].reason, 'configured-on-demand');
 });
 
 test('delivery diagnostics preserves pull fallback for legacy rows without delivery modes', () => {
@@ -134,8 +150,25 @@ test('delivery diagnostics preserves pull fallback for legacy rows without deliv
   assert.equal(status.automaticDeliveryReady, false);
   assert.equal(status.activeAutomaticMode, null);
   assert.equal(status.pullReady, true);
+  assert.equal(status.pullOnly, false);
   assert.equal(status.methods[0].configured, false);
   assert.equal(status.methods[0].status, 'fallback');
+  assert.equal(status.methods[0].family, 'openclaw');
+  assert.equal(status.methods[0].reason, 'legacy-fallback');
+});
+
+test('delivery diagnostics identifies a pull-only Provider family without probing a Push transport', () => {
+  const dispatcher = createDispatcher({ db: dbFor(null, 'openhands'), providers: {} });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+
+  assert.equal(status.automaticDeliveryReady, false);
+  assert.equal(status.pullReady, true);
+  assert.equal(status.pullOnly, true);
+  assert.deepEqual(status.configuredModes, ['pull']);
+  assert.deepEqual(status.methods, [{
+    mode: 'pull', provider: null, family: 'openhands', configured: false,
+    available: true, status: 'fallback', reason: 'provider-pull-only',
+  }]);
 });
 
 test('delivery diagnostics isolates provider probe failures and unknown configured modes', () => {

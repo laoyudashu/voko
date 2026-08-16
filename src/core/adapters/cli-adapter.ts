@@ -27,7 +27,7 @@ const { ProviderConversationBindingStore } = require('../provider-conversation-b
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 const { normalizeProviderFamily } = require('../provider-routing');
 import type { DatabaseLike } from '../../types/database';
-import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
+import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
@@ -79,9 +79,10 @@ export interface CliAdapterOptions {
     startedAt: number;
     cwd: string;
   }) => Promise<string | null> | string | null;
+  sessionPersistence?: 'transport' | 'dispatcher';
 }
 
-export type CliProviderOptions = Pick<CliAdapterOptions, 'contextWindow' | 'db' | 'cwd'>;
+export type CliProviderOptions = Pick<CliAdapterOptions, 'contextWindow' | 'db' | 'cwd' | 'sessionPersistence'>;
 
 interface ContextMessage {
   content: string;
@@ -91,6 +92,10 @@ interface ContextMessage {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isCliConfigurationUnavailable(detail: string): boolean {
+  return /not (?:logged|signed) in|login required|authentication required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)/i.test(detail);
 }
 
 const MAX_REPLY_CHARS = 2 * 1024 * 1024; // 单次回复字符上限，防 agent 输出失控撑爆内存
@@ -145,9 +150,11 @@ class CliAdapter extends PushProvider {
     this._prepareInvocation = opts.prepareInvocation || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
-    this._bindingStore = opts.db && typeof (opts.db as any).exec === 'function'
+    this._bindingStore = opts.sessionPersistence !== 'dispatcher'
+      && opts.db && typeof (opts.db as any).exec === 'function'
       ? new ProviderConversationBindingStore(opts.db as any)
       : null;
+    this._sessionPersistence = opts.sessionPersistence || 'transport';
     this._identityBindings = opts.db && typeof (opts.db as any).exec === 'function'
       ? new AgentIdentityBindingStore(opts.db as any)
       : null;
@@ -157,13 +164,20 @@ class CliAdapter extends PushProvider {
   get priority() { return this._priority; }
   get capabilities() { return ['streaming']; }
 
+  useDispatcherSessionPersistence(): void {
+    this._sessionPersistence = 'dispatcher';
+    this._bindingStore = null;
+  }
+
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === this._matchType;
   }
 
   acceptsBinding(binding: any, agentId = ''): boolean {
     if (this._acceptsBinding) return !!this._acceptsBinding(binding, agentId);
-    return binding?.providerType === this._matchType;
+    return binding?.providerType === this._bindingProviderType
+      && binding.adapterType === this._adapterType
+      && binding.deliveryMode === 'cli';
   }
 
   isAvailable(_agentId: string): boolean {
@@ -172,14 +186,65 @@ class CliAdapter extends PushProvider {
     return this._available;
   }
 
+  /** Model-backed isolated probe. Catalog capability gating decides which subclasses may expose it. */
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    const prompt = `VOKO isolated loopback test. Do not use tools or modify files. Reply with exactly: ${challenge}`;
+    const configuredArgs = this._argsForSession ? this._argsForSession(null, true) : this._args;
+    const payload = { agentId, fromUid: `loopback-${challenge}`, content: prompt,
+      messageId: challenge, turnId: challenge, channelId: `loopback-${challenge}`, channelType: 1 } as PushPayload;
+    const preparedInvocation = this._prepareInvocation?.(payload, prompt) || null;
+    const invocationArgs = preparedInvocation?.args || configuredArgs;
+    let useStdin = preparedInvocation ? preparedInvocation.stdinInput !== undefined : !invocationArgs.includes('{prompt}');
+    let stdinInput: string | undefined = useStdin ? prompt : undefined;
+    let cleanupPrompt: (() => void) | null = null;
+    let args: string[];
+    if (this._preparePrompt) {
+      const prepared = this._preparePrompt(prompt, { agentId, fromUid: payload.fromUid,
+        nativeSessionId: null, configuredArgs: [...configuredArgs] });
+      args = [...(prepared.args || [])].map((arg: string) => arg.replace('{prompt}', () => prompt));
+      useStdin = prepared.useStdin ?? !args.includes('{prompt}');
+      stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
+      cleanupPrompt = prepared.cleanup || null;
+    } else {
+      args = useStdin ? [...invocationArgs] : invocationArgs.map((arg: string) => arg.replace('{prompt}', () => prompt));
+    }
+    const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
+    if (runtime && (!runtime.available || !runtime.executable)) return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    const cmd = runtime?.available && runtime.executable ? runtime.executable : this._cmd;
+    if (runtime?.available) args.unshift(...runtime.argvPrefix);
+    let reply = '';
+    const parser = createParser({ format: this._parserName, parserOpts: this._parserOpts,
+      onText: (text: string) => { reply += text; }, onDone: () => {} });
+    try {
+      const result = await runCli({ cmd, args, stdinInput: preparedInvocation?.stdinInput ?? stdinInput,
+        cwd: this._cwd || undefined, tag: `${this._name}-loopback`, timeout: this._timeout,
+        env: withRuntimePath({ ...this._env }, runtime), logOutput: false,
+        onStdoutLine: (line: string) => parser.handleLine(line) });
+      parser.finish();
+      const matched = result.code === 0 && reply.trim() === challenge;
+      return { ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+        detail: matched ? `${this._name} CLI loopback verified` : `${this._name} CLI did not return the exact challenge` };
+    } finally {
+      try { cleanupPrompt?.(); } catch (_) {}
+      try { preparedInvocation?.afterRun?.(); } catch (_) {}
+    }
+  }
+
   _resolveRuntime(): ResolvedRuntime {
     return this._runtimeResolver.resolve(this._runtimeRequest);
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `cli-${Date.now()}`);
-    const sessionKey = `cli:${agentId}:${fromUid}`;
+    if (!(payload as any).__vokoManagedRetry) {
+      this.notifyProviderEvent({ type: 'accepted', agentId, messageId, turnId, terminal: false });
+    }
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
+    const sessionKey = `cli:${agentId}:${sessionIdentity}`;
     const binding = this.acceptsBinding(payload.providerBinding, agentId)
       ? payload.providerBinding
       : null;
@@ -200,7 +265,7 @@ class CliAdapter extends PushProvider {
       } catch (_) {}
     }
 
-    const contextPrompt = _buildContextPrompt(agentId, fromUid, content, contextMsgs);
+    const contextPrompt = (payload as any).__ownerRaw === true ? content : _buildContextPrompt(agentId, fromUid, content, contextMsgs);
     const prompt = this._promptTemplate
       ? this._promptTemplate.replace('{prompt}', () => contextPrompt)
       : contextPrompt;
@@ -316,8 +381,14 @@ class CliAdapter extends PushProvider {
       }
 
       if (exitCode !== 0) {
+        const cliFailureDetail = `${result.stdout || ''}\n${result.stderr || ''}`;
         error = new Error(`${this._name} 退出 code=${exitCode}`);
         (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
+        if ((error as any).deliveryOutcome === 'not_delivered' && isCliConfigurationUnavailable(cliFailureDetail)) {
+          this._available = false;
+          this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId,
+            available: false, reason: 'cli-auth-required' });
+        }
       } else if (parser.error) {
         error = new Error(parser.error);
         (error as any).deliveryOutcome = 'rejected';
@@ -346,7 +417,8 @@ class CliAdapter extends PushProvider {
       if (!error) error = cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
     }
 
-    if (error && binding && !binding.strictSessionRoute && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
+    if (error && binding && this._sessionPersistence === 'transport' && !binding.strictSessionRoute
+      && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}
       return this.push({ ...payload, providerBinding: null, __vokoManagedRetry: true });
     }
@@ -381,7 +453,11 @@ class CliAdapter extends PushProvider {
       } catch (_) {}
     }
 
-    if (error) throw error;
+    if (error) {
+      this.notifyProviderEvent({ type: 'failed', agentId, messageId, turnId, terminal: true,
+        payload: { outcome: (error as any).deliveryOutcome || 'outcome_unknown' } });
+      throw error;
+    }
     this.emit('agent.reply', {
       agentId, visitorId: fromUid,
       content: fullContent,
@@ -390,6 +466,20 @@ class CliAdapter extends PushProvider {
       turnId,
       replyId: turnId,
     });
+    const receipt = {
+      nativeSessionId: observedSessionId,
+      providerInstanceId: binding?.providerInstanceId || null,
+      deliveryMode: 'cli',
+      adapterType: this._adapterType,
+    };
+    this.notifyProviderEvent({ type: 'completed', agentId, messageId, turnId,
+      nativeSessionId: observedSessionId, terminal: true });
+    return receipt;
+  }
+
+  /** Dedicated owner driver hook. Subclasses must opt in explicitly. */
+  protected pushOwnerRaw(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
+    return this.push({ ...payload, __ownerRaw: true } as PushPayload);
   }
 
   async steer(
@@ -397,7 +487,7 @@ class CliAdapter extends PushProvider {
     visitorId: string,
     content: string,
     metadata?: ProviderSteerMetadata,
-  ): Promise<void> {
+  ): Promise<unknown> {
     // owner intervention：走同样的 push 路径
     const messageId = metadata?.turnId || `steer-${Date.now()}`;
     const channelType = metadata?.channelType === 2 || visitorId.startsWith('group:') ? 2 : 1;

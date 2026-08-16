@@ -1,7 +1,8 @@
 /**
- * 访问控制（黑白名单 / 公有私有）核心逻辑
+ * 访问控制（黑白名单 / 访客访问模式）核心逻辑
  *
- * access_mode（public/private）= 服务端 visibility；私有 = 白名单模式。
+ * access_mode（public/private）仅表示本地访客白名单模式；
+ * 服务端 Agent 展现范围由独立的 visibility_type（0/1/2）维护。
  * 供主进程 IPC 和 MCP 工具共享。
  */
 
@@ -29,12 +30,14 @@ interface DatabaseLike {
 
 interface AgentPublishRow {
   publish_status?: string | null;
+  access_mode?: 'public' | 'private' | null;
+  visibility_type?: number | null;
 }
 
 interface StatusParams {
   agentId: string;
   status: number;
-  visibility: number;
+  visibility: 0 | 1 | 2;
 }
 
 interface ToggleWhitelistOptions {
@@ -73,9 +76,14 @@ async function toggleWhitelistMode(opts?: ToggleWhitelistOptions): Promise<Toggl
   if (!agentId) return { success: false, error: 'agentId is required' };
 
   try {
-    const row = db.prepare(`SELECT publish_status FROM agents WHERE agent_id = ?`).get(agentId) as AgentPublishRow | undefined;
+    const row = db.prepare(`SELECT publish_status, access_mode, visibility_type FROM agents WHERE agent_id = ?`).get(agentId) as AgentPublishRow | undefined;
     const newMode = enabled ? 'private' : 'public';
-    const visibility = newMode === 'public' ? 1 : 0;
+    // Do not derive remote Agent visibility from the visitor whitelist mode.
+    // Legacy databases without visibility_type keep their historical mapping
+    // until the schema migration has run.
+    const visibility = row && (row.visibility_type === 0 || row.visibility_type === 1 || row.visibility_type === 2)
+      ? row.visibility_type as 0 | 1 | 2
+      : (row?.access_mode === 'public' ? 1 : 0);
     const published = row?.publish_status === 'published';
     const serverStatus = published ? 1 : 0;
     const now = Date.now();

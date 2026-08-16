@@ -53,10 +53,7 @@ reasonix run --output-format stream-json --permission-mode dontAsk --resume <nat
 
 ## 降级、恢复和 Pull
 
-- Reasonix 入口不存在、认证失败、会话恢复失败或进程异常时，Dispatcher 刷新路由缓存并使用 Pull。
-- 没有 ACP/HTTP/WS 健康事件，恢复通常依赖重启 VOKO 后的入口探测。
-- 原生 session 恢复失败会标记旧 binding stale，并创建隔离的新会话；结果不明确时不自动重发。
-- Pull 是正式兜底，消息仍保留在 VOKO，Agent 可主动读取。
+通用降级、结果分类、缓存和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Reasonix 没有 ACP/HTTP/WebSocket 健康事件，入口、认证或原生 session 恢复后通常依赖重启 VOKO 重新探测；`session_id` 只能由 VOKO 绑定，不能手工复用。
 
 ## 真机验证边界
 

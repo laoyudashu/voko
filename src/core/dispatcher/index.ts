@@ -14,20 +14,24 @@
  * lite 其他模块只通过 dispatcher 调度，不再直接 spawn / 配置 agent。
  */
 import type { DatabaseLike } from '../../types/database';
-import type { AgentDeliveryStatus, AgentMeta, PushPayload } from './types';
+import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
-const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
 const { isRoutingPolicyEligible } = require('../provider-routing');
 const { getProviderFamily, getProviderTransport } = require('./provider-catalog');
 const { ProviderRuntimeRegistry } = require('./provider-runtime-registry');
 const { RouteResolver } = require('./route-resolver');
 const { DeliveryExecutor } = require('./delivery-executor');
+const { getProviderModularRollout, providerModularModeForFamily } = require('./provider-modular-rollout');
+const { ProviderEventGate } = require('./provider-event-gate');
+const crypto = require('crypto');
 
 interface DispatcherProvider {
   priority?: number;
   match?(agentId: string, meta: AgentMeta): boolean;
   isAvailable?(agentId: string): boolean;
   push?(payload: PushPayload): unknown;
+  pushOwner?(payload: PushPayload, context: unknown): unknown;
   steer?(agentId: string, visitorId: string, content: string, metadata?: { turnId: string }): unknown;
   start?(): unknown;
   stop?(): unknown;
@@ -38,7 +42,7 @@ interface DispatcherProvider {
   removeListener?(event: string, handler: (payload: any) => void): unknown;
 }
 
-type RouteOperation = 'push' | 'steer';
+type RouteOperation = 'push' | 'steer' | 'owner_push';
 type DeliveryOutcome = 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 interface AvailabilityEvent {
@@ -67,6 +71,10 @@ interface RouteInvalidation {
   reason?: string;
 }
 
+function providerSupportsOperation(provider: DispatcherProvider, operation: RouteOperation): boolean {
+  return operation === 'owner_push' ? typeof provider.pushOwner === 'function' : typeof provider[operation] === 'function';
+}
+
 interface ProviderReply {
   agentId?: string;
   visitorId?: string;
@@ -87,6 +95,8 @@ interface ReplyContext {
   a2aTurn?: number;
   turnId?: string;
   interventionResume?: boolean;
+  sourceMessageId?: string;
+  sourceRouteClaimSafe?: boolean;
   rememberedAt?: number;
   [key: string]: unknown;
 }
@@ -95,6 +105,20 @@ interface DispatcherOptions {
   db: Pick<DatabaseLike, 'prepare'>;
   providers: Record<string, DispatcherProvider>;
   onAgentReply?: (reply: ProviderReply) => void;
+}
+
+interface IsolatedExecutionOptions {
+  agentId: string; content: string; taskId: string; contextId: string;
+  binding?: PushPayload['providerBinding']; timeoutMs?: number;
+  sourceType?: 'agent_peer' | 'owner' | 'owner_chat';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat';
+  preferredAdapter?: string;
+  ownerExecutionContext?: Readonly<Record<string, unknown>>;
+  onProviderAccepted?: (receipt: unknown) => void;
+  sessionScopeId?: string;
+  principalScope?: string;
+  protocolContextId?: string;
+  bindingGeneration?: number;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -204,10 +228,32 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   // 避免逐个 provider 修改协议，也让群回复能准确决定是否 @回上一位 Agent。
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
-  const _bindingStore = new ProviderConversationBindingStore(db);
+  const _sessionCoordinator = new ProviderSessionCoordinator(db);
+  const _bindingStore = _sessionCoordinator.store;
+  const _modularRollout = getProviderModularRollout(db);
   const _conversationRoutes = new Map<string, Promise<void>>();
-  try { _bindingStore.recoverPending(); } catch (_) {}
+  try { _sessionCoordinator.recoverPending(); } catch (_) {}
+
+  function _commitProviderSession(input: any): void {
+    const mode = providerModularModeForFamily(_modularRollout, input.providerType);
+    if (mode === 'shadow') {
+      if (input.receipt?.nativeSessionId) {
+        console.error(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
+      }
+      return;
+    }
+    if (mode === 'enabled') _sessionCoordinator.commitDelivery(input);
+  }
   const _processedFinalReplies = new Map<string, number>();
+  const _providerEventGate = new ProviderEventGate();
+  const _providerEventCounts = new Map<string, number>();
+  const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
+  function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
+    if (!_providerEventGate.accept(event)) return false;
+    const key = `${event.providerId}:${event.type}`;
+    _providerEventCounts.set(key, (_providerEventCounts.get(key) || 0) + 1);
+    return true;
+  }
   const FINAL_REPLY_TTL_MS = 10 * 60 * 1000;
   function _replyContextKey(agentId?: string, visitorId?: string): string {
     return `${agentId}::${visitorId || ''}`;
@@ -254,11 +300,12 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const context = reply.turnId
       ? _replyContextsByTurn.get(`${reply.agentId || ''}::${reply.turnId}`)
       : queue?.[0];
+    const sourceRouteClaimSafe = !!context && (reply.turnId ? context === exact : queue?.length === 1);
     if (context && reply?.done !== false) {
       if (context.turnId) _replyContextsByTurn.delete(`${reply.agentId || ''}::${context.turnId}`);
       _removeReplyContext(context);
     }
-    return context ? { ...reply, ...context } : reply;
+    return context ? { ...reply, ...context, sourceRouteClaimSafe } : reply;
   }
   function _finalReplyKey(reply: ProviderReply): string | null {
     const identity = reply.turnId || reply.replyId;
@@ -283,10 +330,41 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return true;
   }
   const attachedReplyProviders = new Set<DispatcherProvider>();
+  const attachedEventProviders = new Set<DispatcherProvider>();
+  const _ownerIoSubscribers = new Set<(event: Record<string, unknown>) => void>();
+  const _providerIds = new Map<DispatcherProvider, string>();
+  for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
+  function attachProviderEvents(p: DispatcherProvider): void {
+    if (attachedEventProviders.has(p) || typeof p.on !== 'function') return;
+    attachedEventProviders.add(p);
+    p.on('provider.event', (event: ProviderCoreEvent) => {
+      _acceptProviderEvent(event);
+    });
+    p.on('owner.io-event', (event: Record<string, unknown>) => {
+      for (const subscriber of _ownerIoSubscribers) { try { subscriber(event); } catch (_) {} }
+    });
+  }
   function attachReplyProvider(p: DispatcherProvider): void {
     if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
+          const providerId = _providerIds.get(p) || 'unregistered';
+          _acceptProviderEvent({
+            eventId: reply.replyId
+              ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
+              : crypto.randomUUID(),
+            type: 'reply', providerId, agentId: String(reply.agentId || ''),
+            turnId: reply.turnId, occurredAt: Date.now(), terminal: false, payload: reply,
+          });
+          const isolatedSink = reply.turnId
+            ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+            : undefined;
+          if (isolatedSink) {
+            if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
+            isolatedSink(reply);
+            if (reply.done !== false) _isolatedReplySinks.delete(`${reply.agentId || ''}::${reply.turnId}`);
+            return;
+          }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
           if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
           const contextualized = _contextualizeReply(reply);
@@ -294,7 +372,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           onAgentReply(contextualized);
     });
   }
-  for (const p of Object.values(providers)) attachReplyProvider(p);
+  for (const p of Object.values(providers)) {
+    attachProviderEvents(p);
+    attachReplyProvider(p);
+  }
   // backend_type 内存缓存：避免每条访客消息都查一次 DB（match/isAvailable 已是同步纯判断，
   // 这里消除最后一次同步 IO）。TTL 兜底；写入点（注册/发布/runtime 上报）低频，30s 收敛足够。
   const META_CACHE_TTL = Number(process.env.VOKO_BACKEND_TYPE_CACHE_TTL_MS) || 30000;
@@ -302,11 +383,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
-  const _providerIds = new Map<DispatcherProvider, string>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
   const _availabilityEventGenerations = new Map<string, number>();
-  for (const [providerId, provider] of Object.entries(providers)) _providerIds.set(provider, providerId);
   // A2A 状态按 scope 隔离：direct 或 group:<channelId>。
   // 收敛标记是一次性停推闸门：吞掉对方在最终总结后的自动续答即清除，允许后续开启新话题。
   const _convergedMap = new Map<string, number>();   // scopeKey -> markedAt
@@ -442,7 +521,45 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
 
   function resolveProviders(agentId: string, operation: RouteOperation = 'push'): DispatcherProvider[] {
     const meta = _metaOf(agentId);
-    return routeResolver.resolve({ agentId, operation, meta, providers }).map((item: any) => item.provider);
+    const resolverOperation = operation === 'owner_push' ? 'push' : operation;
+    return routeResolver.resolve({ agentId, operation: resolverOperation, meta, providers }).map((item: any) => item.provider);
+  }
+
+  function _ownerRouteEntry(agentId: string, excluded: Set<DispatcherProvider> = new Set()): RouteCacheEntry | null {
+    const cacheKey = `owner_push:${agentId}`;
+    const cached = _routeCache.get(cacheKey);
+    if (cached && !excluded.has(cached.provider) && Date.now() - cached.selectedAt < ROUTE_CACHE_TTL) {
+      try {
+        if (cached.generation === _generationOf(cached.providerId, agentId, 'owner_push')
+          && cached.provider.isAvailable?.(agentId) && typeof cached.provider.pushOwner === 'function') return cached;
+      } catch (_) {}
+      _bumpScoped(cached.providerId, agentId, 'owner_push'); _routeCache.delete(cacheKey);
+    }
+    const trusted = resolveTrustedOwnerTransport(agentId);
+    if (!trusted) return null;
+    const ownerCapability = getProviderTransport(trusted.providerId)?.owner;
+    if (!ownerCapability?.enabled || !ownerCapability.platforms.includes(process.platform as any)
+      || !['voko_enforced','provider_enforced'].includes(ownerCapability.isolation)) return null;
+    const provider = providers[trusted.providerId];
+    if (!provider || excluded.has(provider) || typeof provider.pushOwner !== 'function') return null;
+    const selected = { providerId: trusted.providerId, provider,
+      generation: _generationOf(trusted.providerId, agentId, 'owner_push'), selectedAt: Date.now() };
+    _routeCache.set(cacheKey, selected); return selected;
+  }
+
+  /** Resolve one explicitly requested transport. Never falls back to another mode. */
+  function resolveProviderTransport(agentId: string, providerId: string, mode: string): DispatcherProvider | null {
+    const definition = getProviderTransport(providerId);
+    const provider = providers[providerId];
+    if (!definition || !provider || definition.mode !== mode) return null;
+    const meta = _metaOf(agentId);
+    const family = getProviderFamily(meta.backend_type);
+    if (!family || family.type !== definition.family) return null;
+    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(mode)) return null;
+    try {
+      if (typeof provider.match !== 'function' || !provider.match(agentId, meta)) return null;
+    } catch (_) { return null; }
+    return provider;
   }
 
   /**
@@ -452,6 +569,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
    */
   function getAgentDeliveryStatus(agentId: string): AgentDeliveryStatus {
     const meta = _metaOf(agentId);
+    const family = getProviderFamily(meta.backend_type);
+    const backendFamily = family?.type || (meta.backend_type ? String(meta.backend_type) : null);
     const explicitModes = Array.isArray(meta.delivery_modes)
       ? [...new Set([...meta.delivery_modes.map(String), 'pull'])]
       : null;
@@ -473,7 +592,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       } catch (_) {
         status = 'unknown';
       }
-      methods.push({ mode, provider: key, configured: true, available, status });
+      methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
+        configured: true, available, status,
+        capabilities: getProviderTransport(key)?.capabilities });
     }
 
     if (!explicitModes) {
@@ -485,12 +606,17 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         methods.push({
           mode: 'pull',
           provider: null,
+          family: backendFamily,
           configured: !!explicitModes,
           available: true,
           status: explicitModes ? 'on-demand' : 'fallback',
+          reason: explicitModes
+            ? 'configured-on-demand'
+            : (family && family.transports.length === 0 ? 'provider-pull-only' : 'legacy-fallback'),
         });
       } else if (!methods.some(method => method.mode === mode)) {
-        methods.push({ mode, provider: null, configured: true, available: false, status: 'unknown' });
+        methods.push({ mode, provider: null, family: backendFamily, configured: true, available: false, status: 'unknown',
+          reason: 'no-registered-transport' });
       }
     }
 
@@ -503,6 +629,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const automaticReadyModes = [...new Set(methods
       .filter(method => method.mode !== 'pull' && method.available)
       .map(method => method.mode))];
+    const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
+    const pullOnly = !!(family && family.transports.length === 0)
+      || (!!explicitModes && configuredPushModes.length === 0);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
@@ -510,6 +639,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       automaticReadyModes,
       activeAutomaticMode: methods.find(method => method.mode !== 'pull' && method.available)?.mode || null,
       pullReady: methods.some(method => method.mode === 'pull' && method.available),
+      pullOnly,
       lastDeliveredMode: _lastDeliveredModes.get(agentId) || null,
       methods,
     };
@@ -526,7 +656,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       try {
         if (cached.generation === _generationOf(cached.providerId, agentId, operation)
           && cached.provider.isAvailable?.(agentId)
-          && typeof cached.provider[operation] === 'function') return cached;
+          && providerSupportsOperation(cached.provider, operation)) return cached;
       } catch (_) {}
       _bumpScoped(cached.providerId, agentId, operation);
       _routeCache.delete(cacheKey);
@@ -536,7 +666,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     }
 
     const provider = resolveProviders(agentId, operation).find(candidate => (
-      !excluded.has(candidate) && typeof candidate[operation] === 'function'
+      !excluded.has(candidate) && providerSupportsOperation(candidate, operation)
     )) || null;
     if (!provider) return null;
     const providerId = _providerIdOf(provider);
@@ -549,6 +679,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     };
     _routeCache.set(cacheKey, selected);
     return selected;
+  }
+
+  function _routeProviderEntryExact(agentId: string, operation: RouteOperation, providerId: string,
+    excluded: Set<DispatcherProvider>): RouteCacheEntry | null {
+    const provider = providers[providerId];
+    if (!provider || excluded.has(provider) || !providerSupportsOperation(provider, operation)
+      || !_providerEligible(providerId, agentId)) return null;
+    try { if (!provider.isAvailable?.(agentId)) return null; } catch (_) { return null; }
+    return { providerId, provider, generation: _generationOf(providerId, agentId, operation), selectedAt: Date.now() };
   }
 
   function _routeProvider(
@@ -576,6 +715,55 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
 
   function resolveProvider(agentId: string): DispatcherProvider | null {
     return _routeProvider(agentId, 'push');
+  }
+
+  function subscribeOwnerIoEvents(handler: (event: Record<string, unknown>) => void): () => void {
+    _ownerIoSubscribers.add(handler); return () => { _ownerIoSubscribers.delete(handler); };
+  }
+
+  async function cancelOwnerTurn(agentId: string, conversationId: string): Promise<boolean> {
+    const route = _ownerRouteEntry(agentId); const cancel = (route?.provider as any)?.cancelOwnerTurn;
+    return typeof cancel === 'function' ? !!await cancel.call(route!.provider, conversationId) : false;
+  }
+
+  function respondOwnerApproval(agentId: string, approvalId: string, decision: 'accept'|'decline'|'cancel'): boolean {
+    const route = _ownerRouteEntry(agentId); const respond = (route?.provider as any)?.respondOwnerApproval;
+    return typeof respond === 'function' ? !!respond.call(route!.provider, approvalId, decision) : false;
+  }
+
+  function resolveTrustedOwnerTransport(agentId: string): {
+    providerId: string; providerType: string; providerInstanceId: string | null; deliveryMode: string;
+  } | null {
+    const meta = _metaOf(agentId); const family = getProviderFamily(meta.backend_type);
+    const providerInstanceId = meta.backend_instance_id || null;
+    const candidates = (family?.transports || []).filter((definition: any) => definition.owner?.enabled && definition.owner?.nativeIoBridge)
+      .sort((a: any, b: any) => Number(b.priority || 0) - Number(a.priority || 0));
+    for (const definition of candidates) {
+      const provider = providers[definition.id];
+      if (!provider || typeof provider.pushOwner !== 'function') continue;
+      try {
+        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)) continue;
+        return { providerId: definition.id, providerType: family?.type || String(meta.backend_type || ''),
+          providerInstanceId, deliveryMode: definition.mode };
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function getOwnerTransportStatus(agentId: string): Record<string, unknown> {
+    const selected = resolveTrustedOwnerTransport(agentId);
+    if (!selected) return { available: false, code: 'OWNER_WORKSPACE_ISOLATION_UNAVAILABLE' };
+    const definition = getProviderTransport(selected.providerId); const owner = definition?.owner;
+    if (!owner?.enabled || !owner.nativeIoBridge || !owner.platforms.includes(process.platform as any)) {
+      return { available: false, code: 'OWNER_RUNTIME_UNSUPPORTED' };
+    }
+    const provider = providers[selected.providerId];
+    if (!provider || typeof provider.pushOwner !== 'function') return { available: false, code: 'OWNER_RUNTIME_UNSUPPORTED' };
+    const snapshot = { providerId: selected.providerId, providerType: selected.providerType,
+      providerInstanceId: selected.providerInstanceId, deliveryMode: selected.deliveryMode,
+      execution: owner.execution, isolation: owner.isolation, platform: process.platform };
+    return { available: true, ...snapshot,
+      configDigest: crypto.createHash('sha256').update(JSON.stringify(snapshot),'utf8').digest('hex') };
   }
 
   /** A2A scope key：私聊与每个群完全隔离，同一 scope 内按无序 Agent 对收敛。 */
@@ -785,7 +973,7 @@ ${body}
       } };
     }
     if (candidate) countRouting(`precise_rejected:${candidate.providerFamily || 'unknown'}`);
-    const binding = _bindingStore.getActive(agentId, channelId, channelType);
+    const binding = _sessionCoordinator.getActive(agentId, channelId, channelType);
     return {
       ...payload,
       providerBinding: binding ? {
@@ -806,37 +994,30 @@ ${body}
   function _bindingForRoute(agentId: string, binding: PushPayload['providerBinding'], route: RouteCacheEntry): PushPayload['providerBinding'] {
     if (!binding) return null;
     const mode = _providerMode(route.providerId);
-    const bindingFamily = getProviderFamily(binding.providerType)?.type || binding.providerType;
-    let compatible = binding.strictSessionRoute
-      ? bindingFamily === _providerFamily(route.providerId)
-      : typeof (route.provider as any).acceptsBinding === 'function'
-      ? !!(route.provider as any).acceptsBinding(binding, agentId)
-      : bindingFamily === _providerFamily(route.providerId)
-        && binding.adapterType === route.providerId
-        && binding.deliveryMode === mode;
     const resolveInstance = (route.provider as any).getInstanceId
       || (route.provider as any)._instanceForAgent
       || (route.provider as any)._profileForAgent;
-    if (compatible && binding.providerInstanceId && typeof resolveInstance === 'function') {
-      try { compatible = String(resolveInstance.call(route.provider, agentId) || '') === String(binding.providerInstanceId); }
-      catch (_) { compatible = false; }
+    let providerInstanceId: string | null | undefined;
+    if (binding.providerInstanceId && typeof resolveInstance === 'function') {
+      try { providerInstanceId = String(resolveInstance.call(route.provider, agentId) || '') || null; }
+      catch (_) { providerInstanceId = null; }
     }
-    if (compatible && binding.strictSessionRoute && typeof (route.provider as any).canRestoreExactSession === 'function') {
-      try { compatible = !!(route.provider as any).canRestoreExactSession(binding, agentId); }
-      catch (_) { compatible = false; }
-    }
-    if (compatible) return binding;
-    if (binding.sessionOrigin !== 'caller') {
-      try { _bindingStore.markStale(binding.id); } catch (_) {}
-    }
-    return null;
+    return _sessionCoordinator.resolveForTransport(agentId, binding, {
+      providerType: _providerFamily(route.providerId),
+      providerInstanceId,
+      deliveryMode: mode,
+      adapterType: route.providerId,
+      acceptsBinding: typeof (route.provider as any).acceptsBinding === 'function'
+        ? (candidate: NonNullable<PushPayload['providerBinding']>, id: string) => !!(route.provider as any).acceptsBinding(candidate, id)
+        : undefined,
+    });
   }
 
   async function _doRoute(
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
-  ): Promise<void> {
+  ): Promise<any> {
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
@@ -846,17 +1027,24 @@ ${body}
       const routedPayload = payload.channelType === 2
         ? { ...payload, turnId: payload.turnId || payload.messageId, senderUid: payload.senderUid || payload.fromUid, fromUid: payload.sessionTarget || `group:${payload.channelId}` }
         : { ...payload, turnId: payload.turnId || payload.messageId };
-      const sourceType = a2aContext?.a2aManaged ? 'agent_peer' : 'visitor';
+      const executionScope = String((payload as any).executionScope || '');
+      const sourceType = executionScope === 'owner_link'
+        ? 'owner'
+        : executionScope === 'owner_chat'
+          ? 'owner_chat'
+        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged) ? 'agent_peer' : 'visitor';
+      const isOwnerChat = sourceType === 'owner_chat';
       const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
-        content: wrapPushContent(routedPayload.content, sourceType),
-        securityContext: createMessageSecurityContext(sourceType),
+        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, sourceType),
+        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(sourceType) }),
         providerBinding: payload.providerBinding ?? null,
       };
       const replyContext = {
         agentId,
         turnId: baseProviderPayload.turnId,
+        sourceMessageId: payload.messageId,
         channelType: payload.channelType || 1,
         channelId: payload.channelId || baseProviderPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,
@@ -866,12 +1054,18 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
+      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link' || executionScope === 'owner_chat';
+      if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
       const result = await deliveryExecutor.execute({
         next: (excluded: Set<DispatcherProvider>) => {
-          const nextRoute = _routeProviderEntry(agentId, 'push', excluded);
+          const strictAdapter = isolated
+            ? String((payload as any).preferredAdapter || baseProviderPayload.providerBinding?.adapterType || '') || null
+            : null;
+          const nextRoute = strictAdapter
+            ? _routeProviderEntryExact(agentId, 'push', strictAdapter, excluded)
+            : _routeProviderEntry(agentId, 'push', excluded);
           if (!nextRoute) return null;
           routeByProvider.set(nextRoute.provider, nextRoute);
           return {
@@ -883,11 +1077,37 @@ ${body}
         },
         invoke: async (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          if (executionScope === 'a2a_mailbox') {
+            const exact = getProviderTransport(selectedRoute.providerId)?.exactSession;
+            if (!exact || typeof (selectedRoute.provider as any).canRestoreExactSession !== 'function') {
+              const error = new Error('A2A Provider does not support exact session routing');
+              (error as any).deliveryOutcome = 'not_delivered';
+              (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
+              throw error;
+            }
+          }
           const selectedBinding = _bindingForRoute(agentId, baseProviderPayload.providerBinding, selectedRoute);
+          if (executionScope === 'a2a_mailbox' && selectedBinding
+            && Number(selectedBinding.bindingVersion) !== Number((payload as any).bindingGeneration)) {
+            const error = new Error('A2A Provider binding generation is stale');
+            (error as any).deliveryOutcome = 'not_delivered';
+            (error as any).code = 'A2A_BINDING_GENERATION_MISMATCH';
+            throw error;
+          }
           if (baseProviderPayload.providerBinding?.strictSessionRoute && !selectedBinding) {
             const error = new Error('Provider cannot restore the precise session');
             (error as any).deliveryOutcome = 'not_delivered';
             throw error;
+          }
+          if (selectedBinding?.strictSessionRoute && executionScope === 'a2a_mailbox') {
+            const exact = getProviderTransport(selectedRoute.providerId)?.exactSession;
+            if (!exact || exact.nativeSessionNamespace !== selectedBinding.nativeSessionNamespace
+              || exact.restoreCompatibilityGroup !== selectedBinding.restoreCompatibilityGroup) {
+              const error = new Error('Provider exact-session namespace is incompatible');
+              (error as any).deliveryOutcome = 'not_delivered';
+              (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
+              throw error;
+            }
           }
           if (selectedBinding?.strictSessionRoute) {
             const restore = (selectedRoute.provider as any).canRestoreExactSession;
@@ -907,33 +1127,150 @@ ${body}
           return candidate.target.push!(providerPayload);
         },
         classify: deliveryOutcome,
-        onSuccess: (candidate: any) => {
+        onSuccess: (candidate: any, deliveryReceipt: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
+          const providerPayload = payloadByProvider.get(candidate.target);
+          if (!isolated && providerPayload && deliveryReceipt?.nativeSessionId) {
+            try {
+              _commitProviderSession({
+                agentId,
+                channelId: String(providerPayload.channelId || providerPayload.fromUid).replace(/^group:/, ''),
+                channelType: providerPayload.channelType,
+                providerType: candidate.providerType,
+                deliveryMode: candidate.deliveryMode,
+                adapterType: selectedRoute.providerId,
+                binding: providerPayload.providerBinding,
+                receipt: deliveryReceipt,
+              });
+            } catch (error) {
+              console.error(`[Dispatcher] Provider session commit failed agent=${agentId}:`, errorMessage(error));
+            }
+          }
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
           _cacheRouteIfCurrent(agentId, 'push', selectedRoute);
+          if (isolated && typeof (payload as any).onDeliveryReceipt === 'function') {
+            (payload as any).onDeliveryReceipt({ deliveryReceipt, provider: candidate });
+          }
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
-          if (outcome === 'not_delivered' && providerPayload?.providerBinding?.id && providerPayload.providerBinding.sessionOrigin !== 'caller') {
-            try { _bindingStore.markStale(providerPayload.providerBinding.id); } catch (_) {}
-          }
-          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
-          console.error(`[Dispatcher] push 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+          try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}
+          const action = outcome === 'not_delivered'
+            ? '当前通道未送达，正在按已配置路由评估备选通道'
+            : '投递结果不允许跨通道重试';
+          console.error(`[Dispatcher] agent=${agentId} provider=${candidate.providerId} ${action} outcome=${outcome}:`, errorMessage(error));
         },
       });
-      if (result.outcome === 'delivered') return;
+      if (result.outcome === 'delivered') return result;
       if (baseProviderPayload.providerBinding?.strictSessionRoute) {
         countRouting(result.outcome === 'not_delivered' ? 'precise_fallback_pull' : `precise_${result.outcome}`);
       }
-      _removeReplyContext(replyContext);
-      if (result.outcome === 'not_delivered') console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+      if (!isolated) _removeReplyContext(replyContext);
+      if (result.outcome === 'not_delivered') {
+        if (isolated) console.log(`[Dispatcher] agent=${agentId} scope=${executionScope} 所有符合精确会话要求的通道均未送达；任务保留在来源队列等待恢复`);
+        else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+      }
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
     }
   }
 
   /** 唯一 push 分发入口。无 provider 时不提前消费轮次，留给 pull 路径统一治理。 */
+  async function executeOwner(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    const context = options.ownerExecutionContext;
+    if (!context || context.sourceType !== 'owner_chat' || context.authority !== 'verified_owner_conversation'
+      || context.executionScope !== 'owner_chat' || context.ownerConversationId !== options.contextId
+      || context.commandMessageId !== options.taskId) throw new Error('OWNER_EXECUTION_CONTEXT_INVALID');
+    const currentOwnerTransport = getOwnerTransportStatus(options.agentId);
+    if (!currentOwnerTransport.available || context.configDigest !== currentOwnerTransport.configDigest
+      || context.providerId !== currentOwnerTransport.providerId) {
+      const error = new Error('Owner Provider policy changed'); (error as any).deliveryOutcome = 'not_delivered';
+      (error as any).code = String(currentOwnerTransport.code || 'OWNER_POLICY_CHANGED'); throw error;
+    }
+    const turnId = `owner-chat-${crypto.randomUUID()}`; const sinkKey = `${options.agentId}::${turnId}`;
+    let resolveReply!: (reply: ProviderReply) => void; let rejectReply!: (error: Error) => void; let receipt: unknown;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, reply => {
+      if (reply.done === false) return;
+      if (reply.error) { const error: any=new Error(String(reply.error));error.code=String((reply as any).errorCode||'OWNER_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome='rejected';rejectReply(error);return; }
+      resolveReply(reply);
+    });
+    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const route = _ownerRouteEntry(options.agentId);
+      if (!route) { const error = new Error('Owner Provider transport is not supported or safely verified');
+        (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_RUNTIME_UNSUPPORTED'; throw error; }
+      const selectedBinding = _bindingForRoute(options.agentId, options.binding || null, route);
+      if (options.binding?.strictSessionRoute && !selectedBinding) { const error = new Error('Owner Provider cannot restore the precise session');
+        (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error; }
+      if (selectedBinding?.strictSessionRoute) {
+        const restore = (route.provider as any).canRestoreExactSession;
+        if (typeof restore !== 'function' || !await restore.call(route.provider, selectedBinding, options.agentId)) {
+          const error = new Error('Owner Provider exact-session restore probe failed');
+          (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error;
+        }
+      }
+      const providerPayload = { agentId: options.agentId, fromUid: `owner-chat:${options.contextId}`, senderUid: 'owner-chat-mailbox',
+        channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
+        content: options.content, rawContent: options.content, providerBinding: selectedBinding,
+        executionScope: 'owner_chat', sourceType: 'owner_chat' } as PushPayload;
+      try { receipt = await route.provider.pushOwner!(providerPayload, context); options.onProviderAccepted?.(receipt);
+        _cacheRouteIfCurrent(options.agentId, 'owner_push', route); }
+      catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
+      return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
+        provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
+    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+  }
+
+  async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    if (options.executionScope === 'owner_chat' || options.sourceType === 'owner_chat') {
+      throw new Error('OWNER_CHAT_REQUIRES_NATIVE_IO_BRIDGE');
+    }
+    const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
+    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
+    if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
+    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    if (executionScope === 'a2a_mailbox'
+      && (!options.principalScope || !options.sessionScopeId || !options.protocolContextId
+        || !Number.isSafeInteger(options.bindingGeneration) || Number(options.bindingGeneration) < 1)) {
+      const error: any = new Error('A2A_PRINCIPAL_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'A2A_PRINCIPAL_SCOPE_REQUIRED'; throw error;
+    }
+    const turnId = `${prefix}-${crypto.randomUUID()}`;
+    const sinkKey = `${options.agentId}::${turnId}`;
+    let receipt: unknown;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
+    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error(`${prefix} Provider reply timed out`)); }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const delivery = await _doRoute(options.agentId, {
+        agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
+        channelId: options.contextId, channelType: 1, messageId: options.taskId, turnId,
+        content: options.content, rawContent: options.content, providerBinding: options.binding || null,
+        executionScope, sourceType, preferredAdapter: options.preferredAdapter,
+        sessionScopeId: options.sessionScopeId, principalScope: options.principalScope,
+        protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
+        onDeliveryReceipt: (value: unknown) => { receipt = value; },
+      });
+      if (delivery?.outcome !== 'delivered') {
+        const error = new Error(`${prefix} Provider delivery ${delivery?.outcome || 'failed'}`);
+        (error as any).deliveryOutcome = delivery?.outcome || 'outcome_unknown';
+        (error as any).code = delivery?.errorCode || 'ISOLATED_PROVIDER_DELIVERY_FAILED';
+        throw error;
+      }
+      options.onProviderAccepted?.(receipt);
+      return { reply: await replyPromise, receipt };
+    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+  }
+
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
     if (!provider) {
@@ -1061,14 +1398,31 @@ ${body}
           });
         },
         classify: deliveryOutcome,
-        onSuccess: (candidate: any) => {
+        onSuccess: (candidate: any, deliveryReceipt: any) => {
+          const selectedRoute = routeByProvider.get(candidate.target)!;
+          if (deliveryReceipt?.nativeSessionId) {
+            try {
+              _commitProviderSession({
+                agentId, channelId, channelType,
+                providerType: candidate.providerType,
+                deliveryMode: candidate.deliveryMode,
+                adapterType: selectedRoute.providerId,
+                binding: _bindingForRoute(agentId, activeBinding, selectedRoute),
+                receipt: deliveryReceipt,
+              });
+            } catch (error) {
+              console.error(`[Dispatcher] Provider session commit failed agent=${agentId}:`, errorMessage(error));
+            }
+          }
           _lastDeliveredModes.set(agentId, candidate.deliveryMode);
-          _cacheRouteIfCurrent(agentId, 'steer', routeByProvider.get(candidate.target)!);
+          _cacheRouteIfCurrent(agentId, 'steer', selectedRoute);
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'steer', candidate.target);
-          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
-          console.error(`[Dispatcher] steer 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+          const action = outcome === 'not_delivered'
+            ? '当前通道未送达，正在按已配置路由评估备选通道'
+            : '投递结果不允许跨通道重试';
+          console.error(`[Dispatcher] agent=${agentId} provider=${candidate.providerId} steer ${action} outcome=${outcome}:`, errorMessage(error));
         },
       });
       if (delivery.outcome === 'delivered') {
@@ -1103,6 +1457,7 @@ ${body}
   async function addProviders(additions: Record<string, DispatcherProvider>) {
     const pending = Object.fromEntries(Object.entries(additions).filter(([key]) => !providers[key]));
     for (const [key, provider] of Object.entries(pending)) {
+      attachProviderEvents(provider);
       attachReplyProvider(provider);
       _providerIds.set(provider, key);
     }
@@ -1119,6 +1474,9 @@ ${body}
     try { return await runtimeRegistry.healthCheck(); }
     catch (e) { console.error('[Dispatcher] provider.healthCheck 失败:', errorMessage(e)); return {}; }
   }
+  async function restartProvider(providerId?: string) {
+    await runtimeRegistry.restart(providerId);
+  }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
   function invalidateBindingsForConfigChange(input: {
@@ -1128,12 +1486,18 @@ ${body}
     nextProviderType: string;
     nextInstanceId: string | null;
   }): number {
-    try { return _bindingStore.invalidateForAgentConfigChange(input); }
+    try { return _sessionCoordinator.invalidateForAgentConfigChange(input); }
     catch (e) { console.error('[Dispatcher] invalidateBindingsForConfigChange 失败:', errorMessage(e)); return 0; }
   }
 
   const getRoutingStats = () => ({ ...routingStats });
-  return { dispatch, prepareForPull, resolveProvider, resolveProviders, getAgentDeliveryStatus, getRoutingStats, steer, start, stop, addProviders, healthCheck, invalidateMeta, invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid, invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
+  const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
+  return { dispatch, executeOwner, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+    subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
+    resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
+    getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
+    invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
+    invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher };

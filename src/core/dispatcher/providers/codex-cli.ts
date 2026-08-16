@@ -39,11 +39,16 @@ class CodexCliProvider extends CliAdapter {
       matchType: 'codex',
       priority: 1,
       timeout: 300000,
+      runtimeRequest: { providerId: 'codex-cli', mode: 'cli', candidates: [
+        { kind: 'node-package-bin', command: 'codex', packageName: '@openai/codex', binName: 'codex' },
+        { kind: 'native', command: 'codex' },
+      ] },
       db: options.db,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
     });
   }
+
 }
 
 module.exports = { CodexCliProvider };

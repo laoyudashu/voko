@@ -18,7 +18,12 @@ const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
 const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
 const { isHermesRuntimeAvailable } = require('./dispatcher/hermes-command');
-const { getProviderFamily } = require('./dispatcher/provider-catalog');
+const {
+  resolveQwenOfficeCommand,
+  getQwenOfficeReadiness,
+} = require('./dispatcher/qwen-office-command');
+const { resolveTraeCliCommand, isTraeCliAvailable } = require('./dispatcher/trae-command');
+const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -40,6 +45,8 @@ const CLI_COMMANDS = {
   'github-copilot': 'copilot',
   grok: 'grok',
   reasonix: 'reasonix',
+  'qwen-office': 'qoderclicn',
+  trae: 'traecli',
 };
 const PULL_ONLY_CLI_COMMANDS = {
   openhands: 'openhands',
@@ -87,10 +94,20 @@ const CLI_DELIVERY_METADATA = {
     description: 'VOKO 以 Plan 模式调用 Cline CLI，关闭工具自动批准并禁止 Shell 命令。',
   },
 };
+
+function qwenOfficeReadiness(options = {}) {
+  if (typeof options.qwenOfficeRuntimeAvailable === 'function') {
+    const ready = !!options.qwenOfficeRuntimeAvailable();
+    return { executable: ready, loggedIn: ready, ready, reason: ready ? 'ready' : 'status_failed' };
+  }
+  return getQwenOfficeReadiness();
+}
 const DESKTOP_APPLICATIONS = [
   { type: 'zcode', label: 'ZCode', pattern: /\bzcode\b/i },
   { type: 'workbuddy', label: 'WorkBuddy', pattern: /\bworkbuddy\b/i },
   { type: 'doubao', label: '豆包', pattern: /豆包|\bdoubao\b/i },
+  { type: 'qwen-office', label: '千问办公 (QwenWork)', pattern: /千问办公|qwenwork(?:cn)?/i },
+  { type: 'trae', label: 'Trae', pattern: /\btrae(?:\s*\(user\))?\b|trae\s+(?:work|solo)/i },
 ];
 const SESSION_EXTENSIONS = new Set(['.json', '.jsonl', '.db', '.sqlite', '.sqlite3']);
 
@@ -111,6 +128,7 @@ function currentAgentTypeFromText(value) {
     ['hermes', /(?:^|[\\/\s])hermes(?:\.exe)?(?:\s|$)/],
     ['gemini', /(?:^|[\\/\s])gemini(?:\.exe)?(?:\s|$)/],
     ['qwen-code', /(?:^|[\\/\s])qwen(?:\.exe)?(?:\s|$)|qwen-code/],
+    ['qwen-office', /(?:^|[\\/\s])qwenworkcn(?:\.exe)?(?:\s|$)|qwenwork(?:\.exe)?(?:\s|$)|qoderclicn(?:\.exe)?(?:\s|$)|千问办公/],
     ['kiro', /(?:^|[\\/\s])kiro-cli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])kiro(?:\.exe)?(?:\s|$)/],
     ['github-copilot', /(?:^|[\\/\s])copilot(?:\.exe)?(?:\s|$)|github-copilot/],
     ['openhands', /(?:^|[\\/\s])openhands(?:\.exe)?(?:\s|$)/],
@@ -121,6 +139,7 @@ function currentAgentTypeFromText(value) {
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
     ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:\s|$)/],
     ['doubao', /(?:^|[\\/\s])doubao(?:\.exe)?(?:\s|$)/],
+    ['trae', /(?:^|[\\/\s])traecli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])trae(?:\.exe|\.cmd)?(?:\s|$)|trae\s+(?:work|solo)/],
     ['cursor', /(?:^|[\\/\s])cursor(?:\.exe)?(?:\s|$)/],
     ['pi', /(?:^|[\\/\s])pi(?:\.exe)?(?:\s|$)/],
   ];
@@ -578,7 +597,13 @@ class RegistrationOrchestrator {
         ? (this.options.commandAvailable
           ? hasCommand('cursor-agent') || hasCommand('agent')
           : isCursorCommandAvailable())
-        : hasCommand(command);
+        : type === 'qwen-office'
+          ? qwenOfficeReadiness(this.options).ready
+          : type === 'trae'
+            ? (typeof this.options.traeCliAvailable === 'function'
+              ? !!this.options.traeCliAvailable()
+              : isTraeCliAvailable())
+            : hasCommand(command);
       if (type === 'openclaw' || type === 'hermes' || !available) continue;
       detected.push({
         type,
@@ -592,6 +617,7 @@ class RegistrationOrchestrator {
     const applicationNames = (this.options.installedApplications || installedApplications)();
     for (const application of DESKTOP_APPLICATIONS) {
       if (!applicationNames.some((name) => application.pattern.test(name))) continue;
+      if (detected.some((item) => item.type === application.type)) continue;
       detected.push({
         type: application.type,
         label: knownLabels.get(application.type) || application.label,
@@ -695,6 +721,19 @@ class RegistrationOrchestrator {
     const capabilities = this._deliveryCapabilities(type, gatewayStatus);
     const family = getProviderFamily(type);
     if (!family) return capabilities;
+    const transports = listProviderTransports(type);
+    for (const item of capabilities) {
+      if (item.mode === 'pull') {
+        item.providerId = null;
+        item.supportsLoopback = false;
+        item.verificationType = 'preflight';
+        continue;
+      }
+      const target = transports.find((transport) => transport.mode === item.mode) || null;
+      item.providerId = target?.id || null;
+      item.supportsLoopback = target?.supportsLoopback === true;
+      item.verificationType = item.supportsLoopback ? 'loopback' : 'preflight';
+    }
     const order = new Map(family.defaultDeliveryModes.map((mode, index) => [mode, index]));
     return capabilities.sort((a, b) => (order.get(a.mode) ?? 999) - (order.get(b.mode) ?? 999));
   }
@@ -732,6 +771,39 @@ class RegistrationOrchestrator {
           description: available ? 'VOKO 通过标准 ACP 会话投递，断线时降级到 Goose CLI。' : '本机未检测到 Goose ACP 运行入口。',
         },
         cli,
+        pull,
+      ];
+    }
+    if (type === 'qwen-office') {
+      const qwenReadiness = qwenOfficeReadiness(this.options);
+      const available = qwenReadiness.ready;
+      return [
+        {
+          mode: 'cli', label: 'QwenWork CLI 自动交付', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 使用 QwenWork 随附的 qoderclicn 非交互 stream-json 入口；工具和权限请求默认关闭。'
+            : qwenReadiness.reason === 'cli_not_logged_in'
+              ? '已检测到 qoderclicn，但 CLI 尚未登录；请执行 qoderclicn login 后再进行真实回路测试。'
+              : '未检测到 qoderclicn，或 QwenWork 尚未安装。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'trae') {
+      const available = typeof this.options.traeCliAvailable === 'function'
+        ? !!this.options.traeCliAvailable()
+        : isTraeCliAvailable();
+      return [
+        {
+          mode: 'acp', label: 'Trae CLI ACP 实时会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 使用独立 traecli 的 ACP stdio 服务；桌面 trae 启动器不作为 ACP 入口。'
+            : '未检测到 traecli。当前桌面版仅验证为 MCP 客户端，暂保留 Pull 兜底。',
+        },
         pull,
       ];
     }
@@ -1200,6 +1272,7 @@ class RegistrationOrchestrator {
       || (provider === 'opencode' && (mode === 'acp' || mode === 'attach'))
       || ((provider === 'github-copilot' || provider === 'cursor') && mode === 'acp')
       || (provider === 'cline' && mode === 'acp')
+      || (provider === 'trae' && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
@@ -1209,6 +1282,10 @@ class RegistrationOrchestrator {
             ? resolveZeroClawCommand()
             : provider === 'cursor'
               ? resolveCursorCommand()
+              : provider === 'trae'
+                ? resolveTraeCliCommand()
+                : provider === 'qwen-office'
+                  ? resolveQwenOfficeCommand()
               : (CLI_COMMANDS[provider] || provider);
       if (provider === 'zeroclaw') {
         const status = mode === 'acp_ws'
@@ -1217,7 +1294,13 @@ class RegistrationOrchestrator {
         ready = status.ready;
         detail = status.detail;
       } else {
-        ready = path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
+        ready = provider === 'qwen-office'
+          ? qwenOfficeReadiness(this.options).ready
+          : provider === 'trae'
+            ? (typeof this.options.traeCliAvailable === 'function'
+              ? !!this.options.traeCliAvailable()
+              : isTraeCliAvailable())
+            : path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
       }
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
@@ -1255,25 +1338,35 @@ class RegistrationOrchestrator {
       return { success: false, code: 'LOOPBACK_UNAVAILABLE', error: '当前 Provider 尚未提供安全的真实闭环测试' };
     }
     const mode = cleanText(input.mode, 40);
+    const providerId = cleanText(input.providerId, 80);
+    const readiness = session.deliveryModes.find((item) => item.mode === mode && item.providerId === providerId);
+    if (!mode || !providerId || !readiness || readiness.supportsLoopback !== true) {
+      return { success: false, code: 'LOOPBACK_UNSUPPORTED', error: '所选消息通道不支持真实闭环测试' };
+    }
     const challenge = `voko-${crypto.randomBytes(12).toString('hex')}`;
     const tested = await this.options.runLoopbackTest({
       agentId: session.result?.agentId || null,
       provider: session.provider,
       mode,
+      providerId,
       challenge,
       acknowledgeCost: true,
     });
     const verified = tested?.success === true && tested?.challengeMatched === true;
     session.deliveryModes = session.deliveryModes.map((item) => item.mode === mode
-      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: { ok: verified, at: now() } }
+      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: {
+          ok: verified, at: now(), providerId, loopbackSessionId: tested?.loopbackSessionId || null,
+        } }
       : item);
     this._save(session);
     return {
       success: verified,
       registrationId: session.id,
       mode,
+      providerId,
       status: verified ? 'loopback_verified' : 'failed',
-      detail: cleanText(tested?.detail, 500),
+      detail: cleanText(tested?.detail || (verified ? `${providerId} 真实闭环测试通过` : `${providerId} 真实闭环测试失败`), 500),
+      loopbackSessionId: tested?.loopbackSessionId || null,
       mayCreateModelCost: true,
     };
   }
@@ -1283,10 +1376,20 @@ class RegistrationOrchestrator {
     if (typeof this.options.cleanupLoopbackSession !== 'function') {
       return { success: true, registrationId: session.id, cleaned: false };
     }
+    const mode = cleanText(input.mode, 40);
+    const providerId = cleanText(input.providerId, 80);
+    const target = session.deliveryModes.find((item) => item.mode === mode
+      && item.providerId === providerId && item.lastLoopback?.providerId === providerId);
+    if (!target) return { success: false, code: 'LOOPBACK_SESSION_NOT_FOUND', cleaned: false };
+    const requestedSessionId = cleanText(input.loopbackSessionId, 200);
+    const loopbackSessionId = target.lastLoopback?.loopbackSessionId || null;
+    if (requestedSessionId && requestedSessionId !== loopbackSessionId) {
+      return { success: false, code: 'LOOPBACK_SESSION_MISMATCH', cleaned: false };
+    }
     const cleaned = await this.options.cleanupLoopbackSession({
       agentId: session.result?.agentId || null,
       provider: session.provider,
-      mode: cleanText(input.mode, 40),
+      mode, providerId, loopbackSessionId,
     });
     return { success: cleaned?.success !== false, registrationId: session.id, cleaned: cleaned?.cleaned === true };
   }
@@ -1331,6 +1434,9 @@ class RegistrationOrchestrator {
         selected: !!mode.selected,
         status: mode.status || 'unavailable',
         detail: mode.lastPreflight?.detail || null,
+        providerId: mode.providerId || null,
+        supportsLoopback: mode.supportsLoopback === true,
+        verificationType: mode.supportsLoopback === true ? 'loopback' : 'preflight',
       })),
       unresolvedConfiguration: session.deliveryModes
         .filter((mode) => mode.mode !== 'pull' && ['configuration_required', 'unavailable', 'failed'].includes(mode.status))

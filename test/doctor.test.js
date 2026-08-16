@@ -9,6 +9,7 @@ const test = require('node:test');
 
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
 const { runDoctor, formatDoctor } = require('../build/core/doctor');
+const { initA2ADatabase } = require('../build/a2a');
 
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-doctor-test-'));
@@ -22,7 +23,7 @@ function makeFixture() {
   db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
     .run(JSON.stringify({
       instanceId: 'doctor-instance', pid: process.pid, port: 32123, ts: now,
-      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true }],
+      agents: [{ agentId: 'doctor-agent', imConnected: true, automaticDeliveryReady: false, automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: true, deliveryStatus: { pullOnly: true, methods: [{ mode: 'pull', reason: 'provider-pull-only' }] } }],
     }), now);
   db.prepare(`
     INSERT INTO agents
@@ -42,6 +43,7 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    env: { VOKO_A2A_ENABLED: 'false' },
     mcpConfigPaths: [],
     deps: {
       readInstanceMetadata: () => ({ instanceId: 'doctor-instance', pid: process.pid, port: 32123 }),
@@ -57,6 +59,9 @@ test('doctor reports an isolated healthy runtime without exposing secrets', asyn
   assert.doesNotMatch(JSON.stringify(result), /doctor-secret-value/);
   assert.ok(result.checks.some((check) => check.id === 'integrity' && check.status === 'ok'));
   assert.ok(result.checks.some((check) => check.id === 'runtime' && check.status === 'ok'));
+  const runtimeAgents = result.checks.find((check) => check.id === 'runtime-agents');
+  assert.equal(runtimeAgents?.data?.providerPullOnly, 1);
+  assert.equal(runtimeAgents?.data?.agents?.[0]?.pullReason, 'provider-pull-only');
 });
 
 test('doctor reports a missing database with a machine-readable error code', async (t) => {
@@ -67,6 +72,16 @@ test('doctor reports a missing database with a machine-readable error code', asy
   assert.equal(result.success, false);
   assert.equal(result.checks.find((check) => check.id === 'database')?.status, 'error');
 });
+test('doctor reports the isolated A2A bridge without exposing its token or database path', async (t) => {
+  const fixture = makeFixture(); const a2aDbPath = path.join(fixture.dir, 'private-a2a.db'); const a2aDb = initA2ADatabase(a2aDbPath);
+  a2aDb.prepare("INSERT INTO a2a_settings(key,value,updated_at) VALUES('bridge_config_v1',?,?)")
+    .run(JSON.stringify({ mailboxUrl: 'https://did.example/private', token: 'a2a-secret-token' }), Date.now()); a2aDb.close();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const result = await runDoctor({ dbPath: fixture.dbPath, a2aDbPath, env: { VOKO_A2A_ENABLED: 'true' }, mcpConfigPaths: [] });
+  const check = result.checks.find((item) => item.id === 'a2a-mailbox');
+  assert.equal(check.status, 'ok'); assert.equal(check.data.bridgeConfigured, true); assert.equal(check.data.schemaVersion, 5);
+  assert.doesNotMatch(JSON.stringify(check), /a2a-secret-token|private-a2a\.db|did\.example/);
+});
 
 test('doctor deep mode probes configured endpoints without starting a provider', async (t) => {
   const fixture = makeFixture();
@@ -74,6 +89,7 @@ test('doctor deep mode probes configured endpoints without starting a provider',
   const calls = [];
   const result = await runDoctor({
     dbPath: fixture.dbPath,
+    env: { VOKO_A2A_ENABLED: 'false' },
     mcpConfigPaths: [],
     deep: true,
     deps: {
@@ -125,6 +141,21 @@ test('doctor reports stale MCP configuration without exposing its contents', asy
   assert.match(JSON.stringify(check), /STALE_MCP_PORT/);
   assert.match(JSON.stringify(check), /Goose/);
   assert.doesNotMatch(JSON.stringify(result), /do-not-print-this-token/);
+});
+
+test('doctor reports effective Provider sandbox dimensions without exposing local paths or credentials', async (t) => {
+  const fixture = makeFixture();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const db = new (require('node:sqlite').DatabaseSync)(fixture.dbPath);
+  db.prepare("UPDATE agents SET backend_type='codex', delivery_modes=? WHERE agent_id='doctor-agent'")
+    .run(JSON.stringify(['cli', 'pull']));
+  db.close();
+  const result = await runDoctor({ dbPath: fixture.dbPath, mcpConfigPaths: [] });
+  const check = result.checks.find((item) => item.id === 'provider-sandbox');
+  assert.ok(check);
+  assert.match(JSON.stringify(check), /codex-readonly/);
+  assert.match(JSON.stringify(check), /read_only/);
+  assert.doesNotMatch(JSON.stringify(check), /doctor-secret-value|[A-Z]:\\|\/home\/|\/Users\//);
 });
 
 test('doctor --fix-mcp migrates an unambiguous legacy VOKO entry and keeps a backup', async (t) => {

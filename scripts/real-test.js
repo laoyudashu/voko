@@ -138,10 +138,17 @@ async function smoke(config, reporter) {
   await mcpCall(config.dbPath, 'voko_fetch_new_messages', { agentId: config.agentId, visitorId: config.peerUid, blockTimeout: 1 });
   reporter.check('MCP Pull', true);
   if (config.filePath) {
-    const uploaded = await mcpCall(config.dbPath, 'voko_upload_and_send_file', {
+    const configuredAttachmentMessage = process.env.VOKO_REAL_ATTACHMENT_MESSAGE;
+    const omitAttachmentMessage = /^(1|true|yes)$/i.test(String(process.env.VOKO_REAL_OMIT_ATTACHMENT_MESSAGE || ''));
+    const attachmentMessage = omitAttachmentMessage ? '' : configuredAttachmentMessage === undefined
+      ? `[VOKO-REAL-TEST ${reporter.runId}] attachment`
+      : String(configuredAttachmentMessage).trim();
+    const uploadArgs = {
       agentId: config.agentId, toUid: config.peerUid, channelType: 1,
-      filePath: path.resolve(config.filePath), message: `[VOKO-REAL-TEST ${reporter.runId}] attachment`,
-    });
+      filePath: path.resolve(config.filePath), message: attachmentMessage,
+    };
+    if (!attachmentMessage) delete uploadArgs.message;
+    const uploaded = await mcpCall(config.dbPath, 'voko_upload_and_send_file', uploadArgs);
     const attachmentOk = uploaded?.success !== false
       && !!(uploaded?.messageId || uploaded?.fileMessageId || uploaded?.attachmentMessageId);
     reporter.check('attachment upload and send', attachmentOk, JSON.stringify(uploaded).slice(0, 200));
@@ -150,11 +157,90 @@ async function smoke(config, reporter) {
         agentId: config.agentId, channelId: config.peerUid, channelType: 1, limit: 100,
       });
       const rows = history?.messages || history?.data?.messages || [];
-      const tagged = rows.filter((item) => String(item.content || '').includes(reporter.runId));
-      reporter.check('attachment persisted exactly once', tagged.length >= 1, `matches=${tagged.length}`);
-      if (tagged.length > 1) reporter.summary.counters.duplicates += tagged.length - 1;
+      const fileMessageId = uploaded.messageId || uploaded.fileMessageId || uploaded.attachmentMessageId || '';
+      const fileMatches = rows.filter((item) => {
+        const rowId = item.id || item.messageId || '';
+        const isFileType = [3, 4, 8].includes(Number(item.contentType ?? item.content_type));
+        return (fileMessageId && String(rowId) === String(fileMessageId))
+          || (isFileType && String(item.content || '').includes(String(uploaded.url || '')));
+      });
+      const textMatches = rows.filter((item) => String(item.content || '').trim() === attachmentMessage
+        && !fileMatches.some((file) => String(file.id || file.messageId || '') === String(item.id || item.messageId || '')));
+      const expectedTextCount = attachmentMessage ? 1 : 0;
+      const persistedExactlyOnce = fileMatches.length === 1 && textMatches.length === expectedTextCount;
+      reporter.check('attachment persisted exactly once', persistedExactlyOnce,
+        `fileMatches=${fileMatches.length},textMatches=${textMatches.length}`);
+      if (fileMatches.length > 1) reporter.summary.counters.duplicates += fileMatches.length - 1;
+      if (textMatches.length > expectedTextCount) reporter.summary.counters.duplicates += textMatches.length - expectedTextCount;
     }
   } else reporter.check('attachment upload and send', true, 'SKIP: VOKO_REAL_TEST_FILE not configured');
+}
+
+function loadProviderTargets() {
+  const raw = String(process.env.VOKO_REAL_PROVIDER_TARGETS || '').trim();
+  if (!raw) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (error) { throw new Error(`VOKO_REAL_PROVIDER_TARGETS must be valid JSON: ${error.message}`); }
+  if (!Array.isArray(parsed)) throw new Error('VOKO_REAL_PROVIDER_TARGETS must be a JSON array');
+  return parsed.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new Error(`provider target ${index} must be an object`);
+    const label = String(item.label || item.backend || `target-${index + 1}`).trim();
+    const agentId = String(item.agentId || '').trim();
+    const uid = String(item.uid || '').trim();
+    if (!agentId || !uid) throw new Error(`provider target ${label} requires agentId and uid`);
+    return { label, agentId, uid };
+  });
+}
+
+async function providers(config, reporter) {
+  const targets = loadProviderTargets();
+  if (!targets.length) {
+    reporter.check('Provider real reply loop', true, 'SKIP: VOKO_REAL_PROVIDER_TARGETS not configured');
+    return;
+  }
+  const senderAgentId = String(process.env.VOKO_REAL_PROVIDER_SENDER_AGENT_ID || config.agentId).trim();
+  const senderUid = String(process.env.VOKO_REAL_PROVIDER_SENDER_UID || '').trim();
+  if (!senderUid) throw new Error('VOKO_REAL_PROVIDER_SENDER_UID is required when provider targets are configured');
+  const timeout = durationMs(process.env.VOKO_REAL_PROVIDER_TIMEOUT || '120s');
+  const interval = durationMs(process.env.VOKO_REAL_PROVIDER_INTERVAL || '5s');
+  for (const target of targets) {
+    const marker = `[VOKO-REAL-PROVIDER ${reporter.runId} ${target.label}]`;
+    const replyToken = `VOKO_PROVIDER_REPLY_${reporter.runId}_${target.label.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    try {
+      const sent = await mcpCall(config.dbPath, 'voko_send_message', {
+        agentId: senderAgentId,
+        toUid: target.uid,
+        channelType: 1,
+        content: `${marker} Reply exactly ${replyToken}. Do not use tools.`,
+      });
+      const accepted = sent?.success !== false;
+      reporter.summary.counters.sent += accepted ? 1 : 0;
+      reporter.check(`Provider ${target.label} accepted inbound message`, accepted, JSON.stringify(sent).slice(0, 240));
+      if (!accepted) continue;
+
+      const deadline = Date.now() + timeout;
+      let matches = [];
+      while (Date.now() < deadline) {
+        const history = await mcpCall(config.dbPath, 'voko_get_chat_history', {
+          agentId: target.agentId, channelId: senderUid, channelType: 1, limit: 100, order: 'asc',
+        });
+        const messages = history?.messages || history?.data?.messages || [];
+        matches = messages.filter((item) => {
+          const fromUid = item.fromUid ?? item.from_uid;
+          return String(fromUid || '') === target.uid && String(item.content || '').includes(replyToken);
+        });
+        if (matches.length) break;
+        const wait = Math.min(interval, Math.max(0, deadline - Date.now()));
+        if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      if (matches.length === 0) reporter.summary.counters.lost += 1;
+      if (matches.length > 1) reporter.summary.counters.duplicates += matches.length - 1;
+      reporter.check(`Provider ${target.label} replied exactly once`, matches.length === 1, `matches=${matches.length}`);
+      if (matches.length === 1) reporter.summary.counters.verified += 1;
+    } catch (error) {
+      reporter.check(`Provider ${target.label} real reply loop`, false, error.stack || error.message);
+    }
+  }
 }
 
 async function recovery(config, reporter) {
@@ -192,6 +278,7 @@ async function main() {
   try {
     if (scenario === 'smoke') await smoke(config, reporter);
     else if (scenario === 'recovery') await recovery(config, reporter);
+    else if (scenario === 'providers' || scenario === 'provider') await providers(config, reporter);
     else if (scenario === 'stability') await stability(config, reporter, durationMs(durationArg));
     else if (scenario === 'all') { await smoke(config, reporter); await recovery(config, reporter); await stability(config, reporter, durationMs(durationArg)); }
     else throw new Error(`unknown real-test scenario: ${scenario}`);
@@ -206,4 +293,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createReporter, durationMs, loadEnv, redact };
+module.exports = { createReporter, durationMs, loadEnv, redact, loadProviderTargets };

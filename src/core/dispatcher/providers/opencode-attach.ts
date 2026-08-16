@@ -20,6 +20,7 @@ interface Options {
   db?: Pick<DatabaseLike, 'prepare'> | null;
   contextWindow?: number;
   cwd?: string;
+  sessionPersistence?: 'transport' | 'dispatcher';
 }
 
 interface SessionRow { session_handle?: string }
@@ -58,6 +59,7 @@ class OpenCodeAttachProvider extends PushProvider {
   _serverPromise: Promise<void> | null = null;
   _port = 0;
   _password = '';
+  _sessionPersistence: 'transport' | 'dispatcher' = 'transport';
 
   constructor(options: Options = {}) {
     super();
@@ -68,6 +70,7 @@ class OpenCodeAttachProvider extends PushProvider {
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
     this._cmd = resolveOpenCodeCommand();
+    if (options.sessionPersistence === 'dispatcher') this.useDispatcherSessionPersistence();
   }
 
   get priority() { return 5; }
@@ -147,6 +150,7 @@ class OpenCodeAttachProvider extends PushProvider {
   }
 
   _loadSession(agentId: string, visitorId: string): string | null {
+    if (this._sessionPersistence === 'dispatcher') return null;
     try {
       const row = this._db?.prepare(
         'SELECT session_handle FROM agent_session_handles WHERE agent_id=? AND visitor_id=? AND adapter_type=?',
@@ -156,7 +160,7 @@ class OpenCodeAttachProvider extends PushProvider {
   }
 
   _saveSession(agentId: string, visitorId: string, sessionId: string): void {
-    if (!this._db || !sessionId) return;
+    if (!this._db || !sessionId || this._sessionPersistence === 'dispatcher') return;
     this._db.prepare(`
       INSERT OR REPLACE INTO agent_session_handles
         (agent_id, visitor_id, adapter_type, session_handle, updated_at)
@@ -181,12 +185,12 @@ class OpenCodeAttachProvider extends PushProvider {
       .slice(0, MAX_REPLY_CHARS);
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     try {
-      await this._pushOnce(payload);
+      return await this._pushOnce(payload);
     } catch (error) {
       const binding = payload.providerBinding?.providerType === 'opencode' ? payload.providerBinding : null;
-      if (!binding || (payload as any).__vokoManagedRetry) throw error;
+      if (this._sessionPersistence === 'dispatcher' || !binding || (payload as any).__vokoManagedRetry) throw error;
       const message = String((error as any)?.message || error || '');
       const outcome = (error as any)?.deliveryOutcome
         || (/timeout|timed out|超时/i.test(message) ? 'outcome_unknown' : 'not_delivered');
@@ -194,11 +198,11 @@ class OpenCodeAttachProvider extends PushProvider {
       // create a second session and risk sending the visitor's message twice.
       if (outcome !== 'not_delivered') throw error;
       try { this._bindingStore?.markStale(binding.id); } catch (_) {}
-      await this._pushOnce({ ...payload, providerBinding: null, __vokoManagedRetry: true });
+      return this._pushOnce({ ...payload, providerBinding: null, __vokoManagedRetry: true });
     }
   }
 
-  async _pushOnce(payload: PushPayload): Promise<void> {
+  async _pushOnce(payload: PushPayload): Promise<unknown> {
     await this._ensureServer();
     const { agentId, fromUid, content, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `opencode-${Date.now()}`);
@@ -291,9 +295,17 @@ class OpenCodeAttachProvider extends PushProvider {
       agentId, visitorId: fromUid, content: fullContent, done: true,
       sessionKey, turnId, replyId: turnId,
     });
+    return { nativeSessionId: observedSession || null,
+      providerInstanceId: activeBinding?.providerInstanceId || null,
+      deliveryMode: 'attach', adapterType: ADAPTER_TYPE };
   }
 
-  async steer(agentId: string, visitorId: string, content: string): Promise<void> {
+  useDispatcherSessionPersistence(): void {
+    this._sessionPersistence = 'dispatcher';
+    this._bindingStore = null;
+  }
+
+  async steer(agentId: string, visitorId: string, content: string): Promise<unknown> {
     return this.push({
       agentId, fromUid: visitorId, content,
       messageId: `steer-${Date.now()}`, timestamp: Date.now(),

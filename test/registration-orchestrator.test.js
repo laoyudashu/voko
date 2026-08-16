@@ -22,6 +22,7 @@ function createDb() {
     JSON.stringify([
       { value: 'openclaw', label: 'OpenClaw' },
       { value: 'hermes', label: 'Hermes' },
+      { value: 'qwen-office', label: 'Qwen Office' },
       { value: 'others', label: 'Others' },
     ]),
     Date.now(),
@@ -69,6 +70,8 @@ describe('shared registration orchestrator', () => {
     assert.strictEqual(currentAgentTypeFromProcessRows(['WorkBuddy.exe --mcp']), 'workbuddy');
     assert.strictEqual(currentAgentTypeFromProcessRows(['Doubao.exe agent']), 'doubao');
     assert.strictEqual(currentAgentTypeFromProcessRows(['zcode.exe mcp']), 'zcode');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['QwenWorkCN.exe --background']), 'qwen-office');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['Trae.exe --extensions-dir C:\\tmp']), 'trae');
   });
 
   it('recognizes gateway-based Agents from safe execution markers', () => {
@@ -175,6 +178,38 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('detects Qwen Office and Trae desktop installs while keeping headless readiness separate', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: () => false,
+      qwenOfficeRuntimeAvailable: () => false,
+      traeCliAvailable: () => false,
+      installedApplications: () => ['千问办公 0.1.6', 'Trae (User) 3.5.81'],
+      detectCurrentAgentType: () => null,
+    });
+    const environment = service.inspectEnvironment();
+    for (const type of ['qwen-office', 'trae']) {
+      const provider = environment.detected.find((item) => item.type === type);
+      assert.ok(provider, `${type} should be detected from the installed-app inventory`);
+      assert.deepEqual(provider.instances, []);
+      assert.deepEqual(provider.deliveryModes.map((mode) => mode.mode), type === 'trae' ? ['acp', 'pull'] : ['cli', 'pull']);
+      assert.equal(provider.deliveryModes.at(-1).selected, true);
+      assert.equal(provider.deliveryModes[0].status, 'unavailable');
+    }
+    assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
+  });
+
+  it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
+    const service = new RegistrationOrchestrator({
+      qwenOfficeRuntimeAvailable: () => true,
+      traeCliAvailable: () => true,
+    });
+    assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
@@ -256,6 +291,7 @@ describe('shared registration orchestrator', () => {
     let sendCount = 0;
     let verifyCount = 0;
     const { db, service } = createService({
+      qwenOfficeRuntimeAvailable: () => true,
       getLoggedEmail: () => '',
       sendCode: async () => { sendCount++; return { success: true }; },
       loginByCode: async ({ code }) => {
@@ -605,22 +641,26 @@ describe('shared registration orchestrator', () => {
 
   it('never runs a model-backed loopback without explicit cost acknowledgement', async () => {
     let calls = 0;
+    let received = null;
     const { db, service } = createService({
-      runLoopbackTest: async ({ challenge }) => {
+      runLoopbackTest: async (request) => {
         calls++;
-        return { success: true, challengeMatched: true, detail: challenge };
+        received = request;
+        return { success: true, challengeMatched: true, detail: request.challenge };
       },
     });
     try {
       const started = await service.start({ email: 'owner@example.com' });
       service.setBasicInfo(started.registrationId, { agentName: 'Loopback Agent' });
-      service.selectProvider(started.registrationId, { providerType: 'others' });
-      const denied = await service.loopbackTest(started.registrationId, { mode: 'pull' });
+      service.selectProvider(started.registrationId, { providerType: 'qwen-office' });
+      const denied = await service.loopbackTest(started.registrationId, { mode: 'cli', providerId: 'qwen-office-cli' });
       assert.strictEqual(denied.code, 'LOOPBACK_CONFIRMATION_REQUIRED');
       assert.strictEqual(calls, 0);
-      const allowed = await service.loopbackTest(started.registrationId, { mode: 'pull', acknowledgeCost: true });
+      const allowed = await service.loopbackTest(started.registrationId, { mode: 'cli', providerId: 'qwen-office-cli', acknowledgeCost: true });
       assert.strictEqual(allowed.status, 'loopback_verified');
       assert.strictEqual(calls, 1);
+      assert.strictEqual(received.providerId, 'qwen-office-cli');
+      assert.strictEqual(received.mode, 'cli');
     } finally {
       db.close();
     }

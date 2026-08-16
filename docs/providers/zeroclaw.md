@@ -89,7 +89,7 @@ voko start
 
 不要把 token 放进 URL 查询参数、`backend_instance_id`、项目文件或日志。URL 必须是无查询参数的本机回环地址；远程地址或未经 TLS 保护的公网地址不会被 VOKO 接受。
 
-配置完成后，选择 `ACP WebSocket → ACP → CLI → Pull`。`voko status --json` 中该 Agent 的 `activeMode` 应为 `acp_ws`，对应方法的 Provider 应为 `zeroclaw-ws`。
+配置完成后，选择 `ACP WebSocket → ACP → CLI → Pull`。`voko status --json` 中该 Agent 的 `activeAutomaticMode` 应为 `acp_ws`，`deliveryStatus.methods` 中对应 Provider 应为 `zeroclaw-ws`。
 
 ### CLI 降级
 

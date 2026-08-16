@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://www.vokovoko.com/schemas/voko-owner-v1.schema.json",
+  "title": "VOKO Owner Trusted Remote Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "kind", "messageId", "ownerConversationId", "ownerIdentityId", "ownerImUid",
+    "agentId", "ownershipEpoch", "conversationEpoch", "sequence", "operation", "payload",
+    "payloadDigest", "keyId", "algorithm", "createdAt", "expiresAt", "signature"
+  ],
+  "properties": {
+    "version": { "const": "voko.owner/1" },
+    "kind": { "enum": ["command", "receipt", "event"] },
+    "messageId": { "$ref": "#/$defs/id" },
+    "ownerConversationId": { "$ref": "#/$defs/id" },
+    "ownerIdentityId": { "$ref": "#/$defs/id" },
+    "ownerImUid": { "$ref": "#/$defs/id" },
+    "agentId": { "$ref": "#/$defs/id" },
+    "ownershipEpoch": { "type": "integer", "minimum": 1 },
+    "conversationEpoch": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "operation": { "enum": ["execute", "cancel", "accepted", "working", "completed", "failed", "canceled"] },
+    "payload": { "type": "object", "maxProperties": 32 },
+    "payloadDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "keyId": { "$ref": "#/$defs/id" },
+    "algorithm": { "const": "Ed25519" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "signature": { "type": "string", "minLength": 1, "maxLength": 256 }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }
+  }
+}

@@ -5,7 +5,7 @@ const express = require('express');
 const test = require('node:test');
 const { createWebRouter } = require('../build/web');
 
-test('agent detail exposes a double-click copy affordance for the Agent ID', async (t) => {
+test('agent detail exposes the shared icon copy control for the Agent ID', async (t) => {
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
@@ -23,12 +23,11 @@ test('agent detail exposes a double-click copy affordance for the Agent ID', asy
   const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-copy-id`);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(html, /data-copy-agent-id/);
-  assert.match(html, /data-copy-value="agent-copy-id"/);
-  assert.match(html, /addEventListener\("dblclick"/);
-  assert.match(html, /voko-copy-toast/);
-  assert.match(html, /Agent ID 已复制/);
-  const script = html.split('<script>').map((value) => value.split('</script>')[0]).find((value) => value.includes('data-copy-agent-id'));
+  assert.match(html, /class="voko-copy-button"/);
+  assert.match(html, /data-voko-copy-value="agent-copy-id"/);
+  assert.match(html, /window\.vokoCopyText/);
+  assert.match(html, /classList\.add\("is-copied"\)/);
+  const script = html.split('<script>').map((value) => value.split('</script>')[0]).find((value) => value.includes('__VOKO_COPY_READY__'));
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
 });

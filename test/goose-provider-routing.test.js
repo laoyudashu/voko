@@ -72,6 +72,16 @@ test('Goose session scope separates agents, direct messages, and groups', () => 
   assert.equal(direct.logicalName.includes('agent-a'), false);
 });
 
+test('Goose A2A scope separates principals that reuse the same protocol context', () => {
+  const { conversationScope } = GooseCliProvider;
+  const first = conversationScope({ agentId: 'agent-a', fromUid: 'a2a:same', channelId: 'same',
+    channelType: 1, sessionScopeId: 'principal-scope-a' });
+  const second = conversationScope({ agentId: 'agent-a', fromUid: 'a2a:same', channelId: 'same',
+    channelType: 1, sessionScopeId: 'principal-scope-b' });
+  assert.notEqual(first.key, second.key);
+  assert.notEqual(first.logicalName, second.logicalName);
+});
+
 test('Goose serializes concurrent first messages for one conversation', async (t) => {
   const { db } = fixture(t);
   const fake = fakeGoose();

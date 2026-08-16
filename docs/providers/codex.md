@@ -75,7 +75,7 @@ Codex 的原生 thread ID 会保存在 VOKO 的会话绑定中。绑定范围固
 
 同一会话后续消息会使用同一个 thread ID；不同 Agent、不同访客、私聊和群聊不会共享 thread。不要从 Codex 的“最近会话”列表猜测并手动填入 VOKO。
 
-如果原生 thread 已被 Codex 删除、归档或无法恢复，VOKO 会创建新的隔离 CLI 会话，旧上下文不会自动恢复。结果不明确时，VOKO 不会跨通道重复发送同一条消息。
+Codex 的差异是原生 thread 删除/归档后的隔离会话处理；结果不明确、Pull 和跨通道行为按 [Transport 行为矩阵](../provider-transport-matrix.md) 执行。
 
 Codex 没有 ACP 主通道；当 CLI 不可用时，消息保留在 Pull 中：
 

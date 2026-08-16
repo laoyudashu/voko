@@ -22,6 +22,7 @@ interface ProfileOptions {
   icon_url?: string;
   cover_url?: string;
   tags?: string | unknown[];
+  backendType?: string;
 }
 
 interface CredentialRow {
@@ -65,7 +66,7 @@ function errorMessage(error: unknown): string {
  */
 async function updateAgentProfile(opts?: ProfileOptions): Promise<ProfileResult> {
   const { db, agentId, name, description, short_description, category } = opts || {};
-  const { address, contact_phone, icon_url, cover_url, tags } = opts || {};
+  const { address, contact_phone, icon_url, cover_url, tags, backendType } = opts || {};
 
   if (!db) return { success: false, error: 'db is required' };
   if (!agentId) return { success: false, error: 'agentId is required' };
@@ -88,6 +89,7 @@ async function updateAgentProfile(opts?: ProfileOptions): Promise<ProfileResult>
     if (icon_url !== undefined) payload.icon_url = icon_url;
     if (cover_url !== undefined) payload.cover_url = cover_url;
     if (tags !== undefined) payload.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
+    if (backendType !== undefined) payload.backendType = backendType;
     const bodyPayload = JSON.stringify(payload, Object.keys(payload).sort());
 
     // 签名

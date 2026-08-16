@@ -21,8 +21,14 @@ function dbWithHistory() {
       content_type INTEGER NOT NULL,
       agent_id TEXT NOT NULL
     );
+    CREATE TABLE agents (
+      agent_id TEXT PRIMARY KEY,
+      backend_type TEXT NOT NULL,
+      backend_instance_id TEXT
+    );
     INSERT INTO messages VALUES
       ('m1', 'visitor-a', 1, 'remembered fact', 1, 0, 1, 'agent-a');
+    INSERT INTO agents VALUES ('agent-a', 'hermes', 'hermes-profile');
   `);
   return db;
 }
@@ -69,10 +75,10 @@ test('Goose ACP inherits the common owner steer implementation', async () => {
   assert.equal(sent[0].fromUid, 'visitor-a');
 });
 
-function binding(providerType, deliveryMode, adapterType, nativeSessionId) {
+function binding(providerType, deliveryMode, adapterType, nativeSessionId, providerInstanceId = null) {
   return {
     id: `${providerType}-binding`, bindingVersion: 1, providerType,
-    providerInstanceId: null, deliveryMode, adapterType, nativeSessionId,
+    providerInstanceId, deliveryMode, adapterType, nativeSessionId,
     sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
   };
 }
@@ -84,7 +90,7 @@ test('OpenClaw sends history only when no resumable binding is available', async
   try {
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
-    const providerBinding = binding('openclaw', 'websocket', 'openclaw-ws', 'agent:agent-a:visitor-a');
+    const providerBinding = binding('openclaw', 'websocket', 'openclaw-ws', 'agent:agent-a:visitor-a', 'agent-a');
     await provider.push({ ...basePayload, content: 'second message', providerBinding });
     await provider.push({ ...basePayload, content: 'after reconnect', providerBinding });
     await provider.push({ ...basePayload, content: 'after failed resume', providerBinding: null });
@@ -106,7 +112,7 @@ test('Hermes sends history only when no resumable binding is available', async (
   try {
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
-    const providerBinding = binding('hermes', 'http', 'hermes-http', 'hermes:agent-a:visitor-a');
+    const providerBinding = binding('hermes', 'http', 'hermes-http', 'hermes:agent-a:visitor-a', 'hermes-profile');
     await provider.push({ ...basePayload, content: 'second message', providerBinding });
     await provider.push({ ...basePayload, content: 'after reconnect', providerBinding });
     await provider.push({ ...basePayload, content: 'after failed resume', providerBinding: null });

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { initDatabase } = require('../build/core/database');
 const { createToolHandlers } = require('../build/mcp/tools');
 const { createContext } = require('../build/context');
+const { RoutingConversationStore } = require('../build/core/provider-routing');
 
 function fixture(sendSystemMessage) {
   const db = initDatabase(':memory:', { silent: true });
@@ -55,5 +56,24 @@ test('short-lived context skips notification before calling a missing Agent work
     const result = await context.sendSystemMessage('agent-1', 'visitor-1', 'whitelist_enabled');
     assert.deepEqual(result, { notificationStatus: 'skipped', notificationReason: 'agent_worker_unavailable' });
     assert.equal(calls, 0);
+  } finally { db.close(); }
+});
+
+test('access status notification keeps an explicitly selected Conversation', async () => {
+  const calls = [];
+  const { db, handlers } = fixture(async (...args) => {
+    calls.push(args);
+    return { notificationStatus: 'sent' };
+  });
+  try {
+    const conversation = new RoutingConversationStore(db).createPending({
+      agentId: 'agent-1', channelId: 'visitor-1', channelType: 1, origin: 'web_system',
+    });
+    const result = await handlers.manage_whitelist({
+      action: 'add', agentId: 'agent-1', visitorId: 'visitor-1', conversationId: conversation.id,
+    });
+    assert.equal(result.notificationStatus, 'sent');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][5].conversationId, conversation.id);
   } finally { db.close(); }
 });

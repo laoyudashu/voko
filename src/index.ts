@@ -517,7 +517,7 @@ function initCore(args?: any, options: any = {}) {
   // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
   const wukongimSender = agentManager;
   const deliver = createDeliver({ transportManager: agentManager });
-  const sendMessage = createSendMessage({ db, deliver, agentWorkers: agentManager.workers, mainWindow: null });
+  const sendMessage = createSendMessage({ db, deliver, databaseAPI, agentWorkers: agentManager.workers, mainWindow: null });
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;  // 供 /api/message/send 等 HTTP 端点统一发送（自带兜底）
   return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, deliver, sendMessage };
@@ -1076,8 +1076,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       if (!intervention || !intervention.id) return res.json({ success: false, error: '缺少 intervention.id' });
       if (!currentOwnsAgent(String(intervention.agentId || intervention.agent_id || ''))) return res.status(403).json({ success: false, error: '无权保存该介入记录' });
       const { createDatabaseAPI } = require('./core/database');
-      createDatabaseAPI(db).saveOwnerIntervention(intervention);
-      res.json({ success: true, id: intervention.id });
+      const saved = createDatabaseAPI(db).saveOwnerIntervention(intervention);
+      if (saved?.success === false) return res.status(saved.code === 'CONVERSATION_REQUIRED' ? 409 : 400).json(saved);
+      res.json({ success: true, id: intervention.id, conversationId: intervention.routingConversationId || null });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1491,7 +1492,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     'agent-delivery:status',
     'owner-intervention:new', 'owner-intervention:email-reply',
     'owner-intervention:updated', 'channels:test-success',
-    'wechat:session-expired', 'owner-reply', 'voko:notification', 'user:switched'];
+    'wechat:session-expired', 'owner-reply', 'owner-chat:updated', 'voko:notification', 'user:switched'];
   for (const evt of WS_EVENTS) {
     bus.on(evt, (data?: any) => broadcast(evt, data));
   }
@@ -1595,6 +1596,60 @@ async function startMcpServer(args?: any, core?: any) {
   const taskManager = new TaskManager();
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
   const userEmail = getCurrentUserEmail(db);
+  const { A2AModule, A2ARegistrationService } = require('./a2a');
+  const a2aModule = new A2AModule();
+  let a2aMailboxClient: any = null;
+  const a2aOwnerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
+  const syncA2ARegistration = userEmail && a2aOwnerToken ? () => a2aModule.withDatabase((a2aDb: any) => {
+    const endpoints = require('./endpoints.json');
+    return new A2ARegistrationService({ mainDb: db, a2aDb, apiBaseUrl: endpoints.api.baseUrl,
+      ownerEmail: userEmail, userAccessToken: a2aOwnerToken }).ensureRegistered();
+  }) : undefined;
+  if (a2aModule.enabled) {
+    await taskManager.start('a2a-module', () => a2aModule.start());
+  }
+  const { createOwnerPullCallerAuthorizer, OwnerCommandProcessor, OwnerEventOutbox, OwnerGatewayKeyStore,
+    OwnerLinkBridge, OwnerLinkIngress, OwnerLinkModule, OwnerPullService, matchesLocalAgentIdentity } = require('./owner-link');
+  const ownerLinkModule = new OwnerLinkModule();
+  let ownerLinkBridge: any = null;
+  let ownerChatBridge: any = null;
+  let ownerChatReadStore: any = null;
+  let ownerPullService: any = null;
+  if (ownerLinkModule.enabled) {
+    try {
+      await taskManager.start('owner-link-module', () => ownerLinkModule.start());
+      const ownerKeyStore = new OwnerGatewayKeyStore(ownerLinkModule.getDatabase());
+      ownerKeyStore.configureFromEnvironment(process.env);
+      ownerLinkBridge = new OwnerLinkBridge({
+        database: ownerLinkModule.getDatabase(),
+        resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
+        matchesAgentId: (localAgentId: string, envelopeAgentId: string) => {
+          const row = db.prepare('SELECT did,owner_email,publish_status FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId);
+          const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+          return !!currentOwner && String(row?.owner_email || '').trim().toLowerCase() === currentOwner
+            && row?.publish_status === 'published' && matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
+        },
+      });
+      const { initOwnerChatSchema, OwnerChatBridge, OwnerChatReadStore } = require('./owner-chat');
+      initOwnerChatSchema(ownerLinkModule.getDatabase());
+      ownerChatReadStore = new OwnerChatReadStore(ownerLinkModule.getDatabase());
+      ownerChatBridge = new OwnerChatBridge({
+        database: ownerLinkModule.getDatabase(),
+        resolvePublicKey: (keyId: string) => ownerKeyStore.resolve(keyId),
+        matchesAgentId: (localAgentId: string, envelopeAgentId: string) => {
+          const row = db.prepare('SELECT did FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId);
+          return matchesLocalAgentIdentity(localAgentId, row?.did, envelopeAgentId);
+        },
+      });
+      ownerChatBridge.setMessageHandler((messageId: string) => {
+        const row = ownerLinkModule.getDatabase().prepare('SELECT local_agent_id,conversation_id FROM owner_chat_messages WHERE message_id=? LIMIT 1').get(messageId);
+        if (row) require('./core/lite-bus').emit('owner-chat:updated', { agentId: row.local_agent_id, conversationId: row.conversation_id });
+      });
+    } catch (error: any) {
+      console.error('[Owner Link] 安全入口初始化失败，Owner 专用消息将被拒绝:', error.message);
+    }
+  }
+  const ownerLinkIngress = new OwnerLinkIngress(ownerLinkBridge);
   const litePort = parseInt(args.port, 10) || 3100;
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
@@ -1649,7 +1704,6 @@ async function startMcpServer(args?: any, core?: any) {
     const hcResult = createHandlers({
       db,
       databaseAPI,
-      openclawMode: 'ws',
       backendTypes: published.map((agent: any) => agent.backend_type || 'openclaw'),
       hermesConfig: { apiHost: hc.apiHost, apiPort: hc.apiPort, apiKey: hc.apiKey, profiles: hc.profiles || {} },
       onAgentReply: (data?: any) => {
@@ -1661,8 +1715,99 @@ async function startMcpServer(args?: any, core?: any) {
     openclawHandler = hcResult.openclawHandler;
     hermesHandler = hcResult.hermesHandler;
     dispatcher = hcResult.dispatcher;
+    if (a2aModule.enabled && dispatcher) {
+      try {
+        const { A2ABridgeRuntime } = require('./a2a');
+        if (syncA2ARegistration) {
+          const bridgeConfig = await syncA2ARegistration();
+          const { A2AMailboxClient } = require('./a2a');
+          a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
+        }
+        const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), mainDatabase: db, dispatcher,
+          onError: (code: string) => console.error(`[A2A Bridge] ${code}`) });
+        await taskManager.start('a2a-bridge', () => a2aRuntime.start());
+      } catch (error: any) {
+        console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+      }
+    }
   } catch (e: any) {
     console.error('[Lite] 创建后端处理器失败:', e.message);
+  }
+
+  if (ownerLinkBridge && ownerLinkModule.dispatchEnabled && dispatcher) {
+    const resolveOwnerAgentIdentity = (agentId: string) => {
+      const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+      if (!currentOwner) return null;
+      const row = db.prepare(`SELECT agent_id,did,imUid,private_key,owner_email,publish_status
+        FROM agents WHERE agent_id=? LIMIT 1`).get(agentId);
+      if (!row || String(row.owner_email || '').trim().toLowerCase() !== currentOwner
+          || row.publish_status !== 'published' || !row.imUid || !row.private_key) return null;
+      return { privateKey: row.private_key, keyId: row.did || row.agent_id, imUid: row.imUid };
+    };
+    const ownerProcessor = new OwnerCommandProcessor({
+      store: ownerLinkBridge.store,
+      dispatcher,
+      dispatchEnabled: true,
+      resolveAgentIdentity: resolveOwnerAgentIdentity,
+    });
+    ownerLinkBridge.setCommandHandler((messageId: string) => ownerProcessor.process(messageId));
+    for (const messageId of ownerLinkBridge.store.listProcessableCommands()) {
+      queueMicrotask(() => void ownerProcessor.process(messageId).catch((error: any) => {
+        console.error('[Owner Link] 待处理命令恢复失败:', error?.code || 'OWNER_COMMAND_PROCESS_FAILED');
+      }));
+    }
+    const ownerOutbox = new OwnerEventOutbox(ownerLinkBridge.store, { deliver }, 2_000, (row: any) => {
+      const localAgentId = String(row.local_agent_id || row.agent_id || '');
+      const identity = resolveOwnerAgentIdentity(localAgentId);
+      if (!identity) return false;
+      const liveUid = agentManager.getStatus?.(localAgentId)?.uid;
+      return !liveUid || liveUid === identity.imUid;
+    });
+    await taskManager.start('owner-link-outbox', () => ownerOutbox.start());
+    const { getProviderCaller } = require('./core/registration-caller-context');
+    ownerPullService = new OwnerPullService({
+      store: ownerLinkBridge.store,
+      resolveAgentIdentity: resolveOwnerAgentIdentity,
+      authorizeAgent: createOwnerPullCallerAuthorizer(db, getProviderCaller),
+    });
+  }
+
+  if (ownerChatBridge && ownerLinkModule.dispatchEnabled && dispatcher) {
+    const { OwnerChatInboxRecovery, OwnerChatOutbox, OwnerChatProcessor } = require('./owner-chat');
+    const resolveOwnerChatAgentIdentity = (agentId: string) => {
+      const currentOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+      if (!currentOwner) return null;
+      const row = db.prepare(`SELECT agent_id,did,imUid,private_key,owner_email,publish_status
+        FROM agents WHERE agent_id=? LIMIT 1`).get(agentId);
+      if (!row || String(row.owner_email || '').trim().toLowerCase() !== currentOwner
+          || row.publish_status !== 'published' || !row.imUid || !row.private_key) return null;
+      return { privateKey: row.private_key, keyId: row.did || row.agent_id, imUid: row.imUid };
+    };
+    const ownerChatProcessor = new OwnerChatProcessor({ database: ownerLinkModule.getDatabase(), dispatcher,
+      resolveAgentIdentity: resolveOwnerChatAgentIdentity });
+    const ownerChatDatabase = ownerLinkModule.getDatabase();
+    const emitOwnerChatUpdate = (messageId: string) => {
+      const row = ownerChatDatabase.prepare('SELECT local_agent_id,conversation_id FROM owner_chat_messages WHERE message_id=? LIMIT 1').get(messageId);
+      if (row) require('./core/lite-bus').emit('owner-chat:updated', { agentId: row.local_agent_id, conversationId: row.conversation_id });
+    };
+    ownerChatBridge.setMessageHandler(async (messageId: string) => {
+      emitOwnerChatUpdate(messageId);
+      try { return await ownerChatProcessor.process(messageId); }
+      finally { emitOwnerChatUpdate(messageId); }
+    });
+    ownerChatBridge.setControlHandler(async (control: any) => {
+      if (control.operation === 'approval') {
+        return dispatcher.respondOwnerApproval(control.localAgentId,String(control.payload?.approvalId||''),control.payload?.decision);
+      }
+      if (control.operation === 'cancel') return dispatcher.cancelOwnerTurn(control.localAgentId,control.conversationId);
+      return false;
+    });
+    const ownerChatRecovery = new OwnerChatInboxRecovery(ownerChatDatabase, ownerChatProcessor, 2000,
+      (event: any) => require('./core/lite-bus').emit('owner-chat:updated', event));
+    await taskManager.start('owner-chat-inbox-recovery', () => ownerChatRecovery.start());
+    const ownerChatOutbox = new OwnerChatOutbox(ownerChatDatabase, { deliver }, 2000,
+      (event: any) => require('./core/lite-bus').emit('owner-chat:updated', event));
+    await taskManager.start('owner-chat-outbox', () => ownerChatOutbox.start());
   }
 
   let ownerInterventionNotifier: any = null; // 在后面创建，供 callback 闭包引用
@@ -1670,6 +1815,7 @@ async function startMcpServer(args?: any, core?: any) {
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
   try {
     const audit = require('./core/audit');
+    const safetyClassifier = require('./core/safety-classifier');
     const groupClient = require('./core/group-client');
     const groupRouteContext = {
       query: (sql: string, params: unknown[] = []) => db.prepare(sql).all(...params),
@@ -1690,6 +1836,8 @@ async function startMcpServer(args?: any, core?: any) {
       ac,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       checkAuditRules: (msg?: any, dir?: any) => audit.checkAuditRules(msg, dir, db),
+      classifyAuditDecision: (msg?: any, dir?: any, decision?: any) =>
+        safetyClassifier.classifyUncertain(db, msg, dir, decision),
       substitutePromptVariables: (p?: any, vars?: any) => audit.substitutePromptVariables(p, vars, db),
       notifyUI: (event?: any, data?: any) => {
         const bus = require('./core/lite-bus');
@@ -1700,7 +1848,33 @@ async function startMcpServer(args?: any, core?: any) {
         const bus = require('./core/lite-bus');
         bus.emit('owner-intervention:new');
       },
-      createPendingPayment: () => {},
+      createPendingPayment: (agentId: string, visitorId: string, fromUid: string, pricing: any, _timestamp: number, sourceMessageId?: string) => {
+        void (async () => {
+          const { resolveOwnerInterventionConversation } = require('./core/owner-intervention-routing');
+          const resolution = resolveOwnerInterventionConversation(db, {
+            agentId, channelId: visitorId, channelType: 1, sourceMessageId: sourceMessageId || null,
+          });
+          if (resolution.status === 'selection_required') {
+            console.warn('[Payment] timed order requires an explicit Conversation; order was not created');
+            return;
+          }
+          const now = Date.now();
+          const order = {
+            id: `timed_${now}_${Math.random().toString(36).slice(2, 8)}`,
+            agent_id: agentId, visitor_id: visitorId, from_uid: fromUid,
+            amount: Number(pricing.price || 0),
+            description: `Timed service (${Number(pricing.duration_minutes || 0)} minutes)`,
+            type: 'timed', status: 'pending', created_at: now, updated_at: now,
+            routing_conversation_id: resolution.status === 'resolved' ? resolution.conversationId : null,
+          };
+          const saved = databaseAPI.savePaymentOrder(order);
+          if ((saved as any)?.success === false) throw new Error((saved as any).error || 'payment order persistence failed');
+          await require('./core/payment').processPendingPaymentOrder(order, {
+            db, databaseAPI, agentWorkers: agentManager.workers, deliver, sendMessage,
+            endpoints: require('./endpoints.json'),
+          });
+        })().catch((error: any) => console.error('[Payment] timed order creation failed:', error.message));
+      },
       getGroupInfo: (agentId: string, channelId: string) =>
         groupClient.getInfo(groupRouteContext, { agentId, channelId }),
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
@@ -1714,6 +1888,33 @@ async function startMcpServer(args?: any, core?: any) {
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      // When trusted remote is parked, reject both owner protocols before the
+      // ordinary visitor handler. This keeps stale/forged owner payloads from
+      // being interpreted as normal visitor messages.
+      let ownerProtocol = '';
+      try {
+        const content = typeof data?.content === 'object' ? data.content : JSON.parse(String(data?.content || ''));
+        ownerProtocol = String(content?.version || '');
+      } catch (_) { /* ordinary text */ }
+      if (!ownerLinkModule.enabled && (ownerProtocol === 'voko.owner/1' || ownerProtocol === 'voko.owner.chat/1')) {
+        console.warn('[Owner Remote] 已停用，拒绝 Owner 专用消息');
+        data?.ack?.();
+        return;
+      }
+      const ownerChatResult = ownerChatBridge?.handle(msg.agentId, data);
+      if (ownerChatResult?.handled) {
+        if (!ownerChatResult.accepted) console.warn(`[Owner Chat] 已拒绝可信聊天消息: ${ownerChatResult.code || 'OWNER_CHAT_REJECTED'}`);
+        data?.ack?.();
+        return;
+      }
+      const ownerResult = ownerLinkIngress.handle(msg.agentId, data);
+      if (ownerResult.handled) {
+        if (!ownerResult.accepted) {
+          console.warn(`[Owner Link] 已拒绝 Owner 专用消息: ${ownerResult.code || 'OWNER_ENVELOPE_REJECTED'}`);
+        }
+        data?.ack?.();
+        return;
+      }
       if (messageHandler) {
         messageHandler.handleAgentMessage(msg.agentId, data);
       } else {
@@ -1816,8 +2017,6 @@ async function startMcpServer(args?: any, core?: any) {
     ownerInterventionNotifier = new OwnerInterventionNotifier({
       databaseAPI, registry, db,
       getEnabledChannel: databaseAPI.getEnabledChannel,
-      getOpenclawHandler: () => openclawHandler,
-      getHermesHandler: () => hermesHandler,
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
@@ -1842,7 +2041,12 @@ async function startMcpServer(args?: any, core?: any) {
         agentWorkers: agentManager.workers,
         deliver,
         endpoints: ENDPOINTS,
-        hermesHandler, openclawHandler,
+        resumeProviderConversation: (conversationId: string, agentId: string, visitorId: string, content: string) =>
+          createResumeOwnerIntervention(dispatcher, db)({
+            id: `payment_${Date.now()}`, agentId, visitorId,
+            sourceSenderUid: visitorId, targetChannelId: visitorId, targetChannelType: 1,
+            routingConversationId: conversationId,
+          }, content),
         sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
         payLog: () => {},
         ownerInterventionNotifier,
@@ -1878,6 +2082,8 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
+  (cx as any).a2aMailboxClient = a2aMailboxClient;
+  (cx as any).ownerPullService = ownerPullService;
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,
@@ -1912,7 +2118,7 @@ async function startMcpServer(args?: any, core?: any) {
     const agentList = agents.map((a: any) => ({
       agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
       imConnected: false, automaticDeliveryReady: false,
-      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, lastDeliveredMode: null,
+      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: false, lastDeliveredMode: null,
     }));
     db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
       .run(JSON.stringify({
@@ -1934,6 +2140,12 @@ async function startMcpServer(args?: any, core?: any) {
     getToolList: () => getToolList(mcpServer),
     webSessions,
     localAuthToken: process.env.VOKO_MCP_TOKEN || __instanceLock?.metadata?.mcpToken,
+    a2aModule,
+    a2aMailboxClient,
+    syncA2ARegistration,
+    trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
+    ownerChatReadStore,
+    ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 
@@ -2051,7 +2263,6 @@ async function runRebindForRoute(db: any, agentId: string, previousSnap: any): P
  *
  * @param {object} params
  * @param {object}   params.databaseAPI - 来自 createDatabaseAPI()
- * @param {string}   [params.openclawMode='ws'] - 'ws' | 'cli'
  * @param {object}   [params.hermesConfig] - { apiHost, apiPort, apiKey, profiles }
  * @param {Function} [params.onAgentReply] - callback(data) 收到 agent 回复时触发
  * @returns {{ openclawHandler: object|null, hermesHandler: object|null }}
@@ -2101,7 +2312,7 @@ function createResumeOwnerIntervention(dispatcher?: any, db?: any) {
   };
 }
 
-function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
+function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
   let openclawHandler = null;
   let hermesHandler = null;
   const providers: Record<string, any> = {};
@@ -2109,77 +2320,47 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
     ? new Set(backendTypes.map((value: unknown) => String(value || '').trim()).filter(Boolean))
     : null;
   const needsBackend = (...types: string[]) => !requiredBackends || types.some(type => requiredBackends.has(type));
-  const { getProviderFamily, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
+  const { getProviderFamily, getProviderTransport, listProviderTransports, instantiateProviderTransport } = require('./core/dispatcher/provider-catalog');
   const { resolveGooseCommand } = require('./core/dispatcher/goose-command');
-  const providerFactoryContext = { db, contextWindow: 20, gooseBin: resolveGooseCommand(), hermesConfig };
+  const { getProviderModularRollout, providerModularModeForFamily } = require('./core/dispatcher/provider-modular-rollout');
+  const modularRollout = getProviderModularRollout(db);
+  const providerFactoryContext = {
+    db,
+    contextWindow: 20,
+    getProviderConfig(transportId: string) {
+      const family = getProviderTransport(transportId)?.family || '';
+      const sessionPersistence = providerModularModeForFamily(modularRollout, family) === 'enabled'
+        ? 'dispatcher' : 'transport';
+      if (transportId === 'goose-cli' || transportId === 'goose-acp') return {
+        binPath: resolveGooseCommand(),
+        sessionPersistence,
+      };
+      if (transportId === 'hermes-http') return { ...hermesConfig, sessionPersistence };
+      return { sessionPersistence };
+    },
+  };
 
-  // ── OpenClaw provider（连接/spawn 收敛在 provider 内） ──
+  // ── OpenClaw WebSocket provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('openclaw')) try {
-    const OpenClawHandler = openclawMode === 'ws'
-      ? require('./core/dispatcher/providers/openclaw-ws')
-      : require('./server/openclaw-handler-cli');
-    openclawHandler = new OpenClawHandler(db, null); // Provider 历史恢复需要原生数据库连接
-    if (openclawMode === 'ws') {
-      providers['openclaw-ws'] = openclawHandler;
-      const status = openclawHandler.getStatus();
-      if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
-    }
-    console.error(`[Lite] OpenClaw 处理器已创建 (${openclawMode} 模式)`);
+    openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
+    providers['openclaw-ws'] = openclawHandler;
+    const status = openclawHandler.getStatus();
+    if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
+    console.error('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
   } catch (err: any) {
     console.error('[Lite] OpenClaw 处理器创建失败:', err.message);
   }
 
   // ── Hermes provider（连接/spawn 收敛在 provider 内） ──
   if (needsBackend('hermes')) try {
-    const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-    hermesHandler = new HermesHandler(db, null, { // Provider 历史恢复需要原生数据库连接
-      host: hermesConfig.apiHost || '127.0.0.1',
-      port: hermesConfig.apiPort || 8642,
-      apiKey: hermesConfig.apiKey || '',
-      profiles: hermesConfig.profiles || {},
-    });
+    hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
     providers['hermes-http'] = hermesHandler;
     console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
 
-  // ── CLI / ACP provider 注册表：新增 backend 只在 PROVIDER_REGISTRY 追加一行。
-  //    openclaw-ws / hermes-http 长连接因构造参数与返回值依赖特殊，仍在上方单独构造。──
-  //
-  //    goose 默认从 PATH 解析，也可通过 VOKO_GOOSE_BIN 指定平台对应的完整版本；
-  //    Claude Code 仅走 claude-cli；ACP 模式已移除，避免安装体积巨大的 Claude Agent SDK。
-  const GOOSE_BIN = resolveGooseCommand();
-  const PROVIDER_REGISTRY = [
-    // CLI 兜底（priority=1，长连接 isAvailable=false 时降级 spawn 本地 CLI；本地未装则 isAvailable=false 自动跳过）
-    { backend: ['openclaw'], key: 'openclaw-cli', mod: './core/dispatcher/providers/openclaw-cli', args: { db, contextWindow: 20 } },
-    { backend: ['hermes'], key: 'hermes-cli', mod: './core/dispatcher/providers/hermes-cli', args: { db, contextWindow: 20 } },
-    { backend: ['goose', 'goose-ai', 'goose-acp', 'acp-goose'], key: 'goose-cli', mod: './core/dispatcher/providers/goose-cli', args: { db, binPath: GOOSE_BIN, contextWindow: 20 } },
-    // Goose ACP（stdio JSON-RPC，priority=10 与 WS/HTTP 同级；backend_type='acp-goose'）
-    { backend: ['acp-goose'], key: 'goose-acp', mod: './core/dispatcher/providers/goose-acp', named: 'GooseAcpProvider', args: { binPath: GOOSE_BIN, db, contextWindow: 20 } },
-    // 各 CLI runtime（priority=1，本地装了对应 CLI 才 isAvailable）
-    { backend: ['claude-code'], key: 'claude-cli', mod: './core/dispatcher/providers/claude-cli', named: 'ClaudeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['codex'], key: 'codex-cli', mod: './core/dispatcher/providers/codex-cli', named: 'CodexCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['gemini'], key: 'gemini-cli', mod: './core/dispatcher/providers/gemini-cli', named: 'GeminiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-acp', mod: './core/dispatcher/providers/cursor-acp', named: 'CursorAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cursor'], key: 'cursor-cli', mod: './core/dispatcher/providers/cursor-cli', named: 'CursorCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-acp', mod: './core/dispatcher/providers/opencode-acp', named: 'OpenCodeAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-attach', mod: './core/dispatcher/providers/opencode-attach', named: 'OpenCodeAttachProvider', args: { db, contextWindow: 20 } },
-    { backend: ['github-copilot'], key: 'github-copilot-acp', mod: './core/dispatcher/providers/github-copilot-acp', named: 'GitHubCopilotAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-ws', mod: './core/dispatcher/providers/zeroclaw-ws', named: 'ZeroClawWsProvider', args: { db, contextWindow: 20 } },
-    { backend: ['zeroclaw'], key: 'zeroclaw-acp', mod: './core/dispatcher/providers/zeroclaw-acp', named: 'ZeroClawAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['opencode'], key: 'opencode-cli', mod: './core/dispatcher/providers/opencode-cli', named: 'OpenCodeCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['pi'], key: 'pi-cli', mod: './core/dispatcher/providers/pi-cli', named: 'PiCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['qwen-code'], key: 'qwen-cli', mod: './core/dispatcher/providers/qwen-cli', named: 'QwenCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['kiro'], key: 'kiro-cli', mod: './core/dispatcher/providers/kiro-cli', named: 'KiroCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['aider'], key: 'aider-cli', mod: './core/dispatcher/providers/aider-cli', named: 'AiderCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-acp', mod: './core/dispatcher/providers/cline-acp', named: 'ClineAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['cline'], key: 'cline-cli', mod: './core/dispatcher/providers/cline-cli', named: 'ClineCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['openhands'], key: 'openhands-acp', mod: './core/dispatcher/providers/openhands-acp', named: 'OpenHandsAcpProvider', args: { db, contextWindow: 20 } },
-    { backend: ['openhands'], key: 'openhands-cli', mod: './core/dispatcher/providers/openhands-cli', named: 'OpenHandsCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['grok'], key: 'grok-cli', mod: './core/dispatcher/providers/grok-cli', named: 'GrokCliProvider', args: { db, contextWindow: 20 } },
-    { backend: ['reasonix'], key: 'reasonix-cli', mod: './core/dispatcher/providers/reasonix-cli', named: 'ReasonixCliProvider', args: { db, contextWindow: 20 } },
-  ];
+  // CLI, ACP, HTTP and WebSocket transports are all constructed by the Catalog.
   const providerDefinitions = listProviderTransports().filter((definition: any) => !definition.testOnly && !['openclaw-ws', 'hermes-http'].includes(definition.id));
   for (const definition of providerDefinitions) {
     const family = getProviderFamily(definition.family);
@@ -2211,19 +2392,12 @@ function createHandlers({ db, databaseAPI, openclawMode = 'ws', hermesConfig = {
       const load = (async () => {
         const additions: Record<string, any> = {};
         if (type === 'openclaw' && !dispatcher.providers['openclaw-ws']) {
-          const OpenClawHandler = require('./core/dispatcher/providers/openclaw-ws');
-          openclawHandler = new OpenClawHandler(db, null);
+          openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
           additions['openclaw-ws'] = openclawHandler;
           (global as any).__openclawHandler = openclawHandler;
         }
         if (type === 'hermes' && !dispatcher.providers['hermes-http']) {
-          const HermesHandler = require('./core/dispatcher/providers/hermes-http');
-          hermesHandler = new HermesHandler(db, null, {
-            host: hermesConfig.apiHost || '127.0.0.1',
-            port: hermesConfig.apiPort || 8642,
-            apiKey: hermesConfig.apiKey || '',
-            profiles: hermesConfig.profiles || {},
-          });
+          hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
           additions['hermes-http'] = hermesHandler;
           (global as any).__hermesHandler = hermesHandler;
         }
@@ -2370,7 +2544,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         try {
           deliveryStatus = dispatcher?.getAgentDeliveryStatus?.(agent.agent_id) || {
             backendType: agent.backend_type || null, configuredModes: [], automaticReadyModes: [],
-            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, pullOnly: false, lastDeliveredMode: null,
           };
         } catch (_) {
           deliveryStatus = {
@@ -2440,7 +2614,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         const agentList = rows.map((a: any) => {
           const deliveryStatus = deliveryStatuses.get(a.agent_id) || {
             backendType: a.backend_type || null, configuredModes: [], automaticReadyModes: [],
-            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, lastDeliveredMode: null,
+            activeAutomaticMode: null, methods: [], automaticDeliveryReady: false, pullReady: true, pullOnly: false, lastDeliveredMode: null,
           };
           return {
             agentId: a.agent_id,
@@ -2450,6 +2624,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             automaticReadyModes: deliveryStatus.automaticReadyModes || [],
             activeAutomaticMode: deliveryStatus.activeAutomaticMode || null,
             pullReady: !!deliveryStatus.pullReady,
+            pullOnly: !!deliveryStatus.pullOnly,
             lastDeliveredMode: deliveryStatus.lastDeliveredMode || null,
             deliveryStatus,
           };
@@ -2483,6 +2658,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
               activeAutomaticMode: agent.activeAutomaticMode || null,
               automaticReadyModes: agent.automaticReadyModes || [],
               pullReady: !!agent.pullReady,
+              pullOnly: !!agent.pullOnly,
             })),
           });
         } catch (_: any) {}

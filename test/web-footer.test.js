@@ -67,7 +67,7 @@ test('shared web footer shows a compact manual update hint without the latest ve
   assert.match(html, />有更新<\/button>/);
   assert.match(html, /id="voko-update-dialog"/);
   assert.match(html, /id="voko-update-command"[\s\S]*voko update/);
-  assert.match(html, /id="voko-copy-update"[\s\S]*复制/);
+  assert.match(html, /class="voko-copy-button"[\s\S]*data-voko-copy-value="voko update"/);
   assert.match(html, /升级完成后/);
   assert.ok(!html.includes(nextVersion));
   assert.match(html, brandLink);

@@ -85,7 +85,7 @@ Claude CLI 返回的原生 `session_id` 会保存到 VOKO 的会话绑定中。�
 
 当前 Provider 已显式把 `claude-code` 的 binding 映射到 `claude-cli`，因此重启 VOKO 或连续投递不会因为 Provider 名称差异而误创建新会话。若原生 session 被删除、清理或无法恢复，VOKO 会将旧绑定标记为 stale，创建一次新的隔离 session；结果不明确时不会自动重复发送同一条消息。
 
-CLI 不可用或进程健康检查失败时，消息保留在 VOKO 的 Pull 队列，可由 Agent 通过 MCP 工具 `voko_fetch_new_messages` 主动读取。恢复 `claude` 入口并重启或完成健康检查后，下一条消息才会重新走 CLI。
+按 [Transport 行为矩阵](../provider-transport-matrix.md) 的 Pull/恢复规则处理 CLI 不可用或进程健康检查失败；Claude Code 侧只需确认 `voko_fetch_new_messages` 能读取待处理消息，并在恢复入口后重新运行预检。
 
 ## 5. Claude Code 作为 MCP 客户端（可选）
 

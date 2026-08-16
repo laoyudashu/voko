@@ -61,6 +61,8 @@ export interface AgentReplyMessage {
   remoteRouteId?: string | null;
   remoteConversationKey?: string | null;
   conversationStart?: boolean;
+  sourceMessageId?: string;
+  sourceRouteClaimSafe?: boolean;
   replyRouteContext?: {
     conversationId: string;
     providerFamily: string;
@@ -78,6 +80,7 @@ export interface AuditRuleMatch {
 
 export interface AuditResult {
   action: AuditAction;
+  verdict?: 'allow' | 'deny' | 'uncertain';
   matchedKeyword?: string | null;
   matchedRule?: AuditRuleMatch | null;
   [key: string]: unknown;
@@ -178,9 +181,15 @@ export interface MessageHandlerOptions {
     code: string,
     params?: Record<string, unknown>,
     timestamp?: number,
+    route?: { conversationId?: string | null },
   ) => unknown;
   deliver?: Deliver;
   checkAuditRules?: (content: string, direction: AuditDirection) => AuditResult;
+  classifyAuditDecision?: (
+    content: string,
+    direction: AuditDirection,
+    decision: AuditResult,
+  ) => Promise<AuditResult>;
   substitutePromptVariables?: (
     prompt: string,
     variables: Record<string, unknown>,
@@ -193,6 +202,7 @@ export interface MessageHandlerOptions {
     toUid: string | undefined,
     pricing: Record<string, unknown>,
     timestamp: number,
+    sourceMessageId?: string | null,
   ) => unknown;
   onOwnerInterventionNew?: () => unknown;
   getGroupInfo?: (agentId: string, channelId: string) => Promise<{

@@ -92,8 +92,12 @@ describe('Dispatcher final reply idempotency', () => {
 
     assert.equal(replies.length, 2);
     assert.equal(replies[0].senderUid, 'sender-2');
+    assert.equal(replies[0].sourceMessageId, 'turn-2');
+    assert.equal(replies[0].sourceRouteClaimSafe, true);
     assert.equal(replies[0].content, 'second reply');
     assert.equal(replies[1].senderUid, 'sender-1');
+    assert.equal(replies[1].sourceMessageId, 'turn-1');
+    assert.equal(replies[1].sourceRouteClaimSafe, true);
     assert.equal(replies[1].content, 'first reply');
 
     dispatcher.dispatch('gym', {
@@ -105,7 +109,27 @@ describe('Dispatcher final reply idempotency', () => {
       sessionKey: 'agent:gym:visitor', turnId: 'unknown-turn', replyId: 'late-reply',
     });
     assert.equal(replies[2].senderUid, undefined, 'unknown turn must not consume the FIFO context');
+    assert.equal(replies[2].sourceMessageId, undefined);
     assert.equal(replies[2].content, 'late reply');
+  });
+
+  it('does not authorize an inbound route claim when a reply lacks turn identity and multiple turns are pending', async () => {
+    const provider = new ReplyProvider();
+    const replies = [];
+    const dispatcher = createDispatcher({ db: createDb(), providers: { 'mock-echo': provider },
+      onAgentReply: (reply) => replies.push(reply) });
+    dispatcher.dispatch('gym', { agentId: 'gym', fromUid: 'visitor', content: 'first',
+      channelId: 'visitor', channelType: 1, messageId: 'ambiguous-1' });
+    dispatcher.dispatch('gym', { agentId: 'gym', fromUid: 'visitor', content: 'second',
+      channelId: 'visitor', channelType: 1, messageId: 'ambiguous-2' });
+    await new Promise(resolve => setImmediate(resolve));
+
+    provider.emit('agent.reply', { agentId: 'gym', visitorId: 'visitor', content: 'reply without turn',
+      done: true, sessionKey: 'agent:gym:visitor' });
+
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].sourceMessageId, 'ambiguous-1');
+    assert.equal(replies[0].sourceRouteClaimSafe, false);
   });
 
   it('流式中间块不占用 final 幂等键', () => {

@@ -198,6 +198,14 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /beginDetection\(\)\.then\(function\(\)\{if\(step===2\)next\.disabled=false\}/);
     assert.match(html, /web的Agent-[0-9a-f]{4}/);
     assert.match(html, /\/api\/agent-registration/);
+    assert.match(html, /class="loopback-feedback"/);
+    assert.match(html, /data-provider-id/);
+    assert.match(html, /supportsLoopback/);
+    assert.match(html, /providerId:b\.dataset\.providerId/);
+    assert.doesNotMatch(html, /id="wf-loopback-dialog"/);
+    assert.doesNotMatch(html, /data-action="test"/);
+    assert.match(html, /b\.classList\.add\('success'\)/);
+    assert.doesNotMatch(html, /window\.confirm\(I\.loopbackConfirm\)/);
     assert.match(html, /addEventListener\('blur'/);
     assert.match(html, /voko\.agentRegistrationDraft/);
     assert.match(html, /voko\.agentRegistrationMode/);

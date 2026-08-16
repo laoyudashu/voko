@@ -15,6 +15,7 @@ class GooseAcpProvider extends AcpAdapter {
       args: ['acp'],
       db: options.db,
       contextWindow: options.contextWindow,
+      sessionPersistence: options.sessionPersistence || 'transport',
     });
   }
 

@@ -80,6 +80,16 @@ voko start --no-open
 
 `--no-open` only disables browser opening. `--no-interactive` disables the headless first-run terminal wizard. Neither option changes the MCP protocol.
 
+### Agent discovery visibility
+
+`voko_set_agent_status` manages external Agent discovery independently from the local visitor whitelist controlled by `voko_set_private_mode`:
+
+- `visibility=0`: private — searchable by keyword, not listed on the yellow pages, and contactable by Guest;
+- `visibility=1`: public — listed and searchable;
+- `visibility=2`: hidden — excluded from lists and search, and unavailable to Guest.
+
+The Web UI capability search and the authenticated MCP/CLI `voko_search_capabilities` use the same remote search rules. A local Agent can still be managed in the owner UI regardless of its remote visibility.
+
 ## Routing conversations in Agent tools
 
 The canonical parameter and response contract is [MCP message and routing Conversation contract](mcp-message-conversations.md).

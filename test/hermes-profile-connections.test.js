@@ -310,3 +310,84 @@ test('Hermes HTTP marks a timed-out turn pending without retrying it', async () 
   assert.equal(statuses.at(-1).status, 'pending');
   await provider.destroy();
 });
+
+test('Hermes HTTP does not reuse a binding from a different profile', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'profile-new' }) }),
+  }, null, { profiles: { 'profile-new': { port: 8642, apiKey: 'key' } } });
+  let sessionKey = '';
+  provider.sendToSession = async (key) => { sessionKey = key; };
+  const receipt = await provider.push({
+    agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello', messageId: 'message-a',
+    providerBinding: {
+      id: 'binding-old', bindingVersion: 1, providerType: 'hermes', providerInstanceId: 'profile-old',
+      deliveryMode: 'http', adapterType: 'hermes-http', nativeSessionId: 'hermes:other-agent:visitor-a',
+      sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
+    },
+  });
+  assert.equal(sessionKey, 'hermes:agent-a:visitor-a');
+  assert.equal(receipt.providerInstanceId, 'profile-new');
+  await provider.destroy();
+});
+
+test('Hermes HTTP exact A2A routing requires the scoped namespace and preserves sessionScopeId', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }),
+  }, null, { profiles: { 'profile-a': { port: 8642, apiKey: 'key' } } });
+  provider.connectedAgents = new Set(['profile-a']);
+  provider._authStates.set('profile-a', true);
+  let sessionKey = '';
+  provider.sendToSession = async (key) => { sessionKey = key; };
+  const binding = {
+    id: 'a2a-binding', bindingVersion: 2, providerType: 'hermes', providerInstanceId: 'profile-a',
+    deliveryMode: 'http', adapterType: 'hermes-http', nativeSessionId: 'hermes:agent-a:scope-a',
+    sessionOrigin: 'voko_managed', channelId: 'scope-a', channelType: 1, strictSessionRoute: true,
+    nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http',
+  };
+  assert.equal(await provider.canRestoreExactSession(binding, 'agent-a'), true);
+  assert.equal(await provider.canRestoreExactSession({ ...binding, nativeSessionNamespace: 'hermes-cli' }, 'agent-a'), false);
+  await provider.push({ agentId: 'agent-a', fromUid: 'a2a:same-context', sessionScopeId: 'scope-b',
+    content: 'hello', messageId: 'message-a' });
+  assert.equal(sessionKey, 'hermes:agent-a:scope-b');
+  await provider.destroy();
+});
+
+test('Hermes HTTP does not retry an uncertain failure after a refreshed key', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }),
+  }, null, { profiles: { 'profile-a': { port: 8642, apiKey: 'key' } } });
+  provider.connected = true;
+  provider._ensureGatewayRunning = async () => true;
+  provider._selectAuthenticatedProfileConnection = async () => true;
+  let restarts = 0;
+  provider._restartGateway = async () => { restarts++; return true; };
+  let chats = 0;
+  provider.client = {
+    destroy() {},
+    async chat() {
+      chats++;
+      if (chats === 1) throw new Error('HTTP 401: stale key');
+      throw new Error('request timed out');
+    },
+  };
+  await assert.rejects(
+    provider._sendToSession('hermes:agent-a:visitor-a', 'hello'),
+    error => /timed out/.test(error.message) && error.deliveryOutcome === undefined,
+  );
+  assert.equal(chats, 2);
+  assert.equal(restarts, 0);
+  await provider.destroy();
+});
+
+test('Hermes HTTP marks a pre-delivery unavailable gateway as safe to fallback', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }),
+  }, null, { profiles: { 'profile-a': { port: 8642, apiKey: 'key' } } });
+  provider.client = { destroy() {} };
+  provider._ensureGatewayRunning = async () => false;
+  await assert.rejects(
+    provider._sendToSession('hermes:agent-a:visitor-a', 'hello'),
+    error => error.deliveryOutcome === 'not_delivered',
+  );
+  await provider.destroy();
+});

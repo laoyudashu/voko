@@ -1,8 +1,26 @@
 # 新增智能体框架（Provider）开发指南
 
-[文档索引](README.md) · [统一注册与投递路由](provider-delivery-routing.md) · [Provider 身份证据](provider-caller-identity.md) · [专属指南索引](providers/README.md) · [测试指南](testing.md)
+[文档索引](README.md) · [Transport 行为矩阵（架构真相源）](provider-transport-matrix.md) · [统一注册与投递路由](provider-delivery-routing.md) · [Provider 身份证据](provider-caller-identity.md) · [专属指南索引](providers/README.md) · [测试指南](testing.md)
 
 本文记录把一个新的智能体框架接入 VOKO 时必须完成的设计、开发、验证和文档工作。它是仓库内的长期开发记忆；Provider 机制变化时，应同步更新本文，而不是只在某个实现或测试报告中保留经验。
+
+本文只定义**开发实现规范**。通道顺序、投递结果、路由缓存、Binding 所有权和灰度不变量以 [Provider Transport 行为矩阵](provider-transport-matrix.md) 为唯一真相源；注册和操作者排障以 [统一注册与投递路由](provider-delivery-routing.md) 为准；测试命令和真机证据以 [测试指南](testing.md) 与兼容性矩阵为准。不要在本页或 Provider 专属页重新定义这些通用规则。
+
+## 当前架构基线（2026-08）
+
+当前 Provider 主链路已经统一为：
+
+```text
+Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor → Session Coordinator/Binding Store
+```
+
+- **Catalog** 描述 family、transport、优先级、能力和安全策略；**Runtime Registry** 负责 `start/stop/restart/healthCheck` 及 availability 事件；**Dispatcher** 是唯一的跨 transport 路由、降级和结果分类执行者。
+- `src/core/dispatcher/providers/` 中的实现是 transport，不要再增加分散在 `src/index.ts`、旧 handler 或 Provider 内部的跨通道路由分支。OpenClaw WebSocket、Hermes HTTP 的专属配置也应通过 Catalog 的 `create(context)` / `getProviderConfig()` 注入。
+- `openclaw-cli` 仍是 Catalog 中的 CLI fallback transport；旧的 `openclaw-handler-cli` 兼容入口已经删除，新的 Provider 不得引用或重新创建这类旧入口。
+- `pull` 是按需消费能力，不是常驻 transport，也不进入 Push/Steer 路由缓存。所有 Agent 都必须保留 Pull 结果，即使没有任何自动 Push 通道。
+- 当前已启用 `feature:provider_modular_dispatch_v1` 的 family 使用 Dispatcher 统一持久化 Session；新 family 仍建议先以 `shadow` 灰度，再切换 `enabled`，不得跳过契约测试直接启用。
+
+本指南以下内容以这套架构为准；行为细节以 [Provider Transport 行为矩阵](provider-transport-matrix.md) 为准，专属 Provider 文档只补充差异，不得覆盖矩阵规则。
 
 ## 1. 先确定接入的两个方向
 
@@ -44,6 +62,10 @@
 - 提供无副作用 `preflightDelivery`；模型驱动的 loopback 必须由调用方明确同意。
 
 `pull` 始终是最终兜底。Catalog 的默认顺序、注册预检、状态页和 Dispatcher 必须一致。
+
+当前 `ProviderTransportDefinition` 的关键契约是：`id`（全局唯一）、`family`、`mode`、`priority`、`operations`、`capabilities`、`modulePath`、`safetyProfile`、`sandboxPolicyId` 和 `create(context)`。`create(context)` 可以读取该 transport 的受控配置，但不得在 Catalog 中增加 `factoryKind`、Provider 名称分支或跨 transport fallback。Catalog 的 `preflight`/`loopback` 只能用于显式的注册或测试流程，不能把模型调用偷偷放入 `isAvailable()`。
+
+`delivery_modes` 的解释固定为：`null` 使用默认优先级并保留旧数据的 Pull fallback；`[]` 表示不允许 Push、只留库；非空数组严格按用户给出的顺序选择；`pull` 只表示按需接收。修改该字段后必须同时清理 Agent 的 meta、push、steer 路由缓存；Provider 恢复也不能越过显式顺序抢占当前通道。
 
 ### 3.2 Backend 类型和别名
 
@@ -90,6 +112,24 @@
 
 不要在每条消息前做完整网络探测或启动模型。长连接/进程状态变化通过事件刷新路由缓存，每次投递只做轻量守卫。
 
+### 3.4.1 生命周期、availability 与路由缓存
+
+Provider 状态变化统一发出：
+
+```ts
+{
+  providerId, backendType, mode, agentId?,
+  operations: ['push', 'steer'],
+  available, reason, generation
+}
+```
+
+`providerId` 必须是 Catalog 中的精确 ID（例如 `openclaw-ws`、`openclaw-cli`、`hermes-http`），不能只写 `openclaw` 或 `hermes` 这样的 family 名。Runtime Registry 负责订阅、去重和转发事件，`stopAll()` 时必须解除监听器，动态 `addProviders()` 也不能重复订阅。
+
+Dispatcher 以 `agentId + operation(push|steer)` 隔离路由缓存，缓存命中只调用当前 Provider 的同步、无副作用 `isAvailable(agentId)`；默认 TTL 为 30 秒，generation 用于防止在途请求把旧 Provider 写回缓存。事件只失效受影响的 Agent/operation，不取消在途 Promise，也不重放原消息。Provider 不得自己选择另一个 Provider、修改 Dispatcher 缓存或执行跨通道重试；这些职责全部由 Dispatcher 完成。
+
+CLI 的单次模型错误、授权等待或超时不应直接把整个 CLI 标记为不可用；只有入口、profile 或基础配置确定不可用时才发 `available=false`。ACP/Attach 的 session 崩溃按 Agent/session 粒度失效，共享进程退出才做 Provider 级失效。
+
 ### 3.5 注册预检和实例选择
 
 在 `src/core/registration-orchestrator.js` 中补充框架检测、实例枚举、配置变更计划和 readiness。要求：
@@ -129,20 +169,26 @@ messageId / replyToRouteId
 
 Provider原生 Session失效时，将 binding标记 stale。本条消息是否允许创建新 Session取决于投递是否确定未发生，不能无条件重试。
 
-## 5. 投递结果、降级和恢复
+### 4.1 Session Coordinator 的边界
 
-统一分类：
+使用现有 `ProviderSessionCoordinator` 和 `ProviderConversationBindingStore`，不要为新 Provider 建第二套 binding 表或内存“最近会话”。Coordinator 负责 caller-origin / VOKO-managed binding 的解析、pending 预留、版本校验、激活、stale/discard 和配置变化失效；transport 只接收已经解析的 binding，恢复或创建原生 Session，并在 receipt 中返回实际 `nativeSessionId`、`providerInstanceId`、`deliveryMode` 和 `adapterType`。
 
-| 结果 | 含义 | 后续行为 |
-| --- | --- | --- |
-| `delivered` | 已确认投递并得到有效结果 | 保存/确认 Route，不再尝试其他通道 |
-| `not_delivered` | 能证明消息尚未交给模型 | 可尝试下一个已启用且兼容的通道 |
-| `outcome_unknown` | 可能已经投递，但没有可靠结果 | 禁止跨通道重投，避免重复回复 |
-| `rejected` | Provider或业务策略明确拒绝 | 不伪装为运行时故障，不错误降级 |
+同一 adapter 的短暂断线可以继续使用 binding；跨 ACP、Attach、CLI、HTTP、WS 切换时，只有明确证明能恢复同一个原生 Session 才能复用，否则必须创建独立 binding 或留在 Pull。caller-origin binding 不因后台 availability 或自动 fallback 改写。并发创建必须通过 bindingVersion / pending 事务收敛，不能由 transport 直接写表绕过 Coordinator。
 
-只在 `not_delivered` 时跨通道降级。进程启动前失败通常可归类为 `not_delivered`；模型调用超时、连接在发送后断开通常是 `outcome_unknown`。
+## 5. 投递与诊断实现边界
 
-主通道恢复后发布 availability事件，使下一条消息重新升级。恢复事件不能重放上一条结果不明确的消息。
+新 Provider 必须实现并测试统一的投递结果、availability、Pull 保留和
+`messageId`/`turnId` 幂等语义；这些语义的具体定义和不可变不变量只维护在
+[Provider Transport 行为矩阵](provider-transport-matrix.md)，本页不再复制一份运行时规则。
+
+实现时特别确认：
+
+- transport 不选择其他 transport、不修改 Dispatcher 路由缓存、不自行跨通道重试；
+- `not_delivered`、`outcome_unknown` 和 `rejected` 的分类必须来自真实发送阶段，不能用统一的“失败”掩盖结果不确定性；
+- Pull-only 和后端能力诊断必须是只读的，不启动 Gateway、不调用模型、不改变 IM 心跳；
+- 新增或变更 `delivery_modes`、Provider 配置和 binding 时清理受影响的缓存，并覆盖 availability generation 和并发 Session 测试。
+
+状态字段、`methods[]` 和 `voko doctor` 展示以行为矩阵为准；注册和操作者排障请链接到[统一注册与投递路由](provider-delivery-routing.md)。
 
 ## 6. 安全约束
 
@@ -210,32 +256,13 @@ Provider family可以由注册类型准确确定，但同类型多 Agent时仍�
 - 在线、离线、重连补拉；
 - Pull游标隔离且不重复广播。
 
-运行最低门禁：
+测试命令、测试层级、隔离约束、覆盖率和真机报告格式统一维护在[测试指南](testing.md)。Provider 贡献至少要把 Catalog、Resolver、生命周期、Session、结果分类、安全边界和故障恢复纳入对应测试层级；不要在本页复制命令清单。发布前使用测试指南规定的 `test:ci`、E2E 和 `github:preflight` 门禁，真实凭证只允许放在本机忽略文件中。
 
-```bash
-npm run typecheck
-npm run build:ts
-npm test
-npm run package:build
-npm pack --dry-run
-```
+## 9. 验收证据要求
 
-## 9. 真机验收
+真机验收不是本页的运行操作说明，而是 Provider 进入兼容性矩阵和专属指南的证据门槛。实现者必须在[测试指南](testing.md)和[双机生产测试手册](dual-machine-production-testing.md)规定的环境中提交脱敏结果，至少覆盖真实安装/登录、首条消息、Session 续接、主备通道、断线恢复、IM/Provider 重启和安全边界。
 
-自动化通过不等于 Provider已支持。至少在真实安装、真实登录和真实模型环境完成：
-
-1. Provider安装、版本读取、登录/模型可用性；
-2. VOKO注册、实例选择、推荐 `deliveryModes`；
-3. 首条消息、连续消息、原生 Session续接；
-4. 主通道、每个备通道、主动断线、自动恢复；
-5. VOKO和Provider分别重启；
-6. 私聊、群聊、文件和主人介入；
-7. `whoami`唯一 Agent、同类型多 Agent、无可信Session；
-8. Windows、Ubuntu Linux；如果宣称macOS支持则必须补macOS；
-9. 双机双向测试，检查白名单、审核规则、每条消息最多一次；
-10. 日志脱敏和数据库完整性。
-
-测试前按[双机生产测试指南](dual-machine-production-testing.md)准备白名单、审核模式、Provider凭证和本地忽略配置。模型拒绝复述测试令牌不等于路由失败，应结合回包、Route、Conversation、Session和日志判断。
+Provider 专属命令、版本、实例语义和已验证平台写入[兼容性矩阵](provider-compatibility.md)及 `docs/providers/<provider>.md`；本页不重复这些环境差异。未完成证据的 family 只能标为 Pull-only、实验性或未验证，不得在 Catalog 或文档中宣称自动 Push 已支持。
 
 ## 10. 文档与发布门禁
 
@@ -279,3 +306,15 @@ npm pack --dry-run
 - 完整 `npm test`、包构建和密钥扫描通过，工作区不包含凭证、数据库或本地Provider状态。
 
 如果任一项尚未完成，应在兼容性矩阵和专属文档中明确标为 Pull-only、实验性或未验证，不能用最近Session、默认实例或自动重试掩盖缺口。
+
+## 12. 当前版本的额外收尾检查
+
+提交前逐项确认：
+
+- `src/core/dispatcher/provider-catalog.ts` 中 transport ID 唯一，所有 family 默认保留 `pull`，Pull-only family 不伪造 Push 可用性；
+- Provider 通过 `ProviderRuntimeRegistry` 接入 availability，`stopAll()` 后无重复监听，事件带精确 `providerId` 和 generation；
+- Dispatcher 的 `push`/`steer` 缓存、TTL、generation 和 `delivery_modes` 顺序测试通过，`outcome_unknown` 没有跨通道重投；
+- Session 由 `ProviderSessionCoordinator` 收敛，跨 transport 不传递不兼容 binding；
+- `voko doctor --json` / `--deep`、runtime snapshot 和 Web 状态能区分 IM 在线、自动接收能力和 Pull-only；
+- Windows npm shim、Unix shebang、缺失命令、路径变化和 ACP 握手失败均有 Resolver/Adapter 测试；
+- 不实现或调用已删除的旧 handler/旧 factory 入口，`npm run test:ci`、`npm run test:e2e` 和 `npm run github:preflight` 均通过。

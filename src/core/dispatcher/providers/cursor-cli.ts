@@ -47,6 +47,7 @@ class CursorCliProvider extends CliAdapter {
       priority: 1,
       timeout: 300000,
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
     });

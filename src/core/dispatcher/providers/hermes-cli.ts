@@ -108,30 +108,52 @@ class HermesCliProvider extends PushProvider {
     else await Promise.all(Array.from(this._queues.values()));
   }
 
-  async push(payload: PushPayload): Promise<{ accepted: true; queued: true }> {
+  async push(payload: PushPayload): Promise<{
+    accepted: true;
+    queued: true;
+    nativeSessionId: string;
+    providerInstanceId: string;
+    deliveryMode: 'cli';
+    adapterType: 'hermes-cli';
+  }> {
     const profileId = this._instanceForAgent(payload.agentId);
     if (!profileId) {
       const error = new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
       (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     }
+    if ((payload as any).executionScope === 'a2a_mailbox') {
+      const error = new Error('Hermes CLI cannot restore an exact native A2A session');
+      (error as any).deliveryOutcome = 'not_delivered';
+      (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
+      throw error;
+    }
     this._enqueue(profileId, () => this._runPush(payload));
     console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
-    return { accepted: true, queued: true };
+    return {
+      accepted: true,
+      queued: true,
+      nativeSessionId: `hermes:${payload.agentId}:${String((payload as any).sessionScopeId || payload.fromUid)}`,
+      providerInstanceId: profileId,
+      deliveryMode: 'cli',
+      adapterType: 'hermes-cli',
+    };
   }
 
   async _runPush(payload: PushPayload): Promise<void> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `hermes-cli-${Date.now()}`);
+    const profileId = this._instanceForAgent(agentId);
+    if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
     // `hermes -z` has no native-session argument. Keep the binding only as a
     // correlation label and restore bounded VOKO history on every CLI turn.
     const hasBindingLabel = payload.providerBinding?.providerType === 'hermes'
+      && payload.providerBinding.providerInstanceId === profileId
       && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
     const sessionKey = hasBindingLabel
       ? payload.providerBinding!.nativeSessionId
-      : `hermes:${agentId}:${fromUid}`;
-    const profileId = this._instanceForAgent(agentId);
-    if (!profileId) throw new Error('Hermes CLI unavailable: agent is not bound to a Hermes profile');
+      : `hermes:${agentId}:${sessionIdentity}`;
     const deliveryContent = buildConversationDeliveryPrompt(
       this._db, payload, false, this._contextWindow,
     );

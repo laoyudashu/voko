@@ -35,6 +35,41 @@ test('Windows npm package bin resolves to node plus validated package entry', ()
   } finally { cleanup(); }
 });
 
+test('packaged native artifact is resolved without the npm node wrapper', () => {
+  const { root, cleanup } = fixture();
+  try {
+    touch(path.join(root, 'cline.cmd'), '@echo off');
+    const binary = path.join(root, 'node_modules', 'cline', 'node_modules', '@cline', 'cli-windows-x64', 'bin', 'cline.exe');
+    touch(binary);
+    const resolver = new AgentRuntimeResolver({ platform: 'win32', env: { PATH: root }, nodePath: 'C:\\node\\node.exe' });
+    const result = resolver.resolve({
+      providerId: 'cline-acp', mode: 'acp', candidates: [{
+        kind: 'node-package-artifact', command: 'cline', packageName: 'cline',
+        artifactPackage: '@cline/cli-windows-x64', relativePath: 'bin/cline.exe',
+      }],
+    });
+    assert.equal(result.available, true);
+    assert.equal(result.executable, fs.realpathSync(binary));
+    assert.deepEqual(result.argvPrefix, []);
+    assert.equal(result.runtimeKind, 'native');
+  } finally { cleanup(); }
+});
+
+test('packaged native artifact cannot escape its dependency root', () => {
+  const { root, cleanup } = fixture();
+  try {
+    touch(path.join(root, 'cline.cmd'));
+    touch(path.join(root, 'node_modules', 'cline', 'outside.exe'));
+    touch(path.join(root, 'node_modules', 'cline', 'node_modules', '@cline', 'cli-windows-x64', 'package.json'));
+    const resolver = new AgentRuntimeResolver({ platform: 'win32', env: { PATH: root } });
+    const result = resolver.resolve({ providerId: 'cline', mode: 'cli', candidates: [{
+      kind: 'node-package-artifact', command: 'cline', packageName: 'cline',
+      artifactPackage: '@cline/cli-windows-x64', relativePath: '../../../outside.exe',
+    }] });
+    assert.equal(result.available, false);
+  } finally { cleanup(); }
+});
+
 test('Windows native resolution accepts exe but never executes cmd as native', () => {
   const { root, cleanup } = fixture();
   try {

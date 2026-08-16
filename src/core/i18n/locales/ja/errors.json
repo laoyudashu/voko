@@ -15,7 +15,7 @@
   "errors.forbidden_host": "禁止的 Host",
   "errors.unauthorized_token": "未授权：缺少或错误的 X-VOKO-Token",
   "errors.agent_status.missing_values": "status または visibility がありません",
-  "errors.agent_status.invalid_values": "status と visibility は 0 または 1 である必要があります",
+  "errors.agent_status.invalid_values": "status は 0 または 1、visibility は 0（私密）、1（公開）、2（非表示）である必要があります",
   "errors.external_api.http_error": "リモートサービスが HTTP {status} を返しました",
   "errors.external_api.invalid_json": "リモートサービスが無効な JSON を返しました",
   "errors.external_api.invalid_response": "リモートサービスの応答形式が無効です",

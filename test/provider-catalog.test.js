@@ -13,6 +13,42 @@ test('Provider Catalog has valid explicit transports and instance requirements',
   assert.ok(PROVIDER_CATALOG.every(family => family.defaultDeliveryModes.includes('pull')));
 });
 
+test('Qwen Office and Trae expose headless Push transports with Pull fallback', () => {
+  for (const [type, label] of [['qwen-office', '千问办公 (QwenWork)'], ['trae', 'Trae']]) {
+    const family = getProviderFamily(type);
+    assert.ok(family, `${type} should be registered in the catalog`);
+    assert.equal(family.label, label);
+    assert.ok(family.defaultDeliveryModes.includes('pull'));
+    assert.ok(family.transports.length > 0);
+  }
+  assert.equal(getProviderTransport('qwen-office-cli').mode, 'cli');
+  assert.equal(getProviderTransport('traecli-acp').mode, 'acp');
+  assert.equal(getProviderFamily('qwenwork').type, 'qwen-office');
+  assert.equal(getProviderFamily('trae-ide').type, 'trae');
+});
+
+test('loopback capability is explicit and special transports stay preflight-only', () => {
+  for (const id of ['claude-cli', 'codex-cli', 'cline-acp', 'traecli-acp', 'hermes-cli', 'hermes-http', 'openclaw-ws', 'zeroclaw-ws', 'qwen-office-cli']) {
+    assert.equal(getProviderTransport(id).supportsLoopback, true, `${id} should expose a real loopback`);
+  }
+  for (const id of ['openclaw-cli', 'opencode-attach', 'goose-cli']) {
+    assert.equal(getProviderTransport(id).supportsLoopback, false, `${id} must remain preflight-only`);
+  }
+});
+
+test('A2A exact-session capability is explicit for special transports', () => {
+  assert.deepEqual(getProviderTransport('hermes-http').exactSession, {
+    nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http',
+  });
+  for (const id of ['hermes-cli', 'cline-cli', 'github-copilot-cli', 'gemini-cli']) {
+    assert.equal(getProviderTransport(id).exactSession, undefined,
+      `${id} must not impersonate native exact-session recovery`);
+  }
+  assert.ok(getProviderTransport('openclaw-ws').exactSession);
+  assert.equal(getProviderTransport('opencode-attach').exactSession, undefined);
+  assert.equal(getProviderTransport('zeroclaw-ws').exactSession, undefined);
+});
+
 test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
   const calls = [];
   const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];
@@ -41,4 +77,14 @@ test('DeliveryExecutor never retries outcome_unknown or rejected', async () => {
     assert.equal(result.outcome, outcome);
     assert.deepEqual(calls, ['primary']);
   }
+});
+
+test('Owner transports are opt-in and Codex uses its native control plane',()=>{
+  const transports=PROVIDER_CATALOG.flatMap(family=>family.transports);
+  const enabled=transports.filter(item=>item.owner?.enabled);
+  assert.deepEqual(enabled.map(item=>item.id),['codex-app-server']);
+  assert.equal(enabled[0].owner.execution,'workspace_write');
+  assert.equal(enabled[0].owner.isolation,'provider_enforced');
+  assert.equal(enabled[0].owner.nativeIoBridge,true);
+  assert.equal(transports.find(item=>item.id==='openclaw-cli').owner,undefined);
 });

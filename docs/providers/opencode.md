@@ -49,7 +49,7 @@ opencode auth login
    voko status --json
    ```
 
-如果新 Agent 在已经运行的 VOKO 中暂时只显示 Pull，完整重启一次 VOKO，让 Dispatcher 重新加载注册后的路由缓存。
+如果新 Agent 在已经运行的 VOKO 中暂时只显示 Pull，先按 [Transport 行为矩阵](../provider-transport-matrix.md) 检查诊断字段，修复入口或凭据后完整重启一次 VOKO。
 
 ## 3. VOKO 的运行边界
 
@@ -71,7 +71,7 @@ VOKO 使用非交互 JSON 输出：
 opencode run --format json <prompt>
 ```
 
-CLI 只在注册时启用且主通道确认未投递时使用；结果不明确时不自动重复发送，消息保留到 Pull。不要自行替换成带写权限或外部插件的交互式命令。
+OpenCode 的 CLI 只在注册时启用且主通道确认未投递时使用；结果分类和 Pull 处理按 [Transport 行为矩阵](../provider-transport-matrix.md) 执行。不要自行替换成带写权限或外部插件的交互式命令。
 
 ## 4. 会话和恢复
 

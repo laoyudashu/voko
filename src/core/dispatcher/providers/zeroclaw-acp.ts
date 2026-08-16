@@ -32,6 +32,7 @@ class ZeroClawAcpProvider extends AcpAdapter {
       cliPath: command,
       args: ['acp'],
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),
       sessionRequest: (agentId: string) => {
         const alias = instanceAlias(agentId);

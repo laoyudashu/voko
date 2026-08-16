@@ -196,6 +196,21 @@ export class RoutingConversationStore {
       .get(clean(id, 128), clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1));
   }
 
+  /**
+   * Resolve a wire conversation key only inside the caller's Agent/channel
+   * scope.  Chatroom may use either conversationKey or its canonical alias;
+   * both identify the same local logical conversation, but neither is trusted
+   * outside this exact scope.
+   */
+  getForWireKey(agentId: string, channelId: string, channelType: number, wireConversationKey: string): RoutingConversation | null {
+    const key = clean(wireConversationKey, 128);
+    if (!key) return null;
+    return conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
+      WHERE agent_id=? AND channel_id=? AND channel_type=? AND wire_conversation_key=?
+        AND status IN ('pending','active') LIMIT 1`)
+      .get(clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1, key));
+  }
+
   listForScope(agentId: string, channelId: string, channelType = 1): RoutingConversation[] {
     return this.db.prepare(`SELECT * FROM provider_routing_conversations
       WHERE agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active')
@@ -248,7 +263,7 @@ export class RoutingConversationStore {
 
   mergePendingInto(id: string, parentId: string): RoutingConversation | null {
     const pending = conversationFromRow(this.db.prepare(`SELECT * FROM provider_routing_conversations
-      WHERE id=? AND status='pending' LIMIT 1`).get(clean(id, 128)));
+      WHERE id=? AND status IN ('pending','active') LIMIT 1`).get(clean(id, 128)));
     if (!pending || pending.parentConversationId !== clean(parentId, 128)) return null;
     const parent = this.getForScope(parentId, pending.agentId, pending.channelId, pending.channelType);
     if (!parent || parent.status !== 'active') return null;
@@ -258,7 +273,7 @@ export class RoutingConversationStore {
       this.db.prepare('UPDATE provider_message_routes SET conversation_id=?,updated_at=? WHERE conversation_id=?')
         .run(parent.id, now, pending.id);
       this.db.prepare(`UPDATE provider_routing_conversations
-        SET status='archived',merge_status='merged',updated_at=?,last_used_at=? WHERE id=? AND status='pending'`)
+        SET status='archived',merge_status='merged',updated_at=?,last_used_at=? WHERE id=? AND status IN ('pending','active')`)
         .run(now, now, pending.id);
       this.db.exec('COMMIT');
       return parent;

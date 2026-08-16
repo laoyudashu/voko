@@ -22,7 +22,7 @@ export class DeliveryExecutor {
     invoke(candidate: DeliveryCandidate<T>): Promise<unknown>;
     classify(error: unknown): Exclude<DeliveryOutcome, 'delivered'>;
     onFailure?(candidate: DeliveryCandidate<T>, outcome: Exclude<DeliveryOutcome, 'delivered'>, error: unknown): void;
-    onSuccess?(candidate: DeliveryCandidate<T>): void;
+    onSuccess?(candidate: DeliveryCandidate<T>, result: unknown): void;
   }): Promise<DeliveryResult> {
     const excluded = new Set<T>();
     let attempts = 0;
@@ -33,7 +33,7 @@ export class DeliveryExecutor {
       attempts += 1;
       try {
         const result = await input.invoke(candidate);
-        input.onSuccess?.(candidate);
+        input.onSuccess?.(candidate, result);
         return { outcome: 'delivered', providerId: candidate.providerId, providerType: candidate.providerType, deliveryMode: candidate.deliveryMode, result };
       } catch (error) {
         const outcome = input.classify(error);

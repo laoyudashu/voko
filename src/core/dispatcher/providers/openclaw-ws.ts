@@ -447,11 +447,9 @@ class OpenClawWsProvider {
         try {
           child = spawn(cmd, args, {
             stdio: 'ignore',
-            detached: true,
+            detached: process.platform !== 'win32',
             windowsHide: true,
             shell,
-            // Windows: 直接 spawn node 时不创建控制台窗口
-            ...(process.platform === 'win32' && !shell ? { creationFlags: 0x08000000 } : {}),
           });
           child.unref();
           this._gatewayChild = child;  // 记录，供 stop() 清理，避免 detached gateway 泄漏
@@ -510,7 +508,10 @@ class OpenClawWsProvider {
     if (this.logs.length > this.maxLogSize) {
       this.logs.shift();
     }
-    console.log(`[OpenClaw WS] ${msg}`);
+  }
+
+  debugLog(...args: any[]): void {
+    if (process.env.VOKO_PROVIDER_DEBUG === '1') console.log('[OpenClaw WS]', ...args);
   }
 
   on(event: string, handler: EventHandler): void {
@@ -674,7 +675,7 @@ class OpenClawWsProvider {
           const eventStr = msg.type + ' ' + (msg.event || msg.method || '');
           const isNoise = hideEvents.some((eventName: string) => eventStr.includes(eventName));
           if (!isNoise) {
-            console.log('[OpenClaw WS] 📩 收到:', msg.type, msg.event || msg.method || msg.payload?.type);
+            this.debugLog('📩 收到:', msg.type, msg.event || msg.method || msg.payload?.type);
             this.addLog(`📩 收到: ${msg.type} ${msg.event || msg.method || msg.payload?.type || ''}`);
           }
 
@@ -876,7 +877,7 @@ class OpenClawWsProvider {
           this.processMessageQueue();
         }
       } else if (msg.payload?.type !== 'hello-ok') {
-        console.log(`[OpenClaw WS] 📩 收到 res id=${msg.id} type=${msg.payload?.type || 'unknown'}`);
+        this.debugLog(`📩 收到 res id=${msg.id} type=${msg.payload?.type || 'unknown'}`);
       }
     }
 
@@ -889,7 +890,6 @@ class OpenClawWsProvider {
     if (msg.type === 'event' && msg.event === 'session.message') {
       // 始终保留内部兼容事件（连接自检等仍使用）；是否形成业务回复由握手能力决定。
       this.emit('session.message', msg);
-      if (this._replyProtocol === 'chat') return;
 
       // payload 结构: {sessionKey, message: {role, content, done}, ...}
       const innerMsg = msg.payload?.message;
@@ -972,7 +972,7 @@ class OpenClawWsProvider {
         this.ws.send(data);
         // chat.send 的详细日志在 sendChatSend 中，这里只记录其他方法
         if (msg.method !== 'chat.send') {
-          console.log('[OpenClaw WS] 📤 发送:', msg.type, msg.method || msg.event);
+          this.debugLog('📤 发送:', msg.type, msg.method || msg.event);
         }
       } catch (err) {
         console.error('[OpenClaw WS] 发送失败:', errorMessage(err));
@@ -1258,7 +1258,7 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null,
   ): Promise<void> {
     const now = Date.now();
-    console.log(`[OpenClaw WS] 🚀 sendToSession t=${now}`);
+    this.debugLog(`🚀 sendToSession t=${now}`);
     this._evictStalePendingSubscriptions();
     if (!this._supportsSessionSubscribe()) {
       if (!this.connected || this.connecting) {
@@ -1342,7 +1342,7 @@ class OpenClawWsProvider {
       messageId: extraData?.messageId || '',
       timestamp: extraData?.timestamp || Math.floor((sendTimestamp || Date.now()) / 1000)
     });
-    console.log(`[OpenClaw WS] 📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
+    this.debugLog(`📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
 
     this.send({
       type: 'req',
@@ -1430,6 +1430,40 @@ class OpenClawWsProvider {
     });
   }
 
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, code: 'LOOPBACK_CHALLENGE_INVALID' };
+    if (!this.connected) return { ok: false, code: 'LOOPBACK_RUNTIME_UNAVAILABLE' };
+    const sessionKey = `agent:${agentId}:loopback-${challenge}`;
+    return await new Promise<Record<string, unknown>>((resolve) => {
+      const finish = (result: Record<string, unknown>) => {
+        clearTimeout(timer);
+        this.off('session.message', handler);
+        resolve(result);
+      };
+      const handler = (msg: ProtocolMessage) => {
+        const identity = this._replyIdentity(msg, sessionKey);
+        if (identity.turnId && identity.turnId !== challenge) return;
+        const raw = msg.payload?.message?.content;
+        const text = Array.isArray(raw)
+          ? raw.filter((item: any) => item?.type === 'text').map((item: any) => item.text || '').join('')
+          : typeof raw === 'string' ? raw : '';
+        if (!text || text.includes('VOKO isolated loopback test')) return;
+        const matched = text.trim() === challenge;
+        finish({ ok: matched, challengeMatched: matched, status: matched ? 'loopback_verified' : 'failed',
+          detail: matched ? 'OpenClaw WebSocket loopback verified' : 'OpenClaw WebSocket did not return the exact challenge',
+          loopbackSessionId: sessionKey });
+      };
+      const timer = setTimeout(() => finish({ ok: false, code: 'LOOPBACK_TIMEOUT' }), 60000);
+      this.on('session.message', handler);
+      this.sendToSession(sessionKey,
+        `VOKO isolated loopback test. Do not use tools. Reply with exactly: ${challenge}`,
+        { messageId: challenge, turnId: challenge }).catch((error: unknown) =>
+        finish({ ok: false, code: 'LOOPBACK_FAILED', detail: error instanceof Error ? error.message : String(error) }));
+    });
+  }
+
   // ─────────────────────────────────────────────
   // PushProvider 接口（供 dispatcher 统一调度）
   // 本类自带事件机制（eventListeners Map），故不继承 PushProvider，仅实现接口（duck typing）。
@@ -1446,6 +1480,30 @@ class OpenClawWsProvider {
   /** 就绪判断：push 通道是否就绪（WS 已连接；openclaw 为全局单连接，与 agentId 无关）。 */
   isAvailable(_agentId: string): boolean {
     return !!this.connected;
+  }
+
+  /** Read-only probe used by strict A2A/owner routes before reusing a native session. */
+  async canRestoreExactSession(binding: any, agentId: string): Promise<boolean> {
+    if (!this.connected || !binding?.strictSessionRoute
+      || binding.providerType !== 'openclaw'
+      || binding.deliveryMode !== 'websocket'
+      || binding.adapterType !== 'openclaw-ws'
+      || !binding.nativeSessionId) return false;
+    const targetAgentId = this.getInstanceId(agentId);
+    const session = String(binding.nativeSessionId);
+    return binding.providerInstanceId === targetAgentId
+      && session.toLowerCase().startsWith(`agent:${String(targetAgentId).toLowerCase()}:`);
+  }
+
+  getInstanceId(agentId: string): string {
+    try {
+      const row = this.db?.prepare(
+        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
+      ).get(agentId, 'openclaw');
+      return String(row?.backend_instance_id || agentId).trim() || agentId;
+    } catch (_) {
+      return agentId;
+    }
   }
 
   /** 建立连接：确保 gateway 运行 + setEnabled 开启 WS（幂等）。 */
@@ -1466,20 +1524,15 @@ class OpenClawWsProvider {
   }
 
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
-    let targetAgentId = agentId;
-    try {
-      const row = this.db?.prepare(
-        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
-      ).get(agentId, 'openclaw');
-      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
-    } catch (_) {}
+    const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && payload.providerBinding.providerInstanceId === targetAgentId
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
+      : buildOpenClawSessionKey(targetAgentId, agentId, String((payload as any).sessionScopeId || fromUid));
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
@@ -1492,7 +1545,9 @@ class OpenClawWsProvider {
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    return this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
   }
 
   /** 注入系统消息（openclaw 无独立 steer，走 sendToSession）。 */
@@ -1501,22 +1556,20 @@ class OpenClawWsProvider {
     visitorId: string,
     content: string,
     metadata?: ProviderSteerMetadata,
-  ): Promise<void> {
-    let targetAgentId = agentId;
-    try {
-      const row = this.db?.prepare(
-        'SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?'
-      ).get(agentId, 'openclaw');
-      targetAgentId = String(row?.backend_instance_id || agentId).trim() || agentId;
-    } catch (_) {}
+  ): Promise<unknown> {
+    const targetAgentId = this.getInstanceId(agentId);
     const binding = metadata?.providerBinding;
     const sessionKey = binding?.providerType === 'openclaw'
       && binding.providerInstanceId === targetAgentId
       ? binding.nativeSessionId
       : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
-    return this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
+    await this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
+    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
   }
+
+  useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 
   /** 自检 + 重连（替代 index.js 散落的 openclaw 心跳恢复逻辑）。 */
   async healthCheck() {
@@ -1532,7 +1585,9 @@ function _killTree(pid?: number): void {
   if (!pid) return;
   try {
     if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore', timeout: 3000, windowsHide: true,
+      });
     } else {
       try { process.kill(-pid, 'SIGKILL'); } catch (_) { try { process.kill(pid, 'SIGKILL'); } catch (_) {} }
     }

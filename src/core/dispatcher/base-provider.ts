@@ -17,7 +17,8 @@
  *       hermes 等天然 extends EventEmitter 的可继承本类获得默认方法。
  */
 const { EventEmitter } = require('events');
-import type { AgentMeta, ProviderHealth, PushPayload, SessionMode } from './types';
+const crypto = require('crypto');
+import type { AgentMeta, ProviderCoreEvent, ProviderHealth, PushPayload, SessionMode } from './types';
 
 class PushProvider extends EventEmitter {
   private readonly _availabilityGenerations = new Map<string, number>();
@@ -74,6 +75,18 @@ class PushProvider extends EventEmitter {
       ...input,
       generation,
     });
+  }
+
+  protected notifyProviderEvent(input: Omit<ProviderCoreEvent, 'eventId' | 'providerId' | 'occurredAt'> & {
+    eventId?: string;
+    occurredAt?: number;
+  }): void {
+    this.emit('provider.event', {
+      ...input,
+      eventId: input.eventId || crypto.randomUUID(),
+      providerId: this._availabilityProviderId || 'unregistered',
+      occurredAt: input.occurredAt || Date.now(),
+    } satisfies ProviderCoreEvent);
   }
 
   /** 建立连接（含 spawn gateway）。幂等。 */

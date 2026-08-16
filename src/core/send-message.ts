@@ -10,6 +10,8 @@
 
 const ac = require('./access-control-api');
 const bus = require('./lite-bus');
+const { checkAuditRules, triggerManualSendAuditIntervention } = require('./audit');
+const { classifyUncertain } = require('./safety-classifier');
 import type { DatabaseLike } from '../types/database';
 
 interface SendResult {
@@ -51,6 +53,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function debugIm(message: string): void {
+  if (process.env.VOKO_IM_DEBUG === '1') console.log(message);
+}
+
 /**
  * 创建统一投递函数 deliver(agentId, channelId, content, messageType)
  *
@@ -64,14 +70,14 @@ function createDeliver({ transportManager }: {
 }): Deliver {
   return async function deliver(agentId: string, channelId: string, content: string, messageType = 'text', channelType = 1, mentions: unknown = null, localMsgId: string | null = null, metadata: unknown = null) {
     const lmId = localMsgId || `msg-${agentId}-${channelId}-${Date.now()}`;
-    console.log(
+    debugIm(
       `[IM 发送] agent=${agentId} channel=${channelId} channelType=${channelType}`
       + ` type=${messageType} messageId=${lmId} contentLength=${String(content ?? '').length}`,
     );
     try {
       const result = await transportManager.deliver(agentId, channelId, content, messageType, channelType, mentions, lmId, metadata);
       if (result?.success !== false) {
-        console.log(
+        debugIm(
           `[IM SENDACK] agent=${agentId} channel=${channelId} messageId=${result?.messageId || lmId}`
           + ` seq=${result?.messageSeq ?? '-'} clientMsgNo=${result?.clientMsgNo || lmId}`,
         );
@@ -168,9 +174,11 @@ function persistAgentMessage(
  * @param {BrowserWindow|null} deps.mainWindow - Electron 主窗口实例
  * @returns {Function} sendMessage(agentId, channelId, content, fromUid, messageType)
  */
-function createSendMessage({ db, deliver }: {
+function createSendMessage({ db, deliver, databaseAPI, enqueueIntervention }: {
   db: DatabaseLike;
   deliver: Deliver;
+  databaseAPI?: { saveOwnerIntervention: (record: Record<string, unknown>) => unknown };
+  enqueueIntervention?: (record: Record<string, unknown>) => unknown;
   agentWorkers?: Map<string, unknown>;
   mainWindow?: unknown;
 }) {
@@ -187,6 +195,22 @@ function createSendMessage({ db, deliver }: {
   ) {
     // 归一化换行：客户端可能将 \n 作为字面字符发送
     content = content.replace(/\\n/g, '\n');
+
+    // Deterministic checks are always first. The optional model is only
+    // consulted when those checks return an uncertain decision.
+    let auditDecision = checkAuditRules(content, 'outbound', db);
+    if (auditDecision.verdict === 'uncertain' || auditDecision.action === 'soft_deny') {
+      auditDecision = await classifyUncertain(db, content, 'outbound', auditDecision);
+    }
+    if (auditDecision.action === 'hard_deny' || auditDecision.action === 'soft_deny') {
+      if (databaseAPI) triggerManualSendAuditIntervention({ agentId, channelId, content }, auditDecision,
+        db, databaseAPI, enqueueIntervention);
+      return { success: false, error: auditDecision.action === 'hard_deny'
+        ? 'Message blocked by outbound safety policy.'
+        : 'Message requires owner safety review.', auditDecision: {
+          verdict: auditDecision.verdict, source: auditDecision.source, reasonCode: auditDecision.reasonCode,
+        } };
+    }
 
     // 1. 自动将接收方加入白名单（主动发消息 = 信任访客，避免对方回复被私密模式拦截）
     //    群聊（channelType=2）的 channelId 是 roomId，不是访客，跳过白名单

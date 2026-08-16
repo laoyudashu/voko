@@ -73,15 +73,17 @@ class OpenClawCliProvider extends PushProvider {
     }
   }
 
-  async push(payload: PushPayload): Promise<void> {
+  async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `openclaw-cli-${Date.now()}`);
     const targetAgentId = this._instanceForAgent(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
+      && payload.providerBinding.providerInstanceId === targetAgentId
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
+      : buildOpenClawSessionKey(targetAgentId, agentId, sessionIdentity);
     const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
@@ -138,6 +140,8 @@ class OpenClawCliProvider extends PushProvider {
       } else {
         throw new Error('OpenClaw returned no reply text');
       }
+      return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+        deliveryMode: 'cli', adapterType: 'openclaw-cli' };
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
       if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
@@ -149,6 +153,8 @@ class OpenClawCliProvider extends PushProvider {
       throw err;
     }
   }
+
+  useDispatcherSessionPersistence(): void { this._bindingStore = null; }
 
   async steer(agentId: string, visitorId: string, content: string, metadata?: ProviderSteerMetadata): Promise<null> {
     const targetAgentId = this._instanceForAgent(agentId);

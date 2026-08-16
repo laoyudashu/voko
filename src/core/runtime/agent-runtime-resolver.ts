@@ -7,6 +7,7 @@ export type RuntimeKind = 'native' | 'node-script';
 export type RuntimeCandidate =
   | { kind: 'explicit'; path: string; interpreter?: 'node' }
   | { kind: 'native'; command: string }
+  | { kind: 'node-package-artifact'; command: string; packageName: string; artifactPackage: string; relativePath: string }
   | { kind: 'node-package-bin'; command: string; packageName: string; binName?: string };
 
 export interface RuntimeRequest {
@@ -103,6 +104,7 @@ export class AgentRuntimeResolver {
         candidate.interpreter === 'node' ? [target] : [], candidate.interpreter === 'node' ? 'node-script' : 'native', target);
     }
     if (candidate.kind === 'node-package-bin') return this.resolvePackageBin(candidate);
+    if (candidate.kind === 'node-package-artifact') return this.resolvePackageArtifact(candidate);
     const target = this.findOnPath(candidate.command, true);
     return target ? this.result(target, [], 'native', target) : null;
   }
@@ -119,6 +121,19 @@ export class AgentRuntimeResolver {
       const target = canonicalFile(path.resolve(packageRoot, relativeBin));
       if (!target || !isInside(rootReal, target)) return null;
       return this.result(this.nodePath, [target], 'node-script', target);
+    } catch (_) { return null; }
+  }
+
+  private resolvePackageArtifact(candidate: Extract<RuntimeCandidate, { kind: 'node-package-artifact' }>): ResolvedRuntime | null {
+    const shim = this.findOnPath(candidate.command, false);
+    if (!shim) return null;
+    const packageRoot = path.join(path.dirname(shim), 'node_modules', ...candidate.packageName.split('/'));
+    const artifactRoot = path.join(packageRoot, 'node_modules', ...candidate.artifactPackage.split('/'));
+    try {
+      const rootReal = fs.realpathSync(artifactRoot);
+      const target = canonicalFile(path.resolve(artifactRoot, candidate.relativePath));
+      if (!target || !isInside(rootReal, target)) return null;
+      return this.result(target, [], 'native', target);
     } catch (_) { return null; }
   }
 

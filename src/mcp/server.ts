@@ -50,6 +50,20 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     version: options.version || pkg.version,
   });
 
+  server.tool('voko_a2a_discover_agent', 'Discover and validate a remote A2A 1.0 Agent Card through the VOKO A2A Gateway.', {
+    agentId: z.string(), cardUrl: z.string().url(), credential: z.string().max(4096).optional(),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_discover_agent(params)) }] }));
+  server.tool('voko_a2a_send_message', 'Send a task from this VOKO Agent to a previously discovered remote A2A Agent.', {
+    agentId: z.string(), remoteAgentKey: z.string().regex(/^[a-f0-9]{64}$/), content: z.string().min(1).max(6144),
+    messageId: z.string().max(128).optional(), idempotencyKey: z.string().max(128).optional(),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_send_message(params)) }] }));
+  server.tool('voko_a2a_get_task', 'Get the latest state of an outbound A2A task.', {
+    agentId: z.string(), taskId: z.string().max(128),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_get_task(params)) }] }), { readOnlyHint: true });
+  server.tool('voko_a2a_cancel_task', 'Request cancellation of an outbound A2A task without retrying an uncertain result.', {
+    agentId: z.string(), taskId: z.string().max(128),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.a2a_cancel_task(params)) }] }));
+
   // ─── 统一注册编排（Web / MCP / CLI 共用状态机）───
   server.tool(
     'voko_manage_agent_registration',
@@ -115,7 +129,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     {
       agentId: z.string().describe(T('mcp.param.agentId')),
       status: z.number().int().min(0).max(1).optional().describe(T('mcp.tool.set_agent_status.p.status')),
-      visibility: z.number().int().min(0).max(1).optional().describe(T('mcp.tool.set_agent_status.p.visibility')),
+      visibility: z.number().int().min(0).max(2).optional().describe(T('mcp.tool.set_agent_status.p.visibility')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.set_agent_status(params);
@@ -437,6 +451,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().describe(T('mcp.tool.create_payment.p.visitorId')),
       amount: z.number().positive().describe(T('mcp.tool.create_payment.p.amount')),
       description: z.string().optional().describe(T('mcp.tool.create_payment.p.description')),
+      conversationId: z.string().optional().describe('VOKO Conversation ID used to keep payment updates in the same session'),
     },
     async (params: unknown) => {
       const r = await toolHandlers.create_payment(params);
@@ -609,6 +624,24 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { readOnlyHint: true }
   );
 
+  server.tool(
+    'voko_owner_command',
+    T('mcp.tool.owner_command.desc'),
+    {
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      action: z.enum(['fetch', 'complete', 'fail']).describe(T('mcp.tool.owner_command.p.action')),
+      messageId: z.string().optional().describe(T('mcp.tool.owner_command.p.messageId')),
+      claimId: z.string().optional().describe(T('mcp.tool.owner_command.p.claimId')),
+      content: z.string().optional().describe(T('mcp.tool.owner_command.p.content')),
+      reason: z.string().optional().describe(T('mcp.tool.owner_command.p.reason')),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.owner_command(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { destructiveHint: false }
+  );
+
   // ─── 27. 白名单管理 ───
   server.tool(
     'voko_manage_whitelist',
@@ -619,6 +652,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.visitorId')),
       id: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.id')),
       reason: z.string().optional().describe(T('mcp.tool.manage_whitelist.p.reason')),
+      conversationId: z.string().optional().describe(T('mcp.param.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.param.replyToMessageId')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_whitelist(params);
@@ -637,6 +672,8 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       visitorId: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.visitorId')),
       id: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.id')),
       reason: z.string().optional().describe(T('mcp.tool.manage_blacklist.p.reason')),
+      conversationId: z.string().optional().describe(T('mcp.param.conversationId')),
+      replyToMessageId: z.string().optional().describe(T('mcp.param.replyToMessageId')),
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_blacklist(params);

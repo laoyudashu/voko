@@ -1,10 +1,10 @@
 # Provider / 智能体兼容性与实测结果
 
-[Documentation index](README.md) · [Provider registration, delivery, and route recovery](provider-delivery-routing.md) · [Provider-specific guides](providers/README.md)
+[Documentation index](README.md) · [Provider Transport behavior matrix](provider-transport-matrix.md) · [Provider registration, delivery, and route recovery](provider-delivery-routing.md) · [Provider-specific guides](providers/README.md)
 
 此页面向使用 VOKO 的普通用户，说明本地 Agent 如何接入、VOKO 如何把新消息交给 Agent，以及当前证据的边界。它不是对所有 Provider 版本、账号计划、操作系统、模型配置或网络环境的保证。
 
-通用的注册入口、`deliveryModes` 选择、推荐接收顺序、降级、路由缓存和健康事件刷新规则见[Provider 注册、消息投递与路由恢复指南](provider-delivery-routing.md)。本页保留各类型的能力矩阵和验收证据；未完成验收的类型不要按照矩阵中的“可检测”推断为已支持自动推送。
+通用架构不变量见[Provider Transport 行为矩阵](provider-transport-matrix.md)，注册和操作者路径见[Provider 注册、消息投递与路由恢复指南](provider-delivery-routing.md)。本页只保留各类型的能力矩阵和验收证据；未完成验收的类型不要按照矩阵中的“可检测”推断为已支持自动推送。
 
 所有表中“Agent → VOKO”均表示 Agent 可通过 VOKO MCP、CLI 或本机接口完成注册、发消息和主动读取；实际可用入口取决于你的宿主环境。所有“主 / 备”通道都只有在本机检测可用、且你在注册时启用后才会使用。**Pull 始终保留**：消息会留在 VOKO，Agent 可通过 VOKO CLI、MCP 工具或本机接口主动读取；这不是投递错误。消息工具的`conversationId`发现、精确历史、发送与兼容规则统一见[MCP消息与精确Conversation接口](mcp-message-conversations.md)。
 
@@ -25,19 +25,21 @@
 | Pi Coding Agent | MCP、CLI、本机接口 | Pi CLI → Pull | `--session-id` 原生 session 恢复已验证 | Windows 真机 CLI/session 验证 | Pi 0.84.0；no-tools、no-extensions、no-skills；详见 [Pi 专属指南](providers/pi.md)。 |
 | Reasonix | MCP、CLI、本机接口 | Reasonix CLI → Pull | `session_id` 与 `--resume` 原生恢复已验证 | Windows 真机 CLI/session 验证 | Reasonix 1.21.0；stdin 必须省略尾部 `-`，使用 `stream-json` + `dontAsk`；详见 [Reasonix 专属指南](providers/reasonix.md)。 |
 | Grok CLI | MCP、CLI、本机接口 | Grok CLI → Pull | 原生 session 绑定、连续对话和恢复已验证 | Windows 真机 CLI 会话验证 | Windows loopback proxy 可映射；plan、无工具、禁 web / subagents / memory、单轮；详见 [Grok 专属指南](providers/grok.md)。 |
-| OpenHands | MCP、CLI、本机接口 | ACP → 受限 headless JSON CLI → Pull | CLI 首次/续接、ACP → CLI → ACP 往返和原生 session 保持已验证 | Windows 真机 ACP/CLI 回路验证 | OpenHands CLI 1.16.0，启动时显示 SDK 1.21.0；CLI 禁用终端、文件、浏览器、MCP、网络和子代理工具；详见 [OpenHands 专属指南](providers/openhands.md)。 |
+| OpenHands | MCP、CLI、本机接口 | Pull（当前 Catalog） | ACP/CLI 适配器首次、续接和 ACP→CLI→ACP 往返已验证，尚未注册为自动 Push | Windows 适配器真机验证 | OpenHands CLI 1.16.0，启动时显示 SDK 1.21.0；CLI 禁用终端、文件、浏览器、MCP、网络和子代理工具；详见 [OpenHands 专属指南](providers/openhands.md)。 |
 | ZeroClaw | MCP、CLI、本机接口 | ACP-over-WebSocket → ACP → CLI（alias + 独立 state file）→ Pull | ACP WebSocket 原生 session、连续对话和恢复已验证；CLI fallback 配置预检通过 | Windows ZeroClaw 0.8.3 真机 ACP-WebSocket 回路验证 | 网关使用本机回环 `/acp`、配对 Bearer token 和 `zeroclaw.acp.v1`；角色隔离与会话别名受保护；详见 [ZeroClaw 专属指南](providers/zeroclaw.md)。 |
 | Gemini CLI | MCP、CLI、本机接口 | 安全沙箱 CLI（需 Docker）→ Pull | Ubuntu Docker sandbox 首条消息和同一访客续接已验证；当前使用 VOKO context window，不保存原生 binding | Ubuntu 24.04.4 真机完整回归 | Gemini CLI 0.53.1；headless 使用 `--skip-trust`，首次 Docker/上游高负载可能较慢；详见 [Gemini 专属指南](providers/gemini.md)。 |
 
 Ubuntu 24.04.4 LTS 的 18 个 Provider 版本、注册结果、推荐通道和限制见 [Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)。矩阵是当前 Linux 实机证据的集中记录；Windows 版本和路径说明仍保留在各 Provider 条目与专属指南中。
 
-## 已识别但默认 Pull 的集成环境
+## 已识别但 Push 运行时依赖本机条件的集成环境
 
-这些环境可被识别，Agent 仍可通过 MCP 或本机接口与 VOKO 通信；但目前没有承诺可靠的自动推送通道。
+这些环境可被识别，Agent 仍可通过 MCP 或本机接口与 VOKO 通信；QwenWork 和 Trae 已注册可选 Push 运行时，但只有本机预检通过后才启用，否则保留 Pull。
 
 | 类型 | VOKO → Agent | 当前结论 | 说明 |
 | --- | --- | --- | --- |
 | Amazon Q | Pull | 待验证 | 尚未确认 Windows / Ubuntu 当前版本是否具备稳定且可限制权限的非交互模式。 |
+| 千问办公（QwenWork） | QwenWork CLI → Pull | 已接入并完成 Windows 真机完整链路验收 | QwenWork 0.1.6 / qoderclicn 1.0.47；已验证随机 challenge、真实 IM 入站、CLI 自动交付、模型回复、IM 回传、SENDACK、单次落库及 A2A 收敛；详见 [千问办公专属指南](providers/qwen-office.md)。 |
+| Trae | Trae CLI ACP → Pull | 已接入（MCP 客户端 + 可选 traecli ACP） | 本机桌面 Trae 1.107.1 支持 `--add-mcp`，未发现独立 `traecli`；ACP 路由已注册，待安装/登录 CLI 后真机回路验收；详见 [Trae 专属指南](providers/trae.md)。 |
 | WorkBuddy、豆包等无 CLI 桌面 Agent | Pull | 仅检测 / 按宿主集成 | 不配置不可靠自动通道；请让 Agent 用 VOKO CLI、MCP 或本机接口主动获取新消息。 |
 
 ## 会话、安全与降级规则

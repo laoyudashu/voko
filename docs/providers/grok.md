@@ -44,7 +44,7 @@ grok --oauth
    voko status --json
    ```
 
-如果 VOKO 正在运行时刚完成注册但只显示 Pull，重启一次 VOKO 刷新 Dispatcher 路由缓存。
+如果 VOKO 正在运行时刚完成注册但只显示 Pull，先按 [Transport 行为矩阵](../provider-transport-matrix.md) 检查诊断字段，修复认证或 PATH 后重启一次 VOKO。
 
 ## 3. VOKO 的安全运行方式
 

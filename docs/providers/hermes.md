@@ -54,7 +54,7 @@ Hermes 的 `backend_instance_id` 对应 Hermes profile，例如 `default`、`psy
    voko status --json
    ```
 
-确认 `deliveryStatus.activeMode` 为 `http`，并确认 `imConnection.connected/status`。注册成功、HTTP gateway 可用和 IM Worker 已连接是三个不同检查项。
+确认 `deliveryStatus.activeAutomaticMode` 为 `http`，并查看 `deliveryStatus.methods` 中 `hermes-http` 的状态，同时确认 `imConnection.connected/status`。注册成功、HTTP gateway 可用和 IM Worker 已连接是三个不同检查项。
 
 不要把 VOKO Agent ID 当成 Hermes profile；也不要把 profile 名称当成访客 session。多个 VOKO Agent 如共享同一个 Hermes profile，消息仍会通过 VOKO 的 Agent/session key 隔离，但模型资源和 profile 级配置是共享的；除非确定需要共享，否则建议一 Agent 一 profile。
 
@@ -76,14 +76,7 @@ Hermes HTTP 首次回复时间受模型和 Gateway 状态影响，几十秒是�
 
 ## 4. CLI 降级和 Pull
 
-Hermes 的正常顺序为：
-
-1. HTTP gateway 健康时走 `hermes-http`。
-2. HTTP 不可用时，下一条消息可降级到 `hermes-cli`。
-3. CLI 执行失败、等待工具授权或超时时，消息保留在 VOKO。
-4. HTTP 健康检查恢复后，后续消息重新走 HTTP。
-
-CLI 降级不是把 profile 变成新的实例，也不会重置 VOKO 的会话边界。若 CLI 报告 `pending approval`，需要在 Hermes 侧完成工具授权或关闭不适合访客托管的工具；不要通过 `--yolo` 或其他方式扩大访客权限。
+通用通道顺序、降级次数、结果分类、缓存和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。Hermes 的差异是：HTTP 使用 profile，CLI 使用同一 profile 的本地配置；`pending approval` 必须在 Hermes 侧处理，不得通过 `--yolo` 等方式扩大访客权限。CLI 降级不会把 profile 当成新的 VOKO Agent 实例。
 
 网关排障时可在前台运行指定 profile：
 
@@ -116,7 +109,7 @@ hermes mcp test <server-name>
 
 - profile 不存在：运行 `hermes profile list`，在 VOKO 注册时选择完全相同的 profile ID。
 - HTTP 未就绪：运行 `hermes status` 和 `hermes gateway list`，检查模型凭证、端口和 profile 配置。
-- 首条消息很慢：先等待当前请求完成，不要重复发送；查看 VOKO 的 `activeMode` 和 Hermes gateway 日志。
+- 首条消息很慢：先等待当前请求完成，不要重复发送；查看 VOKO 的 `activeAutomaticMode`、`deliveryStatus.methods` 和 Hermes gateway 日志。
 - 自动回复进入 Pull：检查 HTTP/CLI 是否在注册时启用；Pull-only 不会主动推送。
 - CLI 等待授权：按 Hermes 的授权提示处理，访客消息不应自动获得 shell、网络或写文件权限。
 - 回复被 VOKO 审计拦截：这是出站内容审核结果，不代表 Hermes HTTP 请求失败。

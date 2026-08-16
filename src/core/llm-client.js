@@ -78,8 +78,18 @@ function resolveEndpoint(modelName, configEndpoint) {
 
 class LLMClient {
   constructor(configPath) {
+    // Explicit in-memory mode is used by security-sensitive callers which must
+    // never discover credentials from Agent runtimes or environment variables.
+    if (configPath && typeof configPath === 'object') {
+      this.configPath = null;
+      this.config = { mode: 'manual', providers: Array.isArray(configPath.providers) ? configPath.providers : [],
+        activeProviderId: configPath.activeProviderId || configPath.providers?.[0]?.id || null };
+      this.explicitConfig = true;
+      return;
+    }
     this.configPath = configPath || this.getDefaultConfigPath();
     this.config = this.loadConfig();
+    this.explicitConfig = false;
   }
 
   getDefaultConfigPath() {
@@ -423,7 +433,12 @@ class LLMClient {
         'Content-Length': Buffer.byteLength(JSON.stringify(payload))
       };
       if (provider.apiKey) {
-        headers['Authorization'] = `Bearer ${provider.apiKey}`;
+        if (provider.apiType === 'anthropic-messages') {
+          headers['x-api-key'] = provider.apiKey;
+          headers['anthropic-version'] = '2023-06-01';
+        } else {
+          headers['Authorization'] = `Bearer ${provider.apiKey}`;
+        }
       }
       const requestOptions = {
         hostname: url.hostname,
@@ -506,9 +521,9 @@ class LLMClient {
     const baseUrl = assertSecureEndpoint(provider.baseUrl, 'http').replace(/\/$/, '');
 
     if (provider.apiType === 'anthropic-messages') {
-      return `${baseUrl}/v1/messages`;
+      return baseUrl.endsWith('/v1') ? `${baseUrl}/messages` : `${baseUrl}/v1/messages`;
     } else {
-      return `${baseUrl}/v1/chat/completions`;
+      return baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
     }
   }
 
@@ -519,7 +534,8 @@ class LLMClient {
     if (provider.apiType === 'anthropic-messages') {
       const content = data.content || [];
       if (content.length > 0) {
-        return content[0].text || '';
+        return content.filter((block) => block && typeof block.text === 'string')
+          .map((block) => block.text).join('\n').trim();
       }
     } else {
       const choices = data.choices || [];

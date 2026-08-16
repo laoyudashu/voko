@@ -231,7 +231,7 @@ async function setupHermesGateway(databaseAPI, agentId, log) {
     try {
       const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
       require('child_process').spawn(resolveHermesCommand(), ['--profile', target, 'gateway', 'run', '--replace'], {
-        stdio: 'ignore', windowsHide: true, detached: true, env: cleanEnv,
+        stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32', env: cleanEnv,
       }).on('error', (err) => log(`⚠ gateway 启动失败: ${err.message}`)).unref();
       log(`🚀 gateway 已触发启动 (profile=${target})`);
     } catch (e) { log(`⚠ gateway spawn 异常: ${e.message}`); }

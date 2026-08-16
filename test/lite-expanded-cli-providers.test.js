@@ -28,10 +28,30 @@ const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor
 const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw-cli');
 const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
+const { classifyCliFailure } = require('../build/core/adapters/cli-spawner');
+const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const {
   RegistrationOrchestrator,
   currentAgentTypeFromProcessRows,
 } = require('../build/core/registration-orchestrator');
+
+test('CLI auth messages including signed-in wording are safe to fallback', () => {
+  assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'not_delivered');
+  assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'not_delivered');
+});
+
+test('CLI auth failure invalidates the route until the next health check', async () => {
+  const provider = new CliAdapter({
+    name: 'AUTH TEST CLI', cmd: process.execPath,
+    args: ['-e', "process.stdout.write('Not signed in.\n'); process.exit(1)"],
+    matchType: 'grok', adapterType: 'grok-cli', timeout: 5000,
+  });
+  provider._available = true;
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-grok', fromUid: 'visitor-grok', content: 'hello', messageId: 'auth-test',
+  }), error => error.deliveryOutcome === 'not_delivered');
+  assert.equal(provider._available, false);
+});
 
 test('Qwen Code unattended delivery is tool-free and bounded', () => {
   const provider = new QwenCliProvider();
@@ -165,12 +185,21 @@ test('OpenClaw rejects a failed CLI process and Hermes reports a background deli
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const previousPath = process.env.PATH;
+  const previousOpenClawBin = process.env.VOKO_OPENCLAW_BIN;
   t.after(() => { process.env.PATH = previousPath; });
+  t.after(() => {
+    if (previousOpenClawBin === undefined) delete process.env.VOKO_OPENCLAW_BIN;
+    else process.env.VOKO_OPENCLAW_BIN = previousOpenClawBin;
+  });
   for (const command of ['openclaw', 'hermes']) {
     const file = path.join(root, process.platform === 'win32' ? `${command}.cmd` : command);
     fs.writeFileSync(file, process.platform === 'win32' ? '@exit /b 7\r\n' : '#!/bin/sh\nexit 7\n', { mode: 0o755 });
   }
   process.env.PATH = `${root}${path.delimiter}${previousPath || ''}`;
+  // Linux runtime discovery intentionally prefers user-local binary folders
+  // ahead of PATH. Pin this test to its fake executable so it never depends
+  // on a real OpenClaw installation on the host.
+  process.env.VOKO_OPENCLAW_BIN = path.join(root, process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw');
   const db = {
     prepare(sql) {
       if (/backend_instance_id/.test(sql)) return { get: () => ({ backend_instance_id: 'isolated-test' }) };
@@ -209,7 +238,11 @@ test('Hermes CLI fallback queues the same profile serially without blocking disp
   });
   const first = provider.push({ agentId: 'agent-a', fromUid: 'visitor-1', content: 'one', messageId: 'm1' });
   const second = provider.push({ agentId: 'agent-a', fromUid: 'visitor-2', content: 'two', messageId: 'm2' });
-  await Promise.all([first, second]);
+  const receipts = await Promise.all([first, second]);
+  assert.deepEqual(receipts[0], {
+    accepted: true, queued: true, nativeSessionId: 'hermes:agent-a:visitor-1',
+    providerInstanceId: 'shared-profile', deliveryMode: 'cli', adapterType: 'hermes-cli',
+  });
   assert.equal(active <= 1, true);
   await provider.waitForIdle('shared-profile');
   assert.equal(maxActive, 1);

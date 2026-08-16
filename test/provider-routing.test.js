@@ -108,6 +108,35 @@ test('web pending conversation is unique and can merge back into its active pare
   } finally { fixture.close(); }
 });
 
+test('wire conversation keys resolve only inside the exact Agent/channel scope', () => {
+  const fixture = database();
+  try {
+    const conversations = new RoutingConversationStore(fixture.db);
+    const conversation = conversations.createPending({ agentId: 'agent-wire', channelId: 'peer-wire', channelType: 1 });
+    assert.equal(conversations.getForWireKey('agent-wire', 'peer-wire', 1, conversation.wireConversationKey).id, conversation.id);
+    assert.equal(conversations.getForWireKey('other-agent', 'peer-wire', 1, conversation.wireConversationKey), null);
+    assert.equal(conversations.getForWireKey('agent-wire', 'other-peer', 1, conversation.wireConversationKey), null);
+    assert.equal(conversations.getForWireKey('agent-wire', 'peer-wire', 2, conversation.wireConversationKey), null);
+  } finally { fixture.close(); }
+});
+
+test('current schema activates legacy Web conversations after an acknowledged outbound route', () => {
+  const fixture = database();
+  const dbPath = fixture.dbPath;
+  try {
+    const conversations = new RoutingConversationStore(fixture.db);
+    const routes = new MessageRouteStore(fixture.db);
+    const pending = conversations.createPending({ agentId: 'agent-web', channelId: 'peer-web', channelType: 1 });
+    const routeId = routes.createPending({ messageId: 'web-sent', conversationId: pending.id,
+      agentId: 'agent-web', peerUid: 'peer-web', channelId: 'peer-web', direction: 'outbound' });
+    routes.setStatus(routeId, 'active');
+    fixture.db.close();
+    const reopened = initDatabase(dbPath, { silent: true });
+    assert.equal(reopened.prepare('SELECT status FROM provider_routing_conversations WHERE id=?').get(pending.id).status, 'active');
+    reopened.close();
+  } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
+});
+
 test('current development schema 8 receives the one-time Web routing revision and backup', () => {
   const fixture = database();
   const dbPath = fixture.dbPath;

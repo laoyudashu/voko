@@ -15,6 +15,7 @@ class CursorAcpProvider extends AcpAdapter {
       cliPath: command,
       args: [...runtime.prefixArgs, 'acp'],
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),
       contextWindow: options.contextWindow,
     });

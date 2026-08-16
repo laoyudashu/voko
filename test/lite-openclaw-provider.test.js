@@ -70,6 +70,37 @@ describe('Lite OpenClaw WS provider', () => {
     assert.equal(parseOpenClawSessionTarget(second.split(':').slice(2).join(':')), 'group:one');
   });
 
+  it('does not reuse a binding from a different OpenClaw instance', async () => {
+    const provider = new OpenClawWsProvider({
+      prepare: () => ({ get: () => ({ backend_instance_id: 'instance-new' }) }),
+    }, null);
+    providers.push(provider);
+    let sessionKey = '';
+    provider.sendToSession = async (key) => { sessionKey = key; };
+    const receipt = await provider.push({
+      agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello', messageId: 'message-a',
+      providerBinding: {
+        id: 'binding-old', bindingVersion: 1, providerType: 'openclaw',
+        providerInstanceId: 'instance-old', deliveryMode: 'websocket', adapterType: 'openclaw-ws',
+        nativeSessionId: 'agent:instance-old:voko-old:visitor-a', sessionOrigin: 'voko_managed',
+        channelId: 'visitor-a', channelType: 1,
+      },
+    });
+    assert.equal(sessionKey, buildOpenClawSessionKey('instance-new', 'agent-a', 'visitor-a'));
+    assert.equal(receipt.providerInstanceId, 'instance-new');
+  });
+
+  it('accepts an exact A2A session only for the connected matching OpenClaw instance', async () => {
+    const provider = createProvider(); provider.connected = true;
+    const binding = {
+      strictSessionRoute: true, providerType: 'openclaw', providerInstanceId: 'agent-a',
+      deliveryMode: 'websocket', adapterType: 'openclaw-ws', nativeSessionId: 'agent:agent-a:voko-session:a2a:ctx-1',
+    };
+    assert.equal(await provider.canRestoreExactSession(binding, 'agent-a'), true);
+    assert.equal(await provider.canRestoreExactSession({ ...binding, providerInstanceId: 'other' }, 'agent-a'), false);
+    assert.equal(await provider.canRestoreExactSession({ ...binding, nativeSessionId: 'agent:other:voko-session:a2a:ctx-1' }, 'agent-a'), false);
+  });
+
   it('同一 session 在订阅中按发送顺序共享订阅结果', async () => {
     const provider = createProvider();
     const requests = [];

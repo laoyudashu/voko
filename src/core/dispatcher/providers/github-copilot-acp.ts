@@ -17,6 +17,7 @@ class GitHubCopilotAcpProvider extends AcpAdapter {
       cliPath: runtime?.command || null,
       args: runtime ? [...runtime.prefixArgs, '--acp', ...COPILOT_SAFETY_ARGS] : [],
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),
     });
     this._runtime = runtime;

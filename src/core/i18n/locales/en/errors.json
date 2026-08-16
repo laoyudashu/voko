@@ -15,7 +15,7 @@
   "errors.forbidden_host": "Forbidden Host",
   "errors.unauthorized_token": "Unauthorized: missing or invalid X-VOKO-Token",
   "errors.agent_status.missing_values": "Missing status or visibility",
-  "errors.agent_status.invalid_values": "status and visibility must be 0 or 1",
+  "errors.agent_status.invalid_values": "status must be 0 or 1; visibility must be 0 (private), 1 (public), or 2 (hidden)",
   "errors.external_api.http_error": "The remote service returned HTTP {status}",
   "errors.external_api.invalid_json": "The remote service returned invalid JSON",
   "errors.external_api.invalid_response": "The remote service returned an invalid response",

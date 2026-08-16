@@ -45,7 +45,7 @@ export interface RunCliResult {
 function classifyCliFailure(result: Pick<RunCliResult, 'stdout' | 'stderr'>): 'not_delivered' | 'rejected' | 'outcome_unknown' {
   const stderr = String(result.stderr || '');
   const detail = `${stderr}\n${String(result.stdout || '')}`;
-  if (/gateway\s+(?:closed|failed|unavailable|not running)|connection refused|econnrefused|failed to resolve secrets|authentication\s+(?:required|failed|error)|\b(?:401|403)\s+(?:unauthorized|forbidden)?|unauthorized|not logged in|login required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)|command not found|enoent/i.test(detail)) {
+  if (/gateway\s+(?:closed|failed|unavailable|not running)|connection refused|econnrefused|failed to resolve secrets|authentication\s+(?:required|failed|error)|\b(?:401|403)\s+(?:unauthorized|forbidden)?|unauthorized|not (?:logged|signed) in|login required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)|command not found|enoent/i.test(detail)) {
     return 'not_delivered';
   }
   if (/request rejected|provider rejected|safety policy|unsafe request|approval required|not allowed by policy/i.test(stderr)) {
@@ -73,7 +73,9 @@ function _makeLogger(tag: string): (message: string) => void {
 function killTree(pid: number): void {
   try {
     if (process.platform === 'win32') {
-      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', timeout: 3000 });
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore', timeout: 3000, windowsHide: true,
+      });
     } else {
       // runCli/OpenCode 在 Unix 下以 detached 创建独立进程组；负 PID 可一次终止整个树。
       try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }

@@ -23,7 +23,13 @@ function conversationDb() {
       is_me INTEGER NOT NULL,
       content_type INTEGER NOT NULL,
       agent_id TEXT NOT NULL
-    )
+    );
+    CREATE TABLE agents (
+      agent_id TEXT PRIMARY KEY,
+      backend_type TEXT NOT NULL,
+      backend_instance_id TEXT
+    );
+    INSERT INTO agents VALUES ('agent-a', 'hermes', 'hermes-profile');
   `);
   return db;
 }
@@ -129,7 +135,7 @@ test('Hermes HTTP and generic ACP delivery both receive VOKO recovery context', 
       messageId: 'm4',
       providerBinding: {
         id: 'binding-1', bindingVersion: 1, providerType: 'hermes',
-        providerInstanceId: null, deliveryMode: 'http', adapterType: 'hermes-http',
+        providerInstanceId: 'hermes-profile', deliveryMode: 'http', adapterType: 'hermes-http',
         nativeSessionId: 'hermes:agent-a:visitor-a', sessionOrigin: 'voko_managed',
         channelId: 'visitor-a', channelType: 1,
       },
@@ -189,9 +195,10 @@ test('history cannot forge a VOKO control boundary', () => {
 });
 
 test('runtime injects the native database into long-lived providers', () => {
-  const source = fs.readFileSync(require.resolve('../build/index'), 'utf8');
-  assert.match(source, /new OpenClawHandler\(db, null\)/);
-  assert.match(source, /new HermesHandler\(db, null,/);
-  assert.doesNotMatch(source, /new OpenClawHandler\(databaseAPI,/);
-  assert.doesNotMatch(source, /new HermesHandler\(databaseAPI,/);
+  const runtimeSource = fs.readFileSync(require.resolve('../build/index'), 'utf8');
+  const catalogSource = fs.readFileSync(require.resolve('../build/core/dispatcher/provider-catalog'), 'utf8');
+  assert.match(runtimeSource, /const providerFactoryContext = \{\s*db,/);
+  assert.match(catalogSource, /new Ctor\(context\.db, null\)/);
+  assert.match(catalogSource, /new Ctor\(context\.db, null, \{/);
+  assert.doesNotMatch(catalogSource, /new Ctor\(context\.databaseAPI,/);
 });

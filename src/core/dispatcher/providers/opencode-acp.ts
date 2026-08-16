@@ -17,6 +17,7 @@ class OpenCodeAcpProvider extends AcpAdapter {
       cliPath: resolveOpenCodeCommand(),
       args: ['acp'],
       db: options.db,
+      sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),
       env: isolatedOpenCodeEnv(),
     });

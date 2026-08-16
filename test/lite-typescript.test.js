@@ -36,6 +36,14 @@ test('pluralRule keeps the existing locale behavior', () => {
   assert.equal(pluralRule('ja', 1), 'other');
 });
 
+test('desktop Provider aliases normalize to the canonical family types', () => {
+  assert.equal(backendTypes.normalizeBackendType('千问办公'), 'qwen-office');
+  assert.equal(backendTypes.normalizeBackendType('qwenworkcn'), 'qwen-office');
+  assert.equal(backendTypes.normalizeBackendType('trae-ide'), 'trae');
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'qwen-office'));
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'trae'));
+});
+
 test('IPC frame keeps new and legacy wire formats compatible', () => {
   const request = frame.req('worker.send', { channelId: 'visitor-1' }, 'req-1');
   assert.equal(request.type, 'req');
@@ -618,6 +626,18 @@ test('agent actions return to the same agent subpage and conversation controls u
   assert.doesNotMatch(source, /confirm\(I\.gen_security_tip\)/);
   assert.match(source, /id="dlg-short-link-security"/);
   assert.match(source, /data-role="confirm-gen-link"/);
+  assert.match(source, /class="home-access-stack"/);
+  assert.match(source, /web\.home\.access\.visitor/);
+  assert.match(source, /data-role="gen-owner-link"/);
+  assert.match(source, /web\.home\.access\.a2a_published/);
+  assert.match(source, /home-copy-icon/);
+  assert.match(source, /<button type="button" class="btn btn-sm home-mode-toggle /);
+  assert.match(source, /data-role="toggle-pub"/);
+  assert.match(source, /data-role="toggle-acc"/);
+  assert.match(source, /home-mode-published/);
+  assert.match(source, /home-mode-unpublished/);
+  assert.match(source, /home-mode-public/);
+  assert.match(source, /home-mode-private/);
   assert.doesNotMatch(source, /web\.agent\.edit\.section_runtime/);
   assert.doesNotMatch(source, /web\.agent\.edit\.section_access/);
   assert.doesNotMatch(source, /data-value="__custom__"/);

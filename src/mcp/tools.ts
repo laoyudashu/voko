@@ -15,12 +15,14 @@ const { t } = require('../core/i18n');
 const { normalizeBackendType } = require('../core/agent-backend-types');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { createPullSecurityContext } = require('../core/dispatcher/safety-prompt');
+const { getProviderTransport } = require('../core/dispatcher/provider-catalog');
 const { getProviderCaller } = require('../core/registration-caller-context');
-const { ProviderConversationBindingStore } = require('../core/provider-conversation-bindings');
+const { ProviderSessionCoordinator } = require('../core/provider-session-coordinator');
 const { AgentIdentityBindingStore } = require('../core/provider-agent-identity');
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
+const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
@@ -90,6 +92,7 @@ interface AgentDbRow extends DynamicRow {
   agent_name?: string | null;
   imUid?: string | null;
   owner_email?: string | null;
+  visibility_type?: number | null;
 }
 
 interface ConversationDbRow extends DynamicRow {
@@ -295,6 +298,17 @@ type McpContext = Omit<LiteContext,
   getEnabledChannel?(): DynamicRow | null;
   enqueueOwnerIntervention?(record: DynamicRow): unknown;
   processPaymentOrder?(order: DynamicRow): Promise<unknown>;
+  a2aMailboxClient?: {
+    discoverRemote(localAgentId: string, cardUrl: string, credential?: string): Promise<DynamicRow>;
+    sendOutbound(input: DynamicRow): Promise<DynamicRow>;
+    getOutboundTask(taskId: string): Promise<DynamicRow>;
+    cancelOutboundTask(localAgentId: string, taskId: string): Promise<DynamicRow>;
+  };
+  ownerPullService?: {
+    fetch(agentId: string): DynamicRow;
+    complete(agentId: string, messageId: string, claimId: string, content?: string): DynamicRow;
+    fail(agentId: string, messageId: string, claimId: string, errorCode?: string): DynamicRow;
+  };
   wukongim?: {
     getCurrentUid?(agentId?: string): string;
   };
@@ -513,6 +527,7 @@ interface McpToolParams {
   blockTimeout?: number;
   category?: string;
   challenge?: string;
+  claimId?: string;
   channelId?: string;
   channelType?: number | 'all' | 'direct' | 'group';
   /** MCP 客户端自报身份（如 'zcode'/'codex'/'cursor'），用于游标隔离，避免多客户端互抢消息。 */
@@ -522,6 +537,8 @@ interface McpToolParams {
   code?: string;
   contact_phone?: string;
   content?: string;
+  cardUrl?: string;
+  credential?: string;
   contentType?: number | string;
   description?: string;
   direction?: string;
@@ -588,6 +605,8 @@ interface McpToolParams {
   deliveryModes?: string[];
   conversationId?: string;
   replyToMessageId?: string;
+  remoteAgentKey?: string;
+  idempotencyKey?: string;
   webRequest?: boolean;
   visibility?: number;
   visitorId?: string;
@@ -687,7 +706,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
 }
 
 function createToolHandlers(cx: McpContext) {
-  const providerBindings = new ProviderConversationBindingStore(cx.db);
+  const providerBindings = new ProviderSessionCoordinator(cx.db);
   const identityBindings = new AgentIdentityBindingStore(cx.db);
   const routingConversations = new RoutingConversationStore(cx.db);
   const messageRoutes = new MessageRouteStore(cx.db);
@@ -731,6 +750,19 @@ function createToolHandlers(cx: McpContext) {
       if (cx.query("SELECT 1 AS found FROM messages WHERE channel_id=? AND channel_type=2 LIMIT 1", [channelId]).length > 0) return 2;
     } catch (_) { /* inference is best-effort; direct chat remains the safe fallback */ }
     return 1;
+  };
+  const resolveStatusNotificationRoute = (p: McpToolParams) => {
+    const resolution = resolveOwnerInterventionConversation(cx.db, {
+      agentId: p.agentId,
+      channelId: p.visitorId,
+      channelType: 1,
+      caller: getProviderCaller(),
+      sourceMessageId: p.replyToMessageId || null,
+      conversationId: p.conversationId || null,
+    });
+    return resolution.status === 'resolved'
+      ? { route: { conversationId: resolution.conversationId }, resolution }
+      : { route: null, resolution };
   };
   // cx: { db, query, exec, sendMessage, sendSystemMessage, startAgentWorker, stopAgentWorker,
   //        getAgentStatus, registerCapabilities, searchCapabilities, updateAgentProfile, setAgentStatus,
@@ -905,7 +937,7 @@ function createToolHandlers(cx: McpContext) {
     const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
     const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
       `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
-       delivery_modes,publish_status,access_mode,owner_email,created_at FROM agents${where}
+       delivery_modes,publish_status,access_mode,visibility_type,owner_email,created_at FROM agents${where}
        ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
     );
     const agents = rows.map((r) => {
@@ -916,6 +948,7 @@ function createToolHandlers(cx: McpContext) {
         shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
         backendInstanceId: r.backend_instance_id || null, deliveryModes,
         publishStatus: r.publish_status, accessMode: r.access_mode,
+        visibilityType: [0, 1, 2].includes(Number(r.visibility_type)) ? Number(r.visibility_type) : 0,
         ownerEmail: r.owner_email, createdAt: r.created_at,
       };
     });
@@ -1156,7 +1189,10 @@ function createToolHandlers(cx: McpContext) {
         await cx.setAgentStatus({
           agentId,
           status: 1,
-          visibility: accessMode === 'public' ? 1 : 0,
+          // Registration accessMode controls the local visitor whitelist;
+          // external Agent visibility starts private unless explicitly changed
+          // later with set_agent_status visibility=0/1/2.
+          visibility: 0,
         });
       }
 
@@ -1275,7 +1311,8 @@ function createToolHandlers(cx: McpContext) {
         const statusResult = await cx.setAgentStatus({
           agentId,
           status: 1,
-          visibility: accessMode === 'public' ? 1 : 0,
+          // Keep local visitor access separate from external discoverability.
+          visibility: 0,
         });
         accessModeSynced = statusResult?.success !== false;
       }
@@ -1405,7 +1442,7 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 检查是否有需要同步服务端的字段
-      const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone];
+      const serverFields = [p.name, p.description, p.short_description, p.category, p.tags, p.iconUrl, p.address, p.contact_phone, p.backendType];
       if (serverFields.some((v?: any) => v !== undefined)) {
         const result = await cx.updateAgentProfile({
           db: cx.db,
@@ -1418,6 +1455,7 @@ function createToolHandlers(cx: McpContext) {
           icon_url: p.iconUrl,
           address: p.address,
           contact_phone: p.contact_phone,
+          backendType: p.backendType === undefined ? undefined : targetBackendType,
         });
         // 资料同步不影响运行时绑定；如有 backend/instance 变更已在上文触发 rebind
         if (backendRebindResult.length) (result as any).runtimeRebind = backendRebindResult[backendRebindResult.length - 1];
@@ -1429,13 +1467,13 @@ function createToolHandlers(cx: McpContext) {
       return okResult;
     },
 
-    // ─── 4. 设置 Agent 上下架 / 公开私有状态 ───
+    // ─── 4. 设置 Agent 上下架 / 外部展现范围 ───
 
     async set_agent_status(p: McpToolParams = {}) {
-      const hasVisibility = p.visibility === 0 || p.visibility === 1;
+      const hasVisibility = p.visibility === 0 || p.visibility === 1 || p.visibility === 2;
       const hasStatus = p.status === 0 || p.status === 1;
 
-      // 仅切换公有 / 私有（不改变上下架）
+      // 仅切换外部展现范围（不改变上下架，也不改变本地访客白名单模式）
       if (hasVisibility && !hasStatus) {
         if (!cx.setAgentStatus) {
           return { success: false, error: '当前环境不支持同步 Agent 状态' };
@@ -1450,11 +1488,10 @@ function createToolHandlers(cx: McpContext) {
         });
       }
 
+      if (hasVisibility && (p.status === 0 || p.status === 1)) {
+        cx.exec(`UPDATE agents SET visibility_type = ?, updated_at = ? WHERE agent_id = ?`, [p.visibility, Date.now(), p.agentId]);
+      }
       if (p.status === 1) {
-        if (hasVisibility) {
-          const accessMode = p.visibility === 1 ? 'public' : 'private';
-          cx.exec(`UPDATE agents SET access_mode = ?, updated_at = ? WHERE agent_id = ?`, [accessMode, Date.now(), p.agentId]);
-        }
         if (!cx.publishAgent) {
           return { success: false, error: '当前环境不支持发布 Agent' };
         }
@@ -1466,7 +1503,7 @@ function createToolHandlers(cx: McpContext) {
         }
         return cx.unpublishAgent({ agentId: p.agentId });
       }
-      return { success: false, error: 'status 必须为 0（下架）或 1（上架），或使用 visibility 单独切换公有/私有' };
+      return { success: false, error: 'status 必须为 0（下架）或 1（上架），或使用 visibility 单独切换 0（私密）、1（公开）、2（隐藏）' };
     },
 
     // ─── 5. 状态 ───
@@ -1559,6 +1596,7 @@ function createToolHandlers(cx: McpContext) {
           backendInstanceId: a.backend_instance_id || null,
           publishStatus: a.publish_status,
           accessMode: a.access_mode,
+          visibilityType: [0, 1, 2].includes(Number(a.visibility_type)) ? Number(a.visibility_type) : 0,
           did: a.did,
           imUid: a.imUid,
           ownerEmail: a.owner_email,
@@ -1581,6 +1619,7 @@ function createToolHandlers(cx: McpContext) {
           iconUrl: '头像图片链接',
           backendType: 'Agent 类型（预定义：openclaw/hermes/goose 等，也可为自定义类型）',
           publishStatus: '发布状态（published=已上架, unpublished=未上架）',
+          visibilityType: '服务端外部展现范围：0=私密（可搜索、不进黄页），1=公开，2=隐藏（不可搜索）',
           paymentFeeRate: '支付手续费率（如 0.006 = 0.6%）',
           agentUsageFeeRate: '按时计费模式下，平台抽取的佣金比例',
           paymentConfigured: '是否已配置支付认证',
@@ -1627,6 +1666,39 @@ function createToolHandlers(cx: McpContext) {
         return result;
       }
       return { success: true };
+    },
+
+    async a2a_discover_agent(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.agentId || !p.cardUrl) return { success: false, code: 'A2A_DISCOVERY_FAILED', error: 'agentId and cardUrl are required' };
+      try { return { success: true, ...(await cx.a2aMailboxClient.discoverRemote(p.agentId, p.cardUrl, p.credential)) }; }
+      catch (error: any) { return { success: false, code: 'A2A_DISCOVERY_FAILED', error: error.message }; }
+    },
+    async a2a_send_message(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.content) return { success: false, code: 'A2A_SEND_FAILED', error: 'content is required' };
+      try { const { A2ASafetyGate } = require('../a2a'); await new A2ASafetyGate(cx.db).assertAllowed(p.content, 'outbound');
+        return { success: true, task: await cx.a2aMailboxClient.sendOutbound({ localAgentId: p.agentId,
+        remoteAgentKey: p.remoteAgentKey, text: p.content, messageId: p.messageId, idempotencyKey: p.idempotencyKey }) }; }
+      catch (error: any) { return { success: false, code: error?.reasonCode ? 'A2A_SAFETY_REJECTED' : 'A2A_SEND_FAILED', error: error?.reasonCode || error.message }; }
+    },
+    async a2a_get_task(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.agentId || !p.taskId) return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: 'agentId and taskId are required' };
+      try { const task = await cx.a2aMailboxClient.getOutboundTask(p.taskId);
+        if (task.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
+        return { success: true, task }; } catch (error: any) { return { success: false, code: 'A2A_TASK_QUERY_FAILED', error: error.message }; }
+    },
+    async a2a_cancel_task(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId); if (ownershipError) return { success: false, code: 'AGENT_OWNER_MISMATCH', error: ownershipError };
+      if (!cx.a2aMailboxClient) return { success: false, code: 'A2A_UNAVAILABLE', error: 'A2A Mailbox is not enabled' };
+      if (!p.agentId || !p.taskId) return { success: false, code: 'A2A_CANCEL_FAILED', error: 'agentId and taskId are required' };
+      try { const result = await cx.a2aMailboxClient.cancelOutboundTask(p.agentId, p.taskId);
+        if (result?.task?.local_agent_id !== p.agentId) return { success: false, code: 'A2A_TASK_NOT_FOUND', error: 'Task not found' };
+        return { success: true, ...result }; } catch (error: any) { return { success: false, code: 'A2A_CANCEL_FAILED', error: error.message }; }
     },
 
     // ─── 8. 消息 ───
@@ -1762,6 +1834,7 @@ function createToolHandlers(cx: McpContext) {
         }
       }
 
+      const routingConversationWasPending = routingConversation?.status === 'pending';
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
@@ -1785,6 +1858,15 @@ function createToolHandlers(cx: McpContext) {
       } else if (isolateWithManagedSession && result?.success !== false) {
         try { providerBindings.markConversationStale(p.agentId, p.toUid, channelType); } catch (_) {}
       }
+      // A Web-created Conversation is a logical VOKO conversation. Once its
+      // first outbound message is accepted it is usable even when the peer is
+      // a human and will never expose a Provider-native Session.
+      if (p.webRequest === true && routingConversationWasPending && result?.success !== false) {
+        try {
+          routingConversations.activate(routingConversation.id);
+          routingConversation = { ...routingConversation, status: 'active', updatedAt: Date.now(), lastUsedAt: Date.now() };
+        } catch (_) {}
+      }
       // 检测收消息通道是否畅通
       if (cx.checkReceiveChannel) {
         const ch = cx.checkReceiveChannel(p.agentId);
@@ -1798,7 +1880,7 @@ function createToolHandlers(cx: McpContext) {
       if (routingConversation) {
         result.conversationId = routingConversation.id;
         result.conversationStatus = routingConversation.status;
-        result.conversationDisposition = routingConversation.status === 'pending' ? 'created' : 'reused';
+        result.conversationDisposition = routingConversationWasPending ? 'created' : 'reused';
       } else {
         result.conversationId = null;
         result.conversationStatus = null;
@@ -2218,25 +2300,15 @@ function createToolHandlers(cx: McpContext) {
       const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
       const sourceMessageId = p.replyToMessageId || p.messageId || null;
-      let routingConversationId: string | null = null;
-      if (sourceMessageId) {
-        try {
-          const route = messageRoutes.getByMessage(sourceMessageId, p.agentId);
-          if (route?.channel_id === targetChannelId && Number(route.channel_type) === targetChannelType) {
-            routingConversationId = route.conversation_id || null;
-          }
-        } catch (_) {}
-      } else if (p.conversationId) {
-        try { routingConversationId = routingConversations.getForScope(
-          p.conversationId, p.agentId, targetChannelId, targetChannelType)?.id || null; } catch (_) {}
-        if (!routingConversationId) return { success: false, error: 'Conversation is outside the current Agent and channel' };
-      } else {
-        try {
-          const candidates = routingConversations.listForScope(p.agentId, targetChannelId, targetChannelType)
-            .filter((conversation: RoutingConversation) => conversation.status === 'active');
-          if (candidates.length === 1) routingConversationId = candidates[0].id;
-        } catch (_) {}
-      }
+      const resolution = resolveOwnerInterventionConversation(cx.db, { agentId: p.agentId,
+        channelId: targetChannelId, channelType: targetChannelType, caller: getProviderCaller(),
+        sourceMessageId, conversationId: p.conversationId || null });
+      if (resolution.status === 'selection_required') return { success: false, code: 'CONVERSATION_REQUIRED',
+        error: 'Multiple Provider conversations are available; select conversationId',
+        candidateConversationIds: resolution.candidateConversationIds };
+      if (resolution.status === 'unavailable' && p.conversationId) return { success: false,
+        code: 'ROUTING_CONVERSATION_INVALID', error: 'The source message or Conversation cannot be routed in this channel' };
+      const routingConversationId = resolution.status === 'resolved' ? resolution.conversationId : null;
 
       // 根据 backend 类型决定 session_key 前缀
       const backendRow = cx.query ? cx.query(`SELECT backend_type FROM agents WHERE agent_id=?`, [p.agentId]) : [];
@@ -2376,7 +2448,27 @@ function createToolHandlers(cx: McpContext) {
       const now = Date.now();
       const orderId = `po_${now}_${Math.random().toString(36).substr(2, 8)}`;
       const fromUid = cx.getAgentImUid ? cx.getAgentImUid(p.agentId) : '';
-      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now });
+      let paymentConversation: RoutingConversation | null = null;
+      try {
+        if (p.conversationId) {
+          paymentConversation = routingConversations.getForScope(p.conversationId, p.agentId, p.visitorId, 1);
+          if (!paymentConversation) return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: 'Conversation does not belong to the current Agent and visitor' };
+        } else {
+          const caller = getProviderCaller();
+          const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
+            'SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1', [p.agentId])[0];
+          if (caller?.providerType && caller?.nativeSessionId && caller?.evidence
+            && normalizeProviderFamily(caller.providerType) === normalizeProviderFamily(agent?.backend_type || '')) {
+            paymentConversation = routingConversations.resolveOrCreate({ agentId: p.agentId,
+              providerFamily: normalizeProviderFamily(caller.providerType),
+              providerInstanceKey: caller.providerInstanceId || caller.instanceId || agent?.backend_instance_id || '',
+              nativeSessionId: caller.nativeSessionId, channelId: p.visitorId, channelType: 1, origin: 'caller' });
+          }
+        }
+      } catch (error: any) {
+        return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
+      }
+      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null });
       // 同步处理 pending 订单（DID 签名 → 调支付 API → 生成二维码 → 通知访客）
       // 注意：必须等待处理完成，否则 MCP 返回成功但访客收不到支付链接
       if (cx.processPaymentOrder) {
@@ -3001,6 +3093,21 @@ function createToolHandlers(cx: McpContext) {
       return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursorByChannel, clientId: _publicClientId(clientId) });
     },
 
+    async owner_command(p: McpToolParams = {}) {
+      if (!cx.ownerPullService) return { success: false, code: 'OWNER_LINK_UNAVAILABLE' };
+      const agentId = String(p.agentId || '');
+      if (!agentId) return { success: false, code: 'AGENT_ID_REQUIRED' };
+      if (p.action === 'fetch') return cx.ownerPullService.fetch(agentId);
+      if (!p.messageId || !p.claimId) return { success: false, code: 'OWNER_PULL_CLAIM_REQUIRED' };
+      if (p.action === 'complete') {
+        return cx.ownerPullService.complete(agentId, p.messageId, p.claimId, String(p.content || ''));
+      }
+      if (p.action === 'fail') {
+        return cx.ownerPullService.fail(agentId, p.messageId, p.claimId, String(p.reason || 'OWNER_PULL_EXECUTION_FAILED'));
+      }
+      return { success: false, code: 'OWNER_COMMAND_ACTION_INVALID' };
+    },
+
     /**
      * 取某 channel 全量消息（不分 is_me）的最大 message_seq，用于游标推进。
      * 与 onlyReplies 过滤解耦：即使本次只返回了回复（is_me!=1），游标也按全量 maxSeq 推进，
@@ -3082,8 +3189,13 @@ function createToolHandlers(cx: McpContext) {
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
       const result = ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason });
       if (!result.success) return result;
+      const statusRoute = resolveStatusNotificationRoute(p);
+      if (!statusRoute.route && statusRoute.resolution.status === 'selection_required') {
+        return { ...result, notificationStatus: 'skipped', notificationReason: 'conversation_required',
+          candidateConversationIds: statusRoute.resolution.candidateConversationIds };
+      }
       const notification = cx.sendSystemMessage
-        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000))
+        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000), statusRoute.route || undefined)
         : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
       return { ...result, ...notification };
     },
@@ -3098,8 +3210,13 @@ function createToolHandlers(cx: McpContext) {
         const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
         const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');
         if (!r.success || !__wasBlk) return r;
+        const statusRoute = resolveStatusNotificationRoute(p);
+        if (!statusRoute.route && statusRoute.resolution.status === 'selection_required') {
+          return { ...r, notificationStatus: 'skipped', notificationReason: 'conversation_required',
+            candidateConversationIds: statusRoute.resolution.candidateConversationIds };
+        }
         const notification = cx.sendSystemMessage
-          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000))
+          ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'restriction_lifted', {}, Math.floor(Date.now() / 1000), statusRoute.route || undefined)
           : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
         return { ...r, ...notification };
       }
@@ -3470,32 +3587,31 @@ function createToolHandlers(cx: McpContext) {
     },
     runLoopbackTest: async (request: DynamicRow) => {
       const agentId = String(request.agentId || '');
-      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
-      if (!agentId || candidates.length === 0) {
+      const providerId = String(request.providerId || '');
+      const mode = String(request.mode || '');
+      const definition = getProviderTransport(providerId);
+      const provider = (global as any).__dispatcher?.resolveProviderTransport?.(agentId, providerId, mode) || null;
+      if (!agentId || !providerId || !mode || !definition?.supportsLoopback || !provider) {
         return { success: false, detail: 'No safe loopback adapter is available' };
       }
-      for (const provider of candidates) {
-        if (!provider?.runLoopbackTest) continue;
-        const result = await provider.runLoopbackTest(agentId, request);
-        if (result?.code === 'LOOPBACK_UNSUPPORTED') continue;
-        return {
-          success: result?.ok === true,
-          challengeMatched: result?.challengeMatched === true,
-          detail: result?.detail || null,
-        };
-      }
-      return { success: false, detail: 'No safe loopback adapter is available' };
+      const result = await provider.runLoopbackTest(agentId, request);
+      return {
+        success: result?.ok === true,
+        challengeMatched: result?.challengeMatched === true,
+        detail: result?.detail || null,
+        providerId,
+        mode,
+        loopbackSessionId: result?.loopbackSessionId || null,
+      };
     },
     cleanupLoopbackSession: async (request: DynamicRow) => {
       const agentId = String(request.agentId || '');
-      const candidates = (global as any).__dispatcher?.resolveProviders?.(agentId) || [];
-      let cleaned = false;
-      for (const provider of candidates) {
-        if (!provider?.cleanupLoopbackSession) continue;
-        const result = await provider.cleanupLoopbackSession(agentId);
-        cleaned = cleaned || result?.cleaned === true;
-      }
-      return { success: true, cleaned };
+      const providerId = String(request.providerId || '');
+      const mode = String(request.mode || '');
+      const provider = (global as any).__dispatcher?.resolveProviderTransport?.(agentId, providerId, mode) || null;
+      if (!provider?.cleanupLoopbackSession) return { success: false, cleaned: false };
+      const result = await provider.cleanupLoopbackSession(agentId, String(request.loopbackSessionId || '') || undefined);
+      return { success: result?.ok !== false, cleaned: result?.cleaned === true };
     },
   });
   handlers.manage_agent_registration = async (params: McpToolParams = {}) =>

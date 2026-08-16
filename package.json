@@ -80,6 +80,7 @@
     "test:ci:repeat": "node scripts/repeat-test.js",
     "test:real:smoke": "npm run build:ts && node scripts/real-test.js smoke",
     "test:real:recovery": "npm run build:ts && node scripts/real-test.js recovery",
+    "test:real:providers": "npm run build:ts && node scripts/real-test.js providers",
     "test:real:stability": "npm run build:ts && node scripts/real-test.js stability",
     "test:real:all": "npm run build:ts && node scripts/real-test.js all",
     "test:targeted": "npm run build:ts && node scripts/run-targeted-tests.js && node test/group-mcp-tools.test.js",

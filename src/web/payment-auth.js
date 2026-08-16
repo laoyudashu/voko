@@ -13,6 +13,7 @@ const { Router } = require('express');
 const { SUPPORTED_LOCALES, getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter } = require('./language-switcher');
 const { renderSystemFooter } = require('./footer');
+const { UI_CONTROL_CSS, copyControlScript } = require('./ui-controls');
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
@@ -30,7 +31,7 @@ function page(title,body,opt={},tFn,locale){
   const t=tFn||(k=>k);
   const loc=locale||'zh';
   const nav=opt.nav||('<a href="/">'+esc(t('common.nav.home'))+'</a>');
-  const i18nBoot='<script>window.__LOCALE__='+JSON.stringify(loc)+';window.__I18N__='+JSON.stringify(getClientBundle(loc))+'</script>';
+  const i18nBoot='<style>'+UI_CONTROL_CSS+'</style><script>window.__LOCALE__='+JSON.stringify(loc)+';window.__I18N__='+JSON.stringify(getClientBundle(loc))+'</script>';
   const jd=opt.jsonld?'\n<script type="application/ld+json">'+JSON.stringify(opt.jsonld)+'</script>':'';
   const msg=opt.msg?'<div role="alert" style="padding:8px 14px;border-radius:6px;background:'+(opt.msg.success?'#e6f4ea':'#fce8e6')+';margin-bottom:10px;font-weight:600">'+(opt.msg.success?'✅ ':'❌ ')+esc(opt.msg.text)+'</div>':'';
   const st=opt.subtitle?' <span class="meta" style="font-size:14px;font-weight:400">('+esc(opt.subtitle)+')</span>':'';
@@ -38,6 +39,7 @@ function page(title,body,opt={},tFn,locale){
   const h1=ha?'<h1 style="display:flex;justify-content:space-between;align-items:center"><span>'+esc(title)+st+'</span>'+ha+'</h1>':'<h1>'+esc(title)+st+'</h1>';
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
+  footer+=copyControlScript();
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
   return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+'\n</body>\n</html>'
 }

@@ -28,14 +28,12 @@ const { settleOwnerForward } = require('../core/owner-intervention-forward');
 
 class OwnerInterventionNotifier {
   [key: string]: any;
-  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, getOpenclawHandler, getHermesHandler, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention, autoApproveWhitelistIfFriendRequest }: any) {
+  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention, autoApproveWhitelistIfFriendRequest }: any) {
     this.databaseAPI = databaseAPI;
     this.registry = registry;
     this.db = db;
     this.getEnabledChannel = getEnabledChannel;
     this.agentEmailApi = agentEmailApi;
-    this.getOpenclawHandler = getOpenclawHandler || (() => null);
-    this.getHermesHandler = getHermesHandler || (() => null);
     this.buildOwnerReplyPrompt = buildOwnerReplyPrompt || (() => '');
     this.sendSystemMessage = sendSystemMessage || (() => {});
     this.resumeOwnerIntervention = resumeOwnerIntervention || null;
@@ -431,6 +429,7 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
               targetChannelId: row.target_channel_id || row.visitor_id,
               targetChannelType: row.target_channel_type || 1,
               sourceMessageId: row.source_message_id || null,
+              routingConversationId: row.routing_conversation_id || null,
             };
             if (this.resumeOwnerIntervention) {
               try {
@@ -441,31 +440,7 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
                 console.error('[OwnerInterventionNotifier] resume owner intervention failed:', err.message);
               }
             } else {
-            const backendRow = this.db.prepare('SELECT backend_type FROM agents WHERE agent_id = ?').get(row.agent_id);
-            const agentBackend = backendRow?.backend_type;
-
-            if (agentBackend === 'hermes') {
-              const hermesHandler = this.getHermesHandler();
-              const hermesSessionKey = 'hermes:' + row.agent_id + ':' + row.visitor_id;
-              if (hermesHandler?.connected) {
-                await hermesHandler.steer(hermesSessionKey, forwardMsg).then((result: unknown) => {
-                  settle(result);
-                }).catch((err?: any) => {
-                  settle(err);
-                  console.error('[OwnerInterventionNotifier] 邮件回复转发 Hermes 失败:', err.message);
-                });
-              }
-            } else {
-              const openclawHandler = this.getOpenclawHandler();
-              if (openclawHandler?.connected) {
-                await openclawHandler.sendToSession(row.session_key, forwardMsg).then((result: unknown) => {
-                  settle(result);
-                }).catch((err?: any) => {
-                  settle(err);
-                  console.error('[OwnerInterventionNotifier] 邮件回复转发 OpenClaw 失败:', err.message);
-                });
-              }
-            }
+              settle({ success: false, deliveryOutcome: 'not_delivered', error: 'exact resume handler unavailable' });
             }
           }
 
