@@ -109,6 +109,7 @@
   "web.a2a_principal.counterparty": "Counterparty",
   "web.a2a_principal.task_tab": "Task {index}",
   "web.a2a_principal.context_tab": "Conversation {index}",
+  "web.a2a_principal.context_id": "Context ID",
   "web.a2a_task.artifact": "Artifact",
   "web.a2a_principal.not_found": "Caller or task not found, or access denied",
   "web.agent.a2a.state.submitted": "Submitted",

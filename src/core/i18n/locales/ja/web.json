@@ -107,6 +107,7 @@
   "web.a2a_principal.counterparty": "相手",
   "web.a2a_principal.task_tab": "タスク {index}",
   "web.a2a_principal.context_tab": "会話 {index}",
+  "web.a2a_principal.context_id": "コンテキストID",
   "web.a2a_task.artifact": "成果物",
   "web.a2a_principal.not_found": "呼び出し元またはタスクが見つからないか、アクセス権がありません",
   "web.agent.a2a.state.submitted": "送信済み",

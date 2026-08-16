@@ -32,6 +32,10 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /CONVERSATION_TAB_CSS/);
   assert.match(source, /renderA2ATaskConversation\(task,principalDisplayId,T\)/);
   assert.match(source, /web\.a2a_principal\.context_tab/);
+  assert.match(source, /a2a-task-card/);
+  assert.match(source, /showTaskMeta:true/);
+  assert.match(source, /a2a-task-card-message-count/);
+  assert.match(source, /web\.a2a_task\.message_count/);
   assert.match(source, /api\/a2a\/agents\/:agentId\/principals\/:principalViewId\/contexts\/:contextId/);
   assert.match(source, /web\.a2a_task\.no_content/);
   assert.match(source, /web\.a2a_task\.no_reply/);
