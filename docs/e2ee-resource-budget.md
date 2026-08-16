@@ -48,3 +48,5 @@ The isolated Fake IM test initially took 29.29 seconds because it incorrectly ra
 The Fake IM test covers WebSocket `1006`, authentication rejection, lost SENDACK, duplicate ciphertext delivery, reversed delivery order and authenticated route tampering. It asserts ciphertext-only relay storage, exactly-once Provider delivery and zero plaintext fallback. It is still an isolated protocol environment rather than a production WuKongIM integration.
 
 The system credential store is accessed only when provisioning, unlocking, revoking or advancing a rollback anchor. It is not consulted for each encrypted message. The unlocked 32-byte master key remains in zeroizing process memory and the bounded state cache controls decrypted MLS state residency.
+
+The Chromium IndexedDB gate now uses actual serialized WASM/OpenMLS state rather than placeholder bytes. State encryption, atomic state/outbox commit, page reload recovery, sequence continuation and transaction abort rollback all pass in one browser test. IndexedDB size, 1,000-10,000 conversation scale and low-memory mobile measurements remain open performance gates.

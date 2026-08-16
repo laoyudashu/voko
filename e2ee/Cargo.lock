@@ -2621,6 +2621,9 @@ dependencies = [
 name = "voko-e2ee-wasm"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
  "voko-e2ee-core",
  "wasm-bindgen",
  "wasm-bindgen-test",

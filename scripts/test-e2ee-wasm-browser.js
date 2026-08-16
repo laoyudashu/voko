@@ -20,7 +20,7 @@ const server = http.createServer((request, response) => {
     response.end(readFileSync(pageFile));
     return;
   }
-  if (pathname === '/single-writer.html' || pathname === '/single-writer.js') {
+  if (['/single-writer.html', '/single-writer.js', '/indexeddb.html', '/indexeddb.js'].includes(pathname)) {
     const fixture = normalize(join(fixtureRoot, pathname.slice(1)));
     if (!fixture.startsWith(fixtureRoot)) {
       response.writeHead(403).end();
@@ -82,8 +82,23 @@ const server = http.createServer((request, response) => {
       throw new Error('group writer lock was not recoverable after the leader closed');
     }
     await lockContext.close();
+
+    const persistenceContext = await browser.newContext();
+    const persistence = await persistenceContext.newPage();
+    await persistence.goto(`http://127.0.0.1:${address.port}/indexeddb.html`);
+    await persistence.waitForFunction(() => document.body.dataset.status !== 'loading');
+    if (await persistence.getAttribute('body', 'data-status') !== 'prepared') {
+      throw new Error('browser did not atomically prepare WASM state and outbox');
+    }
+    await persistence.reload();
+    await persistence.waitForFunction(() => document.body.dataset.status !== 'loading');
+    if (await persistence.getAttribute('body', 'data-status') !== 'restored') {
+      throw new Error('browser did not restore the encrypted WASM state and fixed ciphertext');
+    }
+    await persistenceContext.close();
     console.log('E2EE browser WASM round trip passed.');
     console.log('E2EE browser single-writer lock passed.');
+    console.log('E2EE browser IndexedDB atomic recovery passed.');
   } finally {
     await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));
