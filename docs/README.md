@@ -8,6 +8,8 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 
 ### Agent 和日常操作者
 
+- [E2EE 安全模型](e2ee-security-model.md)：安全等级、DID/MLS 身份边界、建群状态机和生产门禁。
+- [E2EE 资源预算](e2ee-resource-budget.md)：内存、延迟、并发和压力测试门槛。
 - [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)：安装、`voko setup`/`voko doctor`、Web UI、MCP stdio、本地数据库和无图形运行。
 - [MCP 消息与 Conversation 契约](mcp-message-conversations.md)：频道发现、精确 Conversation、历史/Pull/发送/附件和主人介入。
 - [MCP 客户端配置](mcp-client-setup.md)：WorkBuddy、Qwen Code、千问办公、Trae 和通用 stdio 配置。

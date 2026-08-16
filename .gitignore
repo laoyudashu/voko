@@ -52,6 +52,7 @@ id_ed25519
 events.jsonl
 *.pid
 *.lock
+!e2ee/Cargo.lock
 staged-update/
 provider-sessions/
 
@@ -77,6 +78,7 @@ config/channel_config - *.json
 scancode-results/
 audit-results/
 native/
+e2ee/target/
 
 # Local security scan output.
 .codeql-db/

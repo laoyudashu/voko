@@ -70,6 +70,20 @@ jobs:
             test-results/
           if-no-files-found: ignore
 
+  e2ee-poc:
+    name: E2EE PoC (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --no-self-update
+      - name: Test isolated E2EE core
+        run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -102,7 +116,7 @@ jobs:
 
   ci-gate:
     if: always()
-    needs: [test, web-e2e, security, dependency-review]
+    needs: [test, web-e2e, e2ee-poc, security, dependency-review]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required CI jobs
@@ -111,6 +125,7 @@ jobs:
           const required = {
             test: process.env.TEST_RESULT,
             webE2e: process.env.WEB_E2E_RESULT,
+            e2eePoc: process.env.E2EE_POC_RESULT,
             security: process.env.SECURITY_RESULT,
           };
           const dependencyReview = process.env.DEPENDENCY_REVIEW_RESULT;
@@ -127,5 +142,6 @@ jobs:
         env:
           TEST_RESULT: ${{ needs.test.result }}
           WEB_E2E_RESULT: ${{ needs.web-e2e.result }}
+          E2EE_POC_RESULT: ${{ needs.e2ee-poc.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}

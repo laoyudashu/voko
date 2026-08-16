@@ -1,0 +1,24 @@
+[package]
+name = "voko-e2ee-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+openmls = { version = "=0.8.1", default-features = false, features = ["openmls_rust_crypto"] }
+openmls_basic_credential = { version = "=0.5.0", features = ["clonable"] }
+openmls_rust_crypto = "=0.5.1"
+openmls_traits = "=0.5.0"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+tls_codec = "0.4.2"
+zeroize = { version = "1.8.1", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.7.0"
+
+[[bench]]
+name = "direct_message"
+harness = false

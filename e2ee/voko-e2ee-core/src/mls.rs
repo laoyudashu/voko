@@ -1,0 +1,335 @@
+use openmls::prelude::{
+    BasicCredential, Ciphersuite, CredentialWithKey, Extensions, GroupId, KeyPackage,
+    KeyPackageBundle, MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, MlsMessageBodyIn,
+    MlsMessageIn, ProcessedMessageContent, ProtocolMessage, StagedWelcome,
+};
+use openmls_basic_credential::SignatureKeyPair;
+use openmls_rust_crypto::OpenMlsRustCrypto;
+use openmls_traits::{signatures::Signer, types::SignatureScheme, OpenMlsProvider};
+use thiserror::Error;
+use tls_codec::{Deserialize, Serialize};
+
+use crate::{CanonicalAad, EstablishmentEvent, EstablishmentState, KeyPackageLedger};
+
+const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+
+pub struct DirectGroup {
+    provider: OpenMlsRustCrypto,
+    signer: SignatureKeyPair,
+    group: MlsGroup,
+}
+
+pub struct DirectGroupPair {
+    pub creator: DirectGroup,
+    pub recipient: DirectGroup,
+    pub state: EstablishmentState,
+    pub key_package_reference: [u8; 32],
+}
+
+#[derive(Debug, Error)]
+pub enum DirectGroupError {
+    #[error("MLS operation failed: {0}")]
+    Mls(String),
+    #[error("expected an MLS application message")]
+    NotApplicationMessage,
+}
+
+fn credential(
+    identity: &[u8],
+    provider: &OpenMlsRustCrypto,
+) -> Result<(CredentialWithKey, SignatureKeyPair), DirectGroupError> {
+    let basic = BasicCredential::new(identity.to_vec());
+    let signer = SignatureKeyPair::new(SignatureScheme::ED25519)
+        .map_err(|e| DirectGroupError::Mls(format!("signature key generation: {e:?}")))?;
+    signer
+        .store(provider.storage())
+        .map_err(|e| DirectGroupError::Mls(format!("signature key persistence: {e:?}")))?;
+    Ok((
+        CredentialWithKey {
+            credential: basic.into(),
+            signature_key: signer.to_public_vec().into(),
+        },
+        signer,
+    ))
+}
+
+fn key_package(
+    provider: &OpenMlsRustCrypto,
+    signer: &impl Signer,
+    credential: CredentialWithKey,
+) -> Result<KeyPackageBundle, DirectGroupError> {
+    KeyPackage::builder()
+        .key_package_extensions(Extensions::default())
+        .build(CIPHERSUITE, provider, signer, credential)
+        .map_err(|e| DirectGroupError::Mls(format!("key package creation: {e:?}")))
+}
+
+impl DirectGroupPair {
+    pub fn establish(
+        group_id: &[u8],
+        creator_identity: &[u8],
+        recipient_identity: &[u8],
+        ledger: &mut KeyPackageLedger,
+    ) -> Result<Self, DirectGroupError> {
+        let creator_provider = OpenMlsRustCrypto::default();
+        let recipient_provider = OpenMlsRustCrypto::default();
+        let (creator_credential, creator_signer) = credential(creator_identity, &creator_provider)?;
+        let (recipient_credential, recipient_signer) =
+            credential(recipient_identity, &recipient_provider)?;
+        let recipient_key_package =
+            key_package(&recipient_provider, &recipient_signer, recipient_credential)?;
+
+        let serialized_key_package = recipient_key_package
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|e| DirectGroupError::Mls(format!("key package serialization: {e:?}")))?;
+        let key_package_reference = ledger
+            .consume(&serialized_key_package, group_id)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+
+        let mut state = EstablishmentState::CreatedLocal;
+        state = state
+            .apply(EstablishmentEvent::ReserveKeyPackage)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+
+        let config = MlsGroupCreateConfig::builder()
+            .ciphersuite(CIPHERSUITE)
+            .use_ratchet_tree_extension(true)
+            .build();
+        let mut creator_group = MlsGroup::new_with_group_id(
+            &creator_provider,
+            &creator_signer,
+            &config,
+            GroupId::from_slice(group_id),
+            creator_credential,
+        )
+        .map_err(|e| DirectGroupError::Mls(format!("group creation: {e:?}")))?;
+
+        let (_commit, welcome, _group_info) = creator_group
+            .add_members(
+                &creator_provider,
+                &creator_signer,
+                core::slice::from_ref(recipient_key_package.key_package()),
+            )
+            .map_err(|e| DirectGroupError::Mls(format!("add member: {e:?}")))?;
+        state = state
+            .apply(EstablishmentEvent::CreateAddCommit)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+
+        // The delivery service acceptance is an application-level gate. Only
+        // after it succeeds do we merge the pending creator commit.
+        state = state
+            .apply(EstablishmentEvent::AcceptCommit)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        creator_group
+            .merge_pending_commit(&creator_provider)
+            .map_err(|e| DirectGroupError::Mls(format!("merge creator commit: {e:?}")))?;
+
+        let welcome_bytes = welcome
+            .tls_serialize_detached()
+            .map_err(|e| DirectGroupError::Mls(format!("serialize Welcome: {e:?}")))?;
+        let welcome = match MlsMessageIn::tls_deserialize_exact(&welcome_bytes)
+            .map_err(|e| DirectGroupError::Mls(format!("parse Welcome: {e:?}")))?
+            .extract()
+        {
+            MlsMessageBodyIn::Welcome(welcome) => welcome,
+            _ => return Err(DirectGroupError::Mls("expected Welcome".into())),
+        };
+        state = state
+            .apply(EstablishmentEvent::PersistWelcome)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        let join_config = MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .build();
+        let staged =
+            StagedWelcome::new_from_welcome(&recipient_provider, &join_config, welcome, None)
+                .map_err(|e| DirectGroupError::Mls(format!("stage Welcome: {e:?}")))?;
+        let recipient_group = staged
+            .into_group(&recipient_provider)
+            .map_err(|e| DirectGroupError::Mls(format!("join recipient: {e:?}")))?;
+        state = state
+            .apply(EstablishmentEvent::JoinRecipient)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+
+        // In production this transition is driven by an encrypted and signed
+        // acknowledgement from the recipient.
+        state = state
+            .apply(EstablishmentEvent::AcknowledgeEstablished)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        state = state
+            .apply(EstablishmentEvent::Activate)
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+
+        Ok(Self {
+            creator: DirectGroup {
+                provider: creator_provider,
+                signer: creator_signer,
+                group: creator_group,
+            },
+            recipient: DirectGroup {
+                provider: recipient_provider,
+                signer: recipient_signer,
+                group: recipient_group,
+            },
+            state,
+            key_package_reference,
+        })
+    }
+}
+
+impl DirectGroup {
+    pub fn encrypt(
+        &mut self,
+        aad: &CanonicalAad,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, DirectGroupError> {
+        self.group.set_aad(
+            aad.encode()
+                .map_err(|e| DirectGroupError::Mls(e.to_string()))?,
+        );
+        self.group
+            .create_message(&self.provider, &self.signer, plaintext)
+            .map_err(|e| DirectGroupError::Mls(format!("encrypt message: {e:?}")))?
+            .tls_serialize_detached()
+            .map_err(|e| DirectGroupError::Mls(format!("serialize message: {e:?}")))
+    }
+
+    pub fn decrypt(
+        &mut self,
+        expected_aad: &CanonicalAad,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, DirectGroupError> {
+        let input = MlsMessageIn::tls_deserialize_exact(ciphertext)
+            .map_err(|e| DirectGroupError::Mls(format!("parse message: {e:?}")))?;
+        let protocol: ProtocolMessage = input
+            .try_into_protocol_message()
+            .map_err(|e| DirectGroupError::Mls(format!("expected protocol message: {e:?}")))?;
+        let processed = self
+            .group
+            .process_message(&self.provider, protocol)
+            .map_err(|e| DirectGroupError::Mls(format!("decrypt message: {e:?}")))?;
+        let expected = expected_aad
+            .encode()
+            .map_err(|e| DirectGroupError::Mls(e.to_string()))?;
+        if processed.aad() != expected {
+            return Err(DirectGroupError::Mls(
+                "authenticated routing mismatch".into(),
+            ));
+        }
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(message) => Ok(message.into_bytes()),
+            _ => Err(DirectGroupError::NotApplicationMessage),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
+
+    fn aad(group: &[u8], agent: &[u8], message: &[u8], sender: &[u8]) -> CanonicalAad {
+        CanonicalAad {
+            protocol_version: E2EE_PROTOCOL_VERSION,
+            content_type: E2EE_CONTENT_TYPE,
+            group_id: group.to_vec(),
+            epoch: 1,
+            target_agent_did: agent.to_vec(),
+            conversation_scope: b"conversation-1".to_vec(),
+            sender_device_key_id: sender.to_vec(),
+            message_id: message.to_vec(),
+            channel_type: 1,
+        }
+    }
+
+    #[test]
+    fn establishes_and_exchanges_bidirectional_text() {
+        let mut ledger = KeyPackageLedger::default();
+        let mut pair = DirectGroupPair::establish(
+            b"group-1",
+            b"browser-device-1",
+            b"owner-device-1",
+            &mut ledger,
+        )
+        .unwrap();
+        assert_eq!(pair.state, EstablishmentState::Active);
+
+        let first_aad = aad(
+            b"group-1",
+            b"did:voko:agent-1",
+            b"message-1",
+            b"browser-key-1",
+        );
+        let ciphertext = pair.creator.encrypt(&first_aad, b"hello agent").unwrap();
+        assert!(!ciphertext
+            .windows(b"hello agent".len())
+            .any(|w| w == b"hello agent"));
+        assert_eq!(
+            pair.recipient.decrypt(&first_aad, &ciphertext).unwrap(),
+            b"hello agent"
+        );
+
+        let reply_aad = aad(
+            b"group-1",
+            b"did:voko:agent-1",
+            b"message-2",
+            b"owner-key-1",
+        );
+        let reply = pair
+            .recipient
+            .encrypt(&reply_aad, b"hello visitor")
+            .unwrap();
+        assert_eq!(
+            pair.creator.decrypt(&reply_aad, &reply).unwrap(),
+            b"hello visitor"
+        );
+    }
+
+    #[test]
+    fn wrong_agent_binding_fails_closed() {
+        let mut pair = DirectGroupPair::establish(
+            b"group-2",
+            b"browser-device-2",
+            b"owner-device-2",
+            &mut KeyPackageLedger::default(),
+        )
+        .unwrap();
+        let correct = aad(
+            b"group-2",
+            b"did:voko:agent-a",
+            b"message-a",
+            b"browser-key-2",
+        );
+        let ciphertext = pair.creator.encrypt(&correct, b"secret").unwrap();
+        let wrong = aad(
+            b"group-2",
+            b"did:voko:agent-b",
+            b"message-a",
+            b"browser-key-2",
+        );
+        assert!(pair.recipient.decrypt(&wrong, &ciphertext).is_err());
+    }
+
+    #[test]
+    fn replayed_ciphertext_is_rejected() {
+        let mut pair = DirectGroupPair::establish(
+            b"group-3",
+            b"browser-device-3",
+            b"owner-device-3",
+            &mut KeyPackageLedger::default(),
+        )
+        .unwrap();
+        let route = aad(
+            b"group-3",
+            b"did:voko:agent-3",
+            b"message-3",
+            b"browser-key-3",
+        );
+        let ciphertext = pair.creator.encrypt(&route, b"once only").unwrap();
+        assert_eq!(
+            pair.recipient.decrypt(&route, &ciphertext).unwrap(),
+            b"once only"
+        );
+        assert!(pair.recipient.decrypt(&route, &ciphertext).is_err());
+    }
+}

@@ -24,4 +24,6 @@ Direct runtime dependencies in the `0.4.0` lock file:
 
 The complete dependency tree uses Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, and MIT-0 licenses. The release audit found no unknown, GPL-family, AGPL, SSPL, BUSL, or proprietary package license in the lock file.
 
+The isolated experimental E2EE PoC under `e2ee/` additionally uses OpenMLS 0.8.1 and its Rust dependency tree. Its authoritative dependency set is `e2ee/Cargo.lock`; OpenMLS is licensed under MIT. The PoC is not loaded by the production VOKO runtime.
+
 This file intentionally does not replace license texts distributed by dependencies. The release archive must retain all notices required by those licenses.

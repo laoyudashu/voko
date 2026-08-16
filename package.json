@@ -76,6 +76,8 @@
     "test:e2e": "npm run build:ts && playwright test",
     "test:smoke": "node scripts/run-smoke.js",
     "test:doctor": "npm run build:ts && node --test test/doctor.test.js",
+    "test:e2ee:poc": "node scripts/run-e2ee-poc.js test",
+    "test:e2ee:bench": "node scripts/run-e2ee-poc.js bench",
     "test:ci": "npm run typecheck && npm run build:ts && npm run i18n:check && npm run test:coverage:build && node scripts/check-core-coverage.js",
     "test:ci:repeat": "node scripts/repeat-test.js",
     "test:real:smoke": "npm run build:ts && node scripts/real-test.js smoke",
