@@ -10,13 +10,15 @@ const operation = requested === 'bench' ? 'bench' : requested === 'wasm' ? 'chec
 const executable = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 const localCargo = join(homedir(), '.cargo', 'bin', executable);
 const cargo = existsSync(localCargo) ? localCargo : executable;
-const args = [operation, '--manifest-path', join('e2ee', 'Cargo.toml')];
+const workspace = requested === 'wasm' ? join(__dirname, '..', 'e2ee') : join(__dirname, '..');
+const manifest = requested === 'wasm' ? 'Cargo.toml' : join('e2ee', 'Cargo.toml');
+const args = [operation, '--manifest-path', manifest];
 if (operation === 'bench') args.push('--bench', 'direct_message');
 if (requested === 'wasm') args.push('--target', 'wasm32-unknown-unknown');
 if (requested === 'stress') args.push('--release', '--test', 'stress', '--', '--ignored');
 
 const result = spawnSync(cargo, args, {
-  cwd: join(__dirname, '..'),
+  cwd: workspace,
   env: process.env,
   stdio: 'inherit',
   shell: false,

@@ -40,3 +40,5 @@ On 2026-08-16, OpenMLS 0.8.1 with Rust 1.97.1 under WSL2 x86_64 on an Intel Core
 The same source tree also passed a `wasm32-unknown-unknown` compile check with OpenMLS' `js` feature and the explicit JavaScript randomness backend. This establishes build feasibility only; browser execution, bundle size, IndexedDB atomicity and multi-tab single-writer behavior remain separate gates.
 
 The release stress executable completed 100,000 sequential MLS encrypt/decrypt deliveries in 6.62 seconds with a reported 4,576 KiB maximum RSS for the test process. Every message used a unique authenticated message ID and plaintext was compared after decryption. This is a single-group cryptographic throughput result, not a multi-group storage or full VOKO process memory result.
+
+The browser feasibility package produced a 1,464,933-byte uncompressed release WASM module and passed a real headless Chromium MLS round trip. A two-tab Web Locks test also confirmed that only one tab can hold the writer lease for a group and that a new tab can recover the lease after the leader releases it. Bundle compression, IndexedDB crash atomicity and mobile memory remain open production gates.

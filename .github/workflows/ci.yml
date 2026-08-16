@@ -87,7 +87,22 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           rustup target add wasm32-unknown-unknown --toolchain 1.97.1
-          cargo +1.97.1 check --locked --manifest-path e2ee/Cargo.toml --target wasm32-unknown-unknown
+          cargo +1.97.1 install wasm-bindgen-cli --version 0.2.127 --locked
+          cd e2ee
+          cargo +1.97.1 test --locked --target wasm32-unknown-unknown -p voko-e2ee-wasm
+          cargo +1.97.1 build --locked --release --target wasm32-unknown-unknown -p voko-e2ee-wasm
+          wasm-bindgen --target web --out-dir target/web-poc --out-name voko_e2ee_wasm target/wasm32-unknown-unknown/release/voko_e2ee_wasm.wasm
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          node-version: 22
+          cache: npm
+      - name: Run Chromium WASM PoC
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:e2ee:browser
 
   security:
     runs-on: ubuntu-latest

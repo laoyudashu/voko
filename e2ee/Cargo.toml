@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["voko-e2ee-core"]
+members = ["voko-e2ee-core", "voko-e2ee-wasm"]
 
 [workspace.package]
 edition = "2021"
