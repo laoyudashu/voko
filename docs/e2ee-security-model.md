@@ -13,6 +13,8 @@ Status: experimental. No production message path currently claims E2EE.
 
 The Web MVP may only claim `e2ee_tofu`. CSP and asset hashes reduce XSS and supply-chain risk, but cannot protect against a server that replaces both HTML and JavaScript. `e2ee_transparent` therefore requires an independently verifiable client.
 
+The browser PoC is served with `default-src 'none'`, same-origin-only scripts and connections, WebAssembly-only `wasm-unsafe-eval`, Trusted Types enforcement, no objects, no framing and no referrer. JavaScript `unsafe-eval` remains forbidden. It verifies the generated WASM SHA-256 digest before instantiation. The digest manifest is served by the same test origin, so this is an integrity and regression gate, not protection from an actively malicious origin.
+
 ## Trust and identity
 
 - DID keys authenticate identities and delegation. They are not message-encryption keys.

@@ -2,18 +2,5 @@
 <meta charset="utf-8">
 <title>VOKO E2EE browser PoC</title>
 <body data-status="loading">
-<script type="module">
-  import init, { WasmDirectPoc } from './voko_e2ee_wasm.js';
-  try {
-    await init();
-    const poc = new WasmDirectPoc('browser-poc-group', 'did:voko:browser-poc-agent');
-    const plaintext = 'browser MLS round trip';
-    const result = poc.round_trip(plaintext);
-    document.body.dataset.status = result === plaintext ? 'passed' : 'failed';
-    document.body.textContent = result;
-  } catch (error) {
-    document.body.dataset.status = 'error';
-    document.body.textContent = String(error && error.stack || error);
-  }
-</script>
+<script type="module" src="./main.js"></script>
 </body>

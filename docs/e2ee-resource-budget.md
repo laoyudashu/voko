@@ -50,3 +50,5 @@ The Fake IM test covers WebSocket `1006`, authentication rejection, lost SENDACK
 The system credential store is accessed only when provisioning, unlocking, revoking or advancing a rollback anchor. It is not consulted for each encrypted message. The unlocked 32-byte master key remains in zeroizing process memory and the bounded state cache controls decrypted MLS state residency.
 
 The Chromium IndexedDB gate now uses actual serialized WASM/OpenMLS state rather than placeholder bytes. State encryption, atomic state/outbox commit, page reload recovery, sequence continuation and transaction abort rollback all pass in one browser test. IndexedDB size, 1,000-10,000 conversation scale and low-memory mobile measurements remain open performance gates.
+
+All browser fixtures now run under strict CSP and Trusted Types enforcement. The generated WASM SHA-256 digest is checked before instantiation; this detects packaging corruption but does not expand the Web client's trust boundary beyond E2EE-TOFU.

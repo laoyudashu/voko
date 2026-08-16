@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('node:http');
+const { createHash } = require('node:crypto');
 const { readFileSync, statSync } = require('node:fs');
 const { extname, join, normalize, resolve } = require('node:path');
 const { chromium } = require('@playwright/test');
@@ -8,6 +9,19 @@ const { chromium } = require('@playwright/test');
 const root = resolve(__dirname, '..', 'e2ee', 'target', 'web-poc');
 const fixtureRoot = resolve(__dirname, '..', 'e2ee', 'browser-poc');
 const pageFile = join(fixtureRoot, 'index.html');
+const wasmFile = join(root, 'voko_e2ee_wasm_bg.wasm');
+const wasmSha256 = createHash('sha256').update(readFileSync(wasmFile)).digest('hex');
+const csp = [
+  "default-src 'none'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "require-trusted-types-for 'script'",
+  "trusted-types 'none'",
+].join('; ');
 
 for (const file of ['voko_e2ee_wasm.js', 'voko_e2ee_wasm_bg.wasm']) {
   statSync(join(root, file));
@@ -15,12 +29,20 @@ for (const file of ['voko_e2ee_wasm.js', 'voko_e2ee_wasm_bg.wasm']) {
 
 const server = http.createServer((request, response) => {
   const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+  response.setHeader('content-security-policy', csp);
+  response.setHeader('x-content-type-options', 'nosniff');
+  response.setHeader('referrer-policy', 'no-referrer');
+  if (pathname === '/asset-manifest.json') {
+    response.setHeader('content-type', 'application/json; charset=utf-8');
+    response.end(JSON.stringify({ version: 1, wasmSha256 }));
+    return;
+  }
   if (pathname === '/' || pathname === '/index.html') {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(readFileSync(pageFile));
     return;
   }
-  if (['/single-writer.html', '/single-writer.js', '/indexeddb.html', '/indexeddb.js'].includes(pathname)) {
+  if (['/main.js', '/single-writer.html', '/single-writer.js', '/indexeddb.html', '/indexeddb.js'].includes(pathname)) {
     const fixture = normalize(join(fixtureRoot, pathname.slice(1)));
     if (!fixture.startsWith(fixtureRoot)) {
       response.writeHead(403).end();
@@ -55,11 +77,19 @@ const server = http.createServer((request, response) => {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
+    const cspViolations = [];
+    await page.exposeFunction('recordCspViolation', (directive) => cspViolations.push(directive));
+    await page.addInitScript(() => {
+      document.addEventListener('securitypolicyviolation', (event) => {
+        window.recordCspViolation(event.effectiveDirective);
+      });
+    });
     await page.goto(`http://127.0.0.1:${address.port}/`);
     await page.waitForFunction(() => document.body.dataset.status !== 'loading');
     const status = await page.getAttribute('body', 'data-status');
     const text = await page.textContent('body');
     if (status !== 'passed') throw new Error(`browser PoC ${status}: ${text}`);
+    if (cspViolations.length > 0) throw new Error(`browser CSP violations: ${cspViolations.join(', ')}`);
 
     const lockContext = await browser.newContext();
     const first = await lockContext.newPage();
@@ -99,6 +129,7 @@ const server = http.createServer((request, response) => {
     console.log('E2EE browser WASM round trip passed.');
     console.log('E2EE browser single-writer lock passed.');
     console.log('E2EE browser IndexedDB atomic recovery passed.');
+    console.log('E2EE browser CSP and WASM digest gate passed.');
   } finally {
     await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));
