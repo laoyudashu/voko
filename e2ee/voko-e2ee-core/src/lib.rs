@@ -11,6 +11,8 @@ mod outbox;
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod state_cache;
+#[cfg(not(target_arch = "wasm32"))]
+mod system_key;
 mod vault;
 
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
@@ -26,4 +28,8 @@ pub use persistence::{
     StoredDelivery,
 };
 pub use state_cache::{BoundedSecretCache, CacheError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use system_key::{
+    RollbackAnchorManager, SystemWrappingKeyStore, VaultKeyError, VaultKeyManager, WrappingKeyStore,
+};
 pub use vault::{EncryptedVault, RecordVault, VaultError, VaultKdfParams};
