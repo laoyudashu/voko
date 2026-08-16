@@ -6,6 +6,8 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /renderA2APrincipalRows\(a2aPanelRows,agentId,T\)/);
   assert.match(source, /const showA2ATab=a2aReadAvailable&&a2aTotal>0/);
   assert.match(source, /showA2ATab\?tabBtn\('a2a'/);
+  assert.match(source, /const a2aPrincipalTotal=new Set\(/);
+  assert.match(source, /a2aLabel=L\('web\.agent\.tab\.a2a_tasks'\)\+\(a2aPrincipalTotal\?/);
   assert.match(source, /taskTableA2A\?renderA2ATaskRows/);
   assert.match(source, /buildA2APrincipalGroups\(a2aRows,T,a2aKeyword\)/);
   assert.match(source, /name="a2aKeyword"/);
@@ -32,6 +34,7 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /CONVERSATION_TAB_CSS/);
   assert.match(source, /renderA2ATaskConversation\(task,principalDisplayId,T\)/);
   assert.match(source, /web\.a2a_principal\.context_tab/);
+  assert.doesNotMatch(source, /context\.tasks\.length\)\+'\)<\/a>'/);
   assert.match(source, /a2a-task-card/);
   assert.match(source, /showTaskMeta:true/);
   assert.match(source, /a2a-task-card-message-count/);

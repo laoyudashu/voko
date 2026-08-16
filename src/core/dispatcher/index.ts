@@ -1156,8 +1156,10 @@ ${body}
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
           try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}
-          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
-          console.error(`[Dispatcher] push 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+          const action = outcome === 'not_delivered'
+            ? '当前通道未送达，正在按已配置路由评估备选通道'
+            : '投递结果不允许跨通道重试';
+          console.error(`[Dispatcher] agent=${agentId} provider=${candidate.providerId} ${action} outcome=${outcome}:`, errorMessage(error));
         },
       });
       if (result.outcome === 'delivered') return result;
@@ -1166,7 +1168,7 @@ ${body}
       }
       if (!isolated) _removeReplyContext(replyContext);
       if (result.outcome === 'not_delivered') {
-        if (isolated) console.log(`[Dispatcher] isolated delivery unavailable agent=${agentId} scope=${executionScope}; retained by source queue`);
+        if (isolated) console.log(`[Dispatcher] agent=${agentId} scope=${executionScope} 所有符合精确会话要求的通道均未送达；任务保留在来源队列等待恢复`);
         else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
       }
     } catch (err) {
@@ -1417,8 +1419,10 @@ ${body}
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
           _forgetRoute(agentId, 'steer', candidate.target);
-          const action = outcome === 'not_delivered' ? '尝试已启用备选' : '不跨通道重投';
-          console.error(`[Dispatcher] steer 结果=${outcome}，${action} agent=${agentId}:`, errorMessage(error));
+          const action = outcome === 'not_delivered'
+            ? '当前通道未送达，正在按已配置路由评估备选通道'
+            : '投递结果不允许跨通道重试';
+          console.error(`[Dispatcher] agent=${agentId} provider=${candidate.providerId} steer ${action} outcome=${outcome}:`, errorMessage(error));
         },
       });
       if (delivery.outcome === 'delivered') {

@@ -28,7 +28,7 @@ function errorMessage(error: unknown): string {
 }
 
 function conversationScope(payload: PushPayload): { channelId: string; channelType: number; key: string; logicalName: string } {
-  const channelId = String(payload.providerBinding?.channelId || payload.channelId || payload.fromUid.replace(/^group:/, ''));
+  const channelId = String((payload as any).sessionScopeId || payload.providerBinding?.channelId || payload.channelId || payload.fromUid.replace(/^group:/, ''));
   const channelType = Number(payload.providerBinding?.channelType ?? (payload.channelType === 2 ? 2 : 1));
   const digest = crypto.createHash('sha256')
     .update(JSON.stringify([payload.agentId, channelType, channelId]))

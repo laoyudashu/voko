@@ -17,7 +17,10 @@ class A2AEventOutboxWorker {
       try {
         await this.client.sendEvent(JSON.parse(String(event.envelope_json)));
         this.store.finishOutboxEvent(String(event.event_id), 'acked'); sent += 1;
-        if (['completed', 'failed', 'rejected'].includes(String(event.operation))) console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] 回复了 A2A 消息`);
+        if (['completed', 'failed', 'rejected'].includes(String(event.operation))) {
+          const route = this.store.getTaskLogRoute(String(event.gateway_task_id));
+          console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] ${route?.agentId || 'Agent'} → ${route?.peerLabel || 'A2A 调用方'}（回复消息）`);
+        }
       } catch (error) {
         const status = Number((error as any)?.status || 0);
         const code = String((error as any)?.code || '');

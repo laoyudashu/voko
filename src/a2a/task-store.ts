@@ -11,6 +11,12 @@ interface CreateLocalTaskInput { gatewayTaskId: string; contextId: string; execu
 
 class A2ALocalTaskStore {
   constructor(private readonly db: DatabaseSync) {}
+  getTaskLogRoute(taskId: string): { agentId: string; peerLabel: string } | null {
+    const row = this.db.prepare('SELECT agent_id,principal_scope FROM a2a_local_tasks WHERE gateway_task_id=?')
+      .get(taskId) as { agent_id?: string; principal_scope?: string } | undefined;
+    if (!row?.agent_id || !row.principal_scope) return null;
+    return { agentId: row.agent_id, peerLabel: `A2A-${row.principal_scope.slice(0, 8)}` };
+  }
   createTask(input: CreateLocalTaskInput): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_tasks

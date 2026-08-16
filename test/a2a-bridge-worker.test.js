@@ -41,6 +41,6 @@ test('A2A receive log is a single message-level summary', async t => {
   console.log = (...args) => logs.push(args.join(' '));
   try { await f.worker.pollOnce(); } finally { console.log = original; }
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] /);
+  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] A2A-[A-Za-z0-9_-]{8} → agent-1（收到消息）$/);
   assert.doesNotMatch(logs.join('\n'), /payload|content|secret/i);
 });

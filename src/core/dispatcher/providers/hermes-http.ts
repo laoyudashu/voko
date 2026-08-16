@@ -739,6 +739,24 @@ class HermesHttpProvider extends PushProvider {
     return this.isProfileReady(agentId);
   }
 
+  acceptsBinding(binding: PushPayload['providerBinding'], agentId: string): boolean {
+    const profileId = this._profileForAgent(agentId);
+    return !!profileId
+      && binding?.providerType === 'hermes'
+      && binding.providerInstanceId === profileId
+      && binding.adapterType === 'hermes-http'
+      && binding.deliveryMode === 'http'
+      && new RegExp(`^hermes:${agentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`).test(binding.nativeSessionId);
+  }
+
+  /** Pure capability check: no gateway start, model call or session creation. */
+  async canRestoreExactSession(binding: PushPayload['providerBinding'], agentId: string): Promise<boolean> {
+    return this.isAvailable(agentId)
+      && binding?.nativeSessionNamespace === 'hermes-http'
+      && binding.restoreCompatibilityGroup === 'hermes-http'
+      && this.acceptsBinding(binding, agentId);
+  }
+
   /** 建立连接：启用 HermesApiClient（gateway 按需在 sendToSession/steer 内 spawn）。 */
   async start() {
     this.setEnabled(true);
@@ -759,12 +777,11 @@ class HermesHttpProvider extends PushProvider {
   async push(payload: PushPayload): Promise<unknown> {
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
     const profileId = this._profileForAgent(agentId);
-    const canResumeBinding = payload.providerBinding?.providerType === 'hermes'
-      && payload.providerBinding.providerInstanceId === profileId
-      && /^hermes:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
+    const canResumeBinding = this.acceptsBinding(payload.providerBinding, agentId);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : `hermes:${agentId}:${fromUid}`;
+      : `hermes:${agentId}:${sessionIdentity}`;
     const bindingChannelId = payload.providerBinding?.channelId || channelId || fromUid.replace(/^group:/, '');
     const bindingChannelType = payload.providerBinding?.channelType || (channelType === 2 ? 2 : 1);
     if (!canResumeBinding && profileId && this._bindingStore) {

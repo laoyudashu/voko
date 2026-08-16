@@ -330,6 +330,28 @@ test('Hermes HTTP does not reuse a binding from a different profile', async () =
   await provider.destroy();
 });
 
+test('Hermes HTTP exact A2A routing requires the scoped namespace and preserves sessionScopeId', async () => {
+  const provider = new HermesHttpProvider({
+    prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }),
+  }, null, { profiles: { 'profile-a': { port: 8642, apiKey: 'key' } } });
+  provider.connectedAgents = new Set(['profile-a']);
+  provider._authStates.set('profile-a', true);
+  let sessionKey = '';
+  provider.sendToSession = async (key) => { sessionKey = key; };
+  const binding = {
+    id: 'a2a-binding', bindingVersion: 2, providerType: 'hermes', providerInstanceId: 'profile-a',
+    deliveryMode: 'http', adapterType: 'hermes-http', nativeSessionId: 'hermes:agent-a:scope-a',
+    sessionOrigin: 'voko_managed', channelId: 'scope-a', channelType: 1, strictSessionRoute: true,
+    nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http',
+  };
+  assert.equal(await provider.canRestoreExactSession(binding, 'agent-a'), true);
+  assert.equal(await provider.canRestoreExactSession({ ...binding, nativeSessionNamespace: 'hermes-cli' }, 'agent-a'), false);
+  await provider.push({ agentId: 'agent-a', fromUid: 'a2a:same-context', sessionScopeId: 'scope-b',
+    content: 'hello', messageId: 'message-a' });
+  assert.equal(sessionKey, 'hermes:agent-a:scope-b');
+  await provider.destroy();
+});
+
 test('Hermes HTTP does not retry an uncertain failure after a refreshed key', async () => {
   const provider = new HermesHttpProvider({
     prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }) }),

@@ -36,6 +36,19 @@ test('loopback capability is explicit and special transports stay preflight-only
   }
 });
 
+test('A2A exact-session capability is explicit for special transports', () => {
+  assert.deepEqual(getProviderTransport('hermes-http').exactSession, {
+    nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http',
+  });
+  for (const id of ['hermes-cli', 'cline-cli', 'github-copilot-cli', 'gemini-cli']) {
+    assert.equal(getProviderTransport(id).exactSession, undefined,
+      `${id} must not impersonate native exact-session recovery`);
+  }
+  assert.ok(getProviderTransport('openclaw-ws').exactSession);
+  assert.equal(getProviderTransport('opencode-attach').exactSession, undefined);
+  assert.equal(getProviderTransport('zeroclaw-ws').exactSession, undefined);
+});
+
 test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
   const calls = [];
   const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];

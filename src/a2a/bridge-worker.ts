@@ -39,7 +39,10 @@ class A2ABridgeWorker {
         policyRevision: Number((envelope as any).policyRevision || 1) });
       const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId,
         Number(envelope.commandSequence), envelope.operation, envelope);
-      if (accepted !== 'duplicate') console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] 收到 A2A 消息`);
+      if (accepted !== 'duplicate') {
+        const peerLabel = `A2A-${principalScope.slice(0, 8)}`;
+        console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] ${peerLabel} → ${envelope.agentId}（收到消息）`);
+      }
       await this.options.client.acknowledge(claim.leaseId, item.eventId);
       this.options.store.markReceiptAcknowledged(envelope.eventId);
       const status = this.options.store.commandStatus(envelope.eventId);

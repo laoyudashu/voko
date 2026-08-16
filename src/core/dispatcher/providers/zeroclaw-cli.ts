@@ -33,7 +33,7 @@ class ZeroClawCliProvider extends CliAdapter {
       const alias = instanceAlias(payload.agentId);
       if (!alias) throw new Error('ZeroClaw CLI requires a persisted agent alias');
       fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-      const channelId = payload.channelId || String(payload.fromUid || '').replace(/^group:/, '');
+      const channelId = String((payload as any).sessionScopeId || payload.channelId || String(payload.fromUid || '').replace(/^group:/, ''));
       const channelType = payload.channelType === 2 ? 2 : 1;
       const digest = crypto.createHash('sha256')
         .update(`${alias}\0${payload.agentId}\0${channelType}\0${channelId}`)

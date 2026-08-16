@@ -139,8 +139,8 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
     { ...cli('openclaw-cli', './providers/openclaw-cli'), supportsLoopback: false },
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
-    transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { asyncReply: true, sessionResume: true }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
-    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true },
+    transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { asyncReply: true, sessionResume: true }, exactSession: { nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http' }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
+    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true, exactSession: undefined },
   ] },
   { type: 'zeroclaw', aliases: [], label: 'ZeroClaw', requiresInstance: true, defaultDeliveryModes: ['acp_ws', 'acp', 'cli', 'pull'], transports: [
     transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),
@@ -154,13 +154,14 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   ] },
   { type: 'github-copilot', aliases: [], label: 'GitHub Copilot CLI', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
     acp('github-copilot-acp', './providers/github-copilot-acp', 'GitHubCopilotAcpProvider'),
-    cli('github-copilot-cli', './providers/github-copilot-cli', 'GitHubCopilotCliProvider', 'copilot-restricted'),
+    { ...cli('github-copilot-cli', './providers/github-copilot-cli', 'GitHubCopilotCliProvider', 'copilot-restricted'), exactSession: undefined },
   ] },
   { type: 'cursor', aliases: [], label: 'Cursor Agent', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
     acp('cursor-acp', './providers/cursor-acp', 'CursorAcpProvider'), cli('cursor-cli', './providers/cursor-cli', 'CursorCliProvider', 'cursor-plan'),
   ] },
   { type: 'cline', aliases: [], label: 'Cline', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
-    acp('cline-acp', './providers/cline-acp', 'ClineAcpProvider'), cli('cline-cli', './providers/cline-cli', 'ClineCliProvider', 'cline-command-deny'),
+    acp('cline-acp', './providers/cline-acp', 'ClineAcpProvider'),
+    { ...cli('cline-cli', './providers/cline-cli', 'ClineCliProvider', 'cline-command-deny'), exactSession: undefined },
   ] },
   { type: 'goose', aliases: ['goose-ai', 'acp-goose'], label: 'Goose', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
     acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false },
@@ -177,7 +178,9 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       options: context => context.getProviderConfig?.('codex-app-server') || {},
     }),
   ] },
-  { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container')] },
+  { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
+    { ...cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container'), exactSession: undefined },
+  ] },
   { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [

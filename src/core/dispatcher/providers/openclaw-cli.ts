@@ -80,9 +80,10 @@ class OpenClawCliProvider extends PushProvider {
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId
       && /^agent:[^:]+:.+/.test(payload.providerBinding.nativeSessionId);
+    const sessionIdentity = String((payload as any).sessionScopeId || fromUid);
     const sessionKey = canResumeBinding
       ? payload.providerBinding!.nativeSessionId
-      : buildOpenClawSessionKey(targetAgentId, agentId, fromUid);
+      : buildOpenClawSessionKey(targetAgentId, agentId, sessionIdentity);
     const channelId = payload.providerBinding?.channelId || payload.channelId || fromUid.replace(/^group:/, '');
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     if (!canResumeBinding && this._bindingStore) {
