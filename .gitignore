@@ -3,6 +3,7 @@ build/
 dist/
 coverage/
 e2ee-stability-summary.json
+e2ee-audit-bundle.json
 playwright-report/
 test-results/
 test-reports/
