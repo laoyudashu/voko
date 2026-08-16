@@ -83,6 +83,9 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal --no-self-update
       - name: Test isolated E2EE core
         run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml
+      - name: Test real OS credential store lifecycle
+        if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
+        run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml --test system_key_real -- --ignored --nocapture
       - name: Test ciphertext-only relay contract
         if: matrix.os == 'ubuntu-latest'
         run: npm run test:e2ee:relay

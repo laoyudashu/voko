@@ -54,3 +54,7 @@ The Chromium IndexedDB gate now uses actual serialized WASM/OpenMLS state rather
 All browser fixtures now run under strict CSP and Trusted Types enforcement. The generated WASM SHA-256 digest is checked before instantiation; this detects packaging corruption but does not expand the Web client's trust boundary beyond E2EE-TOFU.
 
 The native scale gate persists 1,000 conversation state records while keeping only 32 decrypted states in the bounded cache. A release-only 10,000-group gate uses the same fixed cache and is available as `npm run test:e2ee:scale`. This verifies bounded cache cardinality and bytes; process RSS, SQLite file size and low-memory mobile behavior remain separate measurements.
+
+The cross-platform CI compiles and tests the E2EE core on Windows, Ubuntu and macOS. Windows and macOS additionally exercise the real OS credential store by provisioning a random owner-scoped key, reopening it in a new manager, decrypting a record, revoking it and verifying it cannot be unlocked again. Headless Ubuntu runners do not provide a trustworthy Secret Service session, so Linux real-keyring lifecycle remains assigned to a dedicated desktop runner rather than being silently replaced with a file or environment variable.
+
+The real Windows Credential Manager lifecycle gate passed locally on 2026-08-16. This is direct platform evidence for Windows only; macOS Keychain and Linux Secret Service still require their respective runners before those platforms can be claimed.
