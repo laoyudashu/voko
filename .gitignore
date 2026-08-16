@@ -2,6 +2,7 @@ node_modules/
 build/
 dist/
 coverage/
+e2ee-stability-summary.json
 playwright-report/
 test-results/
 test-reports/
