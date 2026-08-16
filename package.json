@@ -80,6 +80,7 @@
     "test:e2ee:bench": "node scripts/run-e2ee-poc.js bench",
     "test:e2ee:wasm": "node scripts/run-e2ee-poc.js wasm",
     "test:e2ee:stress": "node scripts/run-e2ee-poc.js stress",
+    "test:e2ee:scale": "node scripts/run-e2ee-poc.js scale",
     "test:e2ee:browser": "node scripts/test-e2ee-wasm-browser.js",
     "test:e2ee:relay": "node scripts/test-e2ee-relay-poc.js",
     "test:e2ee:fake-im": "node scripts/run-e2ee-poc.js fake-im",

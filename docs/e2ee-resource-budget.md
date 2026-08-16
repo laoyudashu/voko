@@ -52,3 +52,5 @@ The system credential store is accessed only when provisioning, unlocking, revok
 The Chromium IndexedDB gate now uses actual serialized WASM/OpenMLS state rather than placeholder bytes. State encryption, atomic state/outbox commit, page reload recovery, sequence continuation and transaction abort rollback all pass in one browser test. IndexedDB size, 1,000-10,000 conversation scale and low-memory mobile measurements remain open performance gates.
 
 All browser fixtures now run under strict CSP and Trusted Types enforcement. The generated WASM SHA-256 digest is checked before instantiation; this detects packaging corruption but does not expand the Web client's trust boundary beyond E2EE-TOFU.
+
+The native scale gate persists 1,000 conversation state records while keeping only 32 decrypted states in the bounded cache. A release-only 10,000-group gate uses the same fixed cache and is available as `npm run test:e2ee:scale`. This verifies bounded cache cardinality and bytes; process RSS, SQLite file size and low-memory mobile behavior remain separate measurements.
