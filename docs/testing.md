@@ -54,6 +54,14 @@ reply returns to ACP, and scan captured logs for tokens, full prompts and user
 configuration paths. The current real result covers Windows; Linux/macOS, long-running
 stability and multi-Agent concurrency remain separate acceptance work.
 
+Real E2EE credential-store evidence is collected on each target machine with:
+
+```bash
+npm run test:e2ee:platform
+```
+
+The command provisions a random owner-scoped secret in the native Windows Credential Manager, macOS Keychain or Linux Secret Service, reopens and uses it, revokes it, then verifies it cannot be reopened. It writes the ignored `e2ee-platform-summary.json` with platform, architecture, exact commit, Cargo version and result; it never records the secret or credential slot. Linux must run inside an unlocked desktop Secret Service session—headless fallback storage is not accepted.
+
 ## Isolation contract
 
 Deterministic tests must not contact public VOKO, WuKongIM or OSS endpoints, inspect a user's Provider configuration, or reuse the normal VOKO database. Use `test/support/runtime.js` and injected dependencies. Every server, socket, timer, worker and database must be registered for cleanup.
