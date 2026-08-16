@@ -58,6 +58,12 @@ pub enum PinStatus {
     Verified,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceStatus {
+    Active,
+    Revoked,
+}
+
 pub struct AtomicStateStore {
     connection: Connection,
 }
@@ -90,6 +96,10 @@ pub enum PersistenceError {
     IdentityChanged,
     #[error("credential epoch rolled back")]
     CredentialRollback,
+    #[error("device is revoked")]
+    DeviceRevoked,
+    #[error("replacement device epoch must advance")]
+    DeviceEpochConflict,
 }
 
 impl From<rusqlite::Error> for PersistenceError {
@@ -109,7 +119,7 @@ impl AtomicStateStore {
     }
 
     fn initialize(connection: Connection) -> Result<Self, PersistenceError> {
-        const SCHEMA_VERSION: i64 = 3;
+        const SCHEMA_VERSION: i64 = 4;
         let existing_version: i64 =
             connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if existing_version > SCHEMA_VERSION {
@@ -165,6 +175,14 @@ impl AtomicStateStore {
                key_epoch INTEGER NOT NULL,
                credential_fingerprint BLOB NOT NULL,
                PRIMARY KEY(identity_scope, role)
+             );
+             CREATE TABLE IF NOT EXISTS e2ee_devices (
+               owner_scope TEXT NOT NULL,
+               device_key_id TEXT NOT NULL,
+               key_epoch INTEGER NOT NULL,
+               status INTEGER NOT NULL,
+               revoked_at_ms INTEGER,
+               PRIMARY KEY(owner_scope, device_key_id)
              );",
         )?;
         ensure_column(
@@ -724,6 +742,111 @@ impl AtomicStateStore {
         Ok(())
     }
 
+    pub fn register_device(
+        &mut self,
+        owner_scope: &str,
+        device_key_id: &str,
+        key_epoch: u64,
+    ) -> Result<(), PersistenceError> {
+        validate_device(owner_scope, device_key_id)?;
+        let epoch = to_i64(key_epoch)?;
+        let existing: Option<(i64, i64)> = self
+            .connection
+            .query_row(
+                "SELECT key_epoch,status FROM e2ee_devices
+                 WHERE owner_scope=?1 AND device_key_id=?2",
+                params![owner_scope, device_key_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        match existing {
+            None => {
+                self.connection.execute(
+                    "INSERT INTO e2ee_devices(owner_scope,device_key_id,key_epoch,status)
+                     VALUES(?1,?2,?3,1)",
+                    params![owner_scope, device_key_id, epoch],
+                )?;
+                Ok(())
+            }
+            Some((stored_epoch, 1)) if stored_epoch == epoch => Ok(()),
+            Some((_stored_epoch, 2)) => Err(PersistenceError::DeviceRevoked),
+            _ => Err(PersistenceError::DeviceEpochConflict),
+        }
+    }
+
+    pub fn replace_device(
+        &mut self,
+        owner_scope: &str,
+        old_device_key_id: &str,
+        new_device_key_id: &str,
+        new_key_epoch: u64,
+        revoked_at_ms: u64,
+    ) -> Result<(), PersistenceError> {
+        validate_device(owner_scope, old_device_key_id)?;
+        validate_device(owner_scope, new_device_key_id)?;
+        if old_device_key_id == new_device_key_id {
+            return Err(PersistenceError::DeviceEpochConflict);
+        }
+        let new_epoch = to_i64(new_key_epoch)?;
+        let revoked_at = to_i64(revoked_at_ms)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let old: Option<(i64, i64)> = transaction
+            .query_row(
+                "SELECT key_epoch,status FROM e2ee_devices
+                 WHERE owner_scope=?1 AND device_key_id=?2",
+                params![owner_scope, old_device_key_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((old_epoch, old_status)) = old else {
+            return Err(PersistenceError::DeviceEpochConflict);
+        };
+        if old_status != 1 || new_epoch <= old_epoch {
+            return Err(PersistenceError::DeviceEpochConflict);
+        }
+        if transaction.execute(
+            "UPDATE e2ee_devices SET status=2,revoked_at_ms=?1
+             WHERE owner_scope=?2 AND device_key_id=?3 AND status=1",
+            params![revoked_at, owner_scope, old_device_key_id],
+        )? != 1
+        {
+            return Err(PersistenceError::DeviceEpochConflict);
+        }
+        transaction.execute(
+            "INSERT INTO e2ee_devices(owner_scope,device_key_id,key_epoch,status)
+             VALUES(?1,?2,?3,1)",
+            params![owner_scope, new_device_key_id, new_epoch],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn verify_active_device(
+        &self,
+        owner_scope: &str,
+        device_key_id: &str,
+        key_epoch: u64,
+    ) -> Result<DeviceStatus, PersistenceError> {
+        validate_device(owner_scope, device_key_id)?;
+        let epoch = to_i64(key_epoch)?;
+        let status: Option<(i64, i64)> = self
+            .connection
+            .query_row(
+                "SELECT key_epoch,status FROM e2ee_devices
+                 WHERE owner_scope=?1 AND device_key_id=?2",
+                params![owner_scope, device_key_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        match status {
+            Some((stored_epoch, 1)) if stored_epoch == epoch => Ok(DeviceStatus::Active),
+            Some((_stored_epoch, 2)) => Err(PersistenceError::DeviceRevoked),
+            _ => Err(PersistenceError::DeviceEpochConflict),
+        }
+    }
+
     pub fn claim_next(
         &mut self,
         lease_owner: &str,
@@ -887,6 +1010,19 @@ fn validate_credential_pin(
         || device_key_id.chars().any(char::is_control)
         || credential_public_key.is_empty()
         || credential_public_key.len() > 4096
+    {
+        return Err(PersistenceError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn validate_device(owner_scope: &str, device_key_id: &str) -> Result<(), PersistenceError> {
+    if owner_scope.is_empty()
+        || owner_scope.len() > 1024
+        || owner_scope.chars().any(char::is_control)
+        || device_key_id.is_empty()
+        || device_key_id.len() > 1024
+        || device_key_id.chars().any(char::is_control)
     {
         return Err(PersistenceError::InvalidInput);
     }
@@ -1136,6 +1272,43 @@ mod tests {
                 .unwrap(),
             PinStatus::Verified
         );
+    }
+
+    #[test]
+    fn revoked_device_cannot_reactivate_and_replacement_epoch_must_advance() {
+        let mut store = AtomicStateStore::in_memory().unwrap();
+        store.register_device("owner-a", "device-old", 7).unwrap();
+        assert_eq!(
+            store
+                .verify_active_device("owner-a", "device-old", 7)
+                .unwrap(),
+            DeviceStatus::Active
+        );
+        assert!(matches!(
+            store.replace_device("owner-a", "device-old", "device-new", 7, 100),
+            Err(PersistenceError::DeviceEpochConflict)
+        ));
+        store
+            .replace_device("owner-a", "device-old", "device-new", 8, 100)
+            .unwrap();
+        assert!(matches!(
+            store.verify_active_device("owner-a", "device-old", 7),
+            Err(PersistenceError::DeviceRevoked)
+        ));
+        assert!(matches!(
+            store.register_device("owner-a", "device-old", 7),
+            Err(PersistenceError::DeviceRevoked)
+        ));
+        assert_eq!(
+            store
+                .verify_active_device("owner-a", "device-new", 8)
+                .unwrap(),
+            DeviceStatus::Active
+        );
+        assert!(matches!(
+            store.replace_device("owner-a", "device-old", "device-third", 9, 200),
+            Err(PersistenceError::DeviceEpochConflict)
+        ));
     }
 
     #[test]

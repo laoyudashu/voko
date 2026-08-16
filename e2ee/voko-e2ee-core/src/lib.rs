@@ -27,8 +27,8 @@ pub use outbox::{OutboxError, OutboxRecord, OutboxState, PreparedOutbox};
 pub use pcs::{PcsPolicyError, PcsUpdatePolicy, PcsUpdateTracker};
 #[cfg(not(target_arch = "wasm32"))]
 pub use persistence::{
-    AtomicStateStore, ClaimedDelivery, ClaimedReceived, DeliveryKind, KeyPackageBinding,
-    PersistenceError, PinStatus, StateAnchor, StoredDelivery,
+    AtomicStateStore, ClaimedDelivery, ClaimedReceived, DeliveryKind, DeviceStatus,
+    KeyPackageBinding, PersistenceError, PinStatus, StateAnchor, StoredDelivery,
 };
 pub use recovery::{ArchivedMessage, ReadOnlyArchive, RecoveryError, ReplacementDeviceRequirement};
 pub use state_cache::{BoundedSecretCache, CacheError};

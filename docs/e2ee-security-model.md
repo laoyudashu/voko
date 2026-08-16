@@ -60,6 +60,8 @@ Recovery exports archive decryption material only. It excludes device signing ke
 
 The first recovery PoC deliberately exports an encrypted read-only local message archive rather than a live MLS snapshot. Its type exposes historical records and a replacement-device requirement only; it has no encrypt, send, KeyPackage or active-session API. Import requires a successor key epoch and identifies the prior device that must be revoked. This proves the non-cloning boundary but does not yet provide a production device-revocation transaction.
 
+The local persistent store records owner-scoped device epochs and revocation state. Replacing a device atomically revokes the old device and admits only a distinct device at a higher epoch; a revoked device cannot be registered again. This is an endpoint fail-closed gate. Production recovery still requires AgentDID to perform the corresponding authoritative revocation and ownership checks before any new group is established.
+
 ## Existing product boundaries
 
 - Metadata-based sessions, blocklists, membership, rate and size limits remain server-enforced.
