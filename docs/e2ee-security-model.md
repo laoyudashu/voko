@@ -67,3 +67,5 @@ Recovery exports archive decryption material only. It excludes device signing ke
 ## Production gate
 
 Production integration is forbidden until the independent PoC proves credentials, one-time KeyPackages, Commit acceptance, Welcome acknowledgement, bidirectional text, restart recovery, duplicate/reordered input, single-writer persistence and the resource budgets in [e2ee-resource-budget.md](e2ee-resource-budget.md).
+
+The isolated PoC now also defines a strict `voko.e2ee/1` wire envelope and exercises it through a ciphertext-only fake relay. The relay test proves that the plaintext canary is absent from the stored envelope, valid ciphertext decrypts at the intended endpoint, and tampering with the authenticated Agent route fails closed. This is a protocol test only: no production Chatroom, WuKongIM, AgentDID or Provider path uses this envelope yet.

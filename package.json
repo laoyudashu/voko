@@ -81,6 +81,7 @@
     "test:e2ee:wasm": "node scripts/run-e2ee-poc.js wasm",
     "test:e2ee:stress": "node scripts/run-e2ee-poc.js stress",
     "test:e2ee:browser": "node scripts/test-e2ee-wasm-browser.js",
+    "test:e2ee:relay": "node scripts/test-e2ee-relay-poc.js",
     "test:ci": "npm run typecheck && npm run build:ts && npm run i18n:check && npm run test:coverage:build && node scripts/check-core-coverage.js",
     "test:ci:repeat": "node scripts/repeat-test.js",
     "test:real:smoke": "npm run build:ts && node scripts/real-test.js smoke",
