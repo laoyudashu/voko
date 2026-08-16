@@ -9,7 +9,10 @@ use openmls_traits::{signatures::Signer, types::SignatureScheme, OpenMlsProvider
 use thiserror::Error;
 use tls_codec::{Deserialize, Serialize};
 
-use crate::{CanonicalAad, EstablishmentEvent, EstablishmentState, KeyPackageLedger};
+use crate::{
+    CanonicalAad, DeviceCredentialIdentity, EstablishmentEvent, EstablishmentState,
+    KeyPackageLedger,
+};
 
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
@@ -65,6 +68,26 @@ fn key_package(
 }
 
 impl DirectGroupPair {
+    pub fn establish_bound(
+        group_id: &[u8],
+        creator_identity: &DeviceCredentialIdentity,
+        recipient_identity: &DeviceCredentialIdentity,
+        ledger: &mut KeyPackageLedger,
+    ) -> Result<Self, DirectGroupError> {
+        DeviceCredentialIdentity::validate_direct_pair(creator_identity, recipient_identity)
+            .map_err(|error| DirectGroupError::Mls(error.to_string()))?;
+        Self::establish(
+            group_id,
+            &creator_identity
+                .encode()
+                .map_err(|error| DirectGroupError::Mls(error.to_string()))?,
+            &recipient_identity
+                .encode()
+                .map_err(|error| DirectGroupError::Mls(error.to_string()))?,
+            ledger,
+        )
+    }
+
     pub fn establish(
         group_id: &[u8],
         creator_identity: &[u8],
@@ -178,6 +201,14 @@ impl DirectGroupPair {
 }
 
 impl DirectGroup {
+    pub fn reload_from_storage(&mut self) -> Result<(), DirectGroupError> {
+        let group_id = self.group.group_id().clone();
+        self.group = MlsGroup::load(self.provider.storage(), &group_id)
+            .map_err(|error| DirectGroupError::Mls(format!("load group: {error:?}")))?
+            .ok_or_else(|| DirectGroupError::Mls("persisted group was not found".into()))?;
+        Ok(())
+    }
+
     pub fn encrypt(
         &mut self,
         aad: &CanonicalAad,
@@ -226,7 +257,17 @@ impl DirectGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
+    use crate::{DeviceCredentialIdentity, DeviceRole, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
+
+    fn identity(role: DeviceRole, key: &[u8], agent: &[u8]) -> DeviceCredentialIdentity {
+        DeviceCredentialIdentity {
+            role,
+            principal_id: b"principal-scope".to_vec(),
+            device_key_id: key.to_vec(),
+            key_epoch: 1,
+            target_agent_did: agent.to_vec(),
+        }
+    }
 
     fn aad(group: &[u8], agent: &[u8], message: &[u8], sender: &[u8]) -> CanonicalAad {
         CanonicalAad {
@@ -331,5 +372,31 @@ mod tests {
             b"once only"
         );
         assert!(pair.recipient.decrypt(&route, &ciphertext).is_err());
+    }
+
+    #[test]
+    fn bound_credentials_and_persisted_group_reload_keep_the_session() {
+        let creator = identity(DeviceRole::Browser, b"browser-key-4", b"did:voko:agent-4");
+        let recipient = identity(DeviceRole::OwnerDevice, b"owner-key-4", b"did:voko:agent-4");
+        let mut pair = DirectGroupPair::establish_bound(
+            b"group-4",
+            &creator,
+            &recipient,
+            &mut KeyPackageLedger::default(),
+        )
+        .unwrap();
+        pair.creator.reload_from_storage().unwrap();
+        pair.recipient.reload_from_storage().unwrap();
+        let route = aad(
+            b"group-4",
+            b"did:voko:agent-4",
+            b"message-4",
+            b"browser-key-4",
+        );
+        let ciphertext = pair.creator.encrypt(&route, b"after reload").unwrap();
+        assert_eq!(
+            pair.recipient.decrypt(&route, &ciphertext).unwrap(),
+            b"after reload"
+        );
     }
 }

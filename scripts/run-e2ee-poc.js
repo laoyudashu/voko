@@ -13,6 +13,7 @@ const cargo = existsSync(localCargo) ? localCargo : executable;
 const args = [operation, '--manifest-path', join('e2ee', 'Cargo.toml')];
 if (operation === 'bench') args.push('--bench', 'direct_message');
 if (requested === 'wasm') args.push('--target', 'wasm32-unknown-unknown');
+if (requested === 'stress') args.push('--release', '--test', 'stress', '--', '--ignored');
 
 const result = spawnSync(cargo, args, {
   cwd: join(__dirname, '..'),

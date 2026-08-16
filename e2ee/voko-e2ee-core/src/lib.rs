@@ -2,6 +2,7 @@
 //! production VOKO message path.
 
 mod aad;
+mod identity;
 mod key_package;
 mod lifecycle;
 mod mls;
@@ -10,6 +11,7 @@ mod state_cache;
 mod vault;
 
 pub use aad::{AadError, CanonicalAad, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION};
+pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
 pub use mls::{DirectGroup, DirectGroupError, DirectGroupPair};
