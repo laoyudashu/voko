@@ -10,6 +10,7 @@
 - `outcome_unknown` 禁止跨 Provider 重投；只有确定 `not_delivered` 才允许最多一次备选通道。
 - 紧急关闭必须持久化；重启后仍关闭，旧队列标记撤销且重新启用后不得自动重放。
 - 纯文本 Canary 不经过 OSS。未进行附件 Canary 时，OSS 结论必须写“未覆盖”，不能写“通过”。
+- 附件入口保持关闭，直到 Fake OSS、Windows 专用 Bucket 和 Ubuntu 专用 Bucket 三个门禁全部通过。
 
 ## 真实验收
 
@@ -90,3 +91,26 @@ SHM 文件，禁止直接在运行中的数据库上覆盖。
 
 4 小时稳定性、macOS 真机、独立 Witness 和外部安全审计仍是扩大或正式发布门禁；
 未完成时必须保持 `pending`，不得因内部 Canary 通过而降低要求。
+
+## 附件 Canary
+
+先运行不联网的故障闭环：
+
+```powershell
+npm run test:e2ee:attachment:fake
+```
+
+它验证分块 AEAD、固定密文重试、500、超时、存储服务重启、逆序下载、篡改拒绝和
+服务端明文扫描。真实 OSS 必须使用专用的私有测试 Bucket，严禁复用生产 Bucket：
+
+```powershell
+$env:VOKO_E2EE_TEST_OSS_ACKNOWLEDGE_DEDICATED='1'
+$env:VOKO_E2EE_TEST_OSS_REGION='<test-region>'
+$env:VOKO_E2EE_TEST_OSS_BUCKET='<dedicated-test-bucket>'
+$env:VOKO_E2EE_TEST_OSS_ACCESS_KEY_ID='<test-only-key-id>'
+$env:VOKO_E2EE_TEST_OSS_ACCESS_KEY_SECRET='<test-only-secret>'
+npm run test:e2ee:attachment:real
+```
+
+凭证只能授予该测试 Bucket 的最小 PUT/GET 权限，不得提交到 Git。Windows 和 Ubuntu
+必须分别生成报告。三个附件门禁全部通过前，不能把附件接入限定账号内部 Canary。
