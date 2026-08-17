@@ -7,10 +7,18 @@ const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'real-e2ee-canary.js'), 'utf8');
 
-test('real E2EE Canary is Windows-only, explicit, and uses contentType 13', () => {
-  assert.match(source, /process\.platform !== 'win32'/);
+test('real E2EE Canary is restricted to allowlisted Windows and Linux devices and uses contentType 13', () => {
+  assert.match(source, /\['win32', 'linux'\]\.includes\(process\.platform\)/);
+  assert.match(source, /status\.platforms\.includes\(process\.platform\)/);
   assert.match(source, /VOKO_E2EE_CANARY_ALLOW_AGENT_SESSION/);
   assert.match(source, /CONTENT_TYPE_E2EE = 13/);
+});
+
+test('real E2EE Canary emits redacted success and failure diagnostics', () => {
+  assert.match(source, /participants: \{ owner: opaqueRef/);
+  assert.match(source, /schemaVersion: 2/);
+  assert.match(source, /failures: \[\{ stage: 'canary'/);
+  assert.doesNotMatch(source, /serverAgentId: config\.serverAgentId/);
 });
 
 test('real E2EE Canary uses AgentDID establishment and real WuKongIM without plaintext fallback', () => {

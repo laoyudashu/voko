@@ -27,6 +27,11 @@ struct Summary {
     platform: String,
     production_enabled: bool,
     exact_scope_allowlist: bool,
+    allowlist_removal_failed_closed: bool,
+    emergency_disable_failed_closed: bool,
+    device_revocation_failed_closed: bool,
+    rollback_restored_scope: bool,
+    rollback_replayed_messages: u8,
     first_contact_pinned: bool,
     bidirectional_messages: u8,
     restart_recovered: bool,
@@ -131,6 +136,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 enabled.decide(candidate, ConversationSecurityState::LegacyTransport, true)
                     == Ok(RolloutDecision::LegacyTransport)
             });
+    let removed = E2eeRolloutPolicy::new(
+        RolloutMode::Enabled,
+        [CanaryScope {
+            device_key_id: "other-device".into(),
+            ..scope.clone()
+        }],
+    )?;
+    let allowlist_removal_failed_closed = matches!(
+        removed.decide(&scope, ConversationSecurityState::E2eeActive, true),
+        Err(RolloutError::PlaintextDowngradeForbidden)
+    );
+    let emergency_disable_failed_closed = matches!(
+        disabled.decide(&scope, ConversationSecurityState::E2eeActive, true),
+        Err(RolloutError::PlaintextDowngradeForbidden)
+    );
+    let device_revocation_failed_closed = matches!(
+        enabled.decide(&scope, ConversationSecurityState::Revoked, true),
+        Err(RolloutError::PlaintextDowngradeForbidden)
+    );
+    let rollback_restored_scope =
+        enabled.decide(&scope, ConversationSecurityState::E2eeActive, true)?
+            == RolloutDecision::ContinueE2ee;
 
     let mut pair = DirectGroupPair::establish(
         b"windows-canary-group",
@@ -194,6 +221,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .delivery
         .ciphertext;
     let disconnect_resumed_without_reencrypt = fixed_retry == forward_ciphertext;
+    store.mark_sent("canary-forward", "sender")?;
+    let rollback_replayed_messages =
+        u8::from(store.claim_next("rollback-worker", 2_000, 100)?.is_some());
 
     let creator_snapshot = pair.creator.snapshot()?;
     let recipient_snapshot = pair.recipient.snapshot()?;
@@ -249,6 +279,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let log_plaintext_hits = occurrences(&fs::read(run_dir.join("canary.log"))?);
     let passed = default_closed
         && exact_scope_allowlist
+        && allowlist_removal_failed_closed
+        && emergency_disable_failed_closed
+        && device_revocation_failed_closed
+        && rollback_restored_scope
+        && rollback_replayed_messages == 0
         && first_contact_pinned
         && received == FORWARD
         && replied == REPLY
@@ -266,6 +301,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         platform: env::consts::OS.into(),
         production_enabled: false,
         exact_scope_allowlist,
+        allowlist_removal_failed_closed,
+        emergency_disable_failed_closed,
+        device_revocation_failed_closed,
+        rollback_restored_scope,
+        rollback_replayed_messages,
         first_contact_pinned,
         bidirectional_messages: 2,
         restart_recovered: received == FORWARD && replied == REPLY,

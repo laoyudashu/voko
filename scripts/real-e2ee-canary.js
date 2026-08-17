@@ -31,7 +31,10 @@ function serverAgentIdFromDid(did) {
 }
 
 function readLocalConfig() {
-  const dbPath = process.env.VOKO_REAL_DB_PATH;
+  let dbPath = process.env.VOKO_REAL_DB_PATH;
+  if (process.platform === 'linux' && /^[A-Za-z]:\\/.test(dbPath || '')) {
+    dbPath = `/mnt/${dbPath[0].toLowerCase()}/${dbPath.slice(3).replaceAll('\\', '/')}`;
+  }
   const localAgentId = process.env.VOKO_REAL_AGENT_ID;
   if (!dbPath || !path.isAbsolute(dbPath) || !localAgentId) throw new Error('VOKO_REAL_DB_PATH and VOKO_REAL_AGENT_ID are required');
   if (!/^(1|true|yes)$/i.test(process.env.VOKO_E2EE_CANARY_ALLOW_AGENT_SESSION || '')) {
@@ -156,6 +159,15 @@ function assertNoPlaintext(capture, plaintexts) {
   }
 }
 
+function opaqueRef(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('base64url').slice(0, 16);
+}
+
+function writeReport(reportDir, report) {
+  fs.mkdirSync(reportDir, { recursive: true });
+  fs.writeFileSync(path.join(reportDir, 'summary.json'), `${JSON.stringify(report, null, 2)}\n`);
+}
+
 async function expectFailure(action, pattern, label) {
   try { await action(); }
   catch (error) {
@@ -165,17 +177,24 @@ async function expectFailure(action, pattern, label) {
   throw new Error(`${label} unexpectedly succeeded`);
 }
 
+let failureReport;
 (async () => {
   loadEnv(envFile);
-  if (process.platform !== 'win32') throw new Error('Real internal Canary is currently restricted to Windows');
+  if (!['win32', 'linux'].includes(process.platform)) {
+    throw new Error('Real internal Canary is restricted to allowlisted Windows and Ubuntu test devices');
+  }
   const config = readLocalConfig();
-  const ownerDevice = process.env.VOKO_E2EE_CANARY_OWNER_DEVICE_KEY_ID;
-  const browserDevice = process.env.VOKO_E2EE_CANARY_BROWSER_DEVICE_KEY_ID;
+  const platformPrefix = process.platform === 'linux' ? 'VOKO_E2EE_CANARY_LINUX' : 'VOKO_E2EE_CANARY_WINDOWS';
+  const ownerDevice = process.env[`${platformPrefix}_OWNER_DEVICE_KEY_ID`]
+    || process.env.VOKO_E2EE_CANARY_OWNER_DEVICE_KEY_ID;
+  const browserDevice = process.env[`${platformPrefix}_BROWSER_DEVICE_KEY_ID`]
+    || process.env.VOKO_E2EE_CANARY_BROWSER_DEVICE_KEY_ID;
   if (!ownerDevice || !browserDevice) throw new Error('Both Canary device key IDs are required');
   const baseUrl = String(process.env.VOKO_E2EE_CANARY_BASE_URL || require('../src/endpoints.json').api.baseUrl).replace(/\/+$/, '');
   const runId = `e2ee-real-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const group = `canary-${crypto.randomUUID()}`;
   const conversation = `canary-conversation-${crypto.randomUUID()}`;
+  const reportDir = path.join(root, 'artifacts', 'real-tests', runId);
   const capture = [];
   const ownerKeyEpoch = Date.now();
   const plaintexts = [
@@ -191,6 +210,13 @@ async function expectFailure(action, pattern, label) {
   const guestAgentId = guest.agentId;
   const guestIdentity = await requestJson(`${baseUrl}/guest/v1/e2ee/identity`, { token: guestToken }, capture);
   const status = await requestJson(`${baseUrl}/api/external/v1/e2ee/canary/status`, { token: config.ownerToken }, capture);
+  if (!Array.isArray(status.platforms) || !status.platforms.includes(process.platform)) {
+    throw new Error(`Canary platform is not allowlisted by AgentDID: ${process.platform}`);
+  }
+  failureReport = { reportDir, runId, platform: process.platform, sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'],
+    { cwd: root, encoding: 'utf8' }).trim(), productionEnabled: false,
+  participants: { owner: opaqueRef(status.ownerScope), agent: opaqueRef(config.serverAgentId),
+    ownerDevice: opaqueRef(ownerDevice), browserDevice: opaqueRef(browserDevice) } };
   let creator = endpoint(executable, { role: 'creator', principal: guestIdentity.principalId,
     device: browserDevice, agent: config.targetAgentDid, group, conversation });
   let recipient = endpoint(executable, { role: 'recipient', principal: status.ownerScope,
@@ -316,19 +342,21 @@ async function expectFailure(action, pattern, label) {
     if (changed.state !== 'identity_changed') throw new Error(`Credential rotation did not fail closed: ${changed.state}`);
     assertNoPlaintext(capture, plaintexts);
 
-    const reportDir = path.join(root, 'artifacts', 'real-tests', runId);
-    fs.mkdirSync(reportDir, { recursive: true });
-    fs.writeFileSync(path.join(reportDir, 'summary.json'), JSON.stringify({ schemaVersion: 1, runId,
-      sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
-      productionEnabled: false, serverAgentId: config.serverAgentId, contentType: CONTENT_TYPE_E2EE,
+    writeReport(reportDir, { schemaVersion: 2, ...failureReport,
+      contentType: CONTENT_TYPE_E2EE, securityMode: 'e2ee_tofu',
       checks: { agentDidHandshake: true, realWuKongImBidirectional: true, restartRecovery: true,
         idempotentRetry: true, duplicateReplayRejected: true, outOfOrderDelivery: true,
         offlinePullRecovery: true, credentialChangeFailClosed: true, keyPackageExhaustionFailClosed: true,
         nonAllowlistedDeviceRejected: true, nonAllowlistedAgentRejected: true,
-        plaintextFallbacks: 0, capturedWirePlaintextHits: 0 }, passed: true }, null, 2));
+        plaintextFallbacks: 0, capturedWirePlaintextHits: 0 }, passed: true });
     console.log(`Real E2EE Canary passed; report=${reportDir}`);
   } finally {
     imClient?.disconnect(); creator?.close(); recipient?.close();
     if (guestToken) await requestJson(`${baseUrl}/guest/v1/sessions/current`, { method: 'DELETE', token: guestToken }, capture).catch(() => {});
   }
-})().catch((error) => { console.error(`Real E2EE Canary failed: ${error.message}`); process.exitCode = 1; });
+})().catch((error) => {
+  if (failureReport?.reportDir) writeReport(failureReport.reportDir, { schemaVersion: 2, ...failureReport,
+    securityMode: 'e2ee_tofu', checks: {}, passed: false, failures: [{ stage: 'canary', code: error.code || 'CANARY_FAILED',
+      message: String(error.message || error).slice(0, 300) }] });
+  console.error(`Real E2EE Canary failed: ${error.message}`); process.exitCode = 1;
+});

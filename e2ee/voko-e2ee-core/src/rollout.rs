@@ -91,7 +91,11 @@ impl E2eeRolloutPolicy {
                 | ConversationSecurityState::Locked
                 | ConversationSecurityState::Revoked
         );
-        if protected && (!both_endpoints_capable || self.mode != RolloutMode::Enabled) {
+        if protected
+            && (!both_endpoints_capable
+                || self.mode != RolloutMode::Enabled
+                || !self.canary_allowlist.contains(scope))
+        {
             return Err(RolloutError::PlaintextDowngradeForbidden);
         }
         if matches!(
@@ -162,5 +166,29 @@ mod tests {
                 Ok(RolloutDecision::LegacyTransport)
             );
         }
+    }
+
+    #[test]
+    fn active_conversation_stops_when_scope_is_removed_or_global_mode_is_disabled() {
+        let scope = CanaryScope {
+            owner_principal_id: "owner-canary".into(),
+            agent_did: "did:voko:canary".into(),
+            device_key_id: "device-canary".into(),
+        };
+        let other = CanaryScope {
+            device_key_id: "other-device".into(),
+            ..scope.clone()
+        };
+        let removed = E2eeRolloutPolicy::new(RolloutMode::Enabled, [other]).unwrap();
+        assert_eq!(
+            removed.decide(&scope, ConversationSecurityState::E2eeActive, true),
+            Err(RolloutError::PlaintextDowngradeForbidden)
+        );
+
+        let disabled = E2eeRolloutPolicy::new(RolloutMode::Disabled, []).unwrap();
+        assert_eq!(
+            disabled.decide(&scope, ConversationSecurityState::E2eeActive, true),
+            Err(RolloutError::PlaintextDowngradeForbidden)
+        );
     }
 }
