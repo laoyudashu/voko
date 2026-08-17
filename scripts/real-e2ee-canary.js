@@ -79,7 +79,7 @@ function endpoint(executable, options) {
   return { ready: request(null), request, close() { child.stdin.end(); lines.close(); } };
 }
 
-async function requestJson(url, options, capture) {
+async function requestJson(url, options, capture, attempt = 0) {
   const body = options?.body == null ? undefined : JSON.stringify(options.body);
   if (body) capture.push(body);
   const response = await fetch(url, { method: options?.method || (body ? 'POST' : 'GET'),
@@ -88,11 +88,17 @@ async function requestJson(url, options, capture) {
     signal: AbortSignal.timeout(options?.timeout || 15_000) });
   const text = await response.text();
   capture.push(text);
+  if (response.status === 429 && attempt < 2) {
+    const retryAfter = Number.parseInt(response.headers.get('retry-after') || '5', 10);
+    const delayMs = Math.min(Math.max(Number.isFinite(retryAfter) ? retryAfter : 5, 1), 60) * 1000;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return requestJson(url, options, capture, attempt + 1);
+  }
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error(`HTTP ${response.status}: invalid JSON`); }
   if (!response.ok || parsed.success === false) {
     const code = parsed?.error?.code || parsed?.code || 'HTTP_ERROR';
-    throw new Error(`${code}: HTTP ${response.status}`);
+    throw new Error(`${code}: HTTP ${response.status} ${new URL(url).pathname}`);
   }
   return parsed.data ?? parsed;
 }
@@ -117,7 +123,7 @@ async function fetchEncryptedReply(baseUrl, guestToken, guestAgentId, serverAgen
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const result = await requestJson(`${baseUrl}/guest/v1/messages/fetch`, { token: guestToken, timeout: 30_000,
       body: { agentId: guestAgentId, channelId: serverAgentId, messageSeq: cursor, onlyReplies: true, limit: 50, blockTimeout: 5 } }, capture);
-    for (const message of result.messages || []) {
+    for (const message of result.items || []) {
       cursor = Math.max(cursor, Number(message.messageSeq) || 0);
       if (Number(message.contentType) === CONTENT_TYPE_E2EE) return JSON.parse(message.content);
     }
@@ -144,6 +150,7 @@ function assertNoPlaintext(capture, plaintexts) {
   const group = `canary-${crypto.randomUUID()}`;
   const conversation = `canary-conversation-${crypto.randomUUID()}`;
   const capture = [];
+  const ownerKeyEpoch = Date.now();
   const plaintexts = [`CANARY_BROWSER_TO_LITE_${runId}`, `CANARY_LITE_TO_BROWSER_${runId}`];
   const executable = buildEndpoint();
   const guest = await requestJson(`${baseUrl}/guest/v1/sessions`, { method: 'POST', body: {} }, capture);
@@ -159,9 +166,9 @@ function assertNoPlaintext(capture, plaintexts) {
   try {
     const [creatorReady, recipientReady] = await Promise.all([creator.ready, recipient.ready]);
     await requestJson(`${baseUrl}/api/external/v1/e2ee/devices`, { token: config.ownerToken, body: {
-      ownerDeviceKeyId: ownerDevice, keyEpoch: 1, credentialPublicKey: recipientReady.credentialPublicKey } }, capture);
+      ownerDeviceKeyId: ownerDevice, keyEpoch: ownerKeyEpoch, credentialPublicKey: recipientReady.credentialPublicKey } }, capture);
     await requestJson(`${baseUrl}/api/external/v1/e2ee/key-packages`, { token: config.ownerToken, body: {
-      agentId: config.serverAgentId, ownerDeviceKeyId: ownerDevice, keyEpoch: 1,
+      agentId: config.serverAgentId, ownerDeviceKeyId: ownerDevice, keyEpoch: ownerKeyEpoch,
       keyPackage: recipientReady.keyPackage, expiresAtMs: Date.now() + 60 * 60 * 1000 } }, capture);
     const reservation = await requestJson(`${baseUrl}/guest/v1/e2ee/key-packages/reserve`, { token: guestToken,
       body: { agentId: config.serverAgentId, targetAgentDid: config.targetAgentDid } }, capture);
