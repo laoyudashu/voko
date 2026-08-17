@@ -4,6 +4,8 @@ import type { CanaryStore } from './canary-store';
 const { parseCanaryEnvelope, CONTENT_TYPE_E2EE } = require('./canary-policy');
 
 interface CanaryCrypto {
+  provision?(scope: any, welcome: string): Promise<Uint8Array>;
+  revoke?(scope: any): Promise<void>;
   decrypt(input: { scope: any; envelope: CanaryEnvelope; encryptedState?: Uint8Array|null; stateVersion: number }): Promise<{ plaintext: string; encryptedState: Uint8Array; stateVersion: number }>;
   encrypt(input: { scope: any; messageId: string; plaintext: string; encryptedState: Uint8Array; stateVersion: number }): Promise<{ envelope: CanaryEnvelope; encryptedState: Uint8Array; stateVersion: number }>;
 }
@@ -57,7 +59,19 @@ export class CanaryRuntime {
   }
 
   diagnostics(): any { return { enabled:this.options.policy.enabled,scopeCount:this.options.policy.count(),...this.stats,...this.options.store.diagnostics() }; }
-  emergencyDisable(): void { this.options.store.lockAll('revoked'); }
+  async provision(scope: any, welcome: string): Promise<void> {
+    if (!this.options.policy.enabled || !this.options.crypto.provision) throw new Error('E2EE_CANARY_DISABLED');
+    const allowed = this.options.policy.configuredScopes().find(candidate => candidate.localAgentId === scope.localAgentId
+      && candidate.groupId === scope.groupId && candidate.senderDeviceKeyId === scope.senderDeviceKeyId);
+    if (!allowed) throw new Error('E2EE_CANARY_SCOPE_REJECTED');
+    this.options.store.provision(allowed, await this.options.crypto.provision(allowed,welcome));
+  }
+  async emergencyDisable(): Promise<void> {
+    this.options.store.lockAll('revoked');
+    if (this.options.crypto.revoke) {
+      await Promise.allSettled(this.options.policy.configuredScopes().map(scope => this.options.crypto.revoke!(scope)));
+    }
+  }
 }
 
 module.exports = { CanaryRuntime, CONTENT_TYPE_E2EE };

@@ -31,6 +31,15 @@ export class CanaryStore {
 
   session(groupId: string): any { return this.db.prepare('SELECT * FROM e2ee_canary_sessions WHERE group_id=?').get(groupId); }
 
+  provision(scope: any, encryptedState: Uint8Array): void {
+    const now = Date.now();
+    this.db.prepare(`INSERT INTO e2ee_canary_sessions(group_id,local_agent_id,target_agent_did,sender_device_key_id,
+      conversation_scope,encrypted_state,state_version,status,updated_at) VALUES(?,?,?,?,?,?,1,'active',?)
+      ON CONFLICT(group_id) DO UPDATE SET encrypted_state=excluded.encrypted_state,state_version=1,status='active',updated_at=excluded.updated_at
+      WHERE e2ee_canary_sessions.status='initializing'`).run(scope.groupId,scope.localAgentId,scope.targetAgentDid,
+      scope.senderDeviceKeyId,scope.conversationScope,encryptedState,now);
+  }
+
   commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void {
     const result = this.db.prepare(`UPDATE e2ee_canary_sessions SET encrypted_state=?,state_version=?,status='active',updated_at=?
       WHERE group_id=? AND state_version=? AND status IN ('initializing','active')`).run(encryptedState,nextVersion,Date.now(),groupId,expectedVersion) as any;

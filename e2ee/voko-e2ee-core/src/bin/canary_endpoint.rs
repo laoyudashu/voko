@@ -4,7 +4,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
     CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint, DirectGroup,
-    DirectRecipientEndpoint, WireEnvelope, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    DirectRecipientEndpoint, SystemWrappingKeyStore, VaultKeyManager, WireEnvelope,
+    E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -23,6 +24,9 @@ enum Command {
     Decrypt { envelope: WireEnvelope },
     Snapshot,
     Restore { snapshot: String },
+    SealSnapshot,
+    RestoreSealed { sealed_snapshot: String },
+    RevokeVault,
 }
 
 #[derive(Serialize)]
@@ -45,6 +49,8 @@ struct Response {
     text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snapshot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sealed_snapshot: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -69,6 +75,7 @@ fn empty() -> Response {
         envelope: None,
         text: None,
         snapshot: None,
+        sealed_snapshot: None,
         error: None,
     }
 }
@@ -100,6 +107,7 @@ fn run() -> Result<(), String> {
     let agent = required("agent")?;
     let group_id = required("group")?;
     let conversation = required("conversation")?;
+    let owner_scope = required("owner-scope")?;
     let identity = DeviceCredentialIdentity {
         role: if role == Role::Creator {
             DeviceRole::Browser
@@ -153,6 +161,7 @@ fn run() -> Result<(), String> {
                     &agent,
                     &group_id,
                     &conversation,
+                    &owner_scope,
                     &mut creator,
                     &mut recipient,
                     &mut group,
@@ -172,6 +181,7 @@ fn handle(
     agent: &str,
     group_id: &str,
     conversation: &str,
+    owner_scope: &str,
     creator: &mut Option<DirectCreatorEndpoint>,
     recipient: &mut Option<DirectRecipientEndpoint>,
     group: &mut Option<DirectGroup>,
@@ -276,8 +286,67 @@ fn handle(
             *recipient = None;
             Ok(empty())
         }
+        Command::SealSnapshot => {
+            let snapshot = group
+                .as_ref()
+                .ok_or("group is not active")?
+                .snapshot()
+                .map_err(|e| e.to_string())?;
+            let vault = unlock_or_provision(owner_scope)?;
+            let sealed = vault
+                .seal(&vault_context(agent, group_id, conversation), &snapshot)
+                .map_err(|e| e.to_string())?;
+            Ok(Response {
+                sealed_snapshot: Some(URL_SAFE_NO_PAD.encode(sealed)),
+                ..empty()
+            })
+        }
+        Command::RestoreSealed { sealed_snapshot } => {
+            let sealed = URL_SAFE_NO_PAD
+                .decode(sealed_snapshot)
+                .map_err(|_| "invalid sealed snapshot")?;
+            let vault = VaultKeyManager::new(SystemWrappingKeyStore)
+                .unlock(owner_scope.as_bytes())
+                .map_err(|e| e.to_string())?;
+            let snapshot = vault
+                .open(&vault_context(agent, group_id, conversation), &sealed)
+                .map_err(|e| e.to_string())?;
+            *group = Some(DirectGroup::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
+            *creator = None;
+            *recipient = None;
+            Ok(empty())
+        }
+        Command::RevokeVault => {
+            VaultKeyManager::new(SystemWrappingKeyStore)
+                .revoke(owner_scope.as_bytes())
+                .map_err(|e| e.to_string())?;
+            *group = None;
+            *creator = None;
+            *recipient = None;
+            Ok(empty())
+        }
         _ => Err("operation is not valid for this endpoint role".into()),
     }
+}
+
+fn unlock_or_provision(owner_scope: &str) -> Result<voko_e2ee_core::RecordVault, String> {
+    let manager = VaultKeyManager::new(SystemWrappingKeyStore);
+    match manager.unlock(owner_scope.as_bytes()) {
+        Ok(vault) => Ok(vault),
+        Err(voko_e2ee_core::VaultKeyError::NotProvisioned) => manager
+            .provision(owner_scope.as_bytes())
+            .map_err(|e| e.to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn vault_context(agent: &str, group_id: &str, conversation: &str) -> Vec<u8> {
+    let mut context = b"voko-e2ee-canary-state/1".to_vec();
+    for value in [agent, group_id, conversation] {
+        context.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        context.extend_from_slice(value.as_bytes());
+    }
+    context
 }
 
 fn write_response(response: &Response) {

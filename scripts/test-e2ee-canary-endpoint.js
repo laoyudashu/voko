@@ -17,7 +17,8 @@ if (!existsSync(executable)) throw new Error('Canary endpoint executable was not
 
 function endpoint(role, device) {
   const child = spawn(executable, [`--role=${role}`, '--principal=canary-principal', `--device=${device}`,
-    '--agent=did:voko:canary-agent', '--group=canary-real-group', '--conversation=canary-real-conversation'],
+    '--agent=did:voko:canary-agent', '--group=canary-real-group', '--conversation=canary-real-conversation',
+    `--owner-scope=canary-endpoint-test-${role}`],
   { cwd: root, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
   const lines = createInterface({ input: child.stdout });
   const pending = [];
@@ -51,17 +52,20 @@ function endpoint(role, device) {
     const outbound = await creator.request({ op: 'encrypt', message_id: 'message-1', text: 'browser to Lite' });
     assert.equal((await recipient.request({ op: 'decrypt', envelope: outbound.envelope })).text, 'browser to Lite');
     const [creatorSnapshot, recipientSnapshot] = await Promise.all([
-      creator.request({ op: 'snapshot' }), recipient.request({ op: 'snapshot' }),
+      creator.request({ op: 'seal_snapshot' }), recipient.request({ op: 'seal_snapshot' }),
     ]);
     creator.close(); recipient.close();
     creator = endpoint('creator', 'browser-device');
     recipient = endpoint('recipient', 'owner-device');
     await Promise.all([creator.ready, recipient.ready]);
-    await creator.request({ op: 'restore', snapshot: creatorSnapshot.snapshot });
-    await recipient.request({ op: 'restore', snapshot: recipientSnapshot.snapshot });
+    await creator.request({ op: 'restore_sealed', sealed_snapshot: creatorSnapshot.sealedSnapshot });
+    await recipient.request({ op: 'restore_sealed', sealed_snapshot: recipientSnapshot.sealedSnapshot });
     const reply = await recipient.request({ op: 'encrypt', message_id: 'message-2', text: 'Lite to browser' });
     assert.equal((await creator.request({ op: 'decrypt', envelope: reply.envelope })).text, 'Lite to browser');
     await assert.rejects(recipient.request({ op: 'decrypt', envelope: outbound.envelope }));
+    await recipient.request({ op: 'revoke_vault' });
+    recipient.close(); recipient = endpoint('recipient', 'owner-device'); await recipient.ready;
+    await assert.rejects(recipient.request({ op: 'restore_sealed', sealed_snapshot: recipientSnapshot.sealedSnapshot }));
     console.log('E2EE Canary endpoint bidirectional and restart test passed.');
   } finally { creator.close(); recipient.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

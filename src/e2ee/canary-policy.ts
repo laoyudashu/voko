@@ -5,6 +5,8 @@ export interface CanaryScope {
   localAgentId: string;
   targetAgentDid: string;
   senderDeviceKeyId: string;
+  recipientDeviceKeyId: string;
+  ownerScope: string;
   groupId: string;
   conversationScope: string;
 }
@@ -46,6 +48,7 @@ export class CanaryRuntimePolicy {
     for (const candidate of configured as Record<string, unknown>[]) {
       if (!candidate || !safe(candidate.localAgentId, 128) || !safe(candidate.targetAgentDid)
           || !safe(candidate.senderDeviceKeyId) || !safe(candidate.groupId) || !safe(candidate.conversationScope)) continue;
+      if (!safe(candidate.recipientDeviceKeyId) || !safe(candidate.ownerScope)) continue;
       const scope = candidate as unknown as CanaryScope;
       this.scopes.set(`${scope.localAgentId}\0${scope.groupId}\0${scope.senderDeviceKeyId}`, Object.freeze({ ...scope }));
     }
@@ -62,6 +65,7 @@ export class CanaryRuntimePolicy {
   }
 
   count(): number { return this.scopes.size; }
+  configuredScopes(): CanaryScope[] { return [...this.scopes.values()]; }
 }
 
 module.exports = { CanaryRuntimePolicy, parseCanaryEnvelope, CONTENT_TYPE_E2EE, MAX_ENVELOPE_BYTES };

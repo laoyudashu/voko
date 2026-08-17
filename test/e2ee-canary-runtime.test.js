@@ -8,7 +8,7 @@ const { CanaryStore } = require('../build/e2ee/canary-store');
 const { CanaryRuntime } = require('../build/e2ee/canary-runtime');
 
 const scope = { localAgentId:'agent-local',targetAgentDid:'did:voko:agent',senderDeviceKeyId:'browser-device',
-  groupId:'group-1',conversationScope:'conversation-1' };
+  recipientDeviceKeyId:'lite-device',ownerScope:'owner-test',groupId:'group-1',conversationScope:'conversation-1' };
 function envelope(messageId='message-1',ciphertext='Y2lwaGVydGV4dA') { return { version:'voko.e2ee/1',contentType:13,
   groupId:scope.groupId,epoch:1,targetAgentDid:scope.targetAgentDid,conversationScope:scope.conversationScope,
   senderDeviceKeyId:scope.senderDeviceKeyId,messageId,channelType:1,ciphertext }; }
@@ -38,4 +38,4 @@ test('scope mismatch, message ID conflict and emergency disable fail closed',asy
   const wrong={...envelope(),senderDeviceKeyId:'other-device'};assert.equal((await f.runtime.handle('agent-local',{contentType:13,content:JSON.stringify(wrong),fromUid:'g',channelType:1})).accepted,false);
   const input={contentType:13,content:JSON.stringify(envelope()),fromUid:'g',channelType:1};assert.equal((await f.runtime.handle('agent-local',input)).accepted,true);
   const changed={...envelope(),ciphertext:'ZGlmZmVyZW50'};assert.equal((await f.runtime.handle('agent-local',{...input,content:JSON.stringify(changed)})).accepted,false);
-  f.runtime.emergencyDisable();assert.equal(f.store.session(scope.groupId).status,'locked');f.db.close()});
+  await f.runtime.emergencyDisable();assert.equal(f.store.session(scope.groupId).status,'locked');f.db.close()});
