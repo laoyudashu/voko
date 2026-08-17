@@ -11,7 +11,7 @@
     { "id": "windows_real_service_canary", "status": "passed", "evidence": "run=e2ee-real-1786949836390-946c489b; voko=df8213f0f10b09d4ef861bd89b71ce1293405f74; agentdid=ac1409e; exact owner+agent+device scope; real AgentDID handshake=true; real WuKongIM bidirectional=true; endpoint restart=true; plaintextFallbacks=0; captured wire/database/journal plaintext hits=0" },
     { "id": "mobile_browser_emulation", "status": "passed", "evidence": "Pixel 5 viewport with Chromium 128MiB V8 heap cap" },
     { "id": "macos_keychain", "status": "pending_external", "evidence": "requires macOS runner result" },
-    { "id": "linux_secret_service", "status": "pending_external", "evidence": "requires unlocked desktop Secret Service runner" },
+    { "id": "linux_secret_service", "status": "passed", "evidence": "Ubuntu WSL2 x64; real GNOME Secret Service lifecycle in isolated unlocked keyring; commit=027406d34cad6fce52c4299fd0ddf1afb81fa7b3; cargo=1.97.1; 2026-08-17" },
     { "id": "mobile_browser", "status": "pending_external", "evidence": "requires real low-memory mobile browser" },
     { "id": "stability_30m", "status": "passed", "evidence": "commit=20d9f3b8fcebe9b5ec6010a8e8732b82f2982c3f; platform=win32/x64; durationMs=1800002; messages=718082; lost=0; duplicateDeliveries=0; crossedSessions=0; rssStart=7495680; rssPeak=8556544; p95Micros=447; messagesPerSecond=398.93" },
     { "id": "stability_4h", "status": "pending_local", "evidence": "deferred by product decision; still required before broader production rollout" },
