@@ -29,3 +29,9 @@ test('real E2EE Canary covers delivery recovery and fail-closed identity boundar
   assert.match(source, /identity_changed/);
   assert.match(source, /KEY_PACKAGE_UNAVAILABLE/);
 });
+
+test('real E2EE Canary proves the deployed allowlist rejects other Agents and devices', () => {
+  assert.match(source, /nonAllowlistedDeviceRejected: true/);
+  assert.match(source, /nonAllowlistedAgentRejected: true/);
+  assert.match(source, /-not-allowlisted/);
+});

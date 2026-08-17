@@ -197,6 +197,13 @@ async function expectFailure(action, pattern, label) {
     device: ownerDevice, agent: config.targetAgentDid, group, conversation });
   let imClient;
   try {
+    await expectFailure(() => requestJson(`${baseUrl}/api/external/v1/e2ee/devices`, { token: config.ownerToken, body: {
+      ownerDeviceKeyId: `${ownerDevice}-not-allowlisted`, keyEpoch: 1,
+      credentialPublicKey: Buffer.alloc(32).toString('base64url') } }, capture),
+    /E2EE_DIRECTORY_DISABLED|HTTP_ERROR: HTTP 404/, 'non-allowlisted device');
+    await expectFailure(() => requestJson(`${baseUrl}/api/external/v1/e2ee/key-packages`, { token: config.ownerToken, body: {
+      agentId: crypto.randomUUID(), ownerDeviceKeyId: ownerDevice } }, capture),
+    /E2EE_DIRECTORY_DISABLED|HTTP_ERROR: HTTP 404/, 'non-allowlisted Agent');
     const [creatorReady, recipientReady] = await Promise.all([creator.ready, recipient.ready]);
     await requestJson(`${baseUrl}/api/external/v1/e2ee/devices`, { token: config.ownerToken, body: {
       ownerDeviceKeyId: ownerDevice, keyEpoch: ownerKeyEpoch, credentialPublicKey: recipientReady.credentialPublicKey } }, capture);
@@ -317,6 +324,7 @@ async function expectFailure(action, pattern, label) {
       checks: { agentDidHandshake: true, realWuKongImBidirectional: true, restartRecovery: true,
         idempotentRetry: true, duplicateReplayRejected: true, outOfOrderDelivery: true,
         offlinePullRecovery: true, credentialChangeFailClosed: true, keyPackageExhaustionFailClosed: true,
+        nonAllowlistedDeviceRejected: true, nonAllowlistedAgentRejected: true,
         plaintextFallbacks: 0, capturedWirePlaintextHits: 0 }, passed: true }, null, 2));
     console.log(`Real E2EE Canary passed; report=${reportDir}`);
   } finally {
