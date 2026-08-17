@@ -1884,10 +1884,58 @@ async function startMcpServer(args?: any, core?: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
   }
 
+  let e2eeCanaryRuntime: any = null;
+  try {
+    const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
+    const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
+    if (canaryPolicy.enabled) {
+      const endpoint = String(process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
+      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error('VOKO_E2EE_CANARY_ENDPOINT must be an absolute path');
+      const { CanaryStore } = require('./e2ee/canary-store');
+      const { CanaryRuntime } = require('./e2ee/canary-runtime');
+      const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
+      e2eeCanaryRuntime = new CanaryRuntime({ policy: canaryPolicy, store: new CanaryStore(db),
+        crypto: new CanaryCryptoProcess(endpoint), dispatcher,
+        deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
+          const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
+          if (!result?.success) {
+            const error: any = new Error(result?.error || 'E2EE_CANARY_REPLY_NOT_DELIVERED');
+            error.deliveryOutcome = result?.outcomeUnknown ? 'outcome_unknown' : 'not_delivered';
+            throw error;
+          }
+          return result;
+        } });
+      console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
+    }
+  } catch (error: any) {
+    console.error('[E2EE Canary] 初始化失败，所有 E2EE 消息将硬拒绝:', error.message);
+  }
+  if (messageHandler) {
+    messageHandler.handleEncryptedMessage = async (agentId: string, data: any) => {
+      if (!e2eeCanaryRuntime) return { handled:true,accepted:false,code:'E2EE_CANARY_DISABLED' };
+      return e2eeCanaryRuntime.handle(agentId,data);
+    };
+  }
+
   // ── 接管 IM Hub 事件：主消息持久化后才向服务端 ACK ──
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      if (Number(data?.contentType) === 13) {
+        if (!e2eeCanaryRuntime) {
+          console.warn('[E2EE Canary] 未启用或初始化失败，拒绝密文消息');
+          data?.ack?.();
+          return;
+        }
+        void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
+          if (!result.accepted) console.warn(`[E2EE Canary] 已拒绝消息: ${result.code || 'E2EE_CANARY_REJECTED'}`);
+          data?.ack?.();
+        }).catch((error: any) => {
+          console.error('[E2EE Canary] 处理异常:', error.message);
+          data?.nack?.(error);
+        });
+        return;
+      }
       // When trusted remote is parked, reject both owner protocols before the
       // ordinary visitor handler. This keeps stale/forged owner payloads from
       // being interpreted as normal visitor messages.
@@ -2146,6 +2194,7 @@ async function startMcpServer(args?: any, core?: any) {
     trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
+    e2eeCanaryRuntime,
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

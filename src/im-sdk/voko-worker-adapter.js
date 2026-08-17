@@ -2,7 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 const { VokoIMHubPool } = require('./hub-pool');
-const { ChannelType, ContentType } = require('./messages');
+const { ChannelType, ContentType, encodeContent } = require('./messages');
 
 class VokoWorkerAdapter extends EventEmitter {
   constructor(options = {}) {
@@ -134,6 +134,17 @@ class VokoWorkerAdapter extends EventEmitter {
 
   send(agentId, request) {
     return this.deliver(agentId, request.channelId, request.content, request.messageType, request.channelType, request.mentions, request.localMsgId, request.metadata);
+  }
+
+  async deliverEncrypted(agentId, channelId, envelope, localMsgId) {
+    try {
+      const result = await this.pool.sendRaw(agentId, channelId, ChannelType.Person,
+        encodeContent(13, { content: String(envelope || '') }), { clientMsgNo: localMsgId || undefined });
+      return { success: true, messageId: result.messageId, messageSeq: result.messageSeq, clientMsgNo: result.clientMsgNo };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error),
+        code: error?.code, outcomeUnknown: error?.outcomeUnknown };
+    }
   }
 
   disconnectAll() {

@@ -79,6 +79,7 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
 
 interface MessageHandlerLike {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
+  handleEncryptedMessage?(agentId: string, data: InboundMessage): Promise<{ handled: boolean; accepted: boolean }>;
   forwardToAgent(...args: unknown[]): unknown;
 }
 
@@ -230,6 +231,17 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     }
 
     console.debug(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
+
+    // E2EE messages are claimed before the ordinary persistence/forwarding
+    // path. A disabled or rejected Canary is still handled fail-closed and is
+    // never reinterpreted as visitor plaintext.
+    for (const pending of pendingMessages) {
+      if (Number(pending.data?.contentType) !== 13) continue;
+      if (typeof messageHandler.handleEncryptedMessage === 'function') {
+        await messageHandler.handleEncryptedMessage(pending.agentId,pending.data!);
+      }
+      pending.data = undefined;
+    }
 
     // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
     // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集

@@ -280,6 +280,10 @@ class AgentWorkerManager extends EventEmitter {
     return this.adapter.deliver(agentId, channelId, content, messageType, channelType, mentions, localMsgId || undefined, metadata);
   }
 
+  deliverEncrypted(agentId: string, channelId: string, envelope: string, localMsgId?: string): Promise<unknown> {
+    return this.adapter.deliverEncrypted(agentId,channelId,envelope,localMsgId);
+  }
+
   send(
     agentId: string,
     channelId: string,

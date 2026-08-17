@@ -6,6 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { CanaryRuntimePolicy } = require('../build/e2ee/canary-policy');
 const { CanaryStore } = require('../build/e2ee/canary-store');
 const { CanaryRuntime } = require('../build/e2ee/canary-runtime');
+const { VokoWorkerAdapter } = require('../build/im-sdk/voko-worker-adapter');
 
 const scope = { localAgentId:'agent-local',targetAgentDid:'did:voko:agent',senderDeviceKeyId:'browser-device',
   recipientDeviceKeyId:'lite-device',ownerScope:'owner-test',groupId:'group-1',conversationScope:'conversation-1' };
@@ -39,3 +40,10 @@ test('scope mismatch, message ID conflict and emergency disable fail closed',asy
   const input={contentType:13,content:JSON.stringify(envelope()),fromUid:'g',channelType:1};assert.equal((await f.runtime.handle('agent-local',input)).accepted,true);
   const changed={...envelope(),ciphertext:'ZGlmZmVyZW50'};assert.equal((await f.runtime.handle('agent-local',{...input,content:JSON.stringify(changed)})).accepted,false);
   await f.runtime.emergencyDisable();assert.equal(f.store.session(scope.groupId).status,'locked');f.db.close()});
+
+test('encrypted reply stays contentType 13 on the raw IM transport',async()=>{
+  let sent;const adapter=Object.create(VokoWorkerAdapter.prototype);adapter.pool={async sendRaw(...args){sent=args;return{messageId:'im-1',messageSeq:9,clientMsgNo:'reply-1'}}};
+  const result=await adapter.deliverEncrypted('agent-local','guest-1','{"ciphertext":"opaque"}','reply-1');
+  assert.equal(result.success,true);assert.equal(sent[0],'agent-local');assert.equal(sent[1],'guest-1');assert.equal(sent[2],1);
+  const payload=JSON.parse(Buffer.from(sent[3]).toString('utf8'));assert.equal(payload.type,13);assert.equal(payload.content,'{"ciphertext":"opaque"}');
+});

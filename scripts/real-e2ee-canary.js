@@ -70,7 +70,8 @@ function buildEndpoint() {
 function endpoint(executable, options) {
   const child = spawn(executable, [`--role=${options.role}`, `--principal=${options.principal}`,
     `--device=${options.device}`, `--agent=${options.agent}`, `--group=${options.group}`,
-    `--conversation=${options.conversation}`], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    `--conversation=${options.conversation}`, `--owner-scope=${options.ownerScope || options.principal}`],
+  { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const lines = createInterface({ input: child.stdout });
   const pending = [];
   lines.on('line', (line) => pending.shift()?.resolve(JSON.parse(line)));
