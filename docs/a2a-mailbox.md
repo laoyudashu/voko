@@ -1,6 +1,6 @@
 # A2A Mailbox Gateway 与 Lite Bridge
 
-[文档索引](README.md) · [MCP/CLI 运行模型](mcp-cli-runtime.md) · [消息安全](message-safety.md)
+[文档索引](README.md) · [A2A Gateway 上手指南](a2a-gateway-getting-started.md) · [MCP/CLI 运行模型](mcp-cli-runtime.md) · [消息安全](message-safety.md)
 
 VOKO 的 A2A Mailbox 将已发布的本地 Agent 映射为可从公网访问的 A2A 1.0 Agent，同时允许本地 Agent 发现并调用外部 A2A Agent。它是独立的数据面，不复用普通访客 IM、WuKongIM 消息或聊天 Conversation。
 
