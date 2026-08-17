@@ -114,3 +114,13 @@ npm run test:e2ee:attachment:real
 
 凭证只能授予该测试 Bucket 的最小 PUT/GET 权限，不得提交到 Git。Windows 和 Ubuntu
 必须分别生成报告。三个附件门禁全部通过前，不能把附件接入限定账号内部 Canary。
+
+2026-08-17 已完成专用阿里云 OSS 验收：Bucket 为私有访问并启用 Block Public Access，
+RAM 测试身份仅通过 Bucket Policy 获得 `oss:PutObject` 与 `oss:GetObject`；测试对象由
+7 天生命周期规则自动清理。Windows 运行
+`e2ee-attachment-1786975611728-52266aad`、Ubuntu 运行
+`e2ee-attachment-1786975625994-efa314a5` 均通过，上传对象明文命中数为 0。
+凭证仅保存在被 Git 忽略的 `.env.real-test.local`，报告位于
+`artifacts/real-tests/`。这只解除附件进入限定账号内部 Canary 的测试门禁，生产附件
+入口仍保持关闭。
+反向权限探测同时确认：该身份无法列举测试 Bucket，也无法列举现有生产 Bucket。
