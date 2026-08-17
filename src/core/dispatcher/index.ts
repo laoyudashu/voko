@@ -110,8 +110,8 @@ interface DispatcherOptions {
 interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
-  sourceType?: 'agent_peer' | 'owner' | 'owner_chat';
-  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat';
+  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee_canary';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
@@ -1054,7 +1054,8 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link' || executionScope === 'owner_chat';
+      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link'
+        || executionScope === 'owner_chat' || executionScope === 'e2ee_canary';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1269,6 +1270,63 @@ ${body}
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
     } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+  }
+
+  async function executeCanary(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
+      const error: any = new Error('E2EE_CANARY_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_CANARY_SCOPE_REQUIRED'; throw error;
+    }
+    const turnId = `e2ee-canary-${crypto.randomUUID()}`;
+    const sinkKey = `${options.agentId}::${turnId}`;
+    let receipt: unknown;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'E2EE_CANARY_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = 'rejected'; rejectReply(error); return;
+      }
+      resolveReply(reply);
+    });
+    const timeout = setTimeout(() => {
+      _isolatedReplySinks.delete(sinkKey);
+      rejectReply(new Error('E2EE Canary Provider reply timed out'));
+    }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const delivery = await _doRoute(options.agentId, {
+        agentId: options.agentId,
+        fromUid: `e2ee-canary:${options.contextId}`,
+        senderUid: 'e2ee-canary',
+        channelId: options.contextId,
+        channelType: 1,
+        messageId: options.taskId,
+        turnId,
+        content: options.content,
+        rawContent: options.content,
+        providerBinding: options.binding || null,
+        executionScope: 'e2ee_canary',
+        sourceType: 'visitor',
+        sessionScopeId: options.sessionScopeId,
+        onDeliveryReceipt: (value: unknown) => { receipt = value; },
+      });
+      if (delivery?.outcome !== 'delivered') {
+        const error: any = new Error(`E2EE Canary Provider delivery ${delivery?.outcome || 'failed'}`);
+        error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
+        error.code = delivery?.errorCode || 'E2EE_CANARY_PROVIDER_DELIVERY_FAILED';
+        throw error;
+      }
+      options.onProviderAccepted?.(receipt);
+      return { reply: await replyPromise, receipt };
+    } finally {
+      clearTimeout(timeout);
+      _isolatedReplySinks.delete(sinkKey);
+    }
   }
 
   function dispatch(agentId: string, payload: PushPayload): void {
@@ -1492,7 +1550,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
