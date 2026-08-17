@@ -129,6 +129,10 @@ impl DirectRecipientEndpoint {
         &self.serialized_key_package
     }
 
+    pub fn signer_public_key(&self) -> Vec<u8> {
+        self.signer.to_public_vec()
+    }
+
     pub fn join(self, welcome: &[u8]) -> Result<DirectGroup, DirectGroupError> {
         let welcome = match MlsMessageIn::tls_deserialize_exact(welcome)
             .map_err(|error| DirectGroupError::Mls(format!("parse Welcome: {error:?}")))?
@@ -202,6 +206,10 @@ impl DirectCreatorEndpoint {
                 .tls_serialize_detached()
                 .map_err(|error| DirectGroupError::Mls(format!("serialize Welcome: {error:?}")))?,
         })
+    }
+
+    pub fn signer_public_key(&self) -> Vec<u8> {
+        self.signer.to_public_vec()
     }
 
     pub fn accept_add(mut self) -> Result<DirectGroup, DirectGroupError> {

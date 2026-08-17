@@ -60,3 +60,7 @@ path = "src/bin/witness_endpoint.rs"
 [[bin]]
 name = "voko-e2ee-canary-acceptance"
 path = "src/bin/canary_acceptance.rs"
+
+[[bin]]
+name = "voko-e2ee-canary-endpoint"
+path = "src/bin/canary_endpoint.rs"
