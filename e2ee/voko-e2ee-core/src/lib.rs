@@ -55,7 +55,8 @@ pub use persistence::{
 pub use recovery::{ArchivedMessage, ReadOnlyArchive, RecoveryError, ReplacementDeviceRequirement};
 pub use release_manifest::{ClientReleaseError, ClientReleaseManifest, SignedClientRelease};
 pub use rollout::{
-    ConversationSecurityState, E2eeRolloutPolicy, RolloutDecision, RolloutError, RolloutMode,
+    CanaryScope, ConversationSecurityState, E2eeRolloutPolicy, RolloutDecision, RolloutError,
+    RolloutMode,
 };
 pub use state_cache::{BoundedSecretCache, CacheError};
 #[cfg(not(target_arch = "wasm32"))]

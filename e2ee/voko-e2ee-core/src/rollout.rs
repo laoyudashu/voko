@@ -2,6 +2,13 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CanaryScope {
+    pub owner_principal_id: String,
+    pub agent_did: String,
+    pub device_key_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RolloutMode {
     Disabled,
@@ -39,32 +46,40 @@ pub enum RolloutError {
 
 pub struct E2eeRolloutPolicy {
     mode: RolloutMode,
-    agent_allowlist: BTreeSet<String>,
+    canary_allowlist: BTreeSet<CanaryScope>,
 }
 
 impl E2eeRolloutPolicy {
     pub fn new(
         mode: RolloutMode,
-        agent_allowlist: impl IntoIterator<Item = String>,
+        canary_allowlist: impl IntoIterator<Item = CanaryScope>,
     ) -> Result<Self, RolloutError> {
-        let agent_allowlist: BTreeSet<_> = agent_allowlist.into_iter().collect();
-        if agent_allowlist.iter().any(|agent| {
-            agent.is_empty() || agent.len() > 2048 || agent.chars().any(char::is_control)
+        let canary_allowlist: BTreeSet<_> = canary_allowlist.into_iter().collect();
+        if canary_allowlist.iter().any(|scope| {
+            [
+                &scope.owner_principal_id,
+                &scope.agent_did,
+                &scope.device_key_id,
+            ]
+            .into_iter()
+            .any(|value| {
+                value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control)
+            })
         }) {
             return Err(RolloutError::InvalidConfiguration);
         }
-        if mode != RolloutMode::Disabled && agent_allowlist.is_empty() {
+        if mode != RolloutMode::Disabled && canary_allowlist.is_empty() {
             return Err(RolloutError::InvalidConfiguration);
         }
         Ok(Self {
             mode,
-            agent_allowlist,
+            canary_allowlist,
         })
     }
 
     pub fn decide(
         &self,
-        agent_did: &str,
+        scope: &CanaryScope,
         state: ConversationSecurityState,
         both_endpoints_capable: bool,
     ) -> Result<RolloutDecision, RolloutError> {
@@ -90,7 +105,7 @@ impl E2eeRolloutPolicy {
         if state == ConversationSecurityState::E2eeActive {
             return Ok(RolloutDecision::ContinueE2ee);
         }
-        if !self.agent_allowlist.contains(agent_did) {
+        if !self.canary_allowlist.contains(scope) {
             return Ok(RolloutDecision::LegacyTransport);
         }
         match self.mode {
@@ -108,33 +123,44 @@ mod tests {
 
     #[test]
     fn shadow_is_metadata_only_and_enabled_fails_closed() {
-        let shadow =
-            E2eeRolloutPolicy::new(RolloutMode::Shadow, ["did:voko:canary".into()]).unwrap();
+        let scope = CanaryScope {
+            owner_principal_id: "owner-canary".into(),
+            agent_did: "did:voko:canary".into(),
+            device_key_id: "device-canary".into(),
+        };
+        let shadow = E2eeRolloutPolicy::new(RolloutMode::Shadow, [scope.clone()]).unwrap();
         assert_eq!(
-            shadow.decide(
-                "did:voko:canary",
-                ConversationSecurityState::LegacyTransport,
-                true
-            ),
+            shadow.decide(&scope, ConversationSecurityState::LegacyTransport, true),
             Ok(RolloutDecision::ShadowMetadataOnly)
         );
-        let enabled =
-            E2eeRolloutPolicy::new(RolloutMode::Enabled, ["did:voko:canary".into()]).unwrap();
+        let enabled = E2eeRolloutPolicy::new(RolloutMode::Enabled, [scope.clone()]).unwrap();
         assert_eq!(
-            enabled.decide(
-                "did:voko:canary",
-                ConversationSecurityState::LegacyTransport,
-                false
-            ),
+            enabled.decide(&scope, ConversationSecurityState::LegacyTransport, false),
             Err(RolloutError::CapabilityUnavailable)
         );
         assert_eq!(
-            enabled.decide(
-                "did:voko:canary",
-                ConversationSecurityState::E2eeActive,
-                false
-            ),
+            enabled.decide(&scope, ConversationSecurityState::E2eeActive, false),
             Err(RolloutError::PlaintextDowngradeForbidden)
         );
+
+        for rejected in [
+            CanaryScope {
+                owner_principal_id: "other-owner".into(),
+                ..scope.clone()
+            },
+            CanaryScope {
+                agent_did: "did:voko:other".into(),
+                ..scope.clone()
+            },
+            CanaryScope {
+                device_key_id: "other-device".into(),
+                ..scope.clone()
+            },
+        ] {
+            assert_eq!(
+                enabled.decide(&rejected, ConversationSecurityState::LegacyTransport, true),
+                Ok(RolloutDecision::LegacyTransport)
+            );
+        }
     }
 }

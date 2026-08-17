@@ -73,6 +73,18 @@ npm run e2ee:gate:stability -- stability_30m e2ee-stability-30m-summary.json
 npm run test:e2ee:readiness
 ```
 
+Windows 内部 E2EE-TOFU Canary 使用一个命令执行 readiness、核心协议、浏览器
+WASM、Browser→Lite 跨进程、Fake IM 故障以及明文泄漏审计：
+
+```powershell
+npm run test:e2ee:canary
+```
+
+该命令只允许在 Windows 运行，并要求 `productionEnabled=false`。验收范围精确绑定
+主人、Agent DID 和设备三元组；非白名单主体保持旧传输，已经进入 E2EE 的会话在能力
+缺失、身份变化或 KeyPackage 缺失时锁定，不允许降级明文。生成的
+`e2ee-canary-summary.json` 默认被 Git 忽略，人工审核后才可将摘要写入发布门禁。
+
 `test:e2ee:browser` is one combined Chromium gate covering the WASM round trip,
 single-writer lease, IndexedDB crash recovery, CSP/WASM integrity and constrained
 mobile emulation. There are no separate `browser:persistence`, `browser:leader`

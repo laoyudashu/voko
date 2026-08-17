@@ -5,6 +5,7 @@ coverage/
 e2ee-stability-summary.json
 e2ee-audit-bundle.json
 e2ee-platform-summary.json
+e2ee-canary-summary.json
 playwright-report/
 test-results/
 test-reports/

@@ -91,6 +91,7 @@
     "e2ee:audit:prepare": "node scripts/prepare-e2ee-audit.js",
     "test:e2ee:platform": "node scripts/run-e2ee-platform-gate.js",
     "test:e2ee:fake-im": "node scripts/run-e2ee-poc.js fake-im",
+    "test:e2ee:canary": "node scripts/run-e2ee-canary.js",
     "test:ci": "npm run typecheck && npm run build:ts && npm run i18n:check && npm run test:coverage:build && node scripts/check-core-coverage.js",
     "test:ci:repeat": "node scripts/repeat-test.js",
     "test:real:smoke": "npm run build:ts && node scripts/real-test.js smoke",
