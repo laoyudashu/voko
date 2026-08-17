@@ -9,6 +9,7 @@ e2ee-canary-summary.json
 playwright-report/
 test-results/
 test-reports/
+artifacts/
 artifacts/real-tests/
 .build-stage-*/
 .cache/
