@@ -12,5 +12,8 @@ test('deployed Canary probe verifies global disable and irreversible device revo
   assert.match(source, /response\.status !== 404/);
   assert.match(source, /--drill-revoke=/);
   assert.match(source, /replay\.status !== 409/);
+  assert.match(source, /--drill-rotate=/);
+  assert.match(source, /rotatedBody\?\.data\?\.rotated !== true/);
+  assert.match(source, /Stale device epoch was not rejected/);
   assert.doesNotMatch(source, /console\.log\([^\n]*token/i);
 });

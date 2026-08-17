@@ -5,16 +5,17 @@ import type { DatabaseSync } from 'node:sqlite';
 const CONFIG_TYPE = 'owner_codex_bridge_v1';
 interface AgentCodexConfig { cwd: string | null; profile: string | null }
 
-function readAll(db: DatabaseSync): Record<string, AgentCodexConfig> {
+function readAll(db: DatabaseSync): Map<string, AgentCodexConfig> {
   try {
     const row = db.prepare('SELECT data FROM config WHERE type=?').get(CONFIG_TYPE) as any;
     const parsed = JSON.parse(String(row?.data || '{}'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_) { return {}; }
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? new Map(Object.entries(parsed) as [string, AgentCodexConfig][]) : new Map();
+  } catch (_) { return new Map(); }
 }
 
 function readOwnerCodexConfig(db: DatabaseSync, agentId: string): AgentCodexConfig {
-  const value = readAll(db)[String(agentId)] || {} as AgentCodexConfig;
+  const value = readAll(db).get(String(agentId)) || {} as AgentCodexConfig;
   return { cwd: typeof value.cwd === 'string' && value.cwd ? value.cwd : null,
     profile: typeof value.profile === 'string' && value.profile ? value.profile : null };
 }
@@ -29,10 +30,10 @@ function saveOwnerCodexConfig(db: DatabaseSync, agentId: string, input: Partial<
   }
   const profile = input.profile == null || String(input.profile).trim() === '' ? null : String(input.profile).trim();
   if (profile && !/^[A-Za-z0-9._-]{1,64}$/.test(profile)) throw new Error('OWNER_CODEX_PROFILE_INVALID');
-  const all = readAll(db); all[String(agentId)] = { cwd, profile };
+  const all = readAll(db); all.set(String(agentId), { cwd, profile });
   db.prepare(`INSERT INTO config(type,data,updated_at) VALUES(?,?,?)
     ON CONFLICT(type) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`)
-    .run(CONFIG_TYPE,JSON.stringify(all),Date.now());
+    .run(CONFIG_TYPE,JSON.stringify(Object.fromEntries(all)),Date.now());
   return { cwd, profile };
 }
 

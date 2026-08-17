@@ -12,6 +12,7 @@ for (const line of fs.readFileSync(path.join(root, '.env.real-test.local'), 'utf
 }
 const expected = process.argv.find((value) => value.startsWith('--expect='))?.slice(9) || 'enabled';
 const revokeDrillDevice = process.argv.find((value) => value.startsWith('--drill-revoke='))?.slice(15);
+const rotateDrillDevice = process.argv.find((value) => value.startsWith('--drill-rotate='))?.slice(15);
 let dbPath = process.env.VOKO_REAL_DB_PATH;
 if (process.platform === 'linux' && /^[A-Za-z]:\\/.test(dbPath || '')) dbPath = `/mnt/${dbPath[0].toLowerCase()}/${dbPath.slice(3).replaceAll('\\', '/')}`;
 const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -42,14 +43,30 @@ const baseUrl = String(process.env.VOKO_E2EE_CANARY_BASE_URL || require('../src/
   if (!response.ok || body?.data?.enabled !== true || body.data.mode !== 'e2ee_tofu') {
     throw new Error(`Expected enabled Canary, received HTTP ${response.status}`);
   }
+  const endpoint = `${baseUrl}/api/external/v1/e2ee/devices`;
+  const call = (url, requestBody) => fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`,
+    accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(requestBody),
+  signal: AbortSignal.timeout(10_000) });
+  if (rotateDrillDevice) {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(rotateDrillDevice)) throw new Error('Invalid rotation drill device ID');
+    const epoch = Date.now();
+    const first = { ownerDeviceKeyId: rotateDrillDevice, keyEpoch: epoch,
+      credentialPublicKey: crypto.randomBytes(32).toString('base64url') };
+    const successor = { ...first, keyEpoch: epoch + 1, credentialPublicKey: crypto.randomBytes(32).toString('base64url') };
+    const registered = await call(endpoint, first);
+    if (![200, 201].includes(registered.status)) throw new Error(`Rotation drill registration failed: HTTP ${registered.status}`);
+    const rotated = await call(endpoint, successor); const rotatedBody = await rotated.json().catch(() => ({}));
+    if (!rotated.ok || rotatedBody?.data?.rotated !== true) throw new Error(`Rotation drill failed: HTTP ${rotated.status}`);
+    const stale = await call(endpoint, first);
+    if (stale.status !== 409) throw new Error(`Stale device epoch was not rejected: HTTP ${stale.status}`);
+    const revoked = await call(`${endpoint}/revoke`, { ownerDeviceKeyId: rotateDrillDevice });
+    if (!revoked.ok) throw new Error(`Rotation drill cleanup failed: HTTP ${revoked.status}`);
+    console.log('E2EE Canary device rotation: successor accepted, stale epoch rejected, test device revoked');
+  }
   if (revokeDrillDevice) {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(revokeDrillDevice)) throw new Error('Invalid revocation drill device ID');
-    const endpoint = `${baseUrl}/api/external/v1/e2ee/devices`;
     const payload = { ownerDeviceKeyId: revokeDrillDevice, keyEpoch: Date.now(),
       credentialPublicKey: crypto.randomBytes(32).toString('base64url') };
-    const call = (url, requestBody) => fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`,
-      accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(10_000) });
     const registered = await call(endpoint, payload);
     if (![200, 201].includes(registered.status)) throw new Error(`Revocation drill registration failed: HTTP ${registered.status}`);
     const revoked = await call(`${endpoint}/revoke`, { ownerDeviceKeyId: revokeDrillDevice });

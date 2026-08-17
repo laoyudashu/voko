@@ -85,6 +85,10 @@ npm run test:e2ee:canary
 缺失、身份变化或 KeyPackage 缺失时锁定，不允许降级明文。生成的
 `e2ee-canary-summary.json` 默认被 Git 忽略，人工审核后才可将摘要写入发布门禁。
 
+限定账号的真实服务、白名单、换钥、撤销、紧急关闭、明文检查和数据库回滚
+操作统一遵循 [E2EE Canary 运维手册](e2ee-canary-operations.md)。该手册明确区分
+“已通过”“不适用”和“尚未验证”；纯文本 Canary 不得将 OSS 标记为已验证。
+
 `test:e2ee:browser` is one combined Chromium gate covering the WASM round trip,
 single-writer lease, IndexedDB crash recovery, CSP/WASM integrity and constrained
 mobile emulation. There are no separate `browser:persistence`, `browser:leader`
