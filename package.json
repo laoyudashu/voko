@@ -84,6 +84,7 @@
     "test:e2ee:stability": "node scripts/run-e2ee-stability.js",
     "e2ee:gate:stability": "node scripts/record-e2ee-stability-gate.js",
     "test:e2ee:browser": "node scripts/test-e2ee-wasm-browser.js",
+    "test:e2ee:android": "npm run test:e2ee:wasm && node scripts/test-e2ee-android-emulator.js",
     "test:e2ee:relay": "node scripts/test-e2ee-relay-poc.js",
     "test:e2ee:cross-process": "node scripts/test-e2ee-cross-process.js",
     "test:e2ee:witness-processes": "node scripts/test-e2ee-witness-processes.js",

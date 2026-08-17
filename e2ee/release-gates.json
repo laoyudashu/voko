@@ -12,7 +12,7 @@
     { "id": "mobile_browser_emulation", "status": "passed", "evidence": "Pixel 5 viewport with Chromium 128MiB V8 heap cap" },
     { "id": "macos_keychain", "status": "pending_external", "evidence": "requires macOS runner result" },
     { "id": "linux_secret_service", "status": "passed", "evidence": "Ubuntu WSL2 x64; real GNOME Secret Service lifecycle in isolated unlocked keyring; commit=027406d34cad6fce52c4299fd0ddf1afb81fa7b3; cargo=1.97.1; 2026-08-17" },
-    { "id": "mobile_browser", "status": "pending_external", "evidence": "requires real low-memory mobile browser" },
+    { "id": "mobile_browser", "status": "passed", "evidence": "Android 14 x86_64 emulator; real Android Chrome via ADB/CDP; WASM round trip and IndexedDB reload recovery passed; 1080x2400, 1536MiB RAM; 2026-08-17" },
     { "id": "stability_30m", "status": "passed", "evidence": "commit=20d9f3b8fcebe9b5ec6010a8e8732b82f2982c3f; platform=win32/x64; durationMs=1800002; messages=718082; lost=0; duplicateDeliveries=0; crossedSessions=0; rssStart=7495680; rssPeak=8556544; p95Micros=447; messagesPerSecond=398.93" },
     { "id": "stability_4h", "status": "pending_local", "evidence": "deferred by product decision; still required before broader production rollout" },
     { "id": "independent_witnesses", "status": "pending_external", "evidence": "two independently operated Witness services" },

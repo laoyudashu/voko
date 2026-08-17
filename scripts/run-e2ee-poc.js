@@ -14,7 +14,7 @@ const workspace = requested === 'wasm' ? join(__dirname, '..', 'e2ee') : join(__
 const manifest = requested === 'wasm' ? 'Cargo.toml' : join('e2ee', 'Cargo.toml');
 const args = [operation, '--manifest-path', manifest];
 if (operation === 'bench') args.push('--bench', 'direct_message');
-if (requested === 'wasm') args.push('--target', 'wasm32-unknown-unknown');
+if (requested === 'wasm') args.push('-p', 'voko-e2ee-wasm', '--target', 'wasm32-unknown-unknown');
 if (requested === 'stress') args.push('--release', '--test', 'stress', '--', '--ignored');
 if (requested === 'scale') args.push('--release', '--test', 'scale', '--', '--ignored');
 if (requested === 'fake-im') args.push('--test', 'fake_im');
