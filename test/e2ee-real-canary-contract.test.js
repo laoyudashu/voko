@@ -20,3 +20,12 @@ test('real E2EE Canary uses AgentDID establishment and real WuKongIM without pla
   assert.match(source, /plaintextFallbacks: 0/);
   assert.match(source, /assertNoPlaintext/);
 });
+
+test('real E2EE Canary covers delivery recovery and fail-closed identity boundaries', () => {
+  for (const check of ['idempotentRetry', 'duplicateReplayRejected', 'outOfOrderDelivery',
+    'offlinePullRecovery', 'credentialChangeFailClosed', 'keyPackageExhaustionFailClosed']) {
+    assert.match(source, new RegExp(`${check}: true`));
+  }
+  assert.match(source, /identity_changed/);
+  assert.match(source, /KEY_PACKAGE_UNAVAILABLE/);
+});

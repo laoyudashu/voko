@@ -103,9 +103,9 @@ async function requestJson(url, options, capture, attempt = 0) {
   return parsed.data ?? parsed;
 }
 
-function waitForEncryptedMessage(client, timeout = 20_000) {
+function waitForEncryptedMessage(client, timeout = 20_000, label = 'encrypted IM message') {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error('Timed out waiting for encrypted IM message')); }, timeout);
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`Timed out waiting for ${label}`)); }, timeout);
     const onMessage = (message) => {
       if (Number(message.contentType) !== CONTENT_TYPE_E2EE) return;
       cleanup();
@@ -131,11 +131,38 @@ async function fetchEncryptedReply(baseUrl, guestToken, guestAgentId, serverAgen
   throw new Error('Encrypted reply was not returned by Guest fetch');
 }
 
+async function pullOfflineEncryptedMessage(config, guestImUid, clientMsgNo, capture) {
+  const imApiBaseUrl = String(require('../src/endpoints.json').im.apiBaseUrl).replace(/\/+$/, '');
+  const body = JSON.stringify({ login_uid: config.agentImUid, channel_id: guestImUid, channel_type: 1,
+    start_message_seq: 1, end_message_seq: 0, limit: 100, pull_mode: 1 });
+  capture.push(body);
+  const response = await fetch(`${imApiBaseUrl}/channel/messagesync`, { method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.ownerToken}`,
+      'x-voko-agent-uid': config.agentImUid }, body, signal: AbortSignal.timeout(15_000) });
+  const text = await response.text();
+  capture.push(text);
+  if (!response.ok) throw new Error(`Offline IM pull failed: HTTP ${response.status}`);
+  const message = (JSON.parse(text).messages || []).find((item) => item.client_msg_no === clientMsgNo);
+  if (!message?.payload) throw new Error('Offline IM pull did not return the encrypted message');
+  const payload = JSON.parse(Buffer.from(message.payload, 'base64').toString('utf8'));
+  if (Number(payload.type) !== CONTENT_TYPE_E2EE) throw new Error('Offline IM pull changed the encrypted content type');
+  return JSON.parse(payload.content);
+}
+
 function assertNoPlaintext(capture, plaintexts) {
   const wire = Buffer.from(capture.join('\n'));
   for (const plaintext of plaintexts) {
     if (wire.includes(Buffer.from(plaintext))) throw new Error('Canary plaintext appeared in captured AgentDID/IM wire data');
   }
+}
+
+async function expectFailure(action, pattern, label) {
+  try { await action(); }
+  catch (error) {
+    if (pattern.test(String(error?.message || error))) return;
+    throw new Error(`${label} failed with an unexpected error: ${error?.message || error}`);
+  }
+  throw new Error(`${label} unexpectedly succeeded`);
 }
 
 (async () => {
@@ -151,7 +178,13 @@ function assertNoPlaintext(capture, plaintexts) {
   const conversation = `canary-conversation-${crypto.randomUUID()}`;
   const capture = [];
   const ownerKeyEpoch = Date.now();
-  const plaintexts = [`CANARY_BROWSER_TO_LITE_${runId}`, `CANARY_LITE_TO_BROWSER_${runId}`];
+  const plaintexts = [
+    `CANARY_BROWSER_TO_LITE_${runId}`,
+    `CANARY_LITE_TO_BROWSER_${runId}`,
+    `CANARY_REORDER_FIRST_${runId}`,
+    `CANARY_REORDER_SECOND_${runId}`,
+    `CANARY_OFFLINE_RECOVERY_${runId}`,
+  ];
   const executable = buildEndpoint();
   const guest = await requestJson(`${baseUrl}/guest/v1/sessions`, { method: 'POST', body: {} }, capture);
   const guestToken = guest.token;
@@ -196,17 +229,60 @@ function assertNoPlaintext(capture, plaintexts) {
     imClient.on('error', () => {});
     await imClient.connect();
     const outbound = await creator.request({ op: 'encrypt', message_id: `${runId}-forward`, text: plaintexts[0] });
-    const incoming = waitForEncryptedMessage(imClient);
-    await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: { agentId: guestAgentId,
+    const incoming = waitForEncryptedMessage(imClient, 20_000, 'initial encrypted IM message');
+    const initialBody = { agentId: guestAgentId,
       toUid: config.serverAgentId, content: JSON.stringify(outbound.envelope), contentType: CONTENT_TYPE_E2EE,
-      clientMsgNo: `${runId}-forward` } }, capture);
+      clientMsgNo: `${runId}-forward` };
+    const initialSend = await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: initialBody }, capture);
     const receivedEnvelope = await incoming;
     if ((await recipient.request({ op: 'decrypt', envelope: receivedEnvelope })).text !== plaintexts[0]) throw new Error('Guest→Lite plaintext mismatch');
+    const duplicateSend = await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: initialBody }, capture);
+    if (duplicateSend.messageSeq !== initialSend.messageSeq || duplicateSend.clientMsgNo !== initialSend.clientMsgNo) {
+      throw new Error('Guest message idempotency did not return the original message');
+    }
     const reply = await recipient.request({ op: 'encrypt', message_id: `${runId}-reply`, text: plaintexts[1] });
     await imClient.sendRaw(guestIdentity.principalId, 1,
       encodeContent(CONTENT_TYPE_E2EE, { content: JSON.stringify(reply.envelope) }), { clientMsgNo: `${runId}-reply` });
     const returned = await fetchEncryptedReply(baseUrl, guestToken, guestAgentId, config.serverAgentId, capture);
     if ((await creator.request({ op: 'decrypt', envelope: returned })).text !== plaintexts[1]) throw new Error('Lite→Guest plaintext mismatch');
+
+    const reorderFirst = await creator.request({ op: 'encrypt', message_id: `${runId}-reorder-1`, text: plaintexts[2] });
+    const reorderSecond = await creator.request({ op: 'encrypt', message_id: `${runId}-reorder-2`, text: plaintexts[3] });
+    const secondIncoming = waitForEncryptedMessage(imClient, 20_000, 'reordered second encrypted IM message');
+    await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: { agentId: guestAgentId,
+      toUid: config.serverAgentId, content: JSON.stringify(reorderSecond.envelope), contentType: CONTENT_TYPE_E2EE,
+      clientMsgNo: `${runId}-reorder-2` } }, capture);
+    const receivedSecond = await secondIncoming;
+    const firstIncoming = waitForEncryptedMessage(imClient, 20_000, 'reordered first encrypted IM message');
+    await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: { agentId: guestAgentId,
+      toUid: config.serverAgentId, content: JSON.stringify(reorderFirst.envelope), contentType: CONTENT_TYPE_E2EE,
+      clientMsgNo: `${runId}-reorder-1` } }, capture);
+    const receivedFirst = await firstIncoming;
+    if ((await recipient.request({ op: 'decrypt', envelope: receivedSecond })).text !== plaintexts[3]
+      || (await recipient.request({ op: 'decrypt', envelope: receivedFirst })).text !== plaintexts[2]) {
+      throw new Error('Out-of-order encrypted delivery did not preserve both messages');
+    }
+    await expectFailure(() => recipient.request({ op: 'decrypt', envelope: receivedFirst }), /replay|generation|decrypt|secret/i,
+      'duplicate ciphertext replay');
+
+    imClient.disconnect();
+    const offline = await creator.request({ op: 'encrypt', message_id: `${runId}-offline`, text: plaintexts[4] });
+    await requestJson(`${baseUrl}/guest/v1/messages`, { token: guestToken, body: { agentId: guestAgentId,
+      toUid: config.serverAgentId, content: JSON.stringify(offline.envelope), contentType: CONTENT_TYPE_E2EE,
+      clientMsgNo: `${runId}-offline` } }, capture);
+    const recoveredEnvelope = await pullOfflineEncryptedMessage(config, guestIdentity.principalId,
+      `${runId}-offline`, capture);
+    imClient = new VokoIMClient({ uid: config.agentImUid, token: config.agentImToken,
+      serverUrl: config.imServerUrl, autoReconnect: false, ackMode: 'auto' });
+    imClient.on('error', () => {});
+    await imClient.connect();
+    if ((await recipient.request({ op: 'decrypt', envelope: recoveredEnvelope })).text !== plaintexts[4]) {
+      throw new Error('Offline encrypted message was not recovered by IM pull');
+    }
+
+    await expectFailure(() => requestJson(`${baseUrl}/guest/v1/e2ee/key-packages/reserve`, { token: guestToken,
+      body: { agentId: config.serverAgentId, targetAgentDid: config.targetAgentDid } }, capture),
+    /KEY_PACKAGE_UNAVAILABLE/, 'KeyPackage exhaustion');
 
     const [creatorState, recipientState] = await Promise.all([
       creator.request({ op: 'snapshot' }), recipient.request({ op: 'snapshot' }),
@@ -219,6 +295,18 @@ function assertNoPlaintext(capture, plaintexts) {
     await Promise.all([creator.ready, recipient.ready]);
     await creator.request({ op: 'restore', snapshot: creatorState.snapshot });
     await recipient.request({ op: 'restore', snapshot: recipientState.snapshot });
+
+    const successor = endpoint(executable, { role: 'recipient', principal: status.ownerScope,
+      device: ownerDevice, agent: config.targetAgentDid, group: `${group}-successor`, conversation });
+    try {
+      const successorReady = await successor.ready;
+      await requestJson(`${baseUrl}/api/external/v1/e2ee/devices`, { token: config.ownerToken, body: {
+        ownerDeviceKeyId: ownerDevice, keyEpoch: ownerKeyEpoch + 1,
+        credentialPublicKey: successorReady.credentialPublicKey } }, capture);
+    } finally { successor.close(); }
+    const changed = await requestJson(`${baseUrl}/guest/v1/e2ee/establishments/status`, { token: guestToken,
+      body: { establishmentId: establishment.establishmentId } }, capture);
+    if (changed.state !== 'identity_changed') throw new Error(`Credential rotation did not fail closed: ${changed.state}`);
     assertNoPlaintext(capture, plaintexts);
 
     const reportDir = path.join(root, 'artifacts', 'real-tests', runId);
@@ -227,6 +315,8 @@ function assertNoPlaintext(capture, plaintexts) {
       sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
       productionEnabled: false, serverAgentId: config.serverAgentId, contentType: CONTENT_TYPE_E2EE,
       checks: { agentDidHandshake: true, realWuKongImBidirectional: true, restartRecovery: true,
+        idempotentRetry: true, duplicateReplayRejected: true, outOfOrderDelivery: true,
+        offlinePullRecovery: true, credentialChangeFailClosed: true, keyPackageExhaustionFailClosed: true,
         plaintextFallbacks: 0, capturedWirePlaintextHits: 0 }, passed: true }, null, 2));
     console.log(`Real E2EE Canary passed; report=${reportDir}`);
   } finally {
