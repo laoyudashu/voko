@@ -12,6 +12,8 @@ export class CanaryStore {
       message_id TEXT PRIMARY KEY,group_id TEXT NOT NULL,cipher_digest TEXT NOT NULL,state TEXT NOT NULL,
       encrypted_reply TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_e2ee_canary_receipts_state ON e2ee_canary_receipts(state,updated_at);`);
+    db.exec(`CREATE TABLE IF NOT EXISTS e2ee_canary_control(
+      singleton INTEGER PRIMARY KEY CHECK(singleton=1),emergency_disabled INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL);`);
   }
 
   reserve(scope: any, messageId: string, digest: string): 'new'|'duplicate' {
@@ -57,6 +59,16 @@ export class CanaryStore {
     const now = Date.now();
     this.db.prepare("UPDATE e2ee_canary_sessions SET status='locked',updated_at=? WHERE status IN ('initializing','active')").run(now);
     this.db.prepare("UPDATE e2ee_canary_receipts SET state=?,updated_at=? WHERE state IN ('received','provider_accepted')").run(reason,now);
+  }
+
+  emergencyDisable(): void {
+    this.lockAll('revoked');
+    this.db.prepare(`INSERT INTO e2ee_canary_control(singleton,emergency_disabled,updated_at) VALUES(1,1,?)
+      ON CONFLICT(singleton) DO UPDATE SET emergency_disabled=1,updated_at=excluded.updated_at`).run(Date.now());
+  }
+
+  isEmergencyDisabled(): boolean {
+    return Number((this.db.prepare('SELECT emergency_disabled FROM e2ee_canary_control WHERE singleton=1').get() as any)?.emergency_disabled || 0) === 1;
   }
 
   diagnostics(): any {

@@ -1916,6 +1916,13 @@ async function startMcpServer(args?: any, core?: any) {
       return e2eeCanaryRuntime.handle(agentId,data);
     };
   }
+  if (e2eeCanaryRuntime) {
+    const { CanaryMonitor } = require('./e2ee/canary-monitor');
+    const canaryMonitor = new CanaryMonitor(e2eeCanaryRuntime,{ onReport:(report: any) => {
+      try { require('./core/lite-bus').emit('e2ee-canary:status',report); } catch (_) {}
+    } });
+    await taskManager.start('e2ee-canary-monitor',() => canaryMonitor.start());
+  }
 
   // ── 接管 IM Hub 事件：主消息持久化后才向服务端 ACK ──
   agentManager.on('message', (msg?: any) => {

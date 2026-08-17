@@ -19,7 +19,8 @@ test('Canary state survives SQLite restart as ciphertext and revocation stays lo
   assert.doesNotMatch(readFileSync(path).toString('latin1'),/private message|private reply/);
   db = new DatabaseSync(path); store = new CanaryStore(db);
   assert.deepEqual(Buffer.from(store.session(scope.groupId).encrypted_state),sealed);
-  store.lockAll('revoked'); db.close();
+  store.emergencyDisable(); db.close();
   db = new DatabaseSync(path); store = new CanaryStore(db);
-  assert.equal(store.session(scope.groupId).status,'locked'); db.close(); rmSync(dir,{recursive:true,force:true});
+  assert.equal(store.session(scope.groupId).status,'locked');assert.equal(store.isEmergencyDisabled(),true);
+  db.close(); rmSync(dir,{recursive:true,force:true});
 });
