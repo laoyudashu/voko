@@ -85,6 +85,14 @@ class A2AMailboxClient {
   async cancelInboundTask(taskId: string): Promise<any> {
     return this.post(`/tasks/${encodeURIComponent(taskId)}:cancel`, {});
   }
+  async uploadArtifact(taskId: string, input: { artifactId: string; partIndex: number; raw: string;
+    mediaType: string; filename?: string; sha256?: string }): Promise<any> {
+    const result = await this.post(`/tasks/${encodeURIComponent(taskId)}/artifacts`, input);
+    return result?.artifact;
+  }
+  async getDiagnosticsSummary(): Promise<any> {
+    const result = await this.get('/diagnostics/summary'); return result?.diagnostics || null;
+  }
   async claimOutboundResults(limit = 20): Promise<{ leaseId: string; items: OutboundResultItem[] }> {
     return this.post('/outbound/results/claim', { limit });
   }

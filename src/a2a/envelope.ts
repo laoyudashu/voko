@@ -47,11 +47,8 @@ function validatePayload(envelope: A2AEnvelope): void {
     || !Array.isArray(artifact.parts) || artifact.parts.length === 0) throw new Error('Invalid A2A artifact');
   for (const part of artifact.parts) {
     if (typeof part?.text === 'string' && part.text && Buffer.byteLength(part.text, 'utf8') <= 6144) continue;
-    const file = part?.file; let url: URL;
-    try { url = new URL(String(file?.uri || '')); } catch (_) { throw new Error('Invalid A2A artifact part'); }
-    if (url.protocol !== 'https:' || String(file.uri).length > 2048 || !/^[a-f0-9]{64}$/i.test(String(file.sha256 || ''))
-      || !Number.isSafeInteger(Number(file.size)) || Number(file.size) < 0 || Number(file.size) > 100 * 1024 * 1024
-      || typeof file.mimeType !== 'string' || file.mimeType.length > 128) throw new Error('Invalid A2A artifact part');
+    if (ID_PATTERN.test(String(part?.artifactRef || '')) && Object.keys(part).every((key) => key === 'artifactRef')) continue;
+    throw new Error('Invalid A2A artifact part');
   }
 }
 
