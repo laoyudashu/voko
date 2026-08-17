@@ -7,6 +7,7 @@
     { "id": "agentdid_directory", "status": "passed", "evidence": "AgentDID 5cbd826; feature disabled by default" },
     { "id": "browser_lite_cross_process", "status": "passed", "evidence": "npm run test:e2ee:cross-process" },
     { "id": "windows_credential_store", "status": "passed", "evidence": "local Windows Credential Manager lifecycle, 2026-08-16" },
+    { "id": "windows_internal_canary", "status": "passed", "evidence": "commit=1451142a9c5691450c9172af9e4bc2fc1ef26009; production=false; exact owner+agent+device scope; bidirectional=2; restart=true; duplicateRejected=true; reordered=true; fixedCiphertextRetry=true; credentialChangeFailClosed=true; missingKeyPackageFailClosed=true; missingCapabilityFailClosed=true; plaintextFallbacks=0; relay/sqlite/log plaintext hits=0" },
     { "id": "mobile_browser_emulation", "status": "passed", "evidence": "Pixel 5 viewport with Chromium 128MiB V8 heap cap" },
     { "id": "macos_keychain", "status": "pending_external", "evidence": "requires macOS runner result" },
     { "id": "linux_secret_service", "status": "pending_external", "evidence": "requires unlocked desktop Secret Service runner" },
