@@ -2159,6 +2159,16 @@ async function startMcpServer(args?: any, core?: any) {
     },
   });
   const handlers = createToolHandlers(cx);
+  handlers.refresh_delivery_channels = async ({ agentId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.refreshAgentDeliveryChannels) return { success: false, error: 'Dispatcher unavailable' };
+    return { success: true, agentId, deliveryStatus: await activeDispatcher.refreshAgentDeliveryChannels(String(agentId || '')) };
+  };
+  handlers.select_delivery_channel = async ({ agentId, mode, providerId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.selectTemporaryDeliveryChannel) return { success: false, error: 'Dispatcher unavailable' };
+    return { success: true, agentId, deliveryStatus: activeDispatcher.selectTemporaryDeliveryChannel(String(agentId || ''), String(mode || ''), providerId) };
+  };
   handlers.restart_agent_runtime = async () => {
     const email = getCurrentUserEmail(db);
     if (!email) return { success: false, error: '未登录' };

@@ -383,6 +383,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
+  const _temporaryPreferredChannels = new Map<string, { mode: string; providerId: string | null }>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
   const _availabilityEventGenerations = new Map<string, number>();
@@ -632,17 +633,67 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
     const pullOnly = !!(family && family.transports.length === 0)
       || (!!explicitModes && configuredPushModes.length === 0);
+    const temporaryPreference = _temporaryPreferredChannels.get(agentId) || null;
+    const preferredMethod = temporaryPreference?.providerId
+      ? methods.find(method => method.provider === temporaryPreference.providerId && method.available)
+      : null;
+    const activeAutomaticMode = temporaryPreference?.mode === 'pull'
+      ? null
+      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.available)?.mode || null);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
       automaticDeliveryReady: automaticReadyModes.length > 0,
       automaticReadyModes,
-      activeAutomaticMode: methods.find(method => method.mode !== 'pull' && method.available)?.mode || null,
+      activeAutomaticMode,
       pullReady: methods.some(method => method.mode === 'pull' && method.available),
       pullOnly,
       lastDeliveredMode: _lastDeliveredModes.get(agentId) || null,
+      temporaryPreferredMode: temporaryPreference?.mode || null,
+      temporaryPreferredProvider: temporaryPreference?.providerId || null,
       methods,
     };
+  }
+
+  async function refreshAgentDeliveryChannels(agentId: string): Promise<AgentDeliveryStatus> {
+    const meta = _metaOf(agentId);
+    const configuredModes = Array.isArray(meta.delivery_modes) ? meta.delivery_modes : null;
+    const providerIds = Object.keys(providers).filter(providerId => {
+      const definition = getProviderTransport(providerId);
+      if (!definition || (configuredModes && !configuredModes.includes(definition.mode))) return false;
+      try { return !!providers[providerId]?.match?.(agentId, meta); } catch (_) { return false; }
+    });
+    for (const providerId of providerIds) await runtimeRegistry.healthCheck(providerId);
+    invalidateRoutes({ agentId, reason: 'manual-delivery-refresh' });
+    return getAgentDeliveryStatus(agentId);
+  }
+
+  function selectTemporaryDeliveryChannel(agentId: string, mode: string, providerId?: string | null): AgentDeliveryStatus {
+    const selectedMode = String(mode || '').trim();
+    if (!selectedMode) throw new Error('delivery mode is required');
+    const meta = _metaOf(agentId);
+    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(selectedMode)) {
+      throw new Error('delivery mode is not configured for this Agent');
+    }
+    if (selectedMode === 'pull') {
+      _temporaryPreferredChannels.set(agentId, { mode: 'pull', providerId: null });
+    } else {
+      const selectedProviderId = String(providerId || '').trim();
+      const definition = getProviderTransport(selectedProviderId);
+      const provider = providers[selectedProviderId];
+      if (!definition || definition.mode !== selectedMode || !provider) throw new Error('delivery channel not found');
+      try {
+        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)) {
+          throw new Error('delivery channel is unavailable');
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message === 'delivery channel is unavailable') throw error;
+        throw new Error('delivery channel is unavailable');
+      }
+      _temporaryPreferredChannels.set(agentId, { mode: selectedMode, providerId: selectedProviderId });
+    }
+    invalidateRoutes({ agentId, reason: 'manual-delivery-selection' });
+    return getAgentDeliveryStatus(agentId);
   }
 
   function _routeProviderEntry(
@@ -651,6 +702,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     excluded: Set<DispatcherProvider> = new Set(),
   ): RouteCacheEntry | null {
     const cacheKey = `${operation}:${agentId}`;
+    const temporaryPreference = _temporaryPreferredChannels.get(agentId);
+    if (temporaryPreference?.mode === 'pull') {
+      const existing = _routeCache.get(cacheKey);
+      if (existing) {
+        _bumpScoped(existing.providerId, agentId, operation);
+        _routeCache.delete(cacheKey);
+      }
+      return null;
+    }
     const cached = _routeCache.get(cacheKey);
     if (cached && !excluded.has(cached.provider) && Date.now() - cached.selectedAt < ROUTE_CACHE_TTL) {
       try {
@@ -665,6 +725,13 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       _routeCache.delete(cacheKey);
     }
 
+    if (temporaryPreference?.providerId) {
+      const preferred = _routeProviderEntryExact(agentId, operation, temporaryPreference.providerId, excluded);
+      if (preferred) {
+        _routeCache.set(cacheKey, preferred);
+        return preferred;
+      }
+    }
     const provider = resolveProviders(agentId, operation).find(candidate => (
       !excluded.has(candidate) && providerSupportsOperation(candidate, operation)
     )) || null;
@@ -1554,6 +1621,7 @@ ${body}
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
+    refreshAgentDeliveryChannels, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }

@@ -30,6 +30,7 @@ function createDb() {
 
 async function startApp(handlers) {
   const app = express();
+  app.use(express.json());
   app.use(createWebRouter(handlers, createDb(), { trustedRemoteEnabled: true }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -43,8 +44,11 @@ test('home shows the detected primary message mode and wires runtime partial ref
     list_agents: async () => ({ agents: [{ agentId: 'agent-home', agentName: 'Home Agent', backendType: 'qwen', publishStatus: 'published' }] }),
     get_status: async () => ({
       success: true,
-      agent: { imConnected: true, activeAutomaticMode: 'cli', automaticReadyModes: ['cli'], pullReady: true },
+      agent: { imConnected: true, activeAutomaticMode: 'cli', automaticReadyModes: ['cli'], pullReady: true,
+        deliveryStatus: { activeAutomaticMode: 'cli', temporaryPreferredMode: null, methods: [] } },
     }),
+    refresh_delivery_channels: async () => ({ success: true, deliveryStatus: { activeAutomaticMode: 'cli', temporaryPreferredMode: null, methods: [] } }),
+    select_delivery_channel: async ({ mode, providerId }) => ({ success: true, deliveryStatus: { activeAutomaticMode: mode === 'pull' ? null : mode, temporaryPreferredMode: mode, temporaryPreferredProvider: providerId || null, methods: [] } }),
   };
   const server = await startApp(handlers);
   t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
@@ -53,11 +57,16 @@ test('home shows the detected primary message mode and wires runtime partial ref
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /消息模式/);
-  assert.match(html, /data-role="message-mode"[^>]*>CLI<\/td>/);
+  assert.match(html, /data-role="message-mode"[^>]*>[\s\S]*data-role="message-mode-summary">CLI<\/summary>/);
   assert.ok(html.indexOf('>Agent 类型<') < html.indexOf('>连接状态<'));
   assert.ok(html.indexOf('>连接状态<') < html.indexOf('>消息模式<'));
   assert.match(html, /"message_modes":\s*\{[^}]*"pull"/);
   assert.match(html, /messageModeDetected/);
+  assert.match(html, /data-role="message-mode-picker"/);
+  assert.match(html, /delivery-channels\/refresh/);
+  assert.match(html, /delivery-channels\/select/);
+  assert.match(html, /if\(other!==details\)other\.open=false/);
+  assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);
   assert.match(html, /updateAgentRow/);
   assert.match(html, /class="home-access-stack"/);
   assert.match(html, /class="home-access-row home-access-visitor-row"/);
@@ -81,6 +90,34 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(source, /if\(d\.pubStatus==="unpublished"\)/);
 });
 
+test('delivery channel endpoints refresh and select a process-local preference', async (t) => {
+  const calls = [];
+  const status = { activeAutomaticMode: 'cli', temporaryPreferredMode: null, temporaryPreferredProvider: null,
+    methods: [{ mode: 'cli', provider: 'codex-cli', available: true }, { mode: 'pull', provider: null, available: true }] };
+  const handlers = {
+    list_agents: async () => ({ agents: [] }),
+    refresh_delivery_channels: async ({ agentId }) => { calls.push(['refresh', agentId]); return { success: true, deliveryStatus: status }; },
+    select_delivery_channel: async ({ agentId, mode, providerId }) => {
+      calls.push(['select', agentId, mode, providerId]);
+      return { success: true, deliveryStatus: { ...status, activeAutomaticMode: mode === 'pull' ? null : mode,
+        temporaryPreferredMode: mode, temporaryPreferredProvider: providerId || null } };
+    },
+  };
+  const server = await startApp(handlers);
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const refresh = await fetch(`${base}/api/agents/agent-home/delivery-channels/refresh`, { method: 'POST' });
+  assert.equal(refresh.status, 200);
+  assert.equal((await refresh.json()).deliveryStatus.activeAutomaticMode, 'cli');
+  const select = await fetch(`${base}/api/agents/agent-home/delivery-channels/select`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'pull', providerId: null }),
+  });
+  assert.equal(select.status, 200);
+  assert.equal((await select.json()).deliveryStatus.temporaryPreferredMode, 'pull');
+  assert.deepEqual(calls, [['refresh', 'agent-home'], ['select', 'agent-home', 'pull', null]]);
+});
+
 test('home disables access-entry actions when the agent is offline', async (t) => {
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-offline', agentName: 'Offline Agent', backendType: 'qwen', publishStatus: 'unpublished' }] }),
@@ -93,7 +130,11 @@ test('home disables access-entry actions when the agent is offline', async (t) =
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /class="home-agent-short is-agent-offline" data-agent-online="false"/);
+  assert.match(html, /class="home-message-mode-picker is-agent-offline"[^>]*data-agent-online="false"/);
   assert.match(html, /access_offline_tip/);
+  assert.match(html, /home-message-mode-picker\.is-dropup/);
+  assert.match(html, /wrap\.getBoundingClientRect\(\)\.bottom-8/);
+  assert.match(html, /menuRect\.bottom>bottomBoundary/);
 });
 
 test('home preserves the agent list order when connection states differ', async (t) => {
@@ -142,5 +183,5 @@ test('home keeps message mode as loading when the status probe has not completed
   const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(html, /data-role="message-mode"[^>]*>获取中<\/td>/);
+  assert.match(html, /data-role="message-mode"[^>]*>[\s\S]*data-role="message-mode-summary">获取中<\/summary>/);
 });

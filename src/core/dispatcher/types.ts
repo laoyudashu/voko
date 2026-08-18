@@ -124,5 +124,7 @@ export interface AgentDeliveryStatus {
   pullReady: boolean;
   pullOnly: boolean;
   lastDeliveredMode: string | null;
+  temporaryPreferredMode: string | null;
+  temporaryPreferredProvider: string | null;
   methods: AgentDeliveryMethodStatus[];
 }

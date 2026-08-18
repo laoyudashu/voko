@@ -70,6 +70,59 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('temporary delivery selection overrides persisted order without changing the database policy', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher({
+    db: dbFor(['websocket', 'cli', 'pull']),
+    providers: {
+      'openclaw-ws': provider('websocket', 100, calls),
+      'openclaw-cli': provider('cli', 10, calls),
+    },
+  });
+
+  const selected = dispatcher.selectTemporaryDeliveryChannel('agent-1', 'cli', 'openclaw-cli');
+  assert.equal(selected.temporaryPreferredMode, 'cli');
+  assert.equal(selected.temporaryPreferredProvider, 'openclaw-cli');
+  assert.deepEqual(selected.configuredModes, ['websocket', 'cli', 'pull']);
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['cli']);
+});
+
+test('temporary pull selection leaves new messages for on-demand pickup until restart', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher({
+    db: dbFor(['cli', 'pull'], 'codex'),
+    providers: { 'codex-cli': provider('cli', 10, calls) },
+  });
+
+  const selected = dispatcher.selectTemporaryDeliveryChannel('agent-1', 'pull', null);
+  assert.equal(selected.temporaryPreferredMode, 'pull');
+  assert.equal(dispatcher.resolveProvider('agent-1'), null);
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, []);
+});
+
+test('explicit channel refresh detects a recovered CLI and makes it selectable', async () => {
+  const calls = [];
+  let available = false;
+  let checks = 0;
+  const cli = eventProvider('cli', 10, calls, false);
+  cli.isAvailable = () => available;
+  cli.healthCheck = () => { checks++; available = true; cli.available = true; };
+  const dispatcher = createDispatcher({
+    db: dbFor(['cli', 'pull'], 'codex'),
+    providers: { 'codex-cli': cli },
+  });
+
+  assert.equal(dispatcher.getAgentDeliveryStatus('agent-1').activeAutomaticMode, null);
+  const refreshed = await dispatcher.refreshAgentDeliveryChannels('agent-1');
+  assert.equal(checks, 1);
+  assert.equal(refreshed.activeAutomaticMode, 'cli');
+  assert.equal(refreshed.methods.find(method => method.provider === 'codex-cli').available, true);
+});
+
 test('explicit transport resolution never substitutes another mode', () => {
   const http = provider('http', 100, []);
   const cli = provider('cli', 10, []);
