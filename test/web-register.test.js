@@ -202,6 +202,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /data-provider-id/);
     assert.match(html, /supportsLoopback/);
     assert.match(html, /providerId:b\.dataset\.providerId/);
+    assert.match(html, /\['ready','preflight_passed','loopback_verified'\]\.indexOf\(m\.status\)>=0/);
+    assert.match(html, /usable\?I\.testOk:I\.testFailed/);
     assert.doesNotMatch(html, /id="wf-loopback-dialog"/);
     assert.doesNotMatch(html, /data-action="test"/);
     assert.match(html, /b\.classList\.add\('success'\)/);

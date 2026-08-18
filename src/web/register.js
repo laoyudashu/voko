@@ -412,8 +412,10 @@ function wizardJs(t) {
   }
   document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment)}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
-    var disabled=m.required||m.status!=='ready', checked=m.required||m.selected;
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:I.testFailed)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
+    var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
+    var disabled=m.required||!usable, checked=m.required||m.selected;
+    var statusLabel=m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
   }
   function renderDeliveries(d){
     state=d;var modes=d.deliveryModes||[],html='';
