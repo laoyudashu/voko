@@ -167,6 +167,15 @@ const pkg = require('../package.json');
 //  工具函数
 // ═══════════════════════════════════════════════
 
+function withRuntimeTimestamp(args: any[], now: Date = new Date()): any[] {
+  const first = args[0];
+  if (typeof first === 'string' && (/^\[\d{1,2}:\d{2}:\d{2}\]/.test(first)
+    || /^\[\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?\]/.test(first))) return args;
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+  return [`[${timestamp}]`, ...args];
+}
+
 function _initFileLogger() {
   try {
     const fs = require('fs');
@@ -208,12 +217,13 @@ function _initFileLogger() {
       if (!_shouldLog(level)) return;
       try { rotateIfNeeded(logPath); fs.appendFileSync(logPath, fmt(level, a) + '\n'); } catch (_: any) {}
     }
-    // log/error/warn/debug 统一写 voko-im.log
-    const _origLog = console.log, _origError = console.error, _origWarn = console.warn, _origDebug = console.debug;
-    console.log = function(...a: any) { persist('LOG', a); _origLog.apply(console, a); };
-    console.error = function(...a: any) { persist('ERR', a); _origError.apply(console, a); };
-    console.warn = function(...a: any) { persist('WRN', a); _origWarn.apply(console, a); };
-    console.debug = function(...a: any) { persist('DBG', a); if (_origDebug) _origDebug.apply(console, a); };
+    // 仅长驻 Lite 服务安装：CLI/MCP stdio/JSON 输出不会经过这里。
+    const _origLog = console.log, _origInfo = console.info, _origError = console.error, _origWarn = console.warn, _origDebug = console.debug;
+    console.log = function(...a: any) { persist('LOG', a); _origLog.apply(console, withRuntimeTimestamp(a)); };
+    console.info = function(...a: any) { persist('LOG', a); _origInfo.apply(console, withRuntimeTimestamp(a)); };
+    console.error = function(...a: any) { persist('ERR', a); _origError.apply(console, withRuntimeTimestamp(a)); };
+    console.warn = function(...a: any) { persist('WRN', a); _origWarn.apply(console, withRuntimeTimestamp(a)); };
+    console.debug = function(...a: any) { persist('DBG', a); if (_origDebug) _origDebug.apply(console, withRuntimeTimestamp(a)); };
   } catch (_: any) {}
 }
 
@@ -3131,6 +3141,10 @@ async function main() {
 
   const willServe = !subcommand || subcommand === 'start';
   if (willServe) {
+    if (!(global as any).__vokoFileLoggerStarted) {
+      (global as any).__vokoFileLoggerStarted = true;
+      _initFileLogger();
+    }
     const dbPath = resolveDbPath(args);
     const lockResult = await acquireInstanceLock(dbPath, path.resolve(process.argv[1]));
     if (!lockResult.acquired) {
@@ -3206,4 +3220,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
