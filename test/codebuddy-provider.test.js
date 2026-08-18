@@ -41,6 +41,39 @@ test('CodeBuddy version probe uses the resolved script instead of a Windows comm
   assert.equal(codeBuddyCommand.probeCodeBuddyCliVersion(resolver), '2.137.1');
 });
 
+test('CodeBuddy resolves the official package from a custom npm global prefix outside PATH', (t) => {
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-codebuddy-prefix-'));
+  const packageRoot = path.join(prefix, 'node_modules', '@tencent-ai', 'codebuddy-code');
+  const script = path.join(packageRoot, 'bin', 'codebuddy');
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({
+    name: '@tencent-ai/codebuddy-code', bin: { codebuddy: './bin/codebuddy' },
+  }));
+  fs.writeFileSync(script, '#!/usr/bin/env node');
+  t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
+
+  const request = codeBuddyCommand.codeBuddyRuntimeRequest('acp', {
+    PATH: '', NPM_CONFIG_PREFIX: prefix,
+  }, 'win32');
+  assert.deepEqual(request.candidates[2], {
+    kind: 'explicit', path: fs.realpathSync(script), interpreter: 'node',
+  });
+});
+
+test('CodeBuddy rejects a package bin that escapes the custom npm prefix package root', (t) => {
+  const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-codebuddy-prefix-'));
+  const packageRoot = path.join(prefix, 'node_modules', '@tencent-ai', 'codebuddy-code');
+  const outside = path.join(prefix, 'node_modules', 'outside.js');
+  fs.mkdirSync(packageRoot, { recursive: true });
+  fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({
+    name: '@tencent-ai/codebuddy-code', bin: { codebuddy: '../../outside.js' },
+  }));
+  fs.writeFileSync(outside, '#!/usr/bin/env node');
+  t.after(() => fs.rmSync(prefix, { recursive: true, force: true }));
+
+  assert.equal(codeBuddyCommand.discoverGlobalCodeBuddyBin({ NPM_CONFIG_PREFIX: prefix }, 'win32'), null);
+});
+
 test('CodeBuddy ACP disables tools and ambient MCP configuration', () => {
   const provider = new CodeBuddyAcpProvider({ binPath: 'C:\\tools\\codebuddy.exe' });
   assert.equal(provider._adapterType, 'codebuddy-acp');

@@ -3,6 +3,38 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
+function discoverGlobalCodeBuddyBin(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  let prefix = String(env.NPM_CONFIG_PREFIX || env.npm_config_prefix || '').trim();
+  if (!prefix) {
+    try {
+      const executable = platform === 'win32' ? String(env.ComSpec || env.COMSPEC || 'cmd.exe') : 'npm';
+      const args = platform === 'win32'
+        ? ['/d', '/s', '/c', 'npm.cmd config get prefix']
+        : ['config', 'get', 'prefix'];
+      prefix = String(execFileSync(executable, args, {
+        encoding: 'utf8', windowsHide: true, timeout: 2500, maxBuffer: 16 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'], env,
+      })).trim();
+    } catch { return null; }
+  }
+  if (!prefix || prefix === 'undefined' || prefix === 'null') return null;
+  try {
+    const packageRoot = path.join(prefix, 'node_modules', '@tencent-ai', 'codebuddy-code');
+    const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+    const relativeBin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.codebuddy;
+    if (typeof relativeBin !== 'string') return null;
+    const rootReal = fs.realpathSync(packageRoot);
+    const target = fs.realpathSync(path.resolve(packageRoot, relativeBin));
+    const relative = path.relative(rootReal, target);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+      || !fs.statSync(target).isFile()) return null;
+    return target;
+  } catch { return null; }
+}
+
 function resolveCodeBuddyCommand(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
@@ -36,11 +68,13 @@ function codeBuddyRuntimeRequest(
         ...(isNodeScript(configured) ? { interpreter: 'node' } : {}) }],
     };
   }
+  const globalPackageBin = discoverGlobalCodeBuddyBin(env, platform);
   return {
     providerId: 'codebuddy-acp', mode,
     candidates: [
       { kind: 'node-package-bin', command: 'codebuddy', packageName: '@tencent-ai/codebuddy-code', binName: 'codebuddy' },
       { kind: 'node-package-bin', command: 'cbc', packageName: '@tencent-ai/codebuddy-code', binName: 'cbc' },
+      ...(globalPackageBin ? [{ kind: 'explicit' as const, path: globalPackageBin, interpreter: 'node' as const }] : []),
       { kind: 'native', command: platform === 'win32' ? 'codebuddy.exe' : 'codebuddy' },
     ],
   };
@@ -75,6 +109,7 @@ module.exports = {
   resolveCodeBuddyRuntime,
   isCodeBuddyAvailable,
   probeCodeBuddyCliVersion,
+  discoverGlobalCodeBuddyBin,
 };
 
 export {};
