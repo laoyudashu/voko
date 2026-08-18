@@ -9,7 +9,7 @@ test('runtime log arguments receive one local timestamp', () => {
   const now = new Date(2026, 7, 18, 9, 8, 7, 6);
   assert.deepEqual(
     withRuntimeTimestamp(['[Lite] ready', { port: 3100 }], now),
-    ['[2026-08-18 09:08:07.006]', '[Lite] ready', { port: 3100 }],
+    ['[2026-08-18 09:08:07]', '[Lite] ready', { port: 3100 }],
   );
 });
 

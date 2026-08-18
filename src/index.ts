@@ -172,7 +172,7 @@ function withRuntimeTimestamp(args: any[], now: Date = new Date()): any[] {
   if (typeof first === 'string' && (/^\[\d{1,2}:\d{2}:\d{2}\]/.test(first)
     || /^\[\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?\]/.test(first))) return args;
   const pad = (value: number, size = 2) => String(value).padStart(size, '0');
-  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   return [`[${timestamp}]`, ...args];
 }
 
@@ -209,8 +209,7 @@ function _initFileLogger() {
     }
     function fmt(level?: any, a?: any) {
       const n = new Date(), p = (x: any) => String(x).padStart(2, '0');
-      const ms = String(n.getMilliseconds()).padStart(3, '0');
-      const ts = `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}.${ms}`;
+      const ts = `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
       return `${ts} [${level}] ` + a.map((x: any) => typeof x === 'object' ? (x instanceof Error ? x.stack || x.message : JSON.stringify(x)) : String(x)).join(' ');
     }
     function persist(level?: any, a?: any) {
