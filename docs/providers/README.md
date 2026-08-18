@@ -48,7 +48,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 
 ## 暂不提供专属指南的 Provider
 
-Amazon Q、ZCode、豆包和 Others 当前没有本目录下的专属操作指南。WorkBuddy、千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。其他环境的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
+Amazon Q、ZCode、豆包、CodeBuddy 和 Others 当前没有本目录下的专属操作指南。CodeBuddy 已接入官方 ACP 并完成无模型协议初始化，完整模型回路验收前以[兼容性矩阵](../provider-compatibility.md)为准。WorkBuddy、千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
 
 ## 新增指南时的固定结构
 

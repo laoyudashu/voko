@@ -44,6 +44,8 @@ Use HTTP only for a client that cannot launch stdio. Run `voko start --no-open` 
 
 ## WorkBuddy
 
+“CodeBuddy Settings” is a label inside the WorkBuddy UI. VOKO does not classify a separately installed CodeBuddy CLI as the WorkBuddy Provider; their automatic delivery transports are WorkBuddy HTTP and CodeBuddy ACP respectively.
+
 Some WorkBuddy versions display the entry as **CodeBuddy Settings**.
 
 1. In the WorkBuddy conversation panel, open **CodeBuddy Settings**.

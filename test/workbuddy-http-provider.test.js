@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { WorkBuddyHttpProvider, opaqueScope, mergeMarkdown } = require('../build/core/dispatcher/providers/workbuddy-http');
+const { WorkBuddyHttpProvider, opaqueScope, mergeMarkdown, workBuddyServeArgs } = require('../build/core/dispatcher/providers/workbuddy-http');
 const { resolveWorkBuddyRuntime, workBuddySpawnCommand } = require('../build/core/dispatcher/workbuddy-command');
 const catalog = require('../build/core/dispatcher/provider-catalog');
 
@@ -62,6 +62,14 @@ test('WorkBuddy bundled CLI may be configured without PATH and launches through 
   assert.equal(runtime.command, path.resolve(command));
   assert.equal(runtime.source, 'configured');
   assert.deepEqual(workBuddySpawnCommand(runtime), { command: process.execPath, argsPrefix: [path.resolve(command)] });
+});
+
+test('WorkBuddy only resolves its bundled runtime and starts a text-only local service', () => {
+  assert.notEqual(resolveWorkBuddyRuntime({ env: { ...process.env } }).source, 'path');
+  assert.deepEqual(workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session'), [
+    'bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
+    '--session-id', 'voko-session', '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config',
+  ]);
 });
 
 test('WorkBuddy request uses Gateway Protocol, opaque scopes and returns the native session', async () => {

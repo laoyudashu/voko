@@ -68,6 +68,8 @@ describe('shared registration orchestrator', () => {
       'codex.exe app-server',
     ]), 'claude-code');
     assert.strictEqual(currentAgentTypeFromProcessRows(['WorkBuddy.exe --mcp']), 'workbuddy');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['D:\\Program Files\\WorkBuddy\\resources\\cli\\codebuddy --serve']), 'workbuddy');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['codebuddy.exe --acp']), 'codebuddy');
     assert.strictEqual(currentAgentTypeFromProcessRows(['Doubao.exe agent']), 'doubao');
     assert.strictEqual(currentAgentTypeFromProcessRows(['zcode.exe mcp']), 'zcode');
     assert.strictEqual(currentAgentTypeFromProcessRows(['QwenWorkCN.exe --background']), 'qwen-office');
@@ -222,6 +224,22 @@ describe('shared registration orchestrator', () => {
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
+  it('detects standalone CodeBuddy separately from WorkBuddy and exposes ACP before Pull', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: () => false,
+      codeBuddyCliAvailable: () => true,
+      workBuddyRuntime: () => ({ command: null }),
+      installedApplications: () => ['WorkBuddy 5.3.11'],
+      detectCurrentAgentType: () => null,
+    });
+    const environment = service.inspectEnvironment();
+    assert.ok(environment.detected.some((item) => item.type === 'workbuddy'));
+    assert.ok(environment.detected.some((item) => item.type === 'codebuddy'));
+    assert.deepEqual(service.deliveryCapabilities('workbuddy').map((item) => item.mode), ['http', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('codebuddy').map((item) => item.mode), ['acp', 'pull']);
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'ready');
   });
 
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {

@@ -13,8 +13,8 @@ test('Provider Catalog has valid explicit transports and instance requirements',
   assert.ok(PROVIDER_CATALOG.every(family => family.defaultDeliveryModes.includes('pull')));
 });
 
-test('Qwen Office and Trae expose headless Push transports with Pull fallback', () => {
-  for (const [type, label] of [['qwen-office', '千问办公 (QwenWork)'], ['trae', 'Trae']]) {
+test('Qwen Office, Trae and CodeBuddy expose headless Push transports with Pull fallback', () => {
+  for (const [type, label] of [['qwen-office', '千问办公 (QwenWork)'], ['trae', 'Trae'], ['codebuddy', 'CodeBuddy']]) {
     const family = getProviderFamily(type);
     assert.ok(family, `${type} should be registered in the catalog`);
     assert.equal(family.label, label);
@@ -23,12 +23,13 @@ test('Qwen Office and Trae expose headless Push transports with Pull fallback', 
   }
   assert.equal(getProviderTransport('qwen-office-cli').mode, 'cli');
   assert.equal(getProviderTransport('traecli-acp').mode, 'acp');
+  assert.equal(getProviderTransport('codebuddy-acp').mode, 'acp');
   assert.equal(getProviderFamily('qwenwork').type, 'qwen-office');
   assert.equal(getProviderFamily('trae-ide').type, 'trae');
 });
 
 test('loopback capability is explicit and special transports stay preflight-only', () => {
-  for (const id of ['claude-cli', 'codex-cli', 'cline-acp', 'traecli-acp', 'hermes-cli', 'hermes-http', 'openclaw-ws', 'zeroclaw-ws', 'qwen-office-cli']) {
+  for (const id of ['claude-cli', 'codex-cli', 'cline-acp', 'traecli-acp', 'codebuddy-acp', 'hermes-cli', 'hermes-http', 'openclaw-ws', 'zeroclaw-ws', 'qwen-office-cli']) {
     assert.equal(getProviderTransport(id).supportsLoopback, true, `${id} should expose a real loopback`);
   }
   for (const id of ['openclaw-cli', 'opencode-attach', 'goose-cli']) {

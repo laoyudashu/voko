@@ -738,6 +738,17 @@ function createToolHandlers(cx: McpContext) {
       );
     } catch (_) { /* Auditing must not turn a completed user action into a failure. */ }
   };
+  const prepareRegisteredAgentBackend = async (agentId: string, backendType: string) => {
+    const dispatcher = (global as any).__dispatcher;
+    if (!dispatcher) return;
+    try {
+      await dispatcher.ensureBackend?.(backendType);
+      dispatcher.invalidateMeta?.(agentId);
+    } catch (error: any) {
+      // Agent creation remains successful with Pull as the safe fallback.
+      console.error(`[AgentRegistration] Provider runtime load failed agent=${agentId}:`, error?.message || String(error));
+    }
+  };
   const inferChannelType = (params: McpToolParams): number => {
     if (params.channelType !== undefined && params.channelType !== null) {
       return Number(params.channelType) === 2 ? 2 : 1;
@@ -1196,7 +1207,8 @@ function createToolHandlers(cx: McpContext) {
         });
       }
 
-      // Step 4：启动 IM 连接（公开回调名保持兼容）
+      // Step 4：先加载新 Agent 的 Provider，再启动 IM，避免首条消息只能 Pull。
+      await prepareRegisteredAgentBackend(agentId, backendType);
       if (cx.startAgentWorker) {
         let imStatus: WorkerConnectionStatus | undefined;
         try {
@@ -1317,7 +1329,8 @@ function createToolHandlers(cx: McpContext) {
         accessModeSynced = statusResult?.success !== false;
       }
 
-      // Step 4：启动 IM 连接（公开回调名保持兼容）
+      // Step 4：先加载新 Agent 的 Provider，再启动 IM，避免首条消息只能 Pull。
+      await prepareRegisteredAgentBackend(agentId, backendType);
       if (cx.startAgentWorker) {
         let imStatus: WorkerConnectionStatus | undefined;
         try {

@@ -55,6 +55,11 @@ function mergeMarkdown(current: string, incoming: string): string {
   return (current + incoming).slice(0, MAX_REPLY_CHARS);
 }
 
+function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string): string[] {
+  return [...argsPrefix, '--serve', '--host', '127.0.0.1', '--port', String(port),
+    '--session-id', sessionId, '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config'];
+}
+
 class WorkBuddyHttpProvider extends PushProvider {
   _db: any;
   _contextWindow: number;
@@ -134,8 +139,7 @@ class WorkBuddyHttpProvider extends PushProvider {
       const launch = workBuddySpawnCommand(this._runtime);
       if (!launch) throw deliveryError('WorkBuddy launch command is unavailable', 'not_delivered');
       this._port = await findFreePort();
-      const args = [...launch.argsPrefix, '--serve', '--host', '127.0.0.1', '--port', String(this._port),
-        '--session-id', `voko-${crypto.randomUUID()}`];
+      const args = workBuddyServeArgs(launch.argsPrefix, this._port, `voko-${crypto.randomUUID()}`);
       const child = this._spawn(launch.command, args, {
         cwd: this._cwd, env: { ...process.env, NO_COLOR: '1' }, windowsHide: true,
         detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
@@ -515,4 +519,4 @@ class WorkBuddyHttpProvider extends PushProvider {
   }
 }
 
-module.exports = { WorkBuddyHttpProvider, opaqueScope, mergeMarkdown };
+module.exports = { WorkBuddyHttpProvider, opaqueScope, mergeMarkdown, workBuddyServeArgs };

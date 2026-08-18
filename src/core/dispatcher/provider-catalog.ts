@@ -82,7 +82,7 @@ const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
   'pi-cli': 'pi', 'qwen-cli': 'qwen', 'kiro-cli': 'kiro-cli',
   'aider-cli': 'aider', 'grok-cli': 'grok', 'reasonix-cli': 'reasonix',
   'qwen-office-cli': 'qoderclicn', 'traecli-acp': 'traecli',
-  'workbuddy-http': 'codebuddy',
+  'workbuddy-http': 'codebuddy', 'codebuddy-acp': 'codebuddy',
 };
 
 export function getProviderVersionCommand(transportId: unknown): string | null {
@@ -203,6 +203,9 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       exactSession: { nativeSessionNamespace: 'workbuddy-http', restoreCompatibilityGroup: 'workbuddy-http' },
       options: context => context.getProviderConfig?.('workbuddy-http') || {},
     }),
+  ] },
+  { type: 'codebuddy', aliases: ['codebuddy-code', 'codebuddy-cli'], label: 'CodeBuddy', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [
+    acp('codebuddy-acp', './providers/codebuddy-acp', 'CodeBuddyAcpProvider'),
   ] },
   { type: 'doubao', aliases: [], label: '豆包', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'trae', aliases: ['trae-ide', 'trae-work', 'trae-solo'], label: 'Trae', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [

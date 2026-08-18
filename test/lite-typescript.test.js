@@ -42,6 +42,7 @@ test('desktop Provider aliases normalize to the canonical family types', () => {
   assert.equal(backendTypes.normalizeBackendType('trae-ide'), 'trae');
   assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'qwen-office'));
   assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'trae'));
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'codebuddy'));
 });
 
 test('IPC frame keeps new and legacy wire formats compatible', () => {

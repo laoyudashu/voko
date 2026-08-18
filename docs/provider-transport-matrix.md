@@ -43,6 +43,7 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor
 | Qwen Office | CLI, Pull | QwenWork `session_id` | stream-json final | Dispatcher | `qoderclicn` unavailable/auth failure falls back to Pull |
 | Trae | ACP, Pull | Agent-issued ACP session ID | ACP streaming | Dispatcher | Desktop `trae` is MCP client only; `traecli` is required for ACP |
 | WorkBuddy | HTTP, Pull | WorkBuddy session ID | SSE streaming | Dispatcher | HTTP accepts once; uncertain results never create a second Run |
+| CodeBuddy | ACP, Pull | Agent-issued ACP session ID | ACP streaming | Dispatcher | Official standalone CodeBuddy CLI only; embedded WorkBuddy CLI is not auto-selected |
 | Pull-only families (OpenHands, Amazon Q, ZCode, Doubao, Others when no Push transport is registered) | Pull | None required | On demand | N/A | N/A |
 
 ## Normative invariants

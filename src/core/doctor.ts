@@ -10,6 +10,7 @@ const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
 const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { resolveWorkBuddyRuntime, probeWorkBuddyCliVersion } = require('./dispatcher/workbuddy-command');
+const { probeCodeBuddyCliVersion } = require('./dispatcher/codebuddy-command');
 const { getProviderFamily, getProviderVersionCommand } = require('./dispatcher/provider-catalog');
 const { evaluateProviderSandbox, probeProviderVersion } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
@@ -46,6 +47,11 @@ const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   openhands: [{ kind: 'native', command: process.platform === 'win32' ? 'openhands.exe' : 'openhands' }],
   grok: [{ kind: 'native', command: 'grok' }],
   workbuddy: [],
+  codebuddy: [
+    { kind: 'node-package-bin', command: 'codebuddy', packageName: '@tencent-ai/codebuddy-code', binName: 'codebuddy' },
+    { kind: 'node-package-bin', command: 'cbc', packageName: '@tencent-ai/codebuddy-code', binName: 'cbc' },
+    { kind: 'native', command: process.platform === 'win32' ? 'codebuddy.exe' : 'codebuddy' },
+  ],
 };
 
 function parseJson(value: unknown, fallback: any = null): any {
@@ -442,6 +448,11 @@ function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: 
           ? probeProviderVersion(getProviderVersionCommand(transport.id)) : null;
         if (options.deep && transport.id === 'workbuddy-http') {
           const version = probeWorkBuddyCliVersion(resolveWorkBuddyRuntime());
+          versionProbe = { version, source: version ? 'runtime' : 'unknown', observedAt: new Date().toISOString(),
+            result: version ? 'known' : 'unknown', ...(version ? {} : { errorCode: 'not_found' }) };
+        }
+        if (options.deep && transport.id === 'codebuddy-acp') {
+          const version = probeCodeBuddyCliVersion();
           versionProbe = { version, source: version ? 'runtime' : 'unknown', observedAt: new Date().toISOString(),
             result: version ? 'known' : 'unknown', ...(version ? {} : { errorCode: 'not_found' }) };
         }

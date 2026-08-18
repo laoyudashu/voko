@@ -11,7 +11,7 @@ WorkBuddy 与 VOKO 有两个不同方向：
 WorkBuddy HTTP → Pull
 ```
 
-VOKO 自动寻找桌面版内置 CLI，不要求把 `codebuddy` 加入系统 `PATH`。VOKO 启动的服务只监听 `127.0.0.1`，使用动态端口；停止 Lite 时只关闭自己启动的服务，不关闭 WorkBuddy 桌面应用。
+VOKO 只寻找桌面版内置 CLI，不会把系统 `PATH` 中独立安装的 `codebuddy` 错当成 WorkBuddy。VOKO 启动的服务只监听 `127.0.0.1`，使用动态端口；停止 Lite 时只关闭自己启动的服务，不关闭 WorkBuddy 桌面应用。
 
 HTTP 请求一旦获得 `runId` 就视为 WorkBuddy 已接受。此后若 SSE 中断，VOKO只恢复同一个 Run；无法确认结果时标记为结果未知，不重新提交任务。Pull 始终保留。
 
@@ -20,7 +20,8 @@ HTTP 请求一旦获得 `runId` 就视为 WorkBuddy 已接受。此后若 SSE �
 - 每个 VOKO Agent、访客、群聊、Owner 和 A2A Context 使用不同的不透明会话作用域。
 - WorkBuddy 返回的原生 Session ID 只保存在本机 Provider 会话绑定中，不写入日志或远程服务。
 - 外部访客消息仍先经过 VOKO 现有审核与安全上下文。
-- WorkBuddy 的文件、网络、命令和人工审批能力由 Provider 管理；VOKO 不把本机 HTTP 可用误报为已启用沙箱。
+- VOKO 管理的 WorkBuddy HTTP 服务使用 `dontAsk`、空工具集和严格 MCP 配置，访客消息不能调用 CodeBuddy 工具或用户/项目 MCP Server。
+- 该限制只约束 VOKO 管理的消息通道；WorkBuddy 桌面应用自身的文件、网络、命令和人工审批能力仍由 WorkBuddy 管理。
 - `X-CodeBuddy-Request: 1` 是协议头，不是网络认证，因此 VOKO 不允许服务监听局域网或公网地址。
 
 ## 兼容性基线

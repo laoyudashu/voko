@@ -5,7 +5,7 @@ const { execFileSync } = require('node:child_process');
 export interface WorkBuddyRuntime {
   command: string | null;
   argvPrefix: string[];
-  source: 'configured' | 'path' | 'registry' | 'common_location' | 'unavailable';
+  source: 'configured' | 'registry' | 'common_location' | 'unavailable';
   desktopVersion: string | null;
 }
 
@@ -68,30 +68,12 @@ function resolveFromWindowsRegistry(): WorkBuddyRuntime | null {
   return null;
 }
 
-function resolveFromPath(): WorkBuddyRuntime | null {
-  const finder = process.platform === 'win32' ? 'where.exe' : 'which';
-  try {
-    const output = String(execFileSync(finder, ['codebuddy'], {
-      encoding: 'utf8', windowsHide: true, timeout: 1500, maxBuffer: 16 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }));
-    const command = output.split(/\r?\n/).map((item: string) => item.trim()).find(Boolean);
-    return command ? runtimeFor(command, 'path') : null;
-  } catch { return null; }
-}
-
 export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; env?: NodeJS.ProcessEnv } = {}): WorkBuddyRuntime {
   const env = options.env || process.env;
   const canCache = !options.configuredCommand && !options.env;
   if (canCache && cachedDefaultRuntime) return { ...cachedDefaultRuntime, argvPrefix: [...cachedDefaultRuntime.argvPrefix] };
   const configured = existingFile(options.configuredCommand || env.VOKO_WORKBUDDY_CLI);
   if (configured) return runtimeFor(configured, 'configured');
-
-  const inPath = resolveFromPath();
-  if (inPath) {
-    if (canCache) cachedDefaultRuntime = inPath;
-    return inPath;
-  }
 
   const registry = resolveFromWindowsRegistry();
   if (registry) {
