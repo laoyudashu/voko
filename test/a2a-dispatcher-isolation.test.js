@@ -106,10 +106,21 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   const provider = new Provider();
   provider.push = async function (payload) { this.payload = payload; await new Promise(resolve => setTimeout(resolve, 30));
     return { nativeSessionId: 'slow-native-session' }; };
-  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply() {} });
+  const ordinary = [];
+  const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply(reply) { ordinary.push(reply); } });
   await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
     contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
-    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 10 }), /Provider reply timed out/);
+    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 10 }), error => {
+      assert.match(error.message, /Provider reply timed out/);
+      assert.equal(error.deliveryOutcome, 'outcome_unknown');
+      assert.equal(error.code, 'A2A_PROVIDER_REPLY_TIMEOUT');
+      return true;
+    });
+  provider.emit('agent.reply', { agentId: 'agent-1', visitorId: provider.payload.fromUid,
+    turnId: provider.payload.turnId, replyId: 'late-reply', content: 'late isolated result', done: true });
+  provider.emit('agent.reply', { agentId: 'agent-1', visitorId: provider.payload.fromUid,
+    replyId: 'missing-turn', content: 'unattributed isolated result', done: true });
+  assert.equal(ordinary.length, 0, 'late or unattributed isolated replies must never enter the ordinary message path');
 });
 
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {

@@ -1606,7 +1606,12 @@ async function startMcpServer(args?: any, core?: any) {
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
   const userEmail = getCurrentUserEmail(db);
   const { A2AModule, A2ARegistrationService } = require('./a2a');
-  const a2aModule = new A2AModule();
+  // A2A 状态必须与当前主库实例同位。测试、多实例或 --db 启动不得
+  // 回落到默认用户目录的生产 voko-a2a.db，否则恢复扫描会误判正在执行的 Task。
+  const mainDatabasePath = String(db._dbPath || '').trim();
+  const a2aDatabasePath = String(process.env.VOKO_A2A_DB_PATH || '').trim()
+    || path.join(path.dirname(path.resolve(mainDatabasePath)), 'voko-a2a.db');
+  const a2aModule = new A2AModule({ databasePath: a2aDatabasePath });
   let a2aMailboxClient: any = null;
   const a2aOwnerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
   const syncA2ARegistration = userEmail && a2aOwnerToken ? () => a2aModule.withDatabase((a2aDb: any) => {

@@ -248,6 +248,25 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
   const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
+  const _retiredIsolatedTurns = new Map<string, number>();
+  const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
+  function _retireIsolatedTurn(key: string): void {
+    _isolatedReplySinks.delete(key);
+    const now = Date.now();
+    _retiredIsolatedTurns.set(key, now);
+    if (_retiredIsolatedTurns.size > 1000) {
+      for (const [oldKey, retiredAt] of _retiredIsolatedTurns) {
+        if (now - retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
+      }
+    }
+  }
+  function _isRetiredIsolatedTurn(key: string): boolean {
+    const retiredAt = _retiredIsolatedTurns.get(key);
+    if (!retiredAt) return false;
+    if (Date.now() - retiredAt < ISOLATED_TURN_TTL_MS) return true;
+    _retiredIsolatedTurns.delete(key);
+    return false;
+  }
   function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
     if (!_providerEventGate.accept(event)) return false;
     const key = `${event.providerId}:${event.type}`;
@@ -348,6 +367,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
+          const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
+          if (replyTurnKey && _isRetiredIsolatedTurn(replyTurnKey)) {
+            console.warn(`[Dispatcher] 丢弃已结束 isolated turn 的迟到回复 agent=${reply.agentId || '-'} turn=${reply.turnId}`);
+            return;
+          }
+          if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee-canary):/.test(String(reply.visitorId || ''))) {
+            console.warn(`[Dispatcher] 丢弃缺少 turnId 的 isolated 回复 agent=${reply.agentId || '-'}`);
+            return;
+          }
           const providerId = _providerIds.get(p) || 'unregistered';
           _acceptProviderEvent({
             eventId: reply.replyId
@@ -362,7 +390,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           if (isolatedSink) {
             if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
             isolatedSink(reply);
-            if (reply.done !== false) _isolatedReplySinks.delete(`${reply.agentId || ''}::${reply.turnId}`);
+            if (reply.done !== false) _retireIsolatedTurn(`${reply.agentId || ''}::${reply.turnId}`);
             return;
           }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
@@ -1266,7 +1294,7 @@ ${body}
         error.deliveryOutcome='rejected';rejectReply(error);return; }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
+    const timeout = setTimeout(() => { _retireIsolatedTurn(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
       const route = _ownerRouteEntry(options.agentId);
@@ -1291,7 +1319,7 @@ ${body}
       catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
       return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
         provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
-    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1316,7 +1344,13 @@ ${body}
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     void replyPromise.catch(() => undefined);
     _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
-    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error(`${prefix} Provider reply timed out`)); }, options.timeoutMs || 120_000);
+    const timeout = setTimeout(() => {
+      _retireIsolatedTurn(sinkKey);
+      const error: any = new Error(`${prefix} Provider reply timed out`);
+      error.deliveryOutcome = 'outcome_unknown';
+      error.code = `${prefix.toUpperCase()}_PROVIDER_REPLY_TIMEOUT`;
+      rejectReply(error);
+    }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
       const delivery = await _doRoute(options.agentId, {
@@ -1336,7 +1370,7 @@ ${body}
       }
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
-    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeCanary(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1361,7 +1395,7 @@ ${body}
       resolveReply(reply);
     });
     const timeout = setTimeout(() => {
-      _isolatedReplySinks.delete(sinkKey);
+      _retireIsolatedTurn(sinkKey);
       rejectReply(new Error('E2EE Canary Provider reply timed out'));
     }, options.timeoutMs || 120_000);
     timeout.unref?.();
@@ -1392,7 +1426,7 @@ ${body}
       return { reply: await replyPromise, receipt };
     } finally {
       clearTimeout(timeout);
-      _isolatedReplySinks.delete(sinkKey);
+      _retireIsolatedTurn(sinkKey);
     }
   }
 
