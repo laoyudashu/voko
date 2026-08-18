@@ -652,6 +652,7 @@
   "web.home.access.setup": "設定",
   "web.home.access.copy_visitor": "訪問者リンクをコピー",
   "web.home.access.copy_a2a": "Agent Card URL をコピー",
+  "web.home.access.copy_im_uid": "IM UID をコピー",
   "web.home.access.offline_tip": "Agent はオフラインです。先にオンラインにしてください。",
   "web.home.owner_link.title": "所有者リモートアクセス",
   "web.home.owner_link.warning": "新しいスマートフォンまたはパソコンで所有者を確認するためのリンクです。15分後、または1回の確認成功後に失効します。",

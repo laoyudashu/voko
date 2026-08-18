@@ -840,6 +840,7 @@
   "web.home.access.setup": "设置",
   "web.home.access.copy_visitor": "复制访客链接",
   "web.home.access.copy_a2a": "复制 Agent Card 地址",
+  "web.home.access.copy_im_uid": "复制 IM UID",
   "web.home.access.offline_tip": "Agent 当前离线，请先上线。",
   "web.home.owner_link.title": "主人远程访问",
   "web.home.owner_link.warning": "用于在新手机或电脑上验证主人身份。链接将在 15 分钟后失效，或成功验证一次后立即失效。",

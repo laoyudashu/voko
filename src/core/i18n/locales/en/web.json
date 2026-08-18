@@ -840,6 +840,7 @@
   "web.home.access.setup": "Set up",
   "web.home.access.copy_visitor": "Copy visitor link",
   "web.home.access.copy_a2a": "Copy Agent Card URL",
+  "web.home.access.copy_im_uid": "Copy IM UID",
   "web.home.access.offline_tip": "This Agent is offline. Bring it online first.",
   "web.home.owner_link.title": "Owner remote access",
   "web.home.owner_link.warning": "Use this to verify the owner on a new phone or computer. The link expires after 15 minutes or immediately after one successful verification.",

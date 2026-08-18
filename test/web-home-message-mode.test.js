@@ -20,6 +20,7 @@ function createDb() {
             return { data: JSON.stringify({ 'owner@example.com': 'redacted-test-token' }) };
           }
           if (sql.includes("type='runtime'")) return { data: JSON.stringify(runtime) };
+          if (sql.includes('SELECT short_link_url, imUid FROM agents')) return { short_link_url: null, imUid: 'im-home-uid' };
           return null;
         },
         all() { return []; },
@@ -70,6 +71,9 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /updateAgentRow/);
   assert.match(html, /class="home-access-stack"/);
   assert.match(html, /class="home-access-row home-access-visitor-row"/);
+  assert.match(html, /data-role="im-uid-value"[^>]*>im-home-uid<\/span>/);
+  assert.match(html, /data-voko-copy-value="im-home-uid"/);
+  assert.match(html, />IM UID<\/span>/);
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /visitorValue\+visitorAction\+accessModeButton/);
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
