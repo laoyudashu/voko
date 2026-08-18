@@ -40,6 +40,15 @@ test('registered invitees are opened as an email search with conversation action
   assert.doesNotMatch(web, /conversationCount>0\?'\s*<span class="meta">\('/);
 });
 
+test('Agent discovery hides raw auth failures and free-form IM sends require directory validation', () => {
+  const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
+  assert.match(web, /r\.code==='SEARCH_AUTH_REQUIRED'\?T\('web\.capabilities\.err_auth_required'\)/);
+  assert.match(web, /name="validateRecipientUid" value="1"/);
+  assert.match(web, /\/api\/im-users\/[^"']+\/exists/);
+  assert.match(web, /validateRecipientUid==='1'/);
+  assert.match(web, /RECIPIENT_NOT_FOUND/);
+});
+
 test('invitation forms require a custom dialog confirmation before submission', () => {
   const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
   assert.match(web, /function inviteConfirmUi\(/);

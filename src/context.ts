@@ -334,7 +334,7 @@ function createContext({
         if (token) return await searchCapabilitiesByUserToken({ token, keyword, page, limit });
         throw didError || new Error('未找到当前用户的访问令牌，请重新登录');
       } catch (error: unknown) {
-        return { success: false, error: errorMessage(error) };
+        return { success: false, error: errorMessage(error), code: (error as any)?.code || 'SEARCH_FAILED' };
       }
     },
 

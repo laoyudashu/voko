@@ -24,6 +24,7 @@ const { renderSystemFooter } = require('./footer');
 const ENDPOINTS = require('../endpoints.json');
 const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
+const { validateImUidExists } = require('../core/im-user-validation');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const { loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../core/safety-classifier');
@@ -1564,7 +1565,7 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
 
   R.post('/messages/send',async(req,res,next)=>{
     try{
-      const{agentId,toUid,content,channelType,conversationId,replyToMessageId}=req.body;
+      const{agentId,toUid,content,channelType,conversationId,replyToMessageId,validateRecipientUid}=req.body;
       let mentions=null;
       if(channelType&&Number(channelType)===2&&req.body.mentions){
         try{
@@ -1596,6 +1597,20 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
       if(!agentId||!toUid||!content){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
         return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
+      }
+      if(validateRecipientUid==='1'&&Number(channelType||1)!==2){
+        try{
+          const recipient=await validateImUidExists(toUid);
+          if(!recipient.exists){
+            const error=req.t('web.send_message.uid_not_found');
+            if(req.is('json'))return res.status(404).json({success:false,error,code:'RECIPIENT_NOT_FOUND'});
+            return res.status(404).send(renderPage(req,req.t('web.send_message.title'),'<p class="error">'+esc(error)+'</p><a href="/send-message?agentId='+encodeURIComponent(agentId)+'&toUid='+encodeURIComponent(toUid)+'">'+esc(req.t('common.btn.back'))+'</a>'));
+          }
+        }catch(_){
+          const error=req.t('web.send_message.uid_check_failed');
+          if(req.is('json'))return res.status(503).json({success:false,error,code:'RECIPIENT_CHECK_UNAVAILABLE'});
+          return res.status(503).send(renderPage(req,req.t('web.send_message.title'),'<p class="error">'+esc(error)+'</p><a href="javascript:history.back()">'+esc(req.t('common.btn.back'))+'</a>'));
+        }
       }
       const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions,conversationId,replyToMessageId,
         webRequest:Number(channelType)!==2&&webRoutingEnabled('web_private_conversations_v1')});
@@ -2698,7 +2713,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         try{
           const r=await handlers.search_capabilities({agent_id:agentId,keyword,page:curPage2,limit});
 
-          if(r.success===false){errMsg=r.error||T('web.capabilities.err_search_failed')}
+          if(r.success===false){errMsg=r.code==='SEARCH_AUTH_REQUIRED'?T('web.capabilities.err_auth_required'):T('web.capabilities.err_search_failed')}
           else{
             const items=r.data||r.agents||r.results||[];
             results={items:Array.isArray(items)?items:[],total:r.count||r.total||items.length||0};
@@ -2817,6 +2832,15 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
   // ── Agent 系统提示词 ──
 
   // ── 发送消息 ──
+  R.get('/api/im-users/:uid/exists',async(req,res)=>{
+    try{
+      const result=await validateImUidExists(req.params.uid);
+      if(!result.exists)return res.status(404).json({success:false,exists:false,code:'RECIPIENT_NOT_FOUND'});
+      return res.json({success:true,exists:true});
+    }catch(_){
+      return res.status(503).json({success:false,code:'RECIPIENT_CHECK_UNAVAILABLE'});
+    }
+  });
   R.get('/send-message',async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
@@ -2832,12 +2856,13 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
       try{const a=await handlers.list_agents({limit:500});agents=a.agents||[]}catch{}
       let agentOpts='';
       const defAgent=prefillAgent||(agents.length?agents[0].agentId:'');for(const a of agents)agentOpts+='<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>';
-      res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'">'
+      res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="validateRecipientUid" value="1">'
         +'<label for="sma">'+L('web.send_message.from_agent')+'</label><select id="sma" name="agentId" required style="width:100%" data-agent="send_agent_sel" autofocus>'+agentOpts+'</select>'
         +'<label for="smu">'+L('web.send_message.to_uid')+'</label><input type="text" id="smu" name="toUid" value="'+prefillUid+'" required style="width:100%" autocomplete="off" data-agent="send_uid_input" placeholder="'+esc(T('web.send_message.to_uid_ph'))+'">'
+        +'<p id="smu-status" class="meta" role="status" aria-live="polite" style="margin:5px 0 0"></p>'
         +'<label for="smc">'+L('web.send_message.content')+'</label><textarea id="smc" name="content" required rows="4" style="width:100%" data-agent="send_content_input" placeholder="'+esc(T('web.send_message.content_ph'))+'"></textarea>'
         +'<br><br><button type="submit" class="voko-send-button" data-agent="send_submit_btn">'+L('common.btn.send')+'</button>'
-        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div>'
+        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div><script>(function(){var form=document.querySelector("[data-agent=send_msg_form]"),input=document.getElementById("smu"),status=document.getElementById("smu-status"),button=form&&form.querySelector("[type=submit]"),verified="",checking='+jsonForInlineScript(T('web.send_message.uid_checking'))+',valid='+jsonForInlineScript(T('web.send_message.uid_valid'))+',notFound='+jsonForInlineScript(T('web.send_message.uid_not_found'))+',failed='+jsonForInlineScript(T('web.send_message.uid_check_failed'))+';async function check(){var uid=input.value.trim();verified="";if(!uid){status.textContent="";button.disabled=true;return false}status.className="meta";status.textContent=checking;button.disabled=true;try{var r=await fetch("/api/im-users/"+encodeURIComponent(uid)+"/exists",{headers:{Accept:"application/json"}}),j=await r.json().catch(function(){return{}});if(!r.ok||!j.success){status.className="error";status.textContent=r.status===404?notFound:failed;return false}verified=uid;status.className="success";status.textContent=valid;button.disabled=false;return true}catch(_){status.className="error";status.textContent=failed;return false}}input.addEventListener("input",function(){if(input.value.trim()!==verified){verified="";button.disabled=true;status.textContent=""}});input.addEventListener("blur",check);form.addEventListener("submit",function(e){if(input.value.trim()!==verified){e.preventDefault();check()}});button.disabled=true;if(input.value.trim())check()})();</'+'script>'
         +'<p><a href="/">← '+L('common.btn.home')+'</a></p>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/send-message">'+L('web.send_message.breadcrumb')+'</a>'}))
     }catch(e){next(e)}
   });

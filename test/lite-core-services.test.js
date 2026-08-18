@@ -787,6 +787,21 @@ test('Lite user-token capability search classifies invalid external API response
   await assert.rejects(searchCapabilitiesByUserToken({ token: 'ut_test', keyword: 'test' }), /network unavailable/);
 });
 
+test('Lite capability search exposes a stable code for expired authentication', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ success: false, message: 'unauthorized' }),
+  });
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    searchCapabilitiesByUserToken({ token: 'ut_expired', keyword: 'codex' }),
+    error => error.code === 'SEARCH_AUTH_REQUIRED' && error.status === 401,
+  );
+});
+
 test('Lite registration preview classifies external API response failures', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
