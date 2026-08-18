@@ -791,6 +791,23 @@ class RegistrationOrchestrator {
         pull,
       ];
     }
+    if (type === 'workbuddy') {
+      const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      const runtime = typeof this.options.workBuddyRuntime === 'function'
+        ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
+      const available = !!runtime.command;
+      return [
+        {
+          mode: 'http', label: 'WorkBuddy HTTP 自动交付', role: 'primary',
+          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 使用 WorkBuddy 内置 CodeBuddy HTTP API 和隔离会话自动投递；服务仅监听本机回环地址。'
+            : '未检测到 WorkBuddy 内置 CodeBuddy CLI，当前使用主动获取。',
+        },
+        pull,
+      ];
+    }
     if (type === 'trae') {
       const available = typeof this.options.traeCliAvailable === 'function'
         ? !!this.options.traeCliAvailable()
@@ -1303,6 +1320,14 @@ class RegistrationOrchestrator {
             : path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
       }
+    } else if (provider === 'workbuddy' && mode === 'http') {
+      const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      const runtime = typeof this.options.workBuddyRuntime === 'function'
+        ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
+      ready = !!runtime.command;
+      detail = ready
+        ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
+        : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
         .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);

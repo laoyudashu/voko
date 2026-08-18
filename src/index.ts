@@ -2392,6 +2392,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, back
         sessionPersistence,
       };
       if (transportId === 'hermes-http') return { ...hermesConfig, sessionPersistence };
+      if (transportId === 'workbuddy-http') return { sessionPersistence };
       return { sessionPersistence };
     },
   };

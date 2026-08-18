@@ -9,6 +9,7 @@ const { readInstanceMetadata, isInstanceAlive } = require('./process-lifecycle')
 const { AgentRuntimeResolver } = require('./runtime/agent-runtime-resolver');
 const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_PROVIDERS } = require('./provider-routing');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
+const { resolveWorkBuddyRuntime, probeWorkBuddyCliVersion } = require('./dispatcher/workbuddy-command');
 const { getProviderFamily, getProviderVersionCommand } = require('./dispatcher/provider-catalog');
 const { evaluateProviderSandbox, probeProviderVersion } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
@@ -44,6 +45,7 @@ const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   aider: [{ kind: 'native', command: 'aider' }],
   openhands: [{ kind: 'native', command: process.platform === 'win32' ? 'openhands.exe' : 'openhands' }],
   grok: [{ kind: 'native', command: 'grok' }],
+  workbuddy: [],
 };
 
 function parseJson(value: unknown, fallback: any = null): any {
@@ -344,6 +346,17 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
   }
   const resolver = new AgentRuntimeResolver();
   const results = configured.map((backend) => {
+    if (backend === 'workbuddy') {
+      const runtime = resolveWorkBuddyRuntime();
+      return {
+        backend,
+        available: !!runtime.command,
+        runtimeKind: runtime.source,
+        resolvedEntry: runtime.command ? path.basename(runtime.command) : null,
+        spawnEnvironmentReady: !!runtime.command,
+        reason: runtime.command ? null : 'WORKBUDDY_CLI_NOT_FOUND',
+      };
+    }
     const resolved = resolver.resolve({
       providerId: `doctor-${backend}`,
       mode: 'cli',
@@ -425,9 +438,13 @@ function inspectProviderSandbox(agents: any[], db: any, checks: any[], options: 
           status: 'unknown', degradedReason: 'TRANSPORT_NOT_IN_CATALOG' });
       }
       for (const transport of transports) {
-        const versionProbe = options.deep && getProviderVersionCommand(transport.id)
-          ? probeProviderVersion(getProviderVersionCommand(transport.id))
-          : null;
+        let versionProbe = options.deep && getProviderVersionCommand(transport.id)
+          ? probeProviderVersion(getProviderVersionCommand(transport.id)) : null;
+        if (options.deep && transport.id === 'workbuddy-http') {
+          const version = probeWorkBuddyCliVersion(resolveWorkBuddyRuntime());
+          versionProbe = { version, source: version ? 'runtime' : 'unknown', observedAt: new Date().toISOString(),
+            result: version ? 'known' : 'unknown', ...(version ? {} : { errorCode: 'not_found' }) };
+        }
         rows.push(evaluateProviderSandbox({ db, providerFamily: family.type, transportId: transport.id,
           policyId: transport.sandboxPolicyId, platform: process.platform,
           providerVersion: versionProbe?.version || null,

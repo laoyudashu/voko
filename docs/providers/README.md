@@ -11,7 +11,7 @@
 - **Agent → VOKO**：Agent 作为 MCP/CLI 客户端，调用 `voko mcp` 或 VOKO CLI。
 - **VOKO → Agent**：VOKO 作为运行时，通过 Provider 的 ACP、HTTP、WebSocket 或 CLI 投递访客消息。
 
-WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户端配置](../mcp-client-setup.md)；只有它作为 VOKO Provider 具备独立运行规则时，才需要新增 Provider 指南。
+WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由 VOKO 通过本机 HTTP API 自动投递。后者见 [WorkBuddy 专属指南](workbuddy.md)。
 
 ## Agent 如何选择文档
 
@@ -44,10 +44,11 @@ WorkBuddy 当前的专属配置属于第一种方向，继续放在 [MCP 客户�
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
 - [Reasonix](reasonix.md)：stdin、stream-json、dontAsk 权限、原生 session 和尾部参数注意事项。
+- [WorkBuddy](workbuddy.md)：桌面版内置 CodeBuddy HTTP、SSE、精确会话、取消和 Pull 兜底。
 
 ## 暂不提供专属指南的 Provider
 
-Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。其他环境的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
+Amazon Q、ZCode、豆包和 Others 当前没有本目录下的专属操作指南。WorkBuddy、千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。其他环境的状态只以[兼容性矩阵](../provider-compatibility.md)为准；“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
 
 ## 新增指南时的固定结构
 

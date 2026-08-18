@@ -133,7 +133,8 @@ VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测�
 - [Gemini CLI](providers/gemini.md)
 - [千问办公](providers/qwen-office.md)
 - [Trae](providers/trae.md)
+- [WorkBuddy](providers/workbuddy.md)
 
-Amazon Q、ZCode、WorkBuddy、豆包和 Others 当前没有本目录下的专属操作指南。千问办公和 Trae 的运行时前置条件与本机验收记录见上方链接；Push 是否启用以注册预检为准。其他环境请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
+Amazon Q、ZCode、豆包和 Others 当前没有本目录下的专属操作指南。WorkBuddy、千问办公和 Trae 的运行时前置条件与本机验收记录见上方链接；Push 是否启用以注册预检为准。其他环境请先看 [兼容性矩阵](provider-compatibility.md) 的验证状态，再按 [MCP、CLI 与本地运行模型](mcp-cli-runtime.md) 使用 Pull；不要把“可检测”或“功能设计”当作已完成的自动推送验收。
 
 Ubuntu 18 个已验收 Provider 的版本和实机边界见 [Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)。
