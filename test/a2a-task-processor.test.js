@@ -20,10 +20,13 @@ test('processor atomically queues signed accepted, working and completed events'
 });
 test('Provider uncertainty is persisted without fabricating a failed event or retry', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
-  const processor = new A2ATaskProcessor(store, { async execute() { throw new Error('outcome unknown'); } }, identity);
+  const processor = new A2ATaskProcessor(store, { async execute() { const error = new Error('outcome unknown');
+    error.code = 'A2A_PROVIDER_REPLY_TIMEOUT'; throw error; } }, identity);
   await processor.process(request());
-  const operations = db.prepare('SELECT operation FROM a2a_local_outbox ORDER BY producer_sequence').all().map(row => row.operation);
+  const rows = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence').all();
+  const operations = rows.map(row => row.operation);
   assert.deepEqual(operations, ['accepted', 'working', 'working']); assert.equal(operations.includes('failed'), false);
+  assert.equal(JSON.parse(rows[2].envelope_json).payload.reasonCode, 'A2A_PROVIDER_REPLY_TIMEOUT');
   const task = db.prepare("SELECT standard_state,delivery_state FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
   assert.equal(task.standard_state, 'WORKING'); assert.equal(task.delivery_state, 'DELIVERY_UNKNOWN');
 });

@@ -48,7 +48,8 @@ class A2ATaskProcessor {
         return;
       }
       if ((error as any)?.deliveryOutcome === 'not_delivered') throw error;
-      this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'PROVIDER_OUTCOME_UNKNOWN' },
+      this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN',
+        reasonCode: String((error as any)?.code || 'PROVIDER_OUTCOME_UNKNOWN') },
         'WORKING', 'DELIVERY_UNKNOWN');
     }
   }

@@ -69,15 +69,16 @@ class A2ABridgeRuntime {
     }
     const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
-    const runLoop = (work: () => Promise<boolean>, idleMs: number) => void (async () => {
+    const runLoop = (component: string, work: () => Promise<boolean>, idleMs: number) => void (async () => {
       while (!this.stopped) {
         try { if (!await work()) await delay(idleMs); }
-        catch (error) { this.options.onError?.(error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'); if (!this.stopped) await delay(5000); }
+        catch (error) { this.options.onError?.(`${component}: ${error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'}`);
+          if (!this.stopped) await delay(5000); }
       }
     })();
-    runLoop(async () => (await worker.pollOnce()).claimed > 0, 2000);
-    runLoop(async () => (await outbox.drain()).sent > 0, 500);
-    runLoop(async () => (await outboundResults.pollOnce()).claimed > 0, 2000);
+    runLoop('claim', async () => (await worker.pollOnce()).claimed > 0, 2000);
+    runLoop('event-outbox', async () => (await outbox.drain()).sent > 0, 500);
+    runLoop('outbound-results', async () => (await outboundResults.pollOnce()).claimed > 0, 2000);
     return () => { this.stopped = true; };
   }
 }
