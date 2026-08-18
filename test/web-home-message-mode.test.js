@@ -74,6 +74,12 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /data-role="im-uid-value"[^>]*>im-home-uid<\/span>/);
   assert.match(html, /data-voko-copy-value="im-home-uid"/);
   assert.match(html, />IM UID<\/span>/);
+  assert.match(html, /data-role="external-integration-row" data-public-agent-id="agent-home"/);
+  assert.match(html, /class="home-access-row home-access-external-row"/);
+  assert.match(html, /\.home-access-external-row\{grid-template-columns:112px minmax\(0,1fr\) auto\}/);
+  assert.match(html, />REST\/Webhook<\/span>/);
+  assert.match(html, /href="\/external-integrations\?agentId=agent-home"/);
+  assert.match(html, /fetch\("\/api\/external-integrations"/);
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /visitorValue\+visitorAction\+accessModeButton/);
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
@@ -134,6 +140,7 @@ test('home disables access-entry actions when the agent is offline', async (t) =
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /class="home-agent-short is-agent-offline" data-agent-online="false"/);
+  assert.match(html, /href="\/external-integrations\?agentId=agent-offline"/);
   assert.match(html, /class="home-message-mode-picker is-agent-offline"[^>]*data-agent-online="false"/);
   assert.match(html, /access_offline_tip/);
   assert.match(html, /home-message-mode-picker\.is-dropup/);

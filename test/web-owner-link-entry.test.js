@@ -21,10 +21,12 @@ test('global owner link creation uses the authenticated API without an Agent req
   assert.doesNotMatch(route, /INSERT|UPDATE|owner_link_url/);
 });
 
-test('home access entries contain only visitor and A2A, with global management navigation', () => {
+test('home access entries exclude owner and include external integration management', () => {
   const home = source.match(/R\.get\('\/'[\s\S]*?R\.get\('\/trusted-remote'/)[0];
   assert.match(home, /accessIcon\('visitor'\)/);
   assert.match(home, /accessIcon\('a2a'\)/);
+  assert.match(home, /accessIcon\('external'\)/);
+  assert.match(home, /href="\/external-integrations\?agentId=/);
   assert.doesNotMatch(home, /accessIcon\('owner'\)/);
   assert.doesNotMatch(home, /data-role="gen-owner-link"/);
   assert.doesNotMatch(home, /data-owner-agent/);
