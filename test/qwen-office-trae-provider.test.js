@@ -5,6 +5,7 @@ const qwenCommand = require('../build/core/dispatcher/qwen-office-command');
 const traeCommand = require('../build/core/dispatcher/trae-command');
 const { QwenOfficeCliProvider } = require('../build/core/dispatcher/providers/qwen-office-cli');
 const { TraeAcpProvider } = require('../build/core/dispatcher/providers/trae-acp');
+const { withTraeRuntimeLock } = require('../build/core/dispatcher/providers/trae-runtime-coordinator');
 
 test('QwenWork resolver prefers an explicit binary and keeps the runtime request shell-free', () => {
   const explicit = 'C:\\test\\qoderclicn.exe';
@@ -57,9 +58,38 @@ test('QwenWork CLI provider exposes an explicitly acknowledged safe loopback tes
 test('Trae ACP provider uses the separate traecli ACP server and never the desktop launcher', () => {
   const provider = new TraeAcpProvider({ binPath: 'C:\\tools\\traecli.exe' });
   assert.equal(provider._adapterType, 'traecli-acp');
-  assert.deepEqual(provider._cliArgs, ['acp', 'serve', '--yolo']);
+  assert.deepEqual(provider._cliArgs, [
+    'acp', 'serve',
+    '--permission-mode', 'plan',
+    '--disallowed-tool', 'Bash',
+    '--disallowed-tool', 'Edit',
+    '--disallowed-tool', 'Write',
+  ]);
+  assert.equal(provider._cliArgs.includes('--yolo'), false);
   assert.equal(provider._runtimeRequest.providerId, 'traecli-acp');
   assert.equal(provider.acceptsBinding({
     providerType: 'trae', adapterType: 'traecli-acp', deliveryMode: 'acp', nativeSessionId: 's1',
   }), true);
+});
+
+test('Trae ACP serializes prompts per Agent without blocking other Agent processes', async () => {
+  let activeA = 0;
+  let maxA = 0;
+  let activeTotal = 0;
+  let maxTotal = 0;
+  const run = (agentId) => withTraeRuntimeLock(agentId, async () => {
+    activeTotal += 1;
+    maxTotal = Math.max(maxTotal, activeTotal);
+    if (agentId === 'agent-a') {
+      activeA += 1;
+      maxA = Math.max(maxA, activeA);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (agentId === 'agent-a') activeA -= 1;
+    activeTotal -= 1;
+  });
+
+  await Promise.all([run('agent-a'), run('agent-a'), run('agent-b')]);
+  assert.equal(maxA, 1);
+  assert.equal(maxTotal, 2);
 });
