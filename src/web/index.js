@@ -2872,7 +2872,21 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
     try{
       const result=await validateImUidExists(req.params.uid);
       if(!result.exists)return res.status(404).json({success:false,exists:false,code:'RECIPIENT_NOT_FOUND'});
-      return res.json({success:true,exists:true});
+      let isOnline=null;
+      if(result.isAgent===true){
+        let localAgent=null;
+        try{localAgent=db.prepare('SELECT agent_id FROM agents WHERE imUid = ?').get(req.params.uid)}catch{}
+        if(localAgent){
+          try{isOnline=(await getAgentStatus(handlers,localAgent.agent_id)).agent.imConnected===true}catch{}
+        }else if(req.query.agentId){
+          try{
+            const found=await handlers.search_capabilities({agent_id:String(req.query.agentId),keyword:String(req.params.uid),page:1,limit:20});
+            const match=(found.data||found.agents||found.results||[]).find(agent=>String(agent.imUid||agent.im_uid||'')===String(req.params.uid));
+            if(match&&typeof match.isOnline==='boolean')isOnline=match.isOnline;
+          }catch{}
+        }
+      }
+      return res.json({success:true,exists:true,isAgent:result.isAgent===true,isOnline});
     }catch(_){
       return res.status(503).json({success:false,code:'RECIPIENT_CHECK_UNAVAILABLE'});
     }
@@ -2898,7 +2912,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         +'<p id="smu-status" class="meta" role="status" aria-live="polite" style="margin:5px 0 0"></p>'
         +'<label for="smc">'+L('web.send_message.content')+'</label><textarea id="smc" name="content" required rows="4" style="width:100%" data-agent="send_content_input" placeholder="'+esc(T('web.send_message.content_ph'))+'"></textarea>'
         +'<br><br><button type="submit" class="voko-send-button" data-agent="send_submit_btn">'+L('common.btn.send')+'</button>'
-        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div><script>(function(){var form=document.querySelector("[data-agent=send_msg_form]"),input=document.getElementById("smu"),status=document.getElementById("smu-status"),button=form&&form.querySelector("[type=submit]"),verified="",checking='+jsonForInlineScript(T('web.send_message.uid_checking'))+',valid='+jsonForInlineScript(T('web.send_message.uid_valid'))+',notFound='+jsonForInlineScript(T('web.send_message.uid_not_found'))+',failed='+jsonForInlineScript(T('web.send_message.uid_check_failed'))+';async function check(){var uid=input.value.trim();verified="";if(!uid){status.textContent="";button.disabled=true;return false}status.className="meta";status.textContent=checking;button.disabled=true;try{var r=await fetch("/api/im-users/"+encodeURIComponent(uid)+"/exists",{headers:{Accept:"application/json"}}),j=await r.json().catch(function(){return{}});if(!r.ok||!j.success){status.className="error";status.textContent=r.status===404?notFound:failed;return false}verified=uid;status.className="success";status.textContent=valid;button.disabled=false;return true}catch(_){status.className="error";status.textContent=failed;return false}}input.addEventListener("input",function(){if(input.value.trim()!==verified){verified="";button.disabled=true;status.textContent=""}});input.addEventListener("blur",check);form.addEventListener("submit",function(e){if(input.value.trim()!==verified){e.preventDefault();check()}});button.disabled=true;if(input.value.trim())check()})();</'+'script>'
+        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div><script>(function(){var form=document.querySelector("[data-agent=send_msg_form]"),sender=document.getElementById("sma"),input=document.getElementById("smu"),status=document.getElementById("smu-status"),button=form&&form.querySelector("[type=submit]"),verified="",checking='+jsonForInlineScript(T('web.send_message.uid_checking'))+',valid='+jsonForInlineScript(T('web.send_message.uid_valid'))+',agentOnline='+jsonForInlineScript(T('web.send_message.agent_online'))+',agentOffline='+jsonForInlineScript(T('web.send_message.agent_offline'))+',agentUnknown='+jsonForInlineScript(T('web.send_message.agent_status_unknown'))+',notFound='+jsonForInlineScript(T('web.send_message.uid_not_found'))+',failed='+jsonForInlineScript(T('web.send_message.uid_check_failed'))+';async function check(){var uid=input.value.trim();verified="";if(!uid){status.textContent="";button.disabled=true;return false}status.className="meta";status.textContent=checking;button.disabled=true;try{var url="/api/im-users/"+encodeURIComponent(uid)+"/exists?agentId="+encodeURIComponent(sender.value||""),r=await fetch(url,{headers:{Accept:"application/json"}}),j=await r.json().catch(function(){return{}});if(!r.ok||!j.success){status.className="error";status.textContent=r.status===404?notFound:failed;return false}verified=uid;if(j.isAgent){status.className=j.isOnline===true?"online":j.isOnline===false?"offline":"unknown";status.textContent=j.isOnline===true?"● "+agentOnline:j.isOnline===false?"○ "+agentOffline:"○ "+agentUnknown}else{status.className="success";status.textContent=valid}button.disabled=false;return true}catch(_){status.className="error";status.textContent=failed;return false}}input.addEventListener("input",function(){if(input.value.trim()!==verified){verified="";button.disabled=true;status.textContent=""}});sender.addEventListener("change",function(){if(input.value.trim())check()});input.addEventListener("blur",check);form.addEventListener("submit",function(e){if(input.value.trim()!==verified){e.preventDefault();check()}});button.disabled=true;if(input.value.trim())check()})();</'+'script>'
         +'<p><a href="/">← '+L('common.btn.home')+'</a></p>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/send-message">'+L('web.send_message.breadcrumb')+'</a>'}))
     }catch(e){next(e)}
   });

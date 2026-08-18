@@ -6,7 +6,7 @@ export async function validateImUidExists(imUid: string, options: {
   fetchImpl?: typeof fetch;
   baseUrl?: string;
   timeoutMs?: number;
-} = {}): Promise<{ exists: boolean; reason?: string }> {
+} = {}): Promise<{ exists: boolean; reason?: string; isAgent?: boolean }> {
   const uid = String(imUid || '').trim();
   if (!uid) return { exists: false, reason: 'missing_uid' };
 
@@ -24,6 +24,9 @@ export async function validateImUidExists(imUid: string, options: {
   const profile = await response.json();
   const returnedUid = String(profile?.uid || profile?.imUid || profile?.im_uid || uid);
   if (returnedUid !== uid) return { exists: false, reason: 'identity_mismatch' };
+  const isHuman = profile?.is_human ?? profile?.isHuman;
+  if (isHuman === 0 || isHuman === false) return { exists: true, isAgent: true };
+  if (isHuman === 1 || isHuman === true) return { exists: true, isAgent: false };
   return { exists: true };
 }
 

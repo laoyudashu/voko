@@ -47,6 +47,9 @@ test('Agent discovery hides raw auth failures and free-form IM sends require dir
   assert.match(web, /\/api\/im-users\/[^"']+\/exists/);
   assert.match(web, /validateRecipientUid==='1'/);
   assert.match(web, /RECIPIENT_NOT_FOUND/);
+  assert.match(web, /isAgent:result\.isAgent===true,isOnline/);
+  assert.match(web, /j\.isOnline===true\?"online":j\.isOnline===false\?"offline":"unknown"/);
+  assert.match(web, /web\.send_message\.agent_offline/);
 });
 
 test('invitation forms require a custom dialog confirmation before submission', () => {

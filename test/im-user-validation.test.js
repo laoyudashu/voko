@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const { validateImUidExists } = require('../build/core/im-user-validation');
 
-test('IM UID validation accepts the exact directory identity regardless of user type', async () => {
+test('IM UID validation accepts the exact directory identity and identifies the recipient type', async () => {
   const calls = [];
   for (const isHuman of [0, 1]) {
     const result = await validateImUidExists('recipient uid', {
@@ -13,7 +13,7 @@ test('IM UID validation accepts the exact directory identity regardless of user 
         return { ok: true, status: 200, json: async () => ({ uid: 'recipient uid', is_human: isHuman }) };
       },
     });
-    assert.deepEqual(result, { exists: true });
+    assert.deepEqual(result, { exists: true, isAgent: isHuman === 0 });
   }
   assert.equal(calls[0], 'https://im.example.test/api/users/recipient%20uid');
 });
