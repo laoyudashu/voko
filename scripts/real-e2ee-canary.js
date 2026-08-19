@@ -242,12 +242,16 @@ let failureReport;
     const prepared = await creator.request({ op: 'prepare_add', key_package: reservation.keyPackage });
     const establishment = await requestJson(`${baseUrl}/guest/v1/e2ee/establishments`, { token: guestToken, body: {
       reservationId: reservation.reservationId, agentId: config.serverAgentId,
-      groupId: Buffer.from(group).toString('base64url'), commit: prepared.commit, welcome: prepared.welcome } }, capture);
+      groupId: Buffer.from(group).toString('base64url'), conversationScope: Buffer.from(conversation).toString('base64url'),
+      commit: prepared.commit, welcome: prepared.welcome } }, capture);
     await creator.request({ op: 'accept_add' });
     const pending = await requestJson(`${baseUrl}/api/external/v1/e2ee/establishments/pull`, { token: config.ownerToken,
       body: { agentId: config.serverAgentId, ownerDeviceKeyId: ownerDevice, limit: 20 } }, capture);
     const pulled = pending.establishments.find((item) => item.establishmentId === establishment.establishmentId);
     if (!pulled) throw new Error('AgentDID did not return the accepted establishment');
+    if (Buffer.from(pulled.conversationScope, 'base64url').toString('utf8') !== conversation) {
+      throw new Error('AgentDID did not preserve the authenticated conversation scope');
+    }
     await recipient.request({ op: 'join', welcome: pulled.welcome });
     const ack = await recipient.request({ op: 'encrypt', message_id: `${runId}-ack`, text: 'GROUP_ESTABLISHED' });
     await requestJson(`${baseUrl}/api/external/v1/e2ee/establishments/ack`, { token: config.ownerToken, body: {

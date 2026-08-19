@@ -10,11 +10,16 @@ interface CanaryCrypto {
   encrypt(input: { scope: any; messageId: string; plaintext: string; encryptedState: Uint8Array; stateVersion: number }): Promise<{ envelope: CanaryEnvelope; encryptedState: Uint8Array; stateVersion: number }>;
 }
 
+type E2eeDispatcher = {
+  executeE2ee?(input: any): Promise<{ reply: any; receipt?: unknown }>;
+  executeCanary?(input: any): Promise<{ reply: any; receipt?: unknown }>;
+};
+
 export class CanaryRuntime {
   private stats = { received: 0, replied: 0, rejected: 0, failures: 0, plaintextFallbacks: 0 };
   private disabled = false;
   constructor(private readonly options: { policy: CanaryRuntimePolicy; store: CanaryStore; crypto: CanaryCrypto;
-    dispatcher: any; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any> }) {
+    dispatcher: E2eeDispatcher; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any> }) {
     this.disabled = options.store.isEmergencyDisabled();
   }
 
@@ -43,7 +48,9 @@ export class CanaryRuntime {
       this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
       this.stats.received += 1;
       this.options.store.transition(envelope.messageId,['received'],'provider_accepted');
-      const result = await this.options.dispatcher.executeCanary({ agentId:localAgentId,content:opened.plaintext,
+      const execute = this.options.dispatcher.executeE2ee || this.options.dispatcher.executeCanary;
+      if (!execute) throw new Error('E2EE_PROVIDER_EXECUTION_UNAVAILABLE');
+      const result = await execute.call(this.options.dispatcher,{ agentId:localAgentId,content:opened.plaintext,
         taskId:envelope.messageId,contextId:scope.conversationScope,sessionScopeId:scope.groupId });
       const current = this.options.store.session(scope.groupId);
       const replyId = `e2ee-reply-${crypto.randomUUID()}`;

@@ -111,7 +111,7 @@ interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
   sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
-  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee_canary';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee' | 'e2ee_canary';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
@@ -374,7 +374,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
             console.warn(`[Dispatcher] 丢弃已结束 isolated turn 的迟到回复 agent=${reply.agentId || '-'} turn=${reply.turnId}`);
             return;
           }
-          if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee-canary):/.test(String(reply.visitorId || ''))) {
+          if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee|e2ee-canary):/.test(String(reply.visitorId || ''))) {
             console.warn(`[Dispatcher] 丢弃缺少 turnId 的 isolated 回复 agent=${reply.agentId || '-'}`);
             return;
           }
@@ -1152,7 +1152,7 @@ ${body}
         ...(a2aContext || {})
       };
       const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link'
-        || executionScope === 'owner_chat' || executionScope === 'e2ee_canary';
+        || executionScope === 'owner_chat' || executionScope === 'e2ee' || executionScope === 'e2ee_canary';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1376,12 +1376,12 @@ ${body}
     } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
   }
 
-  async function executeCanary(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
     if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
       const error: any = new Error('E2EE_CANARY_SCOPE_REQUIRED');
       error.deliveryOutcome = 'rejected'; error.code = 'E2EE_CANARY_SCOPE_REQUIRED'; throw error;
     }
-    const turnId = `e2ee-canary-${crypto.randomUUID()}`;
+    const turnId = `e2ee-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
     let resolveReply!: (reply: ProviderReply) => void;
@@ -1405,8 +1405,8 @@ ${body}
     try {
       const delivery = await _doRoute(options.agentId, {
         agentId: options.agentId,
-        fromUid: `e2ee-canary:${options.contextId}`,
-        senderUid: 'e2ee-canary',
+        fromUid: `e2ee:${options.contextId}`,
+        senderUid: 'e2ee',
         channelId: options.contextId,
         channelType: 1,
         messageId: options.taskId,
@@ -1414,7 +1414,7 @@ ${body}
         content: options.content,
         rawContent: options.content,
         providerBinding: options.binding || null,
-        executionScope: 'e2ee_canary',
+        executionScope: 'e2ee',
         sourceType: 'visitor',
         sessionScopeId: options.sessionScopeId,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
@@ -1432,6 +1432,11 @@ ${body}
       _retireIsolatedTurn(sinkKey);
     }
   }
+
+  // Compatibility alias for the internal Canary harness. Both paths use the
+  // same isolated Provider scope; production enablement is controlled by the
+  // E2EE runtime policy, not by Dispatcher routing.
+  const executeCanary = executeE2ee;
 
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
@@ -1654,7 +1659,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
