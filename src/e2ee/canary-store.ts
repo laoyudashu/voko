@@ -16,6 +16,30 @@ export class CanaryStore {
       singleton INTEGER PRIMARY KEY CHECK(singleton=1),emergency_disabled INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL);`);
   }
 
+  migrateLegacy(mainDb: DatabaseLike): { sessions: number; receipts: number } {
+    const exists = (name: string) => Boolean(mainDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+    let sessions = 0;
+    let receipts = 0;
+    if (exists('e2ee_canary_sessions')) {
+      for (const row of mainDb.prepare('SELECT * FROM e2ee_canary_sessions').all() as any[]) {
+        const result = this.db.prepare(`INSERT OR IGNORE INTO e2ee_canary_sessions
+          (group_id,local_agent_id,target_agent_did,sender_device_key_id,conversation_scope,encrypted_state,state_version,status,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?)`).run(row.group_id,row.local_agent_id,row.target_agent_did,row.sender_device_key_id,
+          row.conversation_scope,row.encrypted_state,row.state_version,row.status,row.updated_at) as any;
+        sessions += Number(result?.changes || 0);
+      }
+    }
+    if (exists('e2ee_canary_receipts')) {
+      for (const row of mainDb.prepare('SELECT * FROM e2ee_canary_receipts').all() as any[]) {
+        const result = this.db.prepare(`INSERT OR IGNORE INTO e2ee_canary_receipts
+          (message_id,group_id,cipher_digest,state,encrypted_reply,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`)
+          .run(row.message_id,row.group_id,row.cipher_digest,row.state,row.encrypted_reply,row.created_at,row.updated_at) as any;
+        receipts += Number(result?.changes || 0);
+      }
+    }
+    return { sessions, receipts };
+  }
+
   reserve(scope: any, messageId: string, digest: string): 'new'|'duplicate' {
     const now = Date.now();
     const existing = this.db.prepare('SELECT cipher_digest FROM e2ee_canary_receipts WHERE message_id=?').get(messageId) as any;

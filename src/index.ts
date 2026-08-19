@@ -1916,6 +1916,7 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   let e2eeCanaryRuntime: any = null;
+  let e2eeDatabase: any = null;
   try {
     const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
     const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
@@ -1925,7 +1926,16 @@ async function startMcpServer(args?: any, core?: any) {
       const { CanaryStore } = require('./e2ee/canary-store');
       const { CanaryRuntime } = require('./e2ee/canary-runtime');
       const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
-      e2eeCanaryRuntime = new CanaryRuntime({ policy: canaryPolicy, store: new CanaryStore(db),
+      const { DatabaseSync } = require('node:sqlite');
+      const defaultE2eePath = path.join(path.dirname(String(db._dbPath || '')), 'voko-e2ee.db');
+      const e2eePath = path.resolve(String(process.env.VOKO_E2EE_DB_PATH || defaultE2eePath));
+      if (e2eePath === path.resolve(String(db._dbPath || ''))) throw new Error('VOKO_E2EE_DB_PATH must differ from the main database');
+      fs.mkdirSync(path.dirname(e2eePath), { recursive: true });
+      e2eeDatabase = new DatabaseSync(e2eePath);
+      e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+      const e2eeStore = new CanaryStore(e2eeDatabase);
+      const migrated = e2eeStore.migrateLegacy(db);
+      e2eeCanaryRuntime = new CanaryRuntime({ policy: canaryPolicy, store: e2eeStore,
         crypto: new CanaryCryptoProcess(endpoint), dispatcher,
         deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
           const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
@@ -1937,6 +1947,8 @@ async function startMcpServer(args?: any, core?: any) {
           return result;
         } });
       console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
+      if (migrated.sessions || migrated.receipts) console.warn(`[E2EE] 已迁移旧运行状态 sessions=${migrated.sessions} receipts=${migrated.receipts}`);
+      await taskManager.start('e2ee-database', () => async () => { try { e2eeDatabase?.close(); } catch (_) {} });
     }
   } catch (error: any) {
     console.error('[E2EE Canary] 初始化失败，所有 E2EE 消息将硬拒绝:', error.message);
