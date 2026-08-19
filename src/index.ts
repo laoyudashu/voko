@@ -1923,8 +1923,14 @@ async function startMcpServer(args?: any, core?: any) {
     const productionEnabled = process.env.VOKO_E2EE_PRODUCTION_ENABLED === 'true';
     if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
     if (canaryPolicy.enabled || productionEnabled) {
-      const endpoint = String(productionEnabled ? process.env.VOKO_E2EE_ENDPOINT : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
+      let endpoint = String(productionEnabled ? process.env.VOKO_E2EE_ENDPOINT : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
       if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'VOKO_E2EE_ENDPOINT' : 'VOKO_E2EE_CANARY_ENDPOINT'} must be an absolute path`);
+      if (productionEnabled) {
+        const { verifyNativeE2eeRelease } = require('./e2ee/native-release');
+        endpoint = verifyNativeE2eeRelease({ executable:endpoint,
+          manifestPath:String(process.env.VOKO_E2EE_ENDPOINT_MANIFEST || ''),
+          publicKeyPem:String(process.env.VOKO_E2EE_RELEASE_PUBLIC_KEY_PEM || '').replace(/\\n/g,'\n') });
+      }
       const { CanaryStore } = require('./e2ee/canary-store');
       const { CanaryRuntime } = require('./e2ee/canary-runtime');
       const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
