@@ -26,12 +26,16 @@ const bindgenVersion = output(bindgen, ['--version']);
 if (!/\b0\.2\.127\b/.test(bindgenVersion)) {
   throw new Error(`wasm-bindgen-cli 0.2.127 is required; found: ${bindgenVersion}`);
 }
+const rustVersion = output(rustup, ['run', 'stable', 'rustc', '--version']);
+if (!/^rustc 1\.97\.1\b/.test(rustVersion)) {
+  throw new Error(`Rust 1.97.1 stable is required; found: ${rustVersion}`);
+}
 
-execFileSync(rustup, ['target', 'add', 'wasm32-unknown-unknown', '--toolchain', '1.97.1'],
+execFileSync(rustup, ['target', 'add', 'wasm32-unknown-unknown', '--toolchain', 'stable'],
   { cwd: root, stdio: 'inherit' });
-execFileSync(cargo, ['+1.97.1', 'test', '--locked', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
+execFileSync(cargo, ['+stable', 'test', '--locked', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
   { cwd: e2ee, stdio: 'inherit' });
-execFileSync(cargo, ['+1.97.1', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
+execFileSync(cargo, ['+stable', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
   { cwd: e2ee, stdio: 'inherit' });
 execFileSync(bindgen, ['--target', 'web', '--out-dir', 'target/web-poc', '--out-name', 'voko_e2ee_wasm',
   'target/wasm32-unknown-unknown/release/voko_e2ee_wasm.wasm'], { cwd: e2ee, stdio: 'inherit' });
