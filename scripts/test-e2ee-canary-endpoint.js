@@ -15,9 +15,9 @@ const executable = join(root, 'e2ee', 'target', 'debug', process.platform === 'w
   ? 'voko-e2ee-canary-endpoint.exe' : 'voko-e2ee-canary-endpoint');
 if (!existsSync(executable)) throw new Error('Canary endpoint executable was not built');
 
-function endpoint(role, device) {
+function endpoint(role, device, group = 'canary-real-group', conversation = 'canary-real-conversation') {
   const child = spawn(executable, [`--role=${role}`, '--principal=canary-principal', `--device=${device}`,
-    '--agent=did:voko:canary-agent', '--group=canary-real-group', '--conversation=canary-real-conversation',
+    '--agent=did:voko:canary-agent', `--group=${group}`, `--conversation=${conversation}`,
     `--owner-scope=canary-endpoint-test-${role}`],
   { cwd: root, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
   const lines = createInterface({ input: child.stdout });
@@ -38,13 +38,19 @@ function endpoint(role, device) {
 
 (async () => {
   let creator = endpoint('creator', 'browser-device');
-  let recipient = endpoint('recipient', 'owner-device');
+  let recipient = endpoint('recipient', 'owner-device', 'pending-package', 'pending-package');
   try {
     const [creatorReady, recipientReady] = await Promise.all([creator.ready, recipient.ready]);
     assert.equal(creatorReady.role, 'creator');
     assert.equal(recipientReady.role, 'recipient');
     assert.match(recipientReady.keyPackage, /^[A-Za-z0-9_-]+$/);
+    const pendingSnapshot = await recipient.request({ op: 'seal_pending' });
+    recipient.close();
+    recipient = endpoint('recipient', 'owner-device', 'pending-package', 'pending-package');
+    await recipient.ready;
+    await recipient.request({ op: 'restore_pending', sealed_snapshot: pendingSnapshot.sealedSnapshot });
     const prepared = await creator.request({ op: 'prepare_add', key_package: recipientReady.keyPackage });
+    await recipient.request({ op: 'bind_route', group_id: 'canary-real-group', conversation: 'canary-real-conversation' });
     await recipient.request({ op: 'join', welcome: prepared.welcome });
     await creator.request({ op: 'accept_add' });
     const ack = await recipient.request({ op: 'encrypt', message_id: 'established-ack', text: 'GROUP_ESTABLISHED' });

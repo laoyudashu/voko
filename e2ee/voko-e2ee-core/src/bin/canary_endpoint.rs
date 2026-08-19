@@ -17,6 +17,7 @@ enum Role {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    BindRoute { group_id: String, conversation: String },
     PrepareAdd { key_package: String },
     AcceptAdd,
     Join { welcome: String },
@@ -26,6 +27,8 @@ enum Command {
     Restore { snapshot: String },
     SealSnapshot,
     RestoreSealed { sealed_snapshot: String },
+    SealPending,
+    RestorePending { sealed_snapshot: String },
     RevokeVault,
 }
 
@@ -105,8 +108,8 @@ fn run() -> Result<(), String> {
     let principal = required("principal")?;
     let device = required("device")?;
     let agent = required("agent")?;
-    let group_id = required("group")?;
-    let conversation = required("conversation")?;
+    let mut group_id = required("group")?;
+    let mut conversation = required("conversation")?;
     let owner_scope = required("owner-scope")?;
     let identity = DeviceCredentialIdentity {
         role: if role == Role::Creator {
@@ -159,8 +162,8 @@ fn run() -> Result<(), String> {
                     role,
                     &device,
                     &agent,
-                    &group_id,
-                    &conversation,
+                    &mut group_id,
+                    &mut conversation,
                     &owner_scope,
                     &mut creator,
                     &mut recipient,
@@ -179,14 +182,24 @@ fn handle(
     role: Role,
     device: &str,
     agent: &str,
-    group_id: &str,
-    conversation: &str,
+    group_id: &mut String,
+    conversation: &mut String,
     owner_scope: &str,
     creator: &mut Option<DirectCreatorEndpoint>,
     recipient: &mut Option<DirectRecipientEndpoint>,
     group: &mut Option<DirectGroup>,
 ) -> Result<Response, String> {
     match command {
+        Command::BindRoute { group_id: next_group_id, conversation: next_conversation }
+            if role == Role::Recipient && group.is_none() => {
+            if next_group_id.is_empty() || next_group_id.len() > 2048 || next_group_id.chars().any(char::is_control)
+                || next_conversation.is_empty() || next_conversation.len() > 2048 || next_conversation.chars().any(char::is_control) {
+                return Err("invalid route binding".into());
+            }
+            *group_id = next_group_id;
+            *conversation = next_conversation;
+            Ok(empty())
+        }
         Command::PrepareAdd { key_package } if role == Role::Creator => {
             let bytes = URL_SAFE_NO_PAD
                 .decode(key_package)
@@ -314,6 +327,19 @@ fn handle(
             *group = Some(DirectGroup::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
             *creator = None;
             *recipient = None;
+            Ok(empty())
+        }
+        Command::SealPending if role == Role::Recipient && group.is_none() => {
+            let snapshot = recipient.as_ref().ok_or("recipient is not pending")?.snapshot().map_err(|e| e.to_string())?;
+            let vault = unlock_or_provision(owner_scope)?;
+            let sealed = vault.seal(&vault_context(agent, group_id, conversation), &snapshot).map_err(|e| e.to_string())?;
+            Ok(Response { sealed_snapshot: Some(URL_SAFE_NO_PAD.encode(sealed)), ..empty() })
+        }
+        Command::RestorePending { sealed_snapshot } if role == Role::Recipient && group.is_none() => {
+            let sealed = URL_SAFE_NO_PAD.decode(sealed_snapshot).map_err(|_| "invalid sealed pending snapshot")?;
+            let vault = VaultKeyManager::new(SystemWrappingKeyStore).unlock(owner_scope.as_bytes()).map_err(|e| e.to_string())?;
+            let snapshot = vault.open(&vault_context(agent, group_id, conversation), &sealed).map_err(|e| e.to_string())?;
+            *recipient = Some(DirectRecipientEndpoint::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
             Ok(empty())
         }
         Command::RevokeVault => {

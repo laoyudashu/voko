@@ -71,6 +71,15 @@ struct DirectGroupSnapshot {
     storage: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
+#[derive(SerdeSerialize, SerdeDeserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectRecipientSnapshot {
+    version: u16,
+    signer_public_key: Vec<u8>,
+    serialized_key_package: Vec<u8>,
+    storage: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
 fn credential(
     identity: &[u8],
     provider: &OpenMlsRustCrypto,
@@ -131,6 +140,39 @@ impl DirectRecipientEndpoint {
 
     pub fn signer_public_key(&self) -> Vec<u8> {
         self.signer.to_public_vec()
+    }
+
+    /// Serializes an unused KeyPackage endpoint so the host can seal it before
+    /// publication. Restoring it does not create a second KeyPackage.
+    pub fn snapshot(&self) -> Result<Vec<u8>, DirectGroupError> {
+        let mut storage: Vec<_> = self.provider.storage().values.read()
+            .map_err(|_| DirectGroupError::Mls("storage lock poisoned".into()))?
+            .iter().map(|(key, value)| (key.clone(), value.clone())).collect();
+        storage.sort_by(|left, right| left.0.cmp(&right.0));
+        serde_json::to_vec(&DirectRecipientSnapshot { version: 1,
+            signer_public_key: self.signer.to_public_vec(),
+            serialized_key_package: self.serialized_key_package.clone(), storage })
+            .map_err(|error| DirectGroupError::Mls(format!("serialize recipient snapshot: {error}")))
+    }
+
+    pub fn restore(snapshot: &[u8]) -> Result<Self, DirectGroupError> {
+        let snapshot: DirectRecipientSnapshot = serde_json::from_slice(snapshot)
+            .map_err(|error| DirectGroupError::Mls(format!("parse recipient snapshot: {error}")))?;
+        if snapshot.version != 1 || snapshot.signer_public_key.is_empty() || snapshot.serialized_key_package.is_empty() {
+            return Err(DirectGroupError::Mls("unsupported recipient snapshot".into()));
+        }
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider.storage().values.write()
+                .map_err(|_| DirectGroupError::Mls("storage lock poisoned".into()))?;
+            for (key, value) in snapshot.storage {
+                if key.is_empty() { return Err(DirectGroupError::Mls("invalid snapshot storage key".into())); }
+                values.insert(key, value);
+            }
+        }
+        let signer = SignatureKeyPair::read(provider.storage(), &snapshot.signer_public_key, SignatureScheme::ED25519)
+            .ok_or_else(|| DirectGroupError::Mls("recipient snapshot signer was not found".into()))?;
+        Ok(Self { provider, signer, serialized_key_package: snapshot.serialized_key_package })
     }
 
     pub fn join(self, welcome: &[u8]) -> Result<DirectGroup, DirectGroupError> {

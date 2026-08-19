@@ -48,6 +48,37 @@ class EndpointClient {
   private rejectAll(error: Error): void { while (this.pending.length) this.pending.shift()!.reject(error); }
 }
 
+export class PendingRecipientProcess {
+  private readonly endpoint: EndpointClient;
+  readonly ready: Promise<{ keyPackage: string; credentialPublicKey: string }>;
+
+  constructor(executable: string, scope: CanaryScope) {
+    if (!existsSync(executable)) throw new Error('E2EE_ENDPOINT_NOT_FOUND');
+    this.endpoint = new EndpointClient(executable, scope);
+    this.ready = this.endpoint.ready.then(response => {
+      const keyPackage = String(response.keyPackage || '');
+      const credentialPublicKey = String(response.credentialPublicKey || '');
+      if (!/^[A-Za-z0-9_-]+$/.test(keyPackage) || !/^[A-Za-z0-9_-]+$/.test(credentialPublicKey)) {
+        throw new Error('E2EE_ENDPOINT_INVALID_KEY_PACKAGE');
+      }
+      return { keyPackage, credentialPublicKey };
+    });
+  }
+
+  async join(scope: CanaryScope, welcome: string, acknowledgementId: string): Promise<{
+    encryptedState: Uint8Array; acknowledgement: CanaryEnvelope;
+  }> {
+    await this.ready;
+    await this.endpoint.request({ op: 'bind_route', group_id: scope.groupId, conversation: scope.conversationScope });
+    await this.endpoint.request({ op: 'join', welcome });
+    const ack = await this.endpoint.request({ op: 'encrypt', message_id: acknowledgementId, text: 'GROUP_ESTABLISHED' });
+    const sealed = await this.endpoint.request({ op: 'seal_snapshot' });
+    return { encryptedState: Buffer.from(String(sealed.sealedSnapshot), 'base64url'), acknowledgement: ack.envelope as CanaryEnvelope };
+  }
+
+  close(): void { this.endpoint.close(); }
+}
+
 export class CanaryCryptoProcess {
   constructor(private readonly executable: string) {
     if (!existsSync(executable)) throw new Error('E2EE_CANARY_ENDPOINT_NOT_FOUND');
@@ -93,4 +124,4 @@ export class CanaryCryptoProcess {
   }
 }
 
-module.exports = { CanaryCryptoProcess };
+module.exports = { CanaryCryptoProcess, PendingRecipientProcess };
