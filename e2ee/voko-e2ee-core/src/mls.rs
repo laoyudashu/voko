@@ -37,6 +37,7 @@ pub struct DirectGroupPair {
 pub struct DirectRecipientEndpoint {
     provider: OpenMlsRustCrypto,
     signer: SignatureKeyPair,
+    credential_identity: Vec<u8>,
     serialized_key_package: Vec<u8>,
 }
 
@@ -76,6 +77,7 @@ struct DirectGroupSnapshot {
 struct DirectRecipientSnapshot {
     version: u16,
     signer_public_key: Vec<u8>,
+    credential_identity: Vec<u8>,
     serialized_key_package: Vec<u8>,
     storage: Vec<(Vec<u8>, Vec<u8>)>,
 }
@@ -116,12 +118,8 @@ impl DirectRecipientEndpoint {
             .encode()
             .map_err(|error| DirectGroupError::Mls(error.to_string()))?;
         let provider = OpenMlsRustCrypto::default();
-        let (credential, signer) = credential(
-            &identity
-                .encode()
-                .map_err(|error| DirectGroupError::Mls(error.to_string()))?,
-            &provider,
-        )?;
+        let credential_identity = identity.encode().map_err(|error| DirectGroupError::Mls(error.to_string()))?;
+        let (credential, signer) = credential(&credential_identity, &provider)?;
         let package = key_package(&provider, &signer, credential)?;
         let serialized_key_package = package
             .key_package()
@@ -130,6 +128,7 @@ impl DirectRecipientEndpoint {
         Ok(Self {
             provider,
             signer,
+            credential_identity,
             serialized_key_package,
         })
     }
@@ -142,6 +141,17 @@ impl DirectRecipientEndpoint {
         self.signer.to_public_vec()
     }
 
+    pub fn replenish(&mut self) -> Result<&[u8], DirectGroupError> {
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(self.credential_identity.clone()).into(),
+            signature_key: self.signer.to_public_vec().into(),
+        };
+        let package = key_package(&self.provider, &self.signer, credential)?;
+        self.serialized_key_package = package.key_package().tls_serialize_detached()
+            .map_err(|error| DirectGroupError::Mls(format!("serialize KeyPackage: {error:?}")))?;
+        Ok(&self.serialized_key_package)
+    }
+
     /// Serializes an unused KeyPackage endpoint so the host can seal it before
     /// publication. Restoring it does not create a second KeyPackage.
     pub fn snapshot(&self) -> Result<Vec<u8>, DirectGroupError> {
@@ -151,6 +161,7 @@ impl DirectRecipientEndpoint {
         storage.sort_by(|left, right| left.0.cmp(&right.0));
         serde_json::to_vec(&DirectRecipientSnapshot { version: 1,
             signer_public_key: self.signer.to_public_vec(),
+            credential_identity: self.credential_identity.clone(),
             serialized_key_package: self.serialized_key_package.clone(), storage })
             .map_err(|error| DirectGroupError::Mls(format!("serialize recipient snapshot: {error}")))
     }
@@ -158,7 +169,8 @@ impl DirectRecipientEndpoint {
     pub fn restore(snapshot: &[u8]) -> Result<Self, DirectGroupError> {
         let snapshot: DirectRecipientSnapshot = serde_json::from_slice(snapshot)
             .map_err(|error| DirectGroupError::Mls(format!("parse recipient snapshot: {error}")))?;
-        if snapshot.version != 1 || snapshot.signer_public_key.is_empty() || snapshot.serialized_key_package.is_empty() {
+        if snapshot.version != 1 || snapshot.signer_public_key.is_empty() || snapshot.credential_identity.is_empty()
+            || snapshot.serialized_key_package.is_empty() {
             return Err(DirectGroupError::Mls("unsupported recipient snapshot".into()));
         }
         let provider = OpenMlsRustCrypto::default();
@@ -172,7 +184,8 @@ impl DirectRecipientEndpoint {
         }
         let signer = SignatureKeyPair::read(provider.storage(), &snapshot.signer_public_key, SignatureScheme::ED25519)
             .ok_or_else(|| DirectGroupError::Mls("recipient snapshot signer was not found".into()))?;
-        Ok(Self { provider, signer, serialized_key_package: snapshot.serialized_key_package })
+        Ok(Self { provider, signer, credential_identity: snapshot.credential_identity,
+            serialized_key_package: snapshot.serialized_key_package })
     }
 
     pub fn join(self, welcome: &[u8]) -> Result<DirectGroup, DirectGroupError> {

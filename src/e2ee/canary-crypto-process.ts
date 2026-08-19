@@ -76,6 +76,25 @@ export class PendingRecipientProcess {
     return { encryptedState: Buffer.from(String(sealed.sealedSnapshot), 'base64url'), acknowledgement: ack.envelope as CanaryEnvelope };
   }
 
+  async sealPending(): Promise<Uint8Array> {
+    await this.ready;
+    const sealed = await this.endpoint.request({ op: 'seal_pending' });
+    return Buffer.from(String(sealed.sealedSnapshot), 'base64url');
+  }
+
+  async restorePending(sealedSnapshot: Uint8Array): Promise<void> {
+    await this.ready;
+    await this.endpoint.request({ op: 'restore_pending', sealed_snapshot: Buffer.from(sealedSnapshot).toString('base64url') });
+  }
+
+  async replenish(): Promise<string> {
+    await this.ready;
+    const result = await this.endpoint.request({ op: 'replenish' });
+    const keyPackage = String(result.keyPackage || '');
+    if (!/^[A-Za-z0-9_-]+$/.test(keyPackage)) throw new Error('E2EE_ENDPOINT_INVALID_KEY_PACKAGE');
+    return keyPackage;
+  }
+
   close(): void { this.endpoint.close(); }
 }
 

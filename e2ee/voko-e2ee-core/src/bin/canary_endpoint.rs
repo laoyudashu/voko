@@ -29,6 +29,7 @@ enum Command {
     RestoreSealed { sealed_snapshot: String },
     SealPending,
     RestorePending { sealed_snapshot: String },
+    Replenish,
     RevokeVault,
 }
 
@@ -341,6 +342,10 @@ fn handle(
             let snapshot = vault.open(&vault_context(agent, group_id, conversation), &sealed).map_err(|e| e.to_string())?;
             *recipient = Some(DirectRecipientEndpoint::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
             Ok(empty())
+        }
+        Command::Replenish if role == Role::Recipient && group.is_none() => {
+            let key_package = recipient.as_mut().ok_or("recipient is not pending")?.replenish().map_err(|e| e.to_string())?;
+            Ok(Response { key_package: Some(URL_SAFE_NO_PAD.encode(key_package)), ..empty() })
         }
         Command::RevokeVault => {
             VaultKeyManager::new(SystemWrappingKeyStore)

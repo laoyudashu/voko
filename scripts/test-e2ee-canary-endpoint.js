@@ -49,6 +49,9 @@ function endpoint(role, device, group = 'canary-real-group', conversation = 'can
     recipient = endpoint('recipient', 'owner-device', 'pending-package', 'pending-package');
     await recipient.ready;
     await recipient.request({ op: 'restore_pending', sealed_snapshot: pendingSnapshot.sealedSnapshot });
+    const replenished = await recipient.request({ op: 'replenish' });
+    assert.match(replenished.keyPackage, /^[A-Za-z0-9_-]+$/);
+    assert.notEqual(replenished.keyPackage, recipientReady.keyPackage);
     const prepared = await creator.request({ op: 'prepare_add', key_package: recipientReady.keyPackage });
     await recipient.request({ op: 'bind_route', group_id: 'canary-real-group', conversation: 'canary-real-conversation' });
     await recipient.request({ op: 'join', welcome: prepared.welcome });
