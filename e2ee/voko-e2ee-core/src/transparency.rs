@@ -33,6 +33,18 @@ pub struct TransparencyWitness {
     observed_leaves: Vec<[u8; 32]>,
 }
 
+impl Default for TransparencyLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for TransparencyWitness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TransparencyError {
     #[error("invalid key transparency entry or proof")]
@@ -88,7 +100,7 @@ impl TransparencyLog {
         let mut index = leaf_index;
         let mut proof = Vec::new();
         while level.len() > 1 {
-            let sibling = if index % 2 == 0 {
+            let sibling = if index.is_multiple_of(2) {
                 (index + 1).min(level.len() - 1)
             } else {
                 index - 1
@@ -160,7 +172,7 @@ pub fn verify_inclusion(
     let mut hash = entry.leaf_hash()?;
     let mut index = leaf_index;
     for sibling in proof {
-        hash = if index % 2 == 0 {
+        hash = if index.is_multiple_of(2) {
             node_hash(&hash, sibling)
         } else {
             node_hash(sibling, &hash)
