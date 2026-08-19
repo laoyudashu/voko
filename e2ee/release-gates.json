@@ -21,7 +21,7 @@
     { "id": "stability_30m", "status": "passed", "evidence": "commit=20d9f3b8fcebe9b5ec6010a8e8732b82f2982c3f; platform=win32/x64; durationMs=1800002; messages=718082; lost=0; duplicateDeliveries=0; crossedSessions=0; rssStart=7495680; rssPeak=8556544; p95Micros=447; messagesPerSecond=398.93" },
     { "id": "macos_stability_30m", "status": "passed", "evidence": "commit=1a7dc22dfdfe216e91c395d2c20af40dad603349; platform=darwin/arm64; durationMs=1800000; messages=598755; duplicatesRejected=6172; stateRecoveries=2385; pcsUpdates=1190; lost=0; duplicateDeliveries=0; crossedSessions=0; rssStart=4325376; rssPeak=5816320; p95Micros=714; messagesPerSecond=332.64" },
     { "id": "stability_4h", "status": "pending_local", "evidence": "owner risk acceptance recorded 2026-08-19; 4h gate deferred without a passing summary; waiver does not satisfy the gate, does not permit productionEnabled=true, and must be closed before broader production rollout" },
-    { "id": "independent_witnesses", "status": "pending_external", "evidence": "two independently operated Witness services" },
+    { "id": "independent_witnesses", "status": "pending_external", "evidence": "local_evaluation_passed=true; commit=2fac8b3; platform=darwin/arm64; two independent OS processes used distinct signing keys, signed one append-only view, and rejected a fork; production independence still requires two separately operated Witness services" },
     { "id": "external_security_audit", "status": "pending_external", "evidence": "independent MLS/application protocol review" }
   ]
 }
