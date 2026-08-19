@@ -290,7 +290,7 @@ type McpContext = Omit<LiteContext,
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
   sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string, metadata?: unknown): Promise<DynamicRow>;
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
-  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string): Promise<unknown>;
+  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string): Promise<unknown>;
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -676,7 +676,7 @@ const ATTACHMENT_MIME_TYPES: Record<string, string> = {
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
 async function uploadAttachment(cx: McpContext, p: McpToolParams) {
-  if (!cx.uploadFileToOSS) return { success: false, error: 'OSS 未配置' };
+  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
   const fs = require('fs');
   const path = require('path');
   if (!p.filePath) return { success: false, error: '缺少 filePath' };
@@ -691,7 +691,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
   const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
   const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
   try {
-    const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType);
+    const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId);
     return {
       success: true,
       url,

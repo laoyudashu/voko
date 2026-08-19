@@ -7,7 +7,6 @@ export {};
  */
 
 const { registerCapabilitiesForAgent } = require('./core/register-capabilities');
-const { generateOSSSignature } = require('./server/oss');
 const { createContext } = require('./context');
 const { createToolHandlers } = require('./mcp/tools');
 const { createMcpServer, getToolList } = require('./mcp/server');

@@ -64,6 +64,7 @@ const {
   initDatabase,
   createDatabaseAPI,
   getUserAccessToken,
+  getPrimaryOwnerEmail,
   SCHEMA_VERSION,
 } = require('./core/database');
 const { createAgentRegistration } = require('./core/agent-registration');
@@ -77,7 +78,7 @@ const {
   isAllowedBridgeConfigType,
   setLocalSecurityHeaders,
 } = require('./core/local-http-security');
-const { generateOSSSignature, initOSSFromConfig } = require('./server/oss');
+const { generateOSSSignature } = require('./server/oss');
 const { AgentWorkerManager } = require('./core/worker-manager');
 const { createDeliver, createSendMessage } = require('./core/send-message');
 const {
@@ -1467,16 +1468,19 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try { __instanceLock?.release(); } catch {}
   });
 
-  // ── OSS 签名（前端直传 OSS，对应 renderer 的 uploadAndSendFile） ──
-  app.post('/api/oss-signature', (req?: any, res?: any) => {
+  // ── 短期上传授权（前端直传对象存储，不接触长期凭证） ──
+  app.post('/api/oss-signature', async (req?: any, res?: any) => {
     try {
-      const { filename, agentId, contentType } = req.body || {};
+      const { filename, agentId, contentType, size } = req.body || {};
       if (!filename) return res.json({ success: true }); // CLI 连通性测试（空 body）
       if (!agentId || !currentOwnsAgent(agentId)) return res.status(403).json({ success: false, error: 'Forbidden' });
       const safeName = path.basename(String(filename)).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-160);
       if (!safeName || safeName === '.' || safeName === '..') return res.status(400).json({ success: false, error: 'Invalid filename' });
-      const objectName = `chat/files/${encodeURIComponent(agentId)}/${Date.now()}-${safeName}`;
-      res.json({ success: true, data: generateOSSSignature(objectName, contentType) });
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      const data = await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: safeName,
+        size, contentType, idempotencyKey: String(req.get('idempotency-key') || `lite-web-${require('crypto').randomUUID()}`) });
+      res.json({ success: true, data });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -1668,14 +1672,6 @@ async function startMcpServer(args?: any, core?: any) {
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
   if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
-
-  // ── 从 DB 加载 OSS 凭证（与 Desktop main.js 一致，供 /api/oss-signature 端点使用） ──
-  const _ossRow = db.prepare("SELECT data FROM config WHERE type = ?").get('oss_config');
-  if (_ossRow) {
-    initOSSFromConfig({ oss_config: JSON.parse(_ossRow.data) });
-  } else {
-    initOSSFromConfig(databaseAPI.getChannelConfig());
-  }
 
   // 初始化消息通知模块（lite 进程：_mainWindow=null → 总 emit voko:notification 经 WebSocket 给 desktop）
   notifier.init(null, db);
@@ -2226,6 +2222,12 @@ async function startMcpServer(args?: any, core?: any) {
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
     e2eeCanaryRuntime,
+    uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      return require('./server/oss').uploadToOSS(name, data, mime, null, { userAccessToken: token, agentId,
+        purpose: 'agent_icon', fileName: path.basename(name), referenceType: 'agent_icon', referenceId: agentId || name });
+    },
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 

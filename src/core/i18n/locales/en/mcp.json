@@ -103,7 +103,7 @@
   "mcp.tool.mark_conversation_read.desc": "Reset the unread message count of a conversation to 0. Call this after the visitor has read the messages to clear the unread badge.",
   "mcp.tool.mark_conversation_read.p.channelId": "Conversation ID (visitor UID)",
 
-  "mcp.tool.upload_and_send_file.desc": "Upload a local attachment to OSS and send it in one operation. Images are sent as image messages; other files are sent as file messages. When message is supplied, it is sent before the attachment. The maximum file size is 25 MB.",
+  "mcp.tool.upload_and_send_file.desc": "Upload a local attachment with short-lived VOKO authorization and send it in one operation; no storage key configuration is required. Images are sent as image messages; other files are sent as file messages. When message is supplied, it is sent before the attachment. The maximum file size is 25 MB.",
   "mcp.tool.upload_and_send_file.p.toUid": "Recipient visitor or group ID",
   "mcp.tool.upload_and_send_file.p.filePath": "Local absolute file path, e.g. /path/to/photo.jpg",
   "mcp.tool.upload_and_send_file.p.fileName": "Filename shown to the recipient (optional; extracted from filePath if omitted)",

@@ -2149,7 +2149,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         res.json(result);
       } catch (e) {
         try { require('fs').rmSync(uploadDir, { recursive: true, force: true }); } catch (_) {}
-        res.json({ success: false, error: '上传到 OSS 失败: ' + e.message });
+        res.json({ success: false, error: '附件上传失败: ' + e.message });
       }
     } catch (e) {
       res.json({ success: false, error: e.message });
@@ -2165,7 +2165,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       if(!type)return res.status(400).json({success:false,error:req.t('web.agent.edit.icon_invalid')});
       const objectName='agent-icons/'+require('crypto').randomUUID()+'.'+type.ext;
       const uploader=typeof opts.uploadAgentIcon==='function'?opts.uploadAgentIcon:async(data,name,mime)=>require('../server/oss').uploadToOSS(name,data,mime);
-      const iconUrl=await uploader(file.data,objectName,type.mime);
+      const iconUrl=await uploader(file.data,objectName,type.mime,req.params.agentId);
       const updated=await handlers.update_agent_profile({agentId:req.params.agentId,iconUrl});
       if(updated?.success===false||updated?.error)return res.status(502).json({success:false,error:updated.error||req.t('web.agent.edit.icon_upload_failed')});
       return res.json({success:true,iconUrl});
