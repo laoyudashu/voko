@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
-    CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint, DirectGroup,
-    DirectGroupPair, KeyPackageLedger, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    AttachmentKey, CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint,
+    DirectGroup, DirectGroupPair, EncryptedAttachment, KeyPackageLedger, E2EE_CONTENT_TYPE,
+    E2EE_PROTOCOL_VERSION,
 };
 use wasm_bindgen::prelude::*;
 
@@ -43,6 +44,19 @@ struct WasmPreparedRecord {
 struct WasmPreparedAdd {
     commit: String,
     welcome: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WasmEncryptedAttachment {
+    version: String,
+    file_id: String,
+    nonce_prefix: String,
+    plaintext_size: u64,
+    chunk_size: u32,
+    ciphertext_hashes: Vec<String>,
+    chunks: Vec<String>,
+    key: String,
 }
 
 /// Browser-side endpoint used by the cross-process canary. Recipient private
@@ -164,6 +178,47 @@ impl WasmBrowserEndpoint {
         self.group = Some(DirectGroup::restore(&bytes).map_err(|error| JsError::new(&error.to_string()))?);
         self.pending = None;
         Ok(())
+    }
+
+    /// Returns ciphertext chunks plus a per-file key. The caller MUST place
+    /// the key-bearing manifest only inside an authenticated MLS message.
+    pub fn encrypt_attachment(&self, plaintext: Vec<u8>) -> Result<String, JsError> {
+        let key = AttachmentKey::generate();
+        let encrypted = EncryptedAttachment::encrypt(&plaintext, &key)
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        serde_json::to_string(&WasmEncryptedAttachment {
+            version: "voko.e2ee.attachment/1".into(),
+            file_id: URL_SAFE_NO_PAD.encode(encrypted.file_id),
+            nonce_prefix: URL_SAFE_NO_PAD.encode(encrypted.nonce_prefix),
+            plaintext_size: encrypted.plaintext_size,
+            chunk_size: encrypted.chunk_size,
+            ciphertext_hashes: encrypted.ciphertext_hashes.iter().map(|value| URL_SAFE_NO_PAD.encode(value)).collect(),
+            chunks: encrypted.chunks.iter().map(|value| URL_SAFE_NO_PAD.encode(value)).collect(),
+            key: URL_SAFE_NO_PAD.encode(key.expose_for_mls()),
+        }).map_err(|error| JsError::new(&error.to_string()))
+    }
+
+    pub fn decrypt_attachment(&self, package_json: String) -> Result<Vec<u8>, JsError> {
+        let package: WasmEncryptedAttachment = serde_json::from_str(&package_json)
+            .map_err(|_| JsError::new("invalid encrypted attachment"))?;
+        if package.version != "voko.e2ee.attachment/1" {
+            return Err(JsError::new("invalid encrypted attachment version"));
+        }
+        let file_id: [u8; 16] = URL_SAFE_NO_PAD.decode(package.file_id).map_err(|_| JsError::new("invalid file ID"))?
+            .try_into().map_err(|_| JsError::new("invalid file ID"))?;
+        let nonce_prefix: [u8; 8] = URL_SAFE_NO_PAD.decode(package.nonce_prefix).map_err(|_| JsError::new("invalid nonce"))?
+            .try_into().map_err(|_| JsError::new("invalid nonce"))?;
+        let key = AttachmentKey::from_bytes(&URL_SAFE_NO_PAD.decode(package.key).map_err(|_| JsError::new("invalid attachment key"))?)
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        let hashes = package.ciphertext_hashes.into_iter().map(|value| {
+            URL_SAFE_NO_PAD.decode(value).map_err(|_| JsError::new("invalid ciphertext hash"))?
+                .try_into().map_err(|_| JsError::new("invalid ciphertext hash"))
+        }).collect::<Result<Vec<[u8; 32]>, JsError>>()?;
+        let chunks = package.chunks.into_iter().map(|value| URL_SAFE_NO_PAD.decode(value)
+            .map_err(|_| JsError::new("invalid ciphertext chunk"))).collect::<Result<Vec<_>,_>>()?;
+        let encrypted = EncryptedAttachment { file_id, nonce_prefix, plaintext_size:package.plaintext_size,
+            chunk_size:package.chunk_size, ciphertext_hashes:hashes, chunks };
+        encrypted.decrypt(&key).map(|value| value.to_vec()).map_err(|error| JsError::new(&error.to_string()))
     }
 }
 
