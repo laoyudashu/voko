@@ -25,6 +25,15 @@ async function completeUpload(uploadId: string, token: string) {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
     signal: AbortSignal.timeout(Number(process.env.VOKO_UPLOAD_COMPLETE_TIMEOUT_MS) || 15000) }));
 }
+async function getUploadDownload(uploadId: string, token: string, agentId?: string, targetScopeType?: string, targetScopeId?: string) {
+  const query = new URLSearchParams();
+  if (agentId) query.set('agentId', agentId);
+  if (targetScopeType) query.set('targetScopeType', targetScopeType);
+  if (targetScopeId) query.set('targetScopeId', targetScopeId);
+  const suffix = query.size ? `?${query}` : '';
+  return parseResponse(await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/${encodeURIComponent(uploadId)}/download${suffix}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) }));
+}
 async function bindUpload(uploadId: string, token: string, referenceType: string, referenceId: string) {
   return parseResponse(await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/${encodeURIComponent(uploadId)}/bind`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -34,7 +43,7 @@ async function uploadToOfficialStorage(options: any) {
   if (!options.userAccessToken) throw uploadError('UPLOAD_LOGIN_REQUIRED', '请先登录 VOKO 后再上传附件');
   const buffer = Buffer.isBuffer(options.content) ? options.content : Buffer.from(options.content);
   const authorized = await authorizeUpload({ ...options, size: buffer.length });
-  if (authorized.completed) return { uploadId: authorized.uploadId, url: authorized.url };
+  if (authorized.completed) return { uploadId: authorized.uploadId, url: authorized.url || authorized.downloadPath };
   const form = new FormData();
   for (const [key, value] of Object.entries(authorized.fields || {})) form.append(key, String(value));
   form.append('file', new Blob([buffer], { type: options.contentType || 'application/octet-stream' }), options.fileName || 'file');
@@ -56,7 +65,7 @@ async function uploadToOSS(objectName?: any, content?: any, contentType?: any, _
     fileName: options.fileName || String(objectName || 'file').split('/').pop(), purpose: options.purpose || 'agent_attachment' });
   if (options.bind !== false) await bindUpload(result.uploadId, options.userAccessToken,
     options.referenceType || 'voko_pending_message', options.referenceId || String(objectName));
-  return result.url;
+  return result.url || result.downloadPath;
 }
 async function uploadBase64ToOSS(base64DataUrl?: any, objectName?: any, onProgress?: any, options: any = {}) {
   const matches = String(base64DataUrl || '').match(/^data:(.+?);base64,(.+)$/);
@@ -67,5 +76,5 @@ async function uploadBase64ToOSS(base64DataUrl?: any, objectName?: any, onProgre
 }
 async function generateOSSSignature(options: any) { return authorizeUpload(options); }
 function initOSSFromConfig() { /* 已废弃：正式上传只使用服务端短期授权。 */ }
-module.exports = { authorizeUpload, completeUpload, bindUpload, generateOSSSignature, uploadToOfficialStorage,
+module.exports = { authorizeUpload, completeUpload, bindUpload, getUploadDownload, generateOSSSignature, uploadToOfficialStorage,
   uploadBase64ToOSS, uploadToOSS, uploadToOSSWithProgress: uploadToOSS, initOSSFromConfig };

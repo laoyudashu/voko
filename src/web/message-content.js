@@ -28,6 +28,7 @@ function createMessageRenderer(labels) {
   function safeUrl(value) {
     const raw = String(value == null ? '' : value).trim();
     if (!raw) return '';
+    if (/^\/api\/uploads\/[A-Za-z0-9_-]+\/download(?:\?|$)/.test(raw)) return raw;
     try {
       const parsed = new URL(raw);
       return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';

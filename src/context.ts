@@ -339,18 +339,21 @@ function createContext({
     },
 
     // ── OSS ──
-    generateOSSSignature: async (filename: string, _dir?: string, contentType?: string, maxSize?: number, agentId?: string) => {
+    generateOSSSignature: async (filename: string, _dir?: string, contentType?: string, maxSize?: number, agentId?: string,
+      uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
       try {
         const ownerEmail = getPrimaryOwnerEmail(db);
         const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
         return await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: filename,
-          size: maxSize, contentType, idempotencyKey: `lite-web-${require('crypto').randomUUID()}` });
+          size: maxSize, contentType, targetScopeType: uploadOptions.targetScopeType, targetScopeId: uploadOptions.targetScopeId,
+          idempotencyKey: `lite-web-${require('crypto').randomUUID()}` });
       } catch (error: unknown) {
         console.error('[上传] 获取短期授权失败:', errorMessage(error));
         return { uploadUrl: null, fileUrl: null, error: errorMessage(error) };
       }
     },
-    uploadFileToOSS: async (filePath: string, objectName: string, mimeType?: string, agentId?: string) => {
+    uploadFileToOSS: async (filePath: string, objectName: string, mimeType?: string, agentId?: string,
+      uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
       const { uploadToOSS } = require('./server/oss');
       const fs = require('fs');
       const fd = fs.openSync(filePath, 'r');
@@ -366,7 +369,8 @@ function createContext({
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       return await uploadToOSS(objectName, buffer, mimeType, null, { userAccessToken: token, agentId,
         purpose: String(objectName).startsWith('chat/images/') ? 'chat_image' : 'agent_attachment',
-        fileName: require('path').basename(filePath) });
+        fileName: require('path').basename(filePath), targetScopeType: uploadOptions.targetScopeType,
+        targetScopeId: uploadOptions.targetScopeId });
     },
 
     // ── 邮件（未注入时惰性创建，从 DB 读 owner token）──

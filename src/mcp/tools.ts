@@ -290,7 +290,8 @@ type McpContext = Omit<LiteContext,
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
   sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string, metadata?: unknown): Promise<DynamicRow>;
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
-  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string): Promise<unknown>;
+  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string,
+    uploadOptions?: { targetScopeType?: string; targetScopeId?: string }): Promise<unknown>;
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -691,7 +692,14 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
   const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
   const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
   try {
-    const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId);
+    const channelType = Number(p.channelType) === 2 ? 2 : 1;
+    const targetScopeType = channelType === 2 ? 'group' : 'private';
+    const targetScopeId = String(p.toUid || p.channelId || '').trim();
+    const uploadedUrl = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId,
+      { targetScopeType, targetScopeId });
+    const url = String(uploadedUrl || '').startsWith('/api/uploads/')
+      ? `${uploadedUrl}?channelType=${channelType}&channelId=${encodeURIComponent(targetScopeId)}`
+      : String(uploadedUrl || '');
     return {
       success: true,
       url,

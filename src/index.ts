@@ -1471,17 +1471,38 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── 短期上传授权（前端直传对象存储，不接触长期凭证） ──
   app.post('/api/oss-signature', async (req?: any, res?: any) => {
     try {
-      const { filename, agentId, contentType, size } = req.body || {};
+      const { filename, agentId, contentType, size, targetScopeType, targetScopeId, channelType, channelId } = req.body || {};
       if (!filename) return res.json({ success: true }); // CLI 连通性测试（空 body）
       if (!agentId || !currentOwnsAgent(agentId)) return res.status(403).json({ success: false, error: 'Forbidden' });
       const safeName = path.basename(String(filename)).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-160);
       if (!safeName || safeName === '.' || safeName === '..') return res.status(400).json({ success: false, error: 'Invalid filename' });
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      const resolvedScopeType = targetScopeType || (Number(channelType) === 2 ? 'group' : 'private');
+      const resolvedScopeId = targetScopeId || channelId || null;
       const data = await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: safeName,
-        size, contentType, idempotencyKey: String(req.get('idempotency-key') || `lite-web-${require('crypto').randomUUID()}`) });
+        size, contentType, targetScopeType: resolvedScopeType, targetScopeId: resolvedScopeId,
+        idempotencyKey: String(req.get('idempotency-key') || `lite-web-${require('crypto').randomUUID()}`) });
       res.json({ success: true, data });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
+  });
+
+  app.get('/api/uploads/:uploadId/download', async (req?: any, res?: any) => {
+    try {
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      if (!token) return res.status(401).end();
+      const referer = String(req.get('referer') || '');
+      const match = referer.match(/\/agents\/([^/?#]+)/);
+      const agentId = match ? decodeURIComponent(match[1]) : String(req.query?.agentId || '');
+      const channelType = Number(req.query?.channelType) === 2 ? 2 : 1;
+      const targetScopeType = channelType === 2 ? 'group' : 'private';
+      const targetScopeId = String(req.query?.channelId || '');
+      const data = await require('./server/oss').getUploadDownload(req.params.uploadId, token, agentId || undefined,
+        targetScopeType, targetScopeId || undefined);
+      res.set('Cache-Control', 'no-store');
+      res.redirect(302, data.url);
+    } catch (_error: any) { res.status(404).end(); }
   });
 
   // ── WebSocket 服务器（事件推送） ──
