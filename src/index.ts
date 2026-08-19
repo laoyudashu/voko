@@ -1920,9 +1920,11 @@ async function startMcpServer(args?: any, core?: any) {
   try {
     const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
     const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
-    if (canaryPolicy.enabled) {
-      const endpoint = String(process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
-      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error('VOKO_E2EE_CANARY_ENDPOINT must be an absolute path');
+    const productionEnabled = process.env.VOKO_E2EE_PRODUCTION_ENABLED === 'true';
+    if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
+    if (canaryPolicy.enabled || productionEnabled) {
+      const endpoint = String(productionEnabled ? process.env.VOKO_E2EE_ENDPOINT : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
+      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'VOKO_E2EE_ENDPOINT' : 'VOKO_E2EE_CANARY_ENDPOINT'} must be an absolute path`);
       const { CanaryStore } = require('./e2ee/canary-store');
       const { CanaryRuntime } = require('./e2ee/canary-runtime');
       const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
@@ -1933,20 +1935,59 @@ async function startMcpServer(args?: any, core?: any) {
       fs.mkdirSync(path.dirname(e2eePath), { recursive: true });
       e2eeDatabase = new DatabaseSync(e2eePath);
       e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
-      const e2eeStore = new CanaryStore(e2eeDatabase);
-      const migrated = e2eeStore.migrateLegacy(db);
-      e2eeCanaryRuntime = new CanaryRuntime({ policy: canaryPolicy, store: e2eeStore,
+      let e2eeStore: any;
+      let e2eePolicy: any = canaryPolicy;
+      let migrated = { sessions:0,receipts:0 };
+      if (productionEnabled) {
+        const { ProductionE2eeStore } = require('./e2ee/production-store');
+        const { ProductionE2eePolicy } = require('./e2ee/production-policy');
+        e2eeStore = new ProductionE2eeStore(e2eeDatabase);
+        e2eePolicy = new ProductionE2eePolicy(e2eeStore,true);
+      } else {
+        e2eeStore = new CanaryStore(e2eeDatabase);
+        migrated = e2eeStore.migrateLegacy(db);
+      }
+      e2eeCanaryRuntime = new CanaryRuntime({ policy: e2eePolicy, store: e2eeStore,
         crypto: new CanaryCryptoProcess(endpoint), dispatcher,
         deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
           const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
           if (!result?.success) {
-            const error: any = new Error(result?.error || 'E2EE_CANARY_REPLY_NOT_DELIVERED');
+            const error: any = new Error(result?.error || 'E2EE_REPLY_NOT_DELIVERED');
             error.deliveryOutcome = result?.outcomeUnknown ? 'outcome_unknown' : 'not_delivered';
             throw error;
           }
           return result;
         } });
-      console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
+      if (productionEnabled) {
+        const { E2eeDirectoryClient } = require('./e2ee/directory-client');
+        const { ProductionE2eeDirectoryWorker } = require('./e2ee/production-directory-worker');
+        const { PendingRecipientProcess } = require('./e2ee/canary-crypto-process');
+        const { serverAgentIdFromDid } = require('./core/agent-invitations');
+        const nodeCrypto = require('node:crypto');
+        const ownerToken = userEmail ? getUserAccessToken(db,userEmail) : null;
+        if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
+        const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
+        const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
+        const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
+          WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
+          .flatMap((row: any) => {
+            const serverAgentId = serverAgentIdFromDid(row.did);
+            if (!serverAgentId) return [];
+            const suffix = nodeCrypto.createHash('sha256').update(`${deviceGeneration}\0${serverAgentId}`).digest('base64url').slice(0,32);
+            const ownerScope = nodeCrypto.createHash('sha256').update(`voko-e2ee-owner/v1\0${String(userEmail).toLowerCase()}`).digest('base64url');
+            return [{ localAgentId:String(row.agent_id),serverAgentId,targetAgentDid:String(row.did),
+              ownerDeviceKeyId:`voko-lite-${suffix}`,ownerScope,bindingGeneration:1 }];
+          });
+        const directoryWorker = new ProductionE2eeDirectoryWorker({
+          client:new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken }),store:e2eeStore,agents,
+          processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
+          onError:(agentId: string,error: any) => console.warn(`[E2EE] Directory同步失败 agent=${agentId}: ${String(error?.code || error?.message || 'unknown')}`),
+        });
+        await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
+        console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);
+      } else {
+        console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
+      }
       if (migrated.sessions || migrated.receipts) console.warn(`[E2EE] 已迁移旧运行状态 sessions=${migrated.sessions} receipts=${migrated.receipts}`);
       await taskManager.start('e2ee-database', () => async () => { try { e2eeDatabase?.close(); } catch (_) {} });
     }
@@ -1979,7 +2020,7 @@ async function startMcpServer(args?: any, core?: any) {
         }
         void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
           if (!result.accepted) console.warn(`[E2EE Canary] 已拒绝消息: ${result.code || 'E2EE_CANARY_REJECTED'}`);
-          data?.ack?.();
+          if (!data?.__e2eeReceiptAcked) data?.ack?.();
         }).catch((error: any) => {
           console.error('[E2EE Canary] 处理异常:', error.message);
           data?.nack?.(error);

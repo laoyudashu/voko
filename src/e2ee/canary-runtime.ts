@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import type { CanaryEnvelope, CanaryRuntimePolicy } from './canary-policy';
-import type { CanaryStore } from './canary-store';
+import type { CanaryEnvelope } from './canary-policy';
 const { parseCanaryEnvelope, CONTENT_TYPE_E2EE } = require('./canary-policy');
 
 interface CanaryCrypto {
@@ -15,10 +14,30 @@ type E2eeDispatcher = {
   executeCanary?(input: any): Promise<{ reply: any; receipt?: unknown }>;
 };
 
+type E2eeRuntimePolicy = {
+  enabled: boolean;
+  claims(contentType: unknown): boolean;
+  authorize(localAgentId: string, envelope: CanaryEnvelope, message?: any): any;
+  count(): number;
+  configuredScopes(): any[];
+};
+
+type E2eeRuntimeStore = {
+  isEmergencyDisabled(): boolean;
+  reserve(scope: any, messageId: string, digest: string): 'new'|'duplicate';
+  session(groupId: string): any;
+  commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void;
+  transition(messageId: string, from: string[], to: any, encryptedReply?: string): void;
+  diagnostics(): any;
+  bindSenderDevice?(groupId: string, senderDeviceKeyId: string): void;
+  emergencyDisable?(): void;
+  provision?(scope: any, encryptedState: Uint8Array): void;
+};
+
 export class CanaryRuntime {
   private stats = { received: 0, replied: 0, rejected: 0, failures: 0, plaintextFallbacks: 0 };
   private disabled = false;
-  constructor(private readonly options: { policy: CanaryRuntimePolicy; store: CanaryStore; crypto: CanaryCrypto;
+  constructor(private readonly options: { policy: E2eeRuntimePolicy; store: E2eeRuntimeStore; crypto: CanaryCrypto;
     dispatcher: E2eeDispatcher; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any> }) {
     this.disabled = options.store.isEmergencyDisabled();
   }
@@ -32,7 +51,7 @@ export class CanaryRuntime {
     let scope: any;
     try {
       envelope = parseCanaryEnvelope(message.content);
-      scope = this.options.policy.authorize(localAgentId,envelope);
+      scope = this.options.policy.authorize(localAgentId,envelope,message);
       if (String(message.fromUid || '') === '' || Number(message.channelType || 1) !== 1) throw new Error('E2EE_CANARY_ROUTE_REJECTED');
     } catch (error: any) {
       this.stats.rejected += 1;
@@ -40,11 +59,20 @@ export class CanaryRuntime {
     }
     const digest = crypto.createHash('sha256').update(String(message.content)).digest('base64url');
     try {
-      if (this.options.store.reserve(scope,envelope.messageId,digest) === 'duplicate') return { handled:true,accepted:true,code:'duplicate' };
+      if (this.options.store.reserve(scope,envelope.messageId,digest) === 'duplicate') {
+        message?.ack?.();
+        if (message) message.__e2eeReceiptAcked = true;
+        return { handled:true,accepted:true,code:'duplicate' };
+      }
+      // Receipt ACK only means that the immutable ciphertext is durably owned.
+      // Provider execution and its outcome remain separate persisted states.
+      message?.ack?.();
+      if (message) message.__e2eeReceiptAcked = true;
       const session = this.options.store.session(scope.groupId);
       if (!session || session.status === 'locked') throw new Error('E2EE_CANARY_SESSION_LOCKED');
       const opened = await this.options.crypto.decrypt({ scope,envelope,encryptedState:session.encrypted_state,
         stateVersion:Number(session.state_version) });
+      this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
       this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
       this.stats.received += 1;
       this.options.store.transition(envelope.messageId,['received'],'provider_accepted');
@@ -76,11 +104,12 @@ export class CanaryRuntime {
     const allowed = this.options.policy.configuredScopes().find(candidate => candidate.localAgentId === scope.localAgentId
       && candidate.groupId === scope.groupId && candidate.senderDeviceKeyId === scope.senderDeviceKeyId);
     if (!allowed) throw new Error('E2EE_CANARY_SCOPE_REJECTED');
+    if (!this.options.store.provision) throw new Error('E2EE_PROVISION_UNAVAILABLE');
     this.options.store.provision(allowed, await this.options.crypto.provision(allowed,welcome));
   }
   async emergencyDisable(): Promise<void> {
     this.disabled = true;
-    this.options.store.emergencyDisable();
+    this.options.store.emergencyDisable?.();
     if (this.options.crypto.revoke) {
       await Promise.allSettled(this.options.policy.configuredScopes().map(scope => this.options.crypto.revoke!(scope)));
     }
