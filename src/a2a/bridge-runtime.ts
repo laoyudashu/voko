@@ -10,6 +10,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { A2ASafetyGate } from './safety-gate';
 import { A2AOutboundResultWorker } from './outbound-result-worker';
 import { A2AScopeResolver } from './scope';
+import { A2AAttachmentWorkspace } from './attachment-workspace';
 
 interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv;
   delay?: (ms: number) => Promise<void>; onError?: (code: string) => void }
@@ -31,7 +32,8 @@ class A2ABridgeRuntime {
       const row = this.options.mainDatabase.prepare("SELECT publish_status FROM agents WHERE agent_id=? LIMIT 1").get(agentId) as { publish_status?: string } | undefined;
       if (!row || row.publish_status !== 'published') throw new Error('A2A_AGENT_NOT_AVAILABLE');
     } : undefined;
-    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety, assertDispatchAllowed, scopes), identity);
+    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety,
+      assertDispatchAllowed, scopes, client, new A2AAttachmentWorkspace()), identity);
     const bindingGenerations = new Map<string, number>((Array.isArray(stored.agentBindings) ? stored.agentBindings : [])
       .map((item: any) => [String(item.localAgentId), Number(item.bindingGeneration || 1)]));
     const availability = () => {

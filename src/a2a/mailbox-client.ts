@@ -54,6 +54,11 @@ class A2AMailboxClient {
   async acknowledge(leaseId: string, eventId: string): Promise<void> {
     await this.post('/ack', { leaseId, eventId });
   }
+  async downloadAttachment(taskId:string,attachmentId:string):Promise<Response>{
+    const response=await this.fetchImpl(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      {method:'GET',headers:{authorization:`Bearer ${this.token}`},signal:AbortSignal.timeout(60_000)});
+    if(!response.ok)throw await this.responseError(response);return response;
+  }
   async sendEvent(envelope: unknown): Promise<{ status: string; gatewaySequence?: number }> {
     return this.post('/events', envelope);
   }

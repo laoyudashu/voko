@@ -119,6 +119,8 @@ interface IsolatedExecutionOptions {
   principalScope?: string;
   protocolContextId?: string;
   bindingGeneration?: number;
+  attachments?: PushPayload['attachments'];
+  attachmentOutputDirectory?: string;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -1360,6 +1362,7 @@ ${body}
         executionScope, sourceType, preferredAdapter: options.preferredAdapter,
         sessionScopeId: options.sessionScopeId, principalScope: options.principalScope,
         protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
+        attachments: options.attachments, attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {

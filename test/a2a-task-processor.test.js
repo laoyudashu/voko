@@ -18,9 +18,19 @@ test('processor atomically queues signed accepted, working and completed events'
   for (const row of rows) assert.equal(verifyEnvelope(JSON.parse(row.envelope_json), identity.publicKey), true);
   assert.equal(JSON.parse(rows[2].envelope_json).payload.text, 'answer');
 });
+test('attachment replies are emitted as signed artifacts before task completion', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
+  const processor = new A2ATaskProcessor(store, { async execute() { return { content: 'done', artifacts:[{
+    artifactId:'output-1',name:'answer.txt',part:{artifactRef:'stored-ref'} }] }; } }, identity);
+  const incoming = request(); incoming.payload.attachments = [{ attachmentRef: 'extatt_abcdefghijklmnop' }];
+  await processor.process(incoming);
+  const rows=db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence').all();
+  assert.deepEqual(rows.map(row=>row.operation),['accepted','working','artifact','completed']);
+  assert.equal(JSON.parse(rows[2].envelope_json).payload.artifact.parts[0].artifactRef,'stored-ref');
+});
 test('Provider uncertainty is persisted without fabricating a failed event or retry', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
-  const processor = new A2ATaskProcessor(store, { async execute() { const error = new Error('outcome unknown');
+  const processor = new A2ATaskProcessor(store, { async execute(_request,callbacks) { callbacks.onProviderAccepted(); const error = new Error('outcome unknown');
     error.code = 'A2A_PROVIDER_REPLY_TIMEOUT'; throw error; } }, identity);
   await processor.process(request());
   const rows = db.prepare('SELECT operation,envelope_json FROM a2a_local_outbox ORDER BY producer_sequence').all();
@@ -29,6 +39,13 @@ test('Provider uncertainty is persisted without fabricating a failed event or re
   assert.equal(JSON.parse(rows[2].envelope_json).payload.reasonCode, 'A2A_PROVIDER_REPLY_TIMEOUT');
   const task = db.prepare("SELECT standard_state,delivery_state FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
   assert.equal(task.standard_state, 'WORKING'); assert.equal(task.delivery_state, 'DELIVERY_UNKNOWN');
+});
+test('confirmed pre-Provider failure creates no accepted event and remains retryable', async t => {
+  const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();
+  const processor = new A2ATaskProcessor(store, { async execute() { const error = new Error('download unavailable');
+    error.deliveryOutcome = 'not_delivered'; throw error; } }, identity);
+  await assert.rejects(()=>processor.process(request()),/download unavailable/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM a2a_local_outbox WHERE gateway_task_id='task-1'").get().count,0);
 });
 test('known safety rejection produces a standard rejected event without unsafe body', async t => {
   const { db, store } = setup(t); const identity = new A2AIdentityStore(db).getOrCreate();

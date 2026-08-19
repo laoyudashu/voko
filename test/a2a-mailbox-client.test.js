@@ -44,3 +44,9 @@ test('outbound cancellation remains scoped to one local Agent', async () => {
   assert.equal(calls[0].url, 'https://did.example/mailbox/outbound/tasks/task-1:cancel');
   assert.deepEqual(calls[0].body, { localAgentId: 'agent-1' });
 });
+test('attachment download uses the authenticated task-scoped mailbox endpoint',async()=>{
+  const calls=[];const token='x'.repeat(32);const client=new A2AMailboxClient({baseUrl:'https://did.example/mailbox',token,
+    fetchImpl:async(url,options)=>{calls.push([url,options]);return new Response('file',{status:200,headers:{'content-length':'4'}});}});
+  const response=await client.downloadAttachment('task-1','extatt_abcdefghijklmnop');assert.equal(await response.text(),'file');
+  assert.match(calls[0][0],/tasks\/task-1\/attachments\/extatt_/);assert.equal(calls[0][1].headers.authorization,`Bearer ${token}`);
+});

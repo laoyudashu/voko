@@ -40,6 +40,19 @@ function validatePayload(envelope: A2AEnvelope): void {
     || Buffer.byteLength(JSON.stringify(payload), 'utf8') > 7168) throw new Error('Invalid A2A payload');
   if (envelope.operation === 'cancel_ack' && !['accepted', 'unsupported', 'too_late'].includes(String(payload.result || '')))
     throw new Error('Invalid A2A cancellation result');
+  if (['execute', 'continue'].includes(envelope.operation) && 'attachments' in payload) {
+    if (!Array.isArray(payload.attachments) || payload.attachments.length < 1 || payload.attachments.length > 5)
+      throw new Error('Invalid A2A attachment references');
+    const seen = new Set<string>();
+    for (const attachment of payload.attachments as unknown[]) {
+      const ref = (attachment as Record<string, unknown>)?.attachmentRef;
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)
+        || Object.keys(attachment).length !== 1 || typeof ref !== 'string'
+        || !/^extatt_[A-Za-z0-9_-]{16,96}$/.test(ref) || seen.has(ref))
+        throw new Error('Invalid A2A attachment references');
+      seen.add(ref);
+    }
+  }
   if (envelope.operation !== 'artifact') return;
   const artifact = (payload.artifact || payload) as Record<string, any>;
   const index = Number(payload.index || 0);
