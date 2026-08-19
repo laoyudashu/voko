@@ -157,7 +157,7 @@ fn main() {
         let latency_micros = operation_started.elapsed().as_micros().min((LATENCY_BUCKETS - 1) as u128) as usize;
         latency_histogram[latency_micros] += 1;
 
-        if messages % 97 == 0 {
+        if messages.is_multiple_of(97) {
             let replay = if creator_sends {
                 pair.recipient.decrypt(&route, &ciphertext)
             } else {
@@ -166,12 +166,12 @@ fn main() {
             assert!(replay.is_err());
             duplicates_rejected += 1;
         }
-        if messages % 251 == 0 {
+        if messages.is_multiple_of(251) {
             pair.creator = restore(&pair.creator);
             pair.recipient = restore(&pair.recipient);
             state_recoveries += 1;
         }
-        if messages % 503 == 0 {
+        if messages.is_multiple_of(503) {
             let commit = pair
                 .creator
                 .prepare_self_update()
@@ -184,7 +184,7 @@ fn main() {
                 .expect("accept PCS update");
             pcs_updates += 1;
         }
-        if messages % 100 == 0 { peak_rss_bytes = peak_rss_bytes.max(rss_bytes()); }
+        if messages.is_multiple_of(100) { peak_rss_bytes = peak_rss_bytes.max(rss_bytes()); }
         thread::sleep(Duration::from_millis(2));
     }
 
