@@ -80,6 +80,7 @@
     "test:e2ee:bench": "node scripts/run-e2ee-poc.js bench",
     "test:e2ee:wasm": "node scripts/run-e2ee-poc.js wasm",
     "build:e2ee:wasm": "node scripts/build-e2ee-wasm.js",
+    "verify:e2ee:web-release": "node scripts/e2ee-web-release.js e2ee/target/web-release",
     "test:e2ee:stress": "node scripts/run-e2ee-poc.js stress",
     "test:e2ee:scale": "node scripts/run-e2ee-poc.js scale",
     "test:e2ee:stability": "node scripts/run-e2ee-stability.js",

@@ -39,4 +39,9 @@ execFileSync(cargo, ['+stable', 'build', '--locked', '--release', '--target', 'w
   { cwd: e2ee, stdio: 'inherit' });
 execFileSync(bindgen, ['--target', 'web', '--out-dir', 'target/web-poc', '--out-name', 'voko_e2ee_wasm',
   'target/wasm32-unknown-unknown/release/voko_e2ee_wasm.wasm'], { cwd: e2ee, stdio: 'inherit' });
-console.log('E2EE browser WASM artifacts built with wasm-bindgen-cli 0.2.127.');
+const outputDir = process.env.VOKO_E2EE_WEB_RELEASE_DIR
+  ? resolve(process.env.VOKO_E2EE_WEB_RELEASE_DIR)
+  : join(e2ee, 'target', 'web-release');
+execFileSync(process.execPath, [join(root, 'scripts', 'e2ee-web-release.js'), outputDir],
+  { cwd: root, stdio: 'inherit' });
+console.log('E2EE browser WASM artifacts and verified release manifest built with wasm-bindgen-cli 0.2.127.');
