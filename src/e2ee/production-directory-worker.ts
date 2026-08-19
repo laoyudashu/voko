@@ -97,12 +97,13 @@ export class ProductionE2eeDirectoryWorker {
     if (establishment.keyPackageRef !== row.key_package_ref || establishment.keyEpoch !== Number(row.key_epoch)) {
       throw new Error('E2EE_ESTABLISHMENT_KEY_PACKAGE_MISMATCH');
     }
+    if (establishment.bindingGeneration !== agent.bindingGeneration) throw new Error('E2EE_BINDING_GENERATION_MISMATCH');
     const recipient = this.process(agent,Number(row.key_epoch));
     const scope: ProductionE2eeScope = {
       localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
       creatorPrincipalId:establishment.creatorPrincipalId,senderDeviceKeyId:'',
       recipientDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,groupId:establishment.groupId,
-      conversationScope:establishment.conversationScope,bindingGeneration:agent.bindingGeneration,
+      conversationScope:establishment.conversationScope,bindingGeneration:establishment.bindingGeneration,
     };
     const joined = await recipient.join(scope,establishment.welcome,`e2ee-established-${establishment.establishmentId}`);
     // keyEpoch versions the device credential, not individual KeyPackages.

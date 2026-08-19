@@ -14,7 +14,8 @@ test('directory client authenticates requests and preserves trusted conversation
       keyPackageRef: Buffer.alloc(32, 1).toString('base64url'), keyEpoch: 2,
       groupId: Buffer.from('group').toString('base64url'), conversationScope: Buffer.from('conversation').toString('base64url'),
       commit: Buffer.from('commit').toString('base64url'), welcome: Buffer.from('welcome').toString('base64url'),
-      state: 'commit_accepted', expiresAt: new Date(Date.now() + 60_000).toISOString() }] } });
+      state: 'commit_accepted', conversationMode:'e2ee_available',ownerEpoch:1,bindingGeneration:1,policyRevision:1,mlsEpoch:0,
+      expiresAt: new Date(Date.now() + 60_000).toISOString() }] } });
   } });
   const rows = await client.pullEstablishments({ agentId: 'agent-1', ownerDeviceKeyId: 'device-1' });
   assert.equal(Buffer.from(rows[0].conversationScope, 'base64url').toString(), 'conversation');

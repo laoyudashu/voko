@@ -10,6 +10,11 @@ export interface E2eeDirectoryEstablishment {
   commit: string;
   welcome: string;
   state: 'commit_accepted';
+  conversationMode: 'e2ee_available'|'e2ee_active'|'e2ee_required';
+  ownerEpoch: number;
+  bindingGeneration: number;
+  policyRevision: number;
+  mlsEpoch: number;
   expiresAt: string;
 }
 
@@ -79,9 +84,15 @@ export class E2eeDirectoryClient {
       conversationScope: base64url(row.conversationScope, 'CONVERSATION_SCOPE', 255),
       commit: base64url(row.commit, 'COMMIT'), welcome: base64url(row.welcome, 'WELCOME'),
       state: row.state === 'commit_accepted' ? row.state : (() => { throw new Error('E2EE_DIRECTORY_INVALID_STATE'); })(),
+      conversationMode: row.conversationMode === 'e2ee_required' ? row.conversationMode
+        : row.conversationMode === 'e2ee_active' ? row.conversationMode : 'e2ee_available',
+      ownerEpoch: Number(row.ownerEpoch), bindingGeneration: Number(row.bindingGeneration),
+      policyRevision: Number(row.policyRevision), mlsEpoch: Number(row.mlsEpoch),
       expiresAt: bounded(row.expiresAt, 'EXPIRES_AT'),
     })).map((row: E2eeDirectoryEstablishment) => {
       if (!Number.isSafeInteger(row.keyEpoch) || row.keyEpoch < 1) throw new Error('E2EE_DIRECTORY_INVALID_KEY_EPOCH');
+      if (![row.ownerEpoch,row.bindingGeneration,row.policyRevision].every(value => Number.isSafeInteger(value) && value >= 1)
+          || !Number.isSafeInteger(row.mlsEpoch) || row.mlsEpoch < 0) throw new Error('E2EE_DIRECTORY_INVALID_GENERATION');
       if (!Number.isFinite(Date.parse(row.expiresAt))) throw new Error('E2EE_DIRECTORY_INVALID_EXPIRES_AT');
       return row;
     });

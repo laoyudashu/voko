@@ -30,7 +30,8 @@ test('directory worker persists session before ACK and replenishes the same devi
       pulled = true;
       return [{ establishmentId:'est-1',creatorPrincipalId:'guest-a',keyPackageRef:ref(packages[0]),keyEpoch:1,
         groupId:'Z3JvdXAtMQ',conversationScope:'Y29udGV4dC0x',commit:'Y29tbWl0',welcome:'d2VsY29tZQ',
-        state:'commit_accepted',expiresAt:new Date(Date.now()+60_000).toISOString() }];
+        state:'commit_accepted',conversationMode:'e2ee_available',ownerEpoch:1,bindingGeneration:1,policyRevision:1,mlsEpoch:0,
+        expiresAt:new Date(Date.now()+60_000).toISOString() }];
     },
     async acknowledge(input) {
       assert.ok(store.session('Z3JvdXAtMQ'),'session must commit before receipt ACK');
