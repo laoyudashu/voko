@@ -31,6 +31,9 @@ function recordStabilityGate({ gateId, summaryFile, manifestFile }) {
   if (!requiredDuration) throw new Error(`Unsupported stability gate: ${gateId}`);
 
   const summary = JSON.parse(readFileSync(summaryFile, 'utf8'));
+  if (summary.diagnosticOnly || summary.worktreeDirty) {
+    throw new Error('Diagnostic or dirty-worktree evidence cannot update a release gate');
+  }
   validateStabilitySummary(summary, requiredDuration);
 
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));

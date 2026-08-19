@@ -5,7 +5,7 @@ const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const { readFileSync } = require('node:fs');
 const { extname, join, normalize, resolve } = require('node:path');
-const { chromium } = require('@playwright/test');
+const { launchChromium } = require('./playwright-browser');
 
 const repo = resolve(__dirname, '..');
 const wasmRoot = join(repo, 'e2ee', 'target', 'web-poc');
@@ -83,7 +83,7 @@ function send(response, value) {
 (async () => {
   ({ keyPackage } = await ready);
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium({ headless: true });
   try {
     const page = await browser.newPage();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);

@@ -4,7 +4,8 @@ const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { readFileSync, statSync } = require('node:fs');
 const { extname, join, normalize, resolve } = require('node:path');
-const { chromium, devices } = require('@playwright/test');
+const { devices } = require('@playwright/test');
+const { launchChromium } = require('./playwright-browser');
 
 const root = resolve(__dirname, '..', 'e2ee', 'target', 'web-poc');
 const fixtureRoot = resolve(__dirname, '..', 'e2ee', 'browser-poc');
@@ -74,7 +75,7 @@ const server = http.createServer((request, response) => {
 (async () => {
   await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
   const address = server.address();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium({ headless: true });
   try {
     const page = await browser.newPage();
     const cspViolations = [];
@@ -127,7 +128,7 @@ const server = http.createServer((request, response) => {
     }
     await persistenceContext.close();
 
-    const mobileBrowser = await chromium.launch({ headless: true, args: ['--js-flags=--max-old-space-size=128'] });
+    const mobileBrowser = await launchChromium({ headless: true, args: ['--js-flags=--max-old-space-size=128'] });
     try {
       const mobileContext = await mobileBrowser.newContext({ ...devices['Pixel 5'] });
       const mobile = await mobileContext.newPage();
