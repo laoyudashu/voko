@@ -90,3 +90,23 @@ test('directory worker honors server rate-limit backoff without scanning remaini
   assert.deepEqual(calls,[['register','device-a'],['register','device-a']]);
   db.close();
 });
+
+test('a new establishment atomically replaces the previous group for the same conversation scope', () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const scope = groupId => ({ localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    creatorPrincipalId:'guest-a',senderDeviceKeyId:'',recipientDeviceKeyId:'device-gym',ownerScope:'owner',
+    groupId,conversationScope:'scope-1',bindingGeneration:1 });
+  const nextKeyPackage = { localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    ownerDeviceKeyId:'device-gym',ownerScope:'owner',keyEpoch:1,keyPackageRef:'ref',keyPackage:'package',
+    encryptedPendingState:Buffer.from('pending'),publishState:'pending' };
+  store.commitEstablishment({ establishmentId:'est-old',scope:scope('group-old'),encryptedState:Buffer.from('old'),
+    acknowledgement:{ok:true},nextKeyPackage });
+  store.reserve(scope('group-old'),'message-old','digest-old');
+  store.commitEstablishment({ establishmentId:'est-new',scope:scope('group-new'),encryptedState:Buffer.from('new'),
+    acknowledgement:{ok:true},nextKeyPackage });
+  assert.equal(store.session('group-old'),undefined);
+  assert.equal(store.session('group-new').status,'active');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM e2ee_production_receipts WHERE group_id='group-old'").get().n,0);
+  db.close();
+});

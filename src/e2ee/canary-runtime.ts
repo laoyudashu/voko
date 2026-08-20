@@ -97,13 +97,14 @@ export class CanaryRuntime {
         encryptedState:current.encrypted_state,stateVersion:Number(current.state_version) });
       this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
       const encoded = JSON.stringify(sealed.envelope);
-      this.options.store.transition(envelope.messageId,['provider_accepted'],'completed',encoded);
+      this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
       await this.options.deliverRaw(localAgentId,String(message.fromUid),encoded,replyId);
+      this.options.store.transition(envelope.messageId,['reply_ready'],'completed');
       this.stats.replied += 1;
       return { handled:true,accepted:true };
     } catch (error: any) {
       this.stats.failures += 1;
-      try { this.options.store.transition(envelope.messageId,[providerAccepted?'provider_accepted':'received'],providerAccepted?'outcome_unknown':'failed'); } catch {}
+      try { this.options.store.transition(envelope.messageId,providerAccepted?['provider_accepted','reply_ready']:['received'],providerAccepted?'outcome_unknown':'failed'); } catch {}
       return { handled:true,accepted:false,code:String(error?.code || error?.message || 'E2EE_CANARY_FAILED') };
     }
   }

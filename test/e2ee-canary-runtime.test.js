@@ -45,9 +45,17 @@ test('scope mismatch, message ID conflict and emergency disable fail closed',asy
 
 test('encrypted reply stays contentType 13 on the raw IM transport',async()=>{
   let sent;const adapter=Object.create(VokoWorkerAdapter.prototype);adapter.pool={async sendRaw(...args){sent=args;return{messageId:'im-1',messageSeq:9,clientMsgNo:'reply-1'}}};
-  const result=await adapter.deliverEncrypted('agent-local','guest-1','{"ciphertext":"opaque"}','reply-1');
+  const result=await adapter.deliverEncrypted('agent-local','guest-1','{"version":"voko.e2ee/1","ciphertext":"opaque"}','reply-1');
   assert.equal(result.success,true);assert.equal(sent[0],'agent-local');assert.equal(sent[1],'guest-1');assert.equal(sent[2],1);
-  const payload=JSON.parse(Buffer.from(sent[3]).toString('utf8'));assert.equal(payload.type,13);assert.equal(payload.content,'{"ciphertext":"opaque"}');
+  const payload=JSON.parse(Buffer.from(sent[3]).toString('utf8'));assert.equal(payload.type,13);assert.equal(payload.version,'voko.e2ee/1');assert.equal(payload.ciphertext,'opaque');
+});
+
+test('encrypted reply is completed only after raw IM delivery succeeds',async()=>{
+  const failing=fixture();failing.runtime.options.deliverRaw=async()=>{throw new Error('IM_DOWN')};
+  const result=await failing.runtime.handle('agent-local',{contentType:13,content:JSON.stringify(envelope('delivery-failure')),fromUid:'guest',channelType:1});
+  assert.equal(result.accepted,false);assert.equal(result.code,'IM_DOWN');
+  assert.equal(failing.db.prepare('SELECT state FROM e2ee_canary_receipts WHERE message_id=?').get('delivery-failure').state,'outcome_unknown');
+  failing.db.close();
 });
 
 test('encrypted attachment is downloaded, decrypted and removed after exact Provider delivery',async()=>{

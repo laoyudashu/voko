@@ -140,6 +140,13 @@ export class ProductionE2eeStore {
     const now = Date.now();
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const replaced = this.db.prepare(`SELECT group_id FROM e2ee_production_sessions
+        WHERE local_agent_id=? AND creator_principal_id=? AND conversation_scope=? AND group_id<>?`)
+        .get(input.scope.localAgentId,input.scope.creatorPrincipalId,input.scope.conversationScope,input.scope.groupId) as any;
+      if (replaced?.group_id) {
+        this.db.prepare('DELETE FROM e2ee_production_receipts WHERE group_id=?').run(replaced.group_id);
+        this.db.prepare('DELETE FROM e2ee_production_sessions WHERE group_id=?').run(replaced.group_id);
+      }
       this.db.prepare(`INSERT INTO e2ee_production_sessions(group_id,local_agent_id,server_agent_id,target_agent_did,
         creator_principal_id,sender_device_key_id,recipient_device_key_id,owner_scope,conversation_scope,
         binding_generation,encrypted_state,state_version,mode,status,created_at,updated_at)
