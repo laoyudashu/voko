@@ -17,6 +17,8 @@ A2A 默认开启。正常产品流程由 VOKO 使用当前主人账号和已发�
 ```powershell
 $env:VOKO_A2A_MAILBOX_URL='https://<gateway>/internal/a2a-mailbox/v1'
 $env:VOKO_A2A_DEVICE_TOKEN='<device token>'
+$env:VOKO_A2A_EXECUTION_CONCURRENCY='4' # 跨 Agent 并发；同一 Agent 始终串行
+$env:VOKO_A2A_EXECUTION_TIMEOUT_MS='120000'
 $env:VOKO_A2A_GATEWAY_PUBLIC_KEY_B64='<base64 public key>'
 voko start
 ```

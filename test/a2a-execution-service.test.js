@@ -12,6 +12,7 @@ test('first task stores native session and later task restores exactly it', asyn
   const service = new A2AExecutionService(store, dispatcher, undefined, undefined, scopes);
   assert.deepEqual(await service.execute(envelope()), { content: 'done' });
   await service.execute(envelope('task-2'));
+  assert.equal(calls[0].timeoutMs, 120_000);
   assert.equal(calls[0].binding, null); assert.equal(calls[1].binding.nativeSessionId, 'native-1');
   assert.equal(calls[1].binding.strictSessionRoute, true);
 });

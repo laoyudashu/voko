@@ -12,7 +12,7 @@ class A2AExecutionService {
   constructor(private readonly store: A2ALocalTaskStore, private readonly dispatcher: IsolatedDispatcher,
     private readonly safety?: SafetyGate, private readonly assertDispatchAllowed?: (agentId: string) => void,
     private readonly scopes?: A2AScopeResolver, private readonly mailbox?: A2AMailboxClient,
-    private readonly attachmentWorkspace?: A2AAttachmentWorkspace) {}
+    private readonly attachmentWorkspace?: A2AAttachmentWorkspace, private readonly executionTimeoutMs = 120_000) {}
   async execute(envelope: A2AEnvelope, callbacks?: { onProviderAccepted?: () => void }): Promise<{ content: string; noReply?: boolean; artifacts?: Array<any> }> {
     this.assertDispatchAllowed?.(envelope.agentId);
     let content = String((envelope.payload as any)?.text || '');
@@ -55,6 +55,7 @@ class A2AExecutionService {
       result = await this.dispatcher.executeIsolated({ agentId: envelope.agentId, taskId: envelope.gatewayTaskId,
         contextId: envelope.contextId, content, binding, executionScope: 'a2a_mailbox', sessionScopeId,
         principalScope, bindingGeneration, protocolContextId: envelope.contextId,
+        timeoutMs: this.executionTimeoutMs,
         attachments: prepared?.inputs, attachmentOutputDirectory: prepared?.outputDirectory,
         onProviderAccepted: () => { accepted = true; this.store.markLeaseAccepted(sessionScopeId, leaseToken);
           callbacks?.onProviderAccepted?.(); } });

@@ -94,9 +94,12 @@ class A2ALocalTaskStore {
     return row?.standard_state || null;
   }
   acceptCommand(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown = {}): 'accepted' | 'duplicate' {
+    const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_inbox
       (event_id,gateway_task_id,command_sequence,operation,envelope_json,status,received_at) VALUES (?,?,?,?,?,'received',?)`)
-      .run(eventId, taskId, sequence, operation, JSON.stringify(envelope), Date.now());
+      .run(eventId, taskId, sequence, operation, JSON.stringify(envelope), now);
+    if (Number(result.changes) === 1) this.db.prepare('UPDATE a2a_local_tasks SET accepted_at=COALESCE(accepted_at,?),updated_at=? WHERE gateway_task_id=?')
+      .run(now, now, taskId);
     return Number(result.changes) === 1 ? 'accepted' : 'duplicate';
   }
   markReceiptAcknowledged(eventId: string): void {
@@ -107,7 +110,11 @@ class A2ALocalTaskStore {
     return row?.status || null;
   }
   beginCommand(eventId: string): boolean {
-    return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing',execution_state='processing',attempt_count=attempt_count+1 WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
+    const now = Date.now();
+    const result = this.db.prepare("UPDATE a2a_local_inbox SET status='processing',execution_state='processing',attempt_count=attempt_count+1 WHERE event_id=? AND status='received'").run(eventId);
+    if (Number(result.changes) === 1) this.db.prepare(`UPDATE a2a_local_tasks SET started_at=COALESCE(started_at,?),updated_at=?
+      WHERE gateway_task_id=(SELECT gateway_task_id FROM a2a_local_inbox WHERE event_id=?)`).run(now, now, eventId);
+    return Number(result.changes) === 1;
   }
   listProcessingCommands(): Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }> {
     return this.db.prepare("SELECT event_id,gateway_task_id,envelope_json FROM a2a_local_inbox WHERE status='processing' ORDER BY received_at")
@@ -136,9 +143,12 @@ class A2ALocalTaskStore {
     });
   }
   finishCommand(eventId: string, status: 'processed' | 'outcome_unknown', errorCode?: string): void {
+    const now = Date.now();
     this.db.prepare(`UPDATE a2a_local_inbox SET status=?,execution_state=?,processed_at=?,error_code=?,
       envelope_json=CASE WHEN ?='processed' THEN NULL ELSE envelope_json END WHERE event_id=?`)
-      .run(status, status, Date.now(), errorCode || null, status, eventId);
+      .run(status, status, now, errorCode || null, status, eventId);
+    this.db.prepare(`UPDATE a2a_local_tasks SET finished_at=COALESCE(finished_at,?),updated_at=?
+      WHERE gateway_task_id=(SELECT gateway_task_id FROM a2a_local_inbox WHERE event_id=?)`).run(now, now, eventId);
   }
   retryCommand(eventId: string, errorCode: string, delayMs = 2_000): void {
     this.db.prepare("UPDATE a2a_local_inbox SET status='received',execution_state='retry',next_attempt_at=?,error_code=? WHERE event_id=?")

@@ -129,11 +129,12 @@ test('A2A schema 3 upgrades in place and preserves recoverable inbox commands', 
     PRAGMA user_version=3;`);
   legacy.close();
   const upgraded = initA2ADatabase(databasePath);
-  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, A2A_SCHEMA_VERSION);
   const taskColumns = upgraded.prepare('PRAGMA table_info(a2a_local_tasks)').all().map(row => row.name);
   assert.ok(taskColumns.includes('binding_generation')); assert.ok(taskColumns.includes('owner_epoch')); assert.ok(taskColumns.includes('policy_revision'));
+  assert.ok(taskColumns.includes('accepted_at')); assert.ok(taskColumns.includes('started_at')); assert.ok(taskColumns.includes('finished_at'));
   assert.ok(upgraded.prepare('PRAGMA table_info(a2a_local_inbox)').all().some(row => row.name === 'envelope_json'));
-  assert.equal(fs.existsSync(`${databasePath}.pre-schema-v5.bak`), true);
+  assert.equal(fs.existsSync(`${databasePath}.pre-schema-v${A2A_SCHEMA_VERSION}.bak`), true);
   upgraded.close();
 });
 

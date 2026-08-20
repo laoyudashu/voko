@@ -32,8 +32,10 @@ class A2ABridgeRuntime {
       const row = this.options.mainDatabase.prepare("SELECT publish_status FROM agents WHERE agent_id=? LIMIT 1").get(agentId) as { publish_status?: string } | undefined;
       if (!row || row.publish_status !== 'published') throw new Error('A2A_AGENT_NOT_AVAILABLE');
     } : undefined;
+    const executionConcurrency = Math.max(1, Math.min(32, Number(env.VOKO_A2A_EXECUTION_CONCURRENCY || 4) || 4));
+    const executionTimeoutMs = Math.max(1_000, Math.min(900_000, Number(env.VOKO_A2A_EXECUTION_TIMEOUT_MS || 120_000) || 120_000));
     const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety,
-      assertDispatchAllowed, scopes, client, new A2AAttachmentWorkspace()), identity);
+      assertDispatchAllowed, scopes, client, new A2AAttachmentWorkspace(), executionTimeoutMs), identity);
     const bindingGenerations = new Map<string, number>((Array.isArray(stored.agentBindings) ? stored.agentBindings : [])
       .map((item: any) => [String(item.localAgentId), Number(item.bindingGeneration || 1)]));
     const availability = () => {
@@ -53,7 +55,7 @@ class A2ABridgeRuntime {
     };
     const worker = new A2ABridgeWorker({ client, store, scopes, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
-    }, execute: (envelope) => processor.process(envelope) });
+    }, execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
     for (const command of store.listProcessingCommands()) {
       try {
