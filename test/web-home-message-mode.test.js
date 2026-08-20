@@ -80,6 +80,8 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, />REST\/Webhook<\/span>/);
   assert.match(html, /href="\/external-integrations\?agentId=agent-home"/);
   assert.match(html, /fetch\("\/api\/external-integrations"/);
+  assert.match(html, /cache:"no-store"/);
+  assert.match(html, /addEventListener\("pageshow",function\(event\)\{if\(event\.persisted\)refresh\(\)\}\)/);
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /visitorValue\+visitorAction\+accessModeButton/);
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);

@@ -547,10 +547,10 @@ function externalGatewayHomeScript(t){
     setup:t('web.home.access.external_setup'),
     manage:t('web.home.access.external_manage'),
   };
-  return '<script>(function(){var L='+jsonForInlineScript(labels)+';fetch("/api/external-integrations",{headers:{Accept:"application/json"}})'
+  return '<script>(function(){var L='+jsonForInlineScript(labels)+';function refresh(){fetch("/api/external-integrations",{headers:{Accept:"application/json"},cache:"no-store"})'
     +'.then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})})'
     +'.then(function(x){if(!x.ok||!x.data.success)throw new Error("load failed");var items=(x.data.data&&x.data.data.integrations)||[],counts={};items.forEach(function(item){if(item.status!=="active")return;(item.agentIds||[]).forEach(function(id){counts[id]=(counts[id]||0)+1})});document.querySelectorAll("[data-role=external-integration-row]").forEach(function(row){var id=row.dataset.publicAgentId||"",count=counts[id]||0,value=row.querySelector("[data-role=external-integration-value]"),action=row.querySelector("[data-role=external-integration-action]");if(value)value.textContent=count?L.configured.replace("{count}",String(count)):L.notConfigured;if(action)action.textContent=count?L.manage:L.setup})})'
-    +'.catch(function(){document.querySelectorAll("[data-role=external-integration-value]").forEach(function(value){value.textContent=L.unavailable})})})();</script>';
+    +'.catch(function(){document.querySelectorAll("[data-role=external-integration-value]").forEach(function(value){value.textContent=L.unavailable})})}refresh();window.addEventListener("pageshow",function(event){if(event.persisted)refresh()})})();</script>';
 }
 
 function createWebRouter(handlers, db, opts={}){
