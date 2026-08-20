@@ -161,6 +161,20 @@ export class ProductionE2eeDirectoryWorker {
             await this.flushAcknowledgements(agent);
             row = await this.ensurePackage(agent);
           }
+          const inventory = await this.options.client.keyPackageStatus({
+            ownerDeviceKeyId:agent.ownerDeviceKeyId,agentIds:[agent.serverAgentId],
+          });
+          const available = Number(inventory?.agents?.find((item: any) => item?.agentId === agent.serverAgentId)?.available || 0);
+          if (available < 1) {
+            // A KeyPackage is single-use once a remote party has built a
+            // handshake from it. If Lite was offline until that establishment
+            // expired, the local row still says "published" although the
+            // directory can no longer offer it. Publish a fresh package rather
+            // than reusing the consumed one.
+            const next = await this.rotatePending(agent,row);
+            this.options.store.saveKeyPackage(next);
+            row = await this.ensurePackage(agent);
+          }
         } catch (error: any) {
           this.options.onError?.(agent.localAgentId,error);
           if (Number(error?.status) === 429) {

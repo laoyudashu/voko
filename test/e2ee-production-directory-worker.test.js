@@ -30,6 +30,7 @@ test('directory worker persists session before ACK and replenishes the same devi
   const client = {
     async registerDevice(input) { calls.push(['register',input.keyEpoch]); return { duplicate:false }; },
     async publishKeyPackage(input) { calls.push(['publish',input.keyEpoch,input.keyPackage]); return { keyPackageRef:ref(input.keyPackage) }; },
+    async keyPackageStatus() { return { agents:[{ agentId:'server-lawyer',available:1 }] }; },
     async pullEstablishments() {
       if (pulled) return [];
       pulled = true;
@@ -76,6 +77,7 @@ test('directory worker honors server rate-limit backoff without scanning remaini
   const client = {
     async registerDevice(input) { calls.push(['register',input.ownerDeviceKeyId]); throw limited; },
     async publishKeyPackage() { throw new Error('unexpected publish'); },
+    async keyPackageStatus() { throw new Error('unexpected status'); },
     async pullEstablishments() { throw new Error('unexpected pull'); }, async acknowledge() {},
   };
   const agent = id => ({ localAgentId:id,serverAgentId:`server-${id}`,targetAgentDid:`did:wba:test:${id}`,
@@ -88,6 +90,39 @@ test('directory worker honors server rate-limit backoff without scanning remaini
   now += 10_000;
   await worker.runOnce();
   assert.deepEqual(calls,[['register','device-a'],['register','device-a']]);
+  db.close();
+});
+
+test('directory worker replenishes a package consumed by an expired establishment', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const packages = ['Y29uc3VtZWQta2V5LXBhY2thZ2U','ZnJlc2gta2V5LXBhY2thZ2U'];
+  const calls = [];
+  let processIndex = 0;
+  const processFactory = () => {
+    const initial = processIndex++ === 0;
+    return {
+      ready:Promise.resolve({ keyPackage:initial ? packages[0] : 'dW51c2Vk',credentialPublicKey:'Y3JlZGVudGlhbA' }),
+      async sealPending() { return Buffer.from(initial ? 'consumed-state' : 'fresh-state'); },
+      async restorePending() { return 'Y3JlZGVudGlhbA'; },
+      async join() { throw new Error('expired establishment must not be joined'); },
+      async replenish() { calls.push(['replenish']); return { keyPackage:packages[1],credentialPublicKey:'Y3JlZGVudGlhbA' }; },
+      close() {},
+    };
+  };
+  const client = {
+    async registerDevice() {},
+    async publishKeyPackage(input) { calls.push(['publish',input.keyPackage]); return { keyPackageRef:ref(input.keyPackage) }; },
+    async pullEstablishments() { return []; },
+    async keyPackageStatus() { return { agents:[{ agentId:'server-gym',available:0 }] }; },
+    async acknowledge() {}, async reject() {},
+  };
+  const agent = { localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    ownerDeviceKeyId:'device-gym',ownerScope:'owner-scope',bindingGeneration:1 };
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>[agent],processFactory });
+  await worker.runOnce();
+  assert.deepEqual(calls,[['publish',packages[0]],['replenish'],['publish',packages[1]]]);
+  assert.equal(store.keyPackage('gym').key_package_ref,ref(packages[1]));
   db.close();
 });
 
