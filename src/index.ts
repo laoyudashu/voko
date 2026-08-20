@@ -1920,24 +1920,26 @@ async function startMcpServer(args?: any, core?: any) {
   let e2eeDatabase: any = null;
   try {
     const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
+    const { loadProductionE2eeConfig } = require('./e2ee/production-config');
+    const productionConfig = loadProductionE2eeConfig(process.env,(type: string) => databaseAPI.getConfigFromDb(type));
     const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
-    const productionEnabled = process.env.VOKO_E2EE_PRODUCTION_ENABLED === 'true';
+    const productionEnabled = productionConfig.enabled;
     if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
     if (canaryPolicy.enabled || productionEnabled) {
-      let endpoint = String(productionEnabled ? process.env.VOKO_E2EE_ENDPOINT : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
+      let endpoint = String(productionEnabled ? productionConfig.endpoint : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
       if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'VOKO_E2EE_ENDPOINT' : 'VOKO_E2EE_CANARY_ENDPOINT'} must be an absolute path`);
       if (productionEnabled) {
         const { verifyNativeE2eeRelease } = require('./e2ee/native-release');
         endpoint = verifyNativeE2eeRelease({ executable:endpoint,
-          manifestPath:String(process.env.VOKO_E2EE_ENDPOINT_MANIFEST || ''),
-          publicKeyPem:String(process.env.VOKO_E2EE_RELEASE_PUBLIC_KEY_PEM || '').replace(/\\n/g,'\n') });
+          manifestPath:productionConfig.manifestPath,
+          publicKeyPem:productionConfig.publicKeyPem });
       }
       const { CanaryStore } = require('./e2ee/canary-store');
       const { CanaryRuntime } = require('./e2ee/canary-runtime');
       const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
       const { DatabaseSync } = require('node:sqlite');
       const defaultE2eePath = path.join(path.dirname(String(db._dbPath || '')), 'voko-e2ee.db');
-      const e2eePath = path.resolve(String(process.env.VOKO_E2EE_DB_PATH || defaultE2eePath));
+      const e2eePath = path.resolve(String(productionConfig.databasePath || defaultE2eePath));
       if (e2eePath === path.resolve(String(db._dbPath || ''))) throw new Error('VOKO_E2EE_DB_PATH must differ from the main database');
       fs.mkdirSync(path.dirname(e2eePath), { recursive: true });
       e2eeDatabase = new DatabaseSync(e2eePath);
@@ -1994,7 +1996,7 @@ async function startMcpServer(args?: any, core?: any) {
         if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
         const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
         const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
-        const configuredAgentIds = new Set(String(process.env.VOKO_E2EE_PRODUCTION_AGENT_IDS || '')
+        const configuredAgentIds = new Set(String(productionConfig.agentIds || '')
           .split(',').map(value => value.trim()).filter(Boolean));
         const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
           WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
@@ -2010,6 +2012,7 @@ async function startMcpServer(args?: any, core?: any) {
         const directoryWorker = new ProductionE2eeDirectoryWorker({
           client:new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken }),store:e2eeStore,agents,
           processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
+          intervalMs:productionConfig.pollIntervalMs,
           onError:(agentId: string,error: any) => console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`),
         });
         await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
