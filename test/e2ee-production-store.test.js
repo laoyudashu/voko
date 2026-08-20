@@ -50,3 +50,13 @@ test('production store rejects duplicate establishment and message identifiers w
   assert.throws(() => store.reserve(current,'message-1','digest-b'),/E2EE_MESSAGE_ID_CONFLICT/);
   db.close();
 });
+
+test('production store persists a monotonic device credential epoch independently of pending snapshots', () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  assert.equal(store.deviceKeyEpoch('agent-a'),1);
+  store.setDeviceKeyEpoch('agent-a',2);
+  assert.equal(store.deviceKeyEpoch('agent-a'),2);
+  assert.throws(() => store.setDeviceKeyEpoch('agent-a',1),/E2EE_DEVICE_EPOCH_ROLLBACK/);
+  db.close();
+});

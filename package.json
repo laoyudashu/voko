@@ -99,6 +99,7 @@
     "test:e2ee:canary": "node scripts/run-e2ee-canary.js",
     "test:e2ee:endpoint": "node scripts/test-e2ee-canary-endpoint.js",
     "test:e2ee:real-canary": "npm run build:ts && node scripts/real-e2ee-canary.js",
+    "test:e2ee:production:text": "npm run build:ts && node scripts/real-e2ee-production-text.js",
     "test:e2ee:report": "node scripts/report-e2ee-canary.js",
     "test:e2ee:status": "node scripts/check-e2ee-canary-status.js",
     "test:e2ee:db-rollback": "npm run build:ts && node scripts/drill-database-upgrade-rollback.js",

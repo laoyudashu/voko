@@ -9,6 +9,7 @@ export interface CanaryScope {
   ownerScope: string;
   groupId: string;
   conversationScope: string;
+  keyEpoch?: number;
 }
 
 export interface CanaryEnvelope {

@@ -1991,7 +1991,7 @@ async function startMcpServer(args?: any, core?: any) {
         const directoryWorker = new ProductionE2eeDirectoryWorker({
           client:new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken }),store:e2eeStore,agents,
           processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
-          onError:(agentId: string,error: any) => console.warn(`[E2EE] Directory同步失败 agent=${agentId}: ${String(error?.code || error?.message || 'unknown')}`),
+          onError:(agentId: string,error: any) => console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`),
         });
         await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
         console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);

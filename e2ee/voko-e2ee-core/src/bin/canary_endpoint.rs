@@ -68,6 +68,15 @@ fn required(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing or invalid --{name}"))
 }
 
+fn positive_u64(name: &str) -> Result<u64, String> {
+    let value = std::env::args().find_map(|arg| arg.strip_prefix(&format!("--{name}=")).map(str::to_owned));
+    match value {
+        None => Ok(1),
+        Some(value) => value.parse::<u64>().ok().filter(|number| *number > 0)
+            .ok_or_else(|| format!("invalid --{name}")),
+    }
+}
+
 fn empty() -> Response {
     Response {
         success: true,
@@ -112,6 +121,7 @@ fn run() -> Result<(), String> {
     let mut group_id = required("group")?;
     let mut conversation = required("conversation")?;
     let owner_scope = required("owner-scope")?;
+    let key_epoch = positive_u64("key-epoch")?;
     let identity = DeviceCredentialIdentity {
         role: if role == Role::Creator {
             DeviceRole::Browser
@@ -120,7 +130,7 @@ fn run() -> Result<(), String> {
         },
         principal_id: principal.as_bytes().to_vec(),
         device_key_id: device.as_bytes().to_vec(),
-        key_epoch: 1,
+        key_epoch,
         target_agent_did: agent.as_bytes().to_vec(),
     };
     let mut creator = if role == Role::Creator {
@@ -341,11 +351,19 @@ fn handle(
             let vault = VaultKeyManager::new(SystemWrappingKeyStore).unlock(owner_scope.as_bytes()).map_err(|e| e.to_string())?;
             let snapshot = vault.open(&vault_context(agent, group_id, conversation), &sealed).map_err(|e| e.to_string())?;
             *recipient = Some(DirectRecipientEndpoint::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
-            Ok(empty())
+            let mut response = empty();
+            response.credential_public_key = recipient.as_ref()
+                .map(|endpoint| URL_SAFE_NO_PAD.encode(endpoint.signer_public_key()));
+            Ok(response)
         }
         Command::Replenish if role == Role::Recipient && group.is_none() => {
-            let key_package = recipient.as_mut().ok_or("recipient is not pending")?.replenish().map_err(|e| e.to_string())?;
-            Ok(Response { key_package: Some(URL_SAFE_NO_PAD.encode(key_package)), ..empty() })
+            let key_package = {
+                let endpoint = recipient.as_mut().ok_or("recipient is not pending")?;
+                URL_SAFE_NO_PAD.encode(endpoint.replenish().map_err(|e| e.to_string())?)
+            };
+            let credential_public_key = recipient.as_ref()
+                .map(|endpoint| URL_SAFE_NO_PAD.encode(endpoint.signer_public_key()));
+            Ok(Response { key_package: Some(key_package), credential_public_key, ..empty() })
         }
         Command::RevokeVault => {
             VaultKeyManager::new(SystemWrappingKeyStore)

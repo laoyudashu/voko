@@ -19,6 +19,7 @@ class EndpointClient {
       `--group=${scope.groupId}`,
       `--conversation=${scope.conversationScope}`,
       `--owner-scope=${scope.ownerScope}`,
+      `--key-epoch=${Number.isSafeInteger(scope.keyEpoch) && Number(scope.keyEpoch) > 0 ? Number(scope.keyEpoch) : 1}`,
     ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false });
     const lines = createInterface({ input: this.child.stdout });
     lines.on('line', (line) => {
@@ -82,17 +83,23 @@ export class PendingRecipientProcess {
     return Buffer.from(String(sealed.sealedSnapshot), 'base64url');
   }
 
-  async restorePending(sealedSnapshot: Uint8Array): Promise<void> {
+  async restorePending(sealedSnapshot: Uint8Array): Promise<string> {
     await this.ready;
-    await this.endpoint.request({ op: 'restore_pending', sealed_snapshot: Buffer.from(sealedSnapshot).toString('base64url') });
+    const result = await this.endpoint.request({ op: 'restore_pending', sealed_snapshot: Buffer.from(sealedSnapshot).toString('base64url') });
+    const credentialPublicKey = String(result.credentialPublicKey || '');
+    if (!/^[A-Za-z0-9_-]+$/.test(credentialPublicKey)) throw new Error('E2EE_ENDPOINT_INVALID_CREDENTIAL');
+    return credentialPublicKey;
   }
 
-  async replenish(): Promise<string> {
+  async replenish(): Promise<{ keyPackage: string; credentialPublicKey: string }> {
     await this.ready;
     const result = await this.endpoint.request({ op: 'replenish' });
     const keyPackage = String(result.keyPackage || '');
-    if (!/^[A-Za-z0-9_-]+$/.test(keyPackage)) throw new Error('E2EE_ENDPOINT_INVALID_KEY_PACKAGE');
-    return keyPackage;
+    const credentialPublicKey = String(result.credentialPublicKey || '');
+    if (!/^[A-Za-z0-9_-]+$/.test(keyPackage) || !/^[A-Za-z0-9_-]+$/.test(credentialPublicKey)) {
+      throw new Error('E2EE_ENDPOINT_INVALID_KEY_PACKAGE');
+    }
+    return { keyPackage, credentialPublicKey };
   }
 
   close(): void { this.endpoint.close(); }

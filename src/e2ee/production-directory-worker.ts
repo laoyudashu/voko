@@ -26,6 +26,7 @@ function pendingScope(agent: ProductionE2eeAgent, epoch: number): any {
     recipientDeviceKeyId: agent.ownerDeviceKeyId, ownerScope: agent.ownerScope,
     groupId: `pending-${epoch}`, conversationScope: `pending-${epoch}`,
     bindingGeneration: agent.bindingGeneration,
+    keyEpoch: epoch,
   };
 }
 
@@ -55,12 +56,14 @@ export class ProductionE2eeDirectoryWorker {
 
   private async ensurePackage(agent: ProductionE2eeAgent): Promise<any> {
     let row = this.options.store.keyPackage(agent.localAgentId);
-    const epoch = Number(row?.key_epoch || 1);
+    const epoch = Number(row?.key_epoch || this.options.store.deviceKeyEpoch(agent.localAgentId));
     const recipient = this.process(agent,epoch);
+    let credentialPublicKey: string;
     if (row) {
-      await recipient.restorePending(row.encrypted_pending_state);
+      credentialPublicKey = await recipient.restorePending(row.encrypted_pending_state);
     } else {
       const ready = await recipient.ready;
+      credentialPublicKey = ready.credentialPublicKey;
       const ref = packageReference(ready.keyPackage);
       row = {
         localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
@@ -71,9 +74,8 @@ export class ProductionE2eeDirectoryWorker {
       row = this.options.store.keyPackage(agent.localAgentId);
     }
     if (row.publish_state !== 'published') {
-      const ready = await recipient.ready;
       await this.options.client.registerDevice({ ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,
-        credentialPublicKey:ready.credentialPublicKey });
+        credentialPublicKey });
       const published = await this.options.client.publishKeyPackage({ agentId:agent.serverAgentId,
         ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,keyPackage:row.key_package,
         expiresAtMs:(this.options.now || Date.now)() + 23 * 60 * 60 * 1000 });
@@ -82,6 +84,23 @@ export class ProductionE2eeDirectoryWorker {
       row = this.options.store.keyPackage(agent.localAgentId);
     }
     return row;
+  }
+
+  private async rotatePending(agent: ProductionE2eeAgent, row: any): Promise<any> {
+    const current = this.processes.get(agent.localAgentId);
+    current?.close();
+    this.processes.delete(agent.localAgentId);
+    const recipient = this.process(agent,Number(row.key_epoch));
+    await recipient.ready;
+    await recipient.restorePending(row.encrypted_pending_state);
+    const replenished = await recipient.replenish();
+    const next = {
+      localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
+      ownerDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,keyEpoch:Number(row.key_epoch),
+      keyPackageRef:packageReference(replenished.keyPackage),keyPackage:replenished.keyPackage,
+      encryptedPendingState:await recipient.sealPending(),publishState:'pending',
+    };
+    return next;
   }
 
   private async flushAcknowledgements(agent: ProductionE2eeAgent): Promise<void> {
@@ -109,14 +128,7 @@ export class ProductionE2eeDirectoryWorker {
     const joined = await recipient.join(scope,establishment.welcome,`e2ee-established-${establishment.establishmentId}`);
     // keyEpoch versions the device credential, not individual KeyPackages.
     // Rotating it for every package would invalidate already active groups.
-    const nextEpoch = Number(row.key_epoch);
-    const nextPackage = await recipient.replenish();
-    const next = {
-      localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
-      ownerDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,keyEpoch:nextEpoch,
-      keyPackageRef:packageReference(nextPackage),keyPackage:nextPackage,
-      encryptedPendingState:await recipient.sealPending(),publishState:'pending',
-    };
+    const next = await this.rotatePending(agent,row);
     this.options.store.commitEstablishment({ establishmentId:establishment.establishmentId,scope,
       encryptedState:joined.encryptedState,acknowledgement:joined.acknowledgement,nextKeyPackage:next });
   }
@@ -133,7 +145,19 @@ export class ProductionE2eeDirectoryWorker {
           const establishments = await this.options.client.pullEstablishments({ agentId:agent.serverAgentId,
             ownerDeviceKeyId:agent.ownerDeviceKeyId,limit:20 });
           for (const establishment of establishments) {
-            await this.accept(agent,row,establishment);
+            try {
+              await this.accept(agent,row,establishment);
+            } catch (error) {
+              const poisoned = this.processes.get(agent.localAgentId);
+              poisoned?.close();
+              this.processes.delete(agent.localAgentId);
+              await this.options.client.reject({ establishmentId:establishment.establishmentId,
+                agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,reasonCode:'LOCAL_CRYPTO_ERROR' });
+              const next = await this.rotatePending(agent,row);
+              this.options.store.saveKeyPackage(next);
+              row = this.options.store.keyPackage(agent.localAgentId);
+              throw error;
+            }
             await this.flushAcknowledgements(agent);
             row = await this.ensurePackage(agent);
           }

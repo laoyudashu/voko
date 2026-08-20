@@ -79,6 +79,22 @@ export class ProductionE2eeStore {
     return String((this.db.prepare("SELECT value FROM e2ee_production_meta WHERE key='device_generation'").get() as any).value);
   }
 
+  deviceKeyEpoch(localAgentId: string): number {
+    const row = this.db.prepare('SELECT value FROM e2ee_production_meta WHERE key=?')
+      .get(`device_key_epoch:${localAgentId}`) as any;
+    const value = Number(row?.value || 1);
+    return Number.isSafeInteger(value) && value > 0 ? value : 1;
+  }
+
+  setDeviceKeyEpoch(localAgentId: string, epoch: number): void {
+    if (!Number.isSafeInteger(epoch) || epoch < 1) throw new Error('E2EE_DEVICE_EPOCH_INVALID');
+    const current = this.deviceKeyEpoch(localAgentId);
+    if (epoch < current) throw new Error('E2EE_DEVICE_EPOCH_ROLLBACK');
+    this.db.prepare(`INSERT INTO e2ee_production_meta(key,value,updated_at) VALUES(?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+      .run(`device_key_epoch:${localAgentId}`,String(epoch),Date.now());
+  }
+
   session(groupId: string): any {
     return this.db.prepare('SELECT * FROM e2ee_production_sessions WHERE group_id=?').get(groupId);
   }
@@ -94,6 +110,7 @@ export class ProductionE2eeStore {
   }
 
   saveKeyPackage(input: any): void {
+    this.setDeviceKeyEpoch(input.localAgentId,Number(input.keyEpoch));
     this.db.prepare(`INSERT INTO e2ee_production_key_packages(local_agent_id,server_agent_id,target_agent_did,
       owner_device_key_id,owner_scope,key_epoch,key_package_ref,key_package,encrypted_pending_state,publish_state,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(local_agent_id) DO UPDATE SET

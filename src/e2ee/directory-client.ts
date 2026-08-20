@@ -57,6 +57,7 @@ export class E2eeDirectoryClient {
       const error: any = new Error(String(body?.error?.message || body?.message || `E2EE directory HTTP ${response.status}`));
       error.code = String(body?.error?.code || body?.code || `E2EE_DIRECTORY_HTTP_${response.status}`);
       error.status = response.status;
+      error.operation = path;
       if (response.status === 429) {
         const seconds = Number.parseInt(response.headers.get('retry-after') || '', 10);
         error.retryAfterMs = Number.isSafeInteger(seconds) && seconds > 0 ? Math.min(seconds, 300) * 1000 : 60_000;
@@ -104,6 +105,11 @@ export class E2eeDirectoryClient {
 
   acknowledge(input: { establishmentId: string; agentId: string; ownerDeviceKeyId: string; ack: string }): Promise<any> {
     return this.request('/v1/e2ee/establishments/ack', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  reject(input: { establishmentId: string; agentId: string; ownerDeviceKeyId: string;
+    reasonCode: 'INVALID_WELCOME'|'SCOPE_MISMATCH'|'LOCAL_CRYPTO_ERROR' }): Promise<any> {
+    return this.request('/v1/e2ee/establishments/reject', { method: 'POST', body: JSON.stringify(input) });
   }
 }
 
