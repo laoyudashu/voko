@@ -3,10 +3,23 @@ use std::io::{self, BufRead, Write};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
-    CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint, DirectGroup,
+    AttachmentKey, CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint, DirectGroup,
     DirectRecipientEndpoint, SystemWrappingKeyStore, VaultKeyManager, WireEnvelope,
-    E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    EncryptedAttachment, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
 };
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttachmentPackage {
+    version: String,
+    file_id: String,
+    nonce_prefix: String,
+    plaintext_size: u64,
+    chunk_size: u32,
+    ciphertext_hashes: Vec<String>,
+    chunks: Vec<String>,
+    key: String,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -23,6 +36,7 @@ enum Command {
     Join { welcome: String },
     Encrypt { message_id: String, text: String },
     Decrypt { envelope: WireEnvelope },
+    DecryptAttachment { package: AttachmentPackage },
     Snapshot,
     Restore { snapshot: String },
     SealSnapshot,
@@ -51,6 +65,8 @@ struct Response {
     envelope: Option<WireEnvelope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attachment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snapshot: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,6 +103,7 @@ fn empty() -> Response {
         welcome: None,
         envelope: None,
         text: None,
+        attachment: None,
         snapshot: None,
         sealed_snapshot: None,
         error: None,
@@ -289,6 +306,26 @@ fn handle(
                 text: Some(String::from_utf8(plaintext).map_err(|_| "plaintext is not UTF-8")?),
                 ..empty()
             })
+        }
+        Command::DecryptAttachment { package } => {
+            if package.version != "voko.e2ee.attachment/1" { return Err("invalid encrypted attachment version".into()); }
+            let file_id: [u8; 16] = URL_SAFE_NO_PAD.decode(package.file_id).map_err(|_| "invalid file ID")?
+                .try_into().map_err(|_| "invalid file ID")?;
+            let nonce_prefix: [u8; 8] = URL_SAFE_NO_PAD.decode(package.nonce_prefix).map_err(|_| "invalid nonce")?
+                .try_into().map_err(|_| "invalid nonce")?;
+            let key = AttachmentKey::from_bytes(&URL_SAFE_NO_PAD.decode(package.key).map_err(|_| "invalid attachment key")?)
+                .map_err(|error| error.to_string())?;
+            let ciphertext_hashes = package.ciphertext_hashes.into_iter().map(|value| {
+                URL_SAFE_NO_PAD.decode(value).map_err(|_| "invalid ciphertext hash")?
+                    .try_into().map_err(|_| "invalid ciphertext hash")
+            }).collect::<Result<Vec<[u8; 32]>, &str>>().map_err(str::to_owned)?;
+            let chunks = package.chunks.into_iter().map(|value| URL_SAFE_NO_PAD.decode(value)
+                .map_err(|_| "invalid ciphertext chunk".to_owned())).collect::<Result<Vec<_>,_>>()?;
+            let encrypted = EncryptedAttachment { file_id, nonce_prefix, plaintext_size: package.plaintext_size,
+                chunk_size: package.chunk_size, ciphertext_hashes, chunks };
+            let mut response = empty();
+            response.attachment = Some(URL_SAFE_NO_PAD.encode(encrypted.decrypt(&key).map_err(|error| error.to_string())?));
+            Ok(response)
         }
         Command::Snapshot => {
             let snapshot = group

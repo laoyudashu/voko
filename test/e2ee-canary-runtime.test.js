@@ -13,13 +13,15 @@ const scope = { localAgentId:'agent-local',targetAgentDid:'did:voko:agent',sende
 function envelope(messageId='message-1',ciphertext='Y2lwaGVydGV4dA') { return { version:'voko.e2ee/1',contentType:13,
   groupId:scope.groupId,epoch:1,targetAgentDid:scope.targetAgentDid,conversationScope:scope.conversationScope,
   senderDeviceKeyId:scope.senderDeviceKeyId,messageId,channelType:1,ciphertext }; }
-function fixture(enabled=true) {
+function fixture(enabled=true, overrides={}) {
   const db=new DatabaseSync(':memory:');
   const env={VOKO_E2EE_INTERNAL_RUNTIME_ENABLED:enabled?'true':'false',VOKO_E2EE_INTERNAL_RUNTIME_SCOPES:JSON.stringify([scope])};
   const policy=new CanaryRuntimePolicy(env,false);const store=new CanaryStore(db);const delivered=[];const dispatched=[];
-  const crypto={async decrypt(input){return{plaintext:'private canary plaintext',encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}},
+  const crypto={async decrypt(input){return{plaintext:overrides.plaintext||'private canary plaintext',encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}},
+    async decryptAttachment(){return Buffer.from('attachment body')},
     async encrypt(input){return{envelope:envelope(input.messageId,'cmVwbHk'),encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}}};
-  const runtime=new CanaryRuntime({policy,store,crypto,dispatcher:{async executeCanary(input){dispatched.push(input);return{reply:{content:'private reply'}}}},
+  const runtime=new CanaryRuntime({policy,store,crypto,dispatcher:{async executeCanary(input){dispatched.push(input);await overrides.inspectDispatch?.(input);input.onProviderAccepted?.();return{reply:{content:'private reply'}}}},
+    downloadAttachment:overrides.downloadAttachment,
     async deliverRaw(...args){delivered.push(args);return{success:true}}});return{db,store,runtime,delivered,dispatched};
 }
 
@@ -46,4 +48,14 @@ test('encrypted reply stays contentType 13 on the raw IM transport',async()=>{
   const result=await adapter.deliverEncrypted('agent-local','guest-1','{"ciphertext":"opaque"}','reply-1');
   assert.equal(result.success,true);assert.equal(sent[0],'agent-local');assert.equal(sent[1],'guest-1');assert.equal(sent[2],1);
   const payload=JSON.parse(Buffer.from(sent[3]).toString('utf8'));assert.equal(payload.type,13);assert.equal(payload.content,'{"ciphertext":"opaque"}');
+});
+
+test('encrypted attachment is downloaded, decrypted and removed after exact Provider delivery',async()=>{
+  const manifest={type:'voko.e2ee.attachment-message/1',uploadId:'upload_12345678',fileName:'note.txt',mediaType:'text/plain',
+    size:15,package:{version:'voko.e2ee.attachment/1',fileId:'id',noncePrefix:'nonce',plaintextSize:15,chunkSize:1048576,ciphertextHashes:['hash'],key:'key'}};
+  let observedPath='';const f=fixture(true,{plaintext:JSON.stringify(manifest),downloadAttachment:async()=>Buffer.from(JSON.stringify({
+    version:'voko.e2ee.attachment/1',fileId:'id',noncePrefix:'nonce',plaintextSize:15,chunkSize:1048576,ciphertextHashes:['hash'],chunks:['cipher']})),
+    inspectDispatch:async input=>{observedPath=input.attachments[0].path;assert.equal(require('node:fs').readFileSync(observedPath,'utf8'),'attachment body')}});
+  assert.equal((await f.runtime.handle('agent-local',{contentType:13,content:JSON.stringify(envelope('attachment-message')),fromUid:'guest-principal',channelType:1})).accepted,true);
+  assert.equal(require('node:fs').existsSync(observedPath),false);assert.equal(f.dispatched[0].attachments[0].name,'note.txt');f.db.close();
 });

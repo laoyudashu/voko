@@ -1417,6 +1417,8 @@ ${body}
         executionScope: 'e2ee',
         sourceType: 'visitor',
         sessionScopeId: options.sessionScopeId,
+        attachments: options.attachments,
+        attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {

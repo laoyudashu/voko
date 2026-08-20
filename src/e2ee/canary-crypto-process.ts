@@ -145,6 +145,15 @@ export class CanaryCryptoProcess {
     });
   }
 
+  async decryptAttachment(scope: CanaryScope, packageValue: Record<string, unknown>): Promise<Uint8Array> {
+    return this.withEndpoint(scope, async endpoint => {
+      const opened = await endpoint.request({ op: 'decrypt_attachment', package: packageValue });
+      const encoded = String(opened.attachment || '');
+      if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error('E2EE_ATTACHMENT_INVALID_RESPONSE');
+      return Buffer.from(encoded, 'base64url');
+    });
+  }
+
   async revoke(scope: CanaryScope): Promise<void> {
     await this.withEndpoint(scope, async endpoint => { await endpoint.request({ op: 'revoke_vault' }); });
   }

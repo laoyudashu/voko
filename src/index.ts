@@ -1945,6 +1945,7 @@ async function startMcpServer(args?: any, core?: any) {
       let e2eeStore: any;
       let e2eePolicy: any = canaryPolicy;
       let migrated = { sessions:0,receipts:0 };
+      const e2eeOwnerToken = productionEnabled && userEmail ? getUserAccessToken(db,userEmail) : null;
       if (productionEnabled) {
         const { ProductionE2eeStore } = require('./e2ee/production-store');
         const { ProductionE2eePolicy } = require('./e2ee/production-policy');
@@ -1964,14 +1965,28 @@ async function startMcpServer(args?: any, core?: any) {
             throw error;
           }
           return result;
-        } });
+        },
+        downloadAttachment: productionEnabled && e2eeOwnerToken ? async (agentId: string, uploadId: string, targetScopeId: string) => {
+          const { getUploadDownload } = require('./server/oss');
+          const metadata = await getUploadDownload(uploadId,e2eeOwnerToken,agentId,'private',targetScopeId);
+          const url = String(metadata?.url || '');
+          if (!/^https:\/\//i.test(url)) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_URL_INVALID');
+          const response = await fetch(url,{signal:AbortSignal.timeout(15_000)});
+          const length = Number(response.headers.get('content-length') || 0);
+          if (!response.ok || !Number.isSafeInteger(length) || length < 2 || length > 40*1024*1024) {
+            throw new Error('E2EE_ATTACHMENT_DOWNLOAD_INVALID');
+          }
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength !== length) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_TRUNCATED');
+          return bytes;
+        } : undefined });
       if (productionEnabled) {
         const { E2eeDirectoryClient } = require('./e2ee/directory-client');
         const { ProductionE2eeDirectoryWorker } = require('./e2ee/production-directory-worker');
         const { PendingRecipientProcess } = require('./e2ee/canary-crypto-process');
         const { serverAgentIdFromDid } = require('./core/agent-invitations');
         const nodeCrypto = require('node:crypto');
-        const ownerToken = userEmail ? getUserAccessToken(db,userEmail) : null;
+        const ownerToken = e2eeOwnerToken;
         if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
         const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
         const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
