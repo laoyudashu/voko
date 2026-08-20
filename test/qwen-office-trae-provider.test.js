@@ -34,6 +34,24 @@ test('Trae resolver prefers an explicit traecli binary and exposes ACP mode', ()
   assert.deepEqual(request.candidates, [{ kind: 'explicit', path: explicit }]);
 });
 
+test('Trae resolver checks the official per-user Windows CLI install before PATH', () => {
+  const request = traeCommand.traeCliRuntimeRequest('acp', { LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local' }, 'win32');
+  assert.deepEqual(request.candidates.slice(0,3), [
+    { kind:'explicit', path:'C:\\Users\\tester\\AppData\\Local\\trae-cli\\bin\\traecli.exe' },
+    { kind:'explicit', path:'C:\\Users\\tester\\AppData\\Local\\trae-cli\\bin\\trae-cli.exe' },
+    { kind:'explicit', path:'C:\\Users\\tester\\AppData\\Local\\trae-cli\\bin\\trae-agent.exe' },
+  ]);
+  assert.deepEqual(request.candidates[3], { kind:'native', command:'traecli.exe' });
+});
+
+test('Trae readiness distinguishes an installed CLI from a configured model', () => {
+  const resolver={resolve(){return{available:true,executable:'traecli.exe',argvPrefix:[]};}};
+  assert.deepEqual(traeCommand.getTraeCliReadiness(resolver,()=>({status:1,stdout:'model: no effective model configured',stderr:''})),
+    {executable:true,ready:false,reason:'model_not_configured'});
+  assert.deepEqual(traeCommand.getTraeCliReadiness(resolver,()=>({status:0,stdout:'OK',stderr:''})),
+    {executable:true,ready:true,reason:'ready'});
+});
+
 test('QwenWork CLI provider uses stream-json, no tools, and a stable binding adapter', () => {
   const provider = new QwenOfficeCliProvider({ binPath: 'C:\\tools\\qoderclicn.exe' });
   assert.equal(provider._adapterType, 'qwen-office-cli');

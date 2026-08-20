@@ -22,7 +22,7 @@ const {
   resolveQwenOfficeCommand,
   getQwenOfficeReadiness,
 } = require('./dispatcher/qwen-office-command');
-const { resolveTraeCliCommand, isTraeCliAvailable } = require('./dispatcher/trae-command');
+const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
@@ -605,7 +605,7 @@ class RegistrationOrchestrator {
         : type === 'trae'
             ? (typeof this.options.traeCliAvailable === 'function'
               ? !!this.options.traeCliAvailable()
-              : isTraeCliAvailable())
+              : isTraeCliReady())
             : type === 'codebuddy'
               ? (typeof this.options.codeBuddyCliAvailable === 'function'
                 ? !!this.options.codeBuddyCliAvailable()
@@ -834,7 +834,7 @@ class RegistrationOrchestrator {
     if (type === 'trae') {
       const available = typeof this.options.traeCliAvailable === 'function'
         ? !!this.options.traeCliAvailable()
-        : isTraeCliAvailable();
+        : isTraeCliReady();
       return [
         {
           mode: 'acp', label: 'Trae CLI ACP 实时会话', role: 'primary',
@@ -1342,7 +1342,7 @@ class RegistrationOrchestrator {
           : provider === 'trae'
             ? (typeof this.options.traeCliAvailable === 'function'
               ? !!this.options.traeCliAvailable()
-              : isTraeCliAvailable())
+              : isTraeCliReady())
             : provider === 'codebuddy'
               ? (typeof this.options.codeBuddyCliAvailable === 'function'
                 ? !!this.options.codeBuddyCliAvailable()

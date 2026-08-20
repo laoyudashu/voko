@@ -1,6 +1,6 @@
 const os = require('os');
 const { AcpAdapter } = require('../../adapters/acp-adapter');
-const { resolveTraeCliCommand, traeCliRuntimeRequest } = require('../trae-command');
+const { resolveTraeCliCommand, traeCliRuntimeRequest, getTraeCliReadiness } = require('../trae-command');
 const { withTraeRuntimeLock } = require('./trae-runtime-coordinator');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 import type { ProviderDeliveryReceipt, PushPayload } from '../types';
@@ -40,6 +40,12 @@ class TraeAcpProvider extends AcpAdapter {
 
   async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     return withTraeRuntimeLock(payload.agentId, () => super.push(payload));
+  }
+
+  async preflightDelivery(_agentId: string): Promise<Record<string, unknown>> {
+    const readiness = getTraeCliReadiness();
+    return { ok: readiness.ready, status: readiness.ready ? 'preflight_passed' :
+      (readiness.executable ? 'configuration_required' : 'unavailable'), sideEffects: false, code: readiness.reason };
   }
 }
 
