@@ -1975,8 +1975,11 @@ async function startMcpServer(args?: any, core?: any) {
         if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
         const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
         const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
+        const configuredAgentIds = new Set(String(process.env.VOKO_E2EE_PRODUCTION_AGENT_IDS || '')
+          .split(',').map(value => value.trim()).filter(Boolean));
         const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
           WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
+          .filter((row: any) => configuredAgentIds.size === 0 || configuredAgentIds.has(String(row.agent_id)))
           .flatMap((row: any) => {
             const serverAgentId = serverAgentIdFromDid(row.did);
             if (!serverAgentId) return [];
