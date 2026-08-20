@@ -33,6 +33,7 @@ export class ProductionE2eeDirectoryWorker {
   private readonly processes = new Map<string,Recipient>();
   private timer: NodeJS.Timeout|null = null;
   private running = false;
+  private retryAfter = 0;
 
   constructor(private readonly options: {
     client: E2eeDirectoryClient;
@@ -69,10 +70,10 @@ export class ProductionE2eeDirectoryWorker {
       this.options.store.saveKeyPackage(row);
       row = this.options.store.keyPackage(agent.localAgentId);
     }
-    const ready = await recipient.ready;
-    await this.options.client.registerDevice({ ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,
-      credentialPublicKey:ready.credentialPublicKey });
     if (row.publish_state !== 'published') {
+      const ready = await recipient.ready;
+      await this.options.client.registerDevice({ ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,
+        credentialPublicKey:ready.credentialPublicKey });
       const published = await this.options.client.publishKeyPackage({ agentId:agent.serverAgentId,
         ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,keyPackage:row.key_package,
         expiresAtMs:(this.options.now || Date.now)() + 23 * 60 * 60 * 1000 });
@@ -122,6 +123,7 @@ export class ProductionE2eeDirectoryWorker {
 
   async runOnce(): Promise<void> {
     if (this.running) return;
+    if ((this.options.now || Date.now)() < this.retryAfter) return;
     this.running = true;
     try {
       for (const agent of this.options.agents()) {
@@ -135,14 +137,20 @@ export class ProductionE2eeDirectoryWorker {
             await this.flushAcknowledgements(agent);
             row = await this.ensurePackage(agent);
           }
-        } catch (error) { this.options.onError?.(agent.localAgentId,error); }
+        } catch (error: any) {
+          this.options.onError?.(agent.localAgentId,error);
+          if (Number(error?.status) === 429) {
+            this.retryAfter = (this.options.now || Date.now)() + Math.max(Number(error?.retryAfterMs) || 60_000, 1_000);
+            break;
+          }
+        }
       }
     } finally { this.running = false; }
   }
 
   start(): () => Promise<void> {
     void this.runOnce().catch(error => this.options.onError?.('worker',error));
-    this.timer = setInterval(() => { void this.runOnce().catch(error => this.options.onError?.('worker',error)); },this.options.intervalMs || 5_000);
+    this.timer = setInterval(() => { void this.runOnce().catch(error => this.options.onError?.('worker',error)); },this.options.intervalMs || 30_000);
     this.timer.unref?.();
     return async () => {
       if (this.timer) clearInterval(this.timer);

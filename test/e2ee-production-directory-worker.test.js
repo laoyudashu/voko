@@ -50,5 +50,36 @@ test('directory worker persists session before ACK and replenishes the same devi
   assert.equal(calls.filter(call => call[0] === 'join').length,1);
   await worker.runOnce();
   assert.equal(calls.filter(call => call[0] === 'join').length,1,'redelivery must not join twice');
+  assert.equal(calls.filter(call => call[0] === 'register').length,2,
+    'device registration may accompany each newly published package but must not repeat on an idle poll');
+  db.close();
+});
+
+test('directory worker honors server rate-limit backoff without scanning remaining agents', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  let now = 1_000;
+  const calls = [];
+  const process = {
+    ready:Promise.resolve({ keyPackage:'a2V5',credentialPublicKey:'Y3JlZGVudGlhbA' }),
+    async sealPending() { return Buffer.from('pending'); }, async restorePending() {},
+    async join() { throw new Error('unexpected join'); }, async replenish() { return 'a2V5Mg'; }, close() {},
+  };
+  const limited = Object.assign(new Error('limited'), { status:429,retryAfterMs:10_000 });
+  const client = {
+    async registerDevice(input) { calls.push(['register',input.ownerDeviceKeyId]); throw limited; },
+    async publishKeyPackage() { throw new Error('unexpected publish'); },
+    async pullEstablishments() { throw new Error('unexpected pull'); }, async acknowledge() {},
+  };
+  const agent = id => ({ localAgentId:id,serverAgentId:`server-${id}`,targetAgentDid:`did:wba:test:${id}`,
+    ownerDeviceKeyId:`device-${id}`,ownerScope:'owner-scope',bindingGeneration:1 });
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>[agent('a'),agent('b')],
+    processFactory:()=>process,now:()=>now });
+  await worker.runOnce();
+  await worker.runOnce();
+  assert.deepEqual(calls,[['register','device-a']]);
+  now += 10_000;
+  await worker.runOnce();
+  assert.deepEqual(calls,[['register','device-a'],['register','device-a']]);
   db.close();
 });

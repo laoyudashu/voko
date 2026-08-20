@@ -57,6 +57,10 @@ export class E2eeDirectoryClient {
       const error: any = new Error(String(body?.error?.message || body?.message || `E2EE directory HTTP ${response.status}`));
       error.code = String(body?.error?.code || body?.code || `E2EE_DIRECTORY_HTTP_${response.status}`);
       error.status = response.status;
+      if (response.status === 429) {
+        const seconds = Number.parseInt(response.headers.get('retry-after') || '', 10);
+        error.retryAfterMs = Number.isSafeInteger(seconds) && seconds > 0 ? Math.min(seconds, 300) * 1000 : 60_000;
+      }
       throw error;
     }
     return body.data;

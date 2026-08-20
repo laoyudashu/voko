@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { E2eeDirectoryClient } = require('../build/e2ee/directory-client');
 
-function response(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+function response(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...headers } });
 }
 
 test('directory client authenticates requests and preserves trusted conversation scope', async () => {
@@ -32,4 +32,14 @@ test('directory client fails closed on a missing conversation scope', async () =
 
 test('directory client rejects insecure remote origins', () => {
   assert.throws(() => new E2eeDirectoryClient({ baseUrl: 'http://example.test', token: 'ut_secret' }), /HTTPS_REQUIRED/);
+});
+
+test('directory client exposes bounded Retry-After for production backoff', async () => {
+  const client = new E2eeDirectoryClient({ baseUrl:'https://example.test',token:'ut_secret',fetchImpl:async () =>
+    response({ success:false,error:{ code:'RATE_LIMITED' } },429,{ 'retry-after':'12' }) });
+  await assert.rejects(client.registerDevice({ ownerDeviceKeyId:'device',keyEpoch:1,credentialPublicKey:'key' }), error => {
+    assert.equal(error.status,429);
+    assert.equal(error.retryAfterMs,12_000);
+    return true;
+  });
 });
