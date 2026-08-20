@@ -1968,7 +1968,11 @@ async function startMcpServer(args?: any, core?: any) {
         },
         downloadAttachment: productionEnabled && e2eeOwnerToken ? async (agentId: string, uploadId: string, targetScopeId: string) => {
           const { getUploadDownload } = require('./server/oss');
-          const metadata = await getUploadDownload(uploadId,e2eeOwnerToken,agentId,'private',targetScopeId);
+          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(agentId)?.did || '');
+          const serverAgentId = did.split(':').pop()?.replace(/-/g, '');
+          if (!serverAgentId || !/^[0-9a-f]{32}$/i.test(serverAgentId)) throw new Error('E2EE_ATTACHMENT_AGENT_IDENTITY_INVALID');
+          const canonicalAgentId = `${serverAgentId.slice(0,8)}-${serverAgentId.slice(8,12)}-${serverAgentId.slice(12,16)}-${serverAgentId.slice(16,20)}-${serverAgentId.slice(20)}`.toLowerCase();
+          const metadata = await getUploadDownload(uploadId,e2eeOwnerToken,canonicalAgentId,'private',targetScopeId);
           const url = String(metadata?.url || '');
           if (!/^https:\/\//i.test(url)) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_URL_INVALID');
           const response = await fetch(url,{signal:AbortSignal.timeout(15_000)});
