@@ -1,6 +1,6 @@
 use voko_e2ee_core::{
     AtomicStateStore, CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint,
-    DirectRecipientEndpoint, KeyPackageBinding, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
+    DirectGroup, DirectRecipientEndpoint, KeyPackageBinding, E2EE_CONTENT_TYPE, E2EE_PROTOCOL_VERSION,
 };
 
 fn identity(role: DeviceRole, device: &[u8]) -> DeviceCredentialIdentity {
@@ -86,6 +86,12 @@ fn independent_endpoints_establish_ack_and_exchange_without_shared_private_state
         b"GROUP_ESTABLISHED"
     );
 
+    // Lite handles the acknowledgement, inbound request, and outbound reply
+    // in separate endpoint processes. Persisting and restoring between each
+    // operation must not reuse an MLS sender generation.
+    let recipient_snapshot = recipient.snapshot().unwrap();
+    let mut recipient = DirectGroup::restore(&recipient_snapshot).unwrap();
+
     let message_aad = aad(
         group_id,
         creator.epoch(),
@@ -98,5 +104,19 @@ fn independent_endpoints_establish_ack_and_exchange_without_shared_private_state
     assert_eq!(
         recipient.decrypt(&message_aad, &ciphertext).unwrap(),
         b"first message after authenticated ack"
+    );
+
+    let recipient_snapshot = recipient.snapshot().unwrap();
+    let mut recipient = DirectGroup::restore(&recipient_snapshot).unwrap();
+    let reply_aad = aad(
+        group_id,
+        recipient.epoch(),
+        b"owner-device-independent",
+        b"application-reply-1",
+    );
+    let reply = recipient.encrypt(&reply_aad, b"reply after restored request").unwrap();
+    assert_eq!(
+        creator.decrypt(&reply_aad, &reply).unwrap(),
+        b"reply after restored request"
     );
 }
