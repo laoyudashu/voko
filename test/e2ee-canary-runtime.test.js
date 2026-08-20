@@ -55,7 +55,8 @@ test('encrypted attachment is downloaded, decrypted and removed after exact Prov
     size:15,package:{version:'voko.e2ee.attachment/1',fileId:'id',noncePrefix:'nonce',plaintextSize:15,chunkSize:1048576,ciphertextHashes:['hash'],key:'key'}};
   let observedPath='';const f=fixture(true,{plaintext:JSON.stringify(manifest),downloadAttachment:async()=>Buffer.from(JSON.stringify({
     version:'voko.e2ee.attachment/1',fileId:'id',noncePrefix:'nonce',plaintextSize:15,chunkSize:1048576,ciphertextHashes:['hash'],chunks:['cipher']})),
-    inspectDispatch:async input=>{observedPath=input.attachments[0].path;assert.equal(require('node:fs').readFileSync(observedPath,'utf8'),'attachment body')}});
+    inspectDispatch:async input=>{observedPath=input.attachments[0].path;assert.match(input.content,/Review the attachment and respond when appropriate/);
+      assert.equal(require('node:fs').readFileSync(observedPath,'utf8'),'attachment body')}});
   assert.equal((await f.runtime.handle('agent-local',{contentType:13,content:JSON.stringify(envelope('attachment-message')),fromUid:'guest-principal',channelType:1})).accepted,true);
   assert.equal(require('node:fs').existsSync(observedPath),false);assert.equal(f.dispatched[0].attachments[0].name,'note.txt');f.db.close();
 });
