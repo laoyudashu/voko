@@ -123,6 +123,32 @@ test('external integration proxy maps local Agent ID and preserves one-time cred
   assert.ok(calls.some((call) => call.init.method === 'DELETE' && call.url.endsWith('/int-created')));
 });
 
+test('external integration page shows 10 integrations per page and preserves Agent ID', async (t) => {
+  const integrations = Array.from({ length: 12 }, (_, index) => ({
+    integration_id: `int-${index + 1}`,
+    name: `Integration ${index + 1}`,
+    webhook_url: `https://example.com/events/${index + 1}`,
+    token_prefix: `vext_${index + 1}`,
+    status: 'active',
+    agentIds: [PUBLIC_AGENT_ID],
+  }));
+  const server = await startApp(async () => jsonResponse({ success: true, data: { integrations } }));
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  const base = `http://127.0.0.1:${server.address().port}/external-integrations?agentId=${LOCAL_AGENT_ID}`;
+
+  const firstPage = await (await fetch(base)).text();
+  assert.match(firstPage, />Integration 1</);
+  assert.match(firstPage, />Integration 10</);
+  assert.doesNotMatch(firstPage, />Integration 11</);
+  assert.match(firstPage, new RegExp(`agentId=${LOCAL_AGENT_ID}&page=2`));
+
+  const secondPage = await (await fetch(`${base}&page=2`)).text();
+  assert.doesNotMatch(secondPage, />Integration 10</);
+  assert.match(secondPage, />Integration 11</);
+  assert.match(secondPage, />Integration 12</);
+  assert.match(secondPage, new RegExp(`agentId=${LOCAL_AGENT_ID}&page=1`));
+});
+
 test('external integration creation rejects unsafe webhook URLs before contacting the server', async (t) => {
   let called = false;
   const server = await startApp(async () => { called = true; return jsonResponse({ success: true }); });
