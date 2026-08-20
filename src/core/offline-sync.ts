@@ -79,7 +79,7 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
 
 interface MessageHandlerLike {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
-  handleEncryptedMessage?(agentId: string, data: InboundMessage): Promise<{ handled: boolean; accepted: boolean }>;
+  handleEncryptedMessage?(agentId: string, data: InboundMessage): Promise<{ handled: boolean; accepted: boolean; code?: string }>;
   forwardToAgent(...args: unknown[]): unknown;
 }
 
@@ -115,6 +115,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const PERMANENT_E2EE_REJECTIONS = new Set([
+  'E2EE_ENVELOPE_INVALID',
+  'E2EE_ROUTE_REJECTED',
+  'E2EE_SCOPE_REJECTED',
+  'E2EE_SENDER_DEVICE_CHANGED',
+  'E2EE_MESSAGE_ID_CONFLICT',
+]);
+
+function isPermanentE2eeRejection(code: unknown): boolean {
+  return PERMANENT_E2EE_REJECTIONS.has(String(code || ''));
+}
+
 /**
  * 拉取离线消息并转发
  *
@@ -139,7 +151,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?
     `).all<AgentRow>(currentOwnerEmail);
     const cursorMap = loadCursorMap(db);
-    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string; messageSeq?: number }> = [];
+    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string;
+      messageSeq?: number; agentAuthored?: boolean }> = [];
 
     for (const agent of agents) {
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
@@ -206,6 +219,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               agentId: agent.agent_id,
               cursorKey: key,
               messageSeq,
+              agentAuthored: msg.from_uid === agent.imUid,
               data: {
                 fromUid: msg.from_uid || '',
                 toUid,
@@ -235,10 +249,34 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     // E2EE messages are claimed before the ordinary persistence/forwarding
     // path. A disabled or rejected Canary is still handled fail-closed and is
     // never reinterpreted as visitor plaintext.
+    const blockedE2eeAt = new Map<string, number>();
     for (const pending of pendingMessages) {
       if (Number(pending.data?.contentType) !== 13) continue;
+      // The channel history also contains the Agent's encrypted replies. They
+      // have already advanced the local sender ratchet and must never be fed
+      // back into the inbound E2EE runtime.
+      if (pending.agentAuthored) {
+        pending.data = undefined;
+        continue;
+      }
       if (typeof messageHandler.handleEncryptedMessage === 'function') {
-        await messageHandler.handleEncryptedMessage(pending.agentId,pending.data!);
+        const result = await messageHandler.handleEncryptedMessage(pending.agentId,pending.data!);
+        if (!result?.accepted) {
+          const code = String(result?.code || 'E2EE_REJECTED');
+          if (isPermanentE2eeRejection(code)) {
+            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 永久拒绝，隔离密文并推进游标 code=${code}`);
+          } else {
+            const sequence = pending.messageSeq || 0;
+            const previous = blockedE2eeAt.get(pending.cursorKey);
+            blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
+            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 暂未接受，保留当前密文等待重试 code=${code}`);
+          }
+        }
+      } else {
+        const sequence = pending.messageSeq || 0;
+        const previous = blockedE2eeAt.get(pending.cursorKey);
+        blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
+        console.warn(`[离线同步][E2EE] agent=${pending.agentId} 处理器不可用，保留游标等待重试`);
       }
       pending.data = undefined;
     }
@@ -260,7 +298,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
               if (payload) collected.push(payload);
             }
-            if (p.messageSeq !== undefined) {
+            const blockedAt = blockedE2eeAt.get(p.cursorKey);
+            if (p.messageSeq !== undefined && (blockedAt === undefined || (blockedAt > 0 && p.messageSeq < blockedAt))) {
               advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
             }
           }
@@ -388,4 +427,4 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
   };
 }
 
-module.exports = { syncOfflineMessages, createOfflineSyncCoordinator, decodeOfflinePayload };
+module.exports = { syncOfflineMessages, createOfflineSyncCoordinator, decodeOfflinePayload, isPermanentE2eeRejection };

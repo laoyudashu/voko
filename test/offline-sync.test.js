@@ -8,7 +8,7 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { decodeOfflinePayload } = require('../build/core/offline-sync');
+const { decodeOfflinePayload, isPermanentE2eeRejection } = require('../build/core/offline-sync');
 
 // 模拟 syncOfflineMessages 中的 payload 解码逻辑
 function decodePayload(payload) {
@@ -77,6 +77,22 @@ describe('offline route metadata decoding', () => {
       _voko: { routeId: 'route-a' }
     })).toString('base64');
     assert.equal(decodeOfflinePayload(payload)._voko, null);
+  });
+});
+
+describe('E2EE offline rejection classification', () => {
+  it('quarantines permanently invalid ciphertext instead of poisoning the channel cursor', () => {
+    for (const code of ['E2EE_ENVELOPE_INVALID', 'E2EE_ROUTE_REJECTED', 'E2EE_SCOPE_REJECTED',
+      'E2EE_SENDER_DEVICE_CHANGED', 'E2EE_MESSAGE_ID_CONFLICT']) {
+      assert.equal(isPermanentE2eeRejection(code), true);
+    }
+  });
+
+  it('retains transient runtime failures for retry', () => {
+    for (const code of ['E2EE_CANARY_DISABLED', 'E2EE_CANARY_SESSION_LOCKED',
+      'E2EE_PROVIDER_EXECUTION_UNAVAILABLE', 'E2EE_ENDPOINT_EXITED_1']) {
+      assert.equal(isPermanentE2eeRejection(code), false);
+    }
   });
 });
 
