@@ -49,25 +49,38 @@ export class CanaryRuntime {
 
   claims(message: any): boolean { return this.options.policy.claims(message?.contentType); }
 
+  private diagnostic(stage: string, outcome: 'ok'|'skip'|'error', fields: Record<string,unknown> = {}): void {
+    const clean = (value: unknown) => String(value || '').replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,80);
+    const short = (value: unknown) => { const text=clean(value); return text.length<=12?text:`${text.slice(0,6)}..${text.slice(-4)}`; };
+    const record = { stage,outcome,agent:clean(fields.agent),group:short(fields.group),message:short(fields.message),
+      state:clean(fields.state),code:clean(fields.code),providerAccepted:Boolean(fields.providerAccepted) };
+    const line=`[E2EE_DIAG] ${JSON.stringify(record)}`;
+    if(outcome==='error')console.warn(line);else console.debug(line);
+  }
+
   async handle(localAgentId: string, message: any): Promise<{ handled:true;accepted:boolean;code?:string }> {
     if (!this.claims(message)) throw new Error('E2EE_CANARY_NOT_CLAIMED');
     if (this.disabled) return { handled:true,accepted:false,code:'E2EE_CANARY_EMERGENCY_DISABLED' };
     let envelope: CanaryEnvelope;
     let scope: any;
+    let stage = 'lite.parse_authorize';
     try {
       envelope = parseCanaryEnvelope(message.content);
       scope = this.options.policy.authorize(localAgentId,envelope,message);
       if (String(message.fromUid || '') === '' || Number(message.channelType || 1) !== 1) throw new Error('E2EE_CANARY_ROUTE_REJECTED');
     } catch (error: any) {
       this.stats.rejected += 1;
+      this.diagnostic(stage,'error',{agent:localAgentId,code:error?.message});
       return { handled:true,accepted:false,code:String(error?.message || 'E2EE_CANARY_REJECTED') };
     }
     const digest = crypto.createHash('sha256').update(String(message.content)).digest('base64url');
     let providerAccepted = false;
     try {
+      stage='lite.reserve';
       if (this.options.store.reserve(scope,envelope.messageId,digest) === 'duplicate') {
         message?.ack?.();
         if (message) message.__e2eeReceiptAcked = true;
+        this.diagnostic('lite.duplicate','skip',{agent:localAgentId,group:scope.groupId,message:envelope.messageId});
         return { handled:true,accepted:true,code:'duplicate' };
       }
       // Receipt ACK only means that the immutable ciphertext is durably owned.
@@ -76,6 +89,7 @@ export class CanaryRuntime {
       if (message) message.__e2eeReceiptAcked = true;
       const session = this.options.store.session(scope.groupId);
       if (!session || session.status === 'locked') throw new Error('E2EE_CANARY_SESSION_LOCKED');
+      stage='lite.decrypt';
       const opened = await this.options.crypto.decrypt({ scope,envelope,encryptedState:session.encrypted_state,
         stateVersion:Number(session.state_version) });
       this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
@@ -83,14 +97,17 @@ export class CanaryRuntime {
       this.stats.received += 1;
       const execute = this.options.dispatcher.executeE2ee || this.options.dispatcher.executeCanary;
       if (!execute) throw new Error('E2EE_PROVIDER_EXECUTION_UNAVAILABLE');
+      stage='lite.prepare';
       const prepared = await this.prepareAttachment(localAgentId, String(message.fromUid), scope, opened.plaintext, envelope.messageId);
       let result: any;
       try {
+        stage='lite.provider_execute';
         result = await execute.call(this.options.dispatcher,{ agentId:localAgentId,content:prepared.content,
           taskId:envelope.messageId,contextId:scope.conversationScope,sessionScopeId:scope.groupId,
           attachments:prepared.attachments,attachmentOutputDirectory:prepared.outputDirectory,
-          onProviderAccepted:()=>{providerAccepted=true;this.options.store.transition(envelope.messageId,['received'],'provider_accepted');} });
+          onProviderAccepted:()=>{providerAccepted=true;stage='lite.provider_accepted';this.options.store.transition(envelope.messageId,['received'],'provider_accepted');} });
       } finally { await prepared.cleanup(); }
+      stage='lite.reply_encrypt';
       const current = this.options.store.session(scope.groupId);
       const replyId = `e2ee-reply-${crypto.randomUUID()}`;
       const sealed = await this.options.crypto.encrypt({ scope,messageId:replyId,plaintext:String(result.reply?.content || ''),
@@ -98,13 +115,17 @@ export class CanaryRuntime {
       this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
       const encoded = JSON.stringify(sealed.envelope);
       this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
+      stage='lite.reply_deliver';
       await this.options.deliverRaw(localAgentId,String(message.fromUid),encoded,replyId);
       this.options.store.transition(envelope.messageId,['reply_ready'],'completed');
       this.stats.replied += 1;
+      this.diagnostic('lite.completed','ok',{agent:localAgentId,group:scope.groupId,message:envelope.messageId,state:'completed'});
       return { handled:true,accepted:true };
     } catch (error: any) {
       this.stats.failures += 1;
       try { this.options.store.transition(envelope.messageId,providerAccepted?['provider_accepted','reply_ready']:['received'],providerAccepted?'outcome_unknown':'failed'); } catch {}
+      this.diagnostic(stage,'error',{agent:localAgentId,group:scope?.groupId,message:envelope?.messageId,
+        code:error?.code||error?.message,providerAccepted});
       return { handled:true,accepted:false,code:String(error?.code || error?.message || 'E2EE_CANARY_FAILED') };
     }
   }
