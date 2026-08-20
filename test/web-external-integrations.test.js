@@ -53,12 +53,13 @@ async function startApp(externalGatewayFetch) {
   });
 }
 
-test('external integration page filters by Agent and never renders stored secrets', async (t) => {
+test('external integration page masks credentials and provides copy controls', async (t) => {
   const calls = [];
   const externalGatewayFetch = async (url, init) => {
     calls.push({ url: String(url), init });
     return jsonResponse({ success: true, data: { integrations: [
-      { integration_id: 'int-matching', name: 'CRM', webhook_url: 'https://crm.example.com/events', token_prefix: 'voko_abc', status: 'active', agentIds: [PUBLIC_AGENT_ID] },
+      { integration_id: 'int-matching', name: 'CRM', webhook_url: 'https://crm.example.com/events', token_prefix: 'vext_abc',
+        token: 'vext_abcdefghijklmnopqrstuvwxyz', webhookSecret: 'secret_abcdefghijklmnopqrstuvwxyz', status: 'active', agentIds: [PUBLIC_AGENT_ID] },
       { integration_id: 'int-other', name: 'Other', webhook_url: 'https://other.example.com/events', token_prefix: 'voko_xyz', status: 'active', agentIds: ['11111111-1111-1111-1111-111111111111'] },
     ] } });
   };
@@ -72,9 +73,14 @@ test('external integration page filters by Agent and never renders stored secret
   assert.match(html, /https:\/\/crm\.example\.com\/events/);
   assert.match(html, new RegExp('/api/external/v1/gateway/agents/' + PUBLIC_AGENT_ID + '/messages'));
   assert.match(html, /data-voko-copy-value="https:[^"]+\/messages"/);
+  assert.match(html, /vext_abc…wxyz/); assert.match(html, /secret_a…wxyz/);
+  assert.match(html, /data-voko-copy-value="vext_abcdefghijklmnopqrstuvwxyz"/);
+  assert.match(html, /data-voko-copy-value="secret_abcdefghijklmnopqrstuvwxyz"/);
   assert.doesNotMatch(html, />Other</);
   assert.match(html, /id="external-credentials"/);
   assert.match(html, /data-role="confirm-external-revoke"/);
+  assert.match(html, />停用接入</);
+  assert.doesNotMatch(html, />最近调用</);
   assert.doesNotMatch(html, /confirm\(/);
   assert.doesNotMatch(html, /user-access-secret/);
   assert.equal(calls.length, 1);
