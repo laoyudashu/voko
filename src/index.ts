@@ -54,6 +54,7 @@ const _emit = process.emit.bind(process);
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const express = require('express');
 const { ensureLoopbackNoProxy } = require('./core/loopback-env');
 
