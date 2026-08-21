@@ -9,7 +9,7 @@ use voko_e2ee_core::{
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-enum Command { Join { welcome: String }, Ack, Decrypt { ciphertext: String } }
+enum Command { Join { welcome: String }, Ack, Decrypt { ciphertext: String }, EncryptReply }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,11 +40,23 @@ fn main() {
             Ok(Command::Ack) => group.as_mut().ok_or("group not joined".to_string()).and_then(|g| {
                 let route = aad(g.epoch(), b"cross-process-owner", b"group-established-ack");
                 g.encrypt(&route, b"GROUP_ESTABLISHED").map(|c| STANDARD_NO_PAD.encode(c)).map_err(|e| e.to_string())
-            }).map(|ciphertext| Response { success: true, key_package: None, ciphertext: Some(ciphertext), text: None, error: None }).unwrap_or_else(fail),
+            }).and_then(|ciphertext| {
+                let snapshot = group.as_ref().ok_or("group not joined".to_string())?.snapshot().map_err(|e| e.to_string())?;
+                group = Some(DirectGroup::restore(&snapshot).map_err(|e| e.to_string())?);
+                Ok(Response { success: true, key_package: None, ciphertext: Some(ciphertext), text: None, error: None })
+            }).unwrap_or_else(fail),
             Ok(Command::Decrypt { ciphertext }) => group.as_mut().ok_or("group not joined".to_string()).and_then(|g| {
                 let route = aad(g.epoch(), b"cross-process-browser", b"application-1");
                 STANDARD_NO_PAD.decode(ciphertext).map_err(|e| e.to_string()).and_then(|c| g.decrypt(&route, &c).map_err(|e| e.to_string()))
-            }).and_then(|p| String::from_utf8(p).map_err(|e| e.to_string())).map(|text| Response { success: true, key_package: None, ciphertext: None, text: Some(text), error: None }).unwrap_or_else(fail),
+            }).and_then(|p| String::from_utf8(p).map_err(|e| e.to_string())).and_then(|text| {
+                let snapshot = group.as_ref().ok_or("group not joined".to_string())?.snapshot().map_err(|e| e.to_string())?;
+                group = Some(DirectGroup::restore(&snapshot).map_err(|e| e.to_string())?);
+                Ok(Response { success: true, key_package: None, ciphertext: None, text: Some(text), error: None })
+            }).unwrap_or_else(fail),
+            Ok(Command::EncryptReply) => group.as_mut().ok_or("group not joined".to_string()).and_then(|g| {
+                let route = aad(g.epoch(), b"cross-process-owner", b"application-reply-1");
+                g.encrypt(&route, b"reply from Lite process").map(|c| STANDARD_NO_PAD.encode(c)).map_err(|e| e.to_string())
+            }).map(|ciphertext| Response { success: true, key_package: None, ciphertext: Some(ciphertext), text: None, error: None }).unwrap_or_else(fail),
             Err(error) => fail(error),
         };
         write_response(&mut out, response);

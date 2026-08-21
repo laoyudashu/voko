@@ -63,7 +63,10 @@ const server = http.createServer(async (request, response) => {
     if (pathname === '/canary/message') {
       const record = await body(request);
       relayRecords.push(record.ciphertext);
-      return send(response, await liteRequest({ op: 'decrypt', ciphertext: record.ciphertext }));
+      const opened = await liteRequest({ op: 'decrypt', ciphertext: record.ciphertext });
+      const reply = await liteRequest({ op: 'encrypt_reply' });
+      relayRecords.push(reply.ciphertext);
+      return send(response, { ...opened, reply: reply.ciphertext });
     }
     const relative = pathname === '/' ? 'cross-process.html' : pathname.slice(1);
     const root = relative.startsWith('voko_e2ee_') ? wasmRoot : fixtureRoot;

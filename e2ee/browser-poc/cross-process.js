@@ -23,6 +23,9 @@ try {
   const ciphertext = creator.encrypt_message(plaintext);
   const delivered = await json('/canary/message', { ciphertext });
   if (delivered.text !== plaintext) throw new Error('Lite plaintext mismatch');
+  if (creator.decrypt_reply(delivered.reply) !== 'reply from Lite process') {
+    throw new Error('browser reply plaintext mismatch');
+  }
   document.body.dataset.status = 'passed';
   document.body.textContent = 'Cross-process E2EE canary passed.';
 } catch (error) {

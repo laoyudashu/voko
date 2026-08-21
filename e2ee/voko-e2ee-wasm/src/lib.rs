@@ -269,6 +269,10 @@ impl WasmCreatorEndpoint {
             .encrypt(&aad, plaintext.as_bytes()).map_err(|error| JsError::new(&error.to_string()))?;
         Ok(STANDARD_NO_PAD.encode(ciphertext))
     }
+
+    pub fn decrypt_reply(&mut self, ciphertext: String) -> Result<String, JsError> {
+        self.decrypt(ciphertext, b"cross-process-owner", b"application-reply-1")
+    }
 }
 
 impl WasmCreatorEndpoint {
