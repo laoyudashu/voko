@@ -7,24 +7,26 @@ const TERMINAL_STATES = new Set<StandardTaskState>(['COMPLETED', 'FAILED', 'CANC
 
 interface CreateLocalTaskInput { gatewayTaskId: string; contextId: string; executionId: string; agentId: string; gatewayUid: string;
   principalScope: string; scopeVersion: number; scopeKeyId: string;
-  bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number }
+  bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number; sourceChannel?: 'a2a' | 'rest_webhook' }
 
 class A2ALocalTaskStore {
   constructor(private readonly db: DatabaseSync) {}
-  getTaskLogRoute(taskId: string): { agentId: string; peerLabel: string } | null {
-    const row = this.db.prepare('SELECT agent_id,principal_scope FROM a2a_local_tasks WHERE gateway_task_id=?')
-      .get(taskId) as { agent_id?: string; principal_scope?: string } | undefined;
+  getTaskLogRoute(taskId: string): { agentId: string; peerLabel: string; protocolLabel: string } | null {
+    const row = this.db.prepare('SELECT agent_id,principal_scope,source_channel FROM a2a_local_tasks WHERE gateway_task_id=?')
+      .get(taskId) as { agent_id?: string; principal_scope?: string; source_channel?: string } | undefined;
     if (!row?.agent_id || !row.principal_scope) return null;
-    return { agentId: row.agent_id, peerLabel: `A2A-${row.principal_scope.slice(0, 8)}` };
+    const external = row.source_channel === 'rest_webhook';
+    return { agentId: row.agent_id, protocolLabel: external ? 'REST/Webhook' : 'A2A',
+      peerLabel: external ? '外部接入' : `A2A-${row.principal_scope.slice(0, 8)}` };
   }
   createTask(input: CreateLocalTaskInput): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_tasks
-      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,principal_scope,scope_version,scope_key_id,
+      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,principal_scope,scope_version,scope_key_id,source_channel,
        standard_state,delivery_state,binding_generation,owner_epoch,policy_revision,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
+      VALUES (?,?,?,?,?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
       input.gatewayTaskId, input.contextId, input.executionId, input.agentId, input.gatewayUid,
-      input.principalScope, input.scopeVersion, input.scopeKeyId, input.bindingGeneration || 1,
+      input.principalScope, input.scopeVersion, input.scopeKeyId, input.sourceChannel || 'a2a', input.bindingGeneration || 1,
       input.ownerEpoch || 1, input.policyRevision || 1, now, now);
     return Number(result.changes) === 1;
   }

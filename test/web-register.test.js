@@ -118,7 +118,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /class="oauth-icon"/);
     assert.match(html, /fill="#4285F4"/);
     assert.match(html, /fill="currentColor"/);
-    assert.match(html, /class="oauth-buttons" hidden/);
+    assert.match(html, /class="oauth-buttons"/);
+    assert.doesNotMatch(html, /class="oauth-buttons" hidden/);
     assert.doesNotMatch(html, /class="oauth-divider"/);
     assert.ok(html.indexOf('</form>') < html.indexOf('class="oauth-buttons"'));
     assert.match(html, /grid-template-columns:1fr 1fr/);
@@ -133,7 +134,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(switchHtml, /data-oauth-provider="google"/);
     assert.match(switchHtml, /data-oauth-provider="github"/);
     assert.match(switchHtml, /class="oauth-icon"/);
-    assert.match(switchHtml, /class="oauth-buttons" hidden/);
+    assert.match(switchHtml, /class="oauth-buttons"/);
+    assert.doesNotMatch(switchHtml, /class="oauth-buttons" hidden/);
     assert.doesNotMatch(switchHtml, /class="oauth-divider"/);
     assert.ok(switchHtml.indexOf('</form>') < switchHtml.indexOf('class="oauth-buttons"'));
     assert.match(switchHtml, /grid-template-columns:1fr 1fr/);

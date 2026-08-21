@@ -62,4 +62,16 @@ test('A2A and REST Webhook tabs use the trusted source channel instead of princi
   assert.doesNotMatch(source, /externalRows=a2aRows\.filter\([^\n]+principal_kind==='api_client'/);
   assert.match(source, /tabBtn\('external'/);
   assert.match(source, /R\.get\('\/agents\/:agentId\/external\/:principalViewId'/);
+  assert.match(source, /id="external-context-tab-rail"/);
+  assert.match(source, /id="external-tabs-prev"/);
+  assert.match(source, /id="external-tabs-next"/);
+  assert.match(source, /web\.agent\.external\.conversation/);
+  assert.match(source, /web\.agent\.external\.processing_status/);
+  assert.match(source, /web\.agent\.external\.webhook_status/);
+  assert.match(source, /webhook_status/);
+  assert.match(source, /webhook_attempt_count/);
+  assert.match(source, /web\.agent\.external\.webhook\.retrying/);
+  assert.doesNotMatch(source, /L\('web\.agent\.external\.config'\)/);
+  assert.match(source, /sort\(\(a,b\)=>a\.createdAt-b\.createdAt\|\|a\.id\.localeCompare\(b\.id\)\)/);
+  assert.match(source, /contexts\[contexts\.length-1\]/);
 });

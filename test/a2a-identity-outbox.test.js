@@ -37,7 +37,7 @@ test('terminal event log identifies the local Agent and pseudonymous A2A peer', 
   const logs = []; const original = console.log; console.log = (...args) => logs.push(args.join(' '));
   try { await new A2AEventOutboxWorker(store, { async sendEvent() { return { status: 'accepted' }; } }).flushOnce('worker'); }
   finally { console.log = original; }
-  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] zodiac → A2A-12345678（完成任务）$/);
+  assert.equal(logs[0], '[A2A] zodiac → A2A-12345678（完成任务）');
 });
 test('event upload network failure retries the same immutable event without marking Provider outcome unknown', async t => {
   const { db, store } = fixture(t); store.createTask({ gatewayTaskId: 'task-1', contextId: 'ctx', executionId: 'exec', agentId: 'agent', gatewayUid: 'gateway',principalScope:'scope-1',scopeVersion:1,scopeKeyId:'key-1' });
@@ -89,6 +89,6 @@ test('A2A logs contain only message-level summaries and never stream payload det
     await worker.drain('worker');
   } finally { console.log = original; }
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] /);
+  assert.match(logs[0], /^\[A2A\] /);
   assert.doesNotMatch(logs.join('\n'), /stream-detail|private-reply/);
 });

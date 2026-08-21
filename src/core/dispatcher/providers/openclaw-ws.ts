@@ -125,6 +125,8 @@ class OpenClawWsProvider {
     this._legacyReplyTimers = new Map();  // 旧版 final 短暂延迟，优先采用新版完整回复
     this._sessionTurns = new Map();  // sessionKey → 当前入站 turn 身份
     this._vokoAgentBySession = new Map(); // OpenClaw 实例 session → VOKO agentId
+    this._agentTurnTails = new Map(); // agentId → 上一轮 final reply 完成信号
+    this._activeAgentTurns = new Map(); // agentId → 当前 turn 及释放函数
 
     // 初始化
     this.loadConfig();
@@ -324,6 +326,29 @@ class OpenClawWsProvider {
     this._processedMsgs.set(dedupKey, Date.now());
     console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
     this.emit('agent.reply', { agentId, visitorId, content: text, sessionKey: resolvedKey, ...identity });
+    if (agentId) this._releaseAgentTurn(agentId, identity.turnId);
+  }
+
+  async _acquireAgentTurn(agentId: string, turnId: string): Promise<() => void> {
+    const previous = this._agentTurnTails.get(agentId); let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    this._agentTurnTails.set(agentId, done);
+    if (previous) await previous;
+    let released = false; let timeout: NodeJS.Timeout;
+    const release = () => {
+      if (released) return; released = true; clearTimeout(timeout);
+      if (this._activeAgentTurns.get(agentId)?.turnId === turnId) this._activeAgentTurns.delete(agentId);
+      if (this._agentTurnTails.get(agentId) === done) this._agentTurnTails.delete(agentId);
+      resolveDone();
+    };
+    timeout = setTimeout(release, 130_000); timeout.unref?.();
+    this._activeAgentTurns.set(agentId, { turnId, release });
+    return release;
+  }
+
+  _releaseAgentTurn(agentId: string, turnId?: string): void {
+    const active = this._activeAgentTurns.get(agentId);
+    if (active && (!turnId || active.turnId === turnId)) active.release();
   }
 
   _isSameLogicalReply(first: string, second: string): boolean {
@@ -1044,6 +1069,8 @@ class OpenClawWsProvider {
     this._legacyReplyTimers.clear();
     this._chatFinalSessions.clear();
     this._sessionTurns.clear();
+    for (const active of this._activeAgentTurns.values()) active.release();
+    this._activeAgentTurns.clear(); this._agentTurnTails.clear();
     this._replyProtocol = null;
 
     // 清理 pending replies
@@ -1596,6 +1623,9 @@ class OpenClawWsProvider {
   async push(payload: PushPayload): Promise<unknown> {
     await this._waitForAuthenticatedConnection();
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
+    const providerTurnId = String(turnId || messageId || this.generateId());
+    const releaseTurn = await this._acquireAgentTurn(agentId, providerTurnId);
+    try {
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId
@@ -1615,9 +1645,10 @@ class OpenClawWsProvider {
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
     return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
       deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
+    } catch (error) { releaseTurn(); throw error; }
   }
 
   /** 注入系统消息（openclaw 无独立 steer，走 sendToSession）。 */

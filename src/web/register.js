@@ -154,7 +154,7 @@ function loginBody(email, err, tFn, popup) {
     + '<button type="submit" name="action" value="verify" class="btn-success" style="margin:0">' + esc(t('register.login.login_btn')) + '</button>'
     + '</div>'
     + '</form>'
-    + '<div class="oauth-buttons" hidden>'
+    + '<div class="oauth-buttons">'
     + '<button type="button" class="oauth-btn" data-oauth-provider="google" onclick="oauthLogin(\'google\')">' + googleIcon + '<span>' + esc(t('register.login.google')) + '</span></button>'
     + '<button type="button" class="oauth-btn" data-oauth-provider="github" onclick="oauthLogin(\'github\')">' + githubIcon + '<span>' + esc(t('register.login.github')) + '</span></button>'
     + '</div><div id="oauth-status" class="oauth-status"></div>'

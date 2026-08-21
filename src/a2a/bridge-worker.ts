@@ -56,13 +56,16 @@ class A2ABridgeWorker {
       this.options.store.createTask({ gatewayTaskId: envelope.gatewayTaskId, contextId: envelope.contextId,
         executionId: envelope.executionId, agentId: envelope.agentId, gatewayUid: 'mailbox-gateway',
         principalScope, scopeVersion: this.options.scopes.version, scopeKeyId: this.options.scopes.keyId,
+        sourceChannel: envelope.caller.provenance === 'external_gateway' ? 'rest_webhook' : 'a2a',
         bindingGeneration: Number((envelope as any).bindingGeneration || 1), ownerEpoch: Number((envelope as any).ownerEpoch || 1),
         policyRevision: Number((envelope as any).policyRevision || 1) });
       const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId,
         Number(envelope.commandSequence), envelope.operation, envelope);
       if (accepted !== 'duplicate') {
-        const peerLabel = `A2A-${principalScope.slice(0, 8)}`;
-        console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] ${peerLabel} → ${envelope.agentId}（收到消息）`);
+        const external = envelope.caller.provenance === 'external_gateway';
+        const protocolLabel = external ? 'REST/Webhook' : 'A2A';
+        const peerLabel = external ? '外部接入' : `A2A-${principalScope.slice(0, 8)}`;
+        console.log(`[${protocolLabel}] ${peerLabel} → ${envelope.agentId}（收到消息）`);
       }
       await this.options.client.acknowledge(claim.leaseId, item.eventId);
       this.options.store.markReceiptAcknowledged(envelope.eventId);

@@ -144,6 +144,7 @@ class AcpAdapter extends PushProvider {
   _providerStopped: boolean;
   _recoveryTimers: Map<string, NodeJS.Timeout>;
   _recoveryAttempts: Map<string, number>;
+  _sessionTurnTails: Map<string, Promise<void>>;
 
   /**
    * @param {object} [options]
@@ -166,6 +167,7 @@ class AcpAdapter extends PushProvider {
     this._providerStopped = false;
     this._recoveryTimers = new Map<string, NodeJS.Timeout>();
     this._recoveryAttempts = new Map<string, number>();
+    this._sessionTurnTails = new Map<string, Promise<void>>();
 
     // DB 引用（session 句柄持久化）
     this._db = options.db || null;
@@ -392,7 +394,13 @@ class AcpAdapter extends PushProvider {
       const turnId = String(payload.turnId || payload.messageId || `acp-${Date.now()}`);
       this.notifyProviderEvent({ type: 'accepted', agentId, messageId: payload.messageId,
         turnId, terminal: false });
+      const sessionTurnKey = `${agentId}:${String((payload as any).sessionScopeId || fromUid)}`;
+      const previous = this._sessionTurnTails.get(sessionTurnKey);
+      let release!: () => void;
+      const current = new Promise<void>(resolve => { release = resolve; });
+      this._sessionTurnTails.set(sessionTurnKey, current);
       try {
+        if (previous) await previous;
         const receipt = await this._pushViaAcp(payload);
         this.notifyProviderEvent({ type: 'completed', agentId, messageId: payload.messageId,
           turnId, nativeSessionId: receipt.nativeSessionId, terminal: true });
@@ -403,6 +411,9 @@ class AcpAdapter extends PushProvider {
         this.notifyProviderEvent({ type: 'failed', agentId, messageId: payload.messageId,
           turnId, terminal: true, payload: { outcome: (deliveryError as any).deliveryOutcome || 'outcome_unknown' } });
         throw deliveryError;
+      } finally {
+        if (this._sessionTurnTails.get(sessionTurnKey) === current) this._sessionTurnTails.delete(sessionTurnKey);
+        release();
       }
     }
 

@@ -2,10 +2,10 @@
 const assert = require('node:assert/strict'); const fs = require('node:fs'); const os = require('node:os');
 const path = require('node:path'); const test = require('node:test');
 const { A2ABridgeWorker, A2ALocalTaskStore, A2AScopeResolver, initA2ADatabase } = require('../build/a2a');
-function setup(t, execute) {
+function setup(t, execute, provenance = 'guest_a2a') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-bridge-')); const db = initA2ADatabase(path.join(dir, 'a.db'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
-  const envelope = { eventId: 'event-1', gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', commandSequence: 1, operation: 'execute', caller:{principalId:'principal-1',actorKind:'agent',provenance:'guest_a2a'} };
+  const envelope = { eventId: 'event-1', gatewayTaskId: 'task-1', contextId: 'ctx-1', executionId: 'exec-1', agentId: 'agent-1', commandSequence: 1, operation: 'execute', caller:{principalId:'principal-1',actorKind:'agent',provenance} };
   const acknowledgements = []; const client = { async claim() { return { leaseId: 'lease-1', items: [{ eventId: 'event-1', taskId: 'task-1', envelope }] }; },
     async acknowledge(lease, event) { acknowledgements.push([lease, event]); } };
   return { worker: new A2ABridgeWorker({ client, store: new A2ALocalTaskStore(db), scopes:new A2AScopeResolver(db), verify: value => value, execute }), store: new A2ALocalTaskStore(db), acknowledgements };
@@ -41,8 +41,15 @@ test('A2A receive log is a single message-level summary', async t => {
   console.log = (...args) => logs.push(args.join(' '));
   try { await f.worker.pollOnce(); } finally { console.log = original; }
   assert.equal(logs.length, 1);
-  assert.match(logs[0], /^\[\d{2}:\d{2}:\d{2}\] \[A2A\] A2A-[A-Za-z0-9_-]{8} → agent-1（收到消息）$/);
+  assert.match(logs[0], /^\[A2A\] A2A-[A-Za-z0-9_-]{8} → agent-1（收到消息）$/);
   assert.doesNotMatch(logs.join('\n'), /payload|content|secret/i);
+});
+
+test('REST Webhook receive log uses its actual protocol name', async t => {
+  const f = setup(t, async () => {}, 'external_gateway'); const logs = []; const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try { await f.worker.pollOnce(); } finally { console.log = original; }
+  assert.deepEqual(logs, ['[REST/Webhook] 外部接入 → agent-1（收到消息）']);
 });
 
 test('bridge runs different agents up to the limit while serializing each agent', async t => {

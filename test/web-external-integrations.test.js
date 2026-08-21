@@ -92,6 +92,9 @@ test('external integration page masks credentials and provides copy controls', a
   assert.match(html, />编辑</);
   assert.match(html, />操作<\/th>/);
   assert.match(html, />停用<\/button>/);
+  assert.match(html, /webhook-probe/);
+  assert.match(html, /markInvalid/);
+  assert.match(html, /L\.invalid/);
   assert.doesNotMatch(html, />停用接入<\/button>/);
   assert.doesNotMatch(html, />最近调用</);
   assert.doesNotMatch(html, /confirm\(/);
@@ -107,6 +110,7 @@ test('external integration proxy maps local Agent ID and preserves one-time cred
   const calls = [];
   const externalGatewayFetch = async (url, init = {}) => {
     calls.push({ url: String(url), init });
+    if (String(url).endsWith('/int-created/webhook-probe')) return jsonResponse({ success: true, data: { valid: false, status: 404 } });
     if (init.method === 'POST') {
       return jsonResponse({ success: true, data: {
         integrationId: 'int-created', token: 'voko_once_token', webhookSecret: 'whsec_once_secret',
@@ -143,6 +147,10 @@ test('external integration proxy maps local Agent ID and preserves one-time cred
   assert.equal(editCall.url.endsWith('/int-created'), true);
   assert.deepEqual(JSON.parse(editCall.init.body), { name: 'Support CRM 2', webhookUrl: 'https://crm.example.com/voko-2' });
   assert.equal(editCall.init.headers.Authorization, 'Bearer user-access-secret');
+
+  const probed = await fetch(`${base}/api/external-integrations/int-created/webhook-probe`, { method: 'POST' });
+  assert.equal(probed.status, 200);assert.deepEqual((await probed.json()).data,{valid:false,status:404});
+  assert.ok(calls.some(call=>call.init.method==='POST'&&call.url.endsWith('/int-created/webhook-probe')));
 
   const revoked = await fetch(`${base}/api/external-integrations/int-created`, { method: 'DELETE' });
   assert.equal(revoked.status, 200);

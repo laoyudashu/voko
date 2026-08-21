@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const A2A_SCHEMA_VERSION = 6;
+const A2A_SCHEMA_VERSION = 7;
 
 interface InitA2ADatabaseOptions {
   createParent?: boolean;
@@ -63,7 +63,7 @@ function initA2ADatabase(
           delivery_state TEXT NOT NULL, last_command_sequence INTEGER NOT NULL DEFAULT 0,
           last_producer_sequence INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
           binding_generation INTEGER NOT NULL DEFAULT 1, owner_epoch INTEGER NOT NULL DEFAULT 1,
-          policy_revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+          policy_revision INTEGER NOT NULL DEFAULT 1, source_channel TEXT NOT NULL DEFAULT 'a2a', updated_at INTEGER NOT NULL,
           accepted_at INTEGER, started_at INTEGER, finished_at INTEGER,
           CHECK (standard_state IN ('SUBMITTED','WORKING','INPUT_REQUIRED','AUTH_REQUIRED','COMPLETED','FAILED','CANCELED','REJECTED')),
           CHECK (delivery_state IN ('QUEUED_OFFLINE','SENDING','IM_ACCEPTED','DELIVERED','EXECUTING','DELIVERY_UNKNOWN','DEAD_LETTER'))
@@ -145,6 +145,10 @@ function initA2ADatabase(
         if (!taskColumns.has('accepted_at')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN accepted_at INTEGER');
         if (!taskColumns.has('started_at')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN started_at INTEGER');
         if (!taskColumns.has('finished_at')) db.exec('ALTER TABLE a2a_local_tasks ADD COLUMN finished_at INTEGER');
+      }
+      if (currentVersion < 7) {
+        const taskColumns = new Set((db.prepare('PRAGMA table_info(a2a_local_tasks)').all() as Array<{ name: string }>).map(row => row.name));
+        if (!taskColumns.has('source_channel')) db.exec("ALTER TABLE a2a_local_tasks ADD COLUMN source_channel TEXT NOT NULL DEFAULT 'a2a'");
       }
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_a2a_local_tasks_agent_updated ON a2a_local_tasks(agent_id, updated_at);

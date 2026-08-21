@@ -146,6 +146,20 @@ describe('Lite OpenClaw WS provider', () => {
     );
   });
 
+  it('serializes same-Agent turns until the Provider receives the correlated final reply', async () => {
+    const provider = createProvider(); const sent = [];
+    provider._waitForAuthenticatedConnection = async () => {};
+    provider.sendToSession = async (sessionKey, _prompt, extra) => { sent.push({ sessionKey, turnId: extra.turnId }); };
+    const payload = index => ({ agentId:'agent-a',fromUid:`visitor-${index}`,content:`hello-${index}`,
+      messageId:`message-${index}`,turnId:`turn-${index}` });
+    const first = await provider.push(payload(1));
+    const secondPromise = provider.push(payload(2));
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 1);
+    provider._emitAgentReplyFromSession(first.nativeSessionId, 'reply-1', { turnId:'turn-1',replyId:'reply-1' });
+    const second = await secondPromise; assert.equal(sent.length, 2); assert.equal(sent[1].turnId, 'turn-2');
+    provider._emitAgentReplyFromSession(second.nativeSessionId, 'reply-2', { turnId:'turn-2',replyId:'reply-2' });
+  });
+
   it('isolates VOKO Agents sharing one OpenClaw instance and preserves the reply target', () => {
     const first = buildOpenClawSessionKey('shared', 'agent-a', 'group:one');
     const second = buildOpenClawSessionKey('shared', 'agent-b', 'group:one');
