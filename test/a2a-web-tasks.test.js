@@ -53,3 +53,12 @@ test('A2A tab is not rendered for an empty or unavailable task source', () => {
   assert.match(source, /a2aReadAvailable=false/);
   assert.match(source, /const a2aPanel=showA2ATab\?/);
 });
+test('A2A and REST Webhook tabs use the trusted source channel instead of principal type inference', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(source, /source_channel:row\.source_channel/);
+  assert.match(source, /row\.source_channel==='rest_webhook'/);
+  assert.match(source, /row\.source_channel!=='rest_webhook'/);
+  assert.doesNotMatch(source, /externalRows=a2aRows\.filter\([^\n]+principal_kind==='api_client'/);
+  assert.match(source, /tabBtn\('external'/);
+  assert.match(source, /R\.get\('\/agents\/:agentId\/external\/:principalViewId'/);
+});

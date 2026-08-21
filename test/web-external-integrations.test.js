@@ -70,10 +70,14 @@ test('external integration page masks credentials and provides copy controls', a
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /CRM/);
-  assert.match(html, /<strong>CRM<\/strong><\/td>/);
+  assert.match(html, /<strong title="CRM"[^>]*>CRM<\/strong><\/td>/);
   assert.match(html, /https:\/\/crm\.example\.com\/events/);
   assert.match(html, new RegExp('/api/external/v1/gateway/agents/' + PUBLIC_AGENT_ID + '/messages'));
   assert.match(html, /data-voko-copy-value="https:[^"]+\/messages"/);
+  assert.doesNotMatch(html, />复制 REST 地址<\/button>/);
+  assert.match(html, /table-layout:fixed/);
+  assert.match(html, /<col style="width:15%"><col style="width:37%">/);
+  assert.match(html, /max-width:130px;overflow:hidden;text-overflow:ellipsis/);
   assert.match(html, /第三方系统使用 API Token 调用此地址/);
   assert.match(html, /创建后生成 API Token 和 Webhook 密钥，Agent 将回复推送到该地址/);
   assert.match(html, /id="external-webhook"[^>]*style="max-width:none;margin:0"><button type="submit" class="btn-sm" style="margin:0;white-space:nowrap">创建接入<\/button>/);
@@ -90,6 +94,9 @@ test('external integration page masks credentials and provides copy controls', a
   assert.doesNotMatch(html, /user-access-secret/);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].init.headers.Authorization, 'Bearer user-access-secret');
+
+  const createdResponse = await fetch(`http://127.0.0.1:${server.address().port}/external-integrations?agentId=${LOCAL_AGENT_ID}&created=1`);
+  assert.match(await createdResponse.text(), /接入创建成功，已加入下方系统列表/);
 });
 
 test('external integration proxy maps local Agent ID and preserves one-time credentials', async (t) => {
