@@ -20,6 +20,90 @@ afterEach(() => {
 });
 
 describe('Lite OpenClaw WS provider', () => {
+  it('uses a 90 second cold-start budget and shares an in-flight gateway start', async () => {
+    const provider = createProvider();
+    assert.equal(provider.gatewayStartupTimeoutMs, 90000);
+    let starts = 0;
+    let release;
+    provider._startGatewayAndWait = () => {
+      starts += 1;
+      return new Promise((resolve) => { release = resolve; });
+    };
+
+    const first = provider._ensureGatewayRunning();
+    const second = provider._ensureGatewayRunning();
+    assert.equal(starts, 1);
+    release(true);
+    assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  });
+
+  it('does not consume reconnect attempts while the gateway is starting', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayProbeIntervalMs = 5;
+    provider._gatewayStarting = true;
+    provider.reconnectAttempts = 4;
+    provider.scheduleReconnect();
+    assert.equal(provider.reconnectAttempts, 4);
+    provider._gatewayStarting = false;
+    clearTimeout(provider.reconnectTimer);
+    provider.reconnectTimer = null;
+  });
+
+  it('does not consume reconnect attempts while the gateway accepts sockets but is warming up', () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayProbeIntervalMs = 5;
+    provider._gatewayWarmupUntil = Date.now() + 1000;
+    provider.reconnectAttempts = 4;
+    provider.scheduleReconnect();
+    assert.equal(provider.reconnectAttempts, 4);
+    clearTimeout(provider.reconnectTimer);
+    provider.reconnectTimer = null;
+  });
+
+  it('resets reconnect state and connects immediately when the gateway becomes ready', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayStartupTimeoutMs = 20;
+    provider.gatewayProbeIntervalMs = 1;
+    provider.reconnectAttempts = 7;
+    provider._probeGateway = async () => true;
+    let connected = 0;
+    provider.connect = async () => { connected += 1; };
+
+    assert.equal(await provider._waitForGatewayReady(), true);
+    assert.equal(provider.reconnectAttempts, 0);
+    assert.equal(connected, 1);
+  });
+
+  it('keeps WS eligible and waits for authentication during gateway cold start', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider._gatewayStarting = true;
+    provider.gatewayProbeIntervalMs = 1;
+    provider._ensureGatewayRunning = async () => true;
+    provider.connect = async () => { provider.connected = true; };
+    assert.equal(provider.isAvailable('gym'), true);
+
+    setTimeout(() => {
+      provider._gatewayStarting = false;
+    }, 5);
+    await provider._waitForAuthenticatedConnection(100);
+    assert.equal(provider.connected, true);
+  });
+
+  it('fails as not_delivered when WS cold start never authenticates', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider._gatewayStarting = true;
+    provider.gatewayProbeIntervalMs = 1;
+    await assert.rejects(
+      provider._waitForAuthenticatedConnection(5),
+      (error) => error.deliveryOutcome === 'not_delivered',
+    );
+  });
+
   it('push 保持 session key 大小写映射和结构化消息协议', async () => {
     const provider = createProvider();
     const sent = [];
