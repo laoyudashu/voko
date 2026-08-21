@@ -1959,6 +1959,18 @@ async function startMcpServer(args?: any, core?: any) {
       }
       e2eeCanaryRuntime = new CanaryRuntime({ policy: e2eePolicy, store: e2eeStore,
         crypto: new CanaryCryptoProcess(endpoint), dispatcher,
+        persistInbound: (agentId: string, message: any, plaintext: string, messageId: string) => {
+          if (!messageHandler) return false;
+          const projected = messageHandler.handleAgentMessage(agentId, {
+            ...message, content: plaintext, contentType: 1, messageId,
+            clientMsgNo: messageId,
+          }, true);
+          return Boolean(projected);
+        },
+        persistOutbound: (agentId: string, channelId: string, plaintext: string, messageId: string) => {
+          if (!messageHandler) throw new Error('E2EE_MESSAGE_HANDLER_UNAVAILABLE');
+          messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId);
+        },
         deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
           const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
           if (!result?.success) {

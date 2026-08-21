@@ -43,6 +43,8 @@ export class CanaryRuntime {
   private disabled = false;
   constructor(private readonly options: { policy: E2eeRuntimePolicy; store: E2eeRuntimeStore; crypto: CanaryCrypto;
     dispatcher: E2eeDispatcher; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
+    persistInbound?: (agentId:string,message:any,plaintext:string,messageId:string)=>boolean;
+    persistOutbound?: (agentId:string,channelId:string,plaintext:string,messageId:string)=>void;
     downloadAttachment?: (agentId:string,uploadId:string,targetScopeId:string)=>Promise<Uint8Array> }) {
     this.disabled = options.store.isEmergencyDisabled();
   }
@@ -94,6 +96,10 @@ export class CanaryRuntime {
         stateVersion:Number(session.state_version) });
       this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
       this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
+      if (this.options.persistInbound
+          && !this.options.persistInbound(localAgentId,message,opened.plaintext,envelope.messageId)) {
+        throw new Error('E2EE_INBOUND_REJECTED');
+      }
       this.stats.received += 1;
       const execute = this.options.dispatcher.executeE2ee || this.options.dispatcher.executeCanary;
       if (!execute) throw new Error('E2EE_PROVIDER_EXECUTION_UNAVAILABLE');
@@ -110,11 +116,14 @@ export class CanaryRuntime {
       stage='lite.reply_encrypt';
       const current = this.options.store.session(scope.groupId);
       const replyId = `e2ee-reply-${crypto.randomUUID()}`;
-      const sealed = await this.options.crypto.encrypt({ scope,messageId:replyId,plaintext:String(result.reply?.content || ''),
+      const replyContent = String(result.reply?.content || '');
+      if (!replyContent.trim()) throw new Error('E2EE_PROVIDER_EMPTY_REPLY');
+      const sealed = await this.options.crypto.encrypt({ scope,messageId:replyId,plaintext:replyContent,
         encryptedState:current.encrypted_state,stateVersion:Number(current.state_version) });
       this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
       const encoded = JSON.stringify(sealed.envelope);
       this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
+      this.options.persistOutbound?.(localAgentId,String(message.fromUid),replyContent,replyId);
       stage='lite.reply_deliver';
       await this.options.deliverRaw(localAgentId,String(message.fromUid),encoded,replyId);
       this.options.store.transition(envelope.messageId,['reply_ready'],'completed');

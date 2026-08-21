@@ -16,13 +16,15 @@ function envelope(messageId='message-1',ciphertext='Y2lwaGVydGV4dA') { return { 
 function fixture(enabled=true, overrides={}) {
   const db=new DatabaseSync(':memory:');
   const env={VOKO_E2EE_INTERNAL_RUNTIME_ENABLED:enabled?'true':'false',VOKO_E2EE_INTERNAL_RUNTIME_SCOPES:JSON.stringify([scope])};
-  const policy=new CanaryRuntimePolicy(env,false);const store=new CanaryStore(db);const delivered=[];const dispatched=[];
+  const policy=new CanaryRuntimePolicy(env,false);const store=new CanaryStore(db);const delivered=[];const dispatched=[];const persisted=[];
   const crypto={async decrypt(input){return{plaintext:overrides.plaintext||'private canary plaintext',encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}},
     async decryptAttachment(){return Buffer.from('attachment body')},
     async encrypt(input){return{envelope:envelope(input.messageId,'cmVwbHk'),encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}}};
   const runtime=new CanaryRuntime({policy,store,crypto,dispatcher:{async executeCanary(input){dispatched.push(input);await overrides.inspectDispatch?.(input);input.onProviderAccepted?.();return{reply:{content:'private reply'}}}},
+    persistInbound:overrides.persistInbound||((agentId,message,plaintext,messageId)=>{persisted.push({direction:'in',agentId,channelId:message.fromUid,plaintext,messageId});return true}),
+    persistOutbound:overrides.persistOutbound||((agentId,channelId,plaintext,messageId)=>persisted.push({direction:'out',agentId,channelId,plaintext,messageId})),
     downloadAttachment:overrides.downloadAttachment,
-    async deliverRaw(...args){delivered.push(args);return{success:true}}});return{db,store,runtime,delivered,dispatched};
+    async deliverRaw(...args){delivered.push(args);return{success:true}}});return{db,store,runtime,delivered,dispatched,persisted};
 }
 
 test('contentType 13 is always claimed and disabled Canary fails closed before visitor routing',async()=>{const f=fixture(false);
@@ -33,6 +35,7 @@ test('exact scope decrypts, dispatches in isolation, encrypts reply and never st
   const body=JSON.stringify(envelope());const input={contentType:13,content:body,fromUid:'guest-principal',channelType:1};
   assert.equal((await f.runtime.handle('agent-local',input)).accepted,true);assert.equal(f.dispatched.length,1);assert.equal(f.delivered.length,1);
   assert.equal(f.delivered[0][1],'guest-principal');assert.equal(f.dispatched[0].content,'private canary plaintext');
+  assert.deepEqual(f.persisted.map(row=>[row.direction,row.plaintext]),[['in','private canary plaintext'],['out','private reply']]);
   const dump=JSON.stringify({sessions:f.db.prepare('SELECT * FROM e2ee_canary_sessions').all(),receipts:f.db.prepare('SELECT * FROM e2ee_canary_receipts').all()});
   assert.doesNotMatch(dump,/private canary plaintext|private reply/);assert.match(dump,/completed/);
   assert.deepEqual(await f.runtime.handle('agent-local',input),{handled:true,accepted:true,code:'duplicate'});assert.equal(f.dispatched.length,1);f.db.close()});

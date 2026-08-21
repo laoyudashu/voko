@@ -215,6 +215,24 @@ class MessageHandler extends EventEmitter {
   /** 设置消息分发决策层（push/pull） */
   setDispatcher(dispatcher: NonNullable<MessageHandlerOptions['dispatcher']>) { this.dispatcher = dispatcher; }
 
+  /**
+   * E2EE transport has already produced the trusted local plaintext. Persist
+   * the Agent reply through the same local message/conversation projection as
+   * a normal reply, without sending that plaintext over IM.
+   */
+  persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string): void {
+    const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<AgentImUidRow>(agentId);
+    const fromUid = agentRow?.imUid || 'voko';
+    const { msgId, timestamp } = persistAgentMessage(this.db, agentId, channelId, content,
+      fromUid, 'text', 1, null, messageId);
+    logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
+      data: { replyLength: content.length, channelType: 1, e2ee: true } });
+    this._notifyUI('agent-wukongim:message', {
+      agentId, fromUid, toUid: channelId, channelId, channelType: 1,
+      content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
+    });
+  }
+
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
   private _autoTrustSameOwnerAgent(agentId: string, fromUid: string): void {
     if (!this.ac || !agentId || !fromUid) return;
