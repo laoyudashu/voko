@@ -126,6 +126,34 @@ test('directory worker replenishes a package consumed by an expired establishmen
   db.close();
 });
 
+test('directory worker scans large agent sets in bounded round-robin batches', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const seen = [];
+  const agents = Array.from({ length:12 },(_,index) => ({ localAgentId:`agent-${index}`,
+    serverAgentId:`server-${index}`,targetAgentDid:`did:wba:test:${index}`,ownerDeviceKeyId:`device-${index}`,
+    ownerScope:'owner-scope',bindingGeneration:1 }));
+  const processFactory = scope => {
+    const keyPackage = Buffer.from(`package-${scope.localAgentId}`).toString('base64url');
+    return { ready:Promise.resolve({ keyPackage,credentialPublicKey:'Y3JlZGVudGlhbA' }),
+      async sealPending() { return Buffer.from('pending'); }, async restorePending() { return 'Y3JlZGVudGlhbA'; },
+      async join() { throw new Error('unexpected join'); }, async replenish() { throw new Error('unexpected replenish'); }, close() {} };
+  };
+  const client = {
+    async registerDevice() {},
+    async publishKeyPackage(input) { return { keyPackageRef:ref(input.keyPackage) }; },
+    async pullEstablishments(input) { seen.push(input.agentId); return []; },
+    async keyPackageStatus(input) { return { agents:[{ agentId:input.agentIds[0],available:1 }] }; },
+    async acknowledge() {}, async reject() {},
+  };
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>agents,processFactory,maxAgentsPerRun:5 });
+  await worker.runOnce();
+  await worker.runOnce();
+  await worker.runOnce();
+  assert.deepEqual(seen,agents.map(item=>item.serverAgentId).concat(agents.slice(0,3).map(item=>item.serverAgentId)));
+  db.close();
+});
+
 test('a new establishment atomically replaces the previous group for the same conversation scope', () => {
   const db = new DatabaseSync(':memory:');
   const store = new ProductionE2eeStore(db);

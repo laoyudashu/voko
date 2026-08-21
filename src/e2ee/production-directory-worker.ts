@@ -35,6 +35,7 @@ export class ProductionE2eeDirectoryWorker {
   private timer: NodeJS.Timeout|null = null;
   private running = false;
   private retryAfter = 0;
+  private nextAgentIndex = 0;
 
   constructor(private readonly options: {
     client: E2eeDirectoryClient;
@@ -42,6 +43,7 @@ export class ProductionE2eeDirectoryWorker {
     agents: () => ProductionE2eeAgent[];
     processFactory: (scope: ProductionE2eeScope) => Recipient;
     intervalMs?: number;
+    maxAgentsPerRun?: number;
     now?: () => number;
     onError?: (agentId: string, error: unknown) => void;
   }) {}
@@ -138,7 +140,12 @@ export class ProductionE2eeDirectoryWorker {
     if ((this.options.now || Date.now)() < this.retryAfter) return;
     this.running = true;
     try {
-      for (const agent of this.options.agents()) {
+      const agents = this.options.agents();
+      if (agents.length === 0) return;
+      const batchSize = Math.max(1,Math.min(agents.length,Number(this.options.maxAgentsPerRun || 5)));
+      const batch = Array.from({ length:batchSize },(_,offset) => agents[(this.nextAgentIndex + offset) % agents.length]);
+      this.nextAgentIndex = agents.length ? (this.nextAgentIndex + batchSize) % agents.length : 0;
+      for (const agent of batch) {
         try {
           let row = await this.ensurePackage(agent);
           await this.flushAcknowledgements(agent);
