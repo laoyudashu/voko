@@ -55,9 +55,27 @@ export class CanaryRuntime {
     const clean = (value: unknown) => String(value || '').replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,80);
     const short = (value: unknown) => { const text=clean(value); return text.length<=12?text:`${text.slice(0,6)}..${text.slice(-4)}`; };
     const record = { stage,outcome,agent:clean(fields.agent),group:short(fields.group),message:short(fields.message),
-      state:clean(fields.state),code:clean(fields.code),providerAccepted:Boolean(fields.providerAccepted) };
+      state:clean(fields.state),code:clean(fields.code),providerAccepted:Boolean(fields.providerAccepted),
+      cipherDigest:clean(fields.cipherDigest),stateBefore:clean(fields.stateBefore),stateAfter:clean(fields.stateAfter),
+      stateVersion:Number(fields.stateVersion || 0),errorClass:clean(fields.errorClass) };
     const line=`[E2EE_DIAG] ${JSON.stringify(record)}`;
     if(outcome==='error')console.warn(line);else console.debug(line);
+  }
+
+  private fingerprint(value: unknown): string {
+    if (value == null) return '-';
+    const bytes = value instanceof Uint8Array ? Buffer.from(value) : Buffer.from(String(value));
+    return crypto.createHash('sha256').update(bytes).digest('hex').slice(0,12);
+  }
+
+  private errorClass(error: any): string {
+    const value=String(error?.message||error?.code||error||'').toLowerCase();
+    if(value.includes('secretreuse')||value.includes('too distant in the past'))return 'ratchet_past_or_reused';
+    if(value.includes('generationoutofbound')||value.includes('too distant in the future'))return 'ratchet_future_or_missing';
+    if(value.includes('aead'))return 'ciphertext_authentication';
+    if(value.includes('routing mismatch')||value.includes('route scope'))return 'authenticated_route';
+    if(value.includes('restore')||value.includes('snapshot')||value.includes('deserialize'))return 'state_restore';
+    return 'crypto_other';
   }
 
   async handle(localAgentId: string, message: any): Promise<{ handled:true;accepted:boolean;code?:string }> {
@@ -92,6 +110,9 @@ export class CanaryRuntime {
       const session = this.options.store.session(scope.groupId);
       if (!session || session.status === 'locked') throw new Error('E2EE_CANARY_SESSION_LOCKED');
       stage='lite.decrypt';
+      this.diagnostic('lite.decrypt_before','ok',{agent:localAgentId,group:scope.groupId,message:envelope.messageId,
+        cipherDigest:this.fingerprint(envelope.ciphertext),stateBefore:this.fingerprint(session.encrypted_state),
+        stateVersion:Number(session.state_version) });
       const opened = await this.options.crypto.decrypt({ scope,envelope,encryptedState:session.encrypted_state,
         stateVersion:Number(session.state_version) });
       this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
@@ -121,6 +142,9 @@ export class CanaryRuntime {
       const sealed = await this.options.crypto.encrypt({ scope,messageId:replyId,plaintext:replyContent,
         encryptedState:current.encrypted_state,stateVersion:Number(current.state_version) });
       this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
+      this.diagnostic('lite.reply_encrypted','ok',{agent:localAgentId,group:scope.groupId,message:replyId,
+        cipherDigest:this.fingerprint(sealed.envelope?.ciphertext),stateBefore:this.fingerprint(current.encrypted_state),
+        stateAfter:this.fingerprint(sealed.encryptedState),stateVersion:sealed.stateVersion });
       const encoded = JSON.stringify(sealed.envelope);
       this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
       this.options.persistOutbound?.(localAgentId,String(message.fromUid),replyContent,replyId);
@@ -134,7 +158,7 @@ export class CanaryRuntime {
       this.stats.failures += 1;
       try { this.options.store.transition(envelope.messageId,providerAccepted?['provider_accepted','reply_ready']:['received'],providerAccepted?'outcome_unknown':'failed'); } catch {}
       this.diagnostic(stage,'error',{agent:localAgentId,group:scope?.groupId,message:envelope?.messageId,
-        code:error?.code||error?.message,providerAccepted});
+        code:error?.code||error?.message,providerAccepted,errorClass:this.errorClass(error)});
       return { handled:true,accepted:false,code:String(error?.code || error?.message || 'E2EE_CANARY_FAILED') };
     }
   }
