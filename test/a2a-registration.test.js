@@ -50,3 +50,9 @@ test('registration refuses to create a device without a published Agent', async 
     mainDb: { prepare() { return { all: () => [] }; } }, fetchImpl: async () => assert.fail('must not call') });
   await assert.rejects(() => service.ensureRegistered(), /published Agent/);
 });
+test('registration classifies a server 404 as no eligible published Agent', async t => {
+  const service = new A2ARegistrationService({ a2aDb: setup(t), ownerEmail: 'owner@example.com', userAccessToken: 'ut_secret', apiBaseUrl: 'https://did.example',
+    mainDb: { prepare() { return { all: () => [{ agent_id: 'agent-1' }] }; } },
+    fetchImpl: async () => ({ ok: false, status: 404 }) });
+  await assert.rejects(() => service.ensureRegistered(), error => error.code === 'A2A_NO_ELIGIBLE_AGENT' && error.status === 404);
+});

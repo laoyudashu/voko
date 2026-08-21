@@ -1372,6 +1372,50 @@ test('Lite offline sync does nothing when no local user is authenticated', async
   assert.equal(fetchCalls, 0);
 });
 
+test('Lite offline sync stops an in-flight old-owner run after account switching', async (t) => {
+  const originalFetch = global.fetch;
+  let activeOwner = 'owner-a@example.test';
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    requests.push(options.headers.Authorization);
+    activeOwner = 'owner-b@example.test';
+    return { ok: true, json: async () => ({ messages: [{ message_id: 'must-not-process' }] }) };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    exec() {},
+    prepare(sql) {
+      return {
+        all() {
+          if (sql.includes('FROM agents')) return [
+            { agent_id: 'agent-a', imUid: 'uid-a', owner_email: 'owner-a@example.test' },
+            { agent_id: 'agent-a2', imUid: 'uid-a2', owner_email: 'owner-a@example.test' },
+          ];
+          if (sql.includes('FROM conversations')) return [{ channel_id: 'visitor-a' }];
+          return [];
+        },
+        get(key) {
+          if (sql.includes('FROM config') && key === 'current_user_email') return { data: JSON.stringify(activeOwner) };
+          if (sql.includes('FROM config') && key === 'user_access_token') return { data: JSON.stringify({
+            'owner-a@example.test': { user_access_token: 'ut_owner_a' },
+            'owner-b@example.test': { user_access_token: 'ut_owner_b' },
+          }) };
+          if (sql.includes('SELECT MAX(message_seq)')) return { m: 0 };
+          return undefined;
+        },
+        run() {},
+      };
+    },
+  };
+  let handled = 0;
+  const handler = { handleAgentMessage() { handled += 1; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.deepEqual(requests, ['Bearer ut_owner_a']);
+  assert.equal(handled, 0);
+});
+
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {
   const originalFetch = global.fetch;
   const requests = [];

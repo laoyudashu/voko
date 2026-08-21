@@ -792,12 +792,15 @@ test('account switching activates pending credentials and schedules a full proce
     entrySource.indexOf('handlers.restart_agent_runtime = async'),
     entrySource.indexOf('const mcpServer = createMcpServer', entrySource.indexOf('handlers.restart_agent_runtime = async')),
   );
-  assert.match(restartHandler, /activatePendingOwnerSwitch\(db\)/);
+  assert.match(restartHandler, /activatePendingOwnerSwitch\(db, \{ previousInstanceId \}\)/);
   assert.match(restartHandler, /__serviceHealth = 'draining'/);
   assert.match(restartHandler, /__restartAfterShutdown = true/);
   assert.match(restartHandler, /setTimeout\(\(\) => \{[\s\S]*shutdownAll\([\s\S]*'owner-switch'/);
   assert.doesNotMatch(restartHandler, /agentManager\.stopAll\(\)/);
   assert.doesNotMatch(restartHandler, /agentManager\.startMany\(/);
+  assert.match(entrySource, /restartNoticeForInstance\(db, currentInstanceId\)/);
+  assert.match(entrySource, /imSettled \|\| waitExpired/);
+  assert.match(entrySource, /clearRestartNotice\(db\)/);
 
   const shutdown = entrySource.slice(
     entrySource.indexOf('async function shutdownAll'),
@@ -809,6 +812,7 @@ test('account switching activates pending credentials and schedules a full proce
     'the replacement process must start only after the old instance lock is released',
   );
   assert.match(shutdown, /db\.close\(\)/);
+  assert.match(shutdown, /signal_cleanup[\s\S]*signal/);
   assert.ok(
     shutdown.indexOf('db.close()') < shutdown.indexOf('spawnReplacementProcess()'),
     'the replacement process must start only after the old database is closed',

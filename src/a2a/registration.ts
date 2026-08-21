@@ -23,7 +23,16 @@ class A2ARegistrationService {
     const baseUrl = this.options.apiBaseUrl.replace(/\/+$/, ''); const response = await (this.options.fetchImpl || fetch)(`${baseUrl}/api/a2a/v1/devices/register`, {
       method: 'POST', headers: { authorization: `Bearer ${this.options.userAccessToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ deviceId, keyId: identity.keyId, publicKey: identity.publicKey, agents }), signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`A2A device registration failed (${response.status})`);
+    if (!response.ok) {
+      const error: Error & { code?: string; status?: number } = new Error(
+        response.status === 404
+          ? 'A2A registration skipped: no eligible published Agent'
+          : `A2A device registration failed (${response.status})`,
+      );
+      error.code = response.status === 404 ? 'A2A_NO_ELIGIBLE_AGENT' : 'A2A_DEVICE_REGISTRATION_FAILED';
+      error.status = response.status;
+      throw error;
+    }
     const result: any = await response.json();
     const config = { fingerprint, deviceId, token: result.token, mailboxUrl: `${baseUrl}${result.mailboxPath}`,
       gatewayKeyId: result.gatewayKeyId, gatewayPublicKeyB64: Buffer.from(result.gatewayPublicKey).toString('base64'),

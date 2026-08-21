@@ -91,7 +91,8 @@ const {
 const { stopVoko } = require('./core/stop-voko');
 const {
   activatePendingOwnerSwitch,
-  OWNER_SWITCH_RESTART_NOTICE_CONFIG,
+  clearRestartNotice,
+  restartNoticeForInstance,
   spawnReplacementProcess,
 } = require('./core/owner-switch');
 
@@ -1774,7 +1775,11 @@ async function startMcpServer(args?: any, core?: any) {
           onError: (code: string) => console.error(`[A2A Bridge] ${code}`) });
         await taskManager.start('a2a-bridge', () => a2aRuntime.start());
       } catch (error: any) {
-        console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+        if (error?.code === 'A2A_NO_ELIGIBLE_AGENT') {
+          console.warn('[A2A Bridge] 当前主人没有符合服务端发布条件的 Agent，已跳过 A2A 设备注册');
+        } else {
+          console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+        }
       }
     }
   } catch (e: any) {
@@ -2319,7 +2324,7 @@ async function startMcpServer(args?: any, core?: any) {
     __ownerSwitchInProgress = true;
     try {
       const previousInstanceId = __instanceLock?.metadata?.instanceId || null;
-      const activation = activatePendingOwnerSwitch(db);
+      const activation = activatePendingOwnerSwitch(db, { previousInstanceId });
       if (!activation.activated) {
         __ownerSwitchInProgress = false;
         return { success: true, restarting: false, previousInstanceId };
@@ -2854,12 +2859,18 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             userEmail: prevData.userEmail || '',
             agents: agentList,
           }), Date.now());
-        const restartNotice = db.prepare('SELECT 1 FROM config WHERE type=?').get(OWNER_SWITCH_RESTART_NOTICE_CONFIG);
+        const currentInstanceId = __instanceLock?.metadata?.instanceId;
+        const restartNotice = restartNoticeForInstance(db, currentInstanceId);
         if (restartNotice) {
-          const automatic = agentList.filter((agent: any) => agent.automaticDeliveryReady).length;
-          const pullOnly = agentList.filter((agent: any) => agent.pullReady && !agent.automaticDeliveryReady).length;
-          console.error(`[账号切换] 新运行环境 READY：Agent=${agentList.length}，IM=${imOnline}/${agentList.length}，自动推送=${automatic}，仅Pull=${pullOnly}`);
-          db.prepare('DELETE FROM config WHERE type=?').run(OWNER_SWITCH_RESTART_NOTICE_CONFIG);
+          const imSettled = agentList.length === 0 || imOnline === agentList.length;
+          const waitExpired = Date.now() - restartNotice.created_at >= 30000;
+          if (imSettled || waitExpired) {
+            const automatic = agentList.filter((agent: any) => agent.automaticDeliveryReady).length;
+            const pullOnly = agentList.filter((agent: any) => agent.pullReady && !agent.automaticDeliveryReady).length;
+            const phase = imSettled ? 'READY' : '启动完成（部分 IM 未连接）';
+            console.error(`[账号切换] 新运行环境 ${phase}：Agent=${agentList.length}，IM=${imOnline}/${agentList.length}，自动推送=${automatic}，仅Pull=${pullOnly}`);
+            clearRestartNotice(db);
+          }
         }
         // WebSocket 广播 runtime 状态，前端局部刷新 footer
         try {
@@ -2950,7 +2961,7 @@ async function shutdownAll(
   __shuttingDown = true;
   taskManager ||= __shutdownContext?.taskManager;
   __serviceHealth = signal?.startsWith?.('fatal:') ? 'unhealthy' : 'draining';
-  if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
+  console.error(t('cli.index.signal_cleanup', { signal }));
   try { await taskManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] 后台任务清理失败:', e.message); }
   try {
     const handlers = registry.getAllHandlers?.() || {};

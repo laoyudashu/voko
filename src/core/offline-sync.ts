@@ -145,6 +145,11 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     // “最近 owner”或全表回退，否则会把其他用户/其他电脑的 Agent 消息拉到本机。
     const currentOwnerEmail = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
     if (!currentOwnerEmail) return 0;
+    // A single sync run must keep the owner identity it started with. Account
+    // switching updates the active token before shutdown completes; re-reading
+    // it inside the loop would send the new owner's token for old-owner Agents.
+    const ownerAccessToken = getUserAccessToken(db, currentOwnerEmail);
+    const ownerStillActive = () => String(getCurrentUserEmail(db) || '').trim().toLowerCase() === currentOwnerEmail;
     const agents = db.prepare(`
       SELECT agent_id, imUid, imToken, im_server_url, owner_email
       FROM agents
@@ -155,15 +160,21 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       messageSeq?: number; agentAuthored?: boolean }> = [];
 
     for (const agent of agents) {
+      if (!ownerStillActive()) {
+        console.log('[离线同步] 主人已切换，停止旧主人同步');
+        return 0;
+      }
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
         continue;
       }
-      const ownerEmail = String(agent.owner_email || '').trim().toLowerCase();
-      const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const httpBase = String(ENDPOINTS.im.apiBaseUrl || '').replace(/\/$/, '');
       const convs = db.prepare(`SELECT DISTINCT channel_id FROM conversations WHERE agent_id = ?`).all<ConversationRow>(agent.agent_id);
 
       for (const conv of convs) {
+        if (!ownerStillActive()) {
+          console.log('[离线同步] 主人已切换，停止旧主人同步');
+          return 0;
+        }
         const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
         const key = cursorKey(agent.agent_id, conv.channel_id);
         let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
@@ -178,8 +189,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(userAccessToken ? {
-                Authorization: `Bearer ${userAccessToken}`,
+              ...(ownerAccessToken ? {
+                Authorization: `Bearer ${ownerAccessToken}`,
                 'X-Voko-Agent-Uid': agent.imUid,
               } : {}),
             },
@@ -193,6 +204,10 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               pull_mode: 1
             })
           });
+          if (!ownerStillActive()) {
+            console.log('[离线同步] 主人已切换，停止旧主人同步');
+            return 0;
+          }
           if (!resp.ok) {
             console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} HTTP ${resp.status}`);
             continue;
@@ -244,6 +259,10 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       }
     }
 
+    if (!ownerStillActive()) {
+      console.log('[离线同步] 主人已切换，停止旧主人同步');
+      return 0;
+    }
     console.debug(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
 
     // E2EE messages are claimed before the ordinary persistence/forwarding

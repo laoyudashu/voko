@@ -16,6 +16,25 @@ interface PendingOwnerSwitch {
   updated_at: number;
 }
 
+interface OwnerSwitchRestartNotice {
+  created_at: number;
+  previous_instance_id: string;
+}
+
+const LAUNCH_MODE_ENV = 'VOKO_LITE_LAUNCH_MODE';
+
+function resolveForegroundLaunch(
+  explicit: boolean | undefined,
+  env: NodeJS.ProcessEnv,
+  terminal: { stdin?: boolean; stdout?: boolean; stderr?: boolean },
+): boolean {
+  if (typeof explicit === 'boolean') return explicit;
+  const inherited = String(env[LAUNCH_MODE_ENV] || '').trim().toLowerCase();
+  if (inherited === 'foreground') return true;
+  if (inherited === 'background') return false;
+  return Boolean(terminal.stdout || terminal.stderr || terminal.stdin);
+}
+
 function normalizeEmail(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -61,7 +80,7 @@ export function stagePendingOwnerSwitch(db: DatabaseLike, email: unknown, token:
   }
 }
 
-export function activatePendingOwnerSwitch(db: DatabaseLike): {
+export function activatePendingOwnerSwitch(db: DatabaseLike, options: { previousInstanceId?: string } = {}): {
   activated: boolean;
   ownerChanged: boolean;
   tokenChanged: boolean;
@@ -87,7 +106,10 @@ export function activatePendingOwnerSwitch(db: DatabaseLike): {
     db.prepare('DELETE FROM config WHERE type=?').run(PENDING_OWNER_SWITCH_CONFIG);
     if (ownerChanged || tokenChanged) {
       db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
-        .run(OWNER_SWITCH_RESTART_NOTICE_CONFIG, JSON.stringify({ created_at: now }), now);
+        .run(OWNER_SWITCH_RESTART_NOTICE_CONFIG, JSON.stringify({
+          created_at: now,
+          previous_instance_id: String(options.previousInstanceId || '').trim(),
+        }), now);
     }
     db.exec('COMMIT');
   } catch (error) {
@@ -95,6 +117,24 @@ export function activatePendingOwnerSwitch(db: DatabaseLike): {
     throw error;
   }
   return { activated: true, ownerChanged, tokenChanged };
+}
+
+export function restartNoticeForInstance(
+  db: DatabaseLike,
+  instanceId: unknown,
+): OwnerSwitchRestartNotice | null {
+  const notice = readConfig(db, OWNER_SWITCH_RESTART_NOTICE_CONFIG);
+  const previousInstanceId = String(notice?.previous_instance_id || '').trim();
+  const currentInstanceId = String(instanceId || '').trim();
+  if (!previousInstanceId || !currentInstanceId || previousInstanceId === currentInstanceId) return null;
+  return {
+    created_at: Number(notice.created_at) || 0,
+    previous_instance_id: previousInstanceId,
+  };
+}
+
+export function clearRestartNotice(db: DatabaseLike): void {
+  db.prepare('DELETE FROM config WHERE type=?').run(OWNER_SWITCH_RESTART_NOTICE_CONFIG);
 }
 
 export function buildReplacementArgs(argv: string[]): string[] {
@@ -110,17 +150,29 @@ export function spawnReplacementProcess(options: {
   entryPath?: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  foreground?: boolean;
+  terminal?: { stdin?: boolean; stdout?: boolean; stderr?: boolean };
   spawnImpl?: typeof spawn;
 } = {}): { pid: number | null } {
   const execPath = path.resolve(options.execPath || process.execPath);
   const entryPath = path.resolve(options.entryPath || path.join(__dirname, '..', 'index.js'));
+  const baseEnv = options.env || process.env;
+  const foreground = resolveForegroundLaunch(options.foreground, baseEnv, options.terminal || {
+    stdin: process.stdin.isTTY,
+    stdout: process.stdout.isTTY,
+    stderr: process.stderr.isTTY,
+  });
+  const childEnv = {
+    ...baseEnv,
+    [LAUNCH_MODE_ENV]: foreground ? 'foreground' : 'background',
+  };
   const child = (options.spawnImpl || spawn)(execPath, [entryPath, ...buildReplacementArgs(options.argv || process.argv)], {
     cwd: options.cwd || process.cwd(),
-    env: options.env || process.env,
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
+    env: childEnv,
+    detached: !foreground,
+    stdio: foreground ? 'inherit' : 'ignore',
+    windowsHide: !foreground,
   });
-  child.unref();
+  if (!foreground) child.unref();
   return { pid: child.pid || null };
 }
