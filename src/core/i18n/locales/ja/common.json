@@ -57,7 +57,7 @@
   "common.footer.status": "実行状態",
   "common.footer.status_ok": "正常",
   "common.footer.status_im_down": "IM 切断",
-  "common.footer.status_init": "初期化中",
+  "common.footer.status_init": "Agent はまだ作成されていません",
   "common.footer.update_available": "更新可能",
   "common.footer.update_title": "VOKO を更新",
   "common.footer.update_instruction": "ターミナルで次のコマンドを実行してください。完了後に VOKO を再起動すると、新しいバージョンを利用できます。",

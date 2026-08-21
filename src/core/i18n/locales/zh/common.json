@@ -58,7 +58,7 @@
   "common.footer.status": "运行状态",
   "common.footer.status_ok": "正常",
   "common.footer.status_im_down": "IM 断开",
-  "common.footer.status_init": "初始化中",
+  "common.footer.status_init": "尚未创建 Agent",
   "common.footer.update_available": "有更新",
   "common.footer.update_title": "更新 VOKO",
   "common.footer.update_instruction": "请在终端运行以下命令。升级完成后，重新启动 VOKO 即可使用新版本。",
