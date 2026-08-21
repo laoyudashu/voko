@@ -106,8 +106,13 @@ const server = http.createServer((request, response) => {
       globalThis.endpoint = replacement;
     }, scope);
     const reply = await lite.request({ op: 'encrypt', message_id: 'production-browser-reply', text: 'Lite reply' });
-    const replyText = await page.evaluate(envelope => globalThis.endpoint.decrypt_message(JSON.stringify(envelope)), reply.envelope);
+    const replyResult = await page.evaluate(envelope => JSON.parse(globalThis.endpoint.decrypt_message_checked(JSON.stringify(envelope))), reply.envelope);
+    const replyText = replyResult.outcome === 'ok' ? replyResult.plaintext : '';
     if (replyText !== 'Lite reply') throw new Error('browser reply mismatch');
+    const duplicate = await page.evaluate(envelope => JSON.parse(globalThis.endpoint.decrypt_message_checked(JSON.stringify(envelope))), reply.envelope);
+    if (duplicate.outcome !== 'error' || duplicate.code !== 'E2EE_RATCHET_PAST_OR_REUSED') {
+      throw new Error(`browser duplicate classification mismatch: ${JSON.stringify(duplicate)}`);
+    }
     console.log('Production WasmBrowserEndpoint and sealed Lite endpoint round trip passed.');
   } finally {
     lite.close();

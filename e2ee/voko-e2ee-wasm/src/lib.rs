@@ -90,8 +90,12 @@ fn required_bytes(value: String, name: &str) -> Result<Vec<u8>, JsError> {
 }
 
 fn stable_decrypt_error(error: DirectGroupError) -> JsError {
+    JsError::new(stable_decrypt_error_code(&error))
+}
+
+fn stable_decrypt_error_code(error: &DirectGroupError) -> &'static str {
     let detail = error.to_string().to_ascii_lowercase();
-    let code = if detail.contains("secretreuse") || detail.contains("too distant in the past") {
+    if detail.contains("secretreuse") || detail.contains("too distant in the past") {
         "E2EE_RATCHET_PAST_OR_REUSED"
     } else if detail.contains("generationoutofbound") || detail.contains("too distant in the future") {
         "E2EE_RATCHET_FUTURE_OR_MISSING"
@@ -101,8 +105,14 @@ fn stable_decrypt_error(error: DirectGroupError) -> JsError {
         "E2EE_AAD_MISMATCH"
     } else {
         "E2EE_CRYPTO_DECRYPT_FAILED"
-    };
-    JsError::new(code)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+enum CheckedDecryptResult {
+    Ok { plaintext: String },
+    Error { code: &'static str },
 }
 
 #[wasm_bindgen]
@@ -181,6 +191,31 @@ impl WasmBrowserEndpoint {
         let plaintext = self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
             .decrypt(&route, &ciphertext).map_err(stable_decrypt_error)?;
         String::from_utf8(plaintext).map_err(|_| JsError::new("decrypted message is not UTF-8"))
+    }
+
+    /// Decrypts without relying on wasm-bindgen's exception conversion. Some
+    /// embedded browsers collapse a Rust JsError into a generic `Error`, which
+    /// hides the stable ratchet/authentication code needed for safe recovery.
+    /// The result never includes ciphertext, key material, or MLS internals.
+    pub fn decrypt_message_checked(&mut self, envelope_json: String) -> String {
+        let checked = (|| -> Result<String, &'static str> {
+            let envelope: voko_e2ee_core::WireEnvelope = serde_json::from_str(&envelope_json)
+                .map_err(|_| "E2EE_ENVELOPE_INVALID")?;
+            let route = envelope.aad().map_err(|_| "E2EE_ENVELOPE_INVALID")?;
+            if route.group_id != self.group_id || route.target_agent_did != self.target_agent_did
+                || route.conversation_scope != self.conversation_scope {
+                return Err("E2EE_AAD_MISMATCH");
+            }
+            let ciphertext = envelope.ciphertext_bytes().map_err(|_| "E2EE_ENVELOPE_INVALID")?;
+            let plaintext = self.group.as_mut().ok_or("E2EE_GROUP_NOT_ACTIVE")?
+                .decrypt(&route, &ciphertext).map_err(|error| stable_decrypt_error_code(&error))?;
+            String::from_utf8(plaintext).map_err(|_| "E2EE_PLAINTEXT_ENCODING_INVALID")
+        })();
+        let result = match checked {
+            Ok(plaintext) => CheckedDecryptResult::Ok { plaintext },
+            Err(code) => CheckedDecryptResult::Error { code },
+        };
+        serde_json::to_string(&result).expect("checked decrypt result is serializable")
     }
 
     pub fn snapshot(&self) -> Result<String, JsError> {
