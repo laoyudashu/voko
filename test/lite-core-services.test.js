@@ -893,6 +893,31 @@ test('Lite send-code and login bootstrap requests do not expose HMAC credentials
   assert.doesNotMatch(output, /owner@example\.com|123456|ut_test/);
 });
 
+test('Lite send-code surfaces a business failure even when the server responds HTTP 200', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      success: false,
+      code: 'EMAIL_DELIVERY_FAILED',
+      message: 'Verification email delivery failed',
+    }),
+  });
+  const db = {
+    prepare() { return { get() { return undefined; }, run() {} }; },
+  };
+
+  const result = await createAgentRegistration({ db }).sendCode({ email: 'owner@example.com' });
+  assert.deepEqual(result, {
+    success: false,
+    status: 200,
+    code: 'EMAIL_DELIVERY_FAILED',
+    error: 'Verification email delivery failed',
+  });
+});
+
 test('Lite OAuth login follows the server session contract and persists only the VOKO token', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });

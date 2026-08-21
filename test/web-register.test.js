@@ -95,6 +95,7 @@ describe('Web POST /agent/add 注册流程', () => {
   it('OAuth login routes proxy the session contract without exposing the token in HTML', async (t) => {
     const db = createDb(null);
     const startedProviders = [];
+    let exchangeMode = '';
     const handlers = {
       oauth_providers: async () => ({ success: true, data: { providers: [
         { id: 'google', enabled: true },
@@ -108,7 +109,10 @@ describe('Web POST /agent/add 注册流程', () => {
       } };
       },
       oauth_status: async () => ({ success: true, data: { status: 'authorized', exchangeCode: 'loe_web' } }),
-      oauth_exchange: async () => ({ success: true, email: 'owner@example.com' }),
+      oauth_exchange_for_owner_switch: async () => {
+        exchangeMode = 'pending';
+        return { success: true, email: 'owner@example.com' };
+      },
     };
     const server = await setupServer(t, handlers, db);
     const login = await fetch(server.baseUrl + '/login');
@@ -144,7 +148,9 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(switchHtml, /data-voko-system-footer/);
 
     const oauthCompleteHtml = await (await fetch(server.baseUrl + '/login/oauth/complete')).text();
-    assert.match(oauthCompleteHtml, /if\(!r\.ok\|\|!d\.success\)/);
+    assert.match(oauthCompleteHtml, /api\/web\/agents\/restart/);
+    assert.match(oauthCompleteHtml, /x\.instanceId!==j\.previousInstanceId/);
+    assert.match(oauthCompleteHtml, /Date\.now\(\)\+60000/);
     assert.match(oauthCompleteHtml, /switch-error/);
 
     const providers = await (await fetch(server.baseUrl + '/api/login/oauth/providers')).json();
@@ -168,7 +174,32 @@ describe('Web POST /agent/add 注册流程', () => {
       body: '{"sessionId":"los_web","exchangeCode":"loe_web"}',
     })).json();
     assert.strictEqual(exchanged.success, true);
+    assert.strictEqual(exchangeMode, 'pending');
     assert.doesNotMatch(JSON.stringify(exchanged), /ut_/);
+  });
+
+  it('email verification stages an owner switch and renders the controlled restart page', async (t) => {
+    const db = createDb('old@example.com');
+    let verified;
+    const handlers = {
+      login_for_owner_switch: async (input) => {
+        verified = input;
+        return { success: true, email: 'new@example.com' };
+      },
+    };
+    const server = await setupServer(t, handlers, db);
+    const response = await fetch(server.baseUrl + '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ action: 'verify', email: 'new@example.com', code: '123456' }),
+    });
+    const html = await response.text();
+
+    assert.deepStrictEqual(verified, { email: 'new@example.com', code: '123456' });
+    assert.strictEqual(response.status, 200);
+    assert.match(html, /api\/web\/agents\/restart/);
+    assert.match(html, /--no-open --no-interactive/);
+    assert.match(html, /x\.instanceId!==j\.previousInstanceId/);
   });
 
   it('GET /agent/add renders the four-step shared-orchestrator wizard', async (t) => {

@@ -2240,7 +2240,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     try{
       if(typeof handlers.restart_agent_runtime!=='function')return res.status(503).json({success:false,error:'Agent runtime restart is unavailable'});
       const result=await handlers.restart_agent_runtime();
-      return res.status(result?.success===false?500:200).json(result);
+      const status=result?.code==='OWNER_SWITCH_IN_PROGRESS'?409:(result?.success===false?500:(result?.restarting?202:200));
+      return res.status(status).json(result);
     }catch(e){return res.status(500).json({success:false,error:e.message})}
   });
 

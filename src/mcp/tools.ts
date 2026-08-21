@@ -1083,6 +1083,14 @@ function createToolHandlers(cx: McpContext) {
       return r;
     },
 
+    async login_for_owner_switch(p: McpToolParams = {}) {
+      return cx.agentRegistration.loginByCode({ email: p.email, code: p.code, persistMode: 'pending' });
+    },
+
+    async reauth_by_code(p: McpToolParams = {}) {
+      return cx.agentRegistration.loginByCode({ email: p.email, code: p.code, persistMode: 'none' });
+    },
+
     async oauth_providers() {
       return cx.agentRegistration.getOAuthProviders();
     },
@@ -1099,6 +1107,14 @@ function createToolHandlers(cx: McpContext) {
       return cx.agentRegistration.exchangeOAuthSession({
         sessionId: p.sessionId,
         exchangeCode: p.exchangeCode,
+      });
+    },
+
+    async oauth_exchange_for_owner_switch(p: McpToolParams = {}) {
+      return cx.agentRegistration.exchangeOAuthSession({
+        sessionId: p.sessionId,
+        exchangeCode: p.exchangeCode,
+        persistMode: 'pending',
       });
     },
 

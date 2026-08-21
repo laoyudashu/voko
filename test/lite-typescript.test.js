@@ -786,23 +786,32 @@ test('voko update never downgrades when npm registry is behind the installed ver
   assert.equal(calls.length, 1);
 });
 
-test('account switching waits for old IM clients to stop before starting the shared Hub clients', () => {
+test('account switching activates pending credentials and schedules a full process restart', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  const restartRoute = entrySource.slice(
-    entrySource.indexOf("app.post('/api/agents/restart'"),
-    entrySource.indexOf("app.post('/api/payment/write-auth'"),
-  );
   const restartHandler = entrySource.slice(
     entrySource.indexOf('handlers.restart_agent_runtime = async'),
     entrySource.indexOf('const mcpServer = createMcpServer', entrySource.indexOf('handlers.restart_agent_runtime = async')),
   );
-  const implementation = /await handlers\.restart_agent_runtime\(\)/.test(restartRoute)
-    ? restartHandler
-    : restartRoute;
-  assert.match(implementation, /await agentManager\.stopAll\(\)/);
+  assert.match(restartHandler, /activatePendingOwnerSwitch\(db\)/);
+  assert.match(restartHandler, /__serviceHealth = 'draining'/);
+  assert.match(restartHandler, /__restartAfterShutdown = true/);
+  assert.match(restartHandler, /setTimeout\(\(\) => \{[\s\S]*shutdownAll\([\s\S]*'owner-switch'/);
+  assert.doesNotMatch(restartHandler, /agentManager\.stopAll\(\)/);
+  assert.doesNotMatch(restartHandler, /agentManager\.startMany\(/);
+
+  const shutdown = entrySource.slice(
+    entrySource.indexOf('async function shutdownAll'),
+    entrySource.indexOf('function printUsage()', entrySource.indexOf('async function shutdownAll')),
+  );
   assert.ok(
-    implementation.indexOf('await agentManager.stopAll()')
-      < implementation.indexOf('await agentManager.startMany('),
+    shutdown.indexOf('__instanceLock?.release()')
+      < shutdown.indexOf('spawnReplacementProcess()'),
+    'the replacement process must start only after the old instance lock is released',
+  );
+  assert.match(shutdown, /db\.close\(\)/);
+  assert.ok(
+    shutdown.indexOf('db.close()') < shutdown.indexOf('spawnReplacementProcess()'),
+    'the replacement process must start only after the old database is closed',
   );
 });
 

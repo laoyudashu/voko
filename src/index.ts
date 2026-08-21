@@ -89,6 +89,11 @@ const {
   readInstanceMetadata,
 } = require('./core/process-lifecycle');
 const { stopVoko } = require('./core/stop-voko');
+const {
+  activatePendingOwnerSwitch,
+  OWNER_SWITCH_RESTART_NOTICE_CONFIG,
+  spawnReplacementProcess,
+} = require('./core/owner-switch');
 
 // ── Lite 模块 ──
 const { createContext } = require('./context');
@@ -114,6 +119,8 @@ let __shuttingDown = false;
 let __serviceHealth: 'ok' | 'draining' | 'unhealthy' = 'ok';
 let __fatalHandling = false;
 let __shutdownContext: { agentManager?: any; wukongimSender?: any; db?: any; taskManager?: any } | null = null;
+let __ownerSwitchInProgress = false;
+let __restartAfterShutdown = false;
 
 function handleFatalError(kind: 'uncaughtException' | 'unhandledRejection', error: unknown): void {
   console.error(`[Lite][${kind}]`, error instanceof Error ? error.stack || error.message : error);
@@ -610,6 +617,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // 先完成来源、Host 和可选 token 校验，再读取请求体，避免无效来源消耗解析资源。
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  app.use((req?: any, res?: any, next?: any) => {
+    if (__serviceHealth !== 'draining' || ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) return next();
+    return res.status(503).json({ success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换中，请稍候' });
+  });
 
   const currentOwnsAgent = (agentId: string): boolean => {
     if (!agentId) return false;
@@ -1543,9 +1555,12 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         try {
           const prev = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
           const data = prev ? JSON.parse(prev.data) : {};
+          const activeOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+          if (String(data.userEmail || '').trim().toLowerCase() !== activeOwner) data.agents = [];
           data.instanceId = __instanceLock?.metadata?.instanceId;
           data.pid = process.pid;
           data.port = actualPort;
+          data.userEmail = activeOwner;
           db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
             .run(JSON.stringify(data), Date.now());
         } catch (_: any) {}
@@ -2298,32 +2313,32 @@ async function startMcpServer(args?: any, core?: any) {
     return { success: true, agentId, deliveryStatus: activeDispatcher.selectTemporaryDeliveryChannel(String(agentId || ''), String(mode || ''), providerId) };
   };
   handlers.restart_agent_runtime = async () => {
-    const email = getCurrentUserEmail(db);
-    if (!email) return { success: false, error: '未登录' };
-    await agentManager.stopAll();
-    const agents = db.prepare(
-      "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
-    ).all(email);
-    await agentManager.startMany(agents.map((a: any) => ({
-      agentId: a.agent_id,
-      config: { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url },
-    })));
-    const agentList = agents.map((a: any) => ({
-      agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
-      imConnected: false, automaticDeliveryReady: false,
-      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: false, lastDeliveredMode: null,
-    }));
-    db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
-      .run(JSON.stringify({
-        instanceId: __instanceLock?.metadata?.instanceId,
-        pid: process.pid,
-        ts: Date.now(),
-        port: __runtimePort || 3100,
-        userEmail: email,
-        agents: agentList,
-      }), Date.now());
-    try { require('./core/lite-bus').emit('user:switched', { email }); } catch (_: any) {}
-    return { success: true, count: agents.length };
+    if (__ownerSwitchInProgress || __serviceHealth === 'draining') {
+      return { success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换正在进行' };
+    }
+    __ownerSwitchInProgress = true;
+    try {
+      const previousInstanceId = __instanceLock?.metadata?.instanceId || null;
+      const activation = activatePendingOwnerSwitch(db);
+      if (!activation.activated) {
+        __ownerSwitchInProgress = false;
+        return { success: true, restarting: false, previousInstanceId };
+      }
+      if (!activation.ownerChanged && !activation.tokenChanged) {
+        __ownerSwitchInProgress = false;
+        return { success: true, restarting: false, previousInstanceId };
+      }
+      __serviceHealth = 'draining';
+      __restartAfterShutdown = true;
+      console.error('[账号切换] 已验证新主人，准备重启运行环境');
+      setTimeout(() => {
+        void shutdownAll(agentManager, wukongimSender, db, 'owner-switch', 0, taskManager);
+      }, 150);
+      return { success: true, restarting: true, previousInstanceId };
+    } catch (error: any) {
+      __ownerSwitchInProgress = false;
+      return { success: false, code: 'OWNER_SWITCH_ACTIVATION_FAILED', error: error.message };
+    }
   };
   const mcpServer = createMcpServer(handlers, { version: pkg.version });
 
@@ -2709,7 +2724,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         try { await hermesHandler.healthCheck(); } catch (_: any) {}
         try {
           const sql = userEmail
-            ? `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
+            ? `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?`
             : `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
           const hermesAgents = userEmail ? db.prepare(sql).all(userEmail) : db.prepare(sql).all();
           for (const { agent_id, delivery_modes } of hermesAgents) {
@@ -2731,7 +2746,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── 遍历 agent 检测状态 ──
       const warnings = [];
       const agentSql = userEmail
-        ? "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published' AND owner_email = ?"
+        ? "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?"
         : "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published'";
       const rows = userEmail ? db.prepare(agentSql).all(userEmail) : db.prepare(agentSql).all();
       let imOnline = 0, backendOnline = 0, posted = 0;
@@ -2839,6 +2854,13 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             userEmail: prevData.userEmail || '',
             agents: agentList,
           }), Date.now());
+        const restartNotice = db.prepare('SELECT 1 FROM config WHERE type=?').get(OWNER_SWITCH_RESTART_NOTICE_CONFIG);
+        if (restartNotice) {
+          const automatic = agentList.filter((agent: any) => agent.automaticDeliveryReady).length;
+          const pullOnly = agentList.filter((agent: any) => agent.pullReady && !agent.automaticDeliveryReady).length;
+          console.error(`[账号切换] 新运行环境 READY：Agent=${agentList.length}，IM=${imOnline}/${agentList.length}，自动推送=${automatic}，仅Pull=${pullOnly}`);
+          db.prepare('DELETE FROM config WHERE type=?').run(OWNER_SWITCH_RESTART_NOTICE_CONFIG);
+        }
         // WebSocket 广播 runtime 状态，前端局部刷新 footer
         try {
           const imDown = agentList.some((a: any) => !a.imConnected);
@@ -2874,22 +2896,22 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   let firstBeatTimer: NodeJS.Timeout | null = null;
   let firstBeatStatusHandler: ((msg: any) => void) | null = null;
 
-  // Agent 全部连接就绪后立即执行首次心跳（无需等 60s），5s 兜底
+  // Agent 全部连接就绪后立即执行首次心跳；未全部连接时5秒后仍强制刷新真实状态。
+  let _firstBeatDone = false;
+  const _tryFirstBeat = (force = false) => {
+    if (_firstBeatDone) return;
+    if (force || agentManager.connectedAgents.size >= agentCount) {
+      _firstBeatDone = true;
+      void heartbeatFn();
+    }
+  };
   if (agentCount > 0) {
-    let _firstBeatDone = false;
-    const _tryFirstBeat = () => {
-      if (_firstBeatDone) return;
-      if (agentManager.connectedAgents.size >= agentCount) {
-        _firstBeatDone = true;
-        heartbeatFn();
-      }
-    };
     firstBeatStatusHandler = (msg?: any) => {
       if (msg.status === 'connected' || msg.statusCode === 2) _tryFirstBeat();
     };
     agentManager.on('status', firstBeatStatusHandler);
-    firstBeatTimer = setTimeout(() => _tryFirstBeat(), 5000);
   }
+  firstBeatTimer = setTimeout(() => _tryFirstBeat(true), agentCount > 0 ? 5000 : 0);
 
   return () => {
     clearInterval(timer);
@@ -2982,6 +3004,15 @@ async function shutdownAll(
   try { __instanceLock?.release(); } catch {}
   __instanceLock = null;
   __shutdownContext = null;
+  if (__restartAfterShutdown) {
+    __restartAfterShutdown = false;
+    console.error('[账号切换] 旧运行环境已关闭');
+    try {
+      spawnReplacementProcess();
+    } catch (error: any) {
+      console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
+    }
+  }
   console.error(t('cli.index.graceful_exit'));
   process.exit(exitCode);
 }
