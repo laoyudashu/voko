@@ -269,43 +269,50 @@ describe('Lite OpenClaw WS provider', () => {
   it('同一轮旧版片段和新版完整回复只投递新版完整回复', async () => {
     const provider = createProvider();
     const replies = [];
+    const logs = [];
+    const originalLog = console.log;
     provider.on('agent.reply', (reply) => replies.push(reply));
     const connectionTimer = setTimeout(() => {}, 1000);
 
-    await provider.handleMessage({
-      type: 'event',
-      event: 'session.message',
-      payload: {
-        sessionKey: 'agent:gym:visitor',
-        message: {
-          role: 'assistant',
-          content: [{
-            type: 'text',
-            text: '已经在问店里同事了，确认好时间我第一时间回复你！',
-          }],
-          stopReason: 'stop',
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      await provider.handleMessage({
+        type: 'event',
+        event: 'session.message',
+        payload: {
+          sessionKey: 'agent:gym:visitor',
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: '已经在问店里同事了，确认好时间我第一时间回复你！',
+            }],
+            stopReason: 'stop',
+          },
         },
-      },
-    }, undefined, connectionTimer);
-    await provider.handleMessage({
-      type: 'event',
-      event: 'chat',
-      payload: {
-        state: 'final',
-        sessionKey: 'agent:gym:visitor',
-        message: {
-          role: 'assistant',
-          content: [{
-            type: 'text',
-            text: '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',
-          }],
+      }, undefined, connectionTimer);
+      await provider.handleMessage({
+        type: 'event',
+        event: 'chat',
+        payload: {
+          state: 'final',
+          sessionKey: 'agent:gym:visitor',
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',
+            }],
+          },
         },
-      },
-    }, undefined, connectionTimer);
-    clearTimeout(connectionTimer);
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
+      }, undefined, connectionTimer);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } finally {
+      clearTimeout(connectionTimer);
+      console.log = originalLog;
+    }
     assert.equal(replies.length, 1);
+    assert.equal(logs.filter((line) => line.includes('收到完整回复')).length, 1);
     assert.equal(
       replies[0].content,
       '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',

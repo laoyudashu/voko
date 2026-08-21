@@ -989,7 +989,6 @@ class OpenClawWsProvider {
 
         if (isFinal) {
           const finalReply = pending ? pending.currentReply : text;
-          console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
 
           // 不再直接发送回复到访客，只存储到 pending 状态等待后续处理
           // 清理 pending reply 状态
