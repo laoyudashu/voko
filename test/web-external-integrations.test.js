@@ -88,7 +88,11 @@ test('external integration page masks credentials and provides copy controls', a
   assert.doesNotMatch(html, /id="external-credentials"/);
   assert.doesNotMatch(html, /data-role="copy-external-credentials"/);
   assert.match(html, /data-role="confirm-external-revoke"/);
-  assert.match(html, />停用接入</);
+  assert.match(html, /data-role="edit-external-integration"/);
+  assert.match(html, />编辑</);
+  assert.match(html, />操作<\/th>/);
+  assert.match(html, />停用<\/button>/);
+  assert.doesNotMatch(html, />停用接入<\/button>/);
   assert.doesNotMatch(html, />最近调用</);
   assert.doesNotMatch(html, /confirm\(/);
   assert.doesNotMatch(html, /user-access-secret/);
@@ -108,6 +112,7 @@ test('external integration proxy maps local Agent ID and preserves one-time cred
         integrationId: 'int-created', token: 'voko_once_token', webhookSecret: 'whsec_once_secret',
       } }, 201);
     }
+    if (init.method === 'PATCH') return jsonResponse({ success: true, data: { integrationId: 'int-created' } });
     if (init.method === 'DELETE') return new Response(null, { status: 204 });
     return jsonResponse({ success: true, data: { integrations: [] } });
   };
@@ -128,6 +133,16 @@ test('external integration proxy maps local Agent ID and preserves one-time cred
     name: 'Support CRM', webhookUrl: 'https://crm.example.com/voko', agentIds: [PUBLIC_AGENT_ID],
   });
   assert.equal(createCall.init.headers.Authorization, 'Bearer user-access-secret');
+
+  const edited = await fetch(`${base}/api/external-integrations/int-created`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Support CRM 2', webhookUrl: 'https://crm.example.com/voko-2' }),
+  });
+  assert.equal(edited.status, 200);
+  const editCall = calls.find((call) => call.init.method === 'PATCH');
+  assert.equal(editCall.url.endsWith('/int-created'), true);
+  assert.deepEqual(JSON.parse(editCall.init.body), { name: 'Support CRM 2', webhookUrl: 'https://crm.example.com/voko-2' });
+  assert.equal(editCall.init.headers.Authorization, 'Bearer user-access-secret');
 
   const revoked = await fetch(`${base}/api/external-integrations/int-created`, { method: 'DELETE' });
   assert.equal(revoked.status, 200);
