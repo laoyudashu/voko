@@ -672,6 +672,7 @@
   "web.guide.has_actions": "本页可执行的操作（编号 = <code>?som=1</code> 红色徽章）：",
   "web.guide.no_actions": "本页无标记的可交互操作。",
   "web.agent.tab.conversations": "会话列表",
+  "web.agent.e2ee_active": "端到端加密已启用",
   "web.agent.tab.groups": "群列表",
   "web.agent.tab.owner_chats": "主人会话",
   "web.agent.tab.a2a_tasks": "A2A任务",

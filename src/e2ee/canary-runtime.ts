@@ -34,6 +34,8 @@ type E2eeRuntimeStore = {
   transition(messageId: string, from: string[], to: any, encryptedReply?: string): void;
   diagnostics(): any;
   bindSenderDevice?(groupId: string, senderDeviceKeyId: string): void;
+  bindChannel?(localAgentId: string, groupId: string, channelId: string): void;
+  isChannelActive?(localAgentId: string, channelId: string): boolean;
   emergencyDisable?(): void;
   provision?(scope: any, encryptedState: Uint8Array): void;
 };
@@ -94,6 +96,7 @@ export class CanaryRuntime {
       const opened = await this.options.crypto.decrypt({ scope,envelope,encryptedState:session.encrypted_state,
         stateVersion:Number(session.state_version) });
       this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
+      this.options.store.bindChannel?.(localAgentId,scope.groupId,String(message.fromUid));
       this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
       if (this.options.persistInbound
           && !this.options.persistInbound(localAgentId,message,opened.plaintext,envelope.messageId)) {
@@ -163,6 +166,9 @@ export class CanaryRuntime {
 
   diagnostics(): any { return { enabled:this.options.policy.enabled && !this.disabled,emergencyDisabled:this.disabled,
     scopeCount:this.options.policy.count(),...this.stats,...this.options.store.diagnostics() }; }
+  isChannelActive(localAgentId: string, channelId: string): boolean {
+    return !this.disabled && Boolean(this.options.store.isChannelActive?.(localAgentId,channelId));
+  }
   async provision(scope: any, welcome: string): Promise<void> {
     if (!this.options.policy.enabled || this.disabled || !this.options.crypto.provision) throw new Error('E2EE_CANARY_DISABLED');
     const allowed = this.options.policy.configuredScopes().find(candidate => candidate.localAgentId === scope.localAgentId

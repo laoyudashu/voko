@@ -56,6 +56,35 @@ test('agent detail truncates long visitor names and keeps the full name in a too
   assert.match(html, /width:180px;max-width:180px;white-space:nowrap;overflow:hidden/);
 });
 
+test('agent detail marks only active E2EE visitor conversations with a green key', async (t) => {
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'agent-e2ee', agentName: 'E2EE Test', backendType: 'others', publishStatus: 'published' }] }),
+    get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
+    list_conversations: async () => ({ conversations: [
+      { channelId: 'visitor-secure', name: 'Secure visitor', lastMessage: 'hello', lastTimestamp: 2, lastIsMe: 0, lastContentType: 1, needsReply: true, unreadCount: 0 },
+      { channelId: 'visitor-plain', name: 'Plain visitor', lastMessage: 'hello', lastTimestamp: 1, lastIsMe: 0, lastContentType: 1, needsReply: true, unreadCount: 0 },
+    ], total: 2 }),
+    list_groups: async () => ({ groups: [], total: 0 }),
+  };
+  const app = express();
+  app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, {
+    refreshUserProfiles: async () => {},
+    e2eeCanaryRuntime: { isChannelActive: (_agentId, channelId) => channelId === 'visitor-secure' },
+  }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal((html.match(/aria-label="端到端加密已启用"/g) || []).length, 1);
+  assert.match(html, /Secure visitor<\/a> <svg role="img"/);
+  assert.doesNotMatch(html, /Plain visitor<\/a> <svg role="img"/);
+});
+
 test('empty conversation detail still renders the reply composer', async (t) => {
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-empty-chat', agentName: 'Empty Chat', backendType: 'others', publishStatus: 'published' }] }),

@@ -29,6 +29,9 @@ test('production policy binds principal, agent, context and group before Provide
   assert.throws(() => policy.authorize('lawyer',envelope,{ fromUid:'guest-principal-b',channelType:1 }),/E2EE_SCOPE_REJECTED/);
   assert.throws(() => policy.authorize('other',envelope,{ fromUid:'guest-principal-a',channelType:1 }),/E2EE_SCOPE_REJECTED/);
   store.bindSenderDevice('group-a','browser-device-a');
+  store.bindChannel('lawyer','group-a','visitor-a');
+  assert.equal(store.isChannelActive('lawyer','visitor-a'),true);
+  assert.equal(store.isChannelActive('lawyer','visitor-b'),false);
   assert.throws(() => policy.authorize('lawyer',{ ...envelope,senderDeviceKeyId:'browser-device-b' },
     { fromUid:'guest-principal-a',channelType:1 }),/E2EE_SENDER_DEVICE_CHANGED/);
   db.close();

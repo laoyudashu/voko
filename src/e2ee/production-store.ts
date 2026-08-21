@@ -38,6 +38,12 @@ export class ProductionE2eeStore {
       UNIQUE(recipient_device_key_id,group_id));
     CREATE INDEX IF NOT EXISTS idx_e2ee_production_scope
       ON e2ee_production_sessions(local_agent_id,creator_principal_id,conversation_scope,status);
+    CREATE TABLE IF NOT EXISTS e2ee_production_channels(
+      local_agent_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      group_id TEXT NOT NULL UNIQUE REFERENCES e2ee_production_sessions(group_id) ON DELETE CASCADE,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(local_agent_id,channel_id));
     CREATE TABLE IF NOT EXISTS e2ee_production_key_packages(
       local_agent_id TEXT PRIMARY KEY,
       server_agent_id TEXT NOT NULL,
@@ -199,6 +205,24 @@ export class ProductionE2eeStore {
     }
     this.db.prepare(`UPDATE e2ee_production_sessions SET sender_device_key_id=COALESCE(sender_device_key_id,?),updated_at=?
       WHERE group_id=?`).run(senderDeviceKeyId,Date.now(),groupId);
+  }
+
+  bindChannel(localAgentId: string, groupId: string, channelId: string): void {
+    const row = this.session(groupId);
+    if (!row || row.status !== 'active' || row.local_agent_id !== localAgentId || !channelId) {
+      throw new Error('E2EE_CHANNEL_BINDING_INVALID');
+    }
+    this.db.prepare(`INSERT INTO e2ee_production_channels(local_agent_id,channel_id,group_id,updated_at)
+      VALUES(?,?,?,?) ON CONFLICT(local_agent_id,channel_id) DO UPDATE SET
+      group_id=excluded.group_id,updated_at=excluded.updated_at`)
+      .run(localAgentId,channelId,groupId,Date.now());
+  }
+
+  isChannelActive(localAgentId: string, channelId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM e2ee_production_channels c
+      JOIN e2ee_production_sessions s ON s.group_id=c.group_id
+      WHERE c.local_agent_id=? AND c.channel_id=? AND s.status='active' LIMIT 1`)
+      .get(localAgentId,channelId));
   }
 
   commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void {

@@ -672,6 +672,7 @@
   "web.guide.has_actions": "Actions on this page (numbers = <code>?som=1</code> red badges):",
   "web.guide.no_actions": "No marked interactive actions on this page.",
   "web.agent.tab.conversations": "Conversations",
+  "web.agent.e2ee_active": "End-to-end encryption is active",
   "web.agent.tab.groups": "Groups",
   "web.agent.tab.owner_chats": "Owner Chats",
   "web.agent.tab.a2a_tasks": "A2A Tasks",

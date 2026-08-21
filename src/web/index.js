@@ -1496,7 +1496,9 @@ function createWebRouter(handlers, db, opts={}){
           const unreadBadge=c.unreadCount>0?' <span class="badge" style="background:#e74c3c;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px">'+c.unreadCount+'</span>':'';
           const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
           const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';
-          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
+          const e2eeActive=Boolean(opts.e2eeCanaryRuntime?.isChannelActive?.(agentId,String(c.channelId)));
+          const e2eeKey=e2eeActive?' <svg role="img" aria-label="'+esc(T('web.agent.e2ee_active'))+'" style="width:16px;height:16px;vertical-align:middle" viewBox="0 0 256 256"><title>'+esc(T('web.agent.e2ee_active'))+'</title><g transform="rotate(135 128 128)" fill="#22C55E" stroke="#16A34A" stroke-width="4" stroke-linejoin="round"><path fill-rule="evenodd" d="M76 70a58 58 0 1 0 43.6 96.3L218 166v-30h-26v-24h-28v24h-44.4A58 58 0 0 0 76 70Zm0 28a30 30 0 1 1 0 60 30 30 0 0 1 0-60Z"/></g></svg>':'';
+          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+e2eeKey+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
         }
         convHtml+='</tbody></table></div>'
       }
