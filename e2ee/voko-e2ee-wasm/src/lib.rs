@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
     AttachmentKey, CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint,
-    DirectGroup, DirectGroupPair, EncryptedAttachment, KeyPackageLedger, E2EE_CONTENT_TYPE,
+    DirectGroup, DirectGroupError, DirectGroupPair, EncryptedAttachment, KeyPackageLedger, E2EE_CONTENT_TYPE,
     E2EE_PROTOCOL_VERSION,
 };
 use wasm_bindgen::prelude::*;
@@ -89,6 +89,22 @@ fn required_bytes(value: String, name: &str) -> Result<Vec<u8>, JsError> {
     Ok(value.into_bytes())
 }
 
+fn stable_decrypt_error(error: DirectGroupError) -> JsError {
+    let detail = error.to_string().to_ascii_lowercase();
+    let code = if detail.contains("secretreuse") || detail.contains("too distant in the past") {
+        "E2EE_RATCHET_PAST_OR_REUSED"
+    } else if detail.contains("generationoutofbound") || detail.contains("too distant in the future") {
+        "E2EE_RATCHET_FUTURE_OR_MISSING"
+    } else if detail.contains("aead") || detail.contains("authentication") {
+        "E2EE_CIPHERTEXT_AUTH_FAILED"
+    } else if detail.contains("routing mismatch") || detail.contains("route scope") {
+        "E2EE_AAD_MISMATCH"
+    } else {
+        "E2EE_CRYPTO_DECRYPT_FAILED"
+    };
+    JsError::new(code)
+}
+
 #[wasm_bindgen]
 impl WasmBrowserEndpoint {
     #[wasm_bindgen(constructor)]
@@ -163,7 +179,7 @@ impl WasmBrowserEndpoint {
         }
         let ciphertext = envelope.ciphertext_bytes().map_err(|error| JsError::new(&error.to_string()))?;
         let plaintext = self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
-            .decrypt(&route, &ciphertext).map_err(|error| JsError::new(&error.to_string()))?;
+            .decrypt(&route, &ciphertext).map_err(stable_decrypt_error)?;
         String::from_utf8(plaintext).map_err(|_| JsError::new("decrypted message is not UTF-8"))
     }
 

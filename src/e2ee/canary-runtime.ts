@@ -59,7 +59,9 @@ export class CanaryRuntime {
       cipherDigest:clean(fields.cipherDigest),stateBefore:clean(fields.stateBefore),stateAfter:clean(fields.stateAfter),
       stateVersion:Number(fields.stateVersion || 0),errorClass:clean(fields.errorClass) };
     const line=`[E2EE_DIAG] ${JSON.stringify(record)}`;
-    if(outcome==='error')console.warn(line);else console.debug(line);
+    if(outcome==='error') console.warn(line);
+    else if(stage==='lite.decrypt_before'||stage==='lite.reply_encrypted') console.log(line);
+    else console.debug(line);
   }
 
   private fingerprint(value: unknown): string {
