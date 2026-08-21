@@ -7,12 +7,12 @@ test('production E2EE configuration survives a normal process restart', () => {
   const saved = {
     VOKO_E2EE_PRODUCTION_ENABLED:'true',
     VOKO_E2EE_ENDPOINT:'C:\\runtime\\endpoint.exe',
-    VOKO_E2EE_PRODUCTION_AGENT_IDS:'gym',
+    VOKO_E2EE_PRODUCTION_AGENT_IDS:'legacy-test-only',
   };
   const config = loadProductionE2eeConfig({},() => saved);
   assert.equal(config.enabled,true);
   assert.equal(config.endpoint,saved.VOKO_E2EE_ENDPOINT);
-  assert.equal(config.agentIds,'gym');
+  assert.equal(config.agentIds,undefined,'production must cover every published Agent owned by this Lite');
   assert.equal(config.pollIntervalMs,2_000);
 });
 
