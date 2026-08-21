@@ -378,7 +378,9 @@ describe('Lite process lifecycle integration', () => {
     const running = JSON.parse(runningStatus.stdout);
     assert.equal(running.running, true);
     assert.equal(running.state, 'running');
-    assert.equal(running.pid, first.pid);
+    assert.notEqual(running.pid, first.pid, 'status 应报告实际 Lite 子进程，而不是启动监督器');
+    assert.ok(lifecycle.inspectProcess(first.pid), '启动监督器应在 Lite 运行期间保持存活');
+    assert.ok(lifecycle.inspectProcess(running.pid), 'status 报告的 Lite 运行进程应存活');
     assert.equal(running.port, port);
     assert.equal(running.instanceId, health.instanceId);
     assert.ok(running.uptime >= 0);
@@ -399,6 +401,7 @@ describe('Lite process lifecycle integration', () => {
     assert.equal(await waitExit(first, 10000), 0);
     assert.equal(sentinel.exitCode, null, '无关 Node 进程不应被终止');
     assert.equal(lifecycle.inspectProcess(first.pid), null);
+    assert.equal(lifecycle.inspectProcess(running.pid), null);
 
     const stoppedStatus = await runCli(['status', `--db=${dbPath}`]);
     assert.equal(stoppedStatus.code, 0, stoppedStatus.stderr);

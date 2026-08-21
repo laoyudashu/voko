@@ -31,8 +31,10 @@ function resolveForegroundLaunch(
   if (typeof explicit === 'boolean') return explicit;
   const inherited = String(env[LAUNCH_MODE_ENV] || '').trim().toLowerCase();
   if (inherited === 'foreground') return true;
+  const attachedTerminal = Boolean(terminal.stdout || terminal.stderr || terminal.stdin);
+  if (attachedTerminal) return true;
   if (inherited === 'background') return false;
-  return Boolean(terminal.stdout || terminal.stderr || terminal.stdin);
+  return false;
 }
 
 function normalizeEmail(value: unknown): string {
@@ -153,7 +155,7 @@ export function spawnReplacementProcess(options: {
   foreground?: boolean;
   terminal?: { stdin?: boolean; stdout?: boolean; stderr?: boolean };
   spawnImpl?: typeof spawn;
-} = {}): { pid: number | null } {
+} = {}): { pid: number | null; foreground: boolean } {
   const execPath = path.resolve(options.execPath || process.execPath);
   const entryPath = path.resolve(options.entryPath || path.join(__dirname, '..', 'index.js'));
   const baseEnv = options.env || process.env;
@@ -169,10 +171,10 @@ export function spawnReplacementProcess(options: {
   const child = (options.spawnImpl || spawn)(execPath, [entryPath, ...buildReplacementArgs(options.argv || process.argv)], {
     cwd: options.cwd || process.cwd(),
     env: childEnv,
-    detached: !foreground,
+    detached: true,
     stdio: foreground ? 'inherit' : 'ignore',
-    windowsHide: !foreground,
+    windowsHide: true,
   });
-  if (!foreground) child.unref();
-  return { pid: child.pid || null };
+  child.unref();
+  return { pid: child.pid || null, foreground };
 }

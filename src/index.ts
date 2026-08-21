@@ -4,6 +4,9 @@ import type { AccessControlLike } from './core/messenger-types';
 const { normalizeBackendType } = require('./core/agent-backend-types');
 const { isRoutingFeatureEnabled } = require('./core/provider-routing');
 
+const OWNER_SWITCH_RESTART_EXIT_CODE = 75;
+const SUPERVISED_RUNTIME_ENV = 'VOKO_LITE_SUPERVISED_RUNTIME';
+
 
 // 兼容旧的开发启动命令：源码目录中可能包含已迁移为 .ts 的模块，
 // Node.js 不能直接 require；先构建，再将参数原样交给 build 入口。
@@ -3018,10 +3021,16 @@ async function shutdownAll(
   if (__restartAfterShutdown) {
     __restartAfterShutdown = false;
     console.error('[账号切换] 旧运行环境已关闭');
-    try {
-      spawnReplacementProcess();
-    } catch (error: any) {
-      console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
+    if (process.env[SUPERVISED_RUNTIME_ENV] === '1') {
+      console.error('[账号切换] 正在由启动监督器重建运行环境');
+      exitCode = OWNER_SWITCH_RESTART_EXIT_CODE;
+    } else {
+      try {
+        const replacement = spawnReplacementProcess();
+        console.error(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
+      } catch (error: any) {
+        console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
+      }
     }
   }
   console.error(t('cli.index.graceful_exit'));
@@ -3374,8 +3383,39 @@ async function main() {
   }
 }
 
+function shouldSuperviseRuntime(argv = process.argv, env = process.env): boolean {
+  if (env[SUPERVISED_RUNTIME_ENV] === '1') return false;
+  const subcommand = String(argv[2] || '').trim();
+  return !subcommand || subcommand === 'start';
+}
+
+async function runRuntimeSupervisor(): Promise<void> {
+  const { spawn } = require('node:child_process');
+  for (;;) {
+    const child = spawn(process.execPath, [process.argv[1], ...process.argv.slice(2)], {
+      cwd: process.cwd(),
+      env: { ...process.env, [SUPERVISED_RUNTIME_ENV]: '1' },
+      detached: false,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    const result: { code: number | null; signal: NodeJS.Signals | null } = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => resolve({ code, signal }));
+    });
+    if (result.code === OWNER_SWITCH_RESTART_EXIT_CODE) {
+      console.error('[账号切换] 启动监督器正在拉起新运行环境');
+      continue;
+    }
+    if (result.signal) process.kill(process.pid, result.signal);
+    process.exitCode = result.code ?? 1;
+    return;
+  }
+}
+
 if (require.main === module) {
-  main().catch((err: any) => {
+  const entry = shouldSuperviseRuntime() ? runRuntimeSupervisor() : main();
+  entry.catch((err: any) => {
     try { __instanceLock?.release(); } catch {}
     console.error(t('cli.index.start_failed', { msg: (err && err.message) || err }));
     process.exit(1);
@@ -3386,4 +3426,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, shouldSuperviseRuntime, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

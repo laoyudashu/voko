@@ -817,6 +817,10 @@ test('account switching activates pending credentials and schedules a full proce
     shutdown.indexOf('db.close()') < shutdown.indexOf('spawnReplacementProcess()'),
     'the replacement process must start only after the old database is closed',
   );
+  assert.match(entrySource, /OWNER_SWITCH_RESTART_EXIT_CODE = 75/);
+  assert.match(entrySource, /SUPERVISED_RUNTIME_ENV/);
+  assert.match(entrySource, /result\.code === OWNER_SWITCH_RESTART_EXIT_CODE/);
+  assert.match(entrySource, /stdio: 'inherit'/);
 });
 
 test('default lifecycle logs stay concise and stop hides the database path', () => {

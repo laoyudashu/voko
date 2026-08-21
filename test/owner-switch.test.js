@@ -149,10 +149,10 @@ test('foreground replacement inherits the current terminal', () => {
   });
 
   assert.equal(result.pid, 9876);
-  assert.equal(unrefCalled, false);
-  assert.equal(observed.options.detached, false);
+  assert.equal(unrefCalled, true);
+  assert.equal(observed.options.detached, true);
   assert.equal(observed.options.stdio, 'inherit');
-  assert.equal(observed.options.windowsHide, false);
+  assert.equal(observed.options.windowsHide, true);
   assert.equal(observed.options.env.VOKO_LITE_LAUNCH_MODE, 'foreground');
 });
 
@@ -163,11 +163,11 @@ test('replacement preserves an inherited foreground launch mode', () => {
     env: { VOKO_LITE_LAUNCH_MODE: 'foreground' },
     spawnImpl(command, args, options) {
       observed = { command, args, options };
-      return { pid: 2468, unref() { throw new Error('foreground child must stay attached'); } };
+      return { pid: 2468, unref() {} };
     },
   });
 
-  assert.equal(observed.options.detached, false);
+  assert.equal(observed.options.detached, true);
   assert.equal(observed.options.stdio, 'inherit');
   assert.equal(observed.options.env.VOKO_LITE_LAUNCH_MODE, 'foreground');
 });
@@ -187,10 +187,10 @@ test('macOS and Linux terminals remain foreground when any terminal stream is at
       terminal,
       spawnImpl(command, args, options) {
         observed = { command, args, options };
-        return { pid: 1357, unref() { throw new Error('terminal child must stay attached'); } };
+        return { pid: 1357, unref() {} };
       },
     });
-    assert.equal(observed.options.detached, false);
+    assert.equal(observed.options.detached, true);
     assert.equal(observed.options.stdio, 'inherit');
     assert.equal(observed.options.env.VOKO_LITE_LAUNCH_MODE, 'foreground');
   }
@@ -216,7 +216,7 @@ test('systemd launchd nohup and redirected starts remain background', () => {
   assert.equal(observed.options.env.VOKO_LITE_LAUNCH_MODE, 'background');
 });
 
-test('an inherited background mode overrides a newly attached terminal', () => {
+test('a newly attached terminal repairs a stale inherited background mode', () => {
   let observed;
   spawnReplacementProcess({
     argv: ['/usr/bin/node', '/opt/voko/build/index.js', 'start'],
@@ -228,5 +228,6 @@ test('an inherited background mode overrides a newly attached terminal', () => {
     },
   });
   assert.equal(observed.options.detached, true);
-  assert.equal(observed.options.stdio, 'ignore');
+  assert.equal(observed.options.stdio, 'inherit');
+  assert.equal(observed.options.env.VOKO_LITE_LAUNCH_MODE, 'foreground');
 });
