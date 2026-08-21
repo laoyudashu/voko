@@ -13,7 +13,7 @@ test('production E2EE configuration survives a normal process restart', () => {
   assert.equal(config.enabled,true);
   assert.equal(config.endpoint,saved.VOKO_E2EE_ENDPOINT);
   assert.equal(config.agentIds,'gym');
-  assert.equal(config.pollIntervalMs,5_000);
+  assert.equal(config.pollIntervalMs,2_000);
 });
 
 test('explicit environment values override persisted E2EE configuration', () => {

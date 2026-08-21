@@ -14,7 +14,7 @@ function loadProductionE2eeConfig(env: NodeJS.ProcessEnv, load: ConfigLoader) {
     publicKeyPem: configuredValue(env,'VOKO_E2EE_RELEASE_PUBLIC_KEY_PEM',saved).replace(/\\n/g,'\n'),
     databasePath: configuredValue(env,'VOKO_E2EE_DB_PATH',saved),
     agentIds: configuredValue(env,'VOKO_E2EE_PRODUCTION_AGENT_IDS',saved),
-    pollIntervalMs: Math.max(2_000,Number(configuredValue(env,'VOKO_E2EE_DIRECTORY_INTERVAL_MS',saved) || 5_000)),
+    pollIntervalMs: Math.max(2_000,Number(configuredValue(env,'VOKO_E2EE_DIRECTORY_INTERVAL_MS',saved) || 2_000)),
   };
 }
 
