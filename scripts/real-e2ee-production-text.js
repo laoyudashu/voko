@@ -37,6 +37,7 @@ function endpoint(scope) {
   const lines = createInterface({ input:child.stdout });
   const pending = [];
   lines.on('line',line => {
+    if (!String(line).trim()) return;
     const next = pending.shift();
     if (!next) return;
     try { next.resolve(JSON.parse(line)); } catch (error) { next.reject(error); }
@@ -66,17 +67,24 @@ async function request(baseUrl,pathName,options = {},attempt = 0) {
   return data?.data ?? data;
 }
 
-async function waitForReply(baseUrl,token,guestAgentId,serverAgentId,timeoutMs) {
+async function waitForReply(baseUrl,token,guestAgentId,serverAgentId,requestMessageId,timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let cursor = 0;
+  let malformed = 0;
   while (Date.now() < deadline) {
     const result = await request(baseUrl,'/guest/v1/messages/fetch',{ token,timeoutMs:35_000,body:{
       agentId:guestAgentId,channelId:serverAgentId,messageSeq:cursor,onlyReplies:true,limit:50,blockTimeout:20 } });
     for (const message of result.items || []) {
       cursor = Math.max(cursor,Number(message.messageSeq) || 0);
-      if (Number(message.contentType) === CONTENT_TYPE_E2EE) return JSON.parse(message.content);
+      if (Number(message.contentType) !== CONTENT_TYPE_E2EE || !String(message.content || '').trim()) continue;
+      try {
+        const envelope = JSON.parse(message.content);
+        if (String(envelope?.messageId || '') === requestMessageId) continue;
+        return envelope;
+      } catch { malformed += 1; }
     }
   }
+  if (malformed) throw new Error(`E2EE_PRODUCTION_REPLY_MALFORMED_${malformed}`);
   throw new Error('E2EE_PRODUCTION_REPLY_TIMEOUT');
 }
 
@@ -119,7 +127,7 @@ async function waitForReply(baseUrl,token,guestAgentId,serverAgentId,timeoutMs) 
       text:`请只回复以下测试码，不要添加其他内容：${expected}` });
     await request(baseUrl,'/guest/v1/messages',{ token,body:{ agentId:guest.agentId,toUid:agent.serverAgentId,
       content:JSON.stringify(encrypted.envelope),contentType:CONTENT_TYPE_E2EE,clientMsgNo:messageId } });
-    const reply = await waitForReply(baseUrl,token,guest.agentId,agent.serverAgentId,180_000);
+    const reply = await waitForReply(baseUrl,token,guest.agentId,agent.serverAgentId,messageId,180_000);
     const plaintext = String((await creator.request({ op:'decrypt',envelope:reply })).text || '').trim();
     if (!plaintext.includes(expected)) {
       const category = plaintext === 'NO_REPLY' ? 'NO_REPLY' : plaintext.length === 0 ? 'EMPTY' : `UNEXPECTED_LENGTH_${plaintext.length}`;
