@@ -1361,8 +1361,8 @@ function createWebRouter(handlers, db, opts={}){
        a2aRows=a2aRows.filter(row=>row.source_channel!=='rest_webhook');
        const a2aTotal=a2aRows.length;
        const a2aPrincipalTotal=new Set(a2aRows.map(row=>String(row.principal_view_id||'').trim()).filter(Boolean)).size;
-       const showA2ATab=a2aReadAvailable&&a2aTotal>0;
-       const showExternalTab=a2aReadAvailable&&externalRows.length>0;
+       const showA2ATab=a2aReadAvailable;
+       const showExternalTab=a2aReadAvailable;
        if(requestedTab==='a2a'&&!showA2ATab){
          if(a2aReadAvailable)return res.redirect('/agents/'+encodeURIComponent(agentId));
          activeTab='conv';

@@ -4,7 +4,7 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /listInboundTasks/); assert.match(source, /\/api\/a2a\/tasks/); assert.match(source, /tab-a2a/);
   assert.match(source, /authorizeA2AApi/); assert.match(source, /WEB_AUTH_REQUIRED/); assert.match(source, /Context <code>/);
   assert.match(source, /renderA2APrincipalRows\(a2aPanelRows,agentId,T\)/);
-  assert.match(source, /const showA2ATab=a2aReadAvailable&&a2aTotal>0/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
   assert.match(source, /showA2ATab\?tabBtn\('a2a'/);
   assert.match(source, /const a2aPrincipalTotal=new Set\(/);
   assert.match(source, /a2aLabel=L\('web\.agent\.tab\.a2a_tasks'\)\+\(a2aPrincipalTotal\?/);
@@ -47,10 +47,11 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   const route = source.match(/R\.get\('\/a2a-tasks'[\s\S]*?\n  \}\);/)[0];
   assert.match(source, /isolated from visitor conversations/); assert.doesNotMatch(route, /FROM messages|FROM conversations|INSERT INTO messages/);
 });
-test('A2A tab is not rendered for an empty or unavailable task source', () => {
+test('A2A and REST Webhook tabs remain visible when a source has no messages', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
-  assert.match(source, /if\(requestedTab==='a2a'&&!showA2ATab\)/);
   assert.match(source, /a2aReadAvailable=false/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
+  assert.match(source, /const showExternalTab=a2aReadAvailable;/);
   assert.match(source, /const a2aPanel=showA2ATab\?/);
 });
 test('A2A and REST Webhook tabs use the trusted source channel instead of principal type inference', () => {
