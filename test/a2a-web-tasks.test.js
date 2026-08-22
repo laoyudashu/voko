@@ -73,5 +73,31 @@ test('A2A and REST Webhook tabs use the trusted source channel instead of princi
   assert.match(source, /web\.agent\.external\.webhook\.retrying/);
   assert.doesNotMatch(source, /L\('web\.agent\.external\.config'\)/);
   assert.match(source, /sort\(\(a,b\)=>a\.createdAt-b\.createdAt\|\|a\.id\.localeCompare\(b\.id\)\)/);
-  assert.match(source, /contexts\[contexts\.length-1\]/);
+  assert.match(source, /contextPageSize=10/);
+  assert.match(source, /pageContexts=contexts\.slice/);
+  assert.match(source, /req\.query\.contextPage/);
+  assert.match(source, /id="external-conversation-root"/);
+  assert.match(source, /req\.query\.fragment\|\|''\)==='external'/);
+  assert.match(source, /u\.searchParams\.set\("fragment","external"\)/);
+  assert.match(source, /setInterval\(refresh,3000\)/);
+  assert.match(source, /current\.replaceWith\(fresh\)/);
+});
+test('A2A and REST Webhook task cards paginate ten per page', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const external = source.match(/R\.get\('\/agents\/:agentId\/external\/:principalViewId'[\s\S]*?\n  \}\);/)[0];
+  const a2a = source.match(/R\.get\('\/agents\/:agentId\/a2a\/:principalViewId'[\s\S]*?\n  \}\);/)[0];
+  for (const route of [external, a2a]) {
+    assert.match(route, /taskPageSize=10/);
+    assert.match(route, /req\.query\.taskPage/);
+    assert.match(route, /selectedContext\.tasks\.slice/);
+    assert.match(route, /taskTotalPages/);
+    assert.match(route, /&taskPage=/);
+  }
+});
+test('visitor conversation tabs paginate ten per page', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const route = source.match(/R\.get\('\/agents\/:agentId\/c\/:channelId'[\s\S]*?\n  \}\);/)[0];
+  assert.match(route, /conversationPageSize=10/);
+  assert.match(route, /pageConversations=webConversations\.slice/);
+  assert.match(route, /req\.query\.conversationPage/);
 });
