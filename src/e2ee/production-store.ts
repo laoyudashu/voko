@@ -5,6 +5,8 @@ export interface ProductionE2eeScope {
   serverAgentId: string;
   targetAgentDid: string;
   creatorPrincipalId: string;
+  creatorDeviceBindingId: string;
+  protocolMode: 'direct_v2'|'legacy_group_v1';
   senderDeviceKeyId: string;
   recipientDeviceKeyId: string;
   ownerScope: string;
@@ -23,6 +25,8 @@ export class ProductionE2eeStore {
       server_agent_id TEXT NOT NULL,
       target_agent_did TEXT NOT NULL,
       creator_principal_id TEXT NOT NULL,
+      creator_guest_device_uid TEXT,
+      protocol_mode TEXT NOT NULL DEFAULT 'legacy_group_v1',
       sender_device_key_id TEXT,
       recipient_device_key_id TEXT NOT NULL,
       owner_scope TEXT NOT NULL,
@@ -75,9 +79,13 @@ export class ProductionE2eeStore {
     CREATE TABLE IF NOT EXISTS e2ee_production_receipts(
       message_id TEXT PRIMARY KEY,
       group_id TEXT NOT NULL,
+      local_agent_id TEXT,
+      channel_id TEXT,
       cipher_digest TEXT NOT NULL,
       state TEXT NOT NULL,
+      reply_message_id TEXT,
       encrypted_reply TEXT,
+      delivery_attempts INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_e2ee_production_receipts_state
@@ -90,6 +98,14 @@ export class ProductionE2eeStore {
       manifest_json TEXT NOT NULL,
       created_at INTEGER NOT NULL);`);
     try { db.exec('ALTER TABLE e2ee_production_sessions ADD COLUMN mls_epoch INTEGER NOT NULL DEFAULT 1'); } catch {}
+    try { db.exec("ALTER TABLE e2ee_production_sessions ADD COLUMN protocol_mode TEXT NOT NULL DEFAULT 'legacy_group_v1'"); } catch {}
+    try { db.exec('ALTER TABLE e2ee_production_sessions ADD COLUMN creator_guest_device_uid TEXT'); } catch {}
+    for (const definition of [
+      'local_agent_id TEXT','channel_id TEXT','reply_message_id TEXT',
+      'delivery_attempts INTEGER NOT NULL DEFAULT 0'
+    ]) {
+      try { db.exec(`ALTER TABLE e2ee_production_receipts ADD COLUMN ${definition}`); } catch {}
+    }
   }
 
   deviceGeneration(create: () => string): string {
@@ -170,21 +186,27 @@ export class ProductionE2eeStore {
       return 'duplicate';
     }
     const now = Date.now();
+    const protocolMode = input.scope.protocolMode === 'direct_v2' ? 'direct_v2' : 'legacy_group_v1';
+    const creatorDeviceBindingId = input.scope.creatorDeviceBindingId || null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const replaced = this.db.prepare(`SELECT group_id FROM e2ee_production_sessions
-        WHERE local_agent_id=? AND creator_principal_id=? AND conversation_scope=? AND group_id<>?`)
-        .get(input.scope.localAgentId,input.scope.creatorPrincipalId,input.scope.conversationScope,input.scope.groupId) as any;
-      if (replaced?.group_id) {
-        this.db.prepare('DELETE FROM e2ee_production_receipts WHERE group_id=?').run(replaced.group_id);
-        this.db.prepare('DELETE FROM e2ee_production_sessions WHERE group_id=?').run(replaced.group_id);
+        WHERE local_agent_id=? AND group_id<>? AND (
+          (creator_principal_id=? AND conversation_scope=?) OR
+          (?='direct_v2' AND protocol_mode='direct_v2' AND creator_guest_device_uid=?))`)
+        .all(input.scope.localAgentId,input.scope.groupId,input.scope.creatorPrincipalId,input.scope.conversationScope,
+          protocolMode,creatorDeviceBindingId) as any[];
+      for (const previous of replaced) {
+        this.db.prepare('DELETE FROM e2ee_production_receipts WHERE group_id=?').run(previous.group_id);
+        this.db.prepare('DELETE FROM e2ee_production_sessions WHERE group_id=?').run(previous.group_id);
       }
       this.db.prepare(`INSERT INTO e2ee_production_sessions(group_id,local_agent_id,server_agent_id,target_agent_did,
-        creator_principal_id,sender_device_key_id,recipient_device_key_id,owner_scope,conversation_scope,
-        binding_generation,encrypted_state,state_version,mode,status,created_at,updated_at)
-        VALUES(?,?,?,?,?,NULL,?,?,?,?,?,1,'e2ee_active','active',?,?)`)
+        creator_principal_id,creator_guest_device_uid,protocol_mode,sender_device_key_id,recipient_device_key_id,
+        owner_scope,conversation_scope,binding_generation,encrypted_state,state_version,mode,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,NULL,?,?,?,?,?,1,'e2ee_active','active',?,?)`)
         .run(input.scope.groupId,input.scope.localAgentId,input.scope.serverAgentId,input.scope.targetAgentDid,
-          input.scope.creatorPrincipalId,input.scope.recipientDeviceKeyId,input.scope.ownerScope,
+          input.scope.creatorPrincipalId,creatorDeviceBindingId,protocolMode,
+          input.scope.recipientDeviceKeyId,input.scope.ownerScope,
           input.scope.conversationScope,input.scope.bindingGeneration,input.encryptedState,now,now);
       this.db.prepare(`INSERT INTO e2ee_production_establishments(establishment_id,local_agent_id,group_id,ack_json,
         ack_state,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?)`)
@@ -211,22 +233,87 @@ export class ProductionE2eeStore {
       WHERE establishment_id=?`).run(Date.now(),establishmentId);
   }
 
-  reserve(scope: ProductionE2eeScope, messageId: string, digest: string): 'new'|'duplicate' {
+  reserve(scope: ProductionE2eeScope, messageId: string, digest: string,
+    route: { localAgentId?:string; channelId?:string } = {}): 'new'|'duplicate' {
     const existing = this.db.prepare('SELECT cipher_digest FROM e2ee_production_receipts WHERE message_id=?').get(messageId) as any;
     if (existing) {
       if (existing.cipher_digest !== digest) throw new Error('E2EE_MESSAGE_ID_CONFLICT');
       return 'duplicate';
     }
     const now = Date.now();
-    this.db.prepare(`INSERT INTO e2ee_production_receipts(message_id,group_id,cipher_digest,state,created_at,updated_at)
-      VALUES(?,?,?,'received',?,?)`).run(messageId,scope.groupId,digest,now,now);
+    this.db.prepare(`INSERT INTO e2ee_production_receipts
+      (message_id,group_id,local_agent_id,channel_id,cipher_digest,state,created_at,updated_at)
+      VALUES(?,?,?,?,?,'received',?,?)`).run(messageId,scope.groupId,
+        route.localAgentId || scope.localAgentId,route.channelId || null,digest,now,now);
     return 'new';
+  }
+
+  receipt(messageId: string): any {
+    return this.db.prepare('SELECT * FROM e2ee_production_receipts WHERE message_id=?').get(messageId);
+  }
+
+  claim(messageId: string, staleAfterMs = 5 * 60 * 1000): 'claimed'|'busy'|'deliver'|'completed'|'terminal' {
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.receipt(messageId);
+      if (!row) throw new Error('E2EE_RECEIPT_NOT_FOUND');
+      if (row.state === 'completed') { this.db.exec('COMMIT'); return 'completed'; }
+      if (row.state === 'reply_ready' || row.state === 'outcome_unknown') {
+        this.db.exec('COMMIT'); return 'deliver';
+      }
+      if (row.state === 'processing' && now - Number(row.updated_at || 0) < staleAfterMs) {
+        this.db.exec('COMMIT'); return 'busy';
+      }
+      if (!['received','processing','provider_accepted','failed'].includes(String(row.state))) {
+        this.db.exec('COMMIT'); return 'terminal';
+      }
+      const result = this.db.prepare(`UPDATE e2ee_production_receipts SET state='processing',updated_at=?
+        WHERE message_id=? AND state=? AND updated_at=?`).run(now,messageId,row.state,row.updated_at) as any;
+      if (Number(result?.changes) !== 1) { this.db.exec('ROLLBACK'); return 'busy'; }
+      this.db.exec('COMMIT');
+      return 'claimed';
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  commitReply(input: { messageId:string; groupId:string; expectedVersion:number; encryptedState:Uint8Array;
+    nextVersion:number; replyMessageId:string; encryptedReply:string }): void {
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const state = this.db.prepare(`UPDATE e2ee_production_sessions SET encrypted_state=?,state_version=?,updated_at=?
+        WHERE group_id=? AND state_version=? AND status='active'`)
+        .run(input.encryptedState,input.nextVersion,now,input.groupId,input.expectedVersion) as any;
+      if (Number(state?.changes) !== 1) throw new Error('E2EE_STATE_CAS_CONFLICT');
+      const receipt = this.db.prepare(`UPDATE e2ee_production_receipts
+        SET state='reply_ready',reply_message_id=?,encrypted_reply=?,updated_at=?
+        WHERE message_id=? AND group_id=? AND state='provider_accepted'`)
+        .run(input.replyMessageId,input.encryptedReply,now,input.messageId,input.groupId) as any;
+      if (Number(receipt?.changes) !== 1) throw new Error('E2EE_RECEIPT_CAS_CONFLICT');
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  pendingReplies(limit = 50): any[] {
+    const bounded = Math.max(1,Math.min(100,Number(limit) || 50));
+    return this.db.prepare(`SELECT * FROM e2ee_production_receipts
+      WHERE state IN ('reply_ready','outcome_unknown') AND encrypted_reply IS NOT NULL
+        AND reply_message_id IS NOT NULL AND local_agent_id IS NOT NULL AND channel_id IS NOT NULL
+      ORDER BY updated_at LIMIT ${bounded}`).all() as any[];
   }
 
   bindSenderDevice(groupId: string, senderDeviceKeyId: string): void {
     const row = this.session(groupId);
     if (!row || row.status !== 'active') throw new Error('E2EE_SESSION_NOT_ACTIVE');
     if (!senderDeviceKeyId) throw new Error('E2EE_SENDER_DEVICE_INVALID');
+    if (row.protocol_mode === 'direct_v2' && row.sender_device_key_id
+        && row.sender_device_key_id !== senderDeviceKeyId) throw new Error('E2EE_SENDER_DEVICE_CHANGED');
     const now=Date.now();
     const member=this.db.prepare(`SELECT revoked_at FROM e2ee_production_session_senders WHERE group_id=? AND sender_device_key_id=?`)
       .get(groupId,senderDeviceKeyId) as any;
@@ -285,6 +372,11 @@ export class ProductionE2eeStore {
     const result = this.db.prepare(`UPDATE e2ee_production_receipts SET state=?,encrypted_reply=COALESCE(?,encrypted_reply),updated_at=?
       WHERE message_id=? AND state IN (${placeholders})`).run(to,encryptedReply || null,Date.now(),messageId,...from) as any;
     if (Number(result?.changes) !== 1) throw new Error('E2EE_RECEIPT_CAS_CONFLICT');
+  }
+
+  noteDeliveryAttempt(messageId: string): void {
+    this.db.prepare(`UPDATE e2ee_production_receipts SET delivery_attempts=delivery_attempts+1,updated_at=?
+      WHERE message_id=? AND state IN ('reply_ready','outcome_unknown')`).run(Date.now(),messageId);
   }
 
   isEmergencyDisabled(): boolean { return false; }

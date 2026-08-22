@@ -223,8 +223,9 @@ class MessageHandler extends EventEmitter {
   persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string): void {
     const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<AgentImUidRow>(agentId);
     const fromUid = agentRow?.imUid || 'voko';
-    const { msgId, timestamp } = persistAgentMessage(this.db, agentId, channelId, content,
+    const { msgId, timestamp, inserted } = persistAgentMessage(this.db, agentId, channelId, content,
       fromUid, 'text', 1, null, messageId);
+    if (!inserted) return;
     logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
       data: { replyLength: content.length, channelType: 1, e2ee: true } });
     this._notifyUI('agent-wukongim:message', {

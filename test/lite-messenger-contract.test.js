@@ -53,6 +53,18 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('projects a deterministic E2EE reply into the UI only once', () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.persistE2eeAgentReply('agent-1', 'visitor-1', 'encrypted reply', 'e2ee-reply-1');
+      fixture.handler.persistE2eeAgentReply('agent-1', 'visitor-1', 'encrypted reply', 'e2ee-reply-1');
+      assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM messages WHERE id='e2ee-reply-1'").get().count, 1);
+      assert.equal(fixture.notified.filter(row => row.event === 'agent-wukongim:message').length, 1);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('propagates a primary message persistence failure so the transport can NACK', () => {
     const fixture = createFixture();
     const originalPrepare = fixture.db.prepare.bind(fixture.db);

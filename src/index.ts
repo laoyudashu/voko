@@ -2070,6 +2070,20 @@ async function startMcpServer(args?: any, core?: any) {
           onRecovery:(failureCount: number) => console.warn(`[E2EE] Directory服务已恢复 consecutiveFailures=${failureCount}`),
         });
         await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
+        await taskManager.start('e2ee-reply-outbox',() => {
+          let running = false;
+          const drain = async () => {
+            if (running) return;
+            running = true;
+            try { await e2eeCanaryRuntime.recoverPendingReplies(50); }
+            finally { running = false; }
+          };
+          void drain().catch((error: any) => console.warn('[E2EE] 回复Outbox恢复失败:', error?.message || 'unknown'));
+          const timer = setInterval(() => void drain().catch((error: any) =>
+            console.warn('[E2EE] 回复Outbox恢复失败:', error?.message || 'unknown')),2_000);
+          timer.unref?.();
+          return async () => clearInterval(timer);
+        });
         console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);
       } else {
         console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
