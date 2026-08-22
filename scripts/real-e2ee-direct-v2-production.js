@@ -27,6 +27,22 @@ function localAgent() {
   } finally { db.close(); }
 }
 
+function verifyLocalReceipt(messageId, replyMessageId, localAgentId, channelId) {
+  const dbPath = process.env.VOKO_E2EE_PRODUCTION_TEST_E2EE_DB
+    || path.join(process.env.APPDATA || '', 'voko', 'voko-e2ee.db');
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare(`SELECT r.state,r.local_agent_id,r.channel_id,r.reply_message_id,
+      r.delivery_attempts,s.protocol_mode FROM e2ee_production_receipts r
+      JOIN e2ee_production_sessions s ON s.group_id=r.group_id WHERE r.message_id=?`).get(messageId);
+    if (row?.state !== 'completed' || row?.local_agent_id !== localAgentId
+        || row?.channel_id !== channelId || row?.reply_message_id !== replyMessageId
+        || Number(row?.delivery_attempts) !== 1 || row?.protocol_mode !== PROTOCOL_MODE) {
+      throw new Error('E2EE_DIRECT_PRODUCTION_RECEIPT_MISMATCH');
+    }
+  } finally { db.close(); }
+}
+
 function endpoint(scope) {
   const executable = process.env.VOKO_E2EE_PRODUCTION_TEST_ENDPOINT
     || path.join(root, 'e2ee', 'target', 'native-release', 'voko-e2ee-endpoint-win32-x64.exe');
@@ -157,7 +173,7 @@ async function postEncrypted(chatroomBase, cookie, identity, encrypted) {
 }
 
 async function sendExpected({ chatroomBase, gatewayBase, cookie, token, identity, endpointHandle,
-  cursor, ignoredMessageIds, expected, label }) {
+  cursor, ignoredMessageIds, expected, label, localAgentId }) {
   const messageId = `e2ee-${crypto.randomUUID()}`;
   const encrypted = await endpointHandle.request({ op: 'encrypt', message_id: messageId,
     text: `请只回复以下测试码，不要添加其他内容：${expected}` });
@@ -166,7 +182,10 @@ async function sendExpected({ chatroomBase, gatewayBase, cookie, token, identity
   const reply = await waitForReply(gatewayBase, token, identity.callerAgentId,
     identity.target.agentId, endpointHandle, cursor, ignoredMessageIds);
   ignoredMessageIds.add(reply.messageId);
-  if (!reply.plaintext.includes(expected)) throw new Error(`E2EE_DIRECT_${label}_REPLY_MISMATCH`);
+  if (!reply.plaintext.trim() || reply.plaintext.includes('[端到端加密消息]')) {
+    throw new Error(`E2EE_DIRECT_${label}_REPLY_INVALID`);
+  }
+  verifyLocalReceipt(messageId, reply.messageId, localAgentId, identity.principalId);
   return reply;
 }
 
@@ -333,7 +352,8 @@ async function waitForRestartSignal() {
 
     const firstExpected = `DIRECT_V2_TEXT_OK_${crypto.randomBytes(5).toString('hex')}`;
     await sendExpected({ chatroomBase, gatewayBase, cookie: session.cookie, token: session.token,
-      identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: firstExpected, label: 'TEXT' });
+      identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: firstExpected,
+      label: 'TEXT', localAgentId: agent.localAgentId });
     checks.push('text');
 
     const snapshot = (await creator.request({ op: 'snapshot' })).snapshot;
@@ -343,7 +363,8 @@ async function waitForRestartSignal() {
     await creator.request({ op: 'restore', snapshot });
     const refreshExpected = `DIRECT_V2_REFRESH_OK_${crypto.randomBytes(5).toString('hex')}`;
     await sendExpected({ chatroomBase, gatewayBase, cookie: session.cookie, token: session.token,
-      identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: refreshExpected, label: 'REFRESH' });
+      identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: refreshExpected,
+      label: 'REFRESH', localAgentId: agent.localAgentId });
     checks.push('creator_refresh');
 
     const attachmentExpected = `DIRECT_V2_ATTACHMENT_OK_${crypto.randomBytes(5).toString('hex')}`;
@@ -357,13 +378,16 @@ async function waitForRestartSignal() {
       identity.target.agentId, creator, cursor, ignoredMessageIds, 180_000);
     ignoredMessageIds.add(attachmentReply.messageId);
     if (!attachmentReply.plaintext.trim()) throw new Error('E2EE_DIRECT_ATTACHMENT_REPLY_EMPTY');
+    verifyLocalReceipt(attachment.messageId, attachmentReply.messageId,
+      agent.localAgentId, identity.principalId);
     checks.push('attachment');
 
     if (process.env.VOKO_E2EE_PRODUCTION_RESTART_GATE === '1') {
       await waitForRestartSignal();
       const restartExpected = `DIRECT_V2_RESTART_OK_${crypto.randomBytes(5).toString('hex')}`;
       await sendExpected({ chatroomBase, gatewayBase, cookie: session.cookie, token: session.token,
-        identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: restartExpected, label: 'RESTART' });
+        identity, endpointHandle: creator, cursor, ignoredMessageIds, expected: restartExpected,
+        label: 'RESTART', localAgentId: agent.localAgentId });
       checks.push('voko_restart');
     }
 

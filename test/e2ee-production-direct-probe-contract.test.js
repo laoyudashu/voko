@@ -24,6 +24,16 @@ test('production Direct v2 probe covers text, creator refresh, attachment and VO
   assert.match(source, /VOKO_E2EE_PRODUCTION_RESTART_GATE/);
 });
 
+test('production Direct v2 replies are correlated by durable receipt rather than model wording', () => {
+  assert.match(source, /FROM e2ee_production_receipts r/);
+  assert.match(source, /row\?\.state !== 'completed'/);
+  assert.match(source, /row\?\.reply_message_id !== replyMessageId/);
+  assert.match(source, /Number\(row\?\.delivery_attempts\) !== 1/);
+  assert.match(source, /row\?\.protocol_mode !== PROTOCOL_MODE/);
+  assert.match(source, /reply\.plaintext\.includes\('\[端到端加密消息\]'\)/);
+  assert.doesNotMatch(source, /reply\.plaintext\.includes\(expected\)/);
+});
+
 test('production Direct v2 probe never logs guest credentials or plaintext replies', () => {
   assert.doesNotMatch(source, /console\.(?:log|error)\([^\n]*(?:session\.token|session\.cookie|reply\.plaintext)/);
   assert.match(source, /plaintextFallbacks: 0/);
