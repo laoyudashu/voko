@@ -33,6 +33,9 @@ enum Command {
     BindRoute { group_id: String, conversation: String },
     PrepareAdd { key_package: String },
     AcceptAdd,
+    PrepareAddMember { key_package:String },
+    PrepareRemoveDevice { device_key_id:String },
+    AcceptPendingCommit,
     Join { welcome: String },
     Encrypt { message_id: String, text: String },
     Decrypt { envelope: WireEnvelope },
@@ -41,6 +44,7 @@ enum Command {
     Restore { snapshot: String },
     SealSnapshot,
     RestoreSealed { sealed_snapshot: String },
+    ApplyCommit { commit: String },
     SealPending,
     RestorePending { sealed_snapshot: String },
     Replenish,
@@ -253,6 +257,20 @@ fn handle(
             );
             Ok(empty())
         }
+        Command::PrepareAddMember { key_package } => {
+            let bytes=URL_SAFE_NO_PAD.decode(key_package).map_err(|_|"invalid KeyPackage")?;
+            let prepared=group.as_mut().ok_or("group is not active")?.prepare_add_member(&bytes).map_err(|e|e.to_string())?;
+            Ok(Response{commit:Some(URL_SAFE_NO_PAD.encode(prepared.commit)),welcome:Some(URL_SAFE_NO_PAD.encode(prepared.welcome)),..empty()})
+        }
+        Command::PrepareRemoveDevice { device_key_id } => {
+            let prepared=group.as_mut().ok_or("group is not active")?
+                .prepare_remove_device(device_key_id.as_bytes()).map_err(|e|e.to_string())?;
+            Ok(Response{commit:Some(URL_SAFE_NO_PAD.encode(prepared)),..empty()})
+        }
+        Command::AcceptPendingCommit => {
+            group.as_mut().ok_or("group is not active")?.accept_pending_commit().map_err(|e|e.to_string())?;
+            Ok(empty())
+        }
         Command::Join { welcome } if role == Role::Recipient => {
             let bytes = URL_SAFE_NO_PAD
                 .decode(welcome)
@@ -375,6 +393,11 @@ fn handle(
             *group = Some(DirectGroup::restore(snapshot.as_ref()).map_err(|e| e.to_string())?);
             *creator = None;
             *recipient = None;
+            Ok(empty())
+        }
+        Command::ApplyCommit { commit } => {
+            let bytes=URL_SAFE_NO_PAD.decode(commit).map_err(|_| "invalid Commit encoding")?;
+            group.as_mut().ok_or("group is not active")?.apply_commit(&bytes).map_err(|e|e.to_string())?;
             Ok(empty())
         }
         Command::SealPending if role == Role::Recipient && group.is_none() => {

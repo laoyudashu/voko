@@ -30,6 +30,7 @@ export class ProductionE2eeStore {
       binding_generation INTEGER NOT NULL,
       encrypted_state BLOB NOT NULL,
       state_version INTEGER NOT NULL DEFAULT 1,
+      mls_epoch INTEGER NOT NULL DEFAULT 1,
       mode TEXT NOT NULL DEFAULT 'e2ee_active',
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL,
@@ -38,6 +39,13 @@ export class ProductionE2eeStore {
       UNIQUE(recipient_device_key_id,group_id));
     CREATE INDEX IF NOT EXISTS idx_e2ee_production_scope
       ON e2ee_production_sessions(local_agent_id,creator_principal_id,conversation_scope,status);
+    CREATE TABLE IF NOT EXISTS e2ee_production_session_senders(
+      group_id TEXT NOT NULL REFERENCES e2ee_production_sessions(group_id) ON DELETE CASCADE,
+      sender_device_key_id TEXT NOT NULL,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      revoked_at INTEGER,
+      PRIMARY KEY(group_id,sender_device_key_id));
     CREATE TABLE IF NOT EXISTS e2ee_production_channels(
       local_agent_id TEXT NOT NULL,
       channel_id TEXT NOT NULL,
@@ -73,7 +81,15 @@ export class ProductionE2eeStore {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_e2ee_production_receipts_state
-      ON e2ee_production_receipts(state,updated_at);`);
+      ON e2ee_production_receipts(state,updated_at);
+    CREATE TABLE IF NOT EXISTS e2ee_production_attachments(
+      upload_id TEXT PRIMARY KEY,
+      local_agent_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL);`);
+    try { db.exec('ALTER TABLE e2ee_production_sessions ADD COLUMN mls_epoch INTEGER NOT NULL DEFAULT 1'); } catch {}
   }
 
   deviceGeneration(create: () => string): string {
@@ -103,6 +119,16 @@ export class ProductionE2eeStore {
 
   session(groupId: string): any {
     return this.db.prepare('SELECT * FROM e2ee_production_sessions WHERE group_id=?').get(groupId);
+  }
+
+  activeSessions(localAgentId:string):any[]{
+    return this.db.prepare("SELECT * FROM e2ee_production_sessions WHERE local_agent_id=? AND status='active'").all(localAgentId) as any[];
+  }
+
+  applyEpoch(groupId:string,expectedEpoch:number,nextEpoch:number,encryptedState:Uint8Array,stateVersion:number):void{
+    const result=this.db.prepare(`UPDATE e2ee_production_sessions SET encrypted_state=?,state_version=?,mls_epoch=?,updated_at=?
+      WHERE group_id=? AND mls_epoch=? AND status='active'`).run(encryptedState,stateVersion,nextEpoch,Date.now(),groupId,expectedEpoch) as any;
+    if(Number(result?.changes)!==1)throw new Error('E2EE_EPOCH_CAS_CONFLICT');
   }
 
   resolve(localAgentId: string, groupId: string, creatorPrincipalId: string, conversationScope: string): any {
@@ -200,9 +226,14 @@ export class ProductionE2eeStore {
   bindSenderDevice(groupId: string, senderDeviceKeyId: string): void {
     const row = this.session(groupId);
     if (!row || row.status !== 'active') throw new Error('E2EE_SESSION_NOT_ACTIVE');
-    if (row.sender_device_key_id && row.sender_device_key_id !== senderDeviceKeyId) {
-      throw new Error('E2EE_SENDER_DEVICE_CHANGED');
-    }
+    if (!senderDeviceKeyId) throw new Error('E2EE_SENDER_DEVICE_INVALID');
+    const now=Date.now();
+    const member=this.db.prepare(`SELECT revoked_at FROM e2ee_production_session_senders WHERE group_id=? AND sender_device_key_id=?`)
+      .get(groupId,senderDeviceKeyId) as any;
+    if(member?.revoked_at)throw new Error('E2EE_SENDER_DEVICE_REVOKED');
+    this.db.prepare(`INSERT INTO e2ee_production_session_senders(group_id,sender_device_key_id,first_seen_at,last_seen_at)
+      VALUES(?,?,?,?) ON CONFLICT(group_id,sender_device_key_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`)
+      .run(groupId,senderDeviceKeyId,now,now);
     this.db.prepare(`UPDATE e2ee_production_sessions SET sender_device_key_id=COALESCE(sender_device_key_id,?),updated_at=?
       WHERE group_id=?`).run(senderDeviceKeyId,Date.now(),groupId);
   }
@@ -223,6 +254,24 @@ export class ProductionE2eeStore {
       JOIN e2ee_production_sessions s ON s.group_id=c.group_id
       WHERE c.local_agent_id=? AND c.channel_id=? AND s.status='active' LIMIT 1`)
       .get(localAgentId,channelId));
+  }
+
+  scopeForChannel(localAgentId: string, channelId: string): any {
+    return this.db.prepare(`SELECT s.* FROM e2ee_production_channels c
+      JOIN e2ee_production_sessions s ON s.group_id=c.group_id
+      WHERE c.local_agent_id=? AND c.channel_id=? AND s.status='active' LIMIT 1`)
+      .get(localAgentId,channelId);
+  }
+
+  saveAttachment(input: any): void {
+    this.db.prepare(`INSERT INTO e2ee_production_attachments
+      (upload_id,local_agent_id,channel_id,group_id,manifest_json,created_at) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(upload_id) DO NOTHING`).run(input.uploadId,input.localAgentId,input.channelId,
+      input.groupId,JSON.stringify(input.manifest),Date.now());
+  }
+
+  attachment(uploadId: string): any {
+    return this.db.prepare('SELECT * FROM e2ee_production_attachments WHERE upload_id=?').get(uploadId);
   }
 
   commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void {

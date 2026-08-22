@@ -42,6 +42,15 @@ test('图片附件 JSON 根据文件名渲染图片预览', () => {
   assert.doesNotMatch(html, /class="voko-file-card"/);
 });
 
+test('端到端加密图片仅放行严格的本地解密路径', () => {
+  const token='a'.repeat(43);const content = JSON.stringify({name:'voko.png',url:'/api/e2ee/attachments/upload_12345678/download?token='+token,
+    size:2652,mimeType:'image/png'});
+  const html = renderer.render(2,content);
+  assert.match(html,/class="voko-media-image-preview"/);
+  assert.match(html,new RegExp('src="/api/e2ee/attachments/upload_12345678/download\\?token='+token+'"'));
+  assert.doesNotMatch(renderer.render(2,JSON.stringify({...JSON.parse(content),url:'/api/e2ee/attachments/..%2fsecret/download'})),/src=/);
+});
+
 test('long text keeps a collapsed preview and exposes an expandable full message', () => {
   const content = 'a'.repeat(600);
   const html = renderer.render(1, content);

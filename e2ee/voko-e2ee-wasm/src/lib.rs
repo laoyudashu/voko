@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use voko_e2ee_core::{
     AttachmentKey, CanonicalAad, DeviceCredentialIdentity, DeviceRole, DirectCreatorEndpoint,
-    DirectGroup, DirectGroupError, DirectGroupPair, EncryptedAttachment, KeyPackageLedger, E2EE_CONTENT_TYPE,
+    DirectGroup, DirectGroupError, DirectGroupPair, DirectRecipientEndpoint, EncryptedAttachment, KeyPackageLedger, E2EE_CONTENT_TYPE,
     E2EE_PROTOCOL_VERSION,
 };
 use wasm_bindgen::prelude::*;
@@ -75,6 +75,19 @@ pub struct WasmCreatorEndpoint {
 #[wasm_bindgen]
 pub struct WasmBrowserEndpoint {
     pending: Option<DirectCreatorEndpoint>,
+    group: Option<DirectGroup>,
+    group_id: Vec<u8>,
+    target_agent_did: Vec<u8>,
+    conversation_scope: Vec<u8>,
+    sender_device_key_id: Vec<u8>,
+}
+
+/// Independent browser device joining an existing MLS conversation. The
+/// pending KeyPackage snapshot and active group snapshot are persisted only by
+/// that browser's encrypted IndexedDB vault.
+#[wasm_bindgen]
+pub struct WasmBrowserMemberEndpoint {
+    pending: Option<DirectRecipientEndpoint>,
     group: Option<DirectGroup>,
     group_id: Vec<u8>,
     target_agent_did: Vec<u8>,
@@ -231,6 +244,35 @@ impl WasmBrowserEndpoint {
         Ok(())
     }
 
+    pub fn prepare_add_member(&mut self, key_package: String) -> Result<String, JsError> {
+        let package = URL_SAFE_NO_PAD.decode(key_package).map_err(|_| JsError::new("invalid KeyPackage encoding"))?;
+        let prepared = self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
+            .prepare_add_member(&package).map_err(|error| JsError::new(&error.to_string()))?;
+        serde_json::to_string(&WasmPreparedAdd { commit: URL_SAFE_NO_PAD.encode(prepared.commit),
+            welcome: URL_SAFE_NO_PAD.encode(prepared.welcome) }).map_err(|error| JsError::new(&error.to_string()))
+    }
+    pub fn prepare_remove_device(&mut self, device_key_id:String)->Result<String,JsError>{
+        let commit=self.group.as_mut().ok_or_else(||JsError::new("group is not active"))?
+            .prepare_remove_device(&required_bytes(device_key_id,"device key ID")?).map_err(|e|JsError::new(&e.to_string()))?;
+        Ok(URL_SAFE_NO_PAD.encode(commit))
+    }
+
+    pub fn accept_pending_commit(&mut self) -> Result<(), JsError> {
+        self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
+            .accept_pending_commit().map_err(|error| JsError::new(&error.to_string()))
+    }
+
+    pub fn apply_commit(&mut self, commit: String) -> Result<(), JsError> {
+        let bytes = URL_SAFE_NO_PAD.decode(commit).map_err(|_| JsError::new("invalid Commit encoding"))?;
+        self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?
+            .apply_commit(&bytes).map_err(|error| JsError::new(&error.to_string()))
+    }
+
+    pub fn epoch(&self) -> Result<u32, JsError> {
+        let epoch = self.group.as_ref().ok_or_else(|| JsError::new("group is not active"))?.epoch();
+        u32::try_from(epoch).map_err(|_| JsError::new("epoch exceeds browser range"))
+    }
+
     /// Returns ciphertext chunks plus a per-file key. The caller MUST place
     /// the key-bearing manifest only inside an authenticated MLS message.
     pub fn encrypt_attachment(&self, plaintext: Vec<u8>) -> Result<String, JsError> {
@@ -270,6 +312,79 @@ impl WasmBrowserEndpoint {
         let encrypted = EncryptedAttachment { file_id, nonce_prefix, plaintext_size:package.plaintext_size,
             chunk_size:package.chunk_size, ciphertext_hashes:hashes, chunks };
         encrypted.decrypt(&key).map(|value| value.to_vec()).map_err(|error| JsError::new(&error.to_string()))
+    }
+}
+
+#[wasm_bindgen]
+impl WasmBrowserMemberEndpoint {
+    #[wasm_bindgen(constructor)]
+    pub fn new(principal_id: String, device_key_id: String, key_epoch: u32,
+        target_agent_did: String, group_id: String, conversation_scope: String) -> Result<Self, JsError> {
+        if key_epoch == 0 { return Err(JsError::new("invalid key epoch")); }
+        let identity = DeviceCredentialIdentity { role: DeviceRole::Browser,
+            principal_id: required_bytes(principal_id, "principal ID")?,
+            device_key_id: required_bytes(device_key_id.clone(), "device key ID")?, key_epoch:u64::from(key_epoch),
+            target_agent_did: required_bytes(target_agent_did.clone(), "target Agent DID")? };
+        Ok(Self { pending:Some(DirectRecipientEndpoint::new(&identity).map_err(|e| JsError::new(&e.to_string()))?),
+            group:None, group_id:required_bytes(group_id,"group ID")?, target_agent_did:target_agent_did.into_bytes(),
+            conversation_scope:required_bytes(conversation_scope,"conversation scope")?, sender_device_key_id:device_key_id.into_bytes() })
+    }
+
+    pub fn key_package(&self) -> Result<String, JsError> {
+        Ok(URL_SAFE_NO_PAD.encode(self.pending.as_ref().ok_or_else(|| JsError::new("member is not pending"))?.serialized_key_package()))
+    }
+    pub fn pending_snapshot(&self) -> Result<String, JsError> {
+        Ok(URL_SAFE_NO_PAD.encode(self.pending.as_ref().ok_or_else(|| JsError::new("member is not pending"))?
+            .snapshot().map_err(|e| JsError::new(&e.to_string()))?))
+    }
+    pub fn restore_pending(&mut self, snapshot: String) -> Result<(), JsError> {
+        let bytes=URL_SAFE_NO_PAD.decode(snapshot).map_err(|_| JsError::new("invalid pending snapshot"))?;
+        self.pending=Some(DirectRecipientEndpoint::restore(&bytes).map_err(|e| JsError::new(&e.to_string()))?); self.group=None; Ok(())
+    }
+    pub fn join(&mut self, welcome: String) -> Result<(), JsError> {
+        let bytes=URL_SAFE_NO_PAD.decode(welcome).map_err(|_| JsError::new("invalid Welcome encoding"))?;
+        let pending=self.pending.take().ok_or_else(|| JsError::new("member is not pending"))?;
+        self.group=Some(pending.join(&bytes).map_err(|e| JsError::new(&e.to_string()))?); Ok(())
+    }
+    pub fn snapshot(&self) -> Result<String, JsError> {
+        Ok(URL_SAFE_NO_PAD.encode(self.group.as_ref().ok_or_else(|| JsError::new("group is not active"))?
+            .snapshot().map_err(|e| JsError::new(&e.to_string()))?))
+    }
+    pub fn restore(&mut self, snapshot: String) -> Result<(), JsError> {
+        let bytes=URL_SAFE_NO_PAD.decode(snapshot).map_err(|_| JsError::new("invalid group snapshot"))?;
+        self.group=Some(DirectGroup::restore(&bytes).map_err(|e| JsError::new(&e.to_string()))?); self.pending=None; Ok(())
+    }
+    pub fn apply_commit(&mut self, commit: String) -> Result<(), JsError> {
+        let bytes=URL_SAFE_NO_PAD.decode(commit).map_err(|_| JsError::new("invalid Commit encoding"))?;
+        self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?.apply_commit(&bytes)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+    pub fn prepare_remove_device(&mut self,device_key_id:String)->Result<String,JsError>{
+        let commit=self.group.as_mut().ok_or_else(||JsError::new("group is not active"))?
+          .prepare_remove_device(&required_bytes(device_key_id,"device key ID")?).map_err(|e|JsError::new(&e.to_string()))?;
+        Ok(URL_SAFE_NO_PAD.encode(commit))
+    }
+    pub fn epoch(&self) -> Result<u32, JsError> {
+        u32::try_from(self.group.as_ref().ok_or_else(|| JsError::new("group is not active"))?.epoch())
+            .map_err(|_| JsError::new("epoch exceeds browser range"))
+    }
+    pub fn encrypt_message(&mut self, message_id:String, plaintext:String) -> Result<String,JsError> {
+        let active=self.group.as_mut().ok_or_else(|| JsError::new("group is not active"))?;
+        let route=CanonicalAad { protocol_version:E2EE_PROTOCOL_VERSION,content_type:E2EE_CONTENT_TYPE,
+            group_id:self.group_id.clone(),epoch:active.epoch(),target_agent_did:self.target_agent_did.clone(),
+            conversation_scope:self.conversation_scope.clone(),sender_device_key_id:self.sender_device_key_id.clone(),
+            message_id:required_bytes(message_id,"message ID")?,channel_type:1 };
+        let ciphertext=active.encrypt(&route,plaintext.as_bytes()).map_err(|e| JsError::new(&e.to_string()))?;
+        serde_json::to_string(&voko_e2ee_core::WireEnvelope::new(&route,&ciphertext)
+            .map_err(|e| JsError::new(&e.to_string()))?).map_err(|e| JsError::new(&e.to_string()))
+    }
+    pub fn decrypt_message(&mut self,envelope_json:String)->Result<String,JsError>{
+        let envelope:voko_e2ee_core::WireEnvelope=serde_json::from_str(&envelope_json).map_err(|_|JsError::new("invalid E2EE envelope"))?;
+        let route=envelope.aad().map_err(|e|JsError::new(&e.to_string()))?;
+        if route.group_id!=self.group_id||route.target_agent_did!=self.target_agent_did||route.conversation_scope!=self.conversation_scope{return Err(JsError::new("authenticated route scope mismatch"));}
+        let ciphertext=envelope.ciphertext_bytes().map_err(|e|JsError::new(&e.to_string()))?;
+        String::from_utf8(self.group.as_mut().ok_or_else(||JsError::new("group is not active"))?.decrypt(&route,&ciphertext).map_err(stable_decrypt_error)?)
+            .map_err(|_|JsError::new("decrypted message is not UTF-8"))
     }
 }
 

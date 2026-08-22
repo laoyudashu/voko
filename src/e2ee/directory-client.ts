@@ -119,6 +119,28 @@ export class E2eeDirectoryClient {
     reasonCode: 'INVALID_WELCOME'|'SCOPE_MISMATCH'|'LOCAL_CRYPTO_ERROR' }): Promise<any> {
     return this.request('/v1/e2ee/establishments/reject', { method: 'POST', body: JSON.stringify(input) });
   }
+
+  async pullDeviceCommits(input:{agentId:string;ownerDeviceKeyId:string;groupId:string;afterEpoch:number}):Promise<any[]> {
+    const data=await this.request('/v1/e2ee/device-commits/pull',{method:'POST',body:JSON.stringify(input)});
+    if(!Array.isArray(data?.events))throw new Error('E2EE_DIRECTORY_INVALID_DEVICE_COMMITS');
+    return data.events.map((event:any)=>({groupId:base64url(event.groupId,'GROUP_ID',255),
+      epoch:Number(event.epoch),operation:bounded(event.operation,'OPERATION',16),commit:base64url(event.commit,'COMMIT')}));
+  }
+  acknowledgeDeviceCommit(input:{agentId:string;ownerDeviceKeyId:string;groupId:string;epoch:number}):Promise<any>{
+    return this.request('/v1/e2ee/device-commits/ack',{method:'POST',body:JSON.stringify(input)});
+  }
+  claimDeviceJoin(input:{agentId:string;ownerDeviceKeyId:string;groupId:string}):Promise<any>{
+    return this.request('/v1/e2ee/device-joins/claim',{method:'POST',body:JSON.stringify(input)});
+  }
+  completeDeviceJoin(input:{agentId:string;ownerDeviceKeyId:string;groupId:string;joinId:string;commit:string;welcome:string;epoch:number}):Promise<any>{
+    return this.request('/v1/e2ee/device-joins/complete',{method:'POST',body:JSON.stringify(input)});
+  }
+  claimDeviceRevocation(input:{agentId:string;ownerDeviceKeyId:string;groupId:string}):Promise<any>{
+    return this.request('/v1/e2ee/device-revocations/claim',{method:'POST',body:JSON.stringify(input)});
+  }
+  completeDeviceRevocation(input:{agentId:string;ownerDeviceKeyId:string;groupId:string;revocationId:string;commit:string;epoch:number}):Promise<any>{
+    return this.request('/v1/e2ee/device-revocations/complete',{method:'POST',body:JSON.stringify(input)});
+  }
 }
 
 module.exports = { E2eeDirectoryClient };

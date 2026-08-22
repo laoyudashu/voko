@@ -11,7 +11,13 @@ export class CanaryStore {
       CREATE TABLE IF NOT EXISTS e2ee_canary_receipts(
       message_id TEXT PRIMARY KEY,group_id TEXT NOT NULL,cipher_digest TEXT NOT NULL,state TEXT NOT NULL,
       encrypted_reply TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS idx_e2ee_canary_receipts_state ON e2ee_canary_receipts(state,updated_at);`);
+      CREATE INDEX IF NOT EXISTS idx_e2ee_canary_receipts_state ON e2ee_canary_receipts(state,updated_at);
+      CREATE TABLE IF NOT EXISTS e2ee_canary_channels(
+        local_agent_id TEXT NOT NULL,channel_id TEXT NOT NULL,group_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,PRIMARY KEY(local_agent_id,channel_id));
+      CREATE TABLE IF NOT EXISTS e2ee_canary_attachments(
+        upload_id TEXT PRIMARY KEY,local_agent_id TEXT NOT NULL,channel_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,manifest_json TEXT NOT NULL,created_at INTEGER NOT NULL);`);
     db.exec(`CREATE TABLE IF NOT EXISTS e2ee_canary_control(
       singleton INTEGER PRIMARY KEY CHECK(singleton=1),emergency_disabled INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL);`);
   }
@@ -56,6 +62,32 @@ export class CanaryStore {
   }
 
   session(groupId: string): any { return this.db.prepare('SELECT * FROM e2ee_canary_sessions WHERE group_id=?').get(groupId); }
+
+  bindChannel(localAgentId: string, groupId: string, channelId: string): void {
+    this.db.prepare(`INSERT INTO e2ee_canary_channels(local_agent_id,channel_id,group_id,updated_at)
+      VALUES(?,?,?,?) ON CONFLICT(local_agent_id,channel_id) DO UPDATE SET group_id=excluded.group_id,updated_at=excluded.updated_at`)
+      .run(localAgentId,channelId,groupId,Date.now());
+  }
+
+  isChannelActive(localAgentId: string, channelId: string): boolean {
+    return Boolean(this.scopeForChannel(localAgentId,channelId));
+  }
+
+  scopeForChannel(localAgentId: string, channelId: string): any {
+    return this.db.prepare(`SELECT s.* FROM e2ee_canary_channels c JOIN e2ee_canary_sessions s ON s.group_id=c.group_id
+      WHERE c.local_agent_id=? AND c.channel_id=? AND s.status='active' LIMIT 1`).get(localAgentId,channelId);
+  }
+
+  saveAttachment(input: any): void {
+    this.db.prepare(`INSERT INTO e2ee_canary_attachments
+      (upload_id,local_agent_id,channel_id,group_id,manifest_json,created_at) VALUES(?,?,?,?,?,?)
+      ON CONFLICT(upload_id) DO NOTHING`).run(input.uploadId,input.localAgentId,input.channelId,
+      input.groupId,JSON.stringify(input.manifest),Date.now());
+  }
+
+  attachment(uploadId: string): any {
+    return this.db.prepare('SELECT * FROM e2ee_canary_attachments WHERE upload_id=?').get(uploadId);
+  }
 
   provision(scope: any, encryptedState: Uint8Array): void {
     const now = Date.now();

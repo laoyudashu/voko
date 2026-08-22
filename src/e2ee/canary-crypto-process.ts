@@ -145,6 +145,40 @@ export class CanaryCryptoProcess {
     });
   }
 
+  async applyCommit(input: { scope: CanaryScope; commit: string; encryptedState: Uint8Array; stateVersion: number }) {
+    return this.withEndpoint(input.scope, async endpoint => {
+      await endpoint.request({ op:'restore_sealed',sealed_snapshot:Buffer.from(input.encryptedState).toString('base64url') });
+      await endpoint.request({ op:'apply_commit',commit:input.commit });
+      const sealed=await endpoint.request({op:'seal_snapshot'});
+      return {encryptedState:Buffer.from(String(sealed.sealedSnapshot),'base64url'),stateVersion:input.stateVersion+1};
+    });
+  }
+
+  async prepareAddMember(input:{scope:CanaryScope;keyPackage:string;encryptedState:Uint8Array;stateVersion:number}){
+    return this.withEndpoint(input.scope,async endpoint=>{
+      await endpoint.request({op:'restore_sealed',sealed_snapshot:Buffer.from(input.encryptedState).toString('base64url')});
+      const prepared=await endpoint.request({op:'prepare_add_member',key_package:input.keyPackage});
+      const pending=await endpoint.request({op:'seal_snapshot'});
+      return{commit:String(prepared.commit),welcome:String(prepared.welcome),pendingState:Buffer.from(String(pending.sealedSnapshot),'base64url')};
+    });
+  }
+
+  async prepareRemoveDevice(input:{scope:CanaryScope;deviceKeyId:string;encryptedState:Uint8Array;stateVersion:number}){
+    return this.withEndpoint(input.scope,async endpoint=>{
+      await endpoint.request({op:'restore_sealed',sealed_snapshot:Buffer.from(input.encryptedState).toString('base64url')});
+      const prepared=await endpoint.request({op:'prepare_remove_device',device_key_id:input.deviceKeyId});
+      const pending=await endpoint.request({op:'seal_snapshot'});
+      return{commit:String(prepared.commit),pendingState:Buffer.from(String(pending.sealedSnapshot),'base64url')};
+    });
+  }
+  async acceptPendingCommit(input:{scope:CanaryScope;pendingState:Uint8Array;stateVersion:number}){
+    return this.withEndpoint(input.scope,async endpoint=>{
+      await endpoint.request({op:'restore_sealed',sealed_snapshot:Buffer.from(input.pendingState).toString('base64url')});
+      await endpoint.request({op:'accept_pending_commit'});const sealed=await endpoint.request({op:'seal_snapshot'});
+      return{encryptedState:Buffer.from(String(sealed.sealedSnapshot),'base64url'),stateVersion:input.stateVersion+1};
+    });
+  }
+
   async decryptAttachment(scope: CanaryScope, packageValue: Record<string, unknown>): Promise<Uint8Array> {
     return this.withEndpoint(scope, async endpoint => {
       const opened = await endpoint.request({ op: 'decrypt_attachment', package: packageValue });

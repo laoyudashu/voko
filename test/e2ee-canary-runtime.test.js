@@ -21,7 +21,7 @@ function fixture(enabled=true, overrides={}) {
     async decryptAttachment(){return Buffer.from('attachment body')},
     async encrypt(input){return{envelope:envelope(input.messageId,'cmVwbHk'),encryptedState:Buffer.from(`state-${input.stateVersion+1}`),stateVersion:input.stateVersion+1}}};
   const runtime=new CanaryRuntime({policy,store,crypto,dispatcher:{async executeCanary(input){dispatched.push(input);await overrides.inspectDispatch?.(input);input.onProviderAccepted?.();return{reply:{content:'private reply'}}}},
-    persistInbound:overrides.persistInbound||((agentId,message,plaintext,messageId)=>{persisted.push({direction:'in',agentId,channelId:message.fromUid,plaintext,messageId});return true}),
+    persistInbound:overrides.persistInbound||((agentId,message,plaintext,messageId,contentType)=>{persisted.push({direction:'in',agentId,channelId:message.fromUid,plaintext,messageId,contentType});return true}),
     persistOutbound:overrides.persistOutbound||((agentId,channelId,plaintext,messageId)=>persisted.push({direction:'out',agentId,channelId,plaintext,messageId})),
     downloadAttachment:overrides.downloadAttachment,
     async deliverRaw(...args){delivered.push(args);return{success:true}}});return{db,store,runtime,delivered,dispatched,persisted};
@@ -69,5 +69,15 @@ test('encrypted attachment is downloaded, decrypted and removed after exact Prov
     inspectDispatch:async input=>{observedPath=input.attachments[0].path;assert.match(input.content,/Review the attachment and respond when appropriate/);
       assert.equal(require('node:fs').readFileSync(observedPath,'utf8'),'attachment body')}});
   assert.equal((await f.runtime.handle('agent-local',{contentType:13,content:JSON.stringify(envelope('attachment-message')),fromUid:'guest-principal',channelType:1})).accepted,true);
-  assert.equal(require('node:fs').existsSync(observedPath),false);assert.equal(f.dispatched[0].attachments[0].name,'note.txt');f.db.close();
+  assert.equal(require('node:fs').existsSync(observedPath),false);assert.equal(f.dispatched[0].attachments[0].name,'note.txt');
+  const displayed=JSON.parse(f.persisted[0].plaintext);assert.equal(f.persisted[0].contentType,8);
+  assert.match(displayed.url,/^\/api\/e2ee\/attachments\/upload_12345678\/download\?token=[A-Za-z0-9_-]{43}$/);assert.equal(displayed.fileName,'note.txt');
+  assert.equal(Object.prototype.hasOwnProperty.call(displayed,'package'),false);
+  const opened=await f.runtime.openAttachment('upload_12345678');assert.equal(Buffer.from(opened.bytes).toString(),'attachment body');
+  const legacy=f.runtime.projectAttachment('agent-local','guest-principal',JSON.stringify(manifest));assert.equal(legacy.contentType,8);
+  assert.match(JSON.parse(legacy.content).url,/^\/api\/e2ee\/attachments\/upload_12345678\/download\?token=[A-Za-z0-9_-]{43}$/);
+  const token=new URL('http://local'+JSON.parse(legacy.content).url).searchParams.get('token');
+  assert.equal(f.runtime.authorizeAttachmentDownload('upload_12345678',token),true);
+  assert.equal(f.runtime.authorizeAttachmentDownload('upload_12345678','x'.repeat(43)),false);
+  f.db.close();
 });

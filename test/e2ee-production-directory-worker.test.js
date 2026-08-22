@@ -202,6 +202,82 @@ test('directory worker scans large agent sets in bounded round-robin batches', a
   db.close();
 });
 
+test('directory worker hosts a pending guest device join before acknowledging the epoch', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const scope = { localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    creatorPrincipalId:'guest-a',senderDeviceKeyId:'guest-device-1',recipientDeviceKeyId:'device-gym',
+    ownerScope:'owner',groupId:'Z3JvdXAtMQ',conversationScope:'scope-1',bindingGeneration:1 };
+  db.prepare(`INSERT INTO e2ee_production_sessions(group_id,local_agent_id,server_agent_id,target_agent_did,
+    creator_principal_id,sender_device_key_id,recipient_device_key_id,owner_scope,conversation_scope,
+    binding_generation,encrypted_state,state_version,mls_epoch,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(scope.groupId,scope.localAgentId,scope.serverAgentId,scope.targetAgentDid,
+    scope.creatorPrincipalId,scope.senderDeviceKeyId,scope.recipientDeviceKeyId,scope.ownerScope,
+    scope.conversationScope,scope.bindingGeneration,Buffer.from('epoch-1'),1,1,Date.now(),Date.now());
+  store.saveKeyPackage({ localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    ownerDeviceKeyId:'device-gym',ownerScope:'owner',keyEpoch:1,keyPackageRef:ref('a2V5'),keyPackage:'a2V5',
+    encryptedPendingState:Buffer.from('pending'),publishState:'published' });
+  const calls = [];
+  let claimed = false;
+  const client = {
+    async registerDevice() {},
+    async publishKeyPackage(input) { return { keyPackageRef:ref(input.keyPackage) }; },
+    async keyPackageStatus() { return { agents:[{ agentId:'server-gym',available:1 }] }; },
+    async pullEstablishments() { return []; }, async acknowledge() {}, async reject() {},
+    async pullDeviceCommits() { return []; },
+    async claimDeviceJoin() { if (claimed) return null; claimed = true; return { joinId:'join-1',keyPackage:'bmV3LWRldmljZQ' }; },
+    async completeDeviceJoin(input) { calls.push(['complete',input.epoch]); },
+    async acknowledgeDeviceCommit(input) {
+      assert.equal(store.session(scope.groupId).mls_epoch,2,'local epoch must commit before owner ACK');
+      calls.push(['ack',input.epoch]);
+    },
+  };
+  const processFactory = () => ({ ready:Promise.resolve({ keyPackage:'a2V5',credentialPublicKey:'Y3JlZA' }),
+    async sealPending() { return Buffer.from('pending'); }, async restorePending() { return 'Y3JlZA'; }, close() {} });
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,
+    agents:()=>[{ localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+      ownerDeviceKeyId:'device-gym',ownerScope:'owner',bindingGeneration:1 }],processFactory,
+    async prepareAddMember(input) { calls.push(['prepare',Buffer.from(input.encryptedState).toString()]);
+      return { commit:'Y29tbWl0',welcome:'d2VsY29tZQ',pendingState:new Uint8Array(Buffer.from('pending-epoch-2')) }; },
+    async acceptPendingCommit(input) { calls.push(['accept',Buffer.from(input.pendingState).toString()]);
+      return { encryptedState:new Uint8Array(Buffer.from('epoch-2')),stateVersion:1 }; },
+    async applyCommit() { throw new Error('unexpected existing commit'); },
+    onError(_agentId,error) { throw error; },
+  });
+  await worker.runOnce();
+  assert.deepEqual(calls,[['prepare','epoch-1'],['complete',2],['accept','pending-epoch-2'],['ack',2]]);
+  assert.equal(store.session(scope.groupId).mls_epoch,2);
+  await worker.runOnce();
+  assert.equal(calls.filter(item=>item[0]==='prepare').length,1,'completed join must not be hosted twice');
+  db.close();
+});
+
+test('directory worker removes a revoked guest device before acknowledging the epoch', async () => {
+  const db = new DatabaseSync(':memory:'); const store = new ProductionE2eeStore(db); const now=Date.now();
+  db.prepare(`INSERT INTO e2ee_production_sessions(group_id,local_agent_id,server_agent_id,target_agent_did,
+    creator_principal_id,sender_device_key_id,recipient_device_key_id,owner_scope,conversation_scope,
+    binding_generation,encrypted_state,state_version,mls_epoch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('Z3JvdXAtMg','gym','server-gym','did:wba:test:gym','guest-a','guest-device-1','device-gym','owner','scope-2',1,
+      Buffer.from('epoch-1'),1,1,now,now);
+  store.saveKeyPackage({localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',ownerDeviceKeyId:'device-gym',
+    ownerScope:'owner',keyEpoch:1,keyPackageRef:ref('a2V5'),keyPackage:'a2V5',encryptedPendingState:Buffer.from('pending'),publishState:'published'});
+  const calls=[];let claimed=false;
+  const client={async registerDevice(){},async publishKeyPackage(input){return{keyPackageRef:ref(input.keyPackage)}},
+    async keyPackageStatus(){return{agents:[{agentId:'server-gym',available:1}]}},async pullEstablishments(){return[]},
+    async acknowledge(){},async reject(){},async pullDeviceCommits(){return[]},async claimDeviceJoin(){return null},
+    async claimDeviceRevocation(){if(claimed)return null;claimed=true;return{revocationId:'revoke-1',deviceKeyId:'guest-device-1'}},
+    async completeDeviceRevocation(input){calls.push(['complete',input.epoch])},async acknowledgeDeviceCommit(input){calls.push(['ack',input.epoch])}};
+  const worker=new ProductionE2eeDirectoryWorker({client,store,agents:()=>[{localAgentId:'gym',serverAgentId:'server-gym',
+    targetAgentDid:'did:wba:test:gym',ownerDeviceKeyId:'device-gym',ownerScope:'owner',bindingGeneration:1}],
+    processFactory:()=>({ready:Promise.resolve({keyPackage:'a2V5',credentialPublicKey:'Y3JlZA'}),async restorePending(){return'Y3JlZA'},close(){}}),
+    async prepareAddMember(){throw new Error('unexpected add')},async prepareRemoveDevice(input){calls.push(['remove',input.deviceKeyId]);
+      return{commit:'Y29tbWl0',pendingState:new Uint8Array(Buffer.from('pending-2'))}},
+    async acceptPendingCommit(){calls.push(['accept']);return{encryptedState:new Uint8Array(Buffer.from('epoch-2')),stateVersion:2}},
+    onError(_id,error){throw error}});
+  await worker.runOnce();assert.deepEqual(calls,[['remove','guest-device-1'],['complete',2],['accept'],['ack',2]]);
+  assert.equal(store.session('Z3JvdXAtMg').mls_epoch,2);db.close();
+});
+
 test('a new establishment atomically replaces the previous group for the same conversation scope', () => {
   const db = new DatabaseSync(':memory:');
   const store = new ProductionE2eeStore(db);

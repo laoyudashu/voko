@@ -65,8 +65,12 @@ test('private attachment completion returns a local authenticated download path'
 
 test('local web proxies private downloads through the authenticated AgentDID endpoint', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'message-content.js'), 'utf8');
   assert.match(index, /\/api\/uploads\/:uploadId\/download/);
   assert.match(index, /getUploadDownload/);
   assert.match(renderer, /\^\\\/api\\\/uploads/);
+  assert.match(web, /\/api\/e2ee\/attachments\/:uploadId\/download/);
+  assert.match(web, /authorizeAttachmentDownload\(info\.uploadId/);
+  assert.match(web, /openAttachment\(info\.uploadId\)/);
 });

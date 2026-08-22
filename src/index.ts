@@ -1991,10 +1991,10 @@ async function startMcpServer(args?: any, core?: any) {
           const data = await productionDirectoryClient.conversationStatuses({ agentIds:[serverAgentId],visitorIds:channelIds });
           return Array.isArray(data?.conversations) ? data.conversations : [];
         } : undefined,
-        persistInbound: (agentId: string, message: any, plaintext: string, messageId: string) => {
+        persistInbound: (agentId: string, message: any, plaintext: string, messageId: string, contentType = 1) => {
           if (!messageHandler) return false;
           const projected = messageHandler.handleAgentMessage(agentId, {
-            ...message, content: plaintext, contentType: 1, messageId,
+            ...message, content: plaintext, contentType, messageId,
             clientMsgNo: messageId,
           }, true);
           return Boolean(projected);
@@ -2054,6 +2054,10 @@ async function startMcpServer(args?: any, core?: any) {
         const directoryWorker = new ProductionE2eeDirectoryWorker({
           client:productionDirectoryClient,store:e2eeStore,agents,
           processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
+          applyCommit:(input: any) => new CanaryCryptoProcess(endpoint).applyCommit(input),
+          prepareAddMember:(input:any)=>new CanaryCryptoProcess(endpoint).prepareAddMember(input),
+          prepareRemoveDevice:(input:any)=>new CanaryCryptoProcess(endpoint).prepareRemoveDevice(input),
+          acceptPendingCommit:(input:any)=>new CanaryCryptoProcess(endpoint).acceptPendingCommit(input),
           intervalMs:productionConfig.pollIntervalMs,
           onError:(agentId: string,error: any) => {
             if (error?.sharedServiceFailure) {

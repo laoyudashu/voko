@@ -28,7 +28,7 @@ fn aad(epoch: u64, message: &[u8]) -> CanonicalAad {
 }
 
 #[test]
-fn second_device_joins_and_revoked_device_cannot_read_the_new_epoch() {
+fn four_devices_join_and_revoked_device_cannot_read_the_new_epoch() {
     let first_endpoint = DirectRecipientEndpoint::new(&identity(
         DeviceRole::OwnerDevice,
         b"owner-principal",
@@ -72,8 +72,33 @@ fn second_device_joins_and_revoked_device_cannot_read_the_new_epoch() {
         b"visible on both devices"
     );
 
+    let third_endpoint = DirectRecipientEndpoint::new(&identity(
+        DeviceRole::OwnerDevice,b"owner-principal",b"owner-device-3",
+    )).unwrap();
+    let before_third = creator.encrypt(&aad(creator.epoch(),b"before-third"),b"history stays private").unwrap();
+    let third_add=creator.prepare_add_member(third_endpoint.serialized_key_package()).unwrap();
+    first.apply_commit(&third_add.commit).unwrap();second.apply_commit(&third_add.commit).unwrap();
+    creator.accept_pending_commit().unwrap();let mut third=third_endpoint.join(&third_add.welcome).unwrap();
+    assert!(third.decrypt(&aad(creator.epoch()-1,b"before-third"),&before_third).is_err());
+
+    let fourth_endpoint = DirectRecipientEndpoint::new(&identity(
+        DeviceRole::OwnerDevice,b"owner-principal",b"owner-device-4",
+    )).unwrap();
+    let fourth_add=creator.prepare_add_member(fourth_endpoint.serialized_key_package()).unwrap();
+    first.apply_commit(&fourth_add.commit).unwrap();second.apply_commit(&fourth_add.commit).unwrap();third.apply_commit(&fourth_add.commit).unwrap();
+    creator.accept_pending_commit().unwrap();let mut fourth=fourth_endpoint.join(&fourth_add.welcome).unwrap();
+
+    let attachment_aad=aad(creator.epoch(),b"attachment-after-four");
+    let attachment=creator.encrypt(&attachment_aad,br#"{"type":"voko.e2ee.attachment-message/1","fileName":"four.png"}"#).unwrap();
+    for member in [&mut first,&mut second,&mut third,&mut fourth] {
+        assert_eq!(member.decrypt(&attachment_aad,&attachment).unwrap(),
+          br#"{"type":"voko.e2ee.attachment-message/1","fileName":"four.png"}"#);
+    }
+
     let removal = creator.prepare_remove_device(b"owner-device-1").unwrap();
     second.apply_commit(&removal).unwrap();
+    third.apply_commit(&removal).unwrap();
+    fourth.apply_commit(&removal).unwrap();
     creator.accept_pending_commit().unwrap();
     assert_eq!(creator.epoch(), second.epoch());
 
@@ -85,5 +110,7 @@ fn second_device_joins_and_revoked_device_cannot_read_the_new_epoch() {
         second.decrypt(&post_revoke_aad, &post_revoke).unwrap(),
         b"revoked device must not read"
     );
+    assert_eq!(third.decrypt(&post_revoke_aad,&post_revoke).unwrap(),b"revoked device must not read");
+    assert_eq!(fourth.decrypt(&post_revoke_aad,&post_revoke).unwrap(),b"revoked device must not read");
     assert!(first.decrypt(&post_revoke_aad, &post_revoke).is_err());
 }

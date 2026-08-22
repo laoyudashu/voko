@@ -29,6 +29,7 @@ function createMessageRenderer(labels) {
     const raw = String(value == null ? '' : value).trim();
     if (!raw) return '';
     if (/^\/api\/uploads\/[A-Za-z0-9_-]+\/download(?:\?|$)/.test(raw)) return raw;
+    if (/^\/api\/e2ee\/attachments\/[A-Za-z0-9_-]{8,128}\/download\?token=[A-Za-z0-9_-]{43}$/.test(raw)) return raw;
     try {
       const parsed = new URL(raw);
       return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';

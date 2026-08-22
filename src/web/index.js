@@ -632,6 +632,22 @@ function createWebRouter(handlers, db, opts={}){
     R.post('/api/e2ee-canary/emergency-disable',requireSensitiveLocalAuth,requireSensitiveCsrf,async(_req,res)=>{
       await opts.e2eeCanaryRuntime.emergencyDisable();res.json({success:true});
     });
+    R.get('/api/e2ee/attachments/:uploadId/download',async(req,res)=>{
+      try{
+        const info=opts.e2eeCanaryRuntime.attachmentInfo(String(req.params.uploadId||''));
+        if(!info)return res.status(404).send('Not found');
+        if(!opts.e2eeCanaryRuntime.authorizeAttachmentDownload(info.uploadId,String(req.query.token||'')))return res.status(403).send('Forbidden');
+        const row=db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(info.localAgentId);
+        if(!row||String(row.owner_email||'').trim().toLowerCase()!==String(currentOwnerEmail()||'').trim().toLowerCase())return res.status(403).send('Forbidden');
+        const opened=await opts.e2eeCanaryRuntime.openAttachment(info.uploadId);
+        const disposition=String(opened.mediaType||'').startsWith('image/')?'inline':'attachment';
+        res.setHeader('Content-Type',opened.mediaType||'application/octet-stream');
+        res.setHeader('Content-Length',String(opened.bytes.byteLength));
+        res.setHeader('Content-Disposition',disposition+"; filename*=UTF-8''"+encodeURIComponent(opened.name));
+        res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
+        return res.send(Buffer.from(opened.bytes));
+      }catch(error){return res.status(404).send('Encrypted attachment unavailable')}
+    });
   }
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
@@ -1726,7 +1742,7 @@ function createWebRouter(handlers, db, opts={}){
       const pendingHint=selectedConversation?.status==='pending'
         ? '<p class="pending" style="margin:0 0 10px;padding:8px 12px;border-radius:6px;background:#fef7e0">'+L('web.conversation.pending_hint')+'</p>' : '';
       let mh='<p class="meta">'+L('web.conversation.no_messages')+'</p>';const jd=[];
-      if(msgs.length){mh='';const s=[...msgs].reverse();for(const m of s){const sr=m.isMe?L('web.conversation.from.agent'):peerLabel;const t=timeTag(m.timestamp);if(m.contentType===11){const audit=parseAuditContent(m.content);mh+=renderAuditContent(m.content,T,t);jd.push({from:'system',content:audit.valid?audit.text:T('web.audit.message_invalid'),timestamp:m.timestamp});continue;}const c=messageRenderer.render(m.contentType,m.content);mh+='<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(m.isMe?'#0f9d58':'#1a73e8')+';background:'+(m.isMe?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(sr)+'</strong> <span style="color:#888;font-size:13px">['+t+']</span><br>'+c+'</div>';jd.push({from:m.isMe?'agent':'visitor',content:m.content,timestamp:m.timestamp})}}
+      if(msgs.length){mh='';const s=[...msgs].reverse();for(const m of s){const sr=m.isMe?L('web.conversation.from.agent'):peerLabel;const t=timeTag(m.timestamp);if(m.contentType===11){const audit=parseAuditContent(m.content);mh+=renderAuditContent(m.content,T,t);jd.push({from:'system',content:audit.valid?audit.text:T('web.audit.message_invalid'),timestamp:m.timestamp});continue;}const projected=!m.isMe?opts.e2eeCanaryRuntime?.projectAttachment?.(agentId,channelId,m.content):null;const baseContent=projected?.content||m.content,displayContent=!m.isMe?(opts.e2eeCanaryRuntime?.authorizeAttachmentContent?.(agentId,channelId,baseContent)||baseContent):baseContent,displayType=projected?.contentType||m.contentType;const c=messageRenderer.render(displayType,displayContent);mh+='<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(m.isMe?'#0f9d58':'#1a73e8')+';background:'+(m.isMe?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(sr)+'</strong> <span style="color:#888;font-size:13px">['+t+']</span><br>'+c+'</div>';jd.push({from:m.isMe?'agent':'visitor',content:displayContent,timestamp:m.timestamp})}}
       const aId2=esc(agentId),cId2=esc(channelId);
       // 访客昵称（user_cache 有则显示名称，无则仅显示 id）
       let visitorName=peerAgentName||channelId;

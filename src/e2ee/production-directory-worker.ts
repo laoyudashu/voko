@@ -43,6 +43,10 @@ export class ProductionE2eeDirectoryWorker {
     store: ProductionE2eeStore;
     agents: () => ProductionE2eeAgent[];
     processFactory: (scope: ProductionE2eeScope) => Recipient;
+    applyCommit?: (input:{scope:ProductionE2eeScope;commit:string;encryptedState:Uint8Array;stateVersion:number})=>Promise<{encryptedState:Uint8Array;stateVersion:number}>;
+    prepareAddMember?: (input:{scope:ProductionE2eeScope;keyPackage:string;encryptedState:Uint8Array;stateVersion:number})=>Promise<{commit:string;welcome:string;pendingState:Uint8Array}>;
+    prepareRemoveDevice?: (input:{scope:ProductionE2eeScope;deviceKeyId:string;encryptedState:Uint8Array;stateVersion:number})=>Promise<{commit:string;pendingState:Uint8Array}>;
+    acceptPendingCommit?: (input:{scope:ProductionE2eeScope;pendingState:Uint8Array;stateVersion:number})=>Promise<{encryptedState:Uint8Array;stateVersion:number}>;
     intervalMs?: number;
     maxAgentsPerRun?: number;
     now?: () => number;
@@ -139,6 +143,61 @@ export class ProductionE2eeDirectoryWorker {
     }
   }
 
+  private async syncDeviceCommits(agent:ProductionE2eeAgent):Promise<void>{
+    if(!this.options.applyCommit)return;
+    for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      const events=await this.options.client.pullDeviceCommits({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,
+        groupId:String(session.group_id),afterEpoch:Number(session.mls_epoch||1)});
+      let current=session;
+      for(const event of events){
+        if(event.groupId!==session.group_id||event.epoch!==Number(current.mls_epoch)+1)throw new Error('E2EE_DEVICE_COMMIT_SEQUENCE_INVALID');
+        const scope:ProductionE2eeScope={localAgentId:String(current.local_agent_id),serverAgentId:String(current.server_agent_id),
+          targetAgentDid:String(current.target_agent_did),creatorPrincipalId:String(current.creator_principal_id),
+          senderDeviceKeyId:String(current.sender_device_key_id||''),recipientDeviceKeyId:String(current.recipient_device_key_id),
+          ownerScope:String(current.owner_scope),groupId:String(current.group_id),conversationScope:String(current.conversation_scope),
+          bindingGeneration:Number(current.binding_generation)};
+        const applied=await this.options.applyCommit({scope,commit:event.commit,encryptedState:new Uint8Array(current.encrypted_state),stateVersion:Number(current.state_version)});
+        this.options.store.applyEpoch(scope.groupId,Number(current.mls_epoch),event.epoch,applied.encryptedState,applied.stateVersion);
+        await this.options.client.acknowledgeDeviceCommit({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,
+          groupId:scope.groupId,epoch:event.epoch});
+        current=this.options.store.session(scope.groupId);
+      }
+    }
+  }
+
+  private scopeFromSession(current:any):ProductionE2eeScope{return{localAgentId:String(current.local_agent_id),serverAgentId:String(current.server_agent_id),
+    targetAgentDid:String(current.target_agent_did),creatorPrincipalId:String(current.creator_principal_id),senderDeviceKeyId:String(current.sender_device_key_id||''),
+    recipientDeviceKeyId:String(current.recipient_device_key_id),ownerScope:String(current.owner_scope),groupId:String(current.group_id),
+    conversationScope:String(current.conversation_scope),bindingGeneration:Number(current.binding_generation)}}
+
+  private async hostDeviceJoins(agent:ProductionE2eeAgent):Promise<void>{
+    if(!this.options.prepareAddMember||!this.options.acceptPendingCommit)return
+    for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      const claim=await this.options.client.claimDeviceJoin({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
+      if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
+      const prepared=await this.options.prepareAddMember({scope,keyPackage:String(claim.keyPackage),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});
+      await this.options.client.completeDeviceJoin({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:scope.groupId,
+        joinId:String(claim.joinId),commit:prepared.commit,welcome:prepared.welcome,epoch});
+      const accepted=await this.options.acceptPendingCommit({scope,pendingState:prepared.pendingState,stateVersion:Number(session.state_version)});
+      this.options.store.applyEpoch(scope.groupId,Number(session.mls_epoch||1),epoch,accepted.encryptedState,accepted.stateVersion);
+      await this.options.client.acknowledgeDeviceCommit({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:scope.groupId,epoch});
+    }
+  }
+
+  private async hostDeviceRevocations(agent:ProductionE2eeAgent):Promise<void>{
+    if(!this.options.prepareRemoveDevice||!this.options.acceptPendingCommit)return
+    for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      const claim=await this.options.client.claimDeviceRevocation({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
+      if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
+      const prepared=await this.options.prepareRemoveDevice({scope,deviceKeyId:String(claim.deviceKeyId),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});
+      await this.options.client.completeDeviceRevocation({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:scope.groupId,
+        revocationId:String(claim.revocationId),commit:prepared.commit,epoch});
+      const accepted=await this.options.acceptPendingCommit({scope,pendingState:prepared.pendingState,stateVersion:Number(session.state_version)});
+      this.options.store.applyEpoch(scope.groupId,Number(session.mls_epoch||1),epoch,accepted.encryptedState,accepted.stateVersion);
+      await this.options.client.acknowledgeDeviceCommit({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:scope.groupId,epoch});
+    }
+  }
+
   private async accept(agent: ProductionE2eeAgent, row: any, establishment: E2eeDirectoryEstablishment): Promise<void> {
     if (this.options.store.establishment(establishment.establishmentId)) return;
     if (establishment.keyPackageRef !== row.key_package_ref || establishment.keyEpoch !== Number(row.key_epoch)) {
@@ -175,6 +234,9 @@ export class ProductionE2eeDirectoryWorker {
         try {
           let row = await this.ensurePackage(agent);
           await this.flushAcknowledgements(agent);
+          await this.syncDeviceCommits(agent);
+          await this.hostDeviceJoins(agent);
+          await this.hostDeviceRevocations(agent);
           const establishments = await this.options.client.pullEstablishments({ agentId:agent.serverAgentId,
             ownerDeviceKeyId:agent.ownerDeviceKeyId,limit:20 });
           for (const establishment of establishments) {
