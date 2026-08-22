@@ -11,9 +11,6 @@ export class ProductionE2eePolicy {
     if (!creatorPrincipalId || Number(message?.channelType || 1) !== 1) throw new Error('E2EE_ROUTE_REJECTED');
     const row = this.store.resolve(localAgentId,envelope.groupId,creatorPrincipalId,envelope.conversationScope);
     if (!row || row.target_agent_did !== envelope.targetAgentDid) throw new Error('E2EE_SCOPE_REJECTED');
-    if (row.sender_device_key_id && row.sender_device_key_id !== envelope.senderDeviceKeyId) {
-      throw new Error('E2EE_SENDER_DEVICE_CHANGED');
-    }
     return {
       localAgentId: row.local_agent_id, serverAgentId: row.server_agent_id,
       targetAgentDid: row.target_agent_did, creatorPrincipalId: row.creator_principal_id,
