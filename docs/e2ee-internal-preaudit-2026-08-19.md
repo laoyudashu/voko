@@ -2,6 +2,8 @@
 
 Date: 2026-08-19
 
+> Historical snapshot: this report records the 2026-08-19 pre-production state. The current production scope is defined only by [e2ee-security-model.md](e2ee-security-model.md). “Production gates remain open” below describes that dated commit and is not the current product status or an independent external audit.
+
 ## Executive conclusion
 
 **Review completion: complete.**

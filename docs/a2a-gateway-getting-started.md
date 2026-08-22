@@ -29,6 +29,7 @@ A2A Gateway 的作用就是：
 
 1. 仅在本机和访客 IM 内部沟通，不需要公网可发现能力。
 2. 只想做一次性脚本调用，不需要任务可追踪、可审计。
+3. 对端是 CRM、工单或自动化平台而不是 A2A Agent；这类系统应使用 [External REST/Webhook Gateway](external-rest-webhook-gateway.md)。
 
 ## 核心架构（你可以直接理解为三层）
 
@@ -60,6 +61,8 @@ A2A Gateway 的作用就是：
 4. 按 A2A 1.0 发送消息，网关返回 `task` 或消息。
 5. 通过 `GetTask / Subscribe` 查询状态与结果。
 
+文字是最简单的互操作路径。附件通过受控 Artifact 引用传递：Gateway 与 Lite 会校验大小、类型、哈希和任务归属，并只把通过校验的文件交给声明支持文件输入的 Provider。对端不支持 Artifact 时应继续使用文字，不要在文本中嵌入本机路径或长期对象存储凭证。
+
 更细的实现字段、状态边界和安全行为，请继续看：
 
 - [A2A Mailbox Gateway 与 Lite Bridge（实现细节）](a2a-mailbox.md)
@@ -70,6 +73,7 @@ A2A Gateway 的作用就是：
 - 不会走 IM 的 `conversation` 与群聊路由。
 - 公开/私密/隐藏/下架、黑白名单仍按 VOKO 既有规则执行。
 - 本地核心安全策略（关键词审计、人工介入、模型辅助复核）会继续生效。
+- 标准 A2A 当前使用 HTTPS/TLS，不属于访客私聊 E2EE 的覆盖范围。
 
 ## 常见问题（FAQ）
 
