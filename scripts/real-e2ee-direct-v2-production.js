@@ -269,7 +269,10 @@ async function waitForRestartSignal() {
   console.log(JSON.stringify({ phase: 'restart_ready', safeToRestartVoko: true }));
   await new Promise(resolve => {
     process.stdin.resume();
-    process.stdin.once('data', resolve);
+    process.stdin.once('data', () => {
+      process.stdin.pause();
+      resolve();
+    });
   });
 }
 

@@ -22,6 +22,7 @@ test('production Direct v2 probe covers text, creator refresh, attachment and VO
   assert.match(source, /op: 'restore', snapshot/);
   assert.match(source, /voko\.e2ee\.attachment-message\/1/);
   assert.match(source, /VOKO_E2EE_PRODUCTION_RESTART_GATE/);
+  assert.match(source, /process\.stdin\.pause\(\)/);
 });
 
 test('production Direct v2 replies are correlated by durable receipt rather than model wording', () => {
