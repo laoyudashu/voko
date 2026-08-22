@@ -16,6 +16,13 @@ export interface ProcessIdentity {
 
 export interface InstanceMetadata extends ProcessIdentity {
   version: 1;
+  /**
+   * The supervisor identity is intentionally kept in the ephemeral owner
+   * record.  On Unix a killed supervisor can leave the runtime child alive
+   * after it is re-parented; the child must no longer count as this instance.
+   * Older owner records do not have this field and remain PID-compatible.
+   */
+  parentCreationId?: string | null;
   instanceId: string;
   mcpToken: string;
   dbPath: string;
@@ -324,10 +331,12 @@ export function matchesWorkerProcess(
 function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetadata {
   const identity = inspectProcess(process.pid);
   if (!identity) throw new Error(`无法读取当前 Lite 进程身份（PID ${process.pid}）`);
+  const parent = identity.parentPid ? inspectProcess(identity.parentPid) : null;
   const now = Date.now();
   return {
     version: 1,
     ...identity,
+    parentCreationId: parent?.creationId || null,
     instanceId: crypto.randomUUID(),
     mcpToken: crypto.randomBytes(32).toString('base64url'),
     dbPath: canonicalDbPath(dbPath),
@@ -396,7 +405,7 @@ export async function acquireInstanceLock(
     }
 
     const existing = readJson<InstanceMetadata>(paths.ownerFile);
-    if (existing && matchesInstanceProcess(existing, inspect(existing.pid))) {
+    if (existing && isInstanceAlive(existing, inspect)) {
       return { acquired: false, existing };
     }
 
@@ -439,7 +448,19 @@ export function isInstanceAlive(
   metadata: InstanceMetadata,
   inspector: (pid: number) => ProcessIdentity | null = inspectProcess,
 ): boolean {
-  return matchesInstanceProcess(metadata, inspector(metadata.pid));
+  const identity = inspector(metadata.pid);
+  if (!matchesInstanceProcess(metadata, identity)) return false;
+
+  // A normal Lite process is supervised.  If that supervisor was killed,
+  // Unix reparents the child (usually to PID 1); the child may still match
+  // its own PID/command line but no longer owns this runtime lock.  Treat it
+  // as stale.  Records written before parentCreationId was introduced keep
+  // the parent-PID check for backwards compatibility.
+  if (!metadata.parentPid || metadata.parentPid <= 0) return true;
+  if (identity?.parentPid !== metadata.parentPid) return false;
+  const parent = inspector(metadata.parentPid);
+  if (!parent) return false;
+  return !metadata.parentCreationId || parent.creationId === metadata.parentCreationId;
 }
 
 export async function waitForProcessExit(
