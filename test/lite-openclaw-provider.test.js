@@ -173,6 +173,7 @@ describe('Lite OpenClaw WS provider', () => {
       prepare: () => ({ get: () => ({ backend_instance_id: 'instance-new' }) }),
     }, null);
     providers.push(provider);
+    provider.connected = true;
     let sessionKey = '';
     provider.sendToSession = async (key) => { sessionKey = key; };
     const receipt = await provider.push({

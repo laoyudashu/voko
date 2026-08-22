@@ -630,7 +630,7 @@ test('agent actions return to the same agent subpage and conversation controls u
   assert.match(source, /class="home-access-stack"/);
   assert.match(source, /web\.home\.access\.visitor/);
   assert.match(source, /data-role="gen-owner-link"/);
-  assert.match(source, /web\.home\.access\.a2a_published/);
+  assert.match(source, /web\.home\.access\.copy_a2a/);
   assert.match(source, /home-copy-icon/);
   assert.match(source, /<button type="button" class="btn btn-sm home-mode-toggle /);
   assert.match(source, /data-role="toggle-pub"/);

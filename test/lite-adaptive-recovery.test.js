@@ -88,6 +88,8 @@ test('OpenClaw sends history only when no resumable binding is available', async
   const provider = new OpenClawWsProvider(db, null);
   const sent = [];
   try {
+    provider.connected = true;
+    provider._acquireAgentTurn = async () => () => {};
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
     const providerBinding = binding('openclaw', 'websocket', 'openclaw-ws', 'agent:agent-a:visitor-a', 'agent-a');
