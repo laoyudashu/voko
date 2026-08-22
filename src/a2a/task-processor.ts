@@ -35,12 +35,20 @@ class A2ATaskProcessor {
       return;
     }
     if (request.kind !== 'request' || !['execute', 'continue'].includes(request.operation)) throw new Error('Unsupported A2A command');
-    if (!this.store.hasOperationEvent(request.gatewayTaskId, 'accepted'))
-      this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
-    if (!this.store.hasOperationEvent(request.gatewayTaskId, 'working'))
-      this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
+    const markAccepted = () => {
+      if (!this.store.hasOperationEvent(request.gatewayTaskId, 'accepted'))
+        this.event(request, 'accepted', {}, 'SUBMITTED', 'DELIVERED');
+      if (!this.store.hasOperationEvent(request.gatewayTaskId, 'working'))
+        this.event(request, 'working', {}, 'WORKING', 'EXECUTING');
+    };
     try {
-      const result = await this.execution.execute(request);
+      const result = await this.execution.execute(request, { onProviderAccepted: markAccepted });
+      markAccepted();
+      for (let index=0;index<(result.artifacts||[]).length;index+=1) {
+        const artifact=result.artifacts![index];
+        this.event(request,'artifact',{index,append:false,lastChunk:true,artifact:{artifactId:artifact.artifactId,
+          name:artifact.name,parts:[artifact.part]}},'WORKING','DELIVERED');
+      }
       this.event(request, 'completed', result.noReply ? { noReply: true } : { text: result.content }, 'COMPLETED', 'DELIVERED');
     } catch (error) {
       if (error instanceof A2ASafetyRejection) {
@@ -48,7 +56,8 @@ class A2ATaskProcessor {
         return;
       }
       if ((error as any)?.deliveryOutcome === 'not_delivered') throw error;
-      this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'PROVIDER_OUTCOME_UNKNOWN' },
+      this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN',
+        reasonCode: String((error as any)?.code || 'PROVIDER_OUTCOME_UNKNOWN') },
         'WORKING', 'DELIVERY_UNKNOWN');
     }
   }

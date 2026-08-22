@@ -34,3 +34,12 @@ test('binding and policy snapshots must be positive safe integers', () => {
   const value = envelope(); value.bindingGeneration = 0;
   assert.throws(() => validateEnvelope(value, { now }), /policy snapshot/);
 });
+test('attachment references are bounded, unique and opaque', () => {
+  const value = envelope();
+  value.payload.attachments = [{ attachmentRef: 'extatt_abcdefghijklmnop' }];
+  assert.doesNotThrow(() => validateEnvelope(value));
+  value.payload.attachments.push({ attachmentRef: 'extatt_abcdefghijklmnop' });
+  assert.throws(() => validateEnvelope(value), /attachment references/);
+  value.payload.attachments = [{ attachmentRef: '../secret' }];
+  assert.throws(() => validateEnvelope(value), /attachment references/);
+});

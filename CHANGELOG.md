@@ -2,6 +2,14 @@
 
 All notable user-facing changes are documented in this file.
 
+## Unreleased
+
+- Added a public A2A 1.0 Mailbox Gateway with Agent Cards, durable Task/Context handling, streaming/subscription/polling, independent Lite storage, and local trusted execution.
+- Added per-Agent External REST/Webhook integrations with isolated credentials, REST ingestion, signed callbacks, task views, delivery diagnostics, and secure attachment handling.
+- Added production visitor-private-chat E2EE for supported browsers and Lite endpoints, including explicit opt-in, visible key state, non-downgrading active sessions, rebuild after key loss, encrypted attachments, and local plaintext delivery to the selected Provider.
+- Added temporary private-object upload authorization and completion/binding flows so clients no longer require long-lived OSS credentials.
+- Expanded Provider support, exact-session routing, A2A/Owner source isolation, conversation-aware Web UI, and cross-platform recovery and reliability tests.
+
 ## 0.4.1 - 2026-08-03
 
 - Hardened local Web and Provider boundaries with route rate limits, safer command spawning, stronger output encoding, and registration-session identity validation.

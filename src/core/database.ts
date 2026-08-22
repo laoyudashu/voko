@@ -1333,7 +1333,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     console.warn('[Config] current user migration failed:', e.message);
   }
 
-  // 初始化默认 OSS 配置（留空，凭证由环境变量或用户手动配置注入；运行时从 DB 读取）
+  // 保留历史配置记录结构，但正式上传只使用服务端短期授权；清空遗留长期凭证。
   const defaultOss = {
     accessKeyId: '',
     accessKeySecret: '',
@@ -1342,10 +1342,22 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     endpoint: ENDPOINTS.oss.endpoint,
     publicUrl: ENDPOINTS.oss.publicUrl
   };
-  if (!db.prepare('SELECT data FROM config WHERE type = ?').get('oss_config')) {
+  const ossConfigRow = db.prepare('SELECT data FROM config WHERE type = ?').get('oss_config') as { data?: string } | undefined;
+  if (!ossConfigRow) {
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
       .run('oss_config', JSON.stringify(defaultOss), Date.now());
-    console.error('[Config] 已写入独立 OSS 配置');
+  } else {
+    try {
+      const stored = JSON.parse(ossConfigRow.data || '{}');
+      if (stored.accessKeyId || stored.accessKeySecret) {
+        db.prepare('UPDATE config SET data = ?, updated_at = ? WHERE type = ?')
+          .run(JSON.stringify(defaultOss), Date.now(), 'oss_config');
+        console.error('[上传] 已清除本地数据库中的废弃 OSS 长期凭证');
+      }
+    } catch (_: unknown) {
+      db.prepare('UPDATE config SET data = ?, updated_at = ? WHERE type = ?')
+        .run(JSON.stringify(defaultOss), Date.now(), 'oss_config');
+    }
   }
   try {
     const migrated = migrateOfficialHttpsUrls(db);

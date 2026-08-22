@@ -39,8 +39,10 @@ Ubuntu 24.04.4 LTS 的 18 个 Provider 版本、注册结果、推荐通道和�
 | --- | --- | --- | --- |
 | Amazon Q | Pull | 待验证 | 尚未确认 Windows / Ubuntu 当前版本是否具备稳定且可限制权限的非交互模式。 |
 | 千问办公（QwenWork） | QwenWork CLI → Pull | 已接入并完成 Windows 真机完整链路验收 | QwenWork 0.1.6 / qoderclicn 1.0.47；已验证随机 challenge、真实 IM 入站、CLI 自动交付、模型回复、IM 回传、SENDACK、单次落库及 A2A 收敛；详见 [千问办公专属指南](providers/qwen-office.md)。 |
-| Trae | Trae CLI ACP → Pull | 已接入（MCP 客户端 + 可选 traecli ACP） | 本机桌面 Trae 1.107.1 支持 `--add-mcp`，未发现独立 `traecli`；ACP 路由已注册，待安装/登录 CLI 后真机回路验收；详见 [Trae 专属指南](providers/trae.md)。 |
-| WorkBuddy、豆包等无 CLI 桌面 Agent | Pull | 仅检测 / 按宿主集成 | 不配置不可靠自动通道；请让 Agent 用 VOKO CLI、MCP 或本机接口主动获取新消息。 |
+| Trae / TraeWork | Trae CLI ACP → Pull | 已接入（桌面 MCP 客户端 + 独立 traecli ACP） | 本机 TraeWork CN 0.1.51、Trae CLI 0.120.52；ACP initialize 与 DeepSeek 配置识别通过，但当前 Enterprise 发行版首次模型请求仍要求不存在的企业 Keyring 凭证，模型回复/续聊待验收。桌面会话不作为 Push 目标；详见 [Trae 专属指南](providers/trae.md)。 |
+| WorkBuddy | HTTP → Pull | Windows 真机 HTTP/SSE 已验证 | VOKO 使用桌面版内置 CodeBuddy CLI 启动仅监听 `127.0.0.1` 的本机 HTTP 服务；支持流式回复、精确会话和取消。HTTP API 仍属 Beta，启动时会复核实际契约。 |
+| CodeBuddy | ACP → Pull | 官方 ACP 初始化已验证，模型回路待独立 CLI 真机验收 | VOKO 只检测独立安装的 `@tencent-ai/codebuddy-code` / `codebuddy`，不把 WorkBuddy 内置 CLI 当成 CodeBuddy；ACP 禁用工具并忽略外部 MCP 配置。 |
+| 豆包等无可靠自动入口的桌面 Agent | Pull | 仅检测 / 按宿主集成 | 请让 Agent 用 VOKO CLI、MCP 或本机接口主动获取新消息。 |
 
 ## 会话、安全与降级规则
 

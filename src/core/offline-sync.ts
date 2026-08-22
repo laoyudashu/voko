@@ -79,6 +79,7 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
 
 interface MessageHandlerLike {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward: boolean): ForwardPayload | undefined;
+  handleEncryptedMessage?(agentId: string, data: InboundMessage): Promise<{ handled: boolean; accepted: boolean; code?: string }>;
   forwardToAgent(...args: unknown[]): unknown;
 }
 
@@ -114,6 +115,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const PERMANENT_E2EE_REJECTIONS = new Set([
+  'E2EE_ENVELOPE_INVALID',
+  'E2EE_ROUTE_REJECTED',
+  'E2EE_SCOPE_REJECTED',
+  'E2EE_SENDER_DEVICE_CHANGED',
+  'E2EE_MESSAGE_ID_CONFLICT',
+]);
+
+function isPermanentE2eeRejection(code: unknown): boolean {
+  return PERMANENT_E2EE_REJECTIONS.has(String(code || ''));
+}
+
 /**
  * 拉取离线消息并转发
  *
@@ -132,24 +145,36 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
     // “最近 owner”或全表回退，否则会把其他用户/其他电脑的 Agent 消息拉到本机。
     const currentOwnerEmail = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
     if (!currentOwnerEmail) return 0;
+    // A single sync run must keep the owner identity it started with. Account
+    // switching updates the active token before shutdown completes; re-reading
+    // it inside the loop would send the new owner's token for old-owner Agents.
+    const ownerAccessToken = getUserAccessToken(db, currentOwnerEmail);
+    const ownerStillActive = () => String(getCurrentUserEmail(db) || '').trim().toLowerCase() === currentOwnerEmail;
     const agents = db.prepare(`
       SELECT agent_id, imUid, imToken, im_server_url, owner_email
       FROM agents
       WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?
     `).all<AgentRow>(currentOwnerEmail);
     const cursorMap = loadCursorMap(db);
-    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string; messageSeq?: number }> = [];
+    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string;
+      messageSeq?: number; agentAuthored?: boolean }> = [];
 
     for (const agent of agents) {
+      if (!ownerStillActive()) {
+        console.log('[离线同步] 主人已切换，停止旧主人同步');
+        return 0;
+      }
       if (agentIdFilter && agent.agent_id !== agentIdFilter) {
         continue;
       }
-      const ownerEmail = String(agent.owner_email || '').trim().toLowerCase();
-      const userAccessToken = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const httpBase = String(ENDPOINTS.im.apiBaseUrl || '').replace(/\/$/, '');
       const convs = db.prepare(`SELECT DISTINCT channel_id FROM conversations WHERE agent_id = ?`).all<ConversationRow>(agent.agent_id);
 
       for (const conv of convs) {
+        if (!ownerStillActive()) {
+          console.log('[离线同步] 主人已切换，停止旧主人同步');
+          return 0;
+        }
         const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
         const key = cursorKey(agent.agent_id, conv.channel_id);
         let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
@@ -164,8 +189,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(userAccessToken ? {
-                Authorization: `Bearer ${userAccessToken}`,
+              ...(ownerAccessToken ? {
+                Authorization: `Bearer ${ownerAccessToken}`,
                 'X-Voko-Agent-Uid': agent.imUid,
               } : {}),
             },
@@ -179,6 +204,10 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               pull_mode: 1
             })
           });
+          if (!ownerStillActive()) {
+            console.log('[离线同步] 主人已切换，停止旧主人同步');
+            return 0;
+          }
           if (!resp.ok) {
             console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} HTTP ${resp.status}`);
             continue;
@@ -205,6 +234,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               agentId: agent.agent_id,
               cursorKey: key,
               messageSeq,
+              agentAuthored: msg.from_uid === agent.imUid,
               data: {
                 fromUid: msg.from_uid || '',
                 toUid,
@@ -229,7 +259,46 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       }
     }
 
+    if (!ownerStillActive()) {
+      console.log('[离线同步] 主人已切换，停止旧主人同步');
+      return 0;
+    }
     console.debug(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
+
+    // E2EE messages are claimed before the ordinary persistence/forwarding
+    // path. A disabled or rejected Canary is still handled fail-closed and is
+    // never reinterpreted as visitor plaintext.
+    const blockedE2eeAt = new Map<string, number>();
+    for (const pending of pendingMessages) {
+      if (Number(pending.data?.contentType) !== 13) continue;
+      // The channel history also contains the Agent's encrypted replies. They
+      // have already advanced the local sender ratchet and must never be fed
+      // back into the inbound E2EE runtime.
+      if (pending.agentAuthored) {
+        pending.data = undefined;
+        continue;
+      }
+      if (typeof messageHandler.handleEncryptedMessage === 'function') {
+        const result = await messageHandler.handleEncryptedMessage(pending.agentId,pending.data!);
+        if (!result?.accepted) {
+          const code = String(result?.code || 'E2EE_REJECTED');
+          if (isPermanentE2eeRejection(code)) {
+            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 永久拒绝，隔离密文并推进游标 code=${code}`);
+          } else {
+            const sequence = pending.messageSeq || 0;
+            const previous = blockedE2eeAt.get(pending.cursorKey);
+            blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
+            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 暂未接受，保留当前密文等待重试 code=${code}`);
+          }
+        }
+      } else {
+        const sequence = pending.messageSeq || 0;
+        const previous = blockedE2eeAt.get(pending.cursorKey);
+        blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
+        console.warn(`[离线同步][E2EE] agent=${pending.agentId} 处理器不可用，保留游标等待重试`);
+      }
+      pending.data = undefined;
+    }
 
     // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
     // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集
@@ -248,7 +317,8 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
               const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
               if (payload) collected.push(payload);
             }
-            if (p.messageSeq !== undefined) {
+            const blockedAt = blockedE2eeAt.get(p.cursorKey);
+            if (p.messageSeq !== undefined && (blockedAt === undefined || (blockedAt > 0 && p.messageSeq < blockedAt))) {
               advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
             }
           }
@@ -376,4 +446,4 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
   };
 }
 
-module.exports = { syncOfflineMessages, createOfflineSyncCoordinator, decodeOfflinePayload };
+module.exports = { syncOfflineMessages, createOfflineSyncCoordinator, decodeOfflinePayload, isPermanentE2eeRejection };

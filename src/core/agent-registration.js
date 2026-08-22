@@ -15,6 +15,7 @@ const ENDPOINTS = require('../endpoints.json');
 const { t } = require('./i18n');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { AgentDeliveryPolicyStore, normalizeDeliveryModes } = require('./agent-delivery-policy');
+const { PENDING_OWNER_SWITCH_CONFIG, stagePendingOwnerSwitch } = require('./owner-switch');
 const {
   normalizeOfficialImServerUrl,
   normalizeOfficialPublicUrl,
@@ -123,6 +124,20 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     } catch (_) {}
   }
 
+  async function savePendingOwnerSwitch(email, token) {
+    const normalized = normalizeUserEmail(email);
+    if (!normalized || !token) return;
+    if (writeConfig) {
+      await writeConfig(PENDING_OWNER_SWITCH_CONFIG, {
+        email: normalized,
+        user_access_token: token,
+        updated_at: Date.now(),
+      });
+      return;
+    }
+    stagePendingOwnerSwitch(db, normalized, token);
+  }
+
   function getUserAccessToken() {
     try {
       const map = loadUserAccessTokenConfig();
@@ -174,7 +189,21 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       const parsed = await readJsonObject(res);
       console.log('[AgentRegistration] sendCode response status:', res.status);
       if (parsed.error) return { success: false, status: res.status, error: parsed.error };
-      return { success: res.ok, status: res.status, data: parsed.value };
+      const json = parsed.value;
+      if (!hasBooleanSuccess(json)) {
+        return { success: false, status: res.status, error: t('errors.external_api.invalid_response') };
+      }
+      if (!res.ok || !json.success) {
+        return {
+          success: false,
+          status: res.status,
+          code: typeof json.code === 'string' ? json.code : undefined,
+          error: responseMessage(json, res.ok
+            ? '验证码邮件发送失败'
+            : t('errors.external_api.http_error', { status: res.status })),
+        };
+      }
+      return { success: true, status: res.status, data: json };
     } catch (e) {
       console.error('[AgentRegistration] sendCode error:', e);
       return { success: false, error: e.message };
@@ -221,7 +250,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
   }
 
   // ─── 后端 API：验证码登录（消耗验证码，返回 userAccessToken，不创建 Agent）───
-  async function loginByCode({ email, code }) {
+  async function loginByCode({ email, code, persistMode = 'active' }) {
     try {
       const path = '/api/external/v1/login';
       const body = { email, code };
@@ -264,8 +293,9 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
         ? json.data.userAccessToken
         : undefined;
       if (userAccessToken) {
-        await saveUserAccessToken(email, userAccessToken);
-        console.log('[AgentRegistration] loginByCode: saved userAccessToken');
+        if (persistMode === 'pending') await savePendingOwnerSwitch(json.data.email || email, userAccessToken);
+        else if (persistMode !== 'none') await saveUserAccessToken(json.data.email || email, userAccessToken);
+        console.log(`[AgentRegistration] loginByCode: ${persistMode === 'pending' ? 'staged' : persistMode === 'none' ? 'verified' : 'saved'} userAccessToken`);
       }
 
       return {
@@ -276,7 +306,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       };
     } catch (e) {
       console.error('[AgentRegistration] loginByCode error:', e);
-      return { success: false, error: e.message };
+      return { success: false, code: e.code, status: e.status, error: e.message };
     }
   }
 
@@ -322,7 +352,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
     return oauthRequest(`/sessions/${encodeURIComponent(sessionId || '')}`);
   }
 
-  async function exchangeOAuthSession({ sessionId, exchangeCode }) {
+  async function exchangeOAuthSession({ sessionId, exchangeCode, persistMode = 'active' }) {
     const result = await oauthRequest('/exchange', {
       method: 'POST',
       body: JSON.stringify({ sessionId, exchangeCode }),
@@ -333,7 +363,12 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       || typeof data.email !== 'string') return result.success
         ? { success: false, error: t('errors.external_api.invalid_response') }
         : result;
-    await saveUserAccessToken(data.email, data.userAccessToken);
+    try {
+      if (persistMode === 'pending') await savePendingOwnerSwitch(data.email, data.userAccessToken);
+      else if (persistMode !== 'none') await saveUserAccessToken(data.email, data.userAccessToken);
+    } catch (error) {
+      return { success: false, code: error.code, status: error.status, error: error.message };
+    }
     return {
       success: true,
       email: normalizeUserEmail(data.email),

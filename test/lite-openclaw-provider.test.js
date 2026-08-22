@@ -20,6 +20,90 @@ afterEach(() => {
 });
 
 describe('Lite OpenClaw WS provider', () => {
+  it('uses a 90 second cold-start budget and shares an in-flight gateway start', async () => {
+    const provider = createProvider();
+    assert.equal(provider.gatewayStartupTimeoutMs, 90000);
+    let starts = 0;
+    let release;
+    provider._startGatewayAndWait = () => {
+      starts += 1;
+      return new Promise((resolve) => { release = resolve; });
+    };
+
+    const first = provider._ensureGatewayRunning();
+    const second = provider._ensureGatewayRunning();
+    assert.equal(starts, 1);
+    release(true);
+    assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  });
+
+  it('does not consume reconnect attempts while the gateway is starting', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayProbeIntervalMs = 5;
+    provider._gatewayStarting = true;
+    provider.reconnectAttempts = 4;
+    provider.scheduleReconnect();
+    assert.equal(provider.reconnectAttempts, 4);
+    provider._gatewayStarting = false;
+    clearTimeout(provider.reconnectTimer);
+    provider.reconnectTimer = null;
+  });
+
+  it('does not consume reconnect attempts while the gateway accepts sockets but is warming up', () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayProbeIntervalMs = 5;
+    provider._gatewayWarmupUntil = Date.now() + 1000;
+    provider.reconnectAttempts = 4;
+    provider.scheduleReconnect();
+    assert.equal(provider.reconnectAttempts, 4);
+    clearTimeout(provider.reconnectTimer);
+    provider.reconnectTimer = null;
+  });
+
+  it('resets reconnect state and connects immediately when the gateway becomes ready', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider.gatewayStartupTimeoutMs = 20;
+    provider.gatewayProbeIntervalMs = 1;
+    provider.reconnectAttempts = 7;
+    provider._probeGateway = async () => true;
+    let connected = 0;
+    provider.connect = async () => { connected += 1; };
+
+    assert.equal(await provider._waitForGatewayReady(), true);
+    assert.equal(provider.reconnectAttempts, 0);
+    assert.equal(connected, 1);
+  });
+
+  it('keeps WS eligible and waits for authentication during gateway cold start', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider._gatewayStarting = true;
+    provider.gatewayProbeIntervalMs = 1;
+    provider._ensureGatewayRunning = async () => true;
+    provider.connect = async () => { provider.connected = true; };
+    assert.equal(provider.isAvailable('gym'), true);
+
+    setTimeout(() => {
+      provider._gatewayStarting = false;
+    }, 5);
+    await provider._waitForAuthenticatedConnection(100);
+    assert.equal(provider.connected, true);
+  });
+
+  it('fails as not_delivered when WS cold start never authenticates', async () => {
+    const provider = createProvider();
+    provider.enabled = true;
+    provider._gatewayStarting = true;
+    provider.gatewayProbeIntervalMs = 1;
+    await assert.rejects(
+      provider._waitForAuthenticatedConnection(5),
+      (error) => error.deliveryOutcome === 'not_delivered',
+    );
+  });
+
   it('push 保持 session key 大小写映射和结构化消息协议', async () => {
     const provider = createProvider();
     const sent = [];
@@ -62,6 +146,20 @@ describe('Lite OpenClaw WS provider', () => {
     );
   });
 
+  it('serializes same-Agent turns until the Provider receives the correlated final reply', async () => {
+    const provider = createProvider(); const sent = [];
+    provider._waitForAuthenticatedConnection = async () => {};
+    provider.sendToSession = async (sessionKey, _prompt, extra) => { sent.push({ sessionKey, turnId: extra.turnId }); };
+    const payload = index => ({ agentId:'agent-a',fromUid:`visitor-${index}`,content:`hello-${index}`,
+      messageId:`message-${index}`,turnId:`turn-${index}` });
+    const first = await provider.push(payload(1));
+    const secondPromise = provider.push(payload(2));
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(sent.length, 1);
+    provider._emitAgentReplyFromSession(first.nativeSessionId, 'reply-1', { turnId:'turn-1',replyId:'reply-1' });
+    const second = await secondPromise; assert.equal(sent.length, 2); assert.equal(sent[1].turnId, 'turn-2');
+    provider._emitAgentReplyFromSession(second.nativeSessionId, 'reply-2', { turnId:'turn-2',replyId:'reply-2' });
+  });
+
   it('isolates VOKO Agents sharing one OpenClaw instance and preserves the reply target', () => {
     const first = buildOpenClawSessionKey('shared', 'agent-a', 'group:one');
     const second = buildOpenClawSessionKey('shared', 'agent-b', 'group:one');
@@ -75,6 +173,7 @@ describe('Lite OpenClaw WS provider', () => {
       prepare: () => ({ get: () => ({ backend_instance_id: 'instance-new' }) }),
     }, null);
     providers.push(provider);
+    provider.connected = true;
     let sessionKey = '';
     provider.sendToSession = async (key) => { sessionKey = key; };
     const receipt = await provider.push({
@@ -171,43 +270,50 @@ describe('Lite OpenClaw WS provider', () => {
   it('同一轮旧版片段和新版完整回复只投递新版完整回复', async () => {
     const provider = createProvider();
     const replies = [];
+    const logs = [];
+    const originalLog = console.log;
     provider.on('agent.reply', (reply) => replies.push(reply));
     const connectionTimer = setTimeout(() => {}, 1000);
 
-    await provider.handleMessage({
-      type: 'event',
-      event: 'session.message',
-      payload: {
-        sessionKey: 'agent:gym:visitor',
-        message: {
-          role: 'assistant',
-          content: [{
-            type: 'text',
-            text: '已经在问店里同事了，确认好时间我第一时间回复你！',
-          }],
-          stopReason: 'stop',
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      await provider.handleMessage({
+        type: 'event',
+        event: 'session.message',
+        payload: {
+          sessionKey: 'agent:gym:visitor',
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: '已经在问店里同事了，确认好时间我第一时间回复你！',
+            }],
+            stopReason: 'stop',
+          },
         },
-      },
-    }, undefined, connectionTimer);
-    await provider.handleMessage({
-      type: 'event',
-      event: 'chat',
-      payload: {
-        state: 'final',
-        sessionKey: 'agent:gym:visitor',
-        message: {
-          role: 'assistant',
-          content: [{
-            type: 'text',
-            text: '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',
-          }],
+      }, undefined, connectionTimer);
+      await provider.handleMessage({
+        type: 'event',
+        event: 'chat',
+        payload: {
+          state: 'final',
+          sessionKey: 'agent:gym:visitor',
+          message: {
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',
+            }],
+          },
         },
-      },
-    }, undefined, connectionTimer);
-    clearTimeout(connectionTimer);
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
+      }, undefined, connectionTimer);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } finally {
+      clearTimeout(connectionTimer);
+      console.log = originalLog;
+    }
     assert.equal(replies.length, 1);
+    assert.equal(logs.filter((line) => line.includes('收到完整回复')).length, 1);
     assert.equal(
       replies[0].content,
       '我先确认一下店里的安排。已经在问店里同事了，确认好时间我第一时间回复你！',

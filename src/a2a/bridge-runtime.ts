@@ -10,6 +10,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { A2ASafetyGate } from './safety-gate';
 import { A2AOutboundResultWorker } from './outbound-result-worker';
 import { A2AScopeResolver } from './scope';
+import { A2AAttachmentWorkspace } from './attachment-workspace';
 
 interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv;
   delay?: (ms: number) => Promise<void>; onError?: (code: string) => void }
@@ -31,7 +32,10 @@ class A2ABridgeRuntime {
       const row = this.options.mainDatabase.prepare("SELECT publish_status FROM agents WHERE agent_id=? LIMIT 1").get(agentId) as { publish_status?: string } | undefined;
       if (!row || row.publish_status !== 'published') throw new Error('A2A_AGENT_NOT_AVAILABLE');
     } : undefined;
-    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety, assertDispatchAllowed, scopes), identity);
+    const executionConcurrency = Math.max(1, Math.min(32, Number(env.VOKO_A2A_EXECUTION_CONCURRENCY || 4) || 4));
+    const executionTimeoutMs = Math.max(1_000, Math.min(900_000, Number(env.VOKO_A2A_EXECUTION_TIMEOUT_MS || 120_000) || 120_000));
+    const processor = new A2ATaskProcessor(store, new A2AExecutionService(store, this.options.dispatcher, safety,
+      assertDispatchAllowed, scopes, client, new A2AAttachmentWorkspace(), executionTimeoutMs), identity);
     const bindingGenerations = new Map<string, number>((Array.isArray(stored.agentBindings) ? stored.agentBindings : [])
       .map((item: any) => [String(item.localAgentId), Number(item.bindingGeneration || 1)]));
     const availability = () => {
@@ -51,7 +55,7 @@ class A2ABridgeRuntime {
     };
     const worker = new A2ABridgeWorker({ client, store, scopes, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
-    }, execute: (envelope) => processor.process(envelope) });
+    }, execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
     for (const command of store.listProcessingCommands()) {
       try {
@@ -69,15 +73,16 @@ class A2ABridgeRuntime {
     }
     const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
-    const runLoop = (work: () => Promise<boolean>, idleMs: number) => void (async () => {
+    const runLoop = (component: string, work: () => Promise<boolean>, idleMs: number) => void (async () => {
       while (!this.stopped) {
         try { if (!await work()) await delay(idleMs); }
-        catch (error) { this.options.onError?.(error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'); if (!this.stopped) await delay(5000); }
+        catch (error) { this.options.onError?.(`${component}: ${error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'}`);
+          if (!this.stopped) await delay(5000); }
       }
     })();
-    runLoop(async () => (await worker.pollOnce()).claimed > 0, 2000);
-    runLoop(async () => (await outbox.drain()).sent > 0, 500);
-    runLoop(async () => (await outboundResults.pollOnce()).claimed > 0, 2000);
+    runLoop('claim', async () => (await worker.pollOnce()).claimed > 0, 2000);
+    runLoop('event-outbox', async () => (await outbox.drain()).sent > 0, 500);
+    runLoop('outbound-results', async () => (await outboundResults.pollOnce()).claimed > 0, 2000);
     return () => { this.stopped = true; };
   }
 }

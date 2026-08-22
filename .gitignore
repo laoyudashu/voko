@@ -2,9 +2,14 @@ node_modules/
 build/
 dist/
 coverage/
+e2ee-stability-summary.json
+e2ee-audit-bundle.json
+e2ee-platform-summary.json
+e2ee-canary-summary.json
 playwright-report/
 test-results/
 test-reports/
+artifacts/
 artifacts/real-tests/
 .build-stage-*/
 .cache/
@@ -52,6 +57,7 @@ id_ed25519
 events.jsonl
 *.pid
 *.lock
+!e2ee/Cargo.lock
 staged-update/
 provider-sessions/
 
@@ -77,6 +83,10 @@ config/channel_config - *.json
 scancode-results/
 audit-results/
 native/
+e2ee/target/
+e2ee-stability-*-summary.json
+e2ee-stability-summary.json
+e2ee-*macos*.json
 
 # Local security scan output.
 .codeql-db/

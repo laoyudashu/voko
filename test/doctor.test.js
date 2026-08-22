@@ -9,7 +9,7 @@ const test = require('node:test');
 
 const { initDatabase, SCHEMA_VERSION } = require('../build/core/database');
 const { runDoctor, formatDoctor } = require('../build/core/doctor');
-const { initA2ADatabase } = require('../build/a2a');
+const { A2A_SCHEMA_VERSION, initA2ADatabase } = require('../build/a2a');
 
 function makeFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-doctor-test-'));
@@ -79,7 +79,7 @@ test('doctor reports the isolated A2A bridge without exposing its token or datab
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
   const result = await runDoctor({ dbPath: fixture.dbPath, a2aDbPath, env: { VOKO_A2A_ENABLED: 'true' }, mcpConfigPaths: [] });
   const check = result.checks.find((item) => item.id === 'a2a-mailbox');
-  assert.equal(check.status, 'ok'); assert.equal(check.data.bridgeConfigured, true); assert.equal(check.data.schemaVersion, 5);
+  assert.equal(check.status, 'ok'); assert.equal(check.data.bridgeConfigured, true); assert.equal(check.data.schemaVersion, A2A_SCHEMA_VERSION);
   assert.doesNotMatch(JSON.stringify(check), /a2a-secret-token|private-a2a\.db|did\.example/);
 });
 

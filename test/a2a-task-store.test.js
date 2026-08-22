@@ -32,6 +32,19 @@ test('inbox persists the verified envelope before execution and clears it after 
   assert.equal(db.prepare("SELECT envelope_json FROM a2a_local_inbox WHERE event_id='event-envelope'").get().envelope_json, null);
 });
 
+test('task records accepted, started, and finished execution times', (t) => {
+  const { db, store } = fixture(t);
+  store.acceptCommand('event-times', 'task-1', 2, 'execute', {});
+  let row = db.prepare("SELECT accepted_at,started_at,finished_at FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
+  assert.ok(row.accepted_at); assert.equal(row.started_at, null); assert.equal(row.finished_at, null);
+  assert.equal(store.beginCommand('event-times'), true);
+  row = db.prepare("SELECT accepted_at,started_at,finished_at FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
+  assert.ok(row.started_at >= row.accepted_at); assert.equal(row.finished_at, null);
+  store.finishCommand('event-times', 'processed');
+  row = db.prepare("SELECT accepted_at,started_at,finished_at FROM a2a_local_tasks WHERE gateway_task_id='task-1'").get();
+  assert.ok(row.finished_at >= row.started_at);
+});
+
 test('terminal task state cannot be changed', (t) => {
   const { store } = fixture(t);
   assert.equal(store.updateState('task-1', 'WORKING', 'EXECUTING'), true);

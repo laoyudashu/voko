@@ -84,6 +84,10 @@ class OpenClawWsProvider {
 
     // Gateway 启动互斥锁（防止重复启动）
     this._gatewayStarting = false;
+    this._gatewayStartPromise = null;
+    this.gatewayStartupTimeoutMs = 90000;
+    this.gatewayProbeIntervalMs = 1000;
+    this._gatewayWarmupUntil = 0;
 
     // 重连配置
     this.reconnectAttempts = 0;
@@ -121,6 +125,8 @@ class OpenClawWsProvider {
     this._legacyReplyTimers = new Map();  // 旧版 final 短暂延迟，优先采用新版完整回复
     this._sessionTurns = new Map();  // sessionKey → 当前入站 turn 身份
     this._vokoAgentBySession = new Map(); // OpenClaw 实例 session → VOKO agentId
+    this._agentTurnTails = new Map(); // agentId → 上一轮 final reply 完成信号
+    this._activeAgentTurns = new Map(); // agentId → 当前 turn 及释放函数
 
     // 初始化
     this.loadConfig();
@@ -320,6 +326,29 @@ class OpenClawWsProvider {
     this._processedMsgs.set(dedupKey, Date.now());
     console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
     this.emit('agent.reply', { agentId, visitorId, content: text, sessionKey: resolvedKey, ...identity });
+    if (agentId) this._releaseAgentTurn(agentId, identity.turnId);
+  }
+
+  async _acquireAgentTurn(agentId: string, turnId: string): Promise<() => void> {
+    const previous = this._agentTurnTails.get(agentId); let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    this._agentTurnTails.set(agentId, done);
+    if (previous) await previous;
+    let released = false; let timeout: NodeJS.Timeout;
+    const release = () => {
+      if (released) return; released = true; clearTimeout(timeout);
+      if (this._activeAgentTurns.get(agentId)?.turnId === turnId) this._activeAgentTurns.delete(agentId);
+      if (this._agentTurnTails.get(agentId) === done) this._agentTurnTails.delete(agentId);
+      resolveDone();
+    };
+    timeout = setTimeout(release, 130_000); timeout.unref?.();
+    this._activeAgentTurns.set(agentId, { turnId, release });
+    return release;
+  }
+
+  _releaseAgentTurn(agentId: string, turnId?: string): void {
+    const active = this._activeAgentTurns.get(agentId);
+    if (active && (!turnId || active.turnId === turnId)) active.release();
   }
 
   _isSameLogicalReply(first: string, second: string): boolean {
@@ -415,37 +444,78 @@ class OpenClawWsProvider {
    * @returns {Promise<boolean>} gateway 是否已就绪
    */
   async _ensureGatewayRunning(): Promise<boolean> {
-    const { spawn, execFileSync } = require('child_process');
+    const { spawn } = require('child_process');
 
     // 已连上就不需要操作
     if (this.connected) return true;
-    // 已经在启动中，防止重复启动
-    if (this._gatewayStarting) return false;
+
+    // 所有调用者共享同一启动过程；启动中不能返回 false 触发重复拉起。
+    if (this._gatewayStartPromise) return this._gatewayStartPromise;
+
+    this._gatewayStartPromise = this._startGatewayAndWait();
+    try {
+      return await this._gatewayStartPromise;
+    } finally {
+      this._gatewayStartPromise = null;
+    }
+  }
+
+  async _probeGateway(): Promise<boolean> {
+    const http = require('http');
+    return new Promise<boolean>((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.gatewayPort}/health`, (res: import('http').IncomingMessage) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      });
+      req.once('error', () => resolve(false));
+      req.setTimeout(2000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  }
+
+  async _waitForGatewayReady(): Promise<boolean> {
+    const deadline = Date.now() + this.gatewayStartupTimeoutMs;
+    while (Date.now() < deadline) {
+      if (await this._probeGateway()) {
+        this.reconnectAttempts = 0;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        console.log('[OpenClaw WS] Gateway ready，重连计数已重置');
+        if (this.enabled && !this.connected && !this.connecting) void this.connect();
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.gatewayProbeIntervalMs));
+    }
+    return false;
+  }
+
+  async _startGatewayAndWait(): Promise<boolean> {
+    const { spawn } = require('child_process');
     this._gatewayStarting = true;
 
     try {
       // 先检查 gateway 是否已在运行
-      try {
-        const http = require('http');
-        await new Promise<boolean>((resolve, reject) => {
-          const req = http.get(`http://127.0.0.1:${this.gatewayPort}/health`, (res: import('http').IncomingMessage) => {
-            resolve(res.statusCode === 200);
-          });
-          req.on('error', reject);
-          req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
-        });
+      if (await this._probeGateway()) {
         console.log(`[OpenClaw WS] Gateway 已在运行 (port=${this.gatewayPort})`);
+        this.reconnectAttempts = 0;
         return true;
-      } catch {
-        console.log(`[OpenClaw WS] Gateway 未运行，尝试启动 (port=${this.gatewayPort})...`);
       }
 
-      // 启动 gateway 进程
-      const started = await new Promise<boolean>((resolve) => {
+      const childAlive = this._gatewayChild
+        && this._gatewayChild.exitCode === null
+        && !this._gatewayChild.killed;
+      if (childAlive) {
+        console.log(`[OpenClaw WS] Gateway 进程仍在启动，继续等待 (pid=${this._gatewayChild.pid})...`);
+      } else {
+        console.log(`[OpenClaw WS] Gateway 未运行，尝试启动 (port=${this.gatewayPort})...`);
+        this._gatewayWarmupUntil = Date.now() + this.gatewayStartupTimeoutMs;
         const { cmd, args, shell } = this._resolveOpenclawCmd();
-        let child;
         try {
-          child = spawn(cmd, args, {
+          const child = spawn(cmd, args, {
             stdio: 'ignore',
             detached: process.platform !== 'win32',
             windowsHide: true,
@@ -455,48 +525,19 @@ class OpenClawWsProvider {
           this._gatewayChild = child;  // 记录，供 stop() 清理，避免 detached gateway 泄漏
           child.on('error', (err: Error) => {
             console.error('[OpenClaw WS] 无法启动 openclaw 进程:', err.message);
-            resolve(false);
+          });
+          child.on('exit', () => {
+            if (this._gatewayChild === child) this._gatewayChild = null;
           });
         } catch (err) {
           console.error('[OpenClaw WS] 无法启动 openclaw 进程:', errorMessage(err));
-          resolve(false);
-          return;
+          return false;
         }
+      }
 
-        // 等待最多 15 秒，每秒检测 gateway 是否就绪
-        let waited = 0;
-        const interval = setInterval(async () => {
-          waited++;
-          try {
-            const http = require('http');
-            await new Promise<boolean>((resolve, reject) => {
-              const req = http.get(`http://127.0.0.1:${this.gatewayPort}/health`, (res: import('http').IncomingMessage) => {
-                resolve(res.statusCode === 200);
-              });
-              req.on('error', reject);
-              req.setTimeout(2000, () => { req.destroy(); reject(new Error('timeout')); });
-            });
-            clearInterval(interval);
-            clearTimeout(timeout);
-            console.log(`[OpenClaw WS] Gateway 启动成功 (${waited}s)`);
-            resolve(true);
-          } catch {
-            if (waited >= 15) {
-              clearInterval(interval);
-              clearTimeout(timeout);
-              console.error(`[OpenClaw WS] Gateway 启动超时 (15s)`);
-              resolve(false);
-            }
-          }
-        }, 1000);
-
-        const timeout = setTimeout(() => {
-          clearInterval(interval);
-          resolve(false);
-        }, 16000);
-      });
-
-      return started;
+      const ready = await this._waitForGatewayReady();
+      if (!ready) console.error(`[OpenClaw WS] Gateway 启动超时 (${this.gatewayStartupTimeoutMs}ms)`);
+      return ready;
     } finally {
       this._gatewayStarting = false;
     }
@@ -639,20 +680,22 @@ class OpenClawWsProvider {
     console.log('[OpenClaw WS] 正在连接:', this.gatewayUrl);
 
     return new Promise<void>((resolve, reject) => {
+      let socket: InstanceType<typeof WebSocket> | null = null;
       // 连接超时处理
       const connectionTimeout = setTimeout(() => {
-        if (!this.connected) {
+        if (socket && this.ws === socket && !this.connected) {
           this._notifyAvailability(false, 'connect-timeout');
           this.addLog('❌ 连接超时');
           this.connecting = false;
-          this.ws?.close();
+          socket.close();
           this.scheduleReconnect();
           reject(new Error('连接超时'));
         }
       }, 30000);
 
       try {
-        this.ws = new WebSocket(this.gatewayUrl);
+        socket = new WebSocket(this.gatewayUrl);
+        this.ws = socket;
       } catch (err) {
         console.error('[OpenClaw WS] 创建 WebSocket 失败:', errorMessage(err));
         this.connecting = false;
@@ -662,12 +705,14 @@ class OpenClawWsProvider {
         return;
       }
 
-      this.ws.on('open', () => {
+      socket.on('open', () => {
+        if (this.ws !== socket) return;
         console.log('[OpenClaw WS] ✅ WebSocket 已连接，等待认证...');
         this.addLog('🔌 WebSocket 已连接，等待认证...');
       });
 
-      this.ws.on('message', async (data: Buffer) => {
+      socket.on('message', async (data: Buffer) => {
+        if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(data.toString());
           // 噪音事件只打印到控制台，不写入日志缓冲区
@@ -685,7 +730,8 @@ class OpenClawWsProvider {
         }
       });
 
-      this.ws.on('error', (err: Error) => {
+      socket.on('error', (err: Error) => {
+        if (this.ws !== socket) return;
         this._notifyAvailability(false, `socket-error:${err.message}`);
         console.error('[OpenClaw WS] ❌ 连接错误:', err.message);
         this.connecting = false;
@@ -694,9 +740,17 @@ class OpenClawWsProvider {
         reject(err);
       });
 
-      this.ws.on('close', (code: number, reason: Buffer) => {
-        console.log(`[OpenClaw WS] 🔌 连接关闭 (code: ${code}, reason: ${reason || '无'})`);
-      this.addLog(`🔌 连接关闭 (code: ${code}, reason: ${reason || '无'})`);
+      socket.on('close', (code: number, reason: Buffer) => {
+        if (this.ws !== socket) return;
+        const closeReason = String(reason || '');
+        console.log(`[OpenClaw WS] 🔌 连接关闭 (code: ${code}, reason: ${closeReason || '无'})`);
+      this.addLog(`🔌 连接关闭 (code: ${code}, reason: ${closeReason || '无'})`);
+        if (code === 1013 && /gateway starting/i.test(closeReason)) {
+          this._gatewayWarmupUntil = Math.max(
+            this._gatewayWarmupUntil,
+            Date.now() + this.gatewayStartupTimeoutMs,
+          );
+        }
         this.connected = false;
         this._notifyAvailability(false, `socket-close:${code}`);
         this.connecting = false;
@@ -802,6 +856,7 @@ class OpenClawWsProvider {
       const sessionDefaults = this._sessionDefaultsFromHello(msg.payload);
       this.sessionId = sessionDefaults?.mainSessionKey || 'agent:main:main';
       this.reconnectAttempts = 0; // 重置重连计数
+      this._gatewayWarmupUntil = 0;
 
       console.log(`[OpenClaw WS] 认证完成 protocol=${this._protocolVer} subscribe=${this._supportsSessionSubscribe()} replyEvent=${this._replyProtocol || 'auto'} pending=${this.pendingSubscriptions.size}`);
 
@@ -934,7 +989,6 @@ class OpenClawWsProvider {
 
         if (isFinal) {
           const finalReply = pending ? pending.currentReply : text;
-          console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
 
           // 不再直接发送回复到访客，只存储到 pending 状态等待后续处理
           // 清理 pending reply 状态
@@ -1014,6 +1068,8 @@ class OpenClawWsProvider {
     this._legacyReplyTimers.clear();
     this._chatFinalSessions.clear();
     this._sessionTurns.clear();
+    for (const active of this._activeAgentTurns.values()) active.release();
+    this._activeAgentTurns.clear(); this._agentTurnTails.clear();
     this._replyProtocol = null;
 
     // 清理 pending replies
@@ -1038,26 +1094,36 @@ class OpenClawWsProvider {
       return;
     }
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+    const gatewayProcessStarting = this._gatewayStarting || !!this._gatewayStartPromise;
+    const gatewayWarmingUp = this._gatewayWarmupUntil > Date.now();
+    const gatewayStarting = gatewayProcessStarting || gatewayWarmingUp;
+
+    if (!gatewayStarting && this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error(`[OpenClaw WS] 重连次数超过限制 (${this.maxReconnectAttempts})，停止重连`);
       this.addLog(`❌ 重连次数超过限制，停止重连`);
       return;
     }
 
-    this.reconnectAttempts++;
+    if (!gatewayStarting) this.reconnectAttempts++;
 
     // 计算重连延迟（指数退避）
-    const actualDelay = delay !== null ? delay : Math.min(
+    const actualDelay = gatewayStarting ? this.gatewayProbeIntervalMs : delay !== null ? delay : Math.min(
       this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1),
       this.maxReconnectDelay
     );
 
-    console.log(`[OpenClaw WS] 计划 ${actualDelay}ms 后重连 (尝试 ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-    this.addLog(`⏳ 计划 ${actualDelay}ms 后重连 (第${this.reconnectAttempts}次)`);
+    if (gatewayStarting) {
+      console.log(`[OpenClaw WS] Gateway 正在启动，${actualDelay}ms 后重新检查（不计入重连次数）`);
+    } else {
+      console.log(`[OpenClaw WS] 计划 ${actualDelay}ms 后重连 (尝试 ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      this.addLog(`⏳ 计划 ${actualDelay}ms 后重连 (第${this.reconnectAttempts}次)`);
+    }
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.enabled && !this.connected && !this.connecting) {
+      if (this._gatewayStarting || this._gatewayStartPromise) {
+        this.scheduleReconnect(this.gatewayProbeIntervalMs);
+      } else if (this.enabled && !this.connected && !this.connecting) {
         console.log('[OpenClaw WS] 执行重连...');
         this.addLog('🔄 执行重连...');
         this.connect().catch((err: unknown) => {
@@ -1479,7 +1545,36 @@ class OpenClawWsProvider {
 
   /** 就绪判断：push 通道是否就绪（WS 已连接；openclaw 为全局单连接，与 agentId 无关）。 */
   isAvailable(_agentId: string): boolean {
-    return !!this.connected;
+    return !!this.connected || !!(this.enabled && (
+      this.connecting
+      || this._gatewayStarting
+      || this._gatewayStartPromise
+      || Date.now() < this._gatewayWarmupUntil
+    ));
+  }
+
+  /**
+   * 冷启动期间保留 WS 的路由优先级，并等待 Gateway 完成认证。
+   * 这避免消息恰好在 Gateway warmup 窗口到达时被立即交给 CLI，造成两个
+   * OpenClaw transport 同时争用同一个本地运行时或 Session。
+   */
+  async _waitForAuthenticatedConnection(timeoutMs = this.gatewayStartupTimeoutMs): Promise<void> {
+    if (this.connected) return;
+    const deadline = Date.now() + timeoutMs;
+    while (!this.connected && Date.now() < deadline) {
+      if (this._gatewayStarting || this._gatewayStartPromise) {
+        await new Promise(resolve => setTimeout(resolve, this.gatewayProbeIntervalMs));
+        continue;
+      }
+      const running = await this._ensureGatewayRunning();
+      if (!running) break;
+      if (!this.connected && !this.connecting) await this.connect();
+      if (this.connected) return;
+      await new Promise(resolve => setTimeout(resolve, this.gatewayProbeIntervalMs));
+    }
+    const error = new Error('OpenClaw WebSocket did not become ready within the cold-start budget');
+    (error as any).deliveryOutcome = 'not_delivered';
+    throw error;
   }
 
   /** Read-only probe used by strict A2A/owner routes before reusing a native session. */
@@ -1525,7 +1620,11 @@ class OpenClawWsProvider {
 
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */
   async push(payload: PushPayload): Promise<unknown> {
+    await this._waitForAuthenticatedConnection();
     const { agentId, fromUid, senderUid, content, channelId, channelType, contentType, messageId, turnId, timestamp } = payload;
+    const providerTurnId = String(turnId || messageId || this.generateId());
+    const releaseTurn = await this._acquireAgentTurn(agentId, providerTurnId);
+    try {
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId
@@ -1545,9 +1644,10 @@ class OpenClawWsProvider {
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
     return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
       deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
+    } catch (error) { releaseTurn(); throw error; }
   }
 
   /** 注入系统消息（openclaw 无独立 steer，走 sendToSession）。 */
@@ -1557,6 +1657,7 @@ class OpenClawWsProvider {
     content: string,
     metadata?: ProviderSteerMetadata,
   ): Promise<unknown> {
+    await this._waitForAuthenticatedConnection();
     const targetAgentId = this.getInstanceId(agentId);
     const binding = metadata?.providerBinding;
     const sessionKey = binding?.providerType === 'openclaw'

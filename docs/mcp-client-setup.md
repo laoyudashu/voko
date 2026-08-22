@@ -46,6 +46,8 @@ This may invoke the model and send a real IM reply to the supplied visitor, so `
 
 ## WorkBuddy
 
+这里的“CodeBuddy Settings”是 WorkBuddy 界面内的设置名称，不代表 VOKO 会把独立安装的 CodeBuddy CLI 识别为 WorkBuddy Provider。两者的自动接收通道分别为 WorkBuddy HTTP 和 CodeBuddy ACP。
+
 WorkBuddy 的部分版本在界面中显示为 **CodeBuddy Settings**。优先使用界面配置：
 
 1. 打开 WorkBuddy 的对话面板，点击右上角 **CodeBuddy Settings**。

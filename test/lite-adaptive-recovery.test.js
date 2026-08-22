@@ -88,6 +88,8 @@ test('OpenClaw sends history only when no resumable binding is available', async
   const provider = new OpenClawWsProvider(db, null);
   const sent = [];
   try {
+    provider.connected = true;
+    provider._acquireAgentTurn = async () => () => {};
     provider.sendToSession = async (_sessionKey, prompt) => sent.push(prompt);
     await provider.push(basePayload);
     const providerBinding = binding('openclaw', 'websocket', 'openclaw-ws', 'agent:agent-a:visitor-a', 'agent-a');
@@ -156,6 +158,37 @@ test('ACP restores only when its session is newly created', async () => {
   } finally {
     db.close();
   }
+});
+
+test('ACP serializes two turns that consume the same native session update stream', async () => {
+  const adapter = new AcpAdapter({ streamFactory: async () => ({ stream: {} }) });
+  let active = 0; let maxActive = 0;
+  adapter._pushViaAcp = async payload => {
+    active += 1; maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    active -= 1;
+    return { nativeSessionId: 'session-a', deliveryMode: 'acp', adapterType: 'test-acp', turnId: payload.turnId };
+  };
+  const first = { ...basePayload, messageId: 'm1', turnId: 'turn-1' };
+  const second = { ...basePayload, messageId: 'm2', turnId: 'turn-2' };
+  await Promise.all([adapter.push(first), adapter.push(second)]);
+  assert.equal(maxActive, 1);
+});
+
+test('ACP keeps independent sessions for the same Agent concurrent', async () => {
+  const adapter = new AcpAdapter({ streamFactory: async () => ({ stream: {} }) });
+  let active = 0; let maxActive = 0;
+  adapter._pushViaAcp = async () => {
+    active += 1; maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    active -= 1;
+    return { nativeSessionId: 'session-a', deliveryMode: 'acp', adapterType: 'test-acp' };
+  };
+  await Promise.all([
+    adapter.push({ ...basePayload, fromUid: 'visitor-a', messageId: 'm1', turnId: 'turn-1' }),
+    adapter.push({ ...basePayload, fromUid: 'visitor-b', messageId: 'm2', turnId: 'turn-2' }),
+  ]);
+  assert.equal(maxActive, 2);
 });
 
 test('ACP attaches the requested session ID when resume returns an empty result', async () => {

@@ -1,0 +1,242 @@
+import crypto from 'node:crypto';
+import type { E2eeDirectoryClient, E2eeDirectoryEstablishment } from './directory-client';
+import type { PendingRecipientProcess } from './canary-crypto-process';
+import type { ProductionE2eeScope, ProductionE2eeStore } from './production-store';
+
+export interface ProductionE2eeAgent {
+  localAgentId: string;
+  serverAgentId: string;
+  targetAgentDid: string;
+  ownerDeviceKeyId: string;
+  ownerScope: string;
+  bindingGeneration: number;
+}
+
+type Recipient = Pick<PendingRecipientProcess,'ready'|'join'|'sealPending'|'restorePending'|'replenish'|'close'>;
+
+function packageReference(keyPackage: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(keyPackage)) throw new Error('E2EE_ENDPOINT_INVALID_KEY_PACKAGE');
+  return crypto.createHash('sha256').update(Buffer.from(keyPackage,'base64url')).digest('base64url');
+}
+
+function pendingScope(agent: ProductionE2eeAgent, epoch: number): any {
+  return {
+    localAgentId: agent.localAgentId, serverAgentId: agent.serverAgentId,
+    targetAgentDid: agent.targetAgentDid, creatorPrincipalId: 'pending', senderDeviceKeyId: 'pending',
+    recipientDeviceKeyId: agent.ownerDeviceKeyId, ownerScope: agent.ownerScope,
+    groupId: `pending-${epoch}`, conversationScope: `pending-${epoch}`,
+    bindingGeneration: agent.bindingGeneration,
+    keyEpoch: epoch,
+  };
+}
+
+export class ProductionE2eeDirectoryWorker {
+  private readonly processes = new Map<string,Recipient>();
+  private timer: NodeJS.Timeout|null = null;
+  private running = false;
+  private retryAfter = 0;
+  private nextAgentIndex = 0;
+  private sharedFailureCount = 0;
+
+  constructor(private readonly options: {
+    client: E2eeDirectoryClient;
+    store: ProductionE2eeStore;
+    agents: () => ProductionE2eeAgent[];
+    processFactory: (scope: ProductionE2eeScope) => Recipient;
+    intervalMs?: number;
+    maxAgentsPerRun?: number;
+    now?: () => number;
+    onError?: (agentId: string, error: unknown) => void;
+    onRecovery?: (failureCount: number) => void;
+  }) {}
+
+  private isSharedServiceFailure(error: any): boolean {
+    const status = Number(error?.status || 0);
+    const code = String(error?.code || '');
+    const causeCode = String(error?.cause?.code || '');
+    return status === 429 || status >= 500
+      || /^E2EE_DIRECTORY_HTTP_5\d\d$/.test(code)
+      || ['ECONNREFUSED','ECONNRESET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET'].includes(code)
+      || ['ECONNREFUSED','ECONNRESET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET'].includes(causeCode);
+  }
+
+  private backoffSharedFailure(error: any, affectedAgents: number): void {
+    this.sharedFailureCount += 1;
+    const base = Math.max(2_000,Number(this.options.intervalMs || 30_000));
+    const retryMs = Number(error?.status) === 429
+      ? Math.max(1_000,Number(error?.retryAfterMs) || 60_000)
+      : Math.min(60_000,base * (2 ** Math.min(this.sharedFailureCount - 1,5)));
+    this.retryAfter = (this.options.now || Date.now)() + retryMs;
+    error.sharedServiceFailure = true;
+    error.affectedAgents = affectedAgents;
+    error.retryAfterMs = retryMs;
+    this.options.onError?.('directory',error);
+  }
+
+  private process(agent: ProductionE2eeAgent, epoch: number): Recipient {
+    const existing = this.processes.get(agent.localAgentId);
+    if (existing) return existing;
+    const created = this.options.processFactory(pendingScope(agent,epoch));
+    this.processes.set(agent.localAgentId,created);
+    return created;
+  }
+
+  private async ensurePackage(agent: ProductionE2eeAgent): Promise<any> {
+    let row = this.options.store.keyPackage(agent.localAgentId);
+    const epoch = Number(row?.key_epoch || this.options.store.deviceKeyEpoch(agent.localAgentId));
+    const recipient = this.process(agent,epoch);
+    let credentialPublicKey: string;
+    if (row) {
+      credentialPublicKey = await recipient.restorePending(row.encrypted_pending_state);
+    } else {
+      const ready = await recipient.ready;
+      credentialPublicKey = ready.credentialPublicKey;
+      const ref = packageReference(ready.keyPackage);
+      row = {
+        localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
+        ownerDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,keyEpoch:epoch,keyPackageRef:ref,
+        keyPackage:ready.keyPackage,encryptedPendingState:await recipient.sealPending(),publishState:'pending',
+      };
+      this.options.store.saveKeyPackage(row);
+      row = this.options.store.keyPackage(agent.localAgentId);
+    }
+    if (row.publish_state !== 'published') {
+      await this.options.client.registerDevice({ ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,
+        credentialPublicKey });
+      const published = await this.options.client.publishKeyPackage({ agentId:agent.serverAgentId,
+        ownerDeviceKeyId:agent.ownerDeviceKeyId,keyEpoch:epoch,keyPackage:row.key_package,
+        expiresAtMs:(this.options.now || Date.now)() + 23 * 60 * 60 * 1000 });
+      if (String(published?.keyPackageRef || '') !== row.key_package_ref) throw new Error('E2EE_KEY_PACKAGE_REF_MISMATCH');
+      this.options.store.markKeyPackagePublished(agent.localAgentId,row.key_package_ref);
+      row = this.options.store.keyPackage(agent.localAgentId);
+    }
+    return row;
+  }
+
+  private async rotatePending(agent: ProductionE2eeAgent, row: any): Promise<any> {
+    const current = this.processes.get(agent.localAgentId);
+    current?.close();
+    this.processes.delete(agent.localAgentId);
+    const recipient = this.process(agent,Number(row.key_epoch));
+    await recipient.ready;
+    await recipient.restorePending(row.encrypted_pending_state);
+    const replenished = await recipient.replenish();
+    const next = {
+      localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
+      ownerDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,keyEpoch:Number(row.key_epoch),
+      keyPackageRef:packageReference(replenished.keyPackage),keyPackage:replenished.keyPackage,
+      encryptedPendingState:await recipient.sealPending(),publishState:'pending',
+    };
+    return next;
+  }
+
+  private async flushAcknowledgements(agent: ProductionE2eeAgent): Promise<void> {
+    for (const item of this.options.store.pendingAcknowledgements().filter(row => row.local_agent_id === agent.localAgentId)) {
+      await this.options.client.acknowledge({ establishmentId:item.establishment_id,agentId:agent.serverAgentId,
+        ownerDeviceKeyId:agent.ownerDeviceKeyId,
+        ack:Buffer.from(item.ack_json,'utf8').toString('base64url') });
+      this.options.store.markAcknowledged(item.establishment_id);
+    }
+  }
+
+  private async accept(agent: ProductionE2eeAgent, row: any, establishment: E2eeDirectoryEstablishment): Promise<void> {
+    if (this.options.store.establishment(establishment.establishmentId)) return;
+    if (establishment.keyPackageRef !== row.key_package_ref || establishment.keyEpoch !== Number(row.key_epoch)) {
+      throw new Error('E2EE_ESTABLISHMENT_KEY_PACKAGE_MISMATCH');
+    }
+    if (establishment.bindingGeneration !== agent.bindingGeneration) throw new Error('E2EE_BINDING_GENERATION_MISMATCH');
+    const recipient = this.process(agent,Number(row.key_epoch));
+    const scope: ProductionE2eeScope = {
+      localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
+      creatorPrincipalId:establishment.creatorPrincipalId,senderDeviceKeyId:'',
+      recipientDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,groupId:establishment.groupId,
+      conversationScope:establishment.conversationScope,bindingGeneration:establishment.bindingGeneration,
+    };
+    const joined = await recipient.join(scope,establishment.welcome,`e2ee-established-${establishment.establishmentId}`);
+    // keyEpoch versions the device credential, not individual KeyPackages.
+    // Rotating it for every package would invalidate already active groups.
+    const next = await this.rotatePending(agent,row);
+    this.options.store.commitEstablishment({ establishmentId:establishment.establishmentId,scope,
+      encryptedState:joined.encryptedState,acknowledgement:joined.acknowledgement,nextKeyPackage:next });
+  }
+
+  async runOnce(): Promise<void> {
+    if (this.running) return;
+    if ((this.options.now || Date.now)() < this.retryAfter) return;
+    this.running = true;
+    try {
+      const agents = this.options.agents();
+      if (agents.length === 0) return;
+      const batchSize = Math.max(1,Math.min(agents.length,Number(this.options.maxAgentsPerRun || 5)));
+      const batch = Array.from({ length:batchSize },(_,offset) => agents[(this.nextAgentIndex + offset) % agents.length]);
+      this.nextAgentIndex = agents.length ? (this.nextAgentIndex + batchSize) % agents.length : 0;
+      let sharedFailure = false;
+      for (const agent of batch) {
+        try {
+          let row = await this.ensurePackage(agent);
+          await this.flushAcknowledgements(agent);
+          const establishments = await this.options.client.pullEstablishments({ agentId:agent.serverAgentId,
+            ownerDeviceKeyId:agent.ownerDeviceKeyId,limit:20 });
+          for (const establishment of establishments) {
+            try {
+              await this.accept(agent,row,establishment);
+            } catch (error) {
+              const poisoned = this.processes.get(agent.localAgentId);
+              poisoned?.close();
+              this.processes.delete(agent.localAgentId);
+              await this.options.client.reject({ establishmentId:establishment.establishmentId,
+                agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,reasonCode:'LOCAL_CRYPTO_ERROR' });
+              const next = await this.rotatePending(agent,row);
+              this.options.store.saveKeyPackage(next);
+              row = this.options.store.keyPackage(agent.localAgentId);
+              throw error;
+            }
+            await this.flushAcknowledgements(agent);
+            row = await this.ensurePackage(agent);
+          }
+          const inventory = await this.options.client.keyPackageStatus({
+            ownerDeviceKeyId:agent.ownerDeviceKeyId,agentIds:[agent.serverAgentId],
+          });
+          const available = Number(inventory?.agents?.find((item: any) => item?.agentId === agent.serverAgentId)?.available || 0);
+          if (available < 1) {
+            // A KeyPackage is single-use once a remote party has built a
+            // handshake from it. If Lite was offline until that establishment
+            // expired, the local row still says "published" although the
+            // directory can no longer offer it. Publish a fresh package rather
+            // than reusing the consumed one.
+            const next = await this.rotatePending(agent,row);
+            this.options.store.saveKeyPackage(next);
+            row = await this.ensurePackage(agent);
+          }
+        } catch (error: any) {
+          if (this.isSharedServiceFailure(error)) {
+            sharedFailure = true;
+            this.backoffSharedFailure(error,agents.length);
+            break;
+          }
+          this.options.onError?.(agent.localAgentId,error);
+        }
+      }
+      if (!sharedFailure && this.sharedFailureCount > 0) {
+        const failures = this.sharedFailureCount;
+        this.sharedFailureCount = 0;
+        this.retryAfter = 0;
+        this.options.onRecovery?.(failures);
+      }
+    } finally { this.running = false; }
+  }
+
+  start(): () => Promise<void> {
+    void this.runOnce().catch(error => this.options.onError?.('worker',error));
+    this.timer = setInterval(() => { void this.runOnce().catch(error => this.options.onError?.('worker',error)); },this.options.intervalMs || 30_000);
+    this.timer.unref?.();
+    return async () => {
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
+      for (const process of this.processes.values()) process.close();
+      this.processes.clear();
+    };
+  }
+}
+
+module.exports = { ProductionE2eeDirectoryWorker, packageReference };

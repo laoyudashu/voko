@@ -42,6 +42,7 @@ test('desktop Provider aliases normalize to the canonical family types', () => {
   assert.equal(backendTypes.normalizeBackendType('trae-ide'), 'trae');
   assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'qwen-office'));
   assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'trae'));
+  assert.ok(backendTypes.DEFAULT_BACKEND_TYPES.some((item) => item.value === 'codebuddy'));
 });
 
 test('IPC frame keeps new and legacy wire formats compatible', () => {
@@ -629,7 +630,7 @@ test('agent actions return to the same agent subpage and conversation controls u
   assert.match(source, /class="home-access-stack"/);
   assert.match(source, /web\.home\.access\.visitor/);
   assert.match(source, /data-role="gen-owner-link"/);
-  assert.match(source, /web\.home\.access\.a2a_published/);
+  assert.match(source, /web\.home\.access\.copy_a2a/);
   assert.match(source, /home-copy-icon/);
   assert.match(source, /<button type="button" class="btn btn-sm home-mode-toggle /);
   assert.match(source, /data-role="toggle-pub"/);
@@ -785,24 +786,41 @@ test('voko update never downgrades when npm registry is behind the installed ver
   assert.equal(calls.length, 1);
 });
 
-test('account switching waits for old IM clients to stop before starting the shared Hub clients', () => {
+test('account switching activates pending credentials and schedules a full process restart', () => {
   const entrySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
-  const restartRoute = entrySource.slice(
-    entrySource.indexOf("app.post('/api/agents/restart'"),
-    entrySource.indexOf("app.post('/api/payment/write-auth'"),
-  );
   const restartHandler = entrySource.slice(
     entrySource.indexOf('handlers.restart_agent_runtime = async'),
     entrySource.indexOf('const mcpServer = createMcpServer', entrySource.indexOf('handlers.restart_agent_runtime = async')),
   );
-  const implementation = /await handlers\.restart_agent_runtime\(\)/.test(restartRoute)
-    ? restartHandler
-    : restartRoute;
-  assert.match(implementation, /await agentManager\.stopAll\(\)/);
-  assert.ok(
-    implementation.indexOf('await agentManager.stopAll()')
-      < implementation.indexOf('await agentManager.startMany('),
+  assert.match(restartHandler, /activatePendingOwnerSwitch\(db, \{ previousInstanceId \}\)/);
+  assert.match(restartHandler, /__serviceHealth = 'draining'/);
+  assert.match(restartHandler, /__restartAfterShutdown = true/);
+  assert.match(restartHandler, /setTimeout\(\(\) => \{[\s\S]*shutdownAll\([\s\S]*'owner-switch'/);
+  assert.doesNotMatch(restartHandler, /agentManager\.stopAll\(\)/);
+  assert.doesNotMatch(restartHandler, /agentManager\.startMany\(/);
+  assert.match(entrySource, /restartNoticeForInstance\(db, currentInstanceId\)/);
+  assert.match(entrySource, /imSettled \|\| waitExpired/);
+  assert.match(entrySource, /clearRestartNotice\(db\)/);
+
+  const shutdown = entrySource.slice(
+    entrySource.indexOf('async function shutdownAll'),
+    entrySource.indexOf('function printUsage()', entrySource.indexOf('async function shutdownAll')),
   );
+  assert.ok(
+    shutdown.indexOf('__instanceLock?.release()')
+      < shutdown.indexOf('spawnReplacementProcess()'),
+    'the replacement process must start only after the old instance lock is released',
+  );
+  assert.match(shutdown, /db\.close\(\)/);
+  assert.match(shutdown, /signal_cleanup[\s\S]*signal/);
+  assert.ok(
+    shutdown.indexOf('db.close()') < shutdown.indexOf('spawnReplacementProcess()'),
+    'the replacement process must start only after the old database is closed',
+  );
+  assert.match(entrySource, /OWNER_SWITCH_RESTART_EXIT_CODE = 75/);
+  assert.match(entrySource, /SUPERVISED_RUNTIME_ENV/);
+  assert.match(entrySource, /result\.code === OWNER_SWITCH_RESTART_EXIT_CODE/);
+  assert.match(entrySource, /stdio: 'inherit'/);
 });
 
 test('default lifecycle logs stay concise and stop hides the database path', () => {

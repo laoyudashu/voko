@@ -68,6 +68,8 @@ describe('shared registration orchestrator', () => {
       'codex.exe app-server',
     ]), 'claude-code');
     assert.strictEqual(currentAgentTypeFromProcessRows(['WorkBuddy.exe --mcp']), 'workbuddy');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['D:\\Program Files\\WorkBuddy\\resources\\cli\\codebuddy --serve']), 'workbuddy');
+    assert.strictEqual(currentAgentTypeFromProcessRows(['codebuddy.exe --acp']), 'codebuddy');
     assert.strictEqual(currentAgentTypeFromProcessRows(['Doubao.exe agent']), 'doubao');
     assert.strictEqual(currentAgentTypeFromProcessRows(['zcode.exe mcp']), 'zcode');
     assert.strictEqual(currentAgentTypeFromProcessRows(['QwenWorkCN.exe --background']), 'qwen-office');
@@ -160,12 +162,13 @@ describe('shared registration orchestrator', () => {
     });
   });
 
-  it('detects installed desktop-only Agents and exposes pull delivery only', () => {
+  it('detects desktop Agents and exposes unavailable WorkBuddy HTTP before Pull', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       installedApplications: () => ['ZCode 3.5.3', 'WorkBuddy 5.2.6', '豆包 2.19.9'],
       // 隔离真实运行环境：明确声明当前进程不是任何已知 agent，验证 instances 为空的基线行为
       detectCurrentAgentType: () => null,
+      workBuddyRuntime: () => ({ command: null }),
     });
     const environment = service.inspectEnvironment();
     for (const type of ['zcode', 'workbuddy', 'doubao']) {
@@ -173,9 +176,22 @@ describe('shared registration orchestrator', () => {
       assert.ok(provider, type + ' should be detected');
       assert.strictEqual(provider.supportsMultipleInstances, false);
       assert.deepStrictEqual(provider.instances, []);
-      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
-      assert.strictEqual(provider.deliveryModes[0].required, true);
+      const expected = type === 'workbuddy' ? ['http', 'pull'] : ['pull'];
+      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), expected);
+      assert.strictEqual(provider.deliveryModes.at(-1).required, true);
+      if (type === 'workbuddy') assert.strictEqual(provider.deliveryModes[0].status, 'unavailable');
     }
+  });
+
+  it('exposes WorkBuddy HTTP before Pull when the bundled CLI is available', () => {
+    const service = new RegistrationOrchestrator({
+      workBuddyRuntime: () => ({ command: 'codebuddy', source: 'registry' }),
+    });
+    const modes = service.deliveryCapabilities('workbuddy');
+    assert.deepStrictEqual(modes.map((mode) => mode.mode), ['http', 'pull']);
+    assert.strictEqual(modes[0].status, 'preflight_passed');
+    assert.strictEqual(modes[0].selected, true);
+    assert.strictEqual(modes[1].required, true);
   });
 
   it('detects Qwen Office and Trae desktop installs while keeping headless readiness separate', () => {
@@ -208,6 +224,22 @@ describe('shared registration orchestrator', () => {
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
+  it('detects standalone CodeBuddy separately from WorkBuddy and exposes ACP before Pull', () => {
+    const service = new RegistrationOrchestrator({
+      commandAvailable: () => false,
+      codeBuddyCliAvailable: () => true,
+      workBuddyRuntime: () => ({ command: null }),
+      installedApplications: () => ['WorkBuddy 5.3.11'],
+      detectCurrentAgentType: () => null,
+    });
+    const environment = service.inspectEnvironment();
+    assert.ok(environment.detected.some((item) => item.type === 'workbuddy'));
+    assert.ok(environment.detected.some((item) => item.type === 'codebuddy'));
+    assert.deepEqual(service.deliveryCapabilities('workbuddy').map((item) => item.mode), ['http', 'pull']);
+    assert.deepEqual(service.deliveryCapabilities('codebuddy').map((item) => item.mode), ['acp', 'pull']);
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'ready');
   });
 
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {
@@ -461,18 +493,20 @@ describe('shared registration orchestrator', () => {
     }
   });
 
-  it('lets a desktop-only Agent register through MCP with pull delivery', async () => {
+  it('lets WorkBuddy register when HTTP is unavailable and keeps Pull selected', async () => {
     const { db, service } = createService({
       detectCurrentAgentType: () => 'workbuddy',
       detectCurrentAgentInstance: () => null,
+      workBuddyRuntime: () => ({ command: null }),
     });
     try {
       const started = await service.start({ registrationMode: 'agent' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'WorkBuddy Agent' });
       assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.strictEqual(basic.provider.type, 'workbuddy');
-      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
-      assert.strictEqual(basic.deliveryModes[0].required, true);
+      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['http', 'pull']);
+      assert.strictEqual(basic.deliveryModes[0].status, 'unavailable');
+      assert.strictEqual(basic.deliveryModes[1].required, true);
     } finally {
       db.close();
     }

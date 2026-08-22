@@ -12,6 +12,7 @@ test('first task stores native session and later task restores exactly it', asyn
   const service = new A2AExecutionService(store, dispatcher, undefined, undefined, scopes);
   assert.deepEqual(await service.execute(envelope()), { content: 'done' });
   await service.execute(envelope('task-2'));
+  assert.equal(calls[0].timeoutMs, 120_000);
   assert.equal(calls[0].binding, null); assert.equal(calls[1].binding.nativeSessionId, 'native-1');
   assert.equal(calls[1].binding.strictSessionRoute, true);
 });
@@ -60,4 +61,16 @@ test('tasks sharing one principal context execute one Provider turn at a time', 
   await new Promise(resolve=>setImmediate(resolve));
   await assert.rejects(()=>service.execute(envelope('task-2')),error=>error.deliveryOutcome==='not_delivered'&&error.message==='A2A_CONTEXT_BUSY');
   assert.equal(calls,1);release();await first;
+});
+test('attachment execution passes verified paths to Provider and uploads task-scoped replies',async t=>{
+  const {store,scopes}=setup(t);let dispatched;let cleaned=0;
+  const workspace={async prepare(){return{inputs:[{path:'safe-input.txt',name:'input.txt',mediaType:'text/plain',size:4,sha256:'11'.repeat(32)}],
+    outputDirectory:'safe-output',prompt:content=>`${content} [attachments]`,cleanup:async()=>{cleaned+=1;}};},
+    async uploadOutputs(){return[{artifactId:'output-1',name:'answer.txt',part:{artifactRef:'ref-1'}}];}};
+  const dispatcher={async executeIsolated(options){dispatched=options;options.onProviderAccepted?.({});return{reply:{content:'done'},receipt:{provider:{}}};}};
+  const service=new A2AExecutionService(store,dispatcher,undefined,undefined,scopes,{},workspace);
+  const value=envelope();value.payload.attachments=[{attachmentRef:'extatt_abcdefghijklmnop'}];
+  const result=await service.execute(value);assert.equal(dispatched.attachments[0].path,'safe-input.txt');
+  assert.equal(dispatched.attachmentOutputDirectory,'safe-output');assert.match(dispatched.content,/attachments/);
+  assert.equal(result.artifacts[0].part.artifactRef,'ref-1');assert.equal(cleaned,1);
 });

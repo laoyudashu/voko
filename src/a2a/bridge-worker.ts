@@ -6,10 +6,27 @@ import type { A2AScopeResolver } from './scope';
 interface A2ABridgeWorkerOptions { client: A2AMailboxClient; store: A2ALocalTaskStore;
   scopes: A2AScopeResolver;
   verify: (value: unknown) => A2AEnvelope; execute: (envelope: A2AEnvelope) => Promise<void>;
-  availability?: () => Array<any> }
+  availability?: () => Array<any>; concurrency?: number }
 
 class A2ABridgeWorker {
   constructor(private readonly options: A2ABridgeWorkerOptions) {}
+  private async runByAgent(items: Array<{ agentId: string; run: () => Promise<void> }>): Promise<void> {
+    const lanes = new Map<string, Array<() => Promise<void>>>();
+    for (const item of items) {
+      const lane = lanes.get(item.agentId) || [];
+      lane.push(item.run); lanes.set(item.agentId, lane);
+    }
+    const pending = [...lanes.values()];
+    const worker = async () => {
+      while (pending.length) {
+        const lane = pending.shift();
+        if (!lane) return;
+        for (const run of lane) await run();
+      }
+    };
+    const limit = Math.max(1, Math.min(Number(this.options.concurrency || 4), pending.length || 1));
+    await Promise.all(Array.from({ length: limit }, () => worker()));
+  }
   private async executePersisted(eventId: string, envelope: A2AEnvelope): Promise<'processed' | 'retry' | 'uncertain'> {
     if (!this.options.store.beginCommand(eventId)) return 'uncertain';
     try {
@@ -27,36 +44,50 @@ class A2ABridgeWorker {
   }
   async pollOnce(): Promise<{ claimed: number; processed: number; uncertain: number }> {
     const claim = await this.options.client.claim(20, this.options.availability?.() || []); let processed = 0; let uncertain = 0;
-    for (const item of claim.items) {
+    const claimed = claim.items.map(item => {
       const envelope = this.options.verify(item.envelope);
       if (envelope.eventId !== item.eventId || envelope.gatewayTaskId !== item.taskId) throw new Error('A2A claim/envelope identity mismatch');
+      return { item, envelope };
+    });
+    const claimedWork: Array<{ agentId: string; run: () => Promise<void> }> = [];
+    for (const { item, envelope } of claimed) {
       const principalScope = this.options.scopes.principalScope({ issuer: envelope.caller.issuer || 'agentdid',
         provenance: envelope.caller.provenance, principalId: envelope.caller.principalId });
       this.options.store.createTask({ gatewayTaskId: envelope.gatewayTaskId, contextId: envelope.contextId,
         executionId: envelope.executionId, agentId: envelope.agentId, gatewayUid: 'mailbox-gateway',
         principalScope, scopeVersion: this.options.scopes.version, scopeKeyId: this.options.scopes.keyId,
+        sourceChannel: envelope.caller.provenance === 'external_gateway' ? 'rest_webhook' : 'a2a',
         bindingGeneration: Number((envelope as any).bindingGeneration || 1), ownerEpoch: Number((envelope as any).ownerEpoch || 1),
         policyRevision: Number((envelope as any).policyRevision || 1) });
       const accepted = this.options.store.acceptCommand(envelope.eventId, envelope.gatewayTaskId,
         Number(envelope.commandSequence), envelope.operation, envelope);
       if (accepted !== 'duplicate') {
-        const peerLabel = `A2A-${principalScope.slice(0, 8)}`;
-        console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] [A2A] ${peerLabel} → ${envelope.agentId}（收到消息）`);
+        const external = envelope.caller.provenance === 'external_gateway';
+        const protocolLabel = external ? 'REST/Webhook' : 'A2A';
+        const peerLabel = external ? '外部接入' : `A2A-${principalScope.slice(0, 8)}`;
+        console.log(`[${protocolLabel}] ${peerLabel} → ${envelope.agentId}（收到消息）`);
       }
       await this.options.client.acknowledge(claim.leaseId, item.eventId);
       this.options.store.markReceiptAcknowledged(envelope.eventId);
       const status = this.options.store.commandStatus(envelope.eventId);
       if (accepted === 'duplicate' && status !== 'received') continue;
-      const result = await this.executePersisted(envelope.eventId, envelope);
-      if (result === 'processed') processed += 1;
-      else if (result === 'uncertain') uncertain += 1;
+      claimedWork.push({ agentId: envelope.agentId, run: async () => {
+        const result = await this.executePersisted(envelope.eventId, envelope);
+        if (result === 'processed') processed += 1;
+        else if (result === 'uncertain') uncertain += 1;
+      } });
     }
-    for (const command of this.options.store.listReadyRetryCommands()) {
-      if (!command.envelope_json) continue;
-      const result = await this.executePersisted(command.event_id, this.options.verify(JSON.parse(command.envelope_json)));
-      if (result === 'processed') processed += 1;
-      else if (result === 'uncertain') uncertain += 1;
-    }
+    await this.runByAgent(claimedWork);
+    const retryWork = this.options.store.listReadyRetryCommands().flatMap(command => {
+      if (!command.envelope_json) return [];
+      const envelope = this.options.verify(JSON.parse(command.envelope_json));
+      return [{ agentId: envelope.agentId, run: async () => {
+        const result = await this.executePersisted(command.event_id, envelope);
+        if (result === 'processed') processed += 1;
+        else if (result === 'uncertain') uncertain += 1;
+      } }];
+    });
+    await this.runByAgent(retryWork);
     return { claimed: claim.items.length, processed, uncertain };
   }
 }

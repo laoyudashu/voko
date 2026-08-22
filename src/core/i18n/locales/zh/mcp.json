@@ -103,7 +103,7 @@
   "mcp.tool.mark_conversation_read.desc": "将会话的未读消息数重置为 0。访客已读消息后调用此工具清除未读标记",
   "mcp.tool.mark_conversation_read.p.channelId": "会话 ID（访客 UID）",
 
-  "mcp.tool.upload_and_send_file.desc": "将本地附件上传到 OSS 并一次发送。图片发送为图片消息，其他文件发送为文件消息；填写 message 时会先发送文字，再发送附件。单个文件最大 25 MB。",
+  "mcp.tool.upload_and_send_file.desc": "通过 VOKO 短期授权上传本地附件并一次发送，无需配置对象存储密钥。图片发送为图片消息，其他文件发送为文件消息；填写 message 时会先发送文字，再发送附件。单个文件最大 25 MB。",
   "mcp.tool.upload_and_send_file.p.toUid": "接收者访客或群聊 ID",
   "mcp.tool.upload_and_send_file.p.filePath": "本地文件绝对路径，如 /path/to/photo.jpg",
   "mcp.tool.upload_and_send_file.p.fileName": "接收端展示的文件名（可选，默认从 filePath 提取）",

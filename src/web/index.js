@@ -24,6 +24,7 @@ const { renderSystemFooter } = require('./footer');
 const ENDPOINTS = require('../endpoints.json');
 const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
+const { validateImUidExists } = require('../core/im-user-validation');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const { loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../core/safety-classifier');
@@ -88,7 +89,12 @@ function detectAgentIconType(data){
 function h(s){return s||'-'}
 
 function copyIcon(){return COPY_ICON}
-function accessIcon(kind){const path=kind==='visitor'?'<path d="M4 7h16v10H7l-3 3V7Z"/><path d="M8 11h8M8 14h5"/>':kind==='owner'?'<path d="M12 3 5 6v5c0 4.5 2.9 8.1 7 10 4.1-1.9 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/>':'<circle cx="6" cy="12" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="m8 11 8-4M8 13l8 4"/>';return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+path+'</svg>'}
+function accessIcon(kind){const path=kind==='visitor'?'<path d="M4 7h16v10H7l-3 3V7Z"/><path d="M8 11h8M8 14h5"/>':kind==='owner'?'<path d="M12 3 5 6v5c0 4.5 2.9 8.1 7 10 4.1-1.9 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/>':kind==='im'?'<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8" cy="11" r="2"/><path d="M12 10h5M12 14h5M6 16h4"/>':kind==='external'?'<path d="M9 4v5M15 4v5M7 9h10v3a5 5 0 0 1-10 0V9ZM12 17v3"/>':'<circle cx="6" cy="12" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="m8 11 8-4M8 13l8 4"/>';return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+path+'</svg>'}
+
+function externalGatewayErrorText(t,code){
+  const key={LOGIN_REQUIRED:'login_required',EXTERNAL_GATEWAY_DISABLED:'disabled',EXTERNAL_GATEWAY_UNAVAILABLE:'unavailable',WEBHOOK_URL_INVALID:'webhook_invalid',AGENT_UNAVAILABLE:'agent_unavailable',INVALID_REQUEST:'invalid_request'}[String(code||'')];
+  return t('web.external_gateway.'+(key||'request_failed'));
+}
 
 function renderPaymentRegionNotice(tFn){
   const t=tFn||(k=>k);
@@ -277,6 +283,8 @@ async function getAgentStatus(h,id){
 function getMessageMode(status, tFn){
   const agent=status&&status.agent;
   if(!agent||status.probeFailed)return{detected:false,code:'',text:tFn('web.home.message_mode.loading')};
+  const temporaryMode=String(agent.deliveryStatus&&agent.deliveryStatus.temporaryPreferredMode||'').trim();
+  if(temporaryMode){const temporaryKey='web.home.message_mode.'+temporaryMode;const temporaryText=tFn(temporaryKey);return{detected:true,code:temporaryMode,text:temporaryText===temporaryKey?temporaryMode:temporaryText}}
   const automaticModes=Array.isArray(agent.automaticReadyModes)?agent.automaticReadyModes:[];
   const mode=String(agent.activeAutomaticMode||automaticModes[0]||'').trim();
   if(mode){
@@ -367,6 +375,12 @@ function agentWsScript(t) {
       cli: t('web.home.message_mode.cli'),
       mcp: t('web.home.message_mode.mcp'),
     },
+    message_mode_checking: t('web.home.message_mode.checking'),
+    message_mode_available: t('web.home.message_mode.available'),
+    message_mode_unavailable: t('web.home.message_mode.unavailable'),
+    message_mode_active: t('web.home.message_mode.active'),
+    message_mode_temporary: t('web.home.message_mode.temporary'),
+    message_mode_switch_failed: t('web.home.message_mode.switch_failed'),
     copied: t('common.home.copied'),
     failed: t('common.action.failed'),
     gen_creating: t('common.home.gen_creating'),
@@ -414,6 +428,7 @@ var pendingConfirmAction=null;
 function showVokoConfirm(message,action){var d=document.getElementById("dlg-action-confirm");if(!d){d=document.createElement("dialog");d.id="dlg-action-confirm";d.style.cssText="border:none;border-radius:12px;padding:0;max-width:380px;width:calc(100% - 40px);box-shadow:0 12px 36px rgba(15,23,42,.18)";d.innerHTML='<div style="padding:22px 24px 18px"><div style="display:grid;place-items:center;width:40px;height:40px;margin:0 auto 12px;border-radius:50%;background:#fce8e6;color:#d93025;font-size:20px;font-weight:800" aria-hidden="true">!</div><p data-role="confirm-message" style="color:#667085;font-size:14px;line-height:1.65;margin:0 0 18px;text-align:center"></p><div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn-sm btn-outline" data-role="confirm-cancel" style="margin:0;padding:6px 16px;min-height:auto">'+${JSON.stringify(t('common.btn.cancel'))}+'</button><button type="button" class="btn-sm btn-danger" data-role="confirm-action" style="margin:0;padding:6px 16px;min-height:auto">'+${JSON.stringify(t('common.btn.confirm'))}+'</button></div></div>';document.body.appendChild(d);d.querySelector('[data-role="confirm-cancel"]').addEventListener("click",function(){pendingConfirmAction=null;d.close()});d.querySelector('[data-role="confirm-action"]').addEventListener("click",function(){var fn=pendingConfirmAction;pendingConfirmAction=null;d.close();if(fn)fn()});d.addEventListener("click",function(e){if(e.target===d){pendingConfirmAction=null;d.close()}})}d.querySelector('[data-role="confirm-message"]').textContent=message;pendingConfirmAction=action;d.showModal()}
 function showAccessOfflineTip(){var m=document.getElementById("toast-msg");if(m)m.textContent=I.access_offline_tip;var d=document.getElementById("dlg-toast");if(d)d.showModal()}
 function setAgentAccessAvailability(row,online){if(!row)return;var cell=row.querySelector(".home-agent-short");if(!cell)return;cell.classList.toggle("is-agent-offline",!online);cell.setAttribute("data-agent-online",online?"true":"false");cell.querySelectorAll("button,a,.home-access-value").forEach(function(control){if(control.matches("button,a"))control.setAttribute("aria-disabled",online?"false":"true");control.style.opacity=online?"":"0.42";control.style.filter=online?"":"grayscale(1)";if(control.classList.contains("home-access-value"))control.style.color=online?"":"#b0b5bd";if(control.matches("button,a"))control.style.cursor=online?"":"not-allowed"})}
+function setMessageModeAvailability(row,online){if(!row)return;var details=row.querySelector("details[data-role=message-mode-picker]");if(!details)return;details.classList.toggle("is-agent-offline",!online);details.dataset.agentOnline=online?"true":"false";if(!online)details.open=false}
 document.addEventListener("click",function(e){var control=e.target.closest&&e.target.closest(".home-agent-short button,.home-agent-short a");if(!control)return;var cell=control.closest(".home-agent-short");if(!cell||!cell.classList.contains("is-agent-offline"))return;e.preventDefault();e.stopImmediatePropagation();showAccessOfflineTip()},true);
 document.querySelectorAll("tr[data-agent-id]").forEach(function(row){var cell=row.querySelector(".home-agent-short"),state=cell&&cell.getAttribute("data-agent-online");if(state==="true"||state==="false")setAgentAccessAvailability(row,state==="true")});
 function generateShortLink(t){var aid3=t.dataset.agent;t.disabled=true;t.textContent=I.gen_creating;fetch("/api/short-link/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agentId:aid3})}).then(function(r){return r.json()}).then(function(d){if(d.success){location.reload()}else{t.disabled=false;t.textContent=I.gen;var m=document.getElementById("toast-msg");if(m)m.textContent=I.gen_failed;var d2=document.getElementById("dlg-toast");if(d2)d2.showModal()}}).catch(function(){t.disabled=false;t.textContent=I.gen})}
@@ -447,6 +462,8 @@ function connectOwnerDeviceEvents(){if(!window.EventSource)return;var events=new
   var ws = null;
   function modeText(data){
     if(!data||data.messageModeDetected===false)return I.message_mode_loading;
+    var temporaryMode=String(data.temporaryPreferredMode||(data.deliveryStatus&&data.deliveryStatus.temporaryPreferredMode)||"").trim();
+    if(temporaryMode)return I.message_modes[temporaryMode]||temporaryMode;
     var mode=String(data.messageMode||data.activeAutomaticMode||((data.automaticReadyModes||[])[0]||"")).trim();
     if(mode)return I.message_modes[mode]||mode;
     if(data.pullReady===true||data.messageModeDetected===true)return I.message_mode_pull;
@@ -460,10 +477,12 @@ function connectOwnerDeviceEvents(){if(!window.EventSource)return;var events=new
         var statusCell=row.querySelector("[data-role=connection-status]");
         if(statusCell)statusCell.innerHTML=data.imConnected?'<span class="online">'+I.online+'</span>':'<span class="offline">'+I.offline+'</span>';
         setAgentAccessAvailability(row,data.imConnected===true);
+        setMessageModeAvailability(row,data.imConnected===true);
       }
       if(Object.prototype.hasOwnProperty.call(data,"messageModeDetected")||Object.prototype.hasOwnProperty.call(data,"messageMode")||Object.prototype.hasOwnProperty.call(data,"activeAutomaticMode")){
         var modeCell=row.querySelector("[data-role=message-mode]");
-        if(modeCell)modeCell.textContent=modeText(data);
+        var modeSummary=modeCell&&modeCell.querySelector("[data-role=message-mode-summary]");
+        if(modeSummary)modeSummary.textContent=modeText(data);else if(modeCell)modeCell.textContent=modeText(data);
       }
     });
   }
@@ -497,6 +516,13 @@ function connectOwnerDeviceEvents(){if(!window.EventSource)return;var events=new
   }
   connectWS();
 })();
+function messageModeLabel(mode){return I.message_modes[mode]||mode}
+function positionMessageModeMenu(details){var menu=details.querySelector("[data-role=message-mode-menu]");details.classList.remove("is-dropup");if(!details.open||!menu)return;var menuRect=menu.getBoundingClientRect(),detailsRect=details.getBoundingClientRect(),bottomBoundary=window.innerHeight-8,wrap=details.closest(".table-wrap");if(wrap)bottomBoundary=Math.min(bottomBoundary,wrap.getBoundingClientRect().bottom-8);if(menuRect.bottom>bottomBoundary&&detailsRect.top>menu.offsetHeight+8)details.classList.add("is-dropup")}
+function renderMessageModeMenu(details,status){var menu=details.querySelector("[data-role=message-mode-menu]"),preferred=String(status.temporaryPreferredMode||""),preferredProvider=String(status.temporaryPreferredProvider||"");if(!menu)return;menu.innerHTML=(status.methods||[]).map(function(method){var manuallySelected=!!preferred&&method.mode===preferred&&String(method.provider||"")===preferredProvider,activeSelected=!preferred&&method.mode===status.activeAutomaticMode,selected=manuallySelected||activeSelected,enabled=method.available===true,state=manuallySelected?I.message_mode_temporary:(activeSelected?I.message_mode_active:(enabled?I.message_mode_available:I.message_mode_unavailable));return '<button type="button" class="home-message-mode-option'+(selected?' is-selected':'')+'" data-role="select-message-mode" data-mode="'+String(method.mode).replace(/"/g,'&quot;')+'" data-provider="'+String(method.provider||'').replace(/"/g,'&quot;')+'" '+(enabled?'':'disabled')+'><span class="home-message-mode-dot '+(enabled?'is-available':'is-unavailable')+'"></span><span class="home-message-mode-name">'+messageModeLabel(method.mode)+'</span><span class="home-message-mode-state">'+state+'</span></button>'}).join('');requestAnimationFrame(function(){positionMessageModeMenu(details)})}
+function refreshMessageMode(details){if(details.dataset.loading==="true")return;details.dataset.loading="true";var menu=details.querySelector("[data-role=message-mode-menu]");if(menu)menu.innerHTML='<span class="home-message-mode-loading">'+I.message_mode_checking+'</span>';fetch("/api/agents/"+encodeURIComponent(details.dataset.agent||"")+"/delivery-channels/refresh",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(result){if(!result.ok||!result.data.success)throw new Error(result.data.error||I.message_mode_switch_failed);renderMessageModeMenu(details,result.data.deliveryStatus||{})}).catch(function(error){if(menu)menu.innerHTML='<span class="home-message-mode-loading is-error">'+(error.message||I.message_mode_switch_failed)+'</span>'}).finally(function(){details.dataset.loading="false"})}
+document.addEventListener("toggle",function(e){var details=e.target;if(!details||!details.matches||!details.matches("details[data-role=message-mode-picker]")||!details.open)return;if(details.dataset.agentOnline==="false"){details.open=false;return}document.querySelectorAll("details[data-role=message-mode-picker][open]").forEach(function(other){if(other!==details)other.open=false});requestAnimationFrame(function(){positionMessageModeMenu(details)});refreshMessageMode(details)},true);
+document.addEventListener("click",function(e){document.querySelectorAll("details[data-role=message-mode-picker][open]").forEach(function(details){if(!details.contains(e.target))details.open=false})});
+document.addEventListener("click",function(e){var option=e.target.closest&&e.target.closest("[data-role=select-message-mode]");if(!option)return;var details=option.closest("details[data-role=message-mode-picker]"),agentId=details&&details.dataset.agent;option.disabled=true;fetch("/api/agents/"+encodeURIComponent(agentId||"")+"/delivery-channels/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:option.dataset.mode,providerId:option.dataset.provider||null})}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(result){if(!result.ok||!result.data.success)throw new Error(result.data.error||I.message_mode_switch_failed);var status=result.data.deliveryStatus||{},summary=details.querySelector("[data-role=message-mode-summary]");if(summary)summary.textContent=messageModeLabel(status.temporaryPreferredMode||status.activeAutomaticMode||"pull");renderMessageModeMenu(details,status);details.open=false}).catch(function(error){var m=document.getElementById("toast-msg");if(m)m.textContent=error.message||I.message_mode_switch_failed;var dialog=document.getElementById("dlg-toast");if(dialog)dialog.showModal();option.disabled=false})});
 document.addEventListener("click",function(e){var t=e.target.closest?e.target.closest("[data-role]")||e.target:e.target;
  if(t.matches("[data-role=logout-btn]")){var d=document.getElementById("dlg-logout");if(d)d.showModal()}
  else if(t.matches("[data-role=confirm-gen-link]")){var b=pendingShortLinkButton;pendingShortLinkButton=null;var sd=document.getElementById("dlg-short-link-security");if(sd)sd.close();if(b)generateShortLink(b)}
@@ -552,6 +578,26 @@ function createWebRouter(handlers, db, opts={}){
       return Object.entries(tokenMap).sort((a,b)=>(b[1]?.updated_at||0)-(a[1]?.updated_at||0))[0]?.[0]?.trim().toLowerCase()||'';
     }catch(_){return ''}
   };
+  const externalGatewayFetch=opts.externalGatewayFetch||globalThis.fetch;
+  const externalGatewayBase=String(ENDPOINTS.api.baseUrl||'').replace(/\/+$/,'');
+  const externalGatewayPath='/api/external/v1/gateway/integrations';
+  const externalGatewayAgent=(localAgentId)=>{
+    const ownerEmail=String(currentOwnerEmail()||'').trim().toLowerCase();
+    const row=db.prepare('SELECT agent_id,agent_name,owner_email,did FROM agents WHERE agent_id=? LIMIT 1').get(String(localAgentId||''));
+    if(!row||String(row.owner_email||'').trim().toLowerCase()!==ownerEmail)return null;
+    const{serverAgentIdFromDid}=require('../core/agent-invitations');
+    const publicAgentId=serverAgentIdFromDid(row.did);
+    return publicAgentId?{...row,publicAgentId}:null;
+  };
+  const externalGatewayRequest=async(pathname,init={})=>{
+    const ownerEmail=String(currentOwnerEmail()||'').trim().toLowerCase();
+    const token=getUserAccessToken(db,ownerEmail);
+    if(!token){const error=new Error('LOGIN_REQUIRED');error.status=401;throw error}
+    const response=await externalGatewayFetch(externalGatewayBase+pathname,{...init,redirect:'error',headers:{Accept:'application/json',Authorization:'Bearer '+token,...(init.headers||{})},signal:AbortSignal.timeout(10000)});
+    const result=response.status===204?{success:true}:await response.json().catch(()=>({success:false,error:{code:'INVALID_RESPONSE'}}));
+    if(!response.ok||result.success===false){const code=result?.error?.code||result?.error?.message||'EXTERNAL_GATEWAY_REQUEST_FAILED';const error=new Error(String(code));error.status=response.status||502;throw error}
+    return result;
+  };
   const requireSensitiveLocalAuth=(req,res,next)=>{
     const supplied=String(req.get('x-voko-token')||req.get('authorization')||'').replace(/^Bearer\s+/i,'');
     if(opts.localAuthToken&&supplied===opts.localAuthToken){req.localAuth={type:'instance'};return next()}
@@ -565,6 +611,28 @@ function createWebRouter(handlers, db, opts={}){
     if(opts.webSessions&&opts.webSessions.verifyCsrf(req,req.localAuth))return next();
     return res.status(403).json({success:false,error:'Invalid CSRF token'});
   };
+  if(opts.e2eeCanaryRuntime){
+    R.get('/e2ee-canary',requireSensitiveLocalAuth,(req,res)=>{
+      const status=opts.e2eeCanaryRuntime.diagnostics();
+      const csrf=opts.webSessions?.requestCsrfToken(req)||'';
+      const rows=(status.sessions||[]).map(row=>'<tr><td>'+esc(row.status)+'</td><td>'+esc(row.count)+'</td></tr>').join('')||'<tr><td colspan="2">暂无会话</td></tr>';
+      const receipts=(status.receipts||[]).map(row=>'<tr><td>'+esc(row.state)+'</td><td>'+esc(row.count)+'</td></tr>').join('')||'<tr><td colspan="2">暂无消息</td></tr>';
+      const body='<div class="card"><h2>E2EE-TOFU 内部 Canary</h2><p class="meta">仅限精确白名单测试账号、Agent 与设备。生产发布保持关闭；失败绝不降级明文。</p>'
+        +'<div class="grid"><div><strong>运行状态</strong><p>'+(status.enabled?'已启用':'已关闭')+'</p></div><div><strong>白名单范围</strong><p>'+esc(status.scopeCount)+'</p></div><div><strong>密文接收 / 回复</strong><p>'+esc(status.received)+' / '+esc(status.replied)+'</p></div><div><strong>拒绝 / 失败</strong><p>'+esc(status.rejected)+' / '+esc(status.failures)+'</p></div></div></div>'
+        +'<div class="card"><h3>会话状态</h3><table><tr><th>状态</th><th>数量</th></tr>'+rows+'</table><h3>消息状态</h3><table><tr><th>状态</th><th>数量</th></tr>'+receipts+'</table></div>'
+        +'<div class="card"><h3>测试会话初始化</h3><p class="meta">只接受由测试端 Crypto Core 生成的 Welcome；页面不会接收或保存聊天明文。</p><form id="canary-provision"><input type="hidden" name="_csrf" value="'+esc(csrf)+'"><label>本地 Agent ID</label><input name="localAgentId" required><label>Group ID</label><input name="groupId" required><label>发送设备 Key ID</label><input name="senderDeviceKeyId" required><label>Welcome</label><textarea name="welcome" rows="4" required></textarea><br><button type="submit">建立测试密文会话</button></form><p id="canary-result" class="meta"></p></div>'
+        +'<div class="card"><h3>紧急控制</h3><button class="btn-danger" id="canary-disable">立即关闭并撤销 Canary Vault</button></div>'
+        +'<script>(function(){var result=document.getElementById("canary-result"),form=document.getElementById("canary-provision");async function post(url,body){var response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-VOKO-CSRF":document.cookie.split(";").map(x=>x.trim()).find(x=>x.startsWith("voko_csrf="))?.slice(10)||""},body:JSON.stringify(body)}),json=await response.json();if(!response.ok||!json.success)throw new Error(json.error||"操作失败");return json}form.addEventListener("submit",async function(event){event.preventDefault();var body={};new FormData(form).forEach((v,k)=>body[k]=v);try{await post("/api/e2ee-canary/provision",body);result.className="success";result.textContent="密文会话已建立"}catch(error){result.className="error";result.textContent=error.message}});document.getElementById("canary-disable").addEventListener("click",async function(){try{await post("/api/e2ee-canary/emergency-disable",{});location.reload()}catch(error){result.className="error";result.textContent=error.message}})})();</'+'script>';
+      res.send(renderPage(req,'E2EE Canary',body,{footer:renderFooter(req.t,req.locale)}));
+    });
+    R.post('/api/e2ee-canary/provision',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res)=>{
+      try{await opts.e2eeCanaryRuntime.provision({localAgentId:String(req.body.localAgentId||''),groupId:String(req.body.groupId||''),senderDeviceKeyId:String(req.body.senderDeviceKeyId||'')},String(req.body.welcome||''));res.json({success:true})}
+      catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
+    });
+    R.post('/api/e2ee-canary/emergency-disable',requireSensitiveLocalAuth,requireSensitiveCsrf,async(_req,res)=>{
+      await opts.e2eeCanaryRuntime.emergencyDisable();res.json({success:true});
+    });
+  }
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -583,7 +651,7 @@ function createWebRouter(handlers, db, opts={}){
 
   const loadA2ATaskRows=async agentId=>{
     const selectedAgent=String(agentId||'').trim();let inbound=[];
-    if(opts.a2aMailboxClient){try{inbound=(await opts.a2aMailboxClient.listInboundTasks(selectedAgent||undefined)).map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,created_at:row.created_at,direction:'Inbound',principal_kind:row.principal_kind,principal_name:row.display_name,principal_display_id:row.principal_display_id,principal_view_id:row.principal_view_id,trust_level:row.trust_level}))}catch{}}
+    if(opts.a2aMailboxClient){try{inbound=(await opts.a2aMailboxClient.listInboundTasks(selectedAgent||undefined)).map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,created_at:row.created_at,direction:'Inbound',source_channel:row.source_channel,principal_kind:row.principal_kind,principal_name:row.display_name,principal_display_id:row.principal_display_id,principal_view_id:row.principal_view_id,trust_level:row.trust_level,webhook_status:row.webhook_status,webhook_attempt_count:row.webhook_attempt_count,webhook_next_attempt_at:row.webhook_next_attempt_at}))}catch{}}
     if(!inbound.length&&opts.a2aModule?.running)inbound=opts.a2aModule.getDatabase().prepare(`SELECT gateway_task_id AS task_id,context_id,agent_id,standard_state,delivery_state,updated_at FROM a2a_local_tasks WHERE (?='' OR agent_id=?) ORDER BY updated_at DESC LIMIT 100`).all(selectedAgent,selectedAgent).map(row=>({...row,direction:'Inbound',principal_kind:'unknown'}));
     let outbound=[];if(opts.a2aMailboxClient){try{outbound=(await opts.a2aMailboxClient.listOutboundTasks()).filter(row=>!selectedAgent||row.local_agent_id===selectedAgent)}catch{}}
     return inbound.concat(outbound.map(row=>({task_id:row.gateway_task_id,context_id:row.context_id,agent_id:row.local_agent_id,standard_state:row.standard_state,delivery_state:row.delivery_state,updated_at:row.updated_at,direction:'Outbound'}))).sort((a,b)=>new Date(b.updated_at||0)-new Date(a.updated_at||0));
@@ -657,11 +725,12 @@ function createWebRouter(handlers, db, opts={}){
     const artifactBody=artifacts.length?'<ul class="meta">'+artifacts.map(item=>'<li>'+esc(item.name)+' · '+timeTag(item.createdAt)+'</li>').join('')+'</ul>':'';
     const taskId=String(task?.gateway_task_id||task?.id||'');
     const taskState=esc(T('web.agent.a2a.state.'+String(task?.standard_state||task?.status?.state||'unknown').toLowerCase()));
-    const deliveryState=esc(T('web.agent.a2a.delivery.'+String(task?.delivery_state||task?.metadata?.deliveryState||'unknown').toLowerCase()));
+    const deliveryState=esc(options.deliveryValue||T('web.agent.a2a.delivery.'+String(task?.delivery_state||task?.metadata?.deliveryState||'unknown').toLowerCase()));
     const messageSummary=esc(T('web.a2a_task.message_count',{count:messages.length}));
     const compactMessageCount='<span class="a2a-task-message-count">'+messageSummary+'</span>';
+    const taskIdNode=options.taskIdPlain?'<span class="a2a-task-card-id">'+esc(taskId)+'</span>':'<a class="a2a-task-card-id" href="/a2a-tasks/'+encodeURIComponent(taskId)+'" title="'+esc(T('web.a2a_task.breadcrumb'))+'">'+esc(taskId)+'</a>';
     const taskMeta=options.showTaskMeta
-      ? '<div class="a2a-task-card-head"><div class="a2a-task-card-title"><span class="badge badge-online">'+esc(options.taskLabel||T('web.a2a_principal.task_tab',{index:1}))+'</span><a class="a2a-task-card-id" href="/a2a-tasks/'+encodeURIComponent(taskId)+'" title="'+esc(T('web.a2a_task.breadcrumb'))+'">'+esc(taskId)+'</a></div><div class="a2a-task-card-inline-meta"><span><strong>'+esc(T('web.a2a_task.state'))+'</strong> <span class="a2a-task-card-chip success">'+taskState+'</span></span><span><strong>'+esc(T('web.a2a_task.delivery'))+'</strong> <span class="a2a-task-card-chip info">'+deliveryState+'</span></span><span class="a2a-task-card-message-count">'+compactMessageCount+'</span></div></div>'
+      ? '<div class="a2a-task-card-head"><div class="a2a-task-card-title"><span class="badge badge-online">'+esc(options.taskLabel||T('web.a2a_principal.task_tab',{index:1}))+'</span>'+taskIdNode+'</div><div class="a2a-task-card-inline-meta"><span><strong>'+esc(options.stateLabel||T('web.a2a_task.state'))+'</strong> <span class="a2a-task-card-chip success">'+taskState+'</span></span><span><strong>'+esc(options.deliveryLabel||T('web.a2a_task.delivery'))+'</strong> <span class="a2a-task-card-chip info">'+deliveryState+'</span></span><span class="a2a-task-card-message-count">'+compactMessageCount+'</span></div></div>'
       : '<div style="display:flex;justify-content:flex-end;margin:10px 0 6px">'+compactMessageCount+'</div>';
     return taskMeta+'<div class="a2a-task-messages">'+body+artifactBody+'</div>';
   };
@@ -700,6 +769,33 @@ function createWebRouter(handlers, db, opts={}){
     if(!session)return false;
     return !csrf||opts.webSessions.verifyCsrf(req,session);
   };
+  R.get('/agents/:agentId/external/:principalViewId',async(req,res)=>{
+    const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
+    const agentId=String(req.params.agentId||''),principalViewId=String(req.params.principalViewId||'');
+    const notFound=()=>res.status(404).send(renderPage(req,T('web.agent.external.title'),'<div class="card error">'+L('web.agent.external.not_found')+'</div>',{showTitle:false,footer:renderFooter(T,locale)}));
+    if(!ownsA2AAgent(agentId)||!/^pv_[0-9a-f]{32}$/i.test(principalViewId))return notFound();
+    try{
+      const rows=(await loadA2ATaskRows(agentId)).filter(row=>String(row.direction).toLowerCase()!=='outbound'&&row.source_channel==='rest_webhook'&&String(row.principal_view_id||'')===principalViewId);
+      if(!rows.length||!opts.a2aMailboxClient)return notFound();
+      const systemName=String(rows[0].principal_name||T('web.agent.external.unknown'));
+      const contexts=Array.from(rows.reduce((map,row)=>{const id=String(row.context_id||'');if(!map.has(id))map.set(id,[]);map.get(id).push(row);return map},new Map()).entries())
+        .map(([id,tasks])=>({id,tasks:tasks.sort((a,b)=>new Date(a.created_at||a.updated_at||0)-new Date(b.created_at||b.updated_at||0)),createdAt:Math.min(...tasks.map(item=>new Date(item.created_at||item.updated_at||0).getTime())),updatedAt:Math.max(...tasks.map(item=>new Date(item.updated_at||0).getTime()))}))
+        .sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id));
+      const contextPageSize=10,contextTotalPages=Math.max(1,Math.ceil(contexts.length/contextPageSize)),requestedContext=String(req.query.contextId||''),requestedContextIndex=contexts.findIndex(item=>item.id===requestedContext),contextPage=Math.min(Math.max(1,parseInt(String(req.query.contextPage||''),10)||(requestedContextIndex>=0?Math.floor(requestedContextIndex/contextPageSize)+1:contextTotalPages)),contextTotalPages),pageContexts=contexts.slice((contextPage-1)*contextPageSize,contextPage*contextPageSize),selectedContext=pageContexts.find(item=>item.id===requestedContext)||pageContexts[pageContexts.length-1],taskPageSize=10,taskTotalPages=Math.max(1,Math.ceil(selectedContext.tasks.length/taskPageSize)),taskPage=Math.min(Math.max(1,parseInt(String(req.query.taskPage||''),10)||1),taskTotalPages),pageTasks=selectedContext.tasks.slice((taskPage-1)*taskPageSize,taskPage*taskPageSize),details=[];
+      for(const row of pageTasks){const task=await opts.a2aMailboxClient.getInboundTask(row.task_id);if(!task||task.source_channel!=='rest_webhook'||String(task.local_agent_id)!==agentId||String(task.principal_view_id||'')!==principalViewId)return notFound();details.push(task)}
+      const agent=await getAgentInfo(handlers,agentId);
+      const contextBase='/agents/'+encodeURIComponent(agentId)+'/external/'+encodeURIComponent(principalViewId)+'?contextPage=';
+      const tabs=contexts.length>1?'<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell">'+(contextPage>1?'<a class="conversation-tab-arrow" id="external-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'" href="'+contextBase+(contextPage-1)+'">‹</a>':'<span class="conversation-tab-arrow" aria-disabled="true">‹</span>')+'<div class="conversation-tab-rail" id="external-context-tab-rail" role="tablist">'+pageContexts.map(context=>'<a class="conversation-tab-card'+(context.id===selectedContext.id?' active':'')+'" role="tab" aria-selected="'+(context.id===selectedContext.id)+'" href="/agents/'+encodeURIComponent(agentId)+'/external/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(context.id)+'&contextPage='+contextPage+'">'+esc(T('web.agent.external.conversation',{index:contexts.indexOf(context)+1}))+'</a>').join('')+'</div>'+(contextPage<contextTotalPages?'<a class="conversation-tab-arrow" id="external-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'" href="'+contextBase+(contextPage+1)+'">›</a>':'<span class="conversation-tab-arrow" aria-disabled="true">›</span>')+'</div>':'';
+      const webhookState=(task)=>{const value=String(task?.webhook_status||'').toLowerCase(),attempts=Math.max(0,Number(task?.webhook_attempt_count)||0);if(value==='sent')return T('web.agent.external.webhook.sent');if(value==='dead')return T('web.agent.external.webhook.failed');if(value==='canceled')return T('web.agent.external.webhook.canceled');if(value==='pending')return attempts?T('web.agent.external.webhook.retrying',{attempt:Math.min(3,attempts)}):T('web.agent.external.webhook.pending');if(value==='leased')return attempts>1?T('web.agent.external.webhook.retrying',{attempt:Math.min(3,attempts-1)}):T('web.agent.external.webhook.sending');return T(['COMPLETED','FAILED','REJECTED','CANCELED'].includes(String(task?.standard_state||'').toUpperCase())?'web.agent.external.webhook.pending':'web.agent.external.webhook.waiting')};
+      const messages=details.map((task,index)=>'<section class="card a2a-task-card">'+renderA2ATaskConversation(task,systemName,T,{showTaskMeta:true,taskIdPlain:true,taskLabel:T('web.agent.external.request',{index:(taskPage-1)*taskPageSize+index+1}),stateLabel:T('web.agent.external.processing_status'),deliveryLabel:T('web.agent.external.webhook_status'),deliveryValue:webhookState(task)})+'</section>').join('');
+      let taskPagination='';if(taskTotalPages>1){const taskBase='/agents/'+encodeURIComponent(agentId)+'/external/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(selectedContext.id)+'&taskPage=';taskPagination='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 0;font-size:14px">';if(taskPage>1)taskPagination+='<a href="'+taskBase+(taskPage-1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';taskPagination+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:taskPage,total:taskTotalPages}))+'</span>';if(taskPage<taskTotalPages)taskPagination+='<a href="'+taskBase+(taskPage+1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';taskPagination+='</div>'}
+      const body='<div id="external-conversation-root">'+tabs+messages+taskPagination+'</div>';
+      const tabScript='';
+      if(String(req.query.fragment||'')==='external')return res.send(body);
+      const liveScript='<script>(function(){var busy=false,timer=null;function bindTabs(root){var rail=root.querySelector(".conversation-tab-rail"),prev=root.querySelector("#external-tabs-prev"),next=root.querySelector("#external-tabs-next");if(!rail||!prev||!next)return;function state(){var max=Math.max(0,rail.scrollWidth-rail.clientWidth);prev.disabled=rail.scrollLeft<2;next.disabled=rail.scrollLeft>=max-2}prev.onclick=function(){rail.scrollBy({left:-Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};next.onclick=function(){rail.scrollBy({left:Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};rail.addEventListener("scroll",state,{passive:true});state()}function fragmentUrl(){var u=new URL(location.href);u.searchParams.set("fragment","external");return u.pathname+u.search}function refresh(){if(busy||document.hidden)return;var current=document.getElementById("external-conversation-root");if(!current)return;busy=true;fetch(fragmentUrl(),{headers:{"Accept":"text/html","X-Requested-With":"voko-external-conversation"},cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var doc=new DOMParser().parseFromString(html,"text/html"),fresh=doc.getElementById("external-conversation-root");if(!fresh||fresh.innerHTML===current.innerHTML)return;var rail=current.querySelector(".conversation-tab-rail"),left=rail?rail.scrollLeft:0;current.replaceWith(fresh);var next=fresh.querySelector(".conversation-tab-rail");if(next)next.scrollLeft=left;bindTabs(fresh)}).catch(function(){}).finally(function(){busy=false})}timer=setInterval(refresh,3000);document.addEventListener("visibilitychange",function(){if(!document.hidden)refresh()});window.addEventListener("pagehide",function(){clearInterval(timer)},{once:true})})();</script>';
+      res.send(renderPage(req,T('web.agent.external.conversation_title',{name:systemName}),body,{showTitle:false,nav:agentNav(agentId,agent?.agentName||agentId,T)+' › '+esc(systemName),footer:renderFooter(T,locale)+tabScript+liveScript}));
+    }catch(_){return notFound()}
+  });
   R.get('/agents/:agentId/a2a/:principalViewId',async(req,res)=>{
     const locale=req.locale||detectWebLocale(req,res),T=req.t||makeT(locale),L=key=>esc(T(key));req.locale=locale;req.t=T;
     const agentId=String(req.params.agentId||''),principalViewId=String(req.params.principalViewId||'');
@@ -712,17 +808,19 @@ function createWebRouter(handlers, db, opts={}){
       const contexts=Array.from(rows.reduce((map,row)=>{const id=String(row.context_id||'');if(!map.has(id))map.set(id,[]);map.get(id).push(row);return map},new Map()).entries())
         .map(([id,tasks])=>({id,tasks:tasks.sort((a,b)=>new Date(a.created_at||a.updated_at||0)-new Date(b.created_at||b.updated_at||0)),updatedAt:Math.max(...tasks.map(item=>new Date(item.updated_at||0).getTime()))}))
         .sort((a,b)=>b.updatedAt-a.updatedAt);
-      const requestedContext=String(req.query.contextId||''),selectedContext=contexts.find(item=>item.id===requestedContext)||contexts[0];
+      const requestedContext=String(req.query.contextId||''),contextPageSize=10,contextTotalPages=Math.max(1,Math.ceil(contexts.length/contextPageSize)),requestedContextIndex=contexts.findIndex(item=>item.id===requestedContext),contextPage=Math.min(Math.max(1,parseInt(String(req.query.contextPage||''),10)||(requestedContextIndex>=0?Math.floor(requestedContextIndex/contextPageSize)+1:1)),contextTotalPages),pageContexts=contexts.slice((contextPage-1)*contextPageSize,contextPage*contextPageSize),selectedContext=pageContexts.find(item=>item.id===requestedContext)||pageContexts[0];
       const requestedTask=String(req.query.taskId||'');
       if(requestedTask&&!selectedContext.tasks.some(row=>String(row.task_id)===requestedTask))return notFound();
-      const details=[];
-      for(const row of selectedContext.tasks){const task=await opts.a2aMailboxClient.getInboundTask(row.task_id);if(!task||String(task.local_agent_id)!==agentId||String(task.principal_view_id||'')!==principalViewId||String(task.context_id||'')!==selectedContext.id)return notFound();details.push(task)}
+      const taskPageSize=10,taskTotalPages=Math.max(1,Math.ceil(selectedContext.tasks.length/taskPageSize)),taskPage=Math.min(Math.max(1,parseInt(String(req.query.taskPage||''),10)||1),taskTotalPages),pageTasks=selectedContext.tasks.slice((taskPage-1)*taskPageSize,taskPage*taskPageSize),details=[];
+      for(const row of pageTasks){const task=await opts.a2aMailboxClient.getInboundTask(row.task_id);if(!task||String(task.local_agent_id)!==agentId||String(task.principal_view_id||'')!==principalViewId||String(task.context_id||'')!==selectedContext.id)return notFound();details.push(task)}
       const agent=await getAgentInfo(handlers,agentId);
-      const tabs=contexts.length>1?'<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell"><button type="button" class="conversation-tab-arrow" id="a2a-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'">‹</button><div class="conversation-tab-rail" id="a2a-context-tab-rail" role="tablist">'+contexts.map((context,index)=>'<a class="conversation-tab-card'+(context.id===selectedContext.id?' active':'')+'" role="tab" aria-selected="'+(context.id===selectedContext.id)+'" href="/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(context.id)+'" title="'+esc(context.id)+'">'+esc(T('web.a2a_principal.context_tab',{index:index+1}))+'</a>').join('')+'</div><button type="button" class="conversation-tab-arrow" id="a2a-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'">›</button></div>':'';
+      const contextBase='/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalViewId)+'?contextPage=';
+      const tabs=contexts.length>1?'<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell">'+(contextPage>1?'<a class="conversation-tab-arrow" id="a2a-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'" href="'+contextBase+(contextPage-1)+'">‹</a>':'<span class="conversation-tab-arrow" aria-disabled="true">‹</span>')+'<div class="conversation-tab-rail" id="a2a-context-tab-rail" role="tablist">'+pageContexts.map(context=>'<a class="conversation-tab-card'+(context.id===selectedContext.id?' active':'')+'" role="tab" aria-selected="'+(context.id===selectedContext.id)+'" href="/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(context.id)+'&contextPage='+contextPage+'" title="'+esc(context.id)+'">'+esc(T('web.a2a_principal.context_tab',{index:contexts.indexOf(context)+1}))+'</a>').join('')+'</div>'+(contextPage<contextTotalPages?'<a class="conversation-tab-arrow" id="a2a-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'" href="'+contextBase+(contextPage+1)+'">›</a>':'<span class="conversation-tab-arrow" aria-disabled="true">›</span>')+'</div>':'';
       const contextHeader='<div class="meta" style="margin:10px 0">'+L('web.a2a_principal.context_id')+' <code>'+esc(selectedContext.id)+'</code> · '+esc(T('web.agent.a2a.col.task_count'))+': '+esc(selectedContext.tasks.length)+'</div>';
-      const taskCards=details.map((task,index)=>'<section class="card a2a-task-card" id="task-'+esc(task.gateway_task_id)+'">'+renderA2ATaskConversation(task,principalDisplayId,T,{showTaskMeta:true,taskLabel:T('web.a2a_principal.task_tab',{index:index+1})})+'</section>').join('');
-      const tabScript=contexts.length>1?'<script>(function(){var rail=document.getElementById("a2a-context-tab-rail"),prev=document.getElementById("a2a-tabs-prev"),next=document.getElementById("a2a-tabs-next");function state(){var max=Math.max(0,rail.scrollWidth-rail.clientWidth);prev.disabled=rail.scrollLeft<2;next.disabled=rail.scrollLeft>=max-2}prev.onclick=function(){rail.scrollBy({left:-Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};next.onclick=function(){rail.scrollBy({left:Math.max(180,rail.clientWidth*.7),behavior:"smooth"})};rail.addEventListener("scroll",state,{passive:true});var active=rail.querySelector(".active");if(active)active.scrollIntoView({inline:"center",block:"nearest"});state()})();</script>':'';
-      res.send(renderPage(req,T('web.a2a_principal.conversation_title',{id:principalDisplayId}),tabs+contextHeader+taskCards,{showTitle:false,nav:agentNav(agentId,agent?.agentName||agentId,T)+' › '+esc(principalDisplayId),footer:renderFooter(T,locale)+tabScript}));
+      const taskCards=details.map((task,index)=>'<section class="card a2a-task-card" id="task-'+esc(task.gateway_task_id)+'">'+renderA2ATaskConversation(task,principalDisplayId,T,{showTaskMeta:true,taskLabel:T('web.a2a_principal.task_tab',{index:(taskPage-1)*taskPageSize+index+1})})+'</section>').join('');
+      let taskPagination='';if(taskTotalPages>1){const taskBase='/agents/'+encodeURIComponent(agentId)+'/a2a/'+encodeURIComponent(principalViewId)+'?contextId='+encodeURIComponent(selectedContext.id)+'&taskPage=';taskPagination='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 0;font-size:14px">';if(taskPage>1)taskPagination+='<a href="'+taskBase+(taskPage-1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';taskPagination+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:taskPage,total:taskTotalPages}))+'</span>';if(taskPage<taskTotalPages)taskPagination+='<a href="'+taskBase+(taskPage+1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';taskPagination+='</div>'}
+      const tabScript='';
+      res.send(renderPage(req,T('web.a2a_principal.conversation_title',{id:principalDisplayId}),tabs+contextHeader+taskCards+taskPagination,{showTitle:false,nav:agentNav(agentId,agent?.agentName||agentId,T)+' › '+esc(principalDisplayId),footer:renderFooter(T,locale)+tabScript}));
     }catch(_){return notFound()}
   });
   R.get('/__legacy/agents/:agentId/a2a/:principalDisplayId',async(req,res)=>{
@@ -1069,19 +1167,21 @@ function createWebRouter(handlers, db, opts={}){
         const agentNameFull=String(a.agentName||a.agentId||'');
         const agentNameDisplay=truncateAgentName(agentNameFull);
         const agentNameHint=agentNameDisplay===agentNameFull?'':' title="'+esc(agentNameFull)+'" aria-label="'+esc(agentNameFull)+'"';
-        var visitorValue='<span class="home-access-value" style="font-size:13px">'+L('web.home.access.not_generated')+'</span>',visitorAction='<button class="btn btn-sm btn-outline home-access-action" data-role="gen-link" data-agent="'+esc(a.agentId)+'">'+L('common.btn.generate_link')+'</button>';
-        if(db){try{var sr=db.prepare('SELECT short_link_url FROM agents WHERE agent_id=?').get(a.agentId);if(sr&&sr.short_link_url){var su=esc(sr.short_link_url);visitorValue='<a class="home-access-value" href="'+su+'" target="_blank" rel="noopener noreferrer">'+su.substring(0,35)+(su.length>35?'…':'')+'</a>';visitorAction=copyButton({esc,label:L('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+su+'"'})}}catch(ex){}}
+        var visitorValue='<span class="home-access-value" style="font-size:13px">'+L('web.home.access.not_generated')+'</span>',visitorAction='<button class="btn btn-sm btn-outline home-access-action" data-role="gen-link" data-agent="'+esc(a.agentId)+'">'+L('common.btn.generate_link')+'</button>',accessRow=null;
+        if(db){try{accessRow=db.prepare('SELECT short_link_url, imUid FROM agents WHERE agent_id=?').get(a.agentId);if(accessRow&&accessRow.short_link_url){var su=esc(accessRow.short_link_url);visitorValue='<a class="home-access-value" href="'+su+'" target="_blank" rel="noopener noreferrer">'+su.substring(0,35)+(su.length>35?'…':'')+'</a>';visitorAction=copyButton({esc,label:L('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+su+'"'})}}catch(ex){}}
         const a2a=a2aPublicByAgent.get(a.agentId);const a2aCard=a2a?.published?String(ENDPOINTS.api.baseUrl||'').replace(/\/+$/,'')+'/a2a/agents/'+encodeURIComponent(a2a.publicId)+'/.well-known/agent-card.json':'';
-        const a2aValue='<span class="home-access-value" style="font-size:13px">'+L(a2a?.published?'web.home.access.a2a_published':'web.home.access.a2a_unpublished')+'</span>';
-        const a2aAction=a2a?.published?copyButton({esc,label:L('web.home.access.copy_a2a'),attrs:'data-voko-copy-value="'+esc(a2aCard)+'"'}):'<a class="btn btn-sm btn-outline home-access-action home-a2a-action" href="/agents/'+esc(a.agentId)+'/caps">'+L('web.home.access.setup')+'</a>';
+        const a2aAction=a2a?.published?copyButton({esc,label:L('web.home.access.copy_a2a'),attrs:'data-voko-copy-value="'+esc(a2aCard)+'"'}):copyButton({esc,label:L('web.home.access.copy_a2a'),attrs:'disabled'});
+        const imUid=String(accessRow&&accessRow.imUid||''),imUidAction=imUid?copyButton({esc,label:L('web.home.access.copy_im_uid'),attrs:'data-voko-copy-value="'+esc(imUid)+'"'}):copyButton({esc,label:L('web.home.access.copy_im_uid'),attrs:'disabled'});
         var accessModeButton='<button type="button" class="btn btn-sm btn-outline home-mode-toggle home-access-mode '+(a.accessMode==='private'?'home-mode-private':'home-mode-public')+'" style="margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1.4!important;border-width:2px" data-role="toggle-acc" data-agent="'+esc(a.agentId)+'" data-acc-mode="'+(a.accessMode==='private'?'private':'public')+'" title="'+esc(a.accessMode==='private'?T('common.acc.title_private'):T('common.acc.title_public'))+'">'+L(a.accessMode==='private'?'common.acc.private':'common.acc.public')+'</button>';
-        var shortCell='<div class="home-access-stack"><div class="home-access-row home-access-visitor-row"><span class="home-access-label">'+accessIcon('visitor')+L('web.home.access.visitor')+'</span>'+visitorValue+visitorAction+accessModeButton+'</div><div class="home-access-row"><span class="home-access-label">'+accessIcon('a2a')+'A2A</span>'+a2aValue+a2aAction+'</div></div>';
+        var shortCell='<div class="home-access-stack"><div class="home-access-row home-access-visitor-row"><span class="home-access-label">'+accessIcon('visitor')+L('web.home.access.visitor')+'</span>'+visitorValue+accessModeButton+visitorAction+'</div><div class="home-access-row home-access-protocol-row"><span class="home-access-compact-item"><span class="home-access-label">'+accessIcon('a2a')+'A2A Card</span>'+a2aAction+'</span><span class="home-access-compact-item"><span class="home-access-label">'+accessIcon('im')+'IM UID</span>'+imUidAction+'</span><a class="home-access-compact-item home-access-compact-link" href="/external-integrations?agentId='+encodeURIComponent(a.agentId)+'"><span class="home-access-label">'+accessIcon('external')+L('web.home.access.external')+'</span></a></div></div>';
         var actionHtml='<a href="/agents/'+esc(a.agentId)+'/edit" class="btn btn-sm btn-outline" style="margin:1px;padding:1px 6px;font-size:11px;min-height:auto">'+L('common.btn.edit')+'</a> <button type="button" class="btn btn-sm home-mode-toggle '+(a.publishStatus==='published'?'home-mode-published':'home-mode-unpublished')+'" data-role="toggle-pub" data-agent="'+esc(a.agentId)+'" data-pub-status="'+(a.publishStatus==='published'?'published':'unpublished')+'" title="'+esc(a.publishStatus==='published'?T('common.pub.title_published'):T('common.pub.title_unpublished'))+'">'+L(a.publishStatus==='published'?'common.pub.published':'common.pub.unpublished')+'</button>';
-        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td class="home-agent-name"><a href="/agents/'+esc(a.agentId)+'"'+agentNameHint+'>'+esc(agentNameDisplay)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+esc(messageMode)+'</td><td class="home-agent-short'+(agentOnline===false?' is-agent-offline':'')+'" data-agent-online="'+(agentOnline===null?'unknown':agentOnline?'true':'false')+'" style="font-size:13px">'+shortCell+'</td><td class="home-agent-actions" style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
+        const messageModePicker='<details class="home-message-mode-picker'+(agentOnline===false?' is-agent-offline':'')+'" data-role="message-mode-picker" data-agent="'+esc(a.agentId)+'" data-agent-online="'+(agentOnline===false?'false':'true')+'"><summary data-role="message-mode-summary">'+esc(messageMode)+'</summary><div class="home-message-mode-menu" data-role="message-mode-menu"><span class="home-message-mode-loading">'+L('web.home.message_mode.checking')+'</span></div></details>';
+        rows.push('<tr data-agent-id="'+esc(a.agentId)+'"><td class="home-agent-name"><a href="/agents/'+esc(a.agentId)+'"'+agentNameHint+'>'+esc(agentNameDisplay)+'</a></td><td style="white-space:nowrap;font-size:14px;text-align:center">'+esc(bt)+'</td><td data-role="connection-status" style="white-space:nowrap;font-size:14px;text-align:center">'+connStatus+'</td><td data-role="message-mode" data-message-mode-detected="'+(messageModeDetected?'true':'false')+'" style="white-space:nowrap;font-size:14px;text-align:center">'+messageModePicker+'</td><td class="home-agent-short'+(agentOnline===false?' is-agent-offline':'')+'" data-agent-online="'+(agentOnline===null?'unknown':agentOnline?'true':'false')+'" style="font-size:13px">'+shortCell+'</td><td class="home-agent-actions" style="white-space:nowrap;font-size:13px;text-align:center">'+actionHtml+'</td></tr>');        jd.push({name:a.agentName,identifier:a.agentId})
       }
 
       // 信息栏
-      const body='<div class="info-bar" style="display:flex;flex-wrap:nowrap;justify-content:space-between;align-items:center;gap:8px">'
+      const messageModeStyle='<style>.home-message-mode-picker{position:relative;display:inline-block}.home-message-mode-picker summary{list-style:none;cursor:pointer;color:#175cd3;border-radius:6px;padding:2px 18px 2px 6px;position:relative}.home-message-mode-picker summary::-webkit-details-marker{display:none}.home-message-mode-picker summary:after{content:"▾";position:absolute;right:4px;color:#667085}.home-message-mode-picker[open] summary{background:#eff6ff}.home-message-mode-picker.is-agent-offline summary{color:#b0b5bd;cursor:not-allowed;pointer-events:none}.home-message-mode-picker.is-agent-offline summary:after{color:#c8ccd2}.home-message-mode-menu{position:absolute;z-index:30;top:calc(100% + 5px);left:50%;transform:translateX(-50%);width:210px;padding:6px;background:#fff;border:1px solid #d0d5dd;border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);text-align:left}.home-message-mode-picker.is-dropup .home-message-mode-menu{top:auto;bottom:calc(100% + 5px)}.home-message-mode-option{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:7px;width:100%;margin:0;padding:8px;border:0;border-radius:7px;background:transparent;color:#344054;text-align:left;font-size:13px;cursor:pointer}.home-message-mode-option:hover:not(:disabled){background:#f2f7ff}.home-message-mode-option:disabled{cursor:not-allowed;color:#98a2b3}.home-message-mode-option.is-selected{background:#edf9f1}.home-message-mode-dot{width:8px;height:8px;border-radius:50%}.home-message-mode-dot.is-available{background:#12b76a}.home-message-mode-dot.is-unavailable{background:#98a2b3}.home-message-mode-name{font-weight:600}.home-message-mode-state{font-size:11px;color:#667085}.home-message-mode-loading{display:block;padding:9px;color:#667085;font-size:12px;text-align:center}.home-message-mode-loading.is-error{color:#b42318}</style>';
+      const body=messageModeStyle+'<div class="info-bar" style="display:flex;flex-wrap:nowrap;justify-content:space-between;align-items:center;gap:8px">'
         +'<span style="display:flex;align-items:center;gap:6px;white-space:nowrap">'
         +'<strong>👤 '+esc(ownerEmail)+'</strong>'
         +'<a href="javascript:void(0)" data-role="logout-btn" class="btn btn-sm btn-outline" style="margin:0;min-width:auto;min-height:auto;padding:2px 8px;font-size:12px;line-height:1.4">'+L('common.btn.switch')+'</a>'
@@ -1089,7 +1189,7 @@ function createWebRouter(handlers, db, opts={}){
         +(filtered.length>0?'<span style="white-space:nowrap"><a href="/agent/add?new=1" class="btn btn-sm" style="margin:0;min-width:auto;min-height:auto;padding:3px 10px;font-size:13px;line-height:1.4">'+L('common.btn.register')+'</a></span>':'')
         +'</div>'
         +(filtered.length>0
-          ?'<style>.home-agent-table{table-layout:fixed;min-width:0}.home-agent-name a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.home-agent-actions{white-space:nowrap}.home-agent-actions .btn{white-space:nowrap;margin:1px;padding:1px 6px;min-width:auto;min-height:auto;font-size:11px}.home-access-stack{display:grid;gap:0;min-width:0}.home-access-row{display:grid;grid-template-columns:60px minmax(0,1fr) auto;align-items:center;gap:7px;min-height:28px}.home-access-visitor-row{grid-template-columns:60px minmax(0,1fr) auto auto}.home-access-row+.home-access-row{border-top:1px dashed #d9e0e8;padding-top:5px;margin-top:5px}.home-access-label{display:inline-flex;align-items:center;gap:4px;color:#475467;white-space:nowrap}.home-access-value{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#667085;font-size:12px}.home-access-action{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1.4}.home-access-mode{margin:0!important;padding:3px 7px!important;min-width:auto!important;min-height:26px!important;font-size:11px!important;line-height:1.3;white-space:nowrap}.home-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;margin:0;padding:0;min-width:27px;min-height:27px;border:0;background:transparent;color:#667085;border-radius:6px;cursor:pointer;transition:color .15s ease,background .15s ease,transform .15s ease}.home-copy-icon:hover{color:#1677e8;background:#f2f7ff}.home-copy-icon:focus-visible{outline:2px solid #84adff;outline-offset:1px}.home-copy-icon.is-copied{color:#168447;background:#edf9f1;transform:scale(1.05)}.home-a2a-action{color:#175cd3}.home-mode-toggle:disabled{cursor:wait}.home-mode-published{color:#0f7a43;background:#e9f7ef;border-color:#8fd3ae}.home-mode-published:hover{background:#d8f0e2}.home-mode-unpublished{color:#667085;background:#f2f4f7;border-color:#cfd4dc}.home-mode-unpublished:hover{background:#e4e7ec}.home-mode-public{color:#175cd3;background:#eff6ff;border-color:#9ec5fe}.home-mode-public:hover{background:#dbeafe}.home-mode-private{color:#b54708;background:#fff7e6;border-color:#f0c36d}.home-mode-private:hover{background:#ffedc2}@media(max-width:820px){.home-agent-table{min-width:820px}}</style><div class="table-wrap"><table class="home-agent-table"><colgroup><col style="width:20%"><col style="width:11%"><col style="width:9%"><col style="width:12%"><col style="width:35%"><col style="width:13%"></colgroup><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.message_mode')+'</th><th style="text-align:center">'+L('web.home.col.access')+'</th><th style="text-align:center">'+L('web.home.col.manage')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
+          ?'<style>.home-agent-table{table-layout:fixed;min-width:0}.home-agent-name a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.home-agent-actions{white-space:nowrap}.home-agent-actions .btn{white-space:nowrap;margin:1px;padding:1px 6px;min-width:auto;min-height:auto;font-size:11px}.home-access-stack{display:grid;gap:0;min-width:0}.home-access-row{display:grid;grid-template-columns:88px minmax(0,1fr) auto;align-items:center;gap:7px;min-height:28px}.home-access-visitor-row{grid-template-columns:88px minmax(0,1fr) auto auto}.home-access-protocol-row{grid-template-columns:minmax(0,.9fr) minmax(0,.85fr) minmax(0,1.25fr);gap:6px}.home-access-compact-item{display:flex;align-items:center;justify-content:space-between;gap:2px;min-width:0;font-size:12px}.home-access-compact-item+.home-access-compact-item{border-left:1px solid #d9e0e8;padding-left:6px}.home-access-compact-link{color:#475467;text-decoration:none;font-weight:400;padding:0}.home-access-compact-link:hover{color:#1a73e8}.home-access-row+.home-access-row{border-top:1px dashed #d9e0e8;padding-top:5px;margin-top:5px}.home-access-label{display:inline-flex;align-items:center;gap:4px;color:#475467;white-space:nowrap}.home-access-value{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#667085;font-size:12px}.home-access-action{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1.4}.home-access-mode{margin:0!important;padding:3px 7px!important;min-width:auto!important;min-height:26px!important;font-size:11px!important;line-height:1.3;white-space:nowrap}.home-copy-icon{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;margin:0;padding:0;min-width:27px;min-height:27px;border:0;background:transparent;color:#667085;border-radius:6px;cursor:pointer;transition:color .15s ease,background .15s ease,transform .15s ease}.home-copy-icon:hover{color:#1677e8;background:#f2f7ff}.home-copy-icon:focus-visible{outline:2px solid #84adff;outline-offset:1px}.home-copy-icon.is-copied{color:#168447;background:#edf9f1;transform:scale(1.05)}.home-a2a-action{color:#175cd3}.home-mode-toggle:disabled{cursor:wait}.home-mode-published{color:#0f7a43;background:#e9f7ef;border-color:#8fd3ae}.home-mode-published:hover{background:#d8f0e2}.home-mode-unpublished{color:#667085;background:#f2f4f7;border-color:#cfd4dc}.home-mode-unpublished:hover{background:#e4e7ec}.home-mode-public{color:#175cd3;background:#eff6ff;border-color:#9ec5fe}.home-mode-public:hover{background:#dbeafe}.home-mode-private{color:#b54708;background:#fff7e6;border-color:#f0c36d}.home-mode-private:hover{background:#ffedc2}@media(max-width:820px){.home-agent-table{min-width:820px}}</style><div class="table-wrap"><table class="home-agent-table"><colgroup><col style="width:20%"><col style="width:11%"><col style="width:9%"><col style="width:12%"><col style="width:35%"><col style="width:13%"></colgroup><thead><tr><th style="text-align:center">'+L('web.home.col.agent')+'</th><th style="text-align:center">'+L('web.home.col.type')+'</th><th style="text-align:center">'+L('web.home.col.status')+'</th><th style="text-align:center">'+L('web.home.col.message_mode')+'</th><th style="text-align:center">'+L('web.home.col.access')+'</th><th style="text-align:center">'+L('web.home.col.manage')+'</th></tr></thead><tbody>'+rows.join('\n')+'</tbody></table></div>'
           :'<div style="text-align:center;padding:60px 0"><p class="meta" style="font-size:16px;margin:0 0 20px">'+L('web.home.empty')+'</p><a href="/agent/add?new=1" class="btn" style="font-size:18px;padding:14px 40px">'+L('common.btn.register')+'</a></div>')
         +(filtered.length>0
           ?'<div style="display:flex;align-items:center;gap:8px;margin:12px 0 6px 0"><form method="GET" action="/" style="display:flex;align-items:center;gap:8px;margin:0"><input type="text" name="keyword" value="'+esc(keyword)+'" placeholder="'+esc(T('web.home.search_ph'))+'" style="width:200px;max-width:100%;margin:0;font-size:14px;padding:6px 10px">'+(keyword?'<a href="/" class="btn-sm btn-outline" style="margin:0;padding:6px 10px;min-width:auto;min-height:auto">✕</a>':'')+'<button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto" data-agent-action="agent.search">'+L('web.agent.search_btn')+'</button></form></div>'+'<h2 style="margin:18px 0 8px 0;">'+L('web.home.ops_title')+'</h2><div class="ops">'
@@ -1103,11 +1203,100 @@ function createWebRouter(handlers, db, opts={}){
     }catch(e){next(e)}
   });
 
+  R.get('/api/external-integrations',async(req,res)=>{
+    try{
+      const result=await externalGatewayRequest(externalGatewayPath);
+      res.json({success:true,data:{integrations:result.data?.integrations||[]}});
+    }catch(error){res.status(Number(error.status)||502).json({success:false,error:externalGatewayErrorText(req.t,error.message),code:String(error.message||'')})}
+  });
+
+  R.post('/api/external-integrations',async(req,res)=>{
+    try{
+      const agent=externalGatewayAgent(req.body?.agentId);
+      const name=String(req.body?.name||'').trim(),webhookUrl=String(req.body?.webhookUrl||'').trim();
+      if(!agent)return res.status(404).json({success:false,error:req.t('web.external_gateway.agent_unavailable')});
+      if(!name||name.length>128||!webhookUrl||webhookUrl.length>2048)return res.status(400).json({success:false,error:req.t('web.external_gateway.invalid_request')});
+      let parsed;try{parsed=new URL(webhookUrl)}catch(_){return res.status(400).json({success:false,error:req.t('web.external_gateway.webhook_invalid')})}
+      if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash)return res.status(400).json({success:false,error:req.t('web.external_gateway.webhook_invalid')});
+      const result=await externalGatewayRequest(externalGatewayPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,webhookUrl,agentIds:[agent.publicAgentId]})});
+      res.status(201).json({success:true,data:result.data||{}});
+    }catch(error){res.status(Number(error.status)||502).json({success:false,error:externalGatewayErrorText(req.t,error.message),code:String(error.message||'')})}
+  });
+
+  R.patch('/api/external-integrations/:integrationId',async(req,res)=>{
+    try{
+      const integrationId=String(req.params.integrationId||''),name=String(req.body?.name||'').trim(),webhookUrl=String(req.body?.webhookUrl||'').trim();
+      if(!/^[A-Za-z0-9._:-]{1,128}$/.test(integrationId)||!name||name.length>128||!webhookUrl||webhookUrl.length>2048||Object.keys(req.body||{}).some(key=>!['name','webhookUrl'].includes(key)))return res.status(400).json({success:false,error:req.t('web.external_gateway.invalid_request')});
+      let parsed;try{parsed=new URL(webhookUrl)}catch(_){return res.status(400).json({success:false,error:req.t('web.external_gateway.webhook_invalid')})}
+      if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash)return res.status(400).json({success:false,error:req.t('web.external_gateway.webhook_invalid')});
+      const result=await externalGatewayRequest(externalGatewayPath+'/'+encodeURIComponent(integrationId),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,webhookUrl})});
+      res.json({success:true,data:result.data||{}});
+    }catch(error){res.status(Number(error.status)||502).json({success:false,error:externalGatewayErrorText(req.t,error.message),code:String(error.message||'')})}
+  });
+
+  R.post('/api/external-integrations/:integrationId/webhook-probe',async(req,res)=>{
+    try{
+      const integrationId=String(req.params.integrationId||'');
+      if(!/^[A-Za-z0-9._:-]{1,128}$/.test(integrationId))return res.status(400).json({success:false,error:req.t('web.external_gateway.invalid_request')});
+      const result=await externalGatewayRequest(externalGatewayPath+'/'+encodeURIComponent(integrationId)+'/webhook-probe',{method:'POST'});
+      res.json({success:true,data:result.data||{valid:false}});
+    }catch(error){res.status(Number(error.status)||502).json({success:false,error:externalGatewayErrorText(req.t,error.message),code:String(error.message||'')})}
+  });
+
+  R.delete('/api/external-integrations/:integrationId',async(req,res)=>{
+    try{
+      const integrationId=String(req.params.integrationId||'');
+      if(!/^[A-Za-z0-9._:-]{1,128}$/.test(integrationId))return res.status(400).json({success:false,error:req.t('web.external_gateway.invalid_request')});
+      await externalGatewayRequest(externalGatewayPath+'/'+encodeURIComponent(integrationId),{method:'DELETE'});
+      res.json({success:true});
+    }catch(error){res.status(Number(error.status)||502).json({success:false,error:externalGatewayErrorText(req.t,error.message),code:String(error.message||'')})}
+  });
+
+  R.get('/external-integrations',async(req,res)=>{
+    const T=req.t,L=k=>esc(T(k)),agentId=String(req.query.agentId||'');
+    const agent=externalGatewayAgent(agentId);
+    if(!agent)return res.status(404).send(renderPage(req,T('web.external_gateway.title'),'<div class="card error">'+L('web.external_gateway.agent_unavailable')+'</div>',{footer:renderFooter(T,req.locale)}));
+    const restEndpoint=externalGatewayBase+'/api/external/v1/gateway/agents/'+encodeURIComponent(agent.publicAgentId)+'/messages';
+    let integrations=[],loadError='';
+    try{const result=await externalGatewayRequest(externalGatewayPath);integrations=(result.data?.integrations||[]).filter(item=>item.status==='active'&&Array.isArray(item.agentIds)&&item.agentIds.includes(agent.publicAgentId))}
+    catch(error){loadError=externalGatewayErrorText(T,error.message)}
+    const pageSize=10,totalPages=Math.max(1,Math.ceil(integrations.length/pageSize)),page=Math.min(Math.max(1,parseInt(String(req.query.page||''),10)||1),totalPages);
+    const pageIntegrations=integrations.slice((page-1)*pageSize,page*pageSize);
+    const maskCredential=value=>{const text=String(value||'');return text.length>12?text.slice(0,8)+'…'+text.slice(-4):text||'-'};
+    const credentialCell=(value,fallback,label,unavailable)=>'<span style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap"><code>'+esc(value?maskCredential(value):fallback||'-')+'</code>'+(value?copyButton({esc,label,attrs:'data-voko-copy-value="'+esc(value)+'"'}):copyButton({esc,label:unavailable,attrs:'disabled'}))+'</span>';
+    const rows=pageIntegrations.map(item=>{const invalid=item.webhook_health_state==='invalid';return '<tr data-role="external-integration-row" data-integration="'+esc(item.integration_id||'')+'" data-name="'+esc(item.name||'')+'" data-webhook="'+esc(item.webhook_url||'')+'" data-invalid="'+(invalid?'1':'')+'" style="'+(invalid?'opacity:.55':'')+'"><td data-role="integration-name"><strong title="'+esc(item.name||'-')+'" style="display:block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(item.name||'-')+'</strong></td><td data-role="integration-webhook" style="white-space:normal;word-break:break-all;'+(invalid?'color:#98a2b3':'')+'">'+esc(item.webhook_url||'-')+'</td><td>'+credentialCell(item.token,String(item.token_prefix||'-')+'…',T('web.external_gateway.copy_token'),T('web.external_gateway.credential_unavailable'))+'</td><td>'+credentialCell(item.webhookSecret,'-',T('web.external_gateway.copy_secret'),T('web.external_gateway.secret_unavailable'))+'</td><td style="text-align:right"><span data-role="integration-actions" style="display:inline-flex;gap:6px;align-items:center"><button type="button" class="btn-sm btn-outline" data-role="edit-external-integration" style="margin:0;padding:5px 10px;min-height:auto">'+L('web.external_gateway.edit')+'</button><button type="button" class="btn-sm '+(invalid?'btn-outline':'btn-danger')+'" data-role="revoke-external-integration" data-integration="'+esc(item.integration_id||'')+'" data-name="'+esc(item.name||'')+'" style="margin:0;padding:5px 10px;min-height:auto"'+(invalid?' disabled':'')+'>'+(invalid?L('web.external_gateway.invalid'):L('web.external_gateway.revoke'))+'</button></span></td></tr>'}).join('');
+    const list=loadError?'<div class="card error">'+esc(loadError)+'</div>':rows?'<div class="table-wrap"><table style="min-width:900px;table-layout:fixed"><colgroup><col style="width:15%"><col style="width:37%"><col style="width:18%"><col style="width:18%"><col style="width:12%"></colgroup><thead><tr><th>'+L('web.external_gateway.col.name')+'</th><th>'+L('web.external_gateway.col.webhook')+'</th><th>'+L('web.external_gateway.col.token')+'</th><th>'+L('web.external_gateway.col.secret')+'</th><th style="text-align:right">'+L('web.external_gateway.col.actions')+'</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="card"><p class="meta" style="margin:0">'+L('web.external_gateway.empty')+'</p></div>';
+    let pgBar='';if(!loadError&&totalPages>1){const pageBase='/external-integrations?agentId='+encodeURIComponent(agentId)+'&page=';pgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(page>1)pgBar+='<a href="'+pageBase+(page-1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';if(page<totalPages)pgBar+='<a href="'+pageBase+(page+1)+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';pgBar+='</div>'}
+    const createdNotice=req.query.created==='1'?'<div class="card success" style="max-width:760px;padding:10px 14px">✓ '+L('web.external_gateway.created_success')+'</div>':'';
+    const body='<p class="meta" style="max-width:760px">'+esc(T('web.external_gateway.intro',{agent:agent.agent_name||agent.agent_id}))+'</p>'+createdNotice
+      +'<section class="card" style="padding:18px 20px;max-width:760px"><h2 style="margin-top:0">'+L('web.external_gateway.create_title')+' <span class="meta" style="font-weight:400">'+L('web.external_gateway.webhook_flow')+'</span></h2><form id="external-integration-create"><input type="hidden" name="agentId" value="'+esc(agentId)+'"><label for="external-name">'+L('web.external_gateway.name')+'</label><input id="external-name" name="name" maxlength="128" required placeholder="'+L('web.external_gateway.name_placeholder')+'" style="max-width:none"><label for="external-webhook">'+L('web.external_gateway.webhook_url')+'</label><div style="display:flex;align-items:center;gap:8px"><input id="external-webhook" name="webhookUrl" type="url" maxlength="2048" required pattern="https://.*" placeholder="https://crm.example.com/voko/events" style="max-width:none;margin:0"><button type="submit" class="btn-sm" style="margin:0;white-space:nowrap">'+L('web.external_gateway.create')+'</button></div><p class="meta" style="margin:5px 0 0">'+L('web.external_gateway.webhook_help')+'</p><div id="external-create-error" class="error" style="display:none;margin-top:10px"></div></form></section>'
+      +'<section class="card" style="padding:18px 20px;max-width:760px"><h2 style="margin-top:0">'+L('web.external_gateway.rest_title')+' <span class="meta" style="font-weight:400">'+L('web.external_gateway.rest_flow')+'</span></h2><div style="display:flex;align-items:center;gap:8px"><input id="external-rest-endpoint" aria-label="'+L('web.external_gateway.rest_endpoint')+'" readonly value="'+esc(restEndpoint)+'" style="max-width:none;margin:0;font-family:monospace;font-size:13px">'+copyButton({esc,label:T('web.external_gateway.copy_rest'),attrs:'data-voko-copy-value="'+esc(restEndpoint)+'"'})+'</div><p class="meta" style="margin:5px 0 0">'+L('web.external_gateway.rest_help')+'</p></section>'
+      +'<h2>'+esc(T('web.external_gateway.list_title',{count:integrations.length}))+'</h2>'+list+pgBar
+      +'<dialog id="external-revoke-confirm" style="border:none;border-radius:12px;padding:0;max-width:420px;width:calc(100% - 32px);box-shadow:0 12px 36px rgba(15,23,42,.22)"><div style="padding:22px 24px"><h3 style="margin:0 0 8px">'+L('web.external_gateway.revoke_title')+'</h3><p class="meta" data-role="revoke-external-message" style="margin:0 0 16px"></p><div class="error" data-role="revoke-external-error" style="display:none;margin-bottom:10px"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn-sm btn-outline" data-role="cancel-external-revoke" style="margin:0">'+L('common.btn.cancel')+'</button><button type="button" class="btn-sm btn-danger" data-role="confirm-external-revoke" style="margin:0">'+L('web.external_gateway.revoke')+'</button></div></div></dialog>';
+    const labels={creating:T('web.external_gateway.creating'),createFailed:T('web.external_gateway.create_failed'),edit:T('web.external_gateway.edit'),save:T('common.btn.save'),cancel:T('common.btn.cancel'),editFailed:T('web.external_gateway.edit_failed'),revoke:T('web.external_gateway.revoke'),invalid:T('web.external_gateway.invalid'),revokeMessage:T('web.external_gateway.revoke_message',{name:'{name}'}),revokeFailed:T('web.external_gateway.revoke_failed')};
+    const script='<script>(function(){var L='+jsonForInlineScript(labels)+',form=document.getElementById("external-integration-create"),createError=document.getElementById("external-create-error"),revoke=document.getElementById("external-revoke-confirm"),pending="";function h(value){var node=document.createElement("div");node.textContent=String(value||"");return node.innerHTML}function markInvalid(row){row.dataset.invalid="1";row.style.opacity=".55";row.querySelector("[data-role=integration-webhook]").style.color="#98a2b3";var button=row.querySelector("[data-role=revoke-external-integration]");if(button){button.disabled=true;button.className="btn-sm btn-outline";button.textContent=L.invalid}}function probeRow(row){fetch("/api/external-integrations/"+encodeURIComponent(row.dataset.integration)+"/webhook-probe",{method:"POST",headers:{Accept:"application/json"}}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(x){if(x.ok&&x.data.success&&x.data.data&&x.data.data.valid===false)markInvalid(row)}).catch(function(){})}if(new URL(location.href).searchParams.has("created"))history.replaceState(null,"",location.pathname+"?agentId="+encodeURIComponent(form.elements.agentId.value));form.addEventListener("submit",function(e){e.preventDefault();var button=form.querySelector("button[type=submit]"),idle=button.textContent;button.disabled=true;button.textContent=L.creating;createError.style.display="none";var data=Object.fromEntries(new FormData(form));fetch("/api/external-integrations",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(data)}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(x){if(!x.ok||!x.data.success)throw new Error(x.data.error||L.createFailed);location.assign("/external-integrations?agentId="+encodeURIComponent(data.agentId)+"&created=1")}).catch(function(error){createError.textContent=error.message||L.createFailed;createError.style.display="block";button.disabled=false;button.textContent=idle})});function resetRow(row){row.querySelector("[data-role=integration-name]").innerHTML="<strong title=\\\""+h(row.dataset.name)+"\\\" style=\\\"display:block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\\\">"+h(row.dataset.name)+"</strong>";row.querySelector("[data-role=integration-webhook]").textContent=row.dataset.webhook;row.querySelector("[data-role=integration-actions]").innerHTML="<button type=\\\"button\\\" class=\\\"btn-sm btn-outline\\\" data-role=\\\"edit-external-integration\\\" style=\\\"margin:0;padding:5px 10px;min-height:auto\\\">"+L.edit+"</button><button type=\\\"button\\\" class=\\\"btn-sm btn-danger\\\" data-role=\\\"revoke-external-integration\\\" data-integration=\\\""+row.dataset.integration+"\\\" data-name=\\\""+h(row.dataset.name)+"\\\" style=\\\"margin:0;padding:5px 10px;min-height:auto\\\">"+L.revoke+"</button>";if(row.dataset.invalid==="1")markInvalid(row)}document.addEventListener("click",function(e){var edit=e.target.closest("[data-role=edit-external-integration]");if(edit){var row=edit.closest("tr");row.querySelector("[data-role=integration-name]").innerHTML="<input data-role=\\\"edit-name\\\" maxlength=\\\"128\\\" value=\\\""+h(row.dataset.name)+"\\\" style=\\\"min-width:110px;margin:0\\\">";row.querySelector("[data-role=integration-webhook]").innerHTML="<input data-role=\\\"edit-webhook\\\" type=\\\"url\\\" maxlength=\\\"2048\\\" value=\\\""+h(row.dataset.webhook)+"\\\" style=\\\"min-width:280px;margin:0\\\"><div class=\\\"error\\\" data-role=\\\"edit-error\\\" style=\\\"display:none;margin-top:4px\\\"></div>";row.querySelector("[data-role=integration-actions]").innerHTML="<button type=\\\"button\\\" class=\\\"btn-sm\\\" data-role=\\\"save-external-integration\\\" style=\\\"margin:0;padding:5px 10px;min-height:auto\\\">"+L.save+"</button><button type=\\\"button\\\" class=\\\"btn-sm btn-outline\\\" data-role=\\\"cancel-external-integration\\\" style=\\\"margin:0;padding:5px 10px;min-height:auto\\\">"+L.cancel+"</button>";return}var cancel=e.target.closest("[data-role=cancel-external-integration]");if(cancel){resetRow(cancel.closest("tr"));return}var save=e.target.closest("[data-role=save-external-integration]");if(save){var row=save.closest("tr"),name=row.querySelector("[data-role=edit-name]").value.trim(),webhookUrl=row.querySelector("[data-role=edit-webhook]").value.trim(),box=row.querySelector("[data-role=edit-error]");save.disabled=true;fetch("/api/external-integrations/"+encodeURIComponent(row.dataset.integration),{method:"PATCH",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({name:name,webhookUrl:webhookUrl})}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(x){if(!x.ok||!x.data.success)throw new Error(x.data.error||L.editFailed);row.dataset.name=name;row.dataset.webhook=webhookUrl;delete row.dataset.invalid;row.style.opacity="";resetRow(row);probeRow(row)}).catch(function(error){box.textContent=error.message||L.editFailed;box.style.display="block";save.disabled=false});return}var button=e.target.closest("[data-role=revoke-external-integration]");if(!button)return;pending=button.dataset.integration||"";revoke.querySelector("[data-role=revoke-external-message]").textContent=L.revokeMessage.replace("{name}",button.dataset.name||"");revoke.querySelector("[data-role=revoke-external-error]").style.display="none";revoke.showModal()});revoke.querySelector("[data-role=cancel-external-revoke]").addEventListener("click",function(){pending="";revoke.close()});revoke.querySelector("[data-role=confirm-external-revoke]").addEventListener("click",function(){var button=this;if(!pending)return;button.disabled=true;fetch("/api/external-integrations/"+encodeURIComponent(pending),{method:"DELETE",headers:{Accept:"application/json"}}).then(function(r){return r.json().then(function(d){return{ok:r.ok,data:d}})}).then(function(x){if(!x.ok||!x.data.success)throw new Error(x.data.error||L.revokeFailed);location.reload()}).catch(function(error){var box=revoke.querySelector("[data-role=revoke-external-error]");box.textContent=error.message||L.revokeFailed;box.style.display="block";button.disabled=false})});setTimeout(function(){document.querySelectorAll("[data-role=external-integration-row]").forEach(probeRow)},0)})();</script>';
+    res.send(renderPage(req,T('web.external_gateway.title'),body,{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.external_gateway.title'),footer:renderFooter(T,req.locale)+script}));
+  });
+
   // ────────── 注册 ──────────
   R.get('/api/owner-chat/policy',(req,res)=>{try{if(!opts.ownerChatDatabase)return res.status(404).json({success:false,error:'OWNER_CHAT_DISABLED'});const{readOwnerChatPolicy}=require('../owner-chat');res.json({success:true,data:readOwnerChatPolicy(opts.ownerChatDatabase)})}catch(error){res.status(500).json({success:false,error:'OWNER_CHAT_POLICY_FAILED'})}});
   R.put('/api/owner-chat/policy',(req,res)=>{try{if(!opts.ownerChatDatabase)return res.status(404).json({success:false,error:'OWNER_CHAT_DISABLED'});const{updateOwnerChatPolicy}=require('../owner-chat');const patch={};if(typeof req.body?.ownerChatEnabled==='boolean')patch.ownerChatEnabled=req.body.ownerChatEnabled;if(typeof req.body?.remoteExecutionEnabled==='boolean')patch.remoteExecutionEnabled=req.body.remoteExecutionEnabled;const data=updateOwnerChatPolicy(opts.ownerChatDatabase,patch);require('../core/lite-bus').emit('owner-chat:policy',data);res.json({success:true,data})}catch(error){res.status(500).json({success:false,error:'OWNER_CHAT_POLICY_FAILED'})}});
   R.get('/api/owner-codex-config/:agentId',(req,res)=>{try{const{readOwnerCodexConfig}=require('../owner-chat');res.json({success:true,data:readOwnerCodexConfig(db,String(req.params.agentId))})}catch(error){res.status(400).json({success:false,error:String(error.message||error)})}});
   R.put('/api/owner-codex-config/:agentId',(req,res)=>{try{const{saveOwnerCodexConfig}=require('../owner-chat');const data=saveOwnerCodexConfig(db,String(req.params.agentId),{cwd:req.body?.cwd,profile:req.body?.profile});res.json({success:true,data})}catch(error){res.status(400).json({success:false,error:String(error.message||error)})}});
+  R.post('/api/agents/:agentId/delivery-channels/refresh',async(req,res)=>{
+    try{
+      if(typeof handlers.refresh_delivery_channels!=='function')return res.status(503).json({success:false,error:'Delivery channel refresh is unavailable'});
+      const result=await handlers.refresh_delivery_channels({agentId:String(req.params.agentId)});
+      res.status(result&&result.success===false?400:200).json(result);
+    }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
+  });
+  R.post('/api/agents/:agentId/delivery-channels/select',async(req,res)=>{
+    try{
+      if(typeof handlers.select_delivery_channel!=='function')return res.status(503).json({success:false,error:'Delivery channel selection is unavailable'});
+      const result=await handlers.select_delivery_channel({agentId:String(req.params.agentId),mode:req.body&&req.body.mode,providerId:req.body&&req.body.providerId});
+      res.status(result&&result.success===false?400:200).json(result);
+    }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
+  });
 
   R.get('/trusted-remote',async(req,res,next)=>{
     try{
@@ -1168,7 +1357,7 @@ function createWebRouter(handlers, db, opts={}){
       const keyword = req.query.keyword || '';
       const limit = 10;
       const offset = (page - 1) * limit;
-      const requestedTab=req.query.tab==='group'?'group':req.query.tab==='owner'?'owner':req.query.tab==='a2a'?'a2a':'conv';
+      const requestedTab=req.query.tab==='group'?'group':req.query.tab==='owner'?'owner':req.query.tab==='a2a'?'a2a':req.query.tab==='external'?'external':'conv';
       let activeTab=requestedTab;
       const createdGroupId=String(req.query.created||'');
       let convs=[],convTotal=0,convPages=0;
@@ -1180,10 +1369,17 @@ function createWebRouter(handlers, db, opts={}){
       if(activeTab==='owner'&&!ownerTotal)activeTab='conv';
        let a2aRows=[];let a2aReadAvailable=true;
        try{a2aRows=await loadA2ATaskRows(agentId)}catch{a2aReadAvailable=false}
+       const externalRows=a2aRows.filter(row=>String(row.direction).toLowerCase()!=='outbound'&&row.source_channel==='rest_webhook');
+       a2aRows=a2aRows.filter(row=>row.source_channel!=='rest_webhook');
        const a2aTotal=a2aRows.length;
        const a2aPrincipalTotal=new Set(a2aRows.map(row=>String(row.principal_view_id||'').trim()).filter(Boolean)).size;
-       const showA2ATab=a2aReadAvailable&&a2aTotal>0;
+       const showA2ATab=a2aReadAvailable;
+       const showExternalTab=a2aReadAvailable;
        if(requestedTab==='a2a'&&!showA2ATab){
+         if(a2aReadAvailable)return res.redirect('/agents/'+encodeURIComponent(agentId));
+         activeTab='conv';
+       }
+       if(requestedTab==='external'&&!showExternalTab){
          if(a2aReadAvailable)return res.redirect('/agents/'+encodeURIComponent(agentId));
          activeTab='conv';
        }
@@ -1278,6 +1474,9 @@ function createWebRouter(handlers, db, opts={}){
       // 会话
       let convHtml='<p class="meta">'+L('web.agent.no_conversations')+'</p>';
       if(convs.length){
+        let e2eeStates={};
+        try{e2eeStates=await opts.e2eeCanaryRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
+        for(const c of convs){const channelId=String(c.channelId);if(!e2eeStates[channelId]&&opts.e2eeCanaryRuntime?.isChannelActive?.(agentId,channelId))e2eeStates[channelId]='active';}
         // 补昵称（user_cache 有则用，无则回退 channelId）
         let convNickMap={};
         try{const cids=convs.map(c=>c.channelId);const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+cids.map(()=>'?').join(',')+')').all(...cids);rows.forEach(r=>{convNickMap[r.uid]=r.nickname||'';});}catch(_){}
@@ -1288,7 +1487,10 @@ function createWebRouter(handlers, db, opts={}){
           const unreadBadge=c.unreadCount>0?' <span class="badge" style="background:#e74c3c;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px">'+c.unreadCount+'</span>':'';
           const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
           const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';
-          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
+          const e2eeState=String(e2eeStates[String(c.channelId)]||'');
+          const keyMeta=e2eeState==='active'?['web.agent.e2ee_active','#22C55E','#16A34A']:e2eeState==='available'?['web.agent.e2ee_available','#9CA3AF','#6B7280']:e2eeState==='checking'?['web.agent.e2ee_checking','#F59E0B','#D97706']:e2eeState==='error'?['web.agent.e2ee_error','#EF4444','#DC2626']:null;
+          const e2eeKey=keyMeta?' <svg role="img" aria-label="'+esc(T(keyMeta[0]))+'" style="width:16px;height:16px;vertical-align:middle" viewBox="0 0 256 256"><title>'+esc(T(keyMeta[0]))+'</title>'+(e2eeState==='checking'?'<animate attributeName="opacity" values="1;.25;1" dur="1s" repeatCount="indefinite"/>':'')+'<g transform="rotate(135 128 128)" fill="'+keyMeta[1]+'" stroke="'+keyMeta[2]+'" stroke-width="4" stroke-linejoin="round"><path fill-rule="evenodd" d="M76 70a58 58 0 1 0 43.6 96.3L218 166v-30h-26v-24h-28v24h-44.4A58 58 0 0 0 76 70Zm0 28a30 30 0 1 1 0 60 30 30 0 0 1 0-60Z"/></g></svg>':'';
+          convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+e2eeKey+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
         }
         convHtml+='</tbody></table></div>'
       }
@@ -1357,8 +1559,13 @@ function createWebRouter(handlers, db, opts={}){
       const groupLabel=L('web.agent.tab.groups')+(groupTotal?' ('+groupTotal+')':'');
       const ownerLabel=L('web.agent.tab.owner_chats')+' ('+ownerTotal+')';
       const a2aLabel=L('web.agent.tab.a2a_tasks')+(a2aPrincipalTotal?' ('+a2aPrincipalTotal+')':'');
+      const externalKeyword=String(req.query.externalKeyword||'').trim();
+      const externalGroups=buildA2APrincipalGroups(externalRows,T,externalKeyword);
+      const externalLabel=L('web.agent.tab.external_messages')+(externalGroups.length?' ('+externalGroups.length+')':'');
+      const externalPreviews=new Map();
+      if(opts.a2aMailboxClient)await Promise.all(externalGroups.slice(0,10).map(async group=>{try{const task=await opts.a2aMailboxClient.getInboundTask(group.rows[0].task_id);const events=Array.isArray(task?.events)?task.events:[];for(let i=events.length-1;i>=0;i--){const payload=parseA2AEventPayload(events[i]);const text=typeof payload.text==='string'?payload.text:typeof payload.message==='string'?payload.message:'';if(text){externalPreviews.set(group.principalViewId,text);break}}}catch(_){}}));
       const ownerDirectTab=ownerTotal&&ownerConversations[0]?'<a href="/agents/'+aId+'/owner-chats/'+encodeURIComponent(ownerConversations[0].conversationId)+'" style="display:inline-flex;align-self:flex-end;align-items:center;height:50px;box-sizing:border-box;background:transparent;border:none;border-bottom:3px solid transparent;color:#666;font:inherit;font-size:16px;font-weight:600;line-height:27.2px;padding:10px 20px;margin:0 0 -2px;text-decoration:none">'+ownerLabel+'</a>':'';
-      const tabBar='<div style="display:flex;gap:4px;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'+tabBtn('conv',convLabel,activeTab==='conv')+tabBtn('group',groupLabel,activeTab==='group')+ownerDirectTab+(showA2ATab?tabBtn('a2a',a2aLabel,activeTab==='a2a'):'')+'</div>';
+      const tabBar='<div style="display:flex;gap:4px;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'+tabBtn('conv',convLabel,activeTab==='conv')+tabBtn('group',groupLabel,activeTab==='group')+ownerDirectTab+(showA2ATab?tabBtn('a2a',a2aLabel,activeTab==='a2a'):'')+(showExternalTab?tabBtn('external',externalLabel,activeTab==='external'):'')+'</div>';
       const convPanel='<div id="tab-conv" style="'+(activeTab==='conv'?'':'display:none')+'">'+searchHtml+convHtml+pgBar+aclOps+'</div>';
       const groupPanel='<div id="tab-group" style="'+(activeTab==='group'?'':'display:none')+'">'+groupHtml+gPgBar+groupOps+'</div>';
       const ownerPanel=ownerTotal?'<div id="tab-owner" style="'+(activeTab==='owner'?'':'display:none')+'">'+ownerHtml+'</div>':'';
@@ -1368,9 +1575,12 @@ function createWebRouter(handlers, db, opts={}){
       if(a2aPages>1){a2aPgBar='<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;font-size:14px">';if(a2aPage>1)a2aPgBar+='<a href="/agents/'+aId+'?tab=a2a&a2aPage='+(a2aPage-1)+a2aKeywordParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';a2aPgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:a2aPage,total:a2aPages}))+'</span>';if(a2aPage<a2aPages)a2aPgBar+='<a href="/agents/'+aId+'?tab=a2a&a2aPage='+(a2aPage+1)+a2aKeywordParam+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';a2aPgBar+='</div>'}
       const a2aContent=taskTableA2A?renderA2ATaskRows(a2aPanelRows,{showAgent:false,T}):renderA2APrincipalRows(a2aPanelRows,agentId,T);
       const a2aPanel=showA2ATab?'<div id="tab-a2a" style="'+(activeTab==='a2a'?'':'display:none')+'">'+a2aSearchHtml+a2aContent+a2aPgBar+'</div>':'';
-      const body=infoBar+'<div id="agent-tabs-root">'+tabBar+convPanel+groupPanel+ownerPanel+a2aPanel+'</div><p><a href="/">← '+L('common.btn.home')+'</a></p>';
+      const externalSearch='<form method="GET" action="/agents/'+aId+'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px"><input type="hidden" name="tab" value="external"><input type="search" name="externalKeyword" value="'+esc(externalKeyword)+'" placeholder="'+L('web.agent.external.search_ph')+'" style="width:220px;max-width:100%;margin:0;font-size:14px;padding:6px 10px"><button type="submit" class="btn-sm" style="margin:0;padding:6px 12px;min-width:auto;min-height:auto">'+L('web.agent.search_btn')+'</button></form>';
+      const externalContent=externalGroups.length?'<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.external.col.system')+'</th><th>'+L('web.agent.external.col.latest')+'</th><th style="text-align:center">'+L('web.agent.external.col.messages')+'</th><th style="text-align:center">'+L('web.agent.col.time')+'</th></tr></thead><tbody>'+externalGroups.map(group=>{const latest=group.rows[0],name=latest.principal_name||group.principalId||L('web.agent.external.unknown'),preview=externalPreviews.get(group.principalViewId)||'';return '<tr><td><a href="/agents/'+aId+'/external/'+encodeURIComponent(group.principalViewId)+'"><strong>'+esc(name)+'</strong></a></td><td style="white-space:normal;word-break:break-word;max-width:320px">'+esc(preview.length>60?preview.slice(0,60)+'…':preview||'—')+'</td><td style="text-align:center">'+group.rows.length+'</td><td class="meta" style="text-align:center;white-space:nowrap">'+timeTag(latest.updated_at)+'</td></tr>'}).join('')+'</tbody></table></div>':'<p class="meta">'+L('web.agent.external.empty')+'</p>';
+      const externalPanel=showExternalTab?'<div id="tab-external" style="'+(activeTab==='external'?'':'display:none')+'">'+externalSearch+externalContent+'</div>':'';
+      const body=infoBar+'<div id="agent-tabs-root">'+tabBar+convPanel+groupPanel+ownerPanel+a2aPanel+externalPanel+'</div><p><a href="/">← '+L('common.btn.home')+'</a></p>';
 
-      const tabScript='<script>(function(){function setTab(t){["conv","group","owner","a2a"].forEach(function(id){var panel=document.getElementById("tab-"+id);if(panel)panel.style.display=(t===id?"":"none")});document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group"||t==="owner"||t==="a2a")u.searchParams.set("tab",t);else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
+      const tabScript='<script>(function(){function setTab(t){["conv","group","owner","a2a","external"].forEach(function(id){var panel=document.getElementById("tab-"+id);if(panel)panel.style.display=(t===id?"":"none")});document.querySelectorAll("button[data-tab]").forEach(function(b){var on=b.getAttribute("data-tab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="group"||t==="owner"||t==="a2a"||t==="external")u.searchParams.set("tab",t);else u.searchParams.delete("tab");history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-tab]");if(b)setTab(b.getAttribute("data-tab"))});})();</script>';
 
       res.send(renderPage(req,T('web.agent.title',{name:aName}),body,{nav:agentNav(agentId,agent.agentName||agent.agentId,T),msg,jsonld:{'@context':'https://schema.org',name:agent.agentName,identifier:agent.agentId},footer:renderFooter(T, req.locale)+tabScript+ownerChatLiveScript(agentId,'#agent-tabs-root')}))
     }catch(e){next(e)}
@@ -1506,10 +1716,12 @@ function createWebRouter(handlers, db, opts={}){
       }
       let conversationTabs='';
       if(webRoutingEnabled('web_private_conversations_v1')){
-        const cards=webConversations.map((c,i)=>'<a class="conversation-tab-card'+(selectedConversation?.id===c.id&&!showLegacyHistory?' active':'')+'" role="tab" aria-selected="'+(selectedConversation?.id===c.id&&!showLegacyHistory)+'" href="/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?conversationId='+encodeURIComponent(c.id)+'">'+esc(T('web.conversation.tab.label',{index:i+1}))+'</a>').join('');
+        const conversationPageSize=10,conversationTotalPages=Math.max(1,Math.ceil(webConversations.length/conversationPageSize)),selectedConversationIndex=selectedConversation?webConversations.findIndex(c=>c.id===selectedConversation.id):-1,conversationPage=Math.min(Math.max(1,parseInt(String(req.query.conversationPage||''),10)||(selectedConversationIndex>=0?Math.floor(selectedConversationIndex/conversationPageSize)+1:1)),conversationTotalPages),pageConversations=webConversations.slice((conversationPage-1)*conversationPageSize,conversationPage*conversationPageSize);
+        const cards=pageConversations.map(c=>'<a class="conversation-tab-card'+(selectedConversation?.id===c.id&&!showLegacyHistory?' active':'')+'" role="tab" aria-selected="'+(selectedConversation?.id===c.id&&!showLegacyHistory)+'" href="/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?conversationId='+encodeURIComponent(c.id)+'&conversationPage='+conversationPage+'">'+esc(T('web.conversation.tab.label',{index:webConversations.indexOf(c)+1}))+'</a>').join('');
         const history=showLegacyHistory||(!webConversations.length&&msgs.length)?'<a class="conversation-tab-card'+(showLegacyHistory?' active':'')+'" role="tab" href="/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?history=1">'+L('web.conversation.tab.history')+'</a>':'';
         const newConversationLabel=pendingConversation?L('web.conversation.action.continue_pending'):L('web.conversation.action.new');
-        conversationTabs='<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell"><button type="button" class="conversation-tab-arrow" id="conversation-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'">‹</button><div class="conversation-tab-rail" id="conversation-tab-rail" role="tablist">'+cards+history+'<button type="button" id="new-conversation" data-pending-conversation="'+esc(pendingConversation?.id||'')+'" class="conversation-tab-card conversation-tab-new">＋ '+newConversationLabel+'</button></div><button type="button" class="conversation-tab-arrow" id="conversation-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'">›</button></div>';
+        const conversationBase='/agents/'+esc(agentId)+'/c/'+esc(channelId)+'?conversationPage=';
+        conversationTabs='<style>'+CONVERSATION_TAB_CSS+'</style><div class="conversation-tab-shell">'+(conversationPage>1?'<a class="conversation-tab-arrow" id="conversation-tabs-prev" aria-label="'+esc(T('web.payments.prev_page'))+'" href="'+conversationBase+(conversationPage-1)+'">‹</a>':'<span class="conversation-tab-arrow" aria-disabled="true">‹</span>')+'<div class="conversation-tab-rail" id="conversation-tab-rail" role="tablist">'+cards+history+'<button type="button" id="new-conversation" data-pending-conversation="'+esc(pendingConversation?.id||'')+'" class="conversation-tab-card conversation-tab-new">＋ '+newConversationLabel+'</button></div>'+(conversationPage<conversationTotalPages?'<a class="conversation-tab-arrow" id="conversation-tabs-next" aria-label="'+esc(T('web.payments.next_page'))+'" href="'+conversationBase+(conversationPage+1)+'">›</a>':'<span class="conversation-tab-arrow" aria-disabled="true">›</span>')+'</div>';
       }
       const pendingHint=selectedConversation?.status==='pending'
         ? '<p class="pending" style="margin:0 0 10px;padding:8px 12px;border-radius:6px;background:#fef7e0">'+L('web.conversation.pending_hint')+'</p>' : '';
@@ -1542,7 +1754,7 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
 
   R.post('/messages/send',async(req,res,next)=>{
     try{
-      const{agentId,toUid,content,channelType,conversationId,replyToMessageId}=req.body;
+      const{agentId,toUid,content,channelType,conversationId,replyToMessageId,validateRecipientUid}=req.body;
       let mentions=null;
       if(channelType&&Number(channelType)===2&&req.body.mentions){
         try{
@@ -1574,6 +1786,20 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
       if(!agentId||!toUid||!content){
         if(req.is('json'))return res.status(400).json({success:false,error:'缺少参数'});
         return res.status(400).send(renderPage(req,'错误','<p class="error">缺少参数</p><a href="javascript:history.back()">返回</a>'));
+      }
+      if(validateRecipientUid==='1'&&Number(channelType||1)!==2){
+        try{
+          const recipient=await validateImUidExists(toUid);
+          if(!recipient.exists){
+            const error=req.t('web.send_message.uid_not_found');
+            if(req.is('json'))return res.status(404).json({success:false,error,code:'RECIPIENT_NOT_FOUND'});
+            return res.status(404).send(renderPage(req,req.t('web.send_message.title'),'<p class="error">'+esc(error)+'</p><a href="/send-message?agentId='+encodeURIComponent(agentId)+'&toUid='+encodeURIComponent(toUid)+'">'+esc(req.t('common.btn.back'))+'</a>'));
+          }
+        }catch(_){
+          const error=req.t('web.send_message.uid_check_failed');
+          if(req.is('json'))return res.status(503).json({success:false,error,code:'RECIPIENT_CHECK_UNAVAILABLE'});
+          return res.status(503).send(renderPage(req,req.t('web.send_message.title'),'<p class="error">'+esc(error)+'</p><a href="javascript:history.back()">'+esc(req.t('common.btn.back'))+'</a>'));
+        }
       }
       const r=await handlers.send_message({agentId,toUid,content,channelType:channelType?Number(channelType):undefined,mentions,conversationId,replyToMessageId,
         webRequest:Number(channelType)!==2&&webRoutingEnabled('web_private_conversations_v1')});
@@ -1983,7 +2209,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         res.json(result);
       } catch (e) {
         try { require('fs').rmSync(uploadDir, { recursive: true, force: true }); } catch (_) {}
-        res.json({ success: false, error: '上传到 OSS 失败: ' + e.message });
+        res.json({ success: false, error: '附件上传失败: ' + e.message });
       }
     } catch (e) {
       res.json({ success: false, error: e.message });
@@ -1999,7 +2225,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       if(!type)return res.status(400).json({success:false,error:req.t('web.agent.edit.icon_invalid')});
       const objectName='agent-icons/'+require('crypto').randomUUID()+'.'+type.ext;
       const uploader=typeof opts.uploadAgentIcon==='function'?opts.uploadAgentIcon:async(data,name,mime)=>require('../server/oss').uploadToOSS(name,data,mime);
-      const iconUrl=await uploader(file.data,objectName,type.mime);
+      const iconUrl=await uploader(file.data,objectName,type.mime,req.params.agentId);
       const updated=await handlers.update_agent_profile({agentId:req.params.agentId,iconUrl});
       if(updated?.success===false||updated?.error)return res.status(502).json({success:false,error:updated.error||req.t('web.agent.edit.icon_upload_failed')});
       return res.json({success:true,iconUrl});
@@ -2010,7 +2236,8 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     try{
       if(typeof handlers.restart_agent_runtime!=='function')return res.status(503).json({success:false,error:'Agent runtime restart is unavailable'});
       const result=await handlers.restart_agent_runtime();
-      return res.status(result?.success===false?500:200).json(result);
+      const status=result?.code==='OWNER_SWITCH_IN_PROGRESS'?409:(result?.success===false?500:(result?.restarting?202:200));
+      return res.status(status).json(result);
     }catch(e){return res.status(500).json({success:false,error:e.message})}
   });
 
@@ -2676,7 +2903,7 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
         try{
           const r=await handlers.search_capabilities({agent_id:agentId,keyword,page:curPage2,limit});
 
-          if(r.success===false){errMsg=r.error||T('web.capabilities.err_search_failed')}
+          if(r.success===false){errMsg=r.code==='SEARCH_AUTH_REQUIRED'?T('web.capabilities.err_auth_required'):T('web.capabilities.err_search_failed')}
           else{
             const items=r.data||r.agents||r.results||[];
             results={items:Array.isArray(items)?items:[],total:r.count||r.total||items.length||0};
@@ -2795,6 +3022,29 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
   // ── Agent 系统提示词 ──
 
   // ── 发送消息 ──
+  R.get('/api/im-users/:uid/exists',async(req,res)=>{
+    try{
+      const result=await validateImUidExists(req.params.uid);
+      if(!result.exists)return res.status(404).json({success:false,exists:false,code:'RECIPIENT_NOT_FOUND'});
+      let isOnline=null;
+      if(result.isAgent===true){
+        let localAgent=null;
+        try{localAgent=db.prepare('SELECT agent_id FROM agents WHERE imUid = ?').get(req.params.uid)}catch{}
+        if(localAgent){
+          try{isOnline=(await getAgentStatus(handlers,localAgent.agent_id)).agent.imConnected===true}catch{}
+        }else if(req.query.agentId){
+          try{
+            const found=await handlers.search_capabilities({agent_id:String(req.query.agentId),keyword:String(req.params.uid),page:1,limit:20});
+            const match=(found.data||found.agents||found.results||[]).find(agent=>String(agent.imUid||agent.im_uid||'')===String(req.params.uid));
+            if(match&&typeof match.isOnline==='boolean')isOnline=match.isOnline;
+          }catch{}
+        }
+      }
+      return res.json({success:true,exists:true,isAgent:result.isAgent===true,isOnline});
+    }catch(_){
+      return res.status(503).json({success:false,code:'RECIPIENT_CHECK_UNAVAILABLE'});
+    }
+  });
   R.get('/send-message',async(req,res,next)=>{
     try{
       const T=req.t,L=k=>esc(T(k));
@@ -2810,12 +3060,13 @@ const defAgent=agentId||(agents.length?agents[0].agentId:'');
       try{const a=await handlers.list_agents({limit:500});agents=a.agents||[]}catch{}
       let agentOpts='';
       const defAgent=prefillAgent||(agents.length?agents[0].agentId:'');for(const a of agents)agentOpts+='<option value="'+esc(a.agentId)+'"'+(defAgent===a.agentId?' selected':'')+'>'+esc(a.agentName||a.agentId)+'</option>';
-      res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'">'
+      res.send(renderPage(req,T('web.send_message.title'),'<div class="card"><form method="POST" action="/messages/send" data-agent="send_msg_form" data-submit-lock="1" data-submit-label="'+L('web.conversation.sending')+'"><input type="hidden" name="validateRecipientUid" value="1">'
         +'<label for="sma">'+L('web.send_message.from_agent')+'</label><select id="sma" name="agentId" required style="width:100%" data-agent="send_agent_sel" autofocus>'+agentOpts+'</select>'
         +'<label for="smu">'+L('web.send_message.to_uid')+'</label><input type="text" id="smu" name="toUid" value="'+prefillUid+'" required style="width:100%" autocomplete="off" data-agent="send_uid_input" placeholder="'+esc(T('web.send_message.to_uid_ph'))+'">'
+        +'<p id="smu-status" class="meta" role="status" aria-live="polite" style="margin:5px 0 0"></p>'
         +'<label for="smc">'+L('web.send_message.content')+'</label><textarea id="smc" name="content" required rows="4" style="width:100%" data-agent="send_content_input" placeholder="'+esc(T('web.send_message.content_ph'))+'"></textarea>'
         +'<br><br><button type="submit" class="voko-send-button" data-agent="send_submit_btn">'+L('common.btn.send')+'</button>'
-        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div>'
+        +'<a href="/send-message" class="btn" style="margin-left:8px">'+L('web.send_message.reset')+'</a></form></div><script>(function(){var form=document.querySelector("[data-agent=send_msg_form]"),sender=document.getElementById("sma"),input=document.getElementById("smu"),status=document.getElementById("smu-status"),button=form&&form.querySelector("[type=submit]"),verified="",checking='+jsonForInlineScript(T('web.send_message.uid_checking'))+',valid='+jsonForInlineScript(T('web.send_message.uid_valid'))+',agentOnline='+jsonForInlineScript(T('web.send_message.agent_online'))+',agentOffline='+jsonForInlineScript(T('web.send_message.agent_offline'))+',agentUnknown='+jsonForInlineScript(T('web.send_message.agent_status_unknown'))+',notFound='+jsonForInlineScript(T('web.send_message.uid_not_found'))+',failed='+jsonForInlineScript(T('web.send_message.uid_check_failed'))+';async function check(){var uid=input.value.trim();verified="";if(!uid){status.textContent="";button.disabled=true;return false}status.className="meta";status.textContent=checking;button.disabled=true;try{var url="/api/im-users/"+encodeURIComponent(uid)+"/exists?agentId="+encodeURIComponent(sender.value||""),r=await fetch(url,{headers:{Accept:"application/json"}}),j=await r.json().catch(function(){return{}});if(!r.ok||!j.success){status.className="error";status.textContent=r.status===404?notFound:failed;return false}verified=uid;if(j.isAgent){status.className=j.isOnline===true?"online":j.isOnline===false?"offline":"unknown";status.textContent=j.isOnline===true?"● "+agentOnline:j.isOnline===false?"○ "+agentOffline:"○ "+agentUnknown}else{status.className="success";status.textContent=valid}button.disabled=false;return true}catch(_){status.className="error";status.textContent=failed;return false}}input.addEventListener("input",function(){if(input.value.trim()!==verified){verified="";button.disabled=true;status.textContent=""}});sender.addEventListener("change",function(){if(input.value.trim())check()});input.addEventListener("blur",check);form.addEventListener("submit",function(e){if(input.value.trim()!==verified){e.preventDefault();check()}});button.disabled=true;if(input.value.trim())check()})();</'+'script>'
         +'<p><a href="/">← '+L('common.btn.home')+'</a></p>',{nav:'<a href="/">'+L('common.nav.home')+'</a> › <a href="/send-message">'+L('web.send_message.breadcrumb')+'</a>'}))
     }catch(e){next(e)}
   });

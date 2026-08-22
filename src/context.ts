@@ -334,29 +334,43 @@ function createContext({
         if (token) return await searchCapabilitiesByUserToken({ token, keyword, page, limit });
         throw didError || new Error('未找到当前用户的访问令牌，请重新登录');
       } catch (error: unknown) {
-        return { success: false, error: errorMessage(error) };
+        return { success: false, error: errorMessage(error), code: (error as any)?.code || 'SEARCH_FAILED' };
       }
     },
 
     // ── OSS ──
-    generateOSSSignature: (filename: string, _dir?: string, contentType?: string, maxSize?: number) => {
+    generateOSSSignature: async (filename: string, _dir?: string, contentType?: string, maxSize?: number, agentId?: string,
+      uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
       try {
-        return generateOSSSignature(filename, contentType, maxSize);
+        const ownerEmail = getPrimaryOwnerEmail(db);
+        const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+        return await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: filename,
+          size: maxSize, contentType, targetScopeType: uploadOptions.targetScopeType, targetScopeId: uploadOptions.targetScopeId,
+          idempotencyKey: `lite-web-${require('crypto').randomUUID()}` });
       } catch (error: unknown) {
-        console.error('[Lite] OSS 签名失败:', errorMessage(error));
+        console.error('[上传] 获取短期授权失败:', errorMessage(error));
         return { uploadUrl: null, fileUrl: null, error: errorMessage(error) };
       }
     },
-    uploadFileToOSS: async (filePath: string, objectName: string, mimeType?: string) => {
-      const { uploadToOSS, initOSSFromConfig } = require('./server/oss');
-      // 惰性从 DB 加载 OSS 凭证（CLI 模式启动时未 initOSSFromConfig）
-      try {
-        const row = db.prepare("SELECT data FROM config WHERE type='oss_config'").get<ConfigRow>();
-        if (row) initOSSFromConfig({ oss_config: JSON.parse(row.data) });
-      } catch (_: unknown) {}
+    uploadFileToOSS: async (filePath: string, objectName: string, mimeType?: string, agentId?: string,
+      uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
+      const { uploadToOSS } = require('./server/oss');
       const fs = require('fs');
-      const buffer = fs.readFileSync(filePath);
-      return await uploadToOSS(objectName, buffer, mimeType);
+      const fd = fs.openSync(filePath, 'r');
+      let buffer: Buffer;
+      try {
+        const before = fs.fstatSync(fd);
+        if (!before.isFile() || before.size <= 0 || before.size > 25 * 1024 * 1024) throw new Error('附件必须是 25 MB 以内的普通文件');
+        buffer = fs.readFileSync(fd);
+        const after = fs.fstatSync(fd);
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || buffer.length !== before.size) throw new Error('读取附件时文件发生变化，请重试');
+      } finally { fs.closeSync(fd); }
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      return await uploadToOSS(objectName, buffer, mimeType, null, { userAccessToken: token, agentId,
+        purpose: String(objectName).startsWith('chat/images/') ? 'chat_image' : 'agent_attachment',
+        fileName: require('path').basename(filePath), targetScopeType: uploadOptions.targetScopeType,
+        targetScopeId: uploadOptions.targetScopeId });
     },
 
     // ── 邮件（未注入时惰性创建，从 DB 读 owner token）──

@@ -4,7 +4,7 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /listInboundTasks/); assert.match(source, /\/api\/a2a\/tasks/); assert.match(source, /tab-a2a/);
   assert.match(source, /authorizeA2AApi/); assert.match(source, /WEB_AUTH_REQUIRED/); assert.match(source, /Context <code>/);
   assert.match(source, /renderA2APrincipalRows\(a2aPanelRows,agentId,T\)/);
-  assert.match(source, /const showA2ATab=a2aReadAvailable&&a2aTotal>0/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
   assert.match(source, /showA2ATab\?tabBtn\('a2a'/);
   assert.match(source, /const a2aPrincipalTotal=new Set\(/);
   assert.match(source, /a2aLabel=L\('web\.agent\.tab\.a2a_tasks'\)\+\(a2aPrincipalTotal\?/);
@@ -47,9 +47,57 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   const route = source.match(/R\.get\('\/a2a-tasks'[\s\S]*?\n  \}\);/)[0];
   assert.match(source, /isolated from visitor conversations/); assert.doesNotMatch(route, /FROM messages|FROM conversations|INSERT INTO messages/);
 });
-test('A2A tab is not rendered for an empty or unavailable task source', () => {
+test('A2A and REST Webhook tabs remain visible when a source has no messages', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
-  assert.match(source, /if\(requestedTab==='a2a'&&!showA2ATab\)/);
   assert.match(source, /a2aReadAvailable=false/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
+  assert.match(source, /const showExternalTab=a2aReadAvailable;/);
   assert.match(source, /const a2aPanel=showA2ATab\?/);
+});
+test('A2A and REST Webhook tabs use the trusted source channel instead of principal type inference', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(source, /source_channel:row\.source_channel/);
+  assert.match(source, /row\.source_channel==='rest_webhook'/);
+  assert.match(source, /row\.source_channel!=='rest_webhook'/);
+  assert.doesNotMatch(source, /externalRows=a2aRows\.filter\([^\n]+principal_kind==='api_client'/);
+  assert.match(source, /tabBtn\('external'/);
+  assert.match(source, /R\.get\('\/agents\/:agentId\/external\/:principalViewId'/);
+  assert.match(source, /id="external-context-tab-rail"/);
+  assert.match(source, /id="external-tabs-prev"/);
+  assert.match(source, /id="external-tabs-next"/);
+  assert.match(source, /web\.agent\.external\.conversation/);
+  assert.match(source, /web\.agent\.external\.processing_status/);
+  assert.match(source, /web\.agent\.external\.webhook_status/);
+  assert.match(source, /webhook_status/);
+  assert.match(source, /webhook_attempt_count/);
+  assert.match(source, /web\.agent\.external\.webhook\.retrying/);
+  assert.doesNotMatch(source, /L\('web\.agent\.external\.config'\)/);
+  assert.match(source, /sort\(\(a,b\)=>a\.createdAt-b\.createdAt\|\|a\.id\.localeCompare\(b\.id\)\)/);
+  assert.match(source, /contextPageSize=10/);
+  assert.match(source, /pageContexts=contexts\.slice/);
+  assert.match(source, /req\.query\.contextPage/);
+  assert.match(source, /id="external-conversation-root"/);
+  assert.match(source, /req\.query\.fragment\|\|''\)==='external'/);
+  assert.match(source, /u\.searchParams\.set\("fragment","external"\)/);
+  assert.match(source, /setInterval\(refresh,3000\)/);
+  assert.match(source, /current\.replaceWith\(fresh\)/);
+});
+test('A2A and REST Webhook task cards paginate ten per page', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const external = source.match(/R\.get\('\/agents\/:agentId\/external\/:principalViewId'[\s\S]*?\n  \}\);/)[0];
+  const a2a = source.match(/R\.get\('\/agents\/:agentId\/a2a\/:principalViewId'[\s\S]*?\n  \}\);/)[0];
+  for (const route of [external, a2a]) {
+    assert.match(route, /taskPageSize=10/);
+    assert.match(route, /req\.query\.taskPage/);
+    assert.match(route, /selectedContext\.tasks\.slice/);
+    assert.match(route, /taskTotalPages/);
+    assert.match(route, /&taskPage=/);
+  }
+});
+test('visitor conversation tabs paginate ten per page', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const route = source.match(/R\.get\('\/agents\/:agentId\/c\/:channelId'[\s\S]*?\n  \}\);/)[0];
+  assert.match(route, /conversationPageSize=10/);
+  assert.match(route, /pageConversations=webConversations\.slice/);
+  assert.match(route, /req\.query\.conversationPage/);
 });

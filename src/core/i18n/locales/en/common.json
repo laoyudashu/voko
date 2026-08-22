@@ -58,7 +58,7 @@
   "common.footer.status": "Status",
   "common.footer.status_ok": "Normal",
   "common.footer.status_im_down": "IM Disconnected",
-  "common.footer.status_init": "Initializing",
+  "common.footer.status_init": "No Agent created yet",
   "common.footer.update_available": "Update available",
   "common.footer.update_title": "Update VOKO",
   "common.footer.update_instruction": "Run the following command in a terminal. Restart VOKO after the upgrade finishes to use the new version.",

@@ -47,6 +47,18 @@ interface SearchResult {
   onlineStatus: { source: 'agentdid_search'; checkedAt: number };
 }
 
+class SearchApiError extends Error {
+  code: string;
+  status?: number;
+
+  constructor(message: string, code: string, status?: number) {
+    super(message);
+    this.name = 'SearchApiError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
 function isSearchApiResult(value: unknown): value is SearchApiResult {
   if (!value || typeof value !== 'object' || typeof (value as SearchApiResult).success !== 'boolean') {
     return false;
@@ -66,7 +78,12 @@ async function readSearchApiResult(response: Response): Promise<SearchApiResult>
   }
   if (!isSearchApiResult(value)) throw new Error(t('errors.external_api.invalid_response'));
   if (response.ok === false) {
-    throw new Error(value.message || t('errors.external_api.http_error', { status: response.status }));
+    const status = Number(response.status || 0);
+    throw new SearchApiError(
+      value.message || t('errors.external_api.http_error', { status }),
+      status === 401 || status === 403 ? 'SEARCH_AUTH_REQUIRED' : 'SEARCH_REMOTE_UNAVAILABLE',
+      status,
+    );
   }
   return value;
 }

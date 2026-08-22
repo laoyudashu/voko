@@ -335,6 +335,29 @@ describe('verify_agent_email 必填校验', () => {
 });
 
 describe('create_agent_by_token 必填校验', () => {
+  it('运行中注册先加载 Provider 并刷新路由，再启动 IM Worker', async () => {
+    const cx = createMockCx();
+    const order = [];
+    const previousDispatcher = global.__dispatcher;
+    global.__dispatcher = {
+      ensureBackend: async (type) => order.push(`ensure:${type}`),
+      invalidateMeta: (agentId) => order.push(`invalidate:${agentId}`),
+    };
+    cx.startAgentWorker = async () => {
+      order.push('worker:start');
+      return { connected: true, status: 'connected' };
+    };
+    try {
+      const result = await createToolHandlers(cx).create_agent_by_token({
+        email: 'a@b.com', agentName: 'CodeBuddy', backendType: 'codebuddy', deliveryModes: ['acp', 'pull'],
+      });
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(order, ['ensure:codebuddy', 'invalidate:new-1', 'worker:start']);
+    } finally {
+      global.__dispatcher = previousDispatcher;
+    }
+  });
+
   it('缺 backendType → 报错', async () => {
     const cx = createMockCx();
     const h = createToolHandlers(cx);

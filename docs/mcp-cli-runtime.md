@@ -208,6 +208,8 @@ These are entry points to the same local Agent inventory and IM state; they do n
 
 Use `voko_upload_and_send_file` to upload a local file and deliver it in one MCP call. The former `get_upload_url` tool has been removed and has no compatibility entry point.
 
+Production uploads use a short-lived authorization issued by VOKO after login. Lite and browser clients never require or store an OSS AccessKey. An upload is considered usable only after the service confirms it; an uncertain IM send reuses the completed upload instead of uploading the file again.
+
 The required parameters are `agentId`, `toUid`, and an absolute `filePath`. Optional `fileName` changes the displayed name. Optional `message` is delivered first as a text message; `channelType` selects a direct message (`1`, the default) or group message (`2`); `mentions` adds group mentions. Images are sent as image messages and other attachments as file messages. A single file must not exceed 25 MB.
 
 ```json

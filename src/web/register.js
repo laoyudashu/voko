@@ -154,7 +154,7 @@ function loginBody(email, err, tFn, popup) {
     + '<button type="submit" name="action" value="verify" class="btn-success" style="margin:0">' + esc(t('register.login.login_btn')) + '</button>'
     + '</div>'
     + '</form>'
-    + '<div class="oauth-buttons" hidden>'
+    + '<div class="oauth-buttons">'
     + '<button type="button" class="oauth-btn" data-oauth-provider="google" onclick="oauthLogin(\'google\')">' + googleIcon + '<span>' + esc(t('register.login.google')) + '</span></button>'
     + '<button type="button" class="oauth-btn" data-oauth-provider="github" onclick="oauthLogin(\'github\')">' + githubIcon + '<span>' + esc(t('register.login.github')) + '</span></button>'
     + '</div><div id="oauth-status" class="oauth-status"></div>'
@@ -412,8 +412,10 @@ function wizardJs(t) {
   }
   document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment)}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
-    var disabled=m.required||m.status!=='ready', checked=m.required||m.selected;
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:I.testFailed)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
+    var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
+    var disabled=m.required||!usable, checked=m.required||m.selected;
+    var statusLabel=m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
   }
   function renderDeliveries(d){
     state=d;var modes=d.deliveryModes||[],html='';
@@ -775,6 +777,34 @@ function createRegisterRouter(handlers, db, options = {}) {
     return null;
   }
 
+  function getPendingOwnerEmail() {
+    if (!db) return null;
+    try {
+      const row = db.prepare("SELECT data FROM config WHERE type='pending_owner_switch'").get();
+      const value = row?.data ? JSON.parse(row.data) : null;
+      return String(value?.email || '').trim().toLowerCase() || null;
+    } catch (_) { return null; }
+  }
+
+  function ownerAgentDestination(email) {
+    try {
+      const normalized = String(email || '').trim().toLowerCase();
+      const row = db?.prepare('SELECT COUNT(*) AS c FROM agents WHERE LOWER(TRIM(owner_email))=?').get(normalized);
+      return Number(row?.c || 0) === 0 ? '/agent/add' : '/';
+    } catch (_) { return '/'; }
+  }
+
+  function switchTransitionPage(req, dest, popup) {
+    const lang = req.locale === 'en' ? 'en' : (req.locale === 'ja' ? 'ja' : 'zh-CN');
+    const failed = req.t('register.login.restart_failed');
+    const timeout = req.t('register.login.restart_timeout') + '\n' + req.t('register.login.restart_recovery');
+    return '<!DOCTYPE html><html lang="' + lang + '"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">'
+      + '<title>VOKO — ' + esc(req.t('register.login.switching_title')) + '</title>'
+      + '<style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(135deg,#f0f4ff,#f5f7fa);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#1a1a2e}div{text-align:center;max-width:560px;padding:20px}p{font-size:16px;margin:8px 0}.hint{font-size:13px;color:#888}.error{font-size:13px;color:#d93025;white-space:pre-line}.spinner{width:32px;height:32px;border:3px solid #e0e4ea;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}@keyframes spin{to{transform:rotate(360deg)}}</style>'
+      + '</head><body><div><div class="spinner"></div><p>' + esc(req.t('register.login.switching')) + '</p><p class="hint">' + esc(req.t('register.login.switching_hint')) + '</p><p id="switch-error" class="error" hidden></p></div>'
+      + '<script>(async function(){var d=' + JSON.stringify(dest) + ',popup=' + JSON.stringify(!!popup) + ',s=document.getElementById("switch-error"),csrf=(document.cookie.match(/(?:^|;\\s*)voko_csrf=([^;]+)/)||[])[1]||"";function done(){if(popup&&window.opener){window.opener.postMessage({type:"voko-login-complete"},location.origin);window.close();return}location.href=d}try{var r=await fetch("/api/web/agents/restart",{method:"POST",headers:{"Accept":"application/json","X-VOKO-CSRF":decodeURIComponent(csrf)}}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||' + JSON.stringify(failed) + ');if(!j.restarting){done();return}var deadline=Date.now()+60000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,750)});try{var h=await fetch("/health",{cache:"no-store"}),x=await h.json();if(h.ok&&x.status==="ok"&&x.instanceId&&x.instanceId!==j.previousInstanceId){done();return}}catch(_){}}throw new Error(' + JSON.stringify(timeout) + ')}catch(e){s.textContent=e.message||' + JSON.stringify(failed) + ';s.hidden=false}})()<\/script></body></html>';
+  }
+
   const registrationOrchestrator = createRegistrationOrchestrator({
     ...(options.registrationOrchestrator || {}),
     db,
@@ -911,7 +941,8 @@ function createRegisterRouter(handlers, db, options = {}) {
         return res.status(result.success?200:(result.status||400)).json({success:!!result.success,error:result.error});
       }
       if(action==='verify'){
-        const result=await handlers.login_by_code({email,code:req.body?.code});
+        const verifyHandler=handlers.reauth_by_code||handlers.login_by_code;
+        const result=await verifyHandler({email,code:req.body?.code});
         if(!result.success)return res.status(result.status||400).json({success:false,error:result.error||req.t('register.login.code_invalid')});
         if(options.webSessions)options.webSessions.setCookie(res,options.webSessions.create(email));
         return res.json({success:true});
@@ -948,26 +979,23 @@ function createRegisterRouter(handlers, db, options = {}) {
   });
 
   R.post('/api/login/oauth/exchange', async (req, res) => {
-    const r = await handlers.oauth_exchange(req.body || {});
+    const exchangeHandler = handlers.oauth_exchange_for_owner_switch || handlers.oauth_exchange;
+    const r = await exchangeHandler(req.body || {});
     if (r.success && options.webSessions) {
-      const email = getLoggedEmail();
+      const email = r.email || getPendingOwnerEmail() || getLoggedEmail();
       if (email) options.webSessions.setCookie(res, options.webSessions.create(email));
     }
     res.status(r.success ? 200 : (r.status || 400)).json({
       success: !!r.success,
+      code: r.code,
       error: r.error,
     });
   });
 
   R.get('/login/oauth/complete', (req, res) => {
-    let agentCount = 0;
-    try {
-      const row = db?.prepare('SELECT COUNT(*) as c FROM agents').get();
-      agentCount = row ? row.c : 0;
-    } catch (_) {}
-    const dest = agentCount === 0 ? '/agent/add' : '/';
+    const dest = ownerAgentDestination(getPendingOwnerEmail() || getLoggedEmail());
     const popup = req.query.popup === '1';
-    res.send('<!DOCTYPE html><meta charset="UTF-8"><title>VOKO</title><body><p id="switch-error" style="color:#d93025"></p><script>(async function(){var s=document.getElementById("switch-error"),m=document.cookie.match(/(?:^|;\\s*)voko_csrf=([^;]+)/),c=m?decodeURIComponent(m[1]):"";try{var r=await fetch("/api/web/agents/restart",{method:"POST",headers:{"Accept":"application/json","X-VOKO-CSRF":c}}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||"Worker restart failed");if(' + JSON.stringify(popup) + '&&window.opener){window.opener.postMessage({type:"voko-login-complete"},location.origin);window.close();return}location.href=' + JSON.stringify(dest) + '}catch(e){s.textContent=e.message||"Worker restart failed"}})()</'+'script></body>');
+    res.send(switchTransitionPage(req, dest, popup));
   });
 
   R.post('/login', async (req, res, next) => {
@@ -985,29 +1013,15 @@ function createRegisterRouter(handlers, db, options = {}) {
       // Explicit login-state dispatch; login_by_code performs the authoritative OTP verification.
       if (action === 'verify') {
         const code = req.body.code;
-        const r = await handlers.login_by_code({ email, code });
+        const loginHandler = handlers.login_for_owner_switch || handlers.login_by_code;
+        const r = await loginHandler({ email, code });
         if (r.success) {
-          if (options.webSessions) options.webSessions.setCookie(res, options.webSessions.create(email));
-          let agentCount = 0;
-          try {
-            if (db) {
-              const row = db.prepare('SELECT COUNT(*) as c FROM agents').get();
-              agentCount = row ? row.c : 0;
-            }
-          } catch (_) {}
+          const verifiedEmail = r.email || email;
+          if (options.webSessions) options.webSessions.setCookie(res, options.webSessions.create(verifiedEmail));
 
           const popup = req.body.popup === '1';
-          const dest = agentCount === 0 ? '/agent/add' : '/';
-          // 返回过渡页：自动重启运行环境后跳转
-          const _lang = req.locale === 'en' ? 'en' : 'zh-CN';
-          const transitionPage = '<!DOCTYPE html>\n<html lang="' + _lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>VOKO — ' + esc(req.t('register.login.switching_title')) + '</title>\n<style>body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(135deg,#f0f4ff,#f5f7fa);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;color:#1a1a2e}div{text-align:center}p{font-size:16px;margin:8px 0}.spinner{width:32px;height:32px;border:3px solid #e0e4ea;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}@keyframes spin{to{transform:rotate(360deg)}}</style>\n</head>\n<body>\n<div><div class="spinner"></div><p>' + esc(req.t('register.login.switching')) + '</p><p style="font-size:13px;color:#888">' + esc(req.t('register.login.switching_hint')) + '</p></div>\n<script>\n(async function(){var d="' + dest + '";try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=d})();\n</script>\n</body>\n</html>';
-          const checkedTransitionPage = transitionPage
-            .replace('</div>\n<script>', '<p id="switch-error" style="display:none;font-size:13px;color:#d93025"></p></div>\n<script>')
-            .replace(
-              'try{await fetch("/api/agents/restart",{method:"POST"})}catch(e){}location.href=d',
-              'var s=document.getElementById("switch-error"),m=document.cookie.match(/(?:^|;\\s*)voko_csrf=([^;]+)/),c=m?decodeURIComponent(m[1]):"";try{var r=await fetch("/api/web/agents/restart",{method:"POST",headers:{"Accept":"application/json","X-VOKO-CSRF":c}}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.error||"Worker restart failed");if(' + JSON.stringify(popup) + '&&window.opener){window.opener.postMessage({type:"voko-login-complete"},location.origin);window.close();return}location.href=d}catch(e){s.textContent=e.message||"Worker restart failed";s.style.display="block"}',
-            );
-          return res.send(checkedTransitionPage);
+          const dest = ownerAgentDestination(verifiedEmail);
+          return res.send(switchTransitionPage(req, dest, popup));
         }
         return res.redirect('/login?email=' + encodeURIComponent(email) + '&err=' + encodeURIComponent(r.error || req.t('register.login.code_invalid')) + (req.body.popup === '1' ? '&popup=1' : ''));
       }

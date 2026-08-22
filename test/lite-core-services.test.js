@@ -787,6 +787,21 @@ test('Lite user-token capability search classifies invalid external API response
   await assert.rejects(searchCapabilitiesByUserToken({ token: 'ut_test', keyword: 'test' }), /network unavailable/);
 });
 
+test('Lite capability search exposes a stable code for expired authentication', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ success: false, message: 'unauthorized' }),
+  });
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    searchCapabilitiesByUserToken({ token: 'ut_expired', keyword: 'codex' }),
+    error => error.code === 'SEARCH_AUTH_REQUIRED' && error.status === 401,
+  );
+});
+
 test('Lite registration preview classifies external API response failures', async (t) => {
   const originalFetch = global.fetch;
   t.after(() => { global.fetch = originalFetch; });
@@ -876,6 +891,31 @@ test('Lite send-code and login bootstrap requests do not expose HMAC credentials
   }
   const output = logs.join('\n');
   assert.doesNotMatch(output, /owner@example\.com|123456|ut_test/);
+});
+
+test('Lite send-code surfaces a business failure even when the server responds HTTP 200', async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
+      success: false,
+      code: 'EMAIL_DELIVERY_FAILED',
+      message: 'Verification email delivery failed',
+    }),
+  });
+  const db = {
+    prepare() { return { get() { return undefined; }, run() {} }; },
+  };
+
+  const result = await createAgentRegistration({ db }).sendCode({ email: 'owner@example.com' });
+  assert.deepEqual(result, {
+    success: false,
+    status: 200,
+    code: 'EMAIL_DELIVERY_FAILED',
+    error: 'Verification email delivery failed',
+  });
 });
 
 test('Lite OAuth login follows the server session contract and persists only the VOKO token', async (t) => {
@@ -1330,6 +1370,50 @@ test('Lite offline sync does nothing when no local user is authenticated', async
 
   assert.equal(await syncOfflineMessages(db, handler), 0);
   assert.equal(fetchCalls, 0);
+});
+
+test('Lite offline sync stops an in-flight old-owner run after account switching', async (t) => {
+  const originalFetch = global.fetch;
+  let activeOwner = 'owner-a@example.test';
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    requests.push(options.headers.Authorization);
+    activeOwner = 'owner-b@example.test';
+    return { ok: true, json: async () => ({ messages: [{ message_id: 'must-not-process' }] }) };
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const db = {
+    exec() {},
+    prepare(sql) {
+      return {
+        all() {
+          if (sql.includes('FROM agents')) return [
+            { agent_id: 'agent-a', imUid: 'uid-a', owner_email: 'owner-a@example.test' },
+            { agent_id: 'agent-a2', imUid: 'uid-a2', owner_email: 'owner-a@example.test' },
+          ];
+          if (sql.includes('FROM conversations')) return [{ channel_id: 'visitor-a' }];
+          return [];
+        },
+        get(key) {
+          if (sql.includes('FROM config') && key === 'current_user_email') return { data: JSON.stringify(activeOwner) };
+          if (sql.includes('FROM config') && key === 'user_access_token') return { data: JSON.stringify({
+            'owner-a@example.test': { user_access_token: 'ut_owner_a' },
+            'owner-b@example.test': { user_access_token: 'ut_owner_b' },
+          }) };
+          if (sql.includes('SELECT MAX(message_seq)')) return { m: 0 };
+          return undefined;
+        },
+        run() {},
+      };
+    },
+  };
+  let handled = 0;
+  const handler = { handleAgentMessage() { handled += 1; }, forwardToAgent() {} };
+
+  assert.equal(await syncOfflineMessages(db, handler), 0);
+  assert.deepEqual(requests, ['Bearer ut_owner_a']);
+  assert.equal(handled, 0);
 });
 
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {

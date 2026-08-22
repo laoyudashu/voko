@@ -110,8 +110,8 @@ interface DispatcherOptions {
 interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
-  sourceType?: 'agent_peer' | 'owner' | 'owner_chat';
-  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat';
+  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee' | 'e2ee_canary';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
@@ -119,6 +119,8 @@ interface IsolatedExecutionOptions {
   principalScope?: string;
   protocolContextId?: string;
   bindingGeneration?: number;
+  attachments?: PushPayload['attachments'];
+  attachmentOutputDirectory?: string;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -248,6 +250,25 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
   const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
+  const _retiredIsolatedTurns = new Map<string, number>();
+  const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
+  function _retireIsolatedTurn(key: string): void {
+    _isolatedReplySinks.delete(key);
+    const now = Date.now();
+    _retiredIsolatedTurns.set(key, now);
+    if (_retiredIsolatedTurns.size > 1000) {
+      for (const [oldKey, retiredAt] of _retiredIsolatedTurns) {
+        if (now - retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
+      }
+    }
+  }
+  function _isRetiredIsolatedTurn(key: string): boolean {
+    const retiredAt = _retiredIsolatedTurns.get(key);
+    if (!retiredAt) return false;
+    if (Date.now() - retiredAt < ISOLATED_TURN_TTL_MS) return true;
+    _retiredIsolatedTurns.delete(key);
+    return false;
+  }
   function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
     if (!_providerEventGate.accept(event)) return false;
     const key = `${event.providerId}:${event.type}`;
@@ -348,6 +369,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
+          const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
+          if (replyTurnKey && _isRetiredIsolatedTurn(replyTurnKey)) {
+            console.warn(`[Dispatcher] 丢弃已结束 isolated turn 的迟到回复 agent=${reply.agentId || '-'} turn=${reply.turnId}`);
+            return;
+          }
+          if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee|e2ee-canary):/.test(String(reply.visitorId || ''))) {
+            console.warn(`[Dispatcher] 丢弃缺少 turnId 的 isolated 回复 agent=${reply.agentId || '-'}`);
+            return;
+          }
           const providerId = _providerIds.get(p) || 'unregistered';
           _acceptProviderEvent({
             eventId: reply.replyId
@@ -362,7 +392,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           if (isolatedSink) {
             if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
             isolatedSink(reply);
-            if (reply.done !== false) _isolatedReplySinks.delete(`${reply.agentId || ''}::${reply.turnId}`);
+            if (reply.done !== false) _retireIsolatedTurn(`${reply.agentId || ''}::${reply.turnId}`);
             return;
           }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
@@ -383,6 +413,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
+  const _temporaryPreferredChannels = new Map<string, { mode: string; providerId: string | null }>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
   const _availabilityEventGenerations = new Map<string, number>();
@@ -632,17 +663,67 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
     const pullOnly = !!(family && family.transports.length === 0)
       || (!!explicitModes && configuredPushModes.length === 0);
+    const temporaryPreference = _temporaryPreferredChannels.get(agentId) || null;
+    const preferredMethod = temporaryPreference?.providerId
+      ? methods.find(method => method.provider === temporaryPreference.providerId && method.available)
+      : null;
+    const activeAutomaticMode = temporaryPreference?.mode === 'pull'
+      ? null
+      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.available)?.mode || null);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
       automaticDeliveryReady: automaticReadyModes.length > 0,
       automaticReadyModes,
-      activeAutomaticMode: methods.find(method => method.mode !== 'pull' && method.available)?.mode || null,
+      activeAutomaticMode,
       pullReady: methods.some(method => method.mode === 'pull' && method.available),
       pullOnly,
       lastDeliveredMode: _lastDeliveredModes.get(agentId) || null,
+      temporaryPreferredMode: temporaryPreference?.mode || null,
+      temporaryPreferredProvider: temporaryPreference?.providerId || null,
       methods,
     };
+  }
+
+  async function refreshAgentDeliveryChannels(agentId: string): Promise<AgentDeliveryStatus> {
+    const meta = _metaOf(agentId);
+    const configuredModes = Array.isArray(meta.delivery_modes) ? meta.delivery_modes : null;
+    const providerIds = Object.keys(providers).filter(providerId => {
+      const definition = getProviderTransport(providerId);
+      if (!definition || (configuredModes && !configuredModes.includes(definition.mode))) return false;
+      try { return !!providers[providerId]?.match?.(agentId, meta); } catch (_) { return false; }
+    });
+    for (const providerId of providerIds) await runtimeRegistry.healthCheck(providerId);
+    invalidateRoutes({ agentId, reason: 'manual-delivery-refresh' });
+    return getAgentDeliveryStatus(agentId);
+  }
+
+  function selectTemporaryDeliveryChannel(agentId: string, mode: string, providerId?: string | null): AgentDeliveryStatus {
+    const selectedMode = String(mode || '').trim();
+    if (!selectedMode) throw new Error('delivery mode is required');
+    const meta = _metaOf(agentId);
+    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(selectedMode)) {
+      throw new Error('delivery mode is not configured for this Agent');
+    }
+    if (selectedMode === 'pull') {
+      _temporaryPreferredChannels.set(agentId, { mode: 'pull', providerId: null });
+    } else {
+      const selectedProviderId = String(providerId || '').trim();
+      const definition = getProviderTransport(selectedProviderId);
+      const provider = providers[selectedProviderId];
+      if (!definition || definition.mode !== selectedMode || !provider) throw new Error('delivery channel not found');
+      try {
+        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)) {
+          throw new Error('delivery channel is unavailable');
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message === 'delivery channel is unavailable') throw error;
+        throw new Error('delivery channel is unavailable');
+      }
+      _temporaryPreferredChannels.set(agentId, { mode: selectedMode, providerId: selectedProviderId });
+    }
+    invalidateRoutes({ agentId, reason: 'manual-delivery-selection' });
+    return getAgentDeliveryStatus(agentId);
   }
 
   function _routeProviderEntry(
@@ -651,6 +732,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     excluded: Set<DispatcherProvider> = new Set(),
   ): RouteCacheEntry | null {
     const cacheKey = `${operation}:${agentId}`;
+    const temporaryPreference = _temporaryPreferredChannels.get(agentId);
+    if (temporaryPreference?.mode === 'pull') {
+      const existing = _routeCache.get(cacheKey);
+      if (existing) {
+        _bumpScoped(existing.providerId, agentId, operation);
+        _routeCache.delete(cacheKey);
+      }
+      return null;
+    }
     const cached = _routeCache.get(cacheKey);
     if (cached && !excluded.has(cached.provider) && Date.now() - cached.selectedAt < ROUTE_CACHE_TTL) {
       try {
@@ -665,6 +755,13 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       _routeCache.delete(cacheKey);
     }
 
+    if (temporaryPreference?.providerId) {
+      const preferred = _routeProviderEntryExact(agentId, operation, temporaryPreference.providerId, excluded);
+      if (preferred) {
+        _routeCache.set(cacheKey, preferred);
+        return preferred;
+      }
+    }
     const provider = resolveProviders(agentId, operation).find(candidate => (
       !excluded.has(candidate) && providerSupportsOperation(candidate, operation)
     )) || null;
@@ -1054,7 +1151,8 @@ ${body}
         ...((payload as any).conversationStart === true ? { conversationStart: true } : {}),
         ...(a2aContext || {})
       };
-      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link' || executionScope === 'owner_chat';
+      const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link'
+        || executionScope === 'owner_chat' || executionScope === 'e2ee' || executionScope === 'e2ee_canary';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1198,7 +1296,7 @@ ${body}
         error.deliveryOutcome='rejected';rejectReply(error);return; }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
+    const timeout = setTimeout(() => { _retireIsolatedTurn(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
       const route = _ownerRouteEntry(options.agentId);
@@ -1223,7 +1321,7 @@ ${body}
       catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
       return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
         provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
-    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1248,7 +1346,13 @@ ${body}
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     void replyPromise.catch(() => undefined);
     _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
-    const timeout = setTimeout(() => { _isolatedReplySinks.delete(sinkKey); rejectReply(new Error(`${prefix} Provider reply timed out`)); }, options.timeoutMs || 120_000);
+    const timeout = setTimeout(() => {
+      _retireIsolatedTurn(sinkKey);
+      const error: any = new Error(`${prefix} Provider reply timed out`);
+      error.deliveryOutcome = 'outcome_unknown';
+      error.code = `${prefix.toUpperCase()}_PROVIDER_REPLY_TIMEOUT`;
+      rejectReply(error);
+    }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
       const delivery = await _doRoute(options.agentId, {
@@ -1258,6 +1362,7 @@ ${body}
         executionScope, sourceType, preferredAdapter: options.preferredAdapter,
         sessionScopeId: options.sessionScopeId, principalScope: options.principalScope,
         protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
+        attachments: options.attachments, attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {
@@ -1268,8 +1373,72 @@ ${body}
       }
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
-    } finally { clearTimeout(timeout); _isolatedReplySinks.delete(sinkKey); }
+    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
   }
+
+  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+    if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
+      const error: any = new Error('E2EE_CANARY_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_CANARY_SCOPE_REQUIRED'; throw error;
+    }
+    const turnId = `e2ee-${crypto.randomUUID()}`;
+    const sinkKey = `${options.agentId}::${turnId}`;
+    let receipt: unknown;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'E2EE_CANARY_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = 'rejected'; rejectReply(error); return;
+      }
+      resolveReply(reply);
+    });
+    const timeout = setTimeout(() => {
+      _retireIsolatedTurn(sinkKey);
+      rejectReply(new Error('E2EE Canary Provider reply timed out'));
+    }, options.timeoutMs || 120_000);
+    timeout.unref?.();
+    try {
+      const delivery = await _doRoute(options.agentId, {
+        agentId: options.agentId,
+        fromUid: `e2ee:${options.contextId}`,
+        senderUid: 'e2ee',
+        channelId: options.contextId,
+        channelType: 1,
+        messageId: options.taskId,
+        turnId,
+        content: options.content,
+        rawContent: options.content,
+        providerBinding: options.binding || null,
+        executionScope: 'e2ee',
+        sourceType: 'visitor',
+        sessionScopeId: options.sessionScopeId,
+        attachments: options.attachments,
+        attachmentOutputDirectory: options.attachmentOutputDirectory,
+        onDeliveryReceipt: (value: unknown) => { receipt = value; },
+      });
+      if (delivery?.outcome !== 'delivered') {
+        const error: any = new Error(`E2EE Canary Provider delivery ${delivery?.outcome || 'failed'}`);
+        error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
+        error.code = delivery?.errorCode || 'E2EE_CANARY_PROVIDER_DELIVERY_FAILED';
+        throw error;
+      }
+      options.onProviderAccepted?.(receipt);
+      return { reply: await replyPromise, receipt };
+    } finally {
+      clearTimeout(timeout);
+      _retireIsolatedTurn(sinkKey);
+    }
+  }
+
+  // Compatibility alias for the internal Canary harness. Both paths use the
+  // same isolated Provider scope; production enablement is controlled by the
+  // E2EE runtime policy, not by Dispatcher routing.
+  const executeCanary = executeE2ee;
 
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
@@ -1492,10 +1661,11 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
+    refreshAgentDeliveryChannels, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }

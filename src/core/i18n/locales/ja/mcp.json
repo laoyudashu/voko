@@ -101,7 +101,7 @@
   "mcp.tool.mark_conversation_read.desc": "将会话的未读消息数重置为 0。访客已读消息后调用此工具清除未读标记",
   "mcp.tool.mark_conversation_read.p.channelId": "会话 ID（访客 UID）",
 
-  "mcp.tool.upload_and_send_file.desc": "ローカル添付を OSS へアップロードして一度に送信します。画像は画像メッセージ、それ以外はファイルメッセージになります。message を指定した場合は添付より先に送信します。1ファイルの上限は 25 MB です。",
+  "mcp.tool.upload_and_send_file.desc": "VOKO の短期認可でローカル添付をアップロードして一度に送信します。ストレージ鍵の設定は不要です。画像は画像メッセージ、それ以外はファイルメッセージになります。message を指定した場合は添付より先に送信します。1ファイルの上限は 25 MB です。",
   "mcp.tool.upload_and_send_file.p.toUid": "受信者の訪客またはグループ ID",
   "mcp.tool.upload_and_send_file.p.filePath": "ローカル絶対ファイルパス",
   "mcp.tool.upload_and_send_file.p.fileName": "表示するファイル名（任意）",

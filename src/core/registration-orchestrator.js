@@ -22,7 +22,8 @@ const {
   resolveQwenOfficeCommand,
   getQwenOfficeReadiness,
 } = require('./dispatcher/qwen-office-command');
-const { resolveTraeCliCommand, isTraeCliAvailable } = require('./dispatcher/trae-command');
+const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
+const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -46,6 +47,7 @@ const CLI_COMMANDS = {
   grok: 'grok',
   reasonix: 'reasonix',
   'qwen-office': 'qoderclicn',
+  codebuddy: 'codebuddy',
   trae: 'traecli',
 };
 const PULL_ONLY_CLI_COMMANDS = {
@@ -137,7 +139,8 @@ function currentAgentTypeFromText(value) {
     ['amazon-q', /(?:^|[\\/\s])q(?:\.exe)?\s+(?:chat|agent)|amazon-q/],
     ['opencode', /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/],
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
-    ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:\s|$)/],
+    ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:[\\/\s]|$)/],
+    ['codebuddy', /(?:^|[\\/\s])(?:codebuddy|cbc)(?:\.exe|\.cmd)?(?:\s|$)/],
     ['doubao', /(?:^|[\\/\s])doubao(?:\.exe)?(?:\s|$)/],
     ['trae', /(?:^|[\\/\s])traecli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])trae(?:\.exe|\.cmd)?(?:\s|$)|trae\s+(?:work|solo)/],
     ['cursor', /(?:^|[\\/\s])cursor(?:\.exe)?(?:\s|$)/],
@@ -599,10 +602,14 @@ class RegistrationOrchestrator {
           : isCursorCommandAvailable())
         : type === 'qwen-office'
           ? qwenOfficeReadiness(this.options).ready
-          : type === 'trae'
+        : type === 'trae'
             ? (typeof this.options.traeCliAvailable === 'function'
               ? !!this.options.traeCliAvailable()
-              : isTraeCliAvailable())
+              : isTraeCliReady())
+            : type === 'codebuddy'
+              ? (typeof this.options.codeBuddyCliAvailable === 'function'
+                ? !!this.options.codeBuddyCliAvailable()
+                : isCodeBuddyAvailable())
             : hasCommand(command);
       if (type === 'openclaw' || type === 'hermes' || !available) continue;
       detected.push({
@@ -791,10 +798,43 @@ class RegistrationOrchestrator {
         pull,
       ];
     }
+    if (type === 'workbuddy') {
+      const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      const runtime = typeof this.options.workBuddyRuntime === 'function'
+        ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
+      const available = !!runtime.command;
+      return [
+        {
+          mode: 'http', label: 'WorkBuddy HTTP 自动交付', role: 'primary',
+          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 使用 WorkBuddy 内置 CodeBuddy HTTP API 和隔离会话自动投递；服务仅监听本机回环地址。'
+            : '未检测到 WorkBuddy 内置 CodeBuddy CLI，当前使用主动获取。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'codebuddy') {
+      const available = typeof this.options.codeBuddyCliAvailable === 'function'
+        ? !!this.options.codeBuddyCliAvailable()
+        : isCodeBuddyAvailable();
+      return [
+        {
+          mode: 'acp', label: 'CodeBuddy ACP 实时会话', role: 'primary',
+          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 使用 CodeBuddy 官方 ACP stdio，并禁用工具和外部 MCP 配置，仅接收文字回复。'
+            : '未检测到独立 CodeBuddy CLI，当前使用主动获取。',
+        },
+        pull,
+      ];
+    }
     if (type === 'trae') {
       const available = typeof this.options.traeCliAvailable === 'function'
         ? !!this.options.traeCliAvailable()
-        : isTraeCliAvailable();
+        : isTraeCliReady();
       return [
         {
           mode: 'acp', label: 'Trae CLI ACP 实时会话', role: 'primary',
@@ -1273,6 +1313,7 @@ class RegistrationOrchestrator {
       || ((provider === 'github-copilot' || provider === 'cursor') && mode === 'acp')
       || (provider === 'cline' && mode === 'acp')
       || (provider === 'trae' && mode === 'acp')
+      || (provider === 'codebuddy' && mode === 'acp')
       || (provider === 'zeroclaw' && (mode === 'acp' || mode === 'acp_ws'))) {
       const command = provider === 'openclaw'
         ? 'openclaw'
@@ -1284,6 +1325,8 @@ class RegistrationOrchestrator {
               ? resolveCursorCommand()
               : provider === 'trae'
                 ? resolveTraeCliCommand()
+                : provider === 'codebuddy'
+                  ? resolveCodeBuddyCommand()
                 : provider === 'qwen-office'
                   ? resolveQwenOfficeCommand()
               : (CLI_COMMANDS[provider] || provider);
@@ -1299,10 +1342,22 @@ class RegistrationOrchestrator {
           : provider === 'trae'
             ? (typeof this.options.traeCliAvailable === 'function'
               ? !!this.options.traeCliAvailable()
-              : isTraeCliAvailable())
+              : isTraeCliReady())
+            : provider === 'codebuddy'
+              ? (typeof this.options.codeBuddyCliAvailable === 'function'
+                ? !!this.options.codeBuddyCliAvailable()
+                : isCodeBuddyAvailable())
             : path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
       }
+    } else if (provider === 'workbuddy' && mode === 'http') {
+      const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      const runtime = typeof this.options.workBuddyRuntime === 'function'
+        ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
+      ready = !!runtime.command;
+      detail = ready
+        ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
+        : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
         .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);

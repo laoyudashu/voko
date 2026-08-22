@@ -290,7 +290,8 @@ type McpContext = Omit<LiteContext,
   registerCapabilities?(agentId?: string, options?: DynamicRow): Promise<DynamicRow>;
   sendMessage(agentId?: string, toUid?: string, content?: string, fromUid?: string, messageType?: string, channelType?: number, mentions?: unknown, requestedMessageId?: string, metadata?: unknown): Promise<DynamicRow>;
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
-  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string): Promise<unknown>;
+  uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string,
+    uploadOptions?: { targetScopeType?: string; targetScopeId?: string }): Promise<unknown>;
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -676,7 +677,7 @@ const ATTACHMENT_MIME_TYPES: Record<string, string> = {
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
 async function uploadAttachment(cx: McpContext, p: McpToolParams) {
-  if (!cx.uploadFileToOSS) return { success: false, error: 'OSS 未配置' };
+  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
   const fs = require('fs');
   const path = require('path');
   if (!p.filePath) return { success: false, error: '缺少 filePath' };
@@ -691,7 +692,14 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
   const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
   const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
   try {
-    const url = await cx.uploadFileToOSS(p.filePath, objectName, mimeType);
+    const channelType = Number(p.channelType) === 2 ? 2 : 1;
+    const targetScopeType = channelType === 2 ? 'group' : 'private';
+    const targetScopeId = String(p.toUid || p.channelId || '').trim();
+    const uploadedUrl = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId,
+      { targetScopeType, targetScopeId });
+    const url = String(uploadedUrl || '').startsWith('/api/uploads/')
+      ? `${uploadedUrl}?channelType=${channelType}&channelId=${encodeURIComponent(targetScopeId)}`
+      : String(uploadedUrl || '');
     return {
       success: true,
       url,
@@ -737,6 +745,17 @@ function createToolHandlers(cx: McpContext) {
         [`mcpsec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, toolName, params?.agentId || null, success ? 1 : 0, Date.now()],
       );
     } catch (_) { /* Auditing must not turn a completed user action into a failure. */ }
+  };
+  const prepareRegisteredAgentBackend = async (agentId: string, backendType: string) => {
+    const dispatcher = (global as any).__dispatcher;
+    if (!dispatcher) return;
+    try {
+      await dispatcher.ensureBackend?.(backendType);
+      dispatcher.invalidateMeta?.(agentId);
+    } catch (error: any) {
+      // Agent creation remains successful with Pull as the safe fallback.
+      console.error(`[AgentRegistration] Provider runtime load failed agent=${agentId}:`, error?.message || String(error));
+    }
   };
   const inferChannelType = (params: McpToolParams): number => {
     if (params.channelType !== undefined && params.channelType !== null) {
@@ -1064,6 +1083,14 @@ function createToolHandlers(cx: McpContext) {
       return r;
     },
 
+    async login_for_owner_switch(p: McpToolParams = {}) {
+      return cx.agentRegistration.loginByCode({ email: p.email, code: p.code, persistMode: 'pending' });
+    },
+
+    async reauth_by_code(p: McpToolParams = {}) {
+      return cx.agentRegistration.loginByCode({ email: p.email, code: p.code, persistMode: 'none' });
+    },
+
     async oauth_providers() {
       return cx.agentRegistration.getOAuthProviders();
     },
@@ -1080,6 +1107,14 @@ function createToolHandlers(cx: McpContext) {
       return cx.agentRegistration.exchangeOAuthSession({
         sessionId: p.sessionId,
         exchangeCode: p.exchangeCode,
+      });
+    },
+
+    async oauth_exchange_for_owner_switch(p: McpToolParams = {}) {
+      return cx.agentRegistration.exchangeOAuthSession({
+        sessionId: p.sessionId,
+        exchangeCode: p.exchangeCode,
+        persistMode: 'pending',
       });
     },
 
@@ -1196,7 +1231,8 @@ function createToolHandlers(cx: McpContext) {
         });
       }
 
-      // Step 4：启动 IM 连接（公开回调名保持兼容）
+      // Step 4：先加载新 Agent 的 Provider，再启动 IM，避免首条消息只能 Pull。
+      await prepareRegisteredAgentBackend(agentId, backendType);
       if (cx.startAgentWorker) {
         let imStatus: WorkerConnectionStatus | undefined;
         try {
@@ -1317,7 +1353,8 @@ function createToolHandlers(cx: McpContext) {
         accessModeSynced = statusResult?.success !== false;
       }
 
-      // Step 4：启动 IM 连接（公开回调名保持兼容）
+      // Step 4：先加载新 Agent 的 Provider，再启动 IM，避免首条消息只能 Pull。
+      await prepareRegisteredAgentBackend(agentId, backendType);
       if (cx.startAgentWorker) {
         let imStatus: WorkerConnectionStatus | undefined;
         try {

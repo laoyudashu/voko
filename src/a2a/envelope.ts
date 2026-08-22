@@ -40,6 +40,19 @@ function validatePayload(envelope: A2AEnvelope): void {
     || Buffer.byteLength(JSON.stringify(payload), 'utf8') > 7168) throw new Error('Invalid A2A payload');
   if (envelope.operation === 'cancel_ack' && !['accepted', 'unsupported', 'too_late'].includes(String(payload.result || '')))
     throw new Error('Invalid A2A cancellation result');
+  if (['execute', 'continue'].includes(envelope.operation) && 'attachments' in payload) {
+    if (!Array.isArray(payload.attachments) || payload.attachments.length < 1 || payload.attachments.length > 5)
+      throw new Error('Invalid A2A attachment references');
+    const seen = new Set<string>();
+    for (const attachment of payload.attachments as unknown[]) {
+      const ref = (attachment as Record<string, unknown>)?.attachmentRef;
+      if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)
+        || Object.keys(attachment).length !== 1 || typeof ref !== 'string'
+        || !/^extatt_[A-Za-z0-9_-]{16,96}$/.test(ref) || seen.has(ref))
+        throw new Error('Invalid A2A attachment references');
+      seen.add(ref);
+    }
+  }
   if (envelope.operation !== 'artifact') return;
   const artifact = (payload.artifact || payload) as Record<string, any>;
   const index = Number(payload.index || 0);
@@ -47,11 +60,8 @@ function validatePayload(envelope: A2AEnvelope): void {
     || !Array.isArray(artifact.parts) || artifact.parts.length === 0) throw new Error('Invalid A2A artifact');
   for (const part of artifact.parts) {
     if (typeof part?.text === 'string' && part.text && Buffer.byteLength(part.text, 'utf8') <= 6144) continue;
-    const file = part?.file; let url: URL;
-    try { url = new URL(String(file?.uri || '')); } catch (_) { throw new Error('Invalid A2A artifact part'); }
-    if (url.protocol !== 'https:' || String(file.uri).length > 2048 || !/^[a-f0-9]{64}$/i.test(String(file.sha256 || ''))
-      || !Number.isSafeInteger(Number(file.size)) || Number(file.size) < 0 || Number(file.size) > 100 * 1024 * 1024
-      || typeof file.mimeType !== 'string' || file.mimeType.length > 128) throw new Error('Invalid A2A artifact part');
+    if (ID_PATTERN.test(String(part?.artifactRef || '')) && Object.keys(part).every((key) => key === 'artifactRef')) continue;
+    throw new Error('Invalid A2A artifact part');
   }
 }
 

@@ -4,6 +4,9 @@ import type { AccessControlLike } from './core/messenger-types';
 const { normalizeBackendType } = require('./core/agent-backend-types');
 const { isRoutingFeatureEnabled } = require('./core/provider-routing');
 
+const OWNER_SWITCH_RESTART_EXIT_CODE = 75;
+const SUPERVISED_RUNTIME_ENV = 'VOKO_LITE_SUPERVISED_RUNTIME';
+
 
 // 兼容旧的开发启动命令：源码目录中可能包含已迁移为 .ts 的模块，
 // Node.js 不能直接 require；先构建，再将参数原样交给 build 入口。
@@ -54,6 +57,7 @@ const _emit = process.emit.bind(process);
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const express = require('express');
 const { ensureLoopbackNoProxy } = require('./core/loopback-env');
 
@@ -64,6 +68,7 @@ const {
   initDatabase,
   createDatabaseAPI,
   getUserAccessToken,
+  getPrimaryOwnerEmail,
   SCHEMA_VERSION,
 } = require('./core/database');
 const { createAgentRegistration } = require('./core/agent-registration');
@@ -77,7 +82,7 @@ const {
   isAllowedBridgeConfigType,
   setLocalSecurityHeaders,
 } = require('./core/local-http-security');
-const { generateOSSSignature, initOSSFromConfig } = require('./server/oss');
+const { generateOSSSignature } = require('./server/oss');
 const { AgentWorkerManager } = require('./core/worker-manager');
 const { createDeliver, createSendMessage } = require('./core/send-message');
 const {
@@ -87,6 +92,12 @@ const {
   readInstanceMetadata,
 } = require('./core/process-lifecycle');
 const { stopVoko } = require('./core/stop-voko');
+const {
+  activatePendingOwnerSwitch,
+  clearRestartNotice,
+  restartNoticeForInstance,
+  spawnReplacementProcess,
+} = require('./core/owner-switch');
 
 // ── Lite 模块 ──
 const { createContext } = require('./context');
@@ -112,6 +123,8 @@ let __shuttingDown = false;
 let __serviceHealth: 'ok' | 'draining' | 'unhealthy' = 'ok';
 let __fatalHandling = false;
 let __shutdownContext: { agentManager?: any; wukongimSender?: any; db?: any; taskManager?: any } | null = null;
+let __ownerSwitchInProgress = false;
+let __restartAfterShutdown = false;
 
 function handleFatalError(kind: 'uncaughtException' | 'unhandledRejection', error: unknown): void {
   console.error(`[Lite][${kind}]`, error instanceof Error ? error.stack || error.message : error);
@@ -167,6 +180,15 @@ const pkg = require('../package.json');
 //  工具函数
 // ═══════════════════════════════════════════════
 
+function withRuntimeTimestamp(args: any[], now: Date = new Date()): any[] {
+  const first = args[0];
+  if (typeof first === 'string' && (/^\[\d{1,2}:\d{2}:\d{2}\]/.test(first)
+    || /^\[\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{3})?\]/.test(first))) return args;
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return [`[${timestamp}]`, ...args];
+}
+
 function _initFileLogger() {
   try {
     const fs = require('fs');
@@ -200,20 +222,20 @@ function _initFileLogger() {
     }
     function fmt(level?: any, a?: any) {
       const n = new Date(), p = (x: any) => String(x).padStart(2, '0');
-      const ms = String(n.getMilliseconds()).padStart(3, '0');
-      const ts = `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}.${ms}`;
+      const ts = `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
       return `${ts} [${level}] ` + a.map((x: any) => typeof x === 'object' ? (x instanceof Error ? x.stack || x.message : JSON.stringify(x)) : String(x)).join(' ');
     }
     function persist(level?: any, a?: any) {
       if (!_shouldLog(level)) return;
       try { rotateIfNeeded(logPath); fs.appendFileSync(logPath, fmt(level, a) + '\n'); } catch (_: any) {}
     }
-    // log/error/warn/debug 统一写 voko-im.log
-    const _origLog = console.log, _origError = console.error, _origWarn = console.warn, _origDebug = console.debug;
-    console.log = function(...a: any) { persist('LOG', a); _origLog.apply(console, a); };
-    console.error = function(...a: any) { persist('ERR', a); _origError.apply(console, a); };
-    console.warn = function(...a: any) { persist('WRN', a); _origWarn.apply(console, a); };
-    console.debug = function(...a: any) { persist('DBG', a); if (_origDebug) _origDebug.apply(console, a); };
+    // 仅长驻 Lite 服务安装：CLI/MCP stdio/JSON 输出不会经过这里。
+    const _origLog = console.log, _origInfo = console.info, _origError = console.error, _origWarn = console.warn, _origDebug = console.debug;
+    console.log = function(...a: any) { persist('LOG', a); _origLog.apply(console, withRuntimeTimestamp(a)); };
+    console.info = function(...a: any) { persist('LOG', a); _origInfo.apply(console, withRuntimeTimestamp(a)); };
+    console.error = function(...a: any) { persist('ERR', a); _origError.apply(console, withRuntimeTimestamp(a)); };
+    console.warn = function(...a: any) { persist('WRN', a); _origWarn.apply(console, withRuntimeTimestamp(a)); };
+    console.debug = function(...a: any) { persist('DBG', a); if (_origDebug) _origDebug.apply(console, withRuntimeTimestamp(a)); };
   } catch (_: any) {}
 }
 
@@ -599,6 +621,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // 先完成来源、Host 和可选 token 校验，再读取请求体，避免无效来源消耗解析资源。
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  app.use((req?: any, res?: any, next?: any) => {
+    if (__serviceHealth !== 'draining' || ['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) return next();
+    return res.status(503).json({ success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换中，请稍候' });
+  });
 
   const currentOwnsAgent = (agentId: string): boolean => {
     if (!agentId) return false;
@@ -1458,17 +1485,41 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try { __instanceLock?.release(); } catch {}
   });
 
-  // ── OSS 签名（前端直传 OSS，对应 renderer 的 uploadAndSendFile） ──
-  app.post('/api/oss-signature', (req?: any, res?: any) => {
+  // ── 短期上传授权（前端直传对象存储，不接触长期凭证） ──
+  app.post('/api/oss-signature', async (req?: any, res?: any) => {
     try {
-      const { filename, agentId, contentType } = req.body || {};
+      const { filename, agentId, contentType, size, targetScopeType, targetScopeId, channelType, channelId } = req.body || {};
       if (!filename) return res.json({ success: true }); // CLI 连通性测试（空 body）
       if (!agentId || !currentOwnsAgent(agentId)) return res.status(403).json({ success: false, error: 'Forbidden' });
       const safeName = path.basename(String(filename)).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-160);
       if (!safeName || safeName === '.' || safeName === '..') return res.status(400).json({ success: false, error: 'Invalid filename' });
-      const objectName = `chat/files/${encodeURIComponent(agentId)}/${Date.now()}-${safeName}`;
-      res.json({ success: true, data: generateOSSSignature(objectName, contentType) });
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      const resolvedScopeType = targetScopeType || (Number(channelType) === 2 ? 'group' : 'private');
+      const resolvedScopeId = targetScopeId || channelId || null;
+      const data = await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: safeName,
+        size, contentType, targetScopeType: resolvedScopeType, targetScopeId: resolvedScopeId,
+        idempotencyKey: String(req.get('idempotency-key') || `lite-web-${require('crypto').randomUUID()}`) });
+      res.json({ success: true, data });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
+  });
+
+  app.get('/api/uploads/:uploadId/download', async (req?: any, res?: any) => {
+    try {
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      if (!token) return res.status(401).end();
+      const referer = String(req.get('referer') || '');
+      const match = referer.match(/\/agents\/([^/?#]+)/);
+      const agentId = match ? decodeURIComponent(match[1]) : String(req.query?.agentId || '');
+      const channelType = Number(req.query?.channelType) === 2 ? 2 : 1;
+      const targetScopeType = channelType === 2 ? 'group' : 'private';
+      const targetScopeId = String(req.query?.channelId || '');
+      const data = await require('./server/oss').getUploadDownload(req.params.uploadId, token, agentId || undefined,
+        targetScopeType, targetScopeId || undefined);
+      res.set('Cache-Control', 'no-store');
+      res.redirect(302, data.url);
+    } catch (_error: any) { res.status(404).end(); }
   });
 
   // ── WebSocket 服务器（事件推送） ──
@@ -1508,9 +1559,12 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         try {
           const prev = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
           const data = prev ? JSON.parse(prev.data) : {};
+          const activeOwner = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
+          if (String(data.userEmail || '').trim().toLowerCase() !== activeOwner) data.agents = [];
           data.instanceId = __instanceLock?.metadata?.instanceId;
           data.pid = process.pid;
           data.port = actualPort;
+          data.userEmail = activeOwner;
           db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
             .run(JSON.stringify(data), Date.now());
         } catch (_: any) {}
@@ -1597,7 +1651,12 @@ async function startMcpServer(args?: any, core?: any) {
   __shutdownContext = { agentManager, wukongimSender, db, taskManager };
   const userEmail = getCurrentUserEmail(db);
   const { A2AModule, A2ARegistrationService } = require('./a2a');
-  const a2aModule = new A2AModule();
+  // A2A 状态必须与当前主库实例同位。测试、多实例或 --db 启动不得
+  // 回落到默认用户目录的生产 voko-a2a.db，否则恢复扫描会误判正在执行的 Task。
+  const mainDatabasePath = String(db._dbPath || '').trim();
+  const a2aDatabasePath = String(process.env.VOKO_A2A_DB_PATH || '').trim()
+    || path.join(path.dirname(path.resolve(mainDatabasePath)), 'voko-a2a.db');
+  const a2aModule = new A2AModule({ databasePath: a2aDatabasePath });
   let a2aMailboxClient: any = null;
   const a2aOwnerToken = userEmail ? getUserAccessToken(db, userEmail) : null;
   const syncA2ARegistration = userEmail && a2aOwnerToken ? () => a2aModule.withDatabase((a2aDb: any) => {
@@ -1654,14 +1713,6 @@ async function startMcpServer(args?: any, core?: any) {
 
   // ── 初始化文件日志（写入 voko-im.log，仅首次生效） ──
   if (!(global as any).__vokoFileLoggerStarted) { (global as any).__vokoFileLoggerStarted = true; _initFileLogger(); }
-
-  // ── 从 DB 加载 OSS 凭证（与 Desktop main.js 一致，供 /api/oss-signature 端点使用） ──
-  const _ossRow = db.prepare("SELECT data FROM config WHERE type = ?").get('oss_config');
-  if (_ossRow) {
-    initOSSFromConfig({ oss_config: JSON.parse(_ossRow.data) });
-  } else {
-    initOSSFromConfig(databaseAPI.getChannelConfig());
-  }
 
   // 初始化消息通知模块（lite 进程：_mainWindow=null → 总 emit voko:notification 经 WebSocket 给 desktop）
   notifier.init(null, db);
@@ -1727,7 +1778,11 @@ async function startMcpServer(args?: any, core?: any) {
           onError: (code: string) => console.error(`[A2A Bridge] ${code}`) });
         await taskManager.start('a2a-bridge', () => a2aRuntime.start());
       } catch (error: any) {
-        console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+        if (error?.code === 'A2A_NO_ELIGIBLE_AGENT') {
+          console.warn('[A2A Bridge] 当前主人没有符合服务端发布条件的 Agent，已跳过 A2A 设备注册');
+        } else {
+          console.error('[A2A Bridge] 启动失败，现有 VOKO 功能继续运行:', error.message);
+        }
       }
     }
   } catch (e: any) {
@@ -1884,10 +1939,175 @@ async function startMcpServer(args?: any, core?: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
   }
 
+  let e2eeCanaryRuntime: any = null;
+  let e2eeDatabase: any = null;
+  try {
+    const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
+    const { loadProductionE2eeConfig } = require('./e2ee/production-config');
+    const productionConfig = loadProductionE2eeConfig(process.env,(type: string) => databaseAPI.getConfigFromDb(type));
+    const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
+    const productionEnabled = productionConfig.enabled;
+    if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
+    if (canaryPolicy.enabled || productionEnabled) {
+      let endpoint = String(productionEnabled ? productionConfig.endpoint : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
+      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'VOKO_E2EE_ENDPOINT' : 'VOKO_E2EE_CANARY_ENDPOINT'} must be an absolute path`);
+      if (productionEnabled) {
+        const { verifyNativeE2eeRelease } = require('./e2ee/native-release');
+        endpoint = verifyNativeE2eeRelease({ executable:endpoint,
+          manifestPath:productionConfig.manifestPath,
+          publicKeyPem:productionConfig.publicKeyPem });
+      }
+      const { CanaryStore } = require('./e2ee/canary-store');
+      const { CanaryRuntime } = require('./e2ee/canary-runtime');
+      const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
+      const { DatabaseSync } = require('node:sqlite');
+      const defaultE2eePath = path.join(path.dirname(String(db._dbPath || '')), 'voko-e2ee.db');
+      const e2eePath = path.resolve(String(productionConfig.databasePath || defaultE2eePath));
+      if (e2eePath === path.resolve(String(db._dbPath || ''))) throw new Error('VOKO_E2EE_DB_PATH must differ from the main database');
+      fs.mkdirSync(path.dirname(e2eePath), { recursive: true });
+      e2eeDatabase = new DatabaseSync(e2eePath);
+      e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+      let e2eeStore: any;
+      let e2eePolicy: any = canaryPolicy;
+      let productionDirectoryClient: any = null;
+      let migrated = { sessions:0,receipts:0 };
+      const e2eeOwnerToken = productionEnabled && userEmail ? getUserAccessToken(db,userEmail) : null;
+      if (productionEnabled) {
+        const { ProductionE2eeStore } = require('./e2ee/production-store');
+        const { ProductionE2eePolicy } = require('./e2ee/production-policy');
+        e2eeStore = new ProductionE2eeStore(e2eeDatabase);
+        e2eePolicy = new ProductionE2eePolicy(e2eeStore,true);
+      } else {
+        e2eeStore = new CanaryStore(e2eeDatabase);
+        migrated = e2eeStore.migrateLegacy(db);
+      }
+      e2eeCanaryRuntime = new CanaryRuntime({ policy: e2eePolicy, store: e2eeStore,
+        crypto: new CanaryCryptoProcess(endpoint), dispatcher,
+        channelStatusProvider: productionEnabled ? async (localAgentId: string, channelIds: string[]) => {
+          if (!productionDirectoryClient) throw new Error('E2EE_DIRECTORY_UNAVAILABLE');
+          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(localAgentId)?.did || '');
+          const serverAgentId = require('./core/agent-invitations').serverAgentIdFromDid(did);
+          if (!serverAgentId) return [];
+          const data = await productionDirectoryClient.conversationStatuses({ agentIds:[serverAgentId],visitorIds:channelIds });
+          return Array.isArray(data?.conversations) ? data.conversations : [];
+        } : undefined,
+        persistInbound: (agentId: string, message: any, plaintext: string, messageId: string) => {
+          if (!messageHandler) return false;
+          const projected = messageHandler.handleAgentMessage(agentId, {
+            ...message, content: plaintext, contentType: 1, messageId,
+            clientMsgNo: messageId,
+          }, true);
+          return Boolean(projected);
+        },
+        persistOutbound: (agentId: string, channelId: string, plaintext: string, messageId: string) => {
+          if (!messageHandler) throw new Error('E2EE_MESSAGE_HANDLER_UNAVAILABLE');
+          messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId);
+        },
+        deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
+          const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
+          if (!result?.success) {
+            const error: any = new Error(result?.error || 'E2EE_REPLY_NOT_DELIVERED');
+            error.deliveryOutcome = result?.outcomeUnknown ? 'outcome_unknown' : 'not_delivered';
+            throw error;
+          }
+          return result;
+        },
+        downloadAttachment: productionEnabled && e2eeOwnerToken ? async (agentId: string, uploadId: string, targetScopeId: string) => {
+          const { getUploadDownload } = require('./server/oss');
+          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(agentId)?.did || '');
+          const serverAgentId = did.split(':').pop()?.replace(/-/g, '');
+          if (!serverAgentId || !/^[0-9a-f]{32}$/i.test(serverAgentId)) throw new Error('E2EE_ATTACHMENT_AGENT_IDENTITY_INVALID');
+          const canonicalAgentId = `${serverAgentId.slice(0,8)}-${serverAgentId.slice(8,12)}-${serverAgentId.slice(12,16)}-${serverAgentId.slice(16,20)}-${serverAgentId.slice(20)}`.toLowerCase();
+          const metadata = await getUploadDownload(uploadId,e2eeOwnerToken,canonicalAgentId,'private',targetScopeId);
+          const url = String(metadata?.url || '');
+          if (!/^https:\/\//i.test(url)) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_URL_INVALID');
+          const response = await fetch(url,{signal:AbortSignal.timeout(15_000)});
+          const length = Number(response.headers.get('content-length') || 0);
+          if (!response.ok || !Number.isSafeInteger(length) || length < 2 || length > 40*1024*1024) {
+            throw new Error('E2EE_ATTACHMENT_DOWNLOAD_INVALID');
+          }
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength !== length) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_TRUNCATED');
+          return bytes;
+        } : undefined });
+      if (productionEnabled) {
+        const { E2eeDirectoryClient } = require('./e2ee/directory-client');
+        const { ProductionE2eeDirectoryWorker } = require('./e2ee/production-directory-worker');
+        const { PendingRecipientProcess } = require('./e2ee/canary-crypto-process');
+        const { serverAgentIdFromDid } = require('./core/agent-invitations');
+        const nodeCrypto = require('node:crypto');
+        const ownerToken = e2eeOwnerToken;
+        if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
+        const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
+        const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
+        const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
+          WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
+          .flatMap((row: any) => {
+            const serverAgentId = serverAgentIdFromDid(row.did);
+            if (!serverAgentId) return [];
+            const suffix = nodeCrypto.createHash('sha256').update(`${deviceGeneration}\0${serverAgentId}`).digest('base64url').slice(0,32);
+            const ownerScope = nodeCrypto.createHash('sha256').update(`voko-e2ee-owner/v1\0${String(userEmail).toLowerCase()}`).digest('base64url');
+            return [{ localAgentId:String(row.agent_id),serverAgentId,targetAgentDid:String(row.did),
+              ownerDeviceKeyId:`voko-lite-${suffix}`,ownerScope,bindingGeneration:1 }];
+          });
+        productionDirectoryClient = new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken });
+        const directoryWorker = new ProductionE2eeDirectoryWorker({
+          client:productionDirectoryClient,store:e2eeStore,agents,
+          processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
+          intervalMs:productionConfig.pollIntervalMs,
+          onError:(agentId: string,error: any) => {
+            if (error?.sharedServiceFailure) {
+              console.warn(`[E2EE] Directory服务暂不可用 affectedAgents=${Number(error.affectedAgents || 0)} retryInMs=${Number(error.retryAfterMs || 0)} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
+              return;
+            }
+            console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
+          },
+          onRecovery:(failureCount: number) => console.warn(`[E2EE] Directory服务已恢复 consecutiveFailures=${failureCount}`),
+        });
+        await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
+        console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);
+      } else {
+        console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
+      }
+      if (migrated.sessions || migrated.receipts) console.warn(`[E2EE] 已迁移旧运行状态 sessions=${migrated.sessions} receipts=${migrated.receipts}`);
+      await taskManager.start('e2ee-database', () => async () => { try { e2eeDatabase?.close(); } catch (_) {} });
+    }
+  } catch (error: any) {
+    console.error('[E2EE Canary] 初始化失败，所有 E2EE 消息将硬拒绝:', error.message);
+  }
+  if (messageHandler) {
+    messageHandler.handleEncryptedMessage = async (agentId: string, data: any) => {
+      if (!e2eeCanaryRuntime) return { handled:true,accepted:false,code:'E2EE_CANARY_DISABLED' };
+      return e2eeCanaryRuntime.handle(agentId,data);
+    };
+  }
+  if (e2eeCanaryRuntime) {
+    const { CanaryMonitor } = require('./e2ee/canary-monitor');
+    const canaryMonitor = new CanaryMonitor(e2eeCanaryRuntime,{ onReport:(report: any) => {
+      try { require('./core/lite-bus').emit('e2ee-canary:status',report); } catch (_) {}
+    } });
+    await taskManager.start('e2ee-canary-monitor',() => canaryMonitor.start());
+  }
+
   // ── 接管 IM Hub 事件：主消息持久化后才向服务端 ACK ──
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
+      if (Number(data?.contentType) === 13) {
+        if (!e2eeCanaryRuntime) {
+          console.warn('[E2EE Canary] 未启用或初始化失败，拒绝密文消息');
+          data?.ack?.();
+          return;
+        }
+        void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
+          if (!result.accepted) console.warn(`[E2EE Canary] 已拒绝消息: ${result.code || 'E2EE_CANARY_REJECTED'}`);
+          if (!data?.__e2eeReceiptAcked) data?.ack?.();
+        }).catch((error: any) => {
+          console.error('[E2EE Canary] 处理异常:', error.message);
+          data?.nack?.(error);
+        });
+        return;
+      }
       // When trusted remote is parked, reject both owner protocols before the
       // ordinary visitor handler. This keeps stale/forged owner payloads from
       // being interpreted as normal visitor messages.
@@ -2104,33 +2324,43 @@ async function startMcpServer(args?: any, core?: any) {
     },
   });
   const handlers = createToolHandlers(cx);
+  handlers.refresh_delivery_channels = async ({ agentId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.refreshAgentDeliveryChannels) return { success: false, error: 'Dispatcher unavailable' };
+    return { success: true, agentId, deliveryStatus: await activeDispatcher.refreshAgentDeliveryChannels(String(agentId || '')) };
+  };
+  handlers.select_delivery_channel = async ({ agentId, mode, providerId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.selectTemporaryDeliveryChannel) return { success: false, error: 'Dispatcher unavailable' };
+    return { success: true, agentId, deliveryStatus: activeDispatcher.selectTemporaryDeliveryChannel(String(agentId || ''), String(mode || ''), providerId) };
+  };
   handlers.restart_agent_runtime = async () => {
-    const email = getCurrentUserEmail(db);
-    if (!email) return { success: false, error: '未登录' };
-    await agentManager.stopAll();
-    const agents = db.prepare(
-      "SELECT * FROM agents WHERE publish_status = 'published' AND owner_email = ?"
-    ).all(email);
-    await agentManager.startMany(agents.map((a: any) => ({
-      agentId: a.agent_id,
-      config: { uid: a.imUid, token: a.imToken, serverUrl: a.im_server_url },
-    })));
-    const agentList = agents.map((a: any) => ({
-      agentId: a.agent_id, agentName: a.agent_name || a.agent_id,
-      imConnected: false, automaticDeliveryReady: false,
-      automaticReadyModes: [], activeAutomaticMode: null, pullReady: true, pullOnly: false, lastDeliveredMode: null,
-    }));
-    db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
-      .run(JSON.stringify({
-        instanceId: __instanceLock?.metadata?.instanceId,
-        pid: process.pid,
-        ts: Date.now(),
-        port: __runtimePort || 3100,
-        userEmail: email,
-        agents: agentList,
-      }), Date.now());
-    try { require('./core/lite-bus').emit('user:switched', { email }); } catch (_: any) {}
-    return { success: true, count: agents.length };
+    if (__ownerSwitchInProgress || __serviceHealth === 'draining') {
+      return { success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换正在进行' };
+    }
+    __ownerSwitchInProgress = true;
+    try {
+      const previousInstanceId = __instanceLock?.metadata?.instanceId || null;
+      const activation = activatePendingOwnerSwitch(db, { previousInstanceId });
+      if (!activation.activated) {
+        __ownerSwitchInProgress = false;
+        return { success: true, restarting: false, previousInstanceId };
+      }
+      if (!activation.ownerChanged && !activation.tokenChanged) {
+        __ownerSwitchInProgress = false;
+        return { success: true, restarting: false, previousInstanceId };
+      }
+      __serviceHealth = 'draining';
+      __restartAfterShutdown = true;
+      console.error('[账号切换] 已验证新主人，准备重启运行环境');
+      setTimeout(() => {
+        void shutdownAll(agentManager, wukongimSender, db, 'owner-switch', 0, taskManager);
+      }, 150);
+      return { success: true, restarting: true, previousInstanceId };
+    } catch (error: any) {
+      __ownerSwitchInProgress = false;
+      return { success: false, code: 'OWNER_SWITCH_ACTIVATION_FAILED', error: error.message };
+    }
   };
   const mcpServer = createMcpServer(handlers, { version: pkg.version });
 
@@ -2146,6 +2376,13 @@ async function startMcpServer(args?: any, core?: any) {
     trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
+    e2eeCanaryRuntime,
+    uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
+      const ownerEmail = getPrimaryOwnerEmail(db);
+      const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
+      return require('./server/oss').uploadToOSS(name, data, mime, null, { userAccessToken: token, agentId,
+        purpose: 'agent_icon', fileName: path.basename(name), referenceType: 'agent_icon', referenceId: agentId || name });
+    },
   };
   const webRouter = createWebRouter(handlers, db, webRouterOptions);
 
@@ -2336,6 +2573,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, back
         sessionPersistence,
       };
       if (transportId === 'hermes-http') return { ...hermesConfig, sessionPersistence };
+      if (transportId === 'workbuddy-http') return { sessionPersistence };
       return { sessionPersistence };
     },
   };
@@ -2508,7 +2746,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         try { await hermesHandler.healthCheck(); } catch (_: any) {}
         try {
           const sql = userEmail
-            ? `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND owner_email = ?`
+            ? `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?`
             : `SELECT agent_id, delivery_modes FROM agents WHERE backend_type = 'hermes' AND publish_status = 'published'`;
           const hermesAgents = userEmail ? db.prepare(sql).all(userEmail) : db.prepare(sql).all();
           for (const { agent_id, delivery_modes } of hermesAgents) {
@@ -2530,7 +2768,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── 遍历 agent 检测状态 ──
       const warnings = [];
       const agentSql = userEmail
-        ? "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published' AND owner_email = ?"
+        ? "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?"
         : "SELECT agent_id, agent_name, imUid, backend_type, owner_email FROM agents WHERE publish_status = 'published'";
       const rows = userEmail ? db.prepare(agentSql).all(userEmail) : db.prepare(agentSql).all();
       let imOnline = 0, backendOnline = 0, posted = 0;
@@ -2638,6 +2876,19 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             userEmail: prevData.userEmail || '',
             agents: agentList,
           }), Date.now());
+        const currentInstanceId = __instanceLock?.metadata?.instanceId;
+        const restartNotice = restartNoticeForInstance(db, currentInstanceId);
+        if (restartNotice) {
+          const imSettled = agentList.length === 0 || imOnline === agentList.length;
+          const waitExpired = Date.now() - restartNotice.created_at >= 30000;
+          if (imSettled || waitExpired) {
+            const automatic = agentList.filter((agent: any) => agent.automaticDeliveryReady).length;
+            const pullOnly = agentList.filter((agent: any) => agent.pullReady && !agent.automaticDeliveryReady).length;
+            const phase = imSettled ? 'READY' : '启动完成（部分 IM 未连接）';
+            console.error(`[账号切换] 新运行环境 ${phase}：Agent=${agentList.length}，IM=${imOnline}/${agentList.length}，自动推送=${automatic}，仅Pull=${pullOnly}`);
+            clearRestartNotice(db);
+          }
+        }
         // WebSocket 广播 runtime 状态，前端局部刷新 footer
         try {
           const imDown = agentList.some((a: any) => !a.imConnected);
@@ -2673,22 +2924,22 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   let firstBeatTimer: NodeJS.Timeout | null = null;
   let firstBeatStatusHandler: ((msg: any) => void) | null = null;
 
-  // Agent 全部连接就绪后立即执行首次心跳（无需等 60s），5s 兜底
+  // Agent 全部连接就绪后立即执行首次心跳；未全部连接时5秒后仍强制刷新真实状态。
+  let _firstBeatDone = false;
+  const _tryFirstBeat = (force = false) => {
+    if (_firstBeatDone) return;
+    if (force || agentManager.connectedAgents.size >= agentCount) {
+      _firstBeatDone = true;
+      void heartbeatFn();
+    }
+  };
   if (agentCount > 0) {
-    let _firstBeatDone = false;
-    const _tryFirstBeat = () => {
-      if (_firstBeatDone) return;
-      if (agentManager.connectedAgents.size >= agentCount) {
-        _firstBeatDone = true;
-        heartbeatFn();
-      }
-    };
     firstBeatStatusHandler = (msg?: any) => {
       if (msg.status === 'connected' || msg.statusCode === 2) _tryFirstBeat();
     };
     agentManager.on('status', firstBeatStatusHandler);
-    firstBeatTimer = setTimeout(() => _tryFirstBeat(), 5000);
   }
+  firstBeatTimer = setTimeout(() => _tryFirstBeat(true), agentCount > 0 ? 5000 : 0);
 
   return () => {
     clearInterval(timer);
@@ -2727,7 +2978,7 @@ async function shutdownAll(
   __shuttingDown = true;
   taskManager ||= __shutdownContext?.taskManager;
   __serviceHealth = signal?.startsWith?.('fatal:') ? 'unhealthy' : 'draining';
-  if (signal !== 'api-quit') console.error(t('cli.index.signal_cleanup', { signal }));
+  console.error(t('cli.index.signal_cleanup', { signal }));
   try { await taskManager?.stopAll?.(); } catch (e: any) { console.error('[VOKO Lite] 后台任务清理失败:', e.message); }
   try {
     const handlers = registry.getAllHandlers?.() || {};
@@ -2781,6 +3032,21 @@ async function shutdownAll(
   try { __instanceLock?.release(); } catch {}
   __instanceLock = null;
   __shutdownContext = null;
+  if (__restartAfterShutdown) {
+    __restartAfterShutdown = false;
+    console.error('[账号切换] 旧运行环境已关闭');
+    if (process.env[SUPERVISED_RUNTIME_ENV] === '1') {
+      console.error('[账号切换] 正在由启动监督器重建运行环境');
+      exitCode = OWNER_SWITCH_RESTART_EXIT_CODE;
+    } else {
+      try {
+        const replacement = spawnReplacementProcess();
+        console.error(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
+      } catch (error: any) {
+        console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
+      }
+    }
+  }
   console.error(t('cli.index.graceful_exit'));
   process.exit(exitCode);
 }
@@ -3064,6 +3330,10 @@ async function main() {
 
   const willServe = !subcommand || subcommand === 'start';
   if (willServe) {
+    if (!(global as any).__vokoFileLoggerStarted) {
+      (global as any).__vokoFileLoggerStarted = true;
+      _initFileLogger();
+    }
     const dbPath = resolveDbPath(args);
     const lockResult = await acquireInstanceLock(dbPath, path.resolve(process.argv[1]));
     if (!lockResult.acquired) {
@@ -3127,8 +3397,39 @@ async function main() {
   }
 }
 
+function shouldSuperviseRuntime(argv = process.argv, env = process.env): boolean {
+  if (env[SUPERVISED_RUNTIME_ENV] === '1') return false;
+  const subcommand = String(argv[2] || '').trim();
+  return !subcommand || subcommand === 'start';
+}
+
+async function runRuntimeSupervisor(): Promise<void> {
+  const { spawn } = require('node:child_process');
+  for (;;) {
+    const child = spawn(process.execPath, [process.argv[1], ...process.argv.slice(2)], {
+      cwd: process.cwd(),
+      env: { ...process.env, [SUPERVISED_RUNTIME_ENV]: '1' },
+      detached: false,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    const result: { code: number | null; signal: NodeJS.Signals | null } = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => resolve({ code, signal }));
+    });
+    if (result.code === OWNER_SWITCH_RESTART_EXIT_CODE) {
+      console.error('[账号切换] 启动监督器正在拉起新运行环境');
+      continue;
+    }
+    if (result.signal) process.kill(process.pid, result.signal);
+    process.exitCode = result.code ?? 1;
+    return;
+  }
+}
+
 if (require.main === module) {
-  main().catch((err: any) => {
+  const entry = shouldSuperviseRuntime() ? runRuntimeSupervisor() : main();
+  entry.catch((err: any) => {
     try { __instanceLock?.release(); } catch {}
     console.error(t('cli.index.start_failed', { msg: (err && err.message) || err }));
     process.exit(1);
@@ -3139,4 +3440,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, shouldSuperviseRuntime, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

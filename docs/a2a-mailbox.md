@@ -1,6 +1,6 @@
 # A2A Mailbox Gateway 与 Lite Bridge
 
-[文档索引](README.md) · [MCP/CLI 运行模型](mcp-cli-runtime.md) · [消息安全](message-safety.md)
+[文档索引](README.md) · [A2A Gateway 上手指南](a2a-gateway-getting-started.md) · [MCP/CLI 运行模型](mcp-cli-runtime.md) · [消息安全](message-safety.md)
 
 VOKO 的 A2A Mailbox 将已发布的本地 Agent 映射为可从公网访问的 A2A 1.0 Agent，同时允许本地 Agent 发现并调用外部 A2A Agent。它是独立的数据面，不复用普通访客 IM、WuKongIM 消息或聊天 Conversation。
 
@@ -17,6 +17,8 @@ A2A 默认开启。正常产品流程由 VOKO 使用当前主人账号和已发�
 ```powershell
 $env:VOKO_A2A_MAILBOX_URL='https://<gateway>/internal/a2a-mailbox/v1'
 $env:VOKO_A2A_DEVICE_TOKEN='<device token>'
+$env:VOKO_A2A_EXECUTION_CONCURRENCY='4' # 跨 Agent 并发；同一 Agent 始终串行
+$env:VOKO_A2A_EXECUTION_TIMEOUT_MS='120000'
 $env:VOKO_A2A_GATEWAY_PUBLIC_KEY_B64='<base64 public key>'
 voko start
 ```
@@ -40,7 +42,7 @@ Web UI 的 `/a2a-tasks` 是独立任务页，也可以从 Agent 详情页的“A
 3. `voko_a2a_get_task`：使用 `agentId + taskId` 查询。Task 不能被另一个本地 Agent读取。
 4. `voko_a2a_cancel_task`：请求取消同一 Agent 的 Task。只有远端明确返回取消才得到 `accepted`；`unsupported`、`too_late` 和 `outcome_unknown` 均不会伪装成成功，也不会自动重发取消请求。
 
-当前外部调用只开放文字型 A2A 1.0 HTTP+JSON。外部 Artifact、Push Notification、直接 Lite 公网连接和 Provider 原生 Session 外传均未启用。
+当前外部调用使用 A2A 1.0 HTTP+JSON，支持文字以及受控附件/Artifact。附件必须经过服务端对象归属与摘要校验、Lite 隔离工作区和 Provider 文件输入能力检查；普通文字请求不进入附件分支。Push Notification、直接 Lite 公网连接和 Provider 原生 Session 外传均未启用，结果通过同步响应、GetTask、Subscribe 或轮询取得。
 
 ## 状态与可靠性
 
@@ -58,6 +60,7 @@ Web UI 的 `/a2a-tasks` 是独立任务页，也可以从 Agent 详情页的“A
 - 所有 A2A 入站/出站正文仍经过 VOKO 确定性审核和已启用的模型辅助分类器；A2A Reply Sink 不绕过安全策略。
 - 外部发现拒绝 HTTP、重定向、私网/回环/保留地址和 DNS 重绑定目标。
 - 远端凭证采用 A2A 专用密钥命名空间加密，并绑定到 `device + local Agent + remote Card`。
+- 标准 A2A 使用 HTTPS/TLS；生产访客私聊 E2EE 不延伸到 A2A Task 或 Artifact。
 - `nativeSessionId`、Token、签名值、完整 Route、正文和本机路径不得进入 Doctor 或普通日志。
 
 ## 验证

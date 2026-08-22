@@ -7,7 +7,7 @@
  *   2. npm pack 生成 voko-lite-<ver>.tgz（含 build）
  *   3. 上传 tgz + lite-latest.json 到 OSS（updates/lite/）
  *
- * OSS 凭证：环境变量 OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET（与 src/server/oss.js 一致）
+ * 发布凭证：仅由受控 CI/发布环境提供，不进入 VOKO Lite 运行时或用户数据库。
  *
  * 仅在源仓库内运行（require 了未发布的 ../src/server/oss）。用法：
  *   node scripts/publish-lite.js            构建+上传
@@ -29,6 +29,23 @@ function ensureOssCredentials() {
   if (!process.env.OSS_ACCESS_KEY_ID || !process.env.OSS_ACCESS_KEY_SECRET) {
     throw new Error('OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET are required');
   }
+}
+
+async function uploadReleaseObject(objectName, content, contentType) {
+  const bucket = process.env.OSS_BUCKET || ENDPOINTS.oss.bucket;
+  const region = process.env.OSS_REGION || ENDPOINTS.oss.region;
+  const endpoint = String(process.env.OSS_ENDPOINT || `https://${bucket}.${region}.aliyuncs.com`).replace(/\/$/, '');
+  const accessKeyId = process.env.OSS_ACCESS_KEY_ID;
+  const accessKeySecret = process.env.OSS_ACCESS_KEY_SECRET;
+  const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  const date = new Date().toUTCString();
+  const resource = `/${bucket}/${objectName}`;
+  const signature = crypto.createHmac('sha1', accessKeySecret)
+    .update(`PUT\n\n${contentType}\n${date}\n${resource}`).digest('base64');
+  const response = await fetch(`${endpoint}/${objectName}`, { method: 'PUT', headers: {
+    Authorization: `OSS ${accessKeyId}:${signature}`, 'Content-Type': contentType, Date: date, 'Content-Length': String(buffer.length)
+  }, body: buffer });
+  if (!response.ok) throw new Error(`release upload failed (${response.status})`);
 }
 
 async function main() {
@@ -61,8 +78,6 @@ async function main() {
   }
 
   ensureOssCredentials();
-  const { uploadToOSS } = require('../build/server/oss');
-
   // 3. 上传 tgz + manifest
   // OSS object key 必须含 baseUrl 的路径段（updates），公开 URL 才与 auto-updater
   // 读取的 baseUrl + 相对路径 一致。manifest.tarball 存相对 baseUrl 的路径。
@@ -71,7 +86,7 @@ async function main() {
   const tarballKey = `${UPDATE_PATH}/${tarballRel}`;
   const manifestKey = `${UPDATE_PATH}/${(ENDPOINTS.update && ENDPOINTS.update.liteManifest) || 'lite/lite-latest.json'}`;
   console.log(`[publish-lite] 上传 ${tarballKey} ...`);
-  await uploadToOSS(tarballKey, tgzBuffer, 'application/gzip');
+  await uploadReleaseObject(tarballKey, tgzBuffer, 'application/gzip');
 
   const manifest = {
     version,
@@ -81,7 +96,7 @@ async function main() {
     publishedAt: Date.now(),
   };
   console.log(`[publish-lite] 上传 ${manifestKey} ...`);
-  await uploadToOSS(manifestKey, JSON.stringify(manifest, null, 2), 'application/json');
+  await uploadReleaseObject(manifestKey, JSON.stringify(manifest, null, 2), 'application/json');
 
   // 清理本地 tgz
   try { fs.unlinkSync(tgzPath); } catch (_) {}

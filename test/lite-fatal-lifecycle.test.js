@@ -44,7 +44,9 @@ function waitExit(child, timeoutMs = 20000) {
 }
 
 async function runFatal(mode) {
-  const dbPath = path.join(tempDir(), `${mode}.db`);
+  const dir = tempDir();
+  const dbPath = path.join(dir, `${mode}.db`);
+  const a2aDbPath = path.join(dir, 'voko-a2a.db');
   const port = await freePort();
   const child = spawn(process.execPath, [
     LITE_ENTRY,
@@ -60,6 +62,7 @@ async function runFatal(mode) {
       VOKO_LITE_SPAWNED_BY: 'fatal-test',
       VOKO_SMOKE_TEST: '1',
       VOKO_TEST_FATAL_MODE: mode,
+      VOKO_A2A_DB_PATH: a2aDbPath,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -74,6 +77,7 @@ async function runFatal(mode) {
   const code = await waitExit(child);
   assert.equal(code, 1, child.stderrText);
   assert.match(child.stderrText, new RegExp(`\\[Lite\\]\\[${mode}\\]`));
+  assert.equal(fs.existsSync(a2aDbPath), true, 'fatal test must use its isolated A2A database');
 
   const lifecycle = require('../build/core/process-lifecycle');
   const metadata = lifecycle.readInstanceMetadata(dbPath);

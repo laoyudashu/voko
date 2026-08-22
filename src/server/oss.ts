@@ -1,210 +1,80 @@
 export {};
-
-/**
- * OSS 签名生成 - 用于前端直传文件到阿里云 OSS
- * 采用 PostObject 直传模式：后端签名，前端直传
- */
 const crypto = require('crypto');
 const ENDPOINTS = require('../endpoints.json');
-const { assertSecureEndpoint } = require('../core/url-security');
 
-// 默认配置（优先使用环境变量，其次 endpoints.json）
-let OSS_REGION = process.env.OSS_REGION || ENDPOINTS.oss.region;
-let OSS_BUCKET = process.env.OSS_BUCKET || ENDPOINTS.oss.bucket;
-let OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || '';
-let OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || '';
-let OSS_ENDPOINT = assertSecureEndpoint(process.env.OSS_ENDPOINT || ENDPOINTS.oss.endpoint, 'http');
-let OSS_PUBLIC_URL = assertSecureEndpoint(
-  process.env.VOKO_E2E_OSS_BASE_URL || process.env.OSS_PUBLIC_URL || ENDPOINTS.oss.publicUrl,
-  'http',
-);
-
-/**
- * 从配置对象加载 OSS 配置（支持 DB / JSON 来源）
- */
-function loadConfigFromObject(config?: any) {
-  const ossConfig = config.oss_config;
-  if (!ossConfig) return false;
-  if (!OSS_ACCESS_KEY_ID && ossConfig.accessKeyId) OSS_ACCESS_KEY_ID = ossConfig.accessKeyId;
-  if (!OSS_ACCESS_KEY_SECRET && ossConfig.accessKeySecret) OSS_ACCESS_KEY_SECRET = ossConfig.accessKeySecret;
-  if (ossConfig.region) OSS_REGION = ossConfig.region;
-  if (ossConfig.bucket) OSS_BUCKET = ossConfig.bucket;
-  if (ossConfig.endpoint) OSS_ENDPOINT = assertSecureEndpoint(ossConfig.endpoint, 'http');
-  if (ossConfig.publicUrl) OSS_PUBLIC_URL = assertSecureEndpoint(ossConfig.publicUrl, 'http');
-  return true;
+function uploadError(code: string, message: string, status = 0) { return Object.assign(new Error(message), { code, status }); }
+function uploadBaseUrl() { return String(process.env.VOKO_E2E_API_BASE_URL || ENDPOINTS.api.baseUrl).replace(/\/+$/, ''); }
+async function parseResponse(response: any) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.success !== true) throw uploadError(payload?.error?.code || 'UPLOAD_SERVICE_FAILED',
+    payload?.error?.message || `Upload service failed (${response.status})`, response.status);
+  return payload.data;
 }
-
-/**
- * 供 main.js 在 DB 初始化后调用，从 DB 配置加载 OSS 凭证
- */
-function initOSSFromConfig(config?: any) {
-  if (OSS_ACCESS_KEY_ID && OSS_ACCESS_KEY_SECRET) return; // 环境变量优先
-  if (loadConfigFromObject(config)) {
-  }
-  if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
-    console.warn('[OSS] AccessKey 未配置，OSS 签名接口将不可用');
-  }
-}
-
-/**
- * 生成 OSS PostObject 直传签名
- * @param {string} objectName - OSS 中的 object key（如 chat/images/xxx.jpg）
- * @param {string} contentType - 文件 MIME 类型（可选）
- * @param {number} maxSize - 最大文件大小（字节），默认 100MB
- * @returns {Object} 签名参数，前端可直接用于 FormData POST 到 OSS
- */
-function generateOSSSignature(objectName?: any, contentType: any = '', maxSize: any = 100 * 1024 * 1024) {
-  const expiration = new Date(Date.now() + 3600 * 1000).toISOString();
-
-  const conditions = [
-    ['content-length-range', 0, maxSize],
-    { bucket: OSS_BUCKET },
-    ['eq', '$key', objectName]
-  ];
-
-  if (contentType) {
-    conditions.push(['eq', '$Content-Type', contentType]);
-  }
-
-  const disposition = objectName.startsWith('chat/images/') ? 'inline' : 'attachment';
-  conditions.push(['eq', '$Content-Disposition', disposition]);
-
-  const policyObj = { expiration, conditions };
-  const policy = Buffer.from(JSON.stringify(policyObj)).toString('base64');
-  const signature = crypto
-    .createHmac('sha1', OSS_ACCESS_KEY_SECRET)
-    .update(policy)
-    .digest('base64');
-
-  return {
-    endpoint: OSS_ENDPOINT,
-    publicUrl: OSS_PUBLIC_URL,
-    bucket: OSS_BUCKET,
-    region: OSS_REGION,
-    key: objectName,
-    OSSAccessKeyId: OSS_ACCESS_KEY_ID,
-    policy,
-    Signature: signature,
-    contentType,
-    expiration
-  };
-}
-
-/**
- * 服务端上传 base64 图片到 OSS
- * @param {string} base64DataUrl - data:image/xxx;base64,xxxxx
- * @param {string} objectName - OSS object key，如 chat/pay/qr_xxx.png
- * @returns {Promise<string>} 公开访问的图片 URL
- */
-async function uploadBase64ToOSS(base64DataUrl?: any, objectName?: any, onProgress?: any) {
-  if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
-    throw new Error('OSS AccessKey 未配置');
-  }
-
-  const matches = base64DataUrl.match(/^data:(.+?);base64,(.+)$/);
-  if (!matches) throw new Error('无效的 base64 data URL');
-  const contentType = matches[1];
-  const base64Data = matches[2];
-  const buffer = Buffer.from(base64Data, 'base64');
-
-  // OSS REST API PUT 签名（含 x-oss-object-acl 头）
-  const date = new Date().toUTCString();
-  const ossHeaders = 'x-oss-object-acl:public-read';
-  const resource = `/${OSS_BUCKET}/${objectName}`;
-  const stringToSign = `PUT\n\n${contentType}\n${date}\n${ossHeaders}\n${resource}`;
-  const signature = crypto
-    .createHmac('sha1', OSS_ACCESS_KEY_SECRET)
-    .update(stringToSign)
-    .digest('base64');
-
-  const url = `${OSS_PUBLIC_URL}/${objectName}`;
-
-  if (onProgress) onProgress(0);
-  const resp = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `OSS ${OSS_ACCESS_KEY_ID}:${signature}`,
-      'Content-Type': contentType,
-      'Date': date,
-      'Content-Length': String(buffer.length),
-      'x-oss-object-acl': 'public-read'
-    },
-    body: buffer
+async function authorizeUpload(options: any) {
+  const response = await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/authorize`, {
+    method: 'POST', headers: { Authorization: `Bearer ${options.userAccessToken}`, 'Content-Type': 'application/json',
+      'Idempotency-Key': options.idempotencyKey || `voko-${crypto.randomUUID()}` },
+    body: JSON.stringify({ agentId: options.agentId, purpose: options.purpose, fileName: options.fileName,
+      size: options.size, contentType: options.contentType || 'application/octet-stream', targetScopeType: options.targetScopeType || null,
+      targetScopeId: options.targetScopeId || null }), signal: AbortSignal.timeout(Number(process.env.VOKO_UPLOAD_AUTH_TIMEOUT_MS) || 10000),
   });
-
-  if (onProgress) onProgress(100);
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`OSS 上传失败 (${resp.status}): ${text}`);
-  }
-
-  return url;
+  return parseResponse(response);
 }
-
-/**
- * 服务端上传任意内容到 OSS（通用版）
- * @param {string} objectName - OSS object key
- * @param {string|Buffer} content - 文件内容
- * @param {string} contentType - MIME 类型
- * @returns {Promise<string>} 公开访问的 URL
- */
-async function uploadToOSS(objectName?: any, content?: any, contentType?: any, onProgress?: any) { return _uploadToOSS(objectName, content, contentType, onProgress); }
-
-async function uploadToOSSWithProgress(objectName?: any, content?: any, contentType?: any, onProgress?: any) { return _uploadToOSS(objectName, content, contentType, onProgress); }
-
-async function _uploadToOSS(objectName?: any, content?: any, contentType?: any, onProgress?: any) {
-  // The E2E harness exposes a local OSS-compatible PUT endpoint.  It is
-  // deliberately opt-in and avoids requiring production credentials in CI.
+async function completeUpload(uploadId: string, token: string) {
+  return parseResponse(await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/${encodeURIComponent(uploadId)}/complete`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
+    signal: AbortSignal.timeout(Number(process.env.VOKO_UPLOAD_COMPLETE_TIMEOUT_MS) || 15000) }));
+}
+async function getUploadDownload(uploadId: string, token: string, agentId?: string, targetScopeType?: string, targetScopeId?: string) {
+  const query = new URLSearchParams();
+  if (agentId) query.set('agentId', agentId);
+  if (targetScopeType) query.set('targetScopeType', targetScopeType);
+  if (targetScopeId) query.set('targetScopeId', targetScopeId);
+  const suffix = query.size ? `?${query}` : '';
+  return parseResponse(await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/${encodeURIComponent(uploadId)}/download${suffix}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) }));
+}
+async function bindUpload(uploadId: string, token: string, referenceType: string, referenceId: string) {
+  return parseResponse(await fetch(`${uploadBaseUrl()}/api/external/v1/uploads/${encodeURIComponent(uploadId)}/bind`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ referenceType, referenceId }), signal: AbortSignal.timeout(10000) }));
+}
+async function uploadToOfficialStorage(options: any) {
+  if (!options.userAccessToken) throw uploadError('UPLOAD_LOGIN_REQUIRED', '请先登录 VOKO 后再上传附件');
+  const buffer = Buffer.isBuffer(options.content) ? options.content : Buffer.from(options.content);
+  const authorized = await authorizeUpload({ ...options, size: buffer.length });
+  if (authorized.completed) return { uploadId: authorized.uploadId, url: authorized.url || authorized.downloadPath };
+  const form = new FormData();
+  for (const [key, value] of Object.entries(authorized.fields || {})) form.append(key, String(value));
+  form.append('file', new Blob([buffer], { type: options.contentType || 'application/octet-stream' }), options.fileName || 'file');
+  const response = await fetch(authorized.endpoint, { method: 'POST', body: form,
+    signal: AbortSignal.timeout(Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS) || 30000) });
+  if (!response.ok) throw uploadError('UPLOAD_OBJECT_REJECTED', `对象存储拒绝上传 (${response.status})`, response.status);
+  return { ...(await completeUpload(authorized.uploadId, options.userAccessToken)), uploadId: authorized.uploadId };
+}
+async function uploadToOSS(objectName?: any, content?: any, contentType?: any, _onProgress?: any, options: any = {}) {
   if (process.env.VOKO_E2E === '1' && process.env.VOKO_E2E_OSS_BASE_URL) {
-    const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
+    const buffer = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
     const url = `${String(process.env.VOKO_E2E_OSS_BASE_URL).replace(/\/$/, '')}/${objectName}`;
-    const configuredTimeout = Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS || 30000);
-    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 30000;
-    const resp = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': contentType || 'application/octet-stream', 'Content-Length': String(buffer?.length || 0) },
-      body: buffer,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!resp.ok) throw new Error(`OSS 上传失败 (${resp.status}): ${await resp.text()}`);
+    const response = await fetch(url, { method: 'PUT', headers: { 'Content-Type': contentType || 'application/octet-stream' }, body: buffer,
+      signal: AbortSignal.timeout(Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS) || 30000) });
+    if (!response.ok) throw uploadError('UPLOAD_OBJECT_REJECTED', `测试对象存储拒绝上传 (${response.status})`, response.status);
     return url;
   }
-  if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
-    throw new Error('OSS AccessKey 未配置');
-  }
-  const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
-  const date = new Date().toUTCString();
-  const ossHeaders = 'x-oss-object-acl:public-read';
-  const resource = `/${OSS_BUCKET}/${objectName}`;
-  const stringToSign = `PUT\n\n${contentType}\n${date}\n${ossHeaders}\n${resource}`;
-  const signature = crypto
-    .createHmac('sha1', OSS_ACCESS_KEY_SECRET)
-    .update(stringToSign)
-    .digest('base64');
-
-  const url = `https://${OSS_BUCKET}.${OSS_REGION}.aliyuncs.com/${objectName}`;
-  const configuredTimeout = Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS || 30000);
-  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 30000;
-
-  const resp = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `OSS ${OSS_ACCESS_KEY_ID}:${signature}`,
-      'Content-Type': contentType,
-      'Date': date,
-      'Content-Length': String(buffer.length),
-      'x-oss-object-acl': 'public-read'
-    },
-    body: buffer,
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`OSS 上传失败 (${resp.status}): ${text}`);
-  }
-
-  return `${OSS_PUBLIC_URL || OSS_ENDPOINT}/${objectName}`;
+  const result = await uploadToOfficialStorage({ ...options, content, contentType,
+    fileName: options.fileName || String(objectName || 'file').split('/').pop(), purpose: options.purpose || 'agent_attachment' });
+  if (options.bind !== false) await bindUpload(result.uploadId, options.userAccessToken,
+    options.referenceType || 'voko_pending_message', options.referenceId || String(objectName));
+  return result.url || result.downloadPath;
 }
-
-module.exports = { generateOSSSignature, uploadBase64ToOSS, uploadToOSS, uploadToOSSWithProgress, initOSSFromConfig };
+async function uploadBase64ToOSS(base64DataUrl?: any, objectName?: any, onProgress?: any, options: any = {}) {
+  const matches = String(base64DataUrl || '').match(/^data:(.+?);base64,(.+)$/);
+  if (!matches) throw uploadError('UPLOAD_DATA_INVALID', '无效的 base64 data URL');
+  onProgress?.(0);
+  const result = await uploadToOSS(objectName, Buffer.from(matches[2], 'base64'), matches[1], null, options);
+  onProgress?.(100); return result;
+}
+async function generateOSSSignature(options: any) { return authorizeUpload(options); }
+function initOSSFromConfig() { /* 已废弃：正式上传只使用服务端短期授权。 */ }
+module.exports = { authorizeUpload, completeUpload, bindUpload, getUploadDownload, generateOSSSignature, uploadToOfficialStorage,
+  uploadBase64ToOSS, uploadToOSS, uploadToOSSWithProgress: uploadToOSS, initOSSFromConfig };

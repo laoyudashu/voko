@@ -7,24 +7,26 @@ const TERMINAL_STATES = new Set<StandardTaskState>(['COMPLETED', 'FAILED', 'CANC
 
 interface CreateLocalTaskInput { gatewayTaskId: string; contextId: string; executionId: string; agentId: string; gatewayUid: string;
   principalScope: string; scopeVersion: number; scopeKeyId: string;
-  bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number }
+  bindingGeneration?: number; ownerEpoch?: number; policyRevision?: number; sourceChannel?: 'a2a' | 'rest_webhook' }
 
 class A2ALocalTaskStore {
   constructor(private readonly db: DatabaseSync) {}
-  getTaskLogRoute(taskId: string): { agentId: string; peerLabel: string } | null {
-    const row = this.db.prepare('SELECT agent_id,principal_scope FROM a2a_local_tasks WHERE gateway_task_id=?')
-      .get(taskId) as { agent_id?: string; principal_scope?: string } | undefined;
+  getTaskLogRoute(taskId: string): { agentId: string; peerLabel: string; protocolLabel: string } | null {
+    const row = this.db.prepare('SELECT agent_id,principal_scope,source_channel FROM a2a_local_tasks WHERE gateway_task_id=?')
+      .get(taskId) as { agent_id?: string; principal_scope?: string; source_channel?: string } | undefined;
     if (!row?.agent_id || !row.principal_scope) return null;
-    return { agentId: row.agent_id, peerLabel: `A2A-${row.principal_scope.slice(0, 8)}` };
+    const external = row.source_channel === 'rest_webhook';
+    return { agentId: row.agent_id, protocolLabel: external ? 'REST/Webhook' : 'A2A',
+      peerLabel: external ? '外部接入' : `A2A-${row.principal_scope.slice(0, 8)}` };
   }
   createTask(input: CreateLocalTaskInput): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_tasks
-      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,principal_scope,scope_version,scope_key_id,
+      (gateway_task_id,context_id,execution_id,agent_id,gateway_uid,principal_scope,scope_version,scope_key_id,source_channel,
        standard_state,delivery_state,binding_generation,owner_epoch,policy_revision,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
+      VALUES (?,?,?,?,?,?,?,?,?,'SUBMITTED','QUEUED_OFFLINE',?,?,?,?,?)`).run(
       input.gatewayTaskId, input.contextId, input.executionId, input.agentId, input.gatewayUid,
-      input.principalScope, input.scopeVersion, input.scopeKeyId, input.bindingGeneration || 1,
+      input.principalScope, input.scopeVersion, input.scopeKeyId, input.sourceChannel || 'a2a', input.bindingGeneration || 1,
       input.ownerEpoch || 1, input.policyRevision || 1, now, now);
     return Number(result.changes) === 1;
   }
@@ -94,9 +96,12 @@ class A2ALocalTaskStore {
     return row?.standard_state || null;
   }
   acceptCommand(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown = {}): 'accepted' | 'duplicate' {
+    const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_inbox
       (event_id,gateway_task_id,command_sequence,operation,envelope_json,status,received_at) VALUES (?,?,?,?,?,'received',?)`)
-      .run(eventId, taskId, sequence, operation, JSON.stringify(envelope), Date.now());
+      .run(eventId, taskId, sequence, operation, JSON.stringify(envelope), now);
+    if (Number(result.changes) === 1) this.db.prepare('UPDATE a2a_local_tasks SET accepted_at=COALESCE(accepted_at,?),updated_at=? WHERE gateway_task_id=?')
+      .run(now, now, taskId);
     return Number(result.changes) === 1 ? 'accepted' : 'duplicate';
   }
   markReceiptAcknowledged(eventId: string): void {
@@ -107,7 +112,11 @@ class A2ALocalTaskStore {
     return row?.status || null;
   }
   beginCommand(eventId: string): boolean {
-    return Number(this.db.prepare("UPDATE a2a_local_inbox SET status='processing',execution_state='processing',attempt_count=attempt_count+1 WHERE event_id=? AND status='received'").run(eventId).changes) === 1;
+    const now = Date.now();
+    const result = this.db.prepare("UPDATE a2a_local_inbox SET status='processing',execution_state='processing',attempt_count=attempt_count+1 WHERE event_id=? AND status='received'").run(eventId);
+    if (Number(result.changes) === 1) this.db.prepare(`UPDATE a2a_local_tasks SET started_at=COALESCE(started_at,?),updated_at=?
+      WHERE gateway_task_id=(SELECT gateway_task_id FROM a2a_local_inbox WHERE event_id=?)`).run(now, now, eventId);
+    return Number(result.changes) === 1;
   }
   listProcessingCommands(): Array<{ event_id: string; gateway_task_id: string; envelope_json: string | null }> {
     return this.db.prepare("SELECT event_id,gateway_task_id,envelope_json FROM a2a_local_inbox WHERE status='processing' ORDER BY received_at")
@@ -136,9 +145,12 @@ class A2ALocalTaskStore {
     });
   }
   finishCommand(eventId: string, status: 'processed' | 'outcome_unknown', errorCode?: string): void {
+    const now = Date.now();
     this.db.prepare(`UPDATE a2a_local_inbox SET status=?,execution_state=?,processed_at=?,error_code=?,
       envelope_json=CASE WHEN ?='processed' THEN NULL ELSE envelope_json END WHERE event_id=?`)
-      .run(status, status, Date.now(), errorCode || null, status, eventId);
+      .run(status, status, now, errorCode || null, status, eventId);
+    this.db.prepare(`UPDATE a2a_local_tasks SET finished_at=COALESCE(finished_at,?),updated_at=?
+      WHERE gateway_task_id=(SELECT gateway_task_id FROM a2a_local_inbox WHERE event_id=?)`).run(now, now, eventId);
   }
   retryCommand(eventId: string, errorCode: string, delayMs = 2_000): void {
     this.db.prepare("UPDATE a2a_local_inbox SET status='received',execution_state='retry',next_attempt_at=?,error_code=? WHERE event_id=?")

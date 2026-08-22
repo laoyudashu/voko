@@ -39,6 +39,8 @@ export interface PushPayload {
   sessionTarget?: string;
   content: string;
   rawContent?: string;
+  attachments?: ReadonlyArray<Readonly<{ path: string; name: string; mediaType: string; size: number; sha256: string }>>;
+  attachmentOutputDirectory?: string;
   channelId?: string;
   channelType?: number;
   contentType?: number;
@@ -124,5 +126,7 @@ export interface AgentDeliveryStatus {
   pullReady: boolean;
   pullOnly: boolean;
   lastDeliveredMode: string | null;
+  temporaryPreferredMode: string | null;
+  temporaryPreferredProvider: string | null;
   methods: AgentDeliveryMethodStatus[];
 }
