@@ -1775,7 +1775,8 @@ async function startMcpServer(args?: any, core?: any) {
           a2aMailboxClient = new A2AMailboxClient({ baseUrl: bridgeConfig.mailboxUrl, token: bridgeConfig.token });
         }
         const a2aRuntime = new A2ABridgeRuntime({ database: a2aModule.getDatabase(), mainDatabase: db, dispatcher,
-          onError: (code: string) => console.error(`[A2A Bridge] ${code}`) });
+          onError: (code: string) => console.error(`[A2A Bridge] ${code}`),
+          onRecovery: (code: string) => console.warn(`[A2A Bridge] ${code}`) });
         await taskManager.start('a2a-bridge', () => a2aRuntime.start());
       } catch (error: any) {
         if (error?.code === 'A2A_NO_ELIGIBLE_AGENT') {
