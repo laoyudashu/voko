@@ -19,6 +19,22 @@ interface PreparedAttachment { attachmentRef: string; path: string; name: string
 interface UploadedArtifact { artifactId: string; name: string; part: { artifactRef: string } }
 interface AttachmentSafety { assertAllowed(content: string, direction: 'inbound'|'outbound'): Promise<void> }
 
+async function readRegularFile(filePath: string): Promise<{ bytes: Buffer; size: number }> {
+  const noFollow = Number((fs.constants as Record<string, number>).O_NOFOLLOW || 0);
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | noFollow);
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 1 || stat.size > MAX_OUTPUT_FILE_BYTES)
+      throw new Error('A2A_ATTACHMENT_OUTPUT_SIZE_INVALID');
+    const bytes = await handle.readFile();
+    if (bytes.length !== stat.size) throw new Error('A2A_ATTACHMENT_OUTPUT_SIZE_INVALID');
+    return { bytes, size: stat.size };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 function safeName(value: string): string {
   const name = path.basename(String(value || 'attachment')).replace(/[\x00-\x1f\\/]/g, '_').slice(0, 255);
   return name || 'attachment';
@@ -92,10 +108,10 @@ class A2AAttachmentWorkspace {
     const output:UploadedArtifact[]=[];let total=0;
     for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
       if(!entry.isFile())throw new Error('A2A_ATTACHMENT_OUTPUT_TYPE_INVALID');
-      const name=safeName(entry.name);const filePath=path.join(outputDirectory,entry.name);const stat=await fs.promises.lstat(filePath);
-      if(!stat.isFile()||stat.isSymbolicLink()||stat.size<1||stat.size>MAX_OUTPUT_FILE_BYTES)throw new Error('A2A_ATTACHMENT_OUTPUT_SIZE_INVALID');
-      total+=stat.size;if(total>MAX_OUTPUT_BYTES)throw new Error('A2A_ATTACHMENT_OUTPUT_LIMIT');
-      const bytes=await fs.promises.readFile(filePath);const mediaType=mediaTypeOfFromName(name);
+      const name=safeName(entry.name);const filePath=path.join(outputDirectory,entry.name);
+      const {bytes,size}=await readRegularFile(filePath);
+      total+=size;if(total>MAX_OUTPUT_BYTES)throw new Error('A2A_ATTACHMENT_OUTPUT_LIMIT');
+      const mediaType=mediaTypeOfFromName(name);
       assertContentMatchesMediaType(bytes,mediaType);
       if(TEXT_MEDIA_TYPES.has(mediaType))await safety?.assertAllowed(bytes.toString('utf8'),'outbound');
       const sha256=crypto.createHash('sha256').update(bytes).digest('hex');const artifactId=`output-${output.length+1}`;
