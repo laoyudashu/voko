@@ -94,6 +94,7 @@ test('external integration page masks credentials and provides copy controls', a
   assert.match(html, />停用<\/button>/);
   assert.match(html, /webhook-probe/);
   assert.match(html, /markInvalid/);
+  assert.match(html, /setTimeout\(function\(\)\{document\.querySelectorAll/);
   assert.match(html, /L\.invalid/);
   assert.doesNotMatch(html, />停用接入<\/button>/);
   assert.doesNotMatch(html, />最近调用</);

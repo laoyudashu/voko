@@ -905,7 +905,7 @@
   "web.external_gateway.secret_unavailable": "服务端尚未提供可复制的 Webhook Secret",
   "web.external_gateway.copy_template": "REST Endpoint: {endpoint}\nAPI Token: {token}\nWebhook Secret: {secret}",
   "web.external_gateway.revoke": "停用",
-  "web.external_gateway.invalid": "失效",
+  "web.external_gateway.invalid": "已失效",
   "web.external_gateway.col.actions": "操作",
   "web.external_gateway.edit": "编辑",
   "web.external_gateway.edit_failed": "修改接入失败。",
