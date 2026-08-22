@@ -81,6 +81,10 @@ export class E2eeDirectoryClient {
     return this.request('/v1/e2ee/key-packages/status', { method: 'POST', body: JSON.stringify(input) });
   }
 
+  conversationStatuses(input: { agentIds: string[]; visitorIds: string[] }): Promise<any> {
+    return this.request('/v1/e2ee/conversations/status', { method: 'POST', body: JSON.stringify(input) });
+  }
+
   async pullEstablishments(input: { agentId: string; ownerDeviceKeyId: string; limit?: number }): Promise<E2eeDirectoryEstablishment[]> {
     const data = await this.request('/v1/e2ee/establishments/pull', { method: 'POST', body: JSON.stringify(input) });
     if (!Array.isArray(data?.establishments)) throw new Error('E2EE_DIRECTORY_INVALID_ESTABLISHMENTS');

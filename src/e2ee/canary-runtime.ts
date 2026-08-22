@@ -47,11 +47,28 @@ export class CanaryRuntime {
     dispatcher: E2eeDispatcher; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
     persistInbound?: (agentId:string,message:any,plaintext:string,messageId:string)=>boolean;
     persistOutbound?: (agentId:string,channelId:string,plaintext:string,messageId:string)=>void;
-    downloadAttachment?: (agentId:string,uploadId:string,targetScopeId:string)=>Promise<Uint8Array> }) {
+    downloadAttachment?: (agentId:string,uploadId:string,targetScopeId:string)=>Promise<Uint8Array>;
+    channelStatusProvider?: (agentId:string,channelIds:string[])=>Promise<any[]> }) {
     this.disabled = options.store.isEmergencyDisabled();
   }
 
   claims(message: any): boolean { return this.options.policy.claims(message?.contentType); }
+
+  async getChannelEncryptionStatuses(localAgentId: string, channelIds: string[]): Promise<Record<string,string>> {
+    const result: Record<string,string> = {};
+    for (const channelId of channelIds) if (this.isChannelActive(localAgentId,channelId)) result[channelId] = 'active';
+    if (!this.options.channelStatusProvider || this.disabled) return result;
+    try {
+      const rows = await this.options.channelStatusProvider(localAgentId,channelIds);
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const channelId=String(row?.visitorId||''); const state=String(row?.state||'');
+        if (channelId && ['unsupported','available','checking','active','error'].includes(state) && result[channelId] !== 'active') result[channelId]=state;
+      }
+    } catch {
+      for (const channelId of channelIds) if (!result[channelId]) result[channelId]='error';
+    }
+    return result;
+  }
 
   private diagnostic(stage: string, outcome: 'ok'|'skip'|'error', fields: Record<string,unknown> = {}): void {
     if (outcome !== 'error') return;

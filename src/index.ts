@@ -1969,6 +1969,7 @@ async function startMcpServer(args?: any, core?: any) {
       e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
       let e2eeStore: any;
       let e2eePolicy: any = canaryPolicy;
+      let productionDirectoryClient: any = null;
       let migrated = { sessions:0,receipts:0 };
       const e2eeOwnerToken = productionEnabled && userEmail ? getUserAccessToken(db,userEmail) : null;
       if (productionEnabled) {
@@ -1982,6 +1983,14 @@ async function startMcpServer(args?: any, core?: any) {
       }
       e2eeCanaryRuntime = new CanaryRuntime({ policy: e2eePolicy, store: e2eeStore,
         crypto: new CanaryCryptoProcess(endpoint), dispatcher,
+        channelStatusProvider: productionEnabled ? async (localAgentId: string, channelIds: string[]) => {
+          if (!productionDirectoryClient) throw new Error('E2EE_DIRECTORY_UNAVAILABLE');
+          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(localAgentId)?.did || '');
+          const serverAgentId = require('./core/agent-invitations').serverAgentIdFromDid(did);
+          if (!serverAgentId) return [];
+          const data = await productionDirectoryClient.conversationStatuses({ agentIds:[serverAgentId],visitorIds:channelIds });
+          return Array.isArray(data?.conversations) ? data.conversations : [];
+        } : undefined,
         persistInbound: (agentId: string, message: any, plaintext: string, messageId: string) => {
           if (!messageHandler) return false;
           const projected = messageHandler.handleAgentMessage(agentId, {
@@ -2041,8 +2050,9 @@ async function startMcpServer(args?: any, core?: any) {
             return [{ localAgentId:String(row.agent_id),serverAgentId,targetAgentDid:String(row.did),
               ownerDeviceKeyId:`voko-lite-${suffix}`,ownerScope,bindingGeneration:1 }];
           });
+        productionDirectoryClient = new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken });
         const directoryWorker = new ProductionE2eeDirectoryWorker({
-          client:new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken }),store:e2eeStore,agents,
+          client:productionDirectoryClient,store:e2eeStore,agents,
           processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
           intervalMs:productionConfig.pollIntervalMs,
           onError:(agentId: string,error: any) => {
