@@ -2100,8 +2100,10 @@ async function startMcpServer(args?: any, core?: any) {
     try {
       if (Number(data?.contentType) === 13) {
         if (!e2eeCanaryRuntime) {
-          console.warn('[E2EE Canary] 未启用或初始化失败，拒绝密文消息');
-          data?.ack?.();
+          const error: any = new Error('E2EE_RUNTIME_UNAVAILABLE');
+          error.code = 'E2EE_RUNTIME_UNAVAILABLE';
+          console.warn('[E2EE] 运行时不可用，密文消息等待重新投递');
+          data?.nack?.(error);
           return;
         }
         void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
