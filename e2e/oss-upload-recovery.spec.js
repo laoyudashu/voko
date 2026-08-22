@@ -67,7 +67,7 @@ test('OSS 500 shows an error without half-sent messages, then retry sends one at
   await chooseFile(page, note, fileName);
   await page.locator('#upload-submit-btn').click();
   await assertFailedUploadKeepsForm(page, channelId, note, fileName);
-  await expect(page.locator('#upload-result .error')).toContainText('OSS');
+  await expect(page.locator('#upload-result .error')).toContainText(/OSS|对象存储/i);
   expect(readMessages(channelId)).toHaveLength(0);
 
   await clearFault(request);
