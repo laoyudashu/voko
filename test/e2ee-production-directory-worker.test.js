@@ -93,6 +93,54 @@ test('directory worker honors server rate-limit backoff without scanning remaini
   db.close();
 });
 
+test('directory worker aggregates shared outages and applies exponential backoff', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  let now = 1_000, attempts = 0;
+  const errors = [], recoveries = [];
+  const process = {
+    ready:Promise.resolve({ keyPackage:'a2V5',credentialPublicKey:'Y3JlZGVudGlhbA' }),
+    async sealPending() { return Buffer.from('pending'); }, async restorePending() { return 'Y3JlZGVudGlhbA'; },
+    async join() { throw new Error('unexpected join'); }, async replenish() { throw new Error('unexpected replenish'); }, close() {},
+  };
+  const client = {
+    async registerDevice() {
+      attempts += 1;
+      if (attempts <= 2) throw Object.assign(new Error('upstream unavailable'), {
+        status:502,code:'E2EE_DIRECTORY_HTTP_502',operation:'/v1/e2ee/devices',
+      });
+    },
+    async publishKeyPackage(input) { return { keyPackageRef:ref(input.keyPackage) }; },
+    async pullEstablishments() { return []; },
+    async keyPackageStatus(input) { return { agents:[{ agentId:input.agentIds[0],available:1 }] }; },
+    async acknowledge() {}, async reject() {},
+  };
+  const agent = id => ({ localAgentId:id,serverAgentId:`server-${id}`,targetAgentDid:`did:wba:test:${id}`,
+    ownerDeviceKeyId:`device-${id}`,ownerScope:'owner-scope',bindingGeneration:1 });
+  const agents = [agent('a'),agent('b'),agent('c')];
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>agents,processFactory:()=>process,
+    intervalMs:2_000,now:()=>now,onError:(agentId,error)=>errors.push({agentId,error}),
+    onRecovery:count=>recoveries.push(count) });
+  await worker.runOnce();
+  await worker.runOnce();
+  assert.equal(attempts,1,'the shared backoff suppresses immediate retries');
+  assert.equal(errors.length,1,'one outage produces one aggregate error');
+  assert.equal(errors[0].agentId,'directory');
+  assert.equal(errors[0].error.affectedAgents,3);
+  assert.equal(errors[0].error.retryAfterMs,2_000);
+  now += 2_000;
+  await worker.runOnce();
+  assert.equal(attempts,2);
+  assert.equal(errors[1].error.retryAfterMs,4_000,'consecutive failures back off exponentially');
+  now += 3_999;
+  await worker.runOnce();
+  assert.equal(attempts,2);
+  now += 1;
+  await worker.runOnce();
+  assert.deepEqual(recoveries,[2]);
+  db.close();
+});
+
 test('directory worker replenishes a package consumed by an expired establishment', async () => {
   const db = new DatabaseSync(':memory:');
   const store = new ProductionE2eeStore(db);

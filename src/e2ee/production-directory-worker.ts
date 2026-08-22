@@ -36,6 +36,7 @@ export class ProductionE2eeDirectoryWorker {
   private running = false;
   private retryAfter = 0;
   private nextAgentIndex = 0;
+  private sharedFailureCount = 0;
 
   constructor(private readonly options: {
     client: E2eeDirectoryClient;
@@ -46,7 +47,31 @@ export class ProductionE2eeDirectoryWorker {
     maxAgentsPerRun?: number;
     now?: () => number;
     onError?: (agentId: string, error: unknown) => void;
+    onRecovery?: (failureCount: number) => void;
   }) {}
+
+  private isSharedServiceFailure(error: any): boolean {
+    const status = Number(error?.status || 0);
+    const code = String(error?.code || '');
+    const causeCode = String(error?.cause?.code || '');
+    return status === 429 || status >= 500
+      || /^E2EE_DIRECTORY_HTTP_5\d\d$/.test(code)
+      || ['ECONNREFUSED','ECONNRESET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET'].includes(code)
+      || ['ECONNREFUSED','ECONNRESET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET'].includes(causeCode);
+  }
+
+  private backoffSharedFailure(error: any, affectedAgents: number): void {
+    this.sharedFailureCount += 1;
+    const base = Math.max(2_000,Number(this.options.intervalMs || 30_000));
+    const retryMs = Number(error?.status) === 429
+      ? Math.max(1_000,Number(error?.retryAfterMs) || 60_000)
+      : Math.min(60_000,base * (2 ** Math.min(this.sharedFailureCount - 1,5)));
+    this.retryAfter = (this.options.now || Date.now)() + retryMs;
+    error.sharedServiceFailure = true;
+    error.affectedAgents = affectedAgents;
+    error.retryAfterMs = retryMs;
+    this.options.onError?.('directory',error);
+  }
 
   private process(agent: ProductionE2eeAgent, epoch: number): Recipient {
     const existing = this.processes.get(agent.localAgentId);
@@ -145,6 +170,7 @@ export class ProductionE2eeDirectoryWorker {
       const batchSize = Math.max(1,Math.min(agents.length,Number(this.options.maxAgentsPerRun || 5)));
       const batch = Array.from({ length:batchSize },(_,offset) => agents[(this.nextAgentIndex + offset) % agents.length]);
       this.nextAgentIndex = agents.length ? (this.nextAgentIndex + batchSize) % agents.length : 0;
+      let sharedFailure = false;
       for (const agent of batch) {
         try {
           let row = await this.ensurePackage(agent);
@@ -183,12 +209,19 @@ export class ProductionE2eeDirectoryWorker {
             row = await this.ensurePackage(agent);
           }
         } catch (error: any) {
-          this.options.onError?.(agent.localAgentId,error);
-          if (Number(error?.status) === 429) {
-            this.retryAfter = (this.options.now || Date.now)() + Math.max(Number(error?.retryAfterMs) || 60_000, 1_000);
+          if (this.isSharedServiceFailure(error)) {
+            sharedFailure = true;
+            this.backoffSharedFailure(error,agents.length);
             break;
           }
+          this.options.onError?.(agent.localAgentId,error);
         }
+      }
+      if (!sharedFailure && this.sharedFailureCount > 0) {
+        const failures = this.sharedFailureCount;
+        this.sharedFailureCount = 0;
+        this.retryAfter = 0;
+        this.options.onRecovery?.(failures);
       }
     } finally { this.running = false; }
   }

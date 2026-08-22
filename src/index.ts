@@ -2045,7 +2045,14 @@ async function startMcpServer(args?: any, core?: any) {
           client:new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken }),store:e2eeStore,agents,
           processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
           intervalMs:productionConfig.pollIntervalMs,
-          onError:(agentId: string,error: any) => console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`),
+          onError:(agentId: string,error: any) => {
+            if (error?.sharedServiceFailure) {
+              console.warn(`[E2EE] Directory服务暂不可用 affectedAgents=${Number(error.affectedAgents || 0)} retryInMs=${Number(error.retryAfterMs || 0)} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
+              return;
+            }
+            console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
+          },
+          onRecovery:(failureCount: number) => console.warn(`[E2EE] Directory服务已恢复 consecutiveFailures=${failureCount}`),
         });
         await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
         console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);
