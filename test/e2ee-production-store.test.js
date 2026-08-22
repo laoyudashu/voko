@@ -57,6 +57,16 @@ test('production store commits final MLS state and fixed reply Outbox atomically
   assert.equal(store.session('group-a').state_version,3);
   assert.equal(store.receipt('message-outbox').state,'reply_ready');
   assert.equal(store.receipt('message-outbox').reply_message_id,'reply-fixed');
+  assert.equal(store.claimDelivery('message-outbox','worker-crashed',60_000),true);
+  assert.equal(store.claimDelivery('message-outbox','worker-racing',60_000),false);
+  assert.equal(store.pendingReplies().length,0,'an active delivery lease must hide the row from recovery');
+  db.prepare('UPDATE e2ee_production_receipts SET delivery_lease_expires_at=? WHERE message_id=?')
+    .run(Date.now()-1,'message-outbox');
+  assert.equal(store.pendingReplies().length,1,'an expired lease must become recoverable after a crash');
+  assert.equal(store.claimDelivery('message-outbox','worker-recovery',60_000),true);
+  assert.equal(store.finishDelivery('message-outbox','worker-recovery',true),true);
+  assert.equal(store.receipt('message-outbox').state,'completed');
+  assert.equal(store.receipt('message-outbox').delivery_attempts,2);
 
   store.reserve(current,'message-rollback','digest-2',{localAgentId:'lawyer',channelId:'visitor-a'});
   assert.throws(() => store.commitReply({messageId:'message-rollback',groupId:'group-a',expectedVersion:3,

@@ -35,6 +35,8 @@ type E2eeRuntimeStore = {
   commitReply?(input:{messageId:string;groupId:string;expectedVersion:number;encryptedState:Uint8Array;
     nextVersion:number;replyMessageId:string;encryptedReply:string}): void;
   pendingReplies?(limit?: number): any[];
+  claimDelivery?(messageId: string, leaseOwner: string, leaseMs?: number): boolean;
+  finishDelivery?(messageId: string, leaseOwner: string, delivered: boolean): boolean;
   noteDeliveryAttempt?(messageId: string): void;
   session(groupId: string): any;
   commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void;
@@ -121,8 +123,8 @@ export class CanaryRuntime {
         message?.ack?.();
         if (message) message.__e2eeReceiptAcked = true;
         if (claim === 'deliver') {
-          await this.deliverStoredReply(this.options.store.receipt!(envelope.messageId));
-          return { handled:true,accepted:true,code:'recovered' };
+          const delivered = await this.deliverStoredReply(this.options.store.receipt!(envelope.messageId));
+          return { handled:true,accepted:true,code:delivered?'recovered':'delivery_in_progress' };
         }
         if (claim === 'completed') return { handled:true,accepted:true,code:'duplicate' };
         if (claim === 'busy') return { handled:true,accepted:true,code:'in_progress' };
@@ -186,6 +188,11 @@ export class CanaryRuntime {
       }
       replyCommitted = true;
       stage='lite.reply_deliver';
+      if (atomicOutbox) {
+        const delivered = await this.deliverStoredReply(this.options.store.receipt!(envelope.messageId));
+        if (delivered) this.stats.replied += 1;
+        return { handled:true,accepted:true,code:delivered?undefined:'delivery_in_progress' };
+      }
       this.options.store.noteDeliveryAttempt?.(envelope.messageId);
       await this.options.deliverRaw(localAgentId,String(message.fromUid),encoded,replyId);
       this.options.store.transition(envelope.messageId,['reply_ready'],'completed');
@@ -208,16 +215,26 @@ export class CanaryRuntime {
     }
   }
 
-  private async deliverStoredReply(row: any): Promise<void> {
+  private async deliverStoredReply(row: any): Promise<boolean> {
     if (!row?.message_id || !row?.local_agent_id || !row?.channel_id
         || !row?.encrypted_reply || !row?.reply_message_id) throw new Error('E2EE_OUTBOX_ROW_INVALID');
-    this.options.store.noteDeliveryAttempt?.(String(row.message_id));
+    const messageId = String(row.message_id);
+    const leaseOwner = `e2ee-delivery-${crypto.randomUUID()}`;
+    if (this.options.store.claimDelivery
+        && !this.options.store.claimDelivery(messageId,leaseOwner,60_000)) return false;
+    if (!this.options.store.claimDelivery) this.options.store.noteDeliveryAttempt?.(messageId);
     try {
       await this.options.deliverRaw(String(row.local_agent_id),String(row.channel_id),
         String(row.encrypted_reply),String(row.reply_message_id));
-      this.options.store.transition(String(row.message_id),['reply_ready','outcome_unknown'],'completed');
+      if (this.options.store.finishDelivery) {
+        if (!this.options.store.finishDelivery(messageId,leaseOwner,true)) throw new Error('E2EE_DELIVERY_LEASE_LOST');
+      } else this.options.store.transition(messageId,['reply_ready','outcome_unknown'],'completed');
+      return true;
     } catch (error) {
-      try { this.options.store.transition(String(row.message_id),['reply_ready','outcome_unknown'],'outcome_unknown'); } catch {}
+      try {
+        if (this.options.store.finishDelivery) this.options.store.finishDelivery(messageId,leaseOwner,false);
+        else this.options.store.transition(messageId,['reply_ready','outcome_unknown'],'outcome_unknown');
+      } catch {}
       throw error;
     }
   }
@@ -226,7 +243,7 @@ export class CanaryRuntime {
     const rows = this.options.store.pendingReplies?.(limit) || [];
     let delivered = 0, failed = 0;
     for (const row of rows) {
-      try { await this.deliverStoredReply(row); delivered += 1; }
+      try { if (await this.deliverStoredReply(row)) delivered += 1; }
       catch { failed += 1; }
     }
     return { delivered,failed };

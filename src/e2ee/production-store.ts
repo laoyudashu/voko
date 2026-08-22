@@ -86,6 +86,8 @@ export class ProductionE2eeStore {
       reply_message_id TEXT,
       encrypted_reply TEXT,
       delivery_attempts INTEGER NOT NULL DEFAULT 0,
+      delivery_lease_owner TEXT,
+      delivery_lease_expires_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_e2ee_production_receipts_state
@@ -102,7 +104,8 @@ export class ProductionE2eeStore {
     try { db.exec('ALTER TABLE e2ee_production_sessions ADD COLUMN creator_guest_device_uid TEXT'); } catch {}
     for (const definition of [
       'local_agent_id TEXT','channel_id TEXT','reply_message_id TEXT',
-      'delivery_attempts INTEGER NOT NULL DEFAULT 0'
+      'delivery_attempts INTEGER NOT NULL DEFAULT 0','delivery_lease_owner TEXT',
+      'delivery_lease_expires_at INTEGER'
     ]) {
       try { db.exec(`ALTER TABLE e2ee_production_receipts ADD COLUMN ${definition}`); } catch {}
     }
@@ -305,7 +308,28 @@ export class ProductionE2eeStore {
     return this.db.prepare(`SELECT * FROM e2ee_production_receipts
       WHERE state IN ('reply_ready','outcome_unknown') AND encrypted_reply IS NOT NULL
         AND reply_message_id IS NOT NULL AND local_agent_id IS NOT NULL AND channel_id IS NOT NULL
-      ORDER BY updated_at LIMIT ${bounded}`).all() as any[];
+        AND (delivery_lease_owner IS NULL OR delivery_lease_expires_at IS NULL OR delivery_lease_expires_at<=?)
+      ORDER BY updated_at LIMIT ${bounded}`).all(Date.now()) as any[];
+  }
+
+  claimDelivery(messageId: string, leaseOwner: string, leaseMs = 60_000): boolean {
+    if (!leaseOwner) throw new Error('E2EE_DELIVERY_LEASE_OWNER_INVALID');
+    const now = Date.now();
+    const result = this.db.prepare(`UPDATE e2ee_production_receipts
+      SET delivery_lease_owner=?,delivery_lease_expires_at=?,delivery_attempts=delivery_attempts+1,updated_at=?
+      WHERE message_id=? AND state IN ('reply_ready','outcome_unknown')
+        AND (delivery_lease_owner IS NULL OR delivery_lease_expires_at IS NULL OR delivery_lease_expires_at<=?)`)
+      .run(leaseOwner,now+Math.max(1,leaseMs),now,messageId,now) as any;
+    return Number(result?.changes) === 1;
+  }
+
+  finishDelivery(messageId: string, leaseOwner: string, delivered: boolean): boolean {
+    const state = delivered ? 'completed' : 'outcome_unknown';
+    const result = this.db.prepare(`UPDATE e2ee_production_receipts
+      SET state=?,delivery_lease_owner=NULL,delivery_lease_expires_at=NULL,updated_at=?
+      WHERE message_id=? AND delivery_lease_owner=? AND state IN ('reply_ready','outcome_unknown')`)
+      .run(state,Date.now(),messageId,leaseOwner) as any;
+    return Number(result?.changes) === 1;
   }
 
   bindSenderDevice(groupId: string, senderDeviceKeyId: string): void {

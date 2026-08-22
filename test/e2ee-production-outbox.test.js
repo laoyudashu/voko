@@ -75,12 +75,54 @@ test('production Direct v2 retries the exact committed reply ciphertext without 
   failDelivery = false;
   assert.deepEqual(await runtime.recoverPendingReplies(),{delivered:1,failed:0});
   assert.equal(store.receipt('request-1').state,'completed');
+  assert.equal(store.receipt('request-1').delivery_attempts,2);
   assert.equal(deliveries.length,2);
   assert.deepEqual(deliveries[1],deliveries[0],'retry must reuse the exact reply ID and ciphertext');
 
   const duplicate = await runtime.handle('gym',{...message,ack(){}});
   assert.equal(duplicate.code,'duplicate');
   assert.equal(providerCalls,1,'completed redelivery must not execute Provider again');
+  db.close();
+});
+
+test('production Direct v2 online delivery and recovery drain share one atomic lease', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const scope = directScope();
+  seed(store);
+  let deliveryCalls = 0;
+  let releaseDelivery;
+  let markStarted;
+  const deliveryStarted = new Promise(resolve => { markStarted = resolve; });
+  const deliveryGate = new Promise(resolve => { releaseDelivery = resolve; });
+  const runtime = new CanaryRuntime({
+    policy:new ProductionE2eePolicy(store,true),store,
+    crypto:{
+      async decrypt() { return {plaintext:'hello',encryptedState:Buffer.from('state-2'),stateVersion:2}; },
+      async encrypt({messageId}) { return {envelope:{version:'voko.e2ee/1',messageId,
+        groupId:scope.groupId,senderDeviceKeyId:'agent-device',ciphertext:'fixed-reply'},
+        encryptedState:Buffer.from('state-3'),stateVersion:3}; },
+    },
+    dispatcher:{async executeE2ee(input) {
+      input.onProviderAccepted();
+      return {reply:{content:'fixed reply'}};
+    }},
+    persistInbound:()=>true,persistOutbound:()=>{},
+    async deliverRaw() {
+      deliveryCalls += 1;
+      markStarted();
+      await deliveryGate;
+      return {success:true};
+    },
+  });
+  const processing = runtime.handle('gym',inbound());
+  await deliveryStarted;
+  assert.deepEqual(await runtime.recoverPendingReplies(),{delivered:0,failed:0});
+  releaseDelivery();
+  assert.equal((await processing).accepted,true);
+  assert.equal(deliveryCalls,1);
+  assert.equal(store.receipt('request-1').delivery_attempts,1);
+  assert.equal(store.receipt('request-1').state,'completed');
   db.close();
 });
 
