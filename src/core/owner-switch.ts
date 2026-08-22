@@ -146,6 +146,14 @@ export function buildReplacementArgs(argv: string[]): string[] {
   return args;
 }
 
+function resolveLaunchPath(value: string): string {
+  // Keep an explicitly Windows-qualified path intact when the helper is
+  // exercised from a non-Windows test runner.  `path.resolve()` on Unix would
+  // otherwise turn `C:\\runtime\\node.exe` into a bogus repository path.
+  if (/^[A-Za-z]:[\\/]/.test(value)) return value;
+  return path.resolve(value);
+}
+
 export function spawnReplacementProcess(options: {
   argv?: string[];
   execPath?: string;
@@ -156,8 +164,8 @@ export function spawnReplacementProcess(options: {
   terminal?: { stdin?: boolean; stdout?: boolean; stderr?: boolean };
   spawnImpl?: typeof spawn;
 } = {}): { pid: number | null; foreground: boolean } {
-  const execPath = path.resolve(options.execPath || process.execPath);
-  const entryPath = path.resolve(options.entryPath || path.join(__dirname, '..', 'index.js'));
+  const execPath = resolveLaunchPath(options.execPath || process.execPath);
+  const entryPath = resolveLaunchPath(options.entryPath || path.join(__dirname, '..', 'index.js'));
   const baseEnv = options.env || process.env;
   const foreground = resolveForegroundLaunch(options.foreground, baseEnv, options.terminal || {
     stdin: process.stdin.isTTY,
