@@ -2124,7 +2124,7 @@ async function startMcpServer(args?: any, core?: any) {
           return;
         }
         void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
-          if (!result.accepted) console.warn(`[E2EE Canary] 已拒绝消息: ${result.code || 'E2EE_CANARY_REJECTED'}`);
+          if (!result.accepted) console.warn(`[E2EE] 已拒绝消息: ${result.code || 'E2EE_REJECTED'}`);
           if (!data?.__e2eeReceiptAcked) data?.ack?.();
         }).catch((error: any) => {
           console.error('[E2EE Canary] 处理异常:', error.message);

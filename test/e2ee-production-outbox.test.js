@@ -24,13 +24,59 @@ function seed(store) {
       encryptedPendingState:Buffer.from('pending'),publishState:'pending'}});
 }
 
-function inbound() {
+function inbound(messageId = 'request-1') {
   const scope = directScope();
   const content = JSON.stringify({version:'voko.e2ee/1',contentType:13,groupId:scope.groupId,epoch:1,
     targetAgentDid:scope.targetAgentDid,conversationScope:scope.conversationScope,
-    senderDeviceKeyId:'browser-device-1',messageId:'request-1',channelType:1,ciphertext:'Y2lwaGVy'});
+    senderDeviceKeyId:'browser-device-1',messageId,channelType:1,ciphertext:'Y2lwaGVy'});
   return {contentType:13,content,fromUid:'visitor-1',channelType:1,ack(){}};
 }
+
+test('production E2EE serializes concurrent messages within one group', async () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const scope = directScope();
+  seed(store);
+  let running = 0;
+  let maxRunning = 0;
+  const observedDecryptVersions = [];
+  const runtime = new CanaryRuntime({
+    policy:new ProductionE2eePolicy(store,true),store,
+    crypto:{
+      async decrypt({stateVersion}) {
+        observedDecryptVersions.push(stateVersion);
+        return {plaintext:'hello',encryptedState:Buffer.from(`state-${stateVersion + 1}`),stateVersion:stateVersion + 1};
+      },
+      async encrypt({messageId,stateVersion}) {
+        return {envelope:{version:'voko.e2ee/1',messageId,groupId:scope.groupId,
+          senderDeviceKeyId:'agent-device',ciphertext:'fixed-reply'},
+          encryptedState:Buffer.from(`state-${stateVersion + 1}`),stateVersion:stateVersion + 1};
+      },
+    },
+    dispatcher:{async executeE2ee(input) {
+      running += 1;
+      maxRunning = Math.max(maxRunning,running);
+      input.onProviderAccepted();
+      await new Promise(resolve => setTimeout(resolve,20));
+      running -= 1;
+      return {reply:{content:`reply-${input.taskId}`}};
+    }},
+    persistInbound:()=>true,persistOutbound:()=>{},deliverRaw:async()=>({success:true}),
+  });
+
+  const [first,second] = await Promise.all([
+    runtime.handle('gym',inbound('request-a')),
+    runtime.handle('gym',inbound('request-b')),
+  ]);
+  assert.equal(first.accepted,true);
+  assert.equal(second.accepted,true);
+  assert.equal(maxRunning,1,'one E2EE group must have at most one active Provider turn');
+  assert.deepEqual(observedDecryptVersions,[1,3]);
+  assert.equal(store.session(scope.groupId).state_version,5);
+  assert.equal(store.receipt('request-a').state,'completed');
+  assert.equal(store.receipt('request-b').state,'completed');
+  db.close();
+});
 
 test('production Direct v2 retries the exact committed reply ciphertext without re-running Provider', async () => {
   const db = new DatabaseSync(':memory:');

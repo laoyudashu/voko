@@ -56,6 +56,7 @@ export class CanaryRuntime {
   private stats = { received: 0, replied: 0, rejected: 0, failures: 0, plaintextFallbacks: 0 };
   private disabled = false;
   private readonly attachmentUrlKey = crypto.randomBytes(32);
+  private readonly groupExecutionTails = new Map<string,Promise<void>>();
   constructor(private readonly options: { policy: E2eeRuntimePolicy; store: E2eeRuntimeStore; crypto: CanaryCrypto;
     dispatcher: E2eeDispatcher; deliverRaw: (agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
     persistInbound?: (agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean;
@@ -92,6 +93,22 @@ export class CanaryRuntime {
     console.warn(`[E2EE_DIAG] ${JSON.stringify(record)}`);
   }
 
+  private async acquireGroupExecution(groupId: string): Promise<() => void> {
+    const previous = this.groupExecutionTails.get(groupId) || Promise.resolve();
+    let releaseGate!: () => void;
+    const gate = new Promise<void>(resolve => { releaseGate = resolve; });
+    const tail = previous.then(() => gate);
+    this.groupExecutionTails.set(groupId,tail);
+    await previous;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      releaseGate();
+      if (this.groupExecutionTails.get(groupId) === tail) this.groupExecutionTails.delete(groupId);
+    };
+  }
+
   async handle(localAgentId: string, message: any): Promise<{ handled:true;accepted:boolean;code?:string }> {
     if (!this.claims(message)) throw new Error('E2EE_CANARY_NOT_CLAIMED');
     if (this.disabled) return { handled:true,accepted:false,code:'E2EE_CANARY_EMERGENCY_DISABLED' };
@@ -107,6 +124,7 @@ export class CanaryRuntime {
       this.diagnostic(stage,'error',{agent:localAgentId,code:error?.message});
       return { handled:true,accepted:false,code:String(error?.message || 'E2EE_CANARY_REJECTED') };
     }
+    const releaseGroupExecution = await this.acquireGroupExecution(String(scope.groupId));
     const digest = crypto.createHash('sha256').update(String(message.content)).digest('base64url');
     let providerAccepted = false;
     let replyCommitted = false;
@@ -212,6 +230,8 @@ export class CanaryRuntime {
       this.diagnostic(stage,'error',{agent:localAgentId,group:scope?.groupId,message:envelope?.messageId,
         code:error?.code||error?.message,providerAccepted});
       return { handled:true,accepted:false,code:String(error?.code || error?.message || 'E2EE_CANARY_FAILED') };
+    } finally {
+      releaseGroupExecution();
     }
   }
 
