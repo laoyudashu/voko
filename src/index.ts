@@ -1889,6 +1889,11 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   let ownerInterventionNotifier: any = null; // 在后面创建，供 callback 闭包引用
+  const enqueueOwnerIntervention = (record?: any) => {
+    if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue(record);
+    const bus = require('./core/lite-bus');
+    bus.emit('owner-intervention:new');
+  };
 
   // ── 创建 MessageHandler（消息转发/审核/计费） ──
   try {
@@ -1921,11 +1926,7 @@ async function startMcpServer(args?: any, core?: any) {
         const bus = require('./core/lite-bus');
         if (event === 'agent-wukongim:message') bus.emit('agent-wukongim:message', data);
       },
-      enqueueIntervention: (record?: any) => {
-        if (ownerInterventionNotifier) ownerInterventionNotifier.enqueue(record);
-        const bus = require('./core/lite-bus');
-        bus.emit('owner-intervention:new');
-      },
+      enqueueIntervention: enqueueOwnerIntervention,
       createPendingPayment: (agentId: string, visitorId: string, fromUid: string, pricing: any, _timestamp: number, sourceMessageId?: string) => {
         void (async () => {
           const { resolveOwnerInterventionConversation } = require('./core/owner-intervention-routing');
@@ -1981,7 +1982,8 @@ async function startMcpServer(args?: any, core?: any) {
       const store = new E2eeV2Store(e2eeDatabase,e2eePath);
       const directory = new E2eeV2DirectoryClient({baseUrl:String(require('./endpoints.json').api.baseUrl || ''),token:ownerToken});
       const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
-        WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
+        WHERE publish_status IN ('published','private') AND LOWER(owner_email)=LOWER(?)
+          AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
         .flatMap((row:any)=>{
           const serverAgentId=serverAgentIdFromDid(row.did);
           return serverAgentId?[{localAgentId:String(row.agent_id),serverAgentId,agentDid:String(row.did)}]:[];
@@ -1996,6 +1998,9 @@ async function startMcpServer(args?: any, core?: any) {
           if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');
           messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId);
         },
+        reviewOutbound:(input:any)=>require('./e2ee/v2-outbound-policy').reviewE2eeOutboundReply({
+          db,databaseAPI,enqueueIntervention:enqueueOwnerIntervention,...input,
+        }),
         deliverRaw:async(agentId:string,channelId:string,envelope:string,messageId:string)=>
           agentManager.deliverEncrypted(agentId,channelId,envelope,messageId),
         downloadAttachment:async(agent:any,uploadId:string,channelId:string)=>{

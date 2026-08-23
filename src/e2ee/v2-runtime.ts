@@ -25,6 +25,7 @@ type RuntimeOptions={
   dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean;
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string)=>void;
+  reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
   deliverRaw:(agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
   downloadAttachment?:(agent:E2eeV2AgentDescriptor,uploadId:string,channelId:string)=>Promise<Uint8Array>;
 };
@@ -58,7 +59,8 @@ export function parseE2eeV2Envelope(content:unknown):E2eeV2Envelope {
 function sessionScope(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope):string {
   return crypto.createHash('sha256').update('VOKO-E2EE-V2-SESSION\0')
     .update(agent.localAgentId).update('\0').update(agent.serverAgentId).update('\0')
-    .update(envelope.conversationId).update('\0').update(envelope.senderDeviceId).digest('base64url');
+    .update(envelope.channelId).update('\0').update(envelope.conversationId).update('\0')
+    .update(envelope.senderDeviceId).digest('base64url');
 }
 
 function deterministicReplyId(envelope:E2eeV2Envelope):string {
@@ -204,13 +206,18 @@ export class E2eeV2Runtime {
           if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
             throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
           }} });
-      const reply=String(result?.reply?.content||'');
+      let reply=String(result?.reply?.content||'');
       if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
       if(!providerAccepted){
         providerAccepted=true;
         if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
           throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
         }
+      }
+      if(this.options.reviewOutbound){
+        reply=await this.options.reviewOutbound({agentId:agent.localAgentId,channelId:envelope.channelId,
+          content:reply,messageId:envelope.messageId});
+        if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
       }
       const key=this.options.store.key(agent.localAgentId)!;
       const senderBundle=this.endpoint(agent.localAgentId).publicBundle();

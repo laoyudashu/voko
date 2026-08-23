@@ -56,7 +56,13 @@ test('agent detail truncates long visitor names and keeps the full name in a too
   assert.match(html, /width:180px;max-width:180px;white-space:nowrap;overflow:hidden/);
 });
 
-test('agent detail renders authoritative E2EE conversation key states', async (t) => {
+test('agent detail hides E2EE state in production and shows only active state in debug mode', async (t) => {
+  const previousDebug = process.env.VOKO_E2EE_DEBUG_UI;
+  delete process.env.VOKO_E2EE_DEBUG_UI;
+  t.after(() => {
+    if (previousDebug === undefined) delete process.env.VOKO_E2EE_DEBUG_UI;
+    else process.env.VOKO_E2EE_DEBUG_UI = previousDebug;
+  });
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-e2ee', agentName: 'E2EE Test', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
@@ -86,16 +92,19 @@ test('agent detail renders authoritative E2EE conversation key states', async (t
   });
   t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
-  const html = await response.text();
-  assert.equal(response.status, 200);
-  assert.equal((html.match(/aria-label="端到端加密已启用"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="双方支持端到端加密，尚未启用"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="正在检测或建立端到端加密"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="端到端加密异常，请在访客端重试"/g) || []).length, 1);
-  assert.match(html, /attributeName="opacity" values="1;.25;1"/);
-  assert.match(html, /Secure visitor<\/a> <svg role="img"/);
-  assert.doesNotMatch(html, /Plain visitor<\/a> <svg role="img"/);
+  const productionResponse = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
+  const productionHtml = await productionResponse.text();
+  assert.equal(productionResponse.status, 200);
+  assert.doesNotMatch(productionHtml, /aria-label="端到端加密已启用"/);
+
+  process.env.VOKO_E2EE_DEBUG_UI = 'true';
+  const debugResponse = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
+  const debugHtml = await debugResponse.text();
+  assert.equal(debugResponse.status, 200);
+  assert.equal((debugHtml.match(/aria-label="端到端加密已启用"/g) || []).length, 1);
+  assert.doesNotMatch(debugHtml, /双方支持端到端加密|正在检测或建立端到端加密|端到端加密异常/);
+  assert.match(debugHtml, /Secure visitor<\/a> <svg role="img"/);
+  assert.doesNotMatch(debugHtml, /Available visitor<\/a> <svg role="img"/);
 });
 
 test('empty conversation detail still renders the reply composer', async (t) => {

@@ -1445,6 +1445,7 @@ function createWebRouter(handlers, db, opts={}){
 
       const aName=esc(agent.agentName||agent.agentId);
       const aId=esc(agentId);
+      const e2eeDebugUi=String(process.env.VOKO_E2EE_DEBUG_UI||'').trim().toLowerCase()==='true';
 
       // 结果提示
       let msg=null;
@@ -1463,8 +1464,10 @@ function createWebRouter(handlers, db, opts={}){
       let convHtml='<p class="meta">'+L('web.agent.no_conversations')+'</p>';
       if(convs.length){
         let e2eeStates={};
-        try{e2eeStates=await opts.e2eeRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
-        for(const c of convs){const channelId=String(c.channelId);if(!e2eeStates[channelId]&&opts.e2eeRuntime?.isChannelActive?.(agentId,channelId))e2eeStates[channelId]='active';}
+        if(e2eeDebugUi){
+          try{e2eeStates=await opts.e2eeRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
+          for(const c of convs){const channelId=String(c.channelId);if(!e2eeStates[channelId]&&opts.e2eeRuntime?.isChannelActive?.(agentId,channelId))e2eeStates[channelId]='active';}
+        }
         // 补昵称（user_cache 有则用，无则回退 channelId）
         let convNickMap={};
         try{const cids=convs.map(c=>c.channelId);const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+cids.map(()=>'?').join(',')+')').all(...cids);rows.forEach(r=>{convNickMap[r.uid]=r.nickname||'';});}catch(_){}
@@ -1476,7 +1479,7 @@ function createWebRouter(handlers, db, opts={}){
           const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
           const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';
           const e2eeState=String(e2eeStates[String(c.channelId)]||'');
-          const keyMeta=e2eeState==='active'?['web.agent.e2ee_active','#22C55E','#16A34A']:e2eeState==='available'?['web.agent.e2ee_available','#9CA3AF','#6B7280']:e2eeState==='checking'?['web.agent.e2ee_checking','#F59E0B','#D97706']:e2eeState==='error'?['web.agent.e2ee_error','#EF4444','#DC2626']:null;
+          const keyMeta=e2eeDebugUi&&e2eeState==='active'?['web.agent.e2ee_active','#22C55E','#16A34A']:null;
           const e2eeKey=keyMeta?' <svg role="img" aria-label="'+esc(T(keyMeta[0]))+'" style="width:16px;height:16px;vertical-align:middle" viewBox="0 0 256 256"><title>'+esc(T(keyMeta[0]))+'</title>'+(e2eeState==='checking'?'<animate attributeName="opacity" values="1;.25;1" dur="1s" repeatCount="indefinite"/>':'')+'<g transform="rotate(135 128 128)" fill="'+keyMeta[1]+'" stroke="'+keyMeta[2]+'" stroke-width="4" stroke-linejoin="round"><path fill-rule="evenodd" d="M76 70a58 58 0 1 0 43.6 96.3L218 166v-30h-26v-24h-28v24h-44.4A58 58 0 0 0 76 70Zm0 28a30 30 0 1 1 0 60 30 30 0 0 1 0-60Z"/></g></svg>':'';
           convHtml+='<tr><td style="width:180px;max-width:180px;white-space:nowrap;overflow:hidden">'+visitorLink+e2eeKey+unreadBadge+'</td><td style="white-space:normal;word-break:break-word;max-width:300px">'+msg+'</td><td style="white-space:nowrap;width:50px;text-align:center">'+lastFrom+'</td><td class="meta" style="white-space:nowrap;width:90px;text-align:center">'+timeTag(c.lastTimestamp)+'</td></tr>'
         }
