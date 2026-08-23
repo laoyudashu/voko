@@ -1,7 +1,8 @@
 'use strict';
 const assert = require('node:assert/strict'); const fs = require('node:fs'); const os = require('node:os');
 const path = require('node:path'); const test = require('node:test');
-const { A2ABridgeWorker, A2ALocalTaskStore, A2AScopeResolver, initA2ADatabase } = require('../build/a2a');
+const { A2ABridgeWorker, A2AIdentityStore, A2ALocalTaskStore, A2AScopeResolver,
+  A2ATaskProcessor, initA2ADatabase } = require('../build/a2a');
 function setup(t, execute, provenance = 'guest_a2a') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-bridge-')); const db = initA2ADatabase(path.join(dir, 'a.db'));
   t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -71,4 +72,43 @@ test('bridge runs different agents up to the limit while serializing each agent'
     } });
   assert.deepEqual(await worker.pollOnce(), { claimed: 4, processed: 4, uncertain: 0 });
   assert.equal(peak, 2); assert.equal(sameAgentOverlap, false);
+});
+
+test('empty remote claim atomically terminates an expired local retry without Provider execution', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'a2a-expired-retry-')); const db = initA2ADatabase(path.join(dir, 'a.db'));
+  t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const store = new A2ALocalTaskStore(db); const now = Date.now();
+  const envelope = { version: 'voko.a2a/1', kind: 'request', operation: 'execute', eventId: 'event-expired',
+    gatewayTaskId: 'task-expired', contextId: 'ctx-expired', gatewayMessageId: 'message-expired', executionId: 'exec-expired',
+    agentId: 'agent-expired', commandSequence: 1, caller: { principalId: 'principal-1', actorKind: 'agent', provenance: 'guest_a2a' },
+    payload: { text: 'must-not-run' }, trace: { correlationId: 'correlation-expired' },
+    timestamps: { createdAt: new Date(now - 60_000).toISOString(), expiresAt: new Date(now - 1_000).toISOString() } };
+  store.createTask({ gatewayTaskId: envelope.gatewayTaskId, contextId: envelope.contextId, executionId: envelope.executionId,
+    agentId: envelope.agentId, gatewayUid: 'gateway', principalScope: 'scope-1', scopeVersion: 1, scopeKeyId: 'key-1' });
+  store.acceptCommand(envelope.eventId, envelope.gatewayTaskId, 1, 'execute', envelope);
+  store.retryCommand(envelope.eventId, 'PROVIDER_NOT_DELIVERED', 0);
+  let providerCalls = 0; let expiredVerifications = 0;
+  const processor = new A2ATaskProcessor(store, { async execute() { providerCalls += 1; } }, new A2AIdentityStore(db).getOrCreate());
+  const worker = new A2ABridgeWorker({ client: { async claim() { return { leaseId: 'empty', items: [] }; } }, store,
+    scopes: new A2AScopeResolver(db), verify() { throw new Error('Expired A2A envelope'); },
+    verifyExpiredRetry(value) { expiredVerifications += 1; return value; },
+    expireRetry: (eventId, value) => processor.expireBeforeDelivery(eventId, value),
+    async execute() { providerCalls += 1; } });
+
+  assert.deepEqual(await worker.pollOnce(), { claimed: 0, processed: 0, uncertain: 0 });
+  assert.deepEqual(await worker.pollOnce(), { claimed: 0, processed: 0, uncertain: 0 });
+  assert.equal(providerCalls, 0); assert.equal(expiredVerifications, 1);
+  const inbox = db.prepare('SELECT status,execution_state,error_code,envelope_json FROM a2a_local_inbox WHERE event_id=?')
+    .get(envelope.eventId);
+  assert.deepEqual({ ...inbox }, { status: 'processed', execution_state: 'processed',
+    error_code: 'A2A_COMMAND_EXPIRED_BEFORE_DELIVERY', envelope_json: null });
+  const task = db.prepare('SELECT standard_state,delivery_state FROM a2a_local_tasks WHERE gateway_task_id=?')
+    .get(envelope.gatewayTaskId);
+  assert.deepEqual({ ...task }, { standard_state: 'FAILED', delivery_state: 'DEAD_LETTER' });
+  const outbox = db.prepare("SELECT operation,envelope_json FROM a2a_local_outbox WHERE gateway_task_id=? AND operation='failed'")
+    .get(envelope.gatewayTaskId);
+  assert.equal(outbox.operation, 'failed');
+  const terminal = JSON.parse(outbox.envelope_json);
+  assert.equal(terminal.payload.reasonCode, 'A2A_COMMAND_EXPIRED_BEFORE_DELIVERY');
+  assert.equal(terminal.signature.algorithm, 'Ed25519');
 });

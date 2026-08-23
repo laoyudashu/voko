@@ -55,7 +55,14 @@ class A2ABridgeRuntime {
     };
     const worker = new A2ABridgeWorker({ client, store, scopes, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
-    }, execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
+    }, verifyExpiredRetry: (value) => {
+      const candidate = value as any; const expiresAt = Date.parse(candidate?.timestamps?.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt >= Date.now()) throw new Error('A2A_LOCAL_RETRY_NOT_EXPIRED');
+      const envelope = validateEnvelope(value, { now: expiresAt });
+      if (!verifyEnvelope(envelope, gatewayPublicKey, { now: expiresAt })) throw new Error('Invalid A2A Gateway signature');
+      return envelope;
+    }, expireRetry: (eventId, envelope) => processor.expireBeforeDelivery(eventId, envelope),
+    execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
     for (const command of store.listProcessingCommands()) {
       try {

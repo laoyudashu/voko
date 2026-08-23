@@ -6,6 +6,8 @@ import type { A2AScopeResolver } from './scope';
 interface A2ABridgeWorkerOptions { client: A2AMailboxClient; store: A2ALocalTaskStore;
   scopes: A2AScopeResolver;
   verify: (value: unknown) => A2AEnvelope; execute: (envelope: A2AEnvelope) => Promise<void>;
+  verifyExpiredRetry?: (value: unknown) => A2AEnvelope;
+  expireRetry?: (eventId: string, envelope: A2AEnvelope) => boolean;
   availability?: () => Array<any>; concurrency?: number }
 
 class A2ABridgeWorker {
@@ -80,7 +82,18 @@ class A2ABridgeWorker {
     await this.runByAgent(claimedWork);
     const retryWork = this.options.store.listReadyRetryCommands().flatMap(command => {
       if (!command.envelope_json) return [];
-      const envelope = this.options.verify(JSON.parse(command.envelope_json));
+      const value = JSON.parse(command.envelope_json); let envelope: A2AEnvelope;
+      try { envelope = this.options.verify(value); }
+      catch (error) {
+        if (error instanceof Error && error.message === 'Expired A2A envelope'
+          && this.options.verifyExpiredRetry && this.options.expireRetry) {
+          const expiredEnvelope = this.options.verifyExpiredRetry(value);
+          this.options.expireRetry(command.event_id, expiredEnvelope);
+          return [];
+        }
+        const wrapped: any = new Error(`A2A_LOCAL_RETRY_VERIFY_FAILED: ${error instanceof Error ? error.message : 'unknown error'}`);
+        wrapped.code = 'A2A_LOCAL_RETRY_VERIFY_FAILED'; throw wrapped;
+      }
       return [{ agentId: envelope.agentId, run: async () => {
         const result = await this.executePersisted(command.event_id, envelope);
         if (result === 'processed') processed += 1;
