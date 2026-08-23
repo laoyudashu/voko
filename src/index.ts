@@ -590,7 +590,7 @@ let __runtimePort: any = null;
 /**
  * 启动 MCP 传输层（stdio 或 HTTP）
  */
-async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any, taskManager?: any, webRouterOptions?: any) {
+async function startTransport(args?: any, mcpServer?: any, agentManager?: any, db?: any, databaseAPI?: any, webRouter?: any, handlers?: any, runtimeState?: any, wukongimSender?: any, taskManager?: any, webRouterOptions?: any, e2eeRuntime?: any) {
   const port = parseInt(args.port, 10) || 3100;
   const app = express();
   app.use((req?: any, res?: any, next?: any) => {
@@ -1525,6 +1525,25 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     } catch (_error: any) { res.status(404).end(); }
   });
 
+  app.get('/api/e2ee-v2/attachments/:messageId', (req?: any, res?: any) => {
+    try {
+      const agentId = String(req.query?.agentId || '');
+      if (!agentId || !currentOwnsAgent(agentId) || !e2eeRuntime) return res.status(404).end();
+      const row = e2eeRuntime.attachment(String(req.params.messageId || ''));
+      if (!row || String(row.local_agent_id) !== agentId || !fs.existsSync(String(row.local_path))) {
+        return res.status(404).end();
+      }
+      const safeName = path.basename(String(row.file_name || 'attachment')).replace(/["\\\r\n]/g, '_');
+      const mediaType = String(row.media_type || 'application/octet-stream');
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Content-Type', mediaType);
+      res.set('Content-Disposition', `${mediaType.startsWith('image/') ? 'inline' : 'attachment'}; filename="${safeName}"`);
+      return res.sendFile(path.resolve(String(row.local_path)));
+    } catch {
+      return res.status(404).end();
+    }
+  });
+
   // ── WebSocket 服务器（事件推送） ──
   const WebSocket = require('ws');
   let _wss: any = null;
@@ -1979,6 +1998,13 @@ async function startMcpServer(args?: any, core?: any) {
         },
         deliverRaw:async(agentId:string,channelId:string,envelope:string,messageId:string)=>
           agentManager.deliverEncrypted(agentId,channelId,envelope,messageId),
+        downloadAttachment:async(agent:any,uploadId:string,channelId:string)=>{
+          const data=await require('./server/oss').getUploadDownload(uploadId,ownerToken,
+            agent.serverAgentId,'private',channelId);
+          const response=await fetch(String(data.url),{signal:AbortSignal.timeout(30_000)});
+          if(!response.ok)throw new Error(`E2EE_V2_ATTACHMENT_DOWNLOAD_${response.status}`);
+          return new Uint8Array(await response.arrayBuffer());
+        },
       });
       const initial=await e2eeRuntime.synchronizeAgentKeys();
       console.warn(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
@@ -2335,6 +2361,7 @@ const { RuntimeState } = require('./core/runtime-state');
     wukongimSender,
     taskManager,
     webRouterOptions,
+    e2eeRuntime,
   );
 }
 

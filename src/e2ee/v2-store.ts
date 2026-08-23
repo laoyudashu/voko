@@ -33,6 +33,11 @@ export interface E2eeV2ReceiptRow {
   updated_at: number;
 }
 
+export interface E2eeV2AttachmentRow {
+  message_id:string;upload_id:string;local_agent_id:string;channel_id:string;file_name:string;
+  media_type:string;size:number;sha256:string;local_path:string;created_at:number;
+}
+
 function keyFile(databasePath: string): string {
   return path.join(path.dirname(databasePath),'voko-e2ee-v2.key');
 }
@@ -107,6 +112,18 @@ export class E2eeV2Store {
       );
       CREATE INDEX IF NOT EXISTS idx_e2ee_v2_receipts_recovery
         ON e2ee_v2_receipts(state,updated_at);
+      CREATE TABLE IF NOT EXISTS e2ee_v2_attachments (
+        message_id TEXT PRIMARY KEY,
+        upload_id TEXT NOT NULL UNIQUE,
+        local_agent_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        local_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -194,6 +211,29 @@ export class E2eeV2Store {
   hasChannel(localAgentId:string,channelId:string):boolean{
     return Boolean(this.db.prepare(`SELECT 1 FROM e2ee_v2_receipts WHERE local_agent_id=? AND channel_id=? LIMIT 1`)
       .get(localAgentId,channelId));
+  }
+
+  saveAttachment(input:{messageId:string;uploadId:string;localAgentId:string;channelId:string;
+    fileName:string;mediaType:string;sha256:string;bytes:Uint8Array}):E2eeV2AttachmentRow{
+    const existing=this.attachment(input.messageId);if(existing)return existing;
+    const root=path.join(path.dirname(this.databasePath),'e2ee-v2-attachments');
+    fs.mkdirSync(root,{recursive:true,mode:0o700});
+    const localPath=path.join(root,`${crypto.createHash('sha256').update(input.messageId).digest('hex')}.bin`);
+    const temporary=`${localPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporary,Buffer.from(input.bytes),{flag:'wx',mode:0o600});
+    try{
+      fs.renameSync(temporary,localPath);
+      const createdAt=Date.now();
+      this.db.prepare(`INSERT INTO e2ee_v2_attachments(message_id,upload_id,local_agent_id,channel_id,file_name,
+        media_type,size,sha256,local_path,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+          input.messageId,input.uploadId,input.localAgentId,input.channelId,input.fileName,input.mediaType,
+          input.bytes.byteLength,input.sha256,localPath,createdAt);
+      return this.attachment(input.messageId)!;
+    }catch(error){try{fs.unlinkSync(temporary);}catch{}try{if(!this.attachment(input.messageId))fs.unlinkSync(localPath);}catch{}throw error;}
+  }
+
+  attachment(messageId:string):E2eeV2AttachmentRow|null{
+    return(this.db.prepare('SELECT * FROM e2ee_v2_attachments WHERE message_id=?').get(messageId) as E2eeV2AttachmentRow|undefined)||null;
   }
 
   closeAmbiguousExecutions(): number {
