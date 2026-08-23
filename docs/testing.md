@@ -62,6 +62,8 @@ npm run test:e2ee:platform
 
 The command provisions a random owner-scoped secret in the native Windows Credential Manager, macOS Keychain or Linux Secret Service, reopens and uses it, revokes it, then verifies it cannot be reopened. It writes the ignored `e2ee-platform-summary.json` with platform, architecture, exact commit, Cargo version and result; it never records the secret or credential slot. Linux must run inside an unlocked desktop Secret Service session—headless fallback storage is not accepted.
 
+The npm release workflow builds and signs a separate native package on each supported runner: Windows x64, Linux x64/arm64 and macOS x64/arm64. Each package must contain exactly one endpoint, its signed manifest and platform `os`/`cpu` metadata. Platform packages are published before `@voko/lite`; the Lite tarball contains no foreign-platform endpoint. Runtime auto-discovery never trusts a public key supplied by a platform package.
+
 The remaining deterministic E2EE gates use these exact entry points:
 
 ```bash

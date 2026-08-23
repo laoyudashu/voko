@@ -29,4 +29,11 @@ if (sourceVersion !== buildVersion) {
   );
 }
 
+const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const nativePackages = Object.entries(packageJson.optionalDependencies || {})
+  .filter(([name]) => name.startsWith('@voko/e2ee-'));
+if (nativePackages.length !== 5 || nativePackages.some(([, version]) => version !== packageJson.version)) {
+  throw new Error(`E2EE platform packages must all use the Lite release version ${packageJson.version}`);
+}
+
 console.log(`[package-schema] source/build schema v${sourceVersion} are synchronized`);

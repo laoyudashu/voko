@@ -21,7 +21,109 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build-native:
+    name: Build E2EE native (${{ matrix.id }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: win32-x64
+            os: windows-latest
+          - id: linux-x64
+            os: ubuntu-latest
+          - id: linux-arm64
+            os: ubuntu-24.04-arm
+          - id: darwin-x64
+            os: macos-15-intel
+          - id: darwin-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    environment: npm-production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --no-self-update
+          rustup override set 1.97.1
+      - run: npm ci
+      - name: Materialize the E2EE signing key
+        shell: node {0}
+        env:
+          E2EE_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.E2EE_RELEASE_PRIVATE_KEY_PEM }}
+        run: |
+          const fs = require('node:fs');
+          const key = String(process.env.E2EE_RELEASE_PRIVATE_KEY_PEM || '');
+          if (!key.includes('PRIVATE KEY')) throw new Error('E2EE release signing key is not configured');
+          fs.writeFileSync('.e2ee-release-key.pem', key, { mode: 0o600 });
+      - name: Build and stage the current platform package
+        env:
+          VOKO_E2EE_RELEASE_PRIVATE_KEY_FILE: ${{ github.workspace }}/.e2ee-release-key.pem
+        run: node scripts/build-e2ee-platform-package.js --output=dist/e2ee-native
+      - name: Pack the platform package
+        run: npm pack ./dist/e2ee-native --json --ignore-scripts > native-pack.json
+      - name: Remove the signing key
+        if: always()
+        shell: node {0}
+        run: require('node:fs').rmSync('.e2ee-release-key.pem',{force:true})
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: e2ee-native-${{ matrix.id }}-${{ inputs.version }}
+          path: |
+            voko-e2ee-*.tgz
+            native-pack.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-native:
+    name: Publish E2EE native (${{ matrix.id }})
+    needs: build-native
+    strategy:
+      fail-fast: false
+      matrix:
+        id: [win32-x64, linux-x64, linux-arm64, darwin-x64, darwin-arm64]
+    runs-on: ubuntu-latest
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: e2ee-native-${{ matrix.id }}-${{ inputs.version }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Check for an identical existing platform release
+        id: existing
+        shell: node {0}
+        run: |
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const [packed] = JSON.parse(fs.readFileSync('native-pack.json','utf8'));
+          let published = '';
+          try {
+            published = execFileSync('npm',['view',`${packed.name}@${packed.version}`,'dist.integrity','--registry=https://registry.npmjs.org'],{encoding:'utf8'}).trim();
+          } catch (error) {
+            const detail = `${error.stdout || ''}\n${error.stderr || ''}`;
+            if (!/E404|is not in this registry|No match found/i.test(detail)) throw error;
+          }
+          if (published && published !== packed.integrity) throw new Error(`${packed.name}@${packed.version} already exists with different bytes`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`publish=${published ? 'false' : 'true'}\n`);
+      - name: Publish the verified platform tarball
+        if: steps.existing.outputs.publish == 'true'
+        run: |
+          tarball="$(find . -maxdepth 1 -name 'voko-e2ee-*.tgz' -print -quit)"
+          test -n "$tarball"
+          npm publish "$tarball" --access public --provenance
+
   prepare:
+    needs: publish-native
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

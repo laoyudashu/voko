@@ -1954,11 +1954,20 @@ async function startMcpServer(args?: any, core?: any) {
     if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
     if (canaryPolicy.enabled || productionEnabled) {
       let endpoint = String(productionEnabled ? productionConfig.endpoint : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
-      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'VOKO_E2EE_ENDPOINT' : 'VOKO_E2EE_CANARY_ENDPOINT'} must be an absolute path`);
+      let endpointManifest = productionConfig.manifestPath;
+      if (productionEnabled && !endpoint) {
+        const { resolvePackagedE2eeRelease } = require('./e2ee/platform-package');
+        const packagedRelease = resolvePackagedE2eeRelease();
+        if (packagedRelease) {
+          endpoint = packagedRelease.executable;
+          endpointManifest = packagedRelease.manifestPath;
+        }
+      }
+      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'E2EE_PLATFORM_PACKAGE_MISSING' : 'VOKO_E2EE_CANARY_ENDPOINT must be an absolute path'}`);
       if (productionEnabled) {
         const { verifyNativeE2eeRelease } = require('./e2ee/native-release');
         endpoint = verifyNativeE2eeRelease({ executable:endpoint,
-          manifestPath:productionConfig.manifestPath,
+          manifestPath:endpointManifest,
           publicKeyPem:productionConfig.publicKeyPem });
       }
       const { CanaryStore } = require('./e2ee/canary-store');

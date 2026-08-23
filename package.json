@@ -150,6 +150,13 @@
     "ws": "^8.18.0",
     "zod": "^3.24.0"
   },
+  "optionalDependencies": {
+    "@voko/e2ee-win32-x64": "0.4.7",
+    "@voko/e2ee-linux-x64": "0.4.7",
+    "@voko/e2ee-linux-arm64": "0.4.7",
+    "@voko/e2ee-darwin-x64": "0.4.7",
+    "@voko/e2ee-darwin-arm64": "0.4.7"
+  },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.0.0",

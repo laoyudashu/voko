@@ -36,6 +36,12 @@ VOKO 当前为浏览器访客与本地 Agent 的一对一私聊提供可选 E2EE
 
 这些场景继续使用其既有 TLS 通信和访问控制。它们不会显示 E2EE 标识，也不能被描述为端到端加密。
 
+## Lite 平台组件
+
+E2EE 的协议核心跨平台，但 Lite 需要与当前操作系统和 CPU 匹配的签名原生 endpoint。npm 发布将其拆为 `@voko/e2ee-<platform>-<arch>` 可选包；安装 `@voko/lite` 时，npm 根据平台包的 `os`/`cpu` 约束只下载当前设备对应的一份，不会把 Windows、Linux 和 macOS 的全部二进制都装到本机。
+
+支持的发布目标为 Windows x64、Linux x64/arm64 和 macOS x64/arm64。Lite 优先使用主人明确配置的 endpoint；没有显式路径时才自动发现平台包。无论使用哪种方式，endpoint 都必须通过主程序所信任公钥的 manifest 签名和 SHA-256 校验；平台包自身不能替换该信任根。缺少匹配制品、签名无效或系统密钥库不可用时，E2EE 停止启用，不降级保存明文密钥。
+
 ## 数据在哪里解密
 
 E2EE 保护浏览器与本地 Lite 之间的传输和中继存储：AgentDID、WuKongIM 和 OSS 只处理密文。Lite 在本机解密后，按普通可信入站流程执行安全审核、写入本地消息记录、显示在本地 Web UI，并把明文交给目标 Provider；Provider 回复在 Lite 本机加密后返回浏览器。
