@@ -62,7 +62,16 @@ function serverAgentIdFromDid(did: unknown): string | null {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`.toLowerCase();
 }
 
-export { serverAgentIdFromDid };
+function resolveServerAgentIdForLocalAgent(db: DatabaseLike, localAgentId: string): string {
+  const agent = db.prepare('SELECT did FROM agents WHERE agent_id=? LIMIT 1')
+    .get<{ did?: string | null }>(localAgentId);
+  if (!agent) throw new Error('Agent 不存在');
+  const serverAgentId = serverAgentIdFromDid(agent.did);
+  if (!serverAgentId) throw new Error('Agent 服务端身份缺失，请重新注册');
+  return serverAgentId;
+}
+
+export { resolveServerAgentIdForLocalAgent, serverAgentIdFromDid };
 
 function getAgentToken(db: DatabaseLike, agentId: string): { token: string; email: string; serverAgentId: string } {
   const agent = db.prepare('SELECT agent_id, owner_email, did FROM agents WHERE agent_id=?')
@@ -1003,6 +1012,7 @@ function startAgentAccessSync({
 
 module.exports = {
   CURSOR_CONFIG_TYPE,
+  resolveServerAgentIdForLocalAgent,
   serverAgentIdFromDid,
   SERVER_INVITATION_REASON,
   createAgentInvitation,

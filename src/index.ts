@@ -83,6 +83,7 @@ const {
   setLocalSecurityHeaders,
 } = require('./core/local-http-security');
 const { generateOSSSignature } = require('./server/oss');
+const { resolveServerAgentIdForLocalAgent } = require('./core/agent-invitations');
 const { AgentWorkerManager } = require('./core/worker-manager');
 const { createDeliver, createSendMessage } = require('./core/send-message');
 const {
@@ -1497,7 +1498,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const resolvedScopeType = targetScopeType || (Number(channelType) === 2 ? 'group' : 'private');
       const resolvedScopeId = targetScopeId || channelId || null;
-      const data = await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: safeName,
+      const serverAgentId = resolveServerAgentIdForLocalAgent(db, agentId);
+      const data = await generateOSSSignature({ userAccessToken: token, agentId: serverAgentId, purpose: 'agent_attachment', fileName: safeName,
         size, contentType, targetScopeType: resolvedScopeType, targetScopeId: resolvedScopeId,
         idempotencyKey: String(req.get('idempotency-key') || `lite-web-${require('crypto').randomUUID()}`) });
       res.json({ success: true, data });
@@ -1512,10 +1514,11 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const referer = String(req.get('referer') || '');
       const match = referer.match(/\/agents\/([^/?#]+)/);
       const agentId = match ? decodeURIComponent(match[1]) : String(req.query?.agentId || '');
+      const serverAgentId = agentId ? resolveServerAgentIdForLocalAgent(db, agentId) : undefined;
       const channelType = Number(req.query?.channelType) === 2 ? 2 : 1;
       const targetScopeType = channelType === 2 ? 'group' : 'private';
       const targetScopeId = String(req.query?.channelId || '');
-      const data = await require('./server/oss').getUploadDownload(req.params.uploadId, token, agentId || undefined,
+      const data = await require('./server/oss').getUploadDownload(req.params.uploadId, token, serverAgentId,
         targetScopeType, targetScopeId || undefined);
       res.set('Cache-Control', 'no-store');
       res.redirect(302, data.url);
@@ -2401,7 +2404,8 @@ async function startMcpServer(args?: any, core?: any) {
     uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
-      return require('./server/oss').uploadToOSS(name, data, mime, null, { userAccessToken: token, agentId,
+      const serverAgentId = resolveServerAgentIdForLocalAgent(db, agentId);
+      return require('./server/oss').uploadToOSS(name, data, mime, null, { userAccessToken: token, agentId: serverAgentId,
         purpose: 'agent_icon', fileName: path.basename(name), referenceType: 'agent_icon', referenceId: agentId || name });
     },
   };
