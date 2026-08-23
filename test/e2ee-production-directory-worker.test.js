@@ -215,6 +215,8 @@ test('directory worker hosts a pending guest device join before acknowledging th
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(scope.groupId,scope.localAgentId,scope.serverAgentId,scope.targetAgentDid,
     scope.creatorPrincipalId,scope.senderDeviceKeyId,scope.recipientDeviceKeyId,scope.ownerScope,
     scope.conversationScope,scope.bindingGeneration,Buffer.from('epoch-1'),1,1,Date.now(),Date.now());
+  db.prepare(`UPDATE e2ee_production_sessions SET protocol_mode='direct_v2',creator_guest_device_uid=? WHERE group_id=?`)
+    .run('guest-binding-a',scope.groupId);
   store.saveKeyPackage({ localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
     ownerDeviceKeyId:'device-gym',ownerScope:'owner',keyEpoch:1,keyPackageRef:ref('a2V5'),keyPackage:'a2V5',
     encryptedPendingState:Buffer.from('pending'),publishState:'published' });

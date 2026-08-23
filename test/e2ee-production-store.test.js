@@ -36,7 +36,10 @@ test('production policy binds principal, agent, context and group before Provide
   const secondDevice = policy.authorize('lawyer',{ ...envelope,senderDeviceKeyId:'browser-device-b' },
     { fromUid:'guest-principal-a',channelType:1 });
   assert.equal(secondDevice.senderDeviceKeyId,'browser-device-b');
-  assert.throws(() => store.bindSenderDevice('group-a','browser-device-b'),/E2EE_SENDER_DEVICE_CHANGED/);
+  store.bindSenderDevice('group-a','browser-device-b');
+  const senders = db.prepare('SELECT sender_device_key_id FROM e2ee_production_session_senders WHERE group_id=? ORDER BY sender_device_key_id')
+    .all('group-a').map(row => row.sender_device_key_id);
+  assert.deepEqual(senders,['browser-device-a','browser-device-b']);
   db.close();
 });
 

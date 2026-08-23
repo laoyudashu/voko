@@ -165,7 +165,6 @@ export class ProductionE2eeDirectoryWorker {
   private async syncDeviceCommits(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.applyCommit)return;
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
-      if(session.protocol_mode==='direct_v2')continue;
       const events=await this.options.client.pullDeviceCommits({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,
         groupId:String(session.group_id),afterEpoch:Number(session.mls_epoch||1)});
       let current=session;
@@ -196,7 +195,6 @@ export class ProductionE2eeDirectoryWorker {
   private async hostDeviceJoins(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.prepareAddMember||!this.options.acceptPendingCommit)return
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
-      if(session.protocol_mode==='direct_v2')continue;
       const claim=await this.options.client.claimDeviceJoin({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
       if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
       const prepared=await this.options.prepareAddMember({scope,keyPackage:String(claim.keyPackage),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});
@@ -211,7 +209,6 @@ export class ProductionE2eeDirectoryWorker {
   private async hostDeviceRevocations(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.prepareRemoveDevice||!this.options.acceptPendingCommit)return
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
-      if(session.protocol_mode==='direct_v2')continue;
       const claim=await this.options.client.claimDeviceRevocation({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
       if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
       const prepared=await this.options.prepareRemoveDevice({scope,deviceKeyId:String(claim.deviceKeyId),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});

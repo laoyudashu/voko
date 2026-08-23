@@ -336,8 +336,6 @@ export class ProductionE2eeStore {
     const row = this.session(groupId);
     if (!row || row.status !== 'active') throw new Error('E2EE_SESSION_NOT_ACTIVE');
     if (!senderDeviceKeyId) throw new Error('E2EE_SENDER_DEVICE_INVALID');
-    if (row.protocol_mode === 'direct_v2' && row.sender_device_key_id
-        && row.sender_device_key_id !== senderDeviceKeyId) throw new Error('E2EE_SENDER_DEVICE_CHANGED');
     const now=Date.now();
     const member=this.db.prepare(`SELECT revoked_at FROM e2ee_production_session_senders WHERE group_id=? AND sender_device_key_id=?`)
       .get(groupId,senderDeviceKeyId) as any;
