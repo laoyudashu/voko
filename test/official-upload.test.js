@@ -63,16 +63,17 @@ test('private attachment completion returns a local authenticated download path'
   } finally { global.fetch = originalFetch; delete process.env.VOKO_E2E_API_BASE_URL; }
 });
 
-test('local web proxies private downloads through the authenticated AgentDID endpoint', () => {
+test('local web keeps ordinary private downloads and exposes only locally decrypted E2EE v2 attachments', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
   const web = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'message-content.js'), 'utf8');
   assert.match(index, /\/api\/uploads\/:uploadId\/download/);
   assert.match(index, /getUploadDownload/);
   assert.match(renderer, /\^\\\/api\\\/uploads/);
-  assert.match(web, /\/api\/e2ee\/attachments\/:uploadId\/download/);
-  assert.match(web, /authorizeAttachmentDownload\(info\.uploadId/);
-  assert.match(web, /openAttachment\(info\.uploadId\)/);
+  assert.match(index, /\/api\/e2ee-v2\/attachments\/:messageId/);
+  assert.match(index, /e2eeRuntime\.attachment/);
+  assert.doesNotMatch(web, /\/api\/e2ee\/attachments/);
+  assert.doesNotMatch(web, /authorizeAttachmentDownload\(info\.uploadId/);
 });
 
 test('official upload paths translate local agent ids to canonical server agent ids', () => {

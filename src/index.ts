@@ -2315,7 +2315,7 @@ async function startMcpServer(args?: any, core?: any) {
     trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
-    e2eeCanaryRuntime: e2eeRuntime,
+    e2eeRuntime,
     uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;

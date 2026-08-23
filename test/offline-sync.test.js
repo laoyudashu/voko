@@ -82,15 +82,15 @@ describe('offline route metadata decoding', () => {
 
 describe('E2EE offline rejection classification', () => {
   it('quarantines permanently invalid ciphertext instead of poisoning the channel cursor', () => {
-    for (const code of ['E2EE_ENVELOPE_INVALID', 'E2EE_ROUTE_REJECTED', 'E2EE_SCOPE_REJECTED',
-      'E2EE_SENDER_DEVICE_CHANGED', 'E2EE_MESSAGE_ID_CONFLICT']) {
+    for (const code of ['E2EE_V2_ENVELOPE_INVALID', 'E2EE_V2_ROUTE_MISMATCH',
+      'E2EE_V2_SENDER_KEY_MISMATCH', 'E2EE_V2_MESSAGE_ID_CONFLICT']) {
       assert.equal(isPermanentE2eeRejection(code), true);
     }
   });
 
   it('retains transient runtime failures for retry', () => {
-    for (const code of ['E2EE_CANARY_DISABLED', 'E2EE_CANARY_SESSION_LOCKED',
-      'E2EE_PROVIDER_EXECUTION_UNAVAILABLE', 'E2EE_ENDPOINT_EXITED_1']) {
+    for (const code of ['E2EE_V2_DISABLED', 'E2EE_V2_DIRECTORY_UNAVAILABLE',
+      'E2EE_V2_PROVIDER_DELIVERY_FAILED', 'E2EE_V2_REPLY_NOT_DELIVERED']) {
       assert.equal(isPermanentE2eeRejection(code), false);
     }
   });

@@ -47,7 +47,7 @@ For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup gui
 - **Visitor conversations**: provide sessions, messaging, and the required conversation state for published Agents.
 - **A2A Gateway**: publish a local Agent as a public A2A 1.0 Agent without requiring a public IP, and discover or call remote A2A Agents.
 - **REST/Webhook Gateway**: connect CRMs, ticketing systems, automation platforms, and custom services with per-integration API Tokens and signed Webhook callbacks.
-- **Visitor private-chat E2EE**: let a browser visitor explicitly establish an end-to-end encrypted private chat with a local Agent; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
+- **Visitor private-chat E2EE**: capable browser visitors and local Agents use transparent end-to-end encryption by default; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
 - **Group collaboration**: coordinate multiple Agents in groups with explicit context and mentions.
 - **Permissions and human intervention**: control sensitive actions with access modes, audit rules, and owner-intervention flows.
 - **Audit and issue reporting**: retain local event records and submit sanitized reports from the Web UI's Report a bug page.
@@ -57,7 +57,7 @@ For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup gui
 
 | Entry point | Intended caller | Protocol and reply path | Current encryption boundary |
 | --- | --- | --- | --- |
-| VOKO IM | Visitors, registered VOKO Agents, and groups | WuKongIM plus precise VOKO Conversation routing | Visitor private chat can opt into E2EE; ordinary private and group chat use TLS |
+| VOKO IM | Visitors, registered VOKO Agents, and groups | WuKongIM plus precise VOKO Conversation routing | Capable visitor private chat uses E2EE by default; other private and group chat uses TLS |
 | A2A Gateway | External A2A 1.0 Agents | Agent Card, Task/Context, streaming, subscription, or polling | Standard A2A over TLS; no A2A E2EE claim |
 | REST/Webhook Gateway | CRMs, ticketing systems, automation platforms, and custom services | REST inbound plus signed Webhook outbound | HTTPS/TLS; no end-to-end encryption claim |
 

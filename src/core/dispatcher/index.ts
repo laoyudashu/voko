@@ -111,7 +111,7 @@ interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
   sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
-  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee' | 'e2ee_canary';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
@@ -1152,7 +1152,7 @@ ${body}
         ...(a2aContext || {})
       };
       const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link'
-        || executionScope === 'owner_chat' || executionScope === 'e2ee' || executionScope === 'e2ee_canary';
+        || executionScope === 'owner_chat' || executionScope === 'e2ee';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1378,8 +1378,8 @@ ${body}
 
   async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
     if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
-      const error: any = new Error('E2EE_CANARY_SCOPE_REQUIRED');
-      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_CANARY_SCOPE_REQUIRED'; throw error;
+      const error: any = new Error('E2EE_V2_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_SCOPE_REQUIRED'; throw error;
     }
     const turnId = `e2ee-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
@@ -1392,14 +1392,14 @@ ${body}
       if (reply.done === false) return;
       if (reply.error) {
         const error: any = new Error(String(reply.error));
-        error.code = String((reply as any).errorCode || 'E2EE_CANARY_PROVIDER_TURN_FAILED');
+        error.code = String((reply as any).errorCode || 'E2EE_V2_PROVIDER_TURN_FAILED');
         error.deliveryOutcome = 'rejected'; rejectReply(error); return;
       }
       resolveReply(reply);
     });
     const timeout = setTimeout(() => {
       _retireIsolatedTurn(sinkKey);
-      rejectReply(new Error('E2EE Canary Provider reply timed out'));
+      rejectReply(new Error('E2EE v2 Provider reply timed out'));
     }, options.timeoutMs || 120_000);
     timeout.unref?.();
     try {
@@ -1422,9 +1422,9 @@ ${body}
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       });
       if (delivery?.outcome !== 'delivered') {
-        const error: any = new Error(`E2EE Canary Provider delivery ${delivery?.outcome || 'failed'}`);
+        const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
-        error.code = delivery?.errorCode || 'E2EE_CANARY_PROVIDER_DELIVERY_FAILED';
+        error.code = delivery?.errorCode || 'E2EE_V2_PROVIDER_DELIVERY_FAILED';
         throw error;
       }
       options.onProviderAccepted?.(receipt);
@@ -1434,11 +1434,6 @@ ${body}
       _retireIsolatedTurn(sinkKey);
     }
   }
-
-  // Compatibility alias for the internal Canary harness. Both paths use the
-  // same isolated Provider scope; production enablement is controlled by the
-  // E2EE runtime policy, not by Dispatcher routing.
-  const executeCanary = executeE2ee;
 
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
@@ -1661,7 +1656,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeE2ee, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,

@@ -611,44 +611,6 @@ function createWebRouter(handlers, db, opts={}){
     if(opts.webSessions&&opts.webSessions.verifyCsrf(req,req.localAuth))return next();
     return res.status(403).json({success:false,error:'Invalid CSRF token'});
   };
-  if(opts.e2eeCanaryRuntime){
-    R.get('/e2ee-canary',requireSensitiveLocalAuth,(req,res)=>{
-      const status=opts.e2eeCanaryRuntime.diagnostics();
-      const csrf=opts.webSessions?.requestCsrfToken(req)||'';
-      const rows=(status.sessions||[]).map(row=>'<tr><td>'+esc(row.status)+'</td><td>'+esc(row.count)+'</td></tr>').join('')||'<tr><td colspan="2">暂无会话</td></tr>';
-      const receipts=(status.receipts||[]).map(row=>'<tr><td>'+esc(row.state)+'</td><td>'+esc(row.count)+'</td></tr>').join('')||'<tr><td colspan="2">暂无消息</td></tr>';
-      const body='<div class="card"><h2>E2EE-TOFU 内部 Canary</h2><p class="meta">仅限精确白名单测试账号、Agent 与设备。生产发布保持关闭；失败绝不降级明文。</p>'
-        +'<div class="grid"><div><strong>运行状态</strong><p>'+(status.enabled?'已启用':'已关闭')+'</p></div><div><strong>白名单范围</strong><p>'+esc(status.scopeCount)+'</p></div><div><strong>密文接收 / 回复</strong><p>'+esc(status.received)+' / '+esc(status.replied)+'</p></div><div><strong>拒绝 / 失败</strong><p>'+esc(status.rejected)+' / '+esc(status.failures)+'</p></div></div></div>'
-        +'<div class="card"><h3>会话状态</h3><table><tr><th>状态</th><th>数量</th></tr>'+rows+'</table><h3>消息状态</h3><table><tr><th>状态</th><th>数量</th></tr>'+receipts+'</table></div>'
-        +'<div class="card"><h3>测试会话初始化</h3><p class="meta">只接受由测试端 Crypto Core 生成的 Welcome；页面不会接收或保存聊天明文。</p><form id="canary-provision"><input type="hidden" name="_csrf" value="'+esc(csrf)+'"><label>本地 Agent ID</label><input name="localAgentId" required><label>Group ID</label><input name="groupId" required><label>发送设备 Key ID</label><input name="senderDeviceKeyId" required><label>Welcome</label><textarea name="welcome" rows="4" required></textarea><br><button type="submit">建立测试密文会话</button></form><p id="canary-result" class="meta"></p></div>'
-        +'<div class="card"><h3>紧急控制</h3><button class="btn-danger" id="canary-disable">立即关闭并撤销 Canary Vault</button></div>'
-        +'<script>(function(){var result=document.getElementById("canary-result"),form=document.getElementById("canary-provision");async function post(url,body){var response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-VOKO-CSRF":document.cookie.split(";").map(x=>x.trim()).find(x=>x.startsWith("voko_csrf="))?.slice(10)||""},body:JSON.stringify(body)}),json=await response.json();if(!response.ok||!json.success)throw new Error(json.error||"操作失败");return json}form.addEventListener("submit",async function(event){event.preventDefault();var body={};new FormData(form).forEach((v,k)=>body[k]=v);try{await post("/api/e2ee-canary/provision",body);result.className="success";result.textContent="密文会话已建立"}catch(error){result.className="error";result.textContent=error.message}});document.getElementById("canary-disable").addEventListener("click",async function(){try{await post("/api/e2ee-canary/emergency-disable",{});location.reload()}catch(error){result.className="error";result.textContent=error.message}})})();</'+'script>';
-      res.send(renderPage(req,'E2EE Canary',body,{footer:renderFooter(req.t,req.locale)}));
-    });
-    R.post('/api/e2ee-canary/provision',requireSensitiveLocalAuth,requireSensitiveCsrf,async(req,res)=>{
-      try{await opts.e2eeCanaryRuntime.provision({localAgentId:String(req.body.localAgentId||''),groupId:String(req.body.groupId||''),senderDeviceKeyId:String(req.body.senderDeviceKeyId||'')},String(req.body.welcome||''));res.json({success:true})}
-      catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
-    });
-    R.post('/api/e2ee-canary/emergency-disable',requireSensitiveLocalAuth,requireSensitiveCsrf,async(_req,res)=>{
-      await opts.e2eeCanaryRuntime.emergencyDisable();res.json({success:true});
-    });
-    R.get('/api/e2ee/attachments/:uploadId/download',async(req,res)=>{
-      try{
-        const info=opts.e2eeCanaryRuntime.attachmentInfo(String(req.params.uploadId||''));
-        if(!info)return res.status(404).send('Not found');
-        if(!opts.e2eeCanaryRuntime.authorizeAttachmentDownload(info.uploadId,String(req.query.token||'')))return res.status(403).send('Forbidden');
-        const row=db.prepare('SELECT owner_email FROM agents WHERE agent_id=? LIMIT 1').get(info.localAgentId);
-        if(!row||String(row.owner_email||'').trim().toLowerCase()!==String(currentOwnerEmail()||'').trim().toLowerCase())return res.status(403).send('Forbidden');
-        const opened=await opts.e2eeCanaryRuntime.openAttachment(info.uploadId);
-        const disposition=String(opened.mediaType||'').startsWith('image/')?'inline':'attachment';
-        res.setHeader('Content-Type',opened.mediaType||'application/octet-stream');
-        res.setHeader('Content-Length',String(opened.bytes.byteLength));
-        res.setHeader('Content-Disposition',disposition+"; filename*=UTF-8''"+encodeURIComponent(opened.name));
-        res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
-        return res.send(Buffer.from(opened.bytes));
-      }catch(error){return res.status(404).send('Encrypted attachment unavailable')}
-    });
-  }
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -1501,8 +1463,8 @@ function createWebRouter(handlers, db, opts={}){
       let convHtml='<p class="meta">'+L('web.agent.no_conversations')+'</p>';
       if(convs.length){
         let e2eeStates={};
-        try{e2eeStates=await opts.e2eeCanaryRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
-        for(const c of convs){const channelId=String(c.channelId);if(!e2eeStates[channelId]&&opts.e2eeCanaryRuntime?.isChannelActive?.(agentId,channelId))e2eeStates[channelId]='active';}
+        try{e2eeStates=await opts.e2eeRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
+        for(const c of convs){const channelId=String(c.channelId);if(!e2eeStates[channelId]&&opts.e2eeRuntime?.isChannelActive?.(agentId,channelId))e2eeStates[channelId]='active';}
         // 补昵称（user_cache 有则用，无则回退 channelId）
         let convNickMap={};
         try{const cids=convs.map(c=>c.channelId);const rows=db.prepare('SELECT uid, nickname FROM user_cache WHERE uid IN ('+cids.map(()=>'?').join(',')+')').all(...cids);rows.forEach(r=>{convNickMap[r.uid]=r.nickname||'';});}catch(_){}
@@ -1752,7 +1714,7 @@ function createWebRouter(handlers, db, opts={}){
       const pendingHint=selectedConversation?.status==='pending'
         ? '<p class="pending" style="margin:0 0 10px;padding:8px 12px;border-radius:6px;background:#fef7e0">'+L('web.conversation.pending_hint')+'</p>' : '';
       let mh='<p class="meta">'+L('web.conversation.no_messages')+'</p>';const jd=[];
-      if(msgs.length){mh='';const s=[...msgs].reverse();for(const m of s){const sr=m.isMe?L('web.conversation.from.agent'):peerLabel;const t=timeTag(m.timestamp);if(m.contentType===11){const audit=parseAuditContent(m.content);mh+=renderAuditContent(m.content,T,t);jd.push({from:'system',content:audit.valid?audit.text:T('web.audit.message_invalid'),timestamp:m.timestamp});continue;}const projected=!m.isMe?opts.e2eeCanaryRuntime?.projectAttachment?.(agentId,channelId,m.content):null;const baseContent=projected?.content||m.content,displayContent=!m.isMe?(opts.e2eeCanaryRuntime?.authorizeAttachmentContent?.(agentId,channelId,baseContent)||baseContent):baseContent,displayType=projected?.contentType||m.contentType;const c=messageRenderer.render(displayType,displayContent);mh+='<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(m.isMe?'#0f9d58':'#1a73e8')+';background:'+(m.isMe?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(sr)+'</strong> <span style="color:#888;font-size:13px">['+t+']</span><br>'+c+'</div>';jd.push({from:m.isMe?'agent':'visitor',content:displayContent,timestamp:m.timestamp})}}
+      if(msgs.length){mh='';const s=[...msgs].reverse();for(const m of s){const sr=m.isMe?L('web.conversation.from.agent'):peerLabel;const t=timeTag(m.timestamp);if(m.contentType===11){const audit=parseAuditContent(m.content);mh+=renderAuditContent(m.content,T,t);jd.push({from:'system',content:audit.valid?audit.text:T('web.audit.message_invalid'),timestamp:m.timestamp});continue;}const c=messageRenderer.render(m.contentType,m.content);mh+='<div style="padding:8px 12px;margin:4px 0;border-radius:6px;border-left:4px solid '+(m.isMe?'#0f9d58':'#1a73e8')+';background:'+(m.isMe?'#e6f4ea':'#e8f0fe')+'"><strong>'+esc(sr)+'</strong> <span style="color:#888;font-size:13px">['+t+']</span><br>'+c+'</div>';jd.push({from:m.isMe?'agent':'visitor',content:m.content,timestamp:m.timestamp})}}
       const renderedMessageIds=Object.fromEntries(msgs.map(m=>String(m.messageId||m.id||'')).filter(Boolean).map(id=>[id,1]));
       const aId2=esc(agentId),cId2=esc(channelId);
       // 访客昵称（user_cache 有则显示名称，无则仅显示 id）

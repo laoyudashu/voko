@@ -72,7 +72,7 @@ test('agent detail renders authoritative E2EE conversation key states', async (t
   const app = express();
   app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, {
     refreshUserProfiles: async () => {},
-    e2eeCanaryRuntime: {
+    e2eeRuntime: {
       isChannelActive: (_agentId, channelId) => channelId === 'visitor-secure',
       getChannelEncryptionStatuses: async () => ({
         'visitor-secure':'active','visitor-available':'available','visitor-checking':'checking',

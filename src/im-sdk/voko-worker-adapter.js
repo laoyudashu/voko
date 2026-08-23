@@ -139,7 +139,7 @@ class VokoWorkerAdapter extends EventEmitter {
   async deliverEncrypted(agentId, channelId, envelope, localMsgId) {
     try {
       const parsedEnvelope = JSON.parse(String(envelope || ''))
-      if (!parsedEnvelope || parsedEnvelope.version !== 'voko.e2ee/1') {
+      if (!parsedEnvelope || parsedEnvelope.version !== 'voko.e2ee/2') {
         throw new Error('E2EE_REPLY_ENVELOPE_INVALID')
       }
       const result = await this.pool.sendRaw(agentId, channelId, ChannelType.Person,
