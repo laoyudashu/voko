@@ -1198,11 +1198,11 @@ function createWebRouter(handlers, db, opts={}){
       let pgBar='';
       const kwHome=keyword?'&keyword='+encodeURIComponent(keyword):'';
       if(totalPages>1){
-        pgBar='<nav class="home-pagination" aria-label="'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'">';
+        pgBar='<div class="home-pagination" role="navigation" aria-label="'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'">';
         if(page>1)pgBar+='<a href="/?page='+(page-1)+kwHome+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.prev_page'))+'</a>';
         pgBar+='<span style="color:#666">'+esc(T('web.payments.page_of',{cur:page,total:totalPages}))+'</span>';
         if(page<totalPages)pgBar+='<a href="/?page='+(page+1)+kwHome+'" class="btn-sm" style="padding:4px 12px">'+esc(T('web.payments.next_page'))+'</a>';
-        pgBar+='</nav>'
+        pgBar+='</div>'
       }
 
       // 信息栏
