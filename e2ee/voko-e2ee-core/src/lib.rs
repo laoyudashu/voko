@@ -9,6 +9,7 @@ mod group_policy;
 mod identity;
 mod key_package;
 mod lifecycle;
+mod message_v2;
 mod mls;
 mod outbox;
 mod pcs;
@@ -41,6 +42,10 @@ pub use group_policy::{
 pub use identity::{CredentialIdentityError, DeviceCredentialIdentity, DeviceRole};
 pub use key_package::{KeyPackageLedger, KeyPackageLedgerError, KeyPackageReplenishmentPolicy};
 pub use lifecycle::{EstablishmentEvent, EstablishmentState, LifecycleError};
+pub use message_v2::{
+    DevicePrivateBundleV2, DevicePublicBundleV2, MessageContentKindV2, MessageEnvelopeV2,
+    MessageHeaderV2, MessageV2Error, E2EE_V2_PROTOCOL, E2EE_V2_SUITE,
+};
 pub use mls::{
     DirectCreatorEndpoint, DirectGroup, DirectGroupError, DirectGroupPair, DirectRecipientEndpoint,
     PreparedDirectAdd,
