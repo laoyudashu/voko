@@ -14,6 +14,8 @@ export class ProductionE2eePolicy {
     return {
       localAgentId: row.local_agent_id, serverAgentId: row.server_agent_id,
       targetAgentDid: row.target_agent_did, creatorPrincipalId: row.creator_principal_id,
+      creatorDeviceBindingId: String(row.creator_guest_device_uid || ''),
+      protocolMode: row.protocol_mode === 'direct_v2' ? 'direct_v2' : 'legacy_group_v1',
       senderDeviceKeyId: envelope.senderDeviceKeyId, recipientDeviceKeyId: row.recipient_device_key_id,
       ownerScope: row.owner_scope, groupId: row.group_id, conversationScope: row.conversation_scope,
       bindingGeneration: Number(row.binding_generation),

@@ -20,6 +20,7 @@ const ENDPOINTS = require('./endpoints.json');
 const { createSendMessage, createDeliver } = require('./core/send-message');
 const { signDidRequest } = require('./core/did-auth');
 const { createBugReportClient } = require('./core/bug-report');
+const { resolveServerAgentIdForLocalAgent } = require('./core/agent-invitations');
 import type { DatabaseLike } from './types/database';
 
 const pkg = require('../package.json');
@@ -344,7 +345,8 @@ function createContext({
       try {
         const ownerEmail = getPrimaryOwnerEmail(db);
         const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
-        return await generateOSSSignature({ userAccessToken: token, agentId, purpose: 'agent_attachment', fileName: filename,
+        const serverAgentId = agentId ? resolveServerAgentIdForLocalAgent(db, agentId) : undefined;
+        return await generateOSSSignature({ userAccessToken: token, agentId: serverAgentId, purpose: 'agent_attachment', fileName: filename,
           size: maxSize, contentType, targetScopeType: uploadOptions.targetScopeType, targetScopeId: uploadOptions.targetScopeId,
           idempotencyKey: `lite-web-${require('crypto').randomUUID()}` });
       } catch (error: unknown) {
@@ -367,7 +369,8 @@ function createContext({
       } finally { fs.closeSync(fd); }
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
-      return await uploadToOSS(objectName, buffer, mimeType, null, { userAccessToken: token, agentId,
+      const serverAgentId = agentId ? resolveServerAgentIdForLocalAgent(db, agentId) : undefined;
+      return await uploadToOSS(objectName, buffer, mimeType, null, { userAccessToken: token, agentId: serverAgentId,
         purpose: String(objectName).startsWith('chat/images/') ? 'chat_image' : 'agent_attachment',
         fileName: require('path').basename(filePath), targetScopeType: uploadOptions.targetScopeType,
         targetScopeId: uploadOptions.targetScopeId });

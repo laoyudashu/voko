@@ -3,6 +3,8 @@ const MAX_HANDSHAKE_BYTES = 256 * 1024;
 export interface E2eeDirectoryEstablishment {
   establishmentId: string;
   creatorPrincipalId: string;
+  creatorDeviceBindingId: string|null;
+  protocolMode: 'direct_v2'|'legacy_group_v1';
   keyPackageRef: string;
   keyEpoch: number;
   groupId: string;
@@ -91,6 +93,9 @@ export class E2eeDirectoryClient {
     return data.establishments.map((row: any) => ({
       establishmentId: bounded(row.establishmentId, 'ESTABLISHMENT_ID'),
       creatorPrincipalId: bounded(row.creatorPrincipalId, 'CREATOR_PRINCIPAL_ID'),
+      creatorDeviceBindingId: row.creatorDeviceBindingId == null ? null
+        : bounded(row.creatorDeviceBindingId, 'CREATOR_DEVICE_BINDING_ID', 128),
+      protocolMode: row.protocolMode === 'direct_v2' ? 'direct_v2' : 'legacy_group_v1',
       keyPackageRef: base64url(row.keyPackageRef, 'KEY_PACKAGE_REF', 64),
       keyEpoch: Number(row.keyEpoch),
       groupId: base64url(row.groupId, 'GROUP_ID', 255),

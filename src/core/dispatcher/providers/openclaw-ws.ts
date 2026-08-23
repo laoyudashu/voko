@@ -1418,7 +1418,7 @@ class OpenClawWsProvider {
         sessionKey: sessionKey,
         message: structuredMsg,
         deliver: false,
-        idempotencyKey: this.generateId()
+        idempotencyKey: String(extraData?.messageId || extraData?.turnId || this.generateId())
       }
     });
   }

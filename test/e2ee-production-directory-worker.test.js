@@ -174,18 +174,19 @@ test('directory worker replenishes a package consumed by an expired establishmen
   db.close();
 });
 
-test('directory worker scans large agent sets in bounded round-robin batches', async () => {
+test('directory worker scans 100 agents while keeping a CPU-bounded resident crypto pool', async () => {
   const db = new DatabaseSync(':memory:');
   const store = new ProductionE2eeStore(db);
   const seen = [];
-  const agents = Array.from({ length:12 },(_,index) => ({ localAgentId:`agent-${index}`,
+  const agents = Array.from({ length:100 },(_,index) => ({ localAgentId:`agent-${index}`,
     serverAgentId:`server-${index}`,targetAgentDid:`did:wba:test:${index}`,ownerDeviceKeyId:`device-${index}`,
     ownerScope:'owner-scope',bindingGeneration:1 }));
+  let closed = 0;
   const processFactory = scope => {
     const keyPackage = Buffer.from(`package-${scope.localAgentId}`).toString('base64url');
     return { ready:Promise.resolve({ keyPackage,credentialPublicKey:'Y3JlZGVudGlhbA' }),
       async sealPending() { return Buffer.from('pending'); }, async restorePending() { return 'Y3JlZGVudGlhbA'; },
-      async join() { throw new Error('unexpected join'); }, async replenish() { throw new Error('unexpected replenish'); }, close() {} };
+      async join() { throw new Error('unexpected join'); }, async replenish() { throw new Error('unexpected replenish'); }, close() { closed += 1; } };
   };
   const client = {
     async registerDevice() {},
@@ -194,11 +195,11 @@ test('directory worker scans large agent sets in bounded round-robin batches', a
     async keyPackageStatus(input) { return { agents:[{ agentId:input.agentIds[0],available:1 }] }; },
     async acknowledge() {}, async reject() {},
   };
-  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>agents,processFactory,maxAgentsPerRun:5 });
-  await worker.runOnce();
-  await worker.runOnce();
-  await worker.runOnce();
-  assert.deepEqual(seen,agents.map(item=>item.serverAgentId).concat(agents.slice(0,3).map(item=>item.serverAgentId)));
+  const worker = new ProductionE2eeDirectoryWorker({ client,store,agents:()=>agents,processFactory,maxAgentsPerRun:25 });
+  for (let index=0;index<5;index+=1) await worker.runOnce();
+  assert.deepEqual(seen,agents.map(item=>item.serverAgentId).concat(agents.slice(0,25).map(item=>item.serverAgentId)));
+  assert.ok(worker.residentProcessCount() <= 4,'resident crypto processes must stay CPU-bounded');
+  assert.ok(closed >= 96,'evicted Agent processes must release their native resources');
   db.close();
 });
 
@@ -295,5 +296,23 @@ test('a new establishment atomically replaces the previous group for the same co
   assert.equal(store.session('group-old'),undefined);
   assert.equal(store.session('group-new').status,'active');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM e2ee_production_receipts WHERE group_id='group-old'").get().n,0);
+  db.close();
+});
+
+test('a rebuilt Direct v2 channel replaces the prior device channel even when its scope changes', () => {
+  const db = new DatabaseSync(':memory:');
+  const store = new ProductionE2eeStore(db);
+  const scope = (groupId,conversationScope) => ({ localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    creatorPrincipalId:'guest-a',creatorDeviceBindingId:'guest-device-a',protocolMode:'direct_v2',senderDeviceKeyId:'',
+    recipientDeviceKeyId:'device-gym',ownerScope:'owner',groupId,conversationScope,bindingGeneration:1 });
+  const nextKeyPackage = { localAgentId:'gym',serverAgentId:'server-gym',targetAgentDid:'did:wba:test:gym',
+    ownerDeviceKeyId:'device-gym',ownerScope:'owner',keyEpoch:1,keyPackageRef:'ref',keyPackage:'package',
+    encryptedPendingState:Buffer.from('pending'),publishState:'pending' };
+  store.commitEstablishment({establishmentId:'est-direct-old',scope:scope('direct-old','scope-old'),
+    encryptedState:Buffer.from('old'),acknowledgement:{ok:true},nextKeyPackage});
+  store.commitEstablishment({establishmentId:'est-direct-new',scope:scope('direct-new','scope-new'),
+    encryptedState:Buffer.from('new'),acknowledgement:{ok:true},nextKeyPackage});
+  assert.equal(store.session('direct-old'),undefined);
+  assert.equal(store.session('direct-new').protocol_mode,'direct_v2');
   db.close();
 });

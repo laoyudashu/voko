@@ -74,3 +74,22 @@ test('local web proxies private downloads through the authenticated AgentDID end
   assert.match(web, /authorizeAttachmentDownload\(info\.uploadId/);
   assert.match(web, /openAttachment\(info\.uploadId\)/);
 });
+
+test('official upload paths translate local agent ids to canonical server agent ids', () => {
+  const { resolveServerAgentIdForLocalAgent } = require('../build/core/agent-invitations');
+  const db = {
+    prepare() {
+      return { get: localAgentId => localAgentId === 'gym'
+        ? { did: 'did:wba:example.test:2b4a3c62efba4c97add96f09ee092462' }
+        : undefined };
+    },
+  };
+  assert.equal(resolveServerAgentIdForLocalAgent(db, 'gym'), '2b4a3c62-efba-4c97-add9-6f09ee092462');
+  assert.throws(() => resolveServerAgentIdForLocalAgent(db, 'missing'), /Agent 不存在/);
+
+  const context = fs.readFileSync(path.join(__dirname, '..', 'src', 'context.ts'), 'utf8');
+  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+  assert.match(context, /agentId: serverAgentId, purpose: 'agent_attachment'/);
+  assert.match(index, /getUploadDownload\(req\.params\.uploadId, token, serverAgentId/);
+  assert.match(index, /purpose: 'agent_icon'/);
+});

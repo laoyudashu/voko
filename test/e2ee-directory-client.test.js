@@ -11,6 +11,7 @@ test('directory client authenticates requests and preserves trusted conversation
   const client = new E2eeDirectoryClient({ baseUrl: 'https://example.test', token: 'ut_secret', fetchImpl: async (url, init) => {
     calls.push({ url, init });
     return response({ success: true, data: { establishments: [{ establishmentId: 'est-1', creatorPrincipalId: 'principal-1',
+      creatorDeviceBindingId:'guest-device-1',protocolMode:'direct_v2',
       keyPackageRef: Buffer.alloc(32, 1).toString('base64url'), keyEpoch: 2,
       groupId: Buffer.from('group').toString('base64url'), conversationScope: Buffer.from('conversation').toString('base64url'),
       commit: Buffer.from('commit').toString('base64url'), welcome: Buffer.from('welcome').toString('base64url'),
@@ -19,6 +20,8 @@ test('directory client authenticates requests and preserves trusted conversation
   } });
   const rows = await client.pullEstablishments({ agentId: 'agent-1', ownerDeviceKeyId: 'device-1' });
   assert.equal(Buffer.from(rows[0].conversationScope, 'base64url').toString(), 'conversation');
+  assert.equal(rows[0].creatorDeviceBindingId,'guest-device-1');
+  assert.equal(rows[0].protocolMode,'direct_v2');
   assert.equal(calls[0].url, 'https://example.test/api/external/v1/e2ee/establishments/pull');
   assert.equal(calls[0].init.headers.authorization, 'Bearer ut_secret');
 });

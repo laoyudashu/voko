@@ -103,6 +103,29 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(source, /if\(d\.pubStatus==="unpublished"\)/);
 });
 
+test('home centers pagination in the search toolbar', async (t) => {
+  const agents = Array.from({ length: 21 }, (_, index) => ({
+    agentId: `agent-${index + 1}`,
+    agentName: `Agent ${index + 1}`,
+    backendType: 'others',
+    publishStatus: 'published',
+  }));
+  const handlers = {
+    list_agents: async () => ({ agents }),
+    get_status: async () => ({ success: true, agent: { imConnected: true, pullReady: true } }),
+  };
+  const server = await startApp(handlers);
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /class="home-list-toolbar">[\s\S]*class="home-list-search"[\s\S]*class="home-pagination"/);
+  assert.match(html, /\.home-list-toolbar\{display:grid;grid-template-columns:minmax\(0,1fr\) auto minmax\(0,1fr\)/);
+  assert.match(html, /\.home-pagination\{grid-column:2;display:flex;align-items:center;justify-content:center/);
+  assert.ok(html.indexOf('class="home-pagination"') < html.indexOf('class="ops"'));
+});
+
 test('delivery channel endpoints refresh and select a process-local preference', async (t) => {
   const calls = [];
   const status = { activeAutomaticMode: 'cli', temporaryPreferredMode: null, temporaryPreferredProvider: null,

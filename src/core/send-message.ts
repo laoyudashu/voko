@@ -133,6 +133,7 @@ function persistAgentMessage(
   if (messageType === 'image') contentType = 2;
   else if (messageType === 'file') contentType = 8;
 
+  let inserted = true;
   try {
     db.prepare(`
       INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention)
@@ -144,7 +145,10 @@ function persistAgentMessage(
       console.error('[sendMessage] 写入消息失败:', message);
       throw e;
     }
+    inserted = false;
   }
+
+  if (!inserted) return { msgId, timestamp, contentType, inserted };
 
   try {
     const agentRow = db.prepare(`SELECT imUid FROM agents WHERE agent_id = ?`).get<{ imUid?: string }>(agentId);
@@ -160,7 +164,7 @@ function persistAgentMessage(
     }
   } catch (_) {} // 并发写可能触发 UNIQUE，不影响功能
 
-  return { msgId, timestamp, contentType };
+  return { msgId, timestamp, contentType, inserted };
 }
 
 /**

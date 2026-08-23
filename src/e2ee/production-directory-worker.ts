@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { availableParallelism, cpus } from 'node:os';
 import type { E2eeDirectoryClient, E2eeDirectoryEstablishment } from './directory-client';
 import type { PendingRecipientProcess } from './canary-crypto-process';
 import type { ProductionE2eeScope, ProductionE2eeStore } from './production-store';
@@ -22,7 +23,8 @@ function packageReference(keyPackage: string): string {
 function pendingScope(agent: ProductionE2eeAgent, epoch: number): any {
   return {
     localAgentId: agent.localAgentId, serverAgentId: agent.serverAgentId,
-    targetAgentDid: agent.targetAgentDid, creatorPrincipalId: 'pending', senderDeviceKeyId: 'pending',
+    targetAgentDid: agent.targetAgentDid, creatorPrincipalId: 'pending', creatorDeviceBindingId: 'pending',
+    protocolMode: 'legacy_group_v1', senderDeviceKeyId: 'pending',
     recipientDeviceKeyId: agent.ownerDeviceKeyId, ownerScope: agent.ownerScope,
     groupId: `pending-${epoch}`, conversationScope: `pending-${epoch}`,
     bindingGeneration: agent.bindingGeneration,
@@ -31,7 +33,8 @@ function pendingScope(agent: ProductionE2eeAgent, epoch: number): any {
 }
 
 export class ProductionE2eeDirectoryWorker {
-  private readonly processes = new Map<string,Recipient>();
+  private readonly processes = new Map<string,{ recipient:Recipient; lastUsed:number }>();
+  private processClock = 0;
   private timer: NodeJS.Timeout|null = null;
   private running = false;
   private retryAfter = 0;
@@ -49,6 +52,7 @@ export class ProductionE2eeDirectoryWorker {
     acceptPendingCommit?: (input:{scope:ProductionE2eeScope;pendingState:Uint8Array;stateVersion:number})=>Promise<{encryptedState:Uint8Array;stateVersion:number}>;
     intervalMs?: number;
     maxAgentsPerRun?: number;
+    maxResidentProcesses?: number;
     now?: () => number;
     onError?: (agentId: string, error: unknown) => void;
     onRecovery?: (failureCount: number) => void;
@@ -79,11 +83,26 @@ export class ProductionE2eeDirectoryWorker {
 
   private process(agent: ProductionE2eeAgent, epoch: number): Recipient {
     const existing = this.processes.get(agent.localAgentId);
-    if (existing) return existing;
+    if (existing) {
+      existing.lastUsed = ++this.processClock;
+      return existing.recipient;
+    }
+    const configured = Number(this.options.maxResidentProcesses || 0);
+    const cpuLimit = Math.max(1,Math.min(4,typeof availableParallelism === 'function'
+      ? availableParallelism() : cpus().length));
+    const limit = Number.isSafeInteger(configured) && configured > 0 ? Math.min(configured,32) : cpuLimit;
+    while (this.processes.size >= limit) {
+      const oldest = [...this.processes.entries()].sort((left,right) => left[1].lastUsed - right[1].lastUsed)[0];
+      if (!oldest) break;
+      oldest[1].recipient.close();
+      this.processes.delete(oldest[0]);
+    }
     const created = this.options.processFactory(pendingScope(agent,epoch));
-    this.processes.set(agent.localAgentId,created);
+    this.processes.set(agent.localAgentId,{ recipient:created,lastUsed:++this.processClock });
     return created;
   }
+
+  residentProcessCount(): number { return this.processes.size; }
 
   private async ensurePackage(agent: ProductionE2eeAgent): Promise<any> {
     let row = this.options.store.keyPackage(agent.localAgentId);
@@ -119,7 +138,7 @@ export class ProductionE2eeDirectoryWorker {
 
   private async rotatePending(agent: ProductionE2eeAgent, row: any): Promise<any> {
     const current = this.processes.get(agent.localAgentId);
-    current?.close();
+    current?.recipient.close();
     this.processes.delete(agent.localAgentId);
     const recipient = this.process(agent,Number(row.key_epoch));
     await recipient.ready;
@@ -146,6 +165,7 @@ export class ProductionE2eeDirectoryWorker {
   private async syncDeviceCommits(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.applyCommit)return;
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      if(session.protocol_mode==='direct_v2')continue;
       const events=await this.options.client.pullDeviceCommits({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,
         groupId:String(session.group_id),afterEpoch:Number(session.mls_epoch||1)});
       let current=session;
@@ -153,6 +173,8 @@ export class ProductionE2eeDirectoryWorker {
         if(event.groupId!==session.group_id||event.epoch!==Number(current.mls_epoch)+1)throw new Error('E2EE_DEVICE_COMMIT_SEQUENCE_INVALID');
         const scope:ProductionE2eeScope={localAgentId:String(current.local_agent_id),serverAgentId:String(current.server_agent_id),
           targetAgentDid:String(current.target_agent_did),creatorPrincipalId:String(current.creator_principal_id),
+          creatorDeviceBindingId:String(current.creator_guest_device_uid||''),
+          protocolMode:current.protocol_mode==='direct_v2'?'direct_v2':'legacy_group_v1',
           senderDeviceKeyId:String(current.sender_device_key_id||''),recipientDeviceKeyId:String(current.recipient_device_key_id),
           ownerScope:String(current.owner_scope),groupId:String(current.group_id),conversationScope:String(current.conversation_scope),
           bindingGeneration:Number(current.binding_generation)};
@@ -167,12 +189,14 @@ export class ProductionE2eeDirectoryWorker {
 
   private scopeFromSession(current:any):ProductionE2eeScope{return{localAgentId:String(current.local_agent_id),serverAgentId:String(current.server_agent_id),
     targetAgentDid:String(current.target_agent_did),creatorPrincipalId:String(current.creator_principal_id),senderDeviceKeyId:String(current.sender_device_key_id||''),
+    creatorDeviceBindingId:String(current.creator_guest_device_uid||''),protocolMode:current.protocol_mode==='direct_v2'?'direct_v2':'legacy_group_v1',
     recipientDeviceKeyId:String(current.recipient_device_key_id),ownerScope:String(current.owner_scope),groupId:String(current.group_id),
     conversationScope:String(current.conversation_scope),bindingGeneration:Number(current.binding_generation)}}
 
   private async hostDeviceJoins(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.prepareAddMember||!this.options.acceptPendingCommit)return
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      if(session.protocol_mode==='direct_v2')continue;
       const claim=await this.options.client.claimDeviceJoin({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
       if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
       const prepared=await this.options.prepareAddMember({scope,keyPackage:String(claim.keyPackage),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});
@@ -187,6 +211,7 @@ export class ProductionE2eeDirectoryWorker {
   private async hostDeviceRevocations(agent:ProductionE2eeAgent):Promise<void>{
     if(!this.options.prepareRemoveDevice||!this.options.acceptPendingCommit)return
     for(const session of this.options.store.activeSessions(agent.localAgentId)){
+      if(session.protocol_mode==='direct_v2')continue;
       const claim=await this.options.client.claimDeviceRevocation({agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,groupId:String(session.group_id)});
       if(!claim)continue;const scope=this.scopeFromSession(session);const epoch=Number(session.mls_epoch||1)+1;
       const prepared=await this.options.prepareRemoveDevice({scope,deviceKeyId:String(claim.deviceKeyId),encryptedState:new Uint8Array(session.encrypted_state),stateVersion:Number(session.state_version)});
@@ -204,10 +229,15 @@ export class ProductionE2eeDirectoryWorker {
       throw new Error('E2EE_ESTABLISHMENT_KEY_PACKAGE_MISMATCH');
     }
     if (establishment.bindingGeneration !== agent.bindingGeneration) throw new Error('E2EE_BINDING_GENERATION_MISMATCH');
+    const protocolMode = establishment.protocolMode === 'direct_v2' ? 'direct_v2' : 'legacy_group_v1';
+    if (protocolMode === 'direct_v2' && !establishment.creatorDeviceBindingId) {
+      throw new Error('E2EE_DIRECT_DEVICE_BINDING_MISSING');
+    }
     const recipient = this.process(agent,Number(row.key_epoch));
     const scope: ProductionE2eeScope = {
       localAgentId:agent.localAgentId,serverAgentId:agent.serverAgentId,targetAgentDid:agent.targetAgentDid,
       creatorPrincipalId:establishment.creatorPrincipalId,senderDeviceKeyId:'',
+      creatorDeviceBindingId:establishment.creatorDeviceBindingId || '',protocolMode,
       recipientDeviceKeyId:agent.ownerDeviceKeyId,ownerScope:agent.ownerScope,groupId:establishment.groupId,
       conversationScope:establishment.conversationScope,bindingGeneration:establishment.bindingGeneration,
     };
@@ -244,7 +274,7 @@ export class ProductionE2eeDirectoryWorker {
               await this.accept(agent,row,establishment);
             } catch (error) {
               const poisoned = this.processes.get(agent.localAgentId);
-              poisoned?.close();
+              poisoned?.recipient.close();
               this.processes.delete(agent.localAgentId);
               await this.options.client.reject({ establishmentId:establishment.establishmentId,
                 agentId:agent.serverAgentId,ownerDeviceKeyId:agent.ownerDeviceKeyId,reasonCode:'LOCAL_CRYPTO_ERROR' });
@@ -295,7 +325,7 @@ export class ProductionE2eeDirectoryWorker {
     return async () => {
       if (this.timer) clearInterval(this.timer);
       this.timer = null;
-      for (const process of this.processes.values()) process.close();
+      for (const process of this.processes.values()) process.recipient.close();
       this.processes.clear();
     };
   }

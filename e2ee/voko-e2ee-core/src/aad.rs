@@ -89,6 +89,27 @@ mod tests {
     }
 
     #[test]
+    fn every_direct_route_field_is_authenticated_against_cross_scope_replay() {
+        let original = sample().encode().unwrap();
+        let mutations: Vec<Box<dyn Fn(&mut CanonicalAad)>> = vec![
+            Box::new(|aad| aad.protocol_version += 1),
+            Box::new(|aad| aad.content_type += 1),
+            Box::new(|aad| aad.group_id = b"group-2".to_vec()),
+            Box::new(|aad| aad.epoch += 1),
+            Box::new(|aad| aad.target_agent_did = b"did:voko:agent-2".to_vec()),
+            Box::new(|aad| aad.conversation_scope = b"conv-2".to_vec()),
+            Box::new(|aad| aad.sender_device_key_id = b"device-key-2".to_vec()),
+            Box::new(|aad| aad.message_id = b"message-2".to_vec()),
+            Box::new(|aad| aad.channel_type = 2),
+        ];
+        for mutate in mutations {
+            let mut changed = sample();
+            mutate(&mut changed);
+            assert_ne!(original, changed.encode().unwrap());
+        }
+    }
+
+    #[test]
     fn rejects_empty_and_oversized_fields() {
         let mut aad = sample();
         aad.message_id.clear();

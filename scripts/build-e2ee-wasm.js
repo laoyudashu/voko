@@ -35,10 +35,10 @@ execFileSync(rustup, ['target', 'add', 'wasm32-unknown-unknown', '--toolchain', 
   { cwd: root, stdio: 'inherit' });
 execFileSync(cargo, ['+stable', 'test', '--locked', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
   { cwd: e2ee, stdio: 'inherit' });
-execFileSync(cargo, ['+stable', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
+execFileSync(cargo, ['+stable', 'build', '--locked', '--profile', 'web', '--target', 'wasm32-unknown-unknown', '-p', 'voko-e2ee-wasm'],
   { cwd: e2ee, stdio: 'inherit' });
 execFileSync(bindgen, ['--target', 'web', '--out-dir', 'target/web-poc', '--out-name', 'voko_e2ee_wasm',
-  'target/wasm32-unknown-unknown/release/voko_e2ee_wasm.wasm'], { cwd: e2ee, stdio: 'inherit' });
+  'target/wasm32-unknown-unknown/web/voko_e2ee_wasm.wasm'], { cwd: e2ee, stdio: 'inherit' });
 const outputDir = process.env.VOKO_E2EE_WEB_RELEASE_DIR
   ? resolve(process.env.VOKO_E2EE_WEB_RELEASE_DIR)
   : join(e2ee, 'target', 'web-release');

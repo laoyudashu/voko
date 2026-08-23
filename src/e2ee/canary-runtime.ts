@@ -28,7 +28,16 @@ type E2eeRuntimePolicy = {
 
 type E2eeRuntimeStore = {
   isEmergencyDisabled(): boolean;
-  reserve(scope: any, messageId: string, digest: string): 'new'|'duplicate';
+  reserve(scope: any, messageId: string, digest: string,
+    route?: {localAgentId?:string;channelId?:string}): 'new'|'duplicate';
+  receipt?(messageId: string): any;
+  claim?(messageId: string, staleAfterMs?: number): 'claimed'|'busy'|'deliver'|'completed'|'terminal';
+  commitReply?(input:{messageId:string;groupId:string;expectedVersion:number;encryptedState:Uint8Array;
+    nextVersion:number;replyMessageId:string;encryptedReply:string}): void;
+  pendingReplies?(limit?: number): any[];
+  claimDelivery?(messageId: string, leaseOwner: string, leaseMs?: number): boolean;
+  finishDelivery?(messageId: string, leaseOwner: string, delivered: boolean): boolean;
+  noteDeliveryAttempt?(messageId: string): void;
   session(groupId: string): any;
   commitState(groupId: string, expectedVersion: number, encryptedState: Uint8Array, nextVersion: number): void;
   transition(messageId: string, from: string[], to: any, encryptedReply?: string): void;
@@ -100,17 +109,37 @@ export class CanaryRuntime {
     }
     const digest = crypto.createHash('sha256').update(String(message.content)).digest('base64url');
     let providerAccepted = false;
+    let replyCommitted = false;
+    let resumingAcceptedProvider = false;
+    const atomicOutbox = Boolean(this.options.store.claim && this.options.store.receipt && this.options.store.commitReply);
     try {
       stage='lite.reserve';
-      if (this.options.store.reserve(scope,envelope.messageId,digest) === 'duplicate') {
+      const reservation = this.options.store.reserve(scope,envelope.messageId,digest,
+        { localAgentId,channelId:String(message.fromUid) });
+      if (atomicOutbox) {
+        resumingAcceptedProvider = this.options.store.receipt!(envelope.messageId)?.state === 'provider_accepted';
+        providerAccepted = resumingAcceptedProvider;
+        const claim = this.options.store.claim!(envelope.messageId);
         message?.ack?.();
         if (message) message.__e2eeReceiptAcked = true;
-        return { handled:true,accepted:true,code:'duplicate' };
+        if (claim === 'deliver') {
+          const delivered = await this.deliverStoredReply(this.options.store.receipt!(envelope.messageId));
+          return { handled:true,accepted:true,code:delivered?'recovered':'delivery_in_progress' };
+        }
+        if (claim === 'completed') return { handled:true,accepted:true,code:'duplicate' };
+        if (claim === 'busy') return { handled:true,accepted:true,code:'in_progress' };
+        if (claim !== 'claimed') return { handled:true,accepted:false,code:'E2EE_RECEIPT_TERMINAL' };
+      } else if (reservation === 'duplicate') {
+          message?.ack?.();
+          if (message) message.__e2eeReceiptAcked = true;
+          return { handled:true,accepted:true,code:'duplicate' };
       }
       // Receipt ACK only means that the immutable ciphertext is durably owned.
       // Provider execution and its outcome remain separate persisted states.
-      message?.ack?.();
-      if (message) message.__e2eeReceiptAcked = true;
+      if (!atomicOutbox) {
+        message?.ack?.();
+        if (message) message.__e2eeReceiptAcked = true;
+      }
       const session = this.options.store.session(scope.groupId);
       if (!session || session.status === 'locked') throw new Error('E2EE_CANARY_SESSION_LOCKED');
       stage='lite.decrypt';
@@ -118,14 +147,16 @@ export class CanaryRuntime {
         stateVersion:Number(session.state_version) });
       this.options.store.bindSenderDevice?.(scope.groupId,envelope.senderDeviceKeyId);
       this.options.store.bindChannel?.(localAgentId,scope.groupId,String(message.fromUid));
-      this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
+      if (!atomicOutbox) {
+        this.options.store.commitState(scope.groupId,Number(session.state_version),opened.encryptedState,opened.stateVersion);
+      }
       const execute = this.options.dispatcher.executeE2ee || this.options.dispatcher.executeCanary;
       if (!execute) throw new Error('E2EE_PROVIDER_EXECUTION_UNAVAILABLE');
       stage='lite.prepare';
       const prepared = await this.prepareAttachment(localAgentId, String(message.fromUid), scope, opened.plaintext, envelope.messageId);
       let result: any;
       try {
-        if (this.options.persistInbound
+        if (!resumingAcceptedProvider && this.options.persistInbound
             && !this.options.persistInbound(localAgentId,message,prepared.displayContent || opened.plaintext,
               envelope.messageId,prepared.contentType || 1)) throw new Error('E2EE_INBOUND_REJECTED');
         this.stats.received += 1;
@@ -133,31 +164,89 @@ export class CanaryRuntime {
         result = await execute.call(this.options.dispatcher,{ agentId:localAgentId,content:prepared.content,
           taskId:envelope.messageId,contextId:scope.conversationScope,sessionScopeId:scope.groupId,
           attachments:prepared.attachments,attachmentOutputDirectory:prepared.outputDirectory,
-          onProviderAccepted:()=>{providerAccepted=true;stage='lite.provider_accepted';this.options.store.transition(envelope.messageId,['received'],'provider_accepted');} });
+          onProviderAccepted:()=>{providerAccepted=true;stage='lite.provider_accepted';
+            this.options.store.transition(envelope.messageId,atomicOutbox?['processing']:['received'],'provider_accepted');} });
       } finally { await prepared.cleanup(); }
       stage='lite.reply_encrypt';
       const current = this.options.store.session(scope.groupId);
-      const replyId = `e2ee-reply-${crypto.randomUUID()}`;
+      const replyId = `e2ee-reply-${crypto.createHash('sha256')
+        .update(`${scope.groupId}\0${envelope.messageId}`).digest('base64url')}`;
       const replyContent = String(result.reply?.content || '');
       if (!replyContent.trim()) throw new Error('E2EE_PROVIDER_EMPTY_REPLY');
       const sealed = await this.options.crypto.encrypt({ scope,messageId:replyId,plaintext:replyContent,
-        encryptedState:current.encrypted_state,stateVersion:Number(current.state_version) });
-      this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
+        encryptedState:atomicOutbox ? opened.encryptedState : current.encrypted_state,
+        stateVersion:atomicOutbox ? opened.stateVersion : Number(current.state_version) });
       const encoded = JSON.stringify(sealed.envelope);
-      this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
       this.options.persistOutbound?.(localAgentId,String(message.fromUid),replyContent,replyId);
+      if (atomicOutbox) {
+        this.options.store.commitReply!({ messageId:envelope.messageId,groupId:scope.groupId,
+          expectedVersion:Number(session.state_version),encryptedState:sealed.encryptedState,
+          nextVersion:sealed.stateVersion,replyMessageId:replyId,encryptedReply:encoded });
+      } else {
+        this.options.store.commitState(scope.groupId,Number(current.state_version),sealed.encryptedState,sealed.stateVersion);
+        this.options.store.transition(envelope.messageId,['provider_accepted'],'reply_ready',encoded);
+      }
+      replyCommitted = true;
       stage='lite.reply_deliver';
+      if (atomicOutbox) {
+        const delivered = await this.deliverStoredReply(this.options.store.receipt!(envelope.messageId));
+        if (delivered) this.stats.replied += 1;
+        return { handled:true,accepted:true,code:delivered?undefined:'delivery_in_progress' };
+      }
+      this.options.store.noteDeliveryAttempt?.(envelope.messageId);
       await this.options.deliverRaw(localAgentId,String(message.fromUid),encoded,replyId);
       this.options.store.transition(envelope.messageId,['reply_ready'],'completed');
       this.stats.replied += 1;
       return { handled:true,accepted:true };
     } catch (error: any) {
       this.stats.failures += 1;
-      try { this.options.store.transition(envelope.messageId,providerAccepted?['provider_accepted','reply_ready']:['received'],providerAccepted?'outcome_unknown':'failed'); } catch {}
+      try {
+        if (atomicOutbox) {
+          if (replyCommitted) this.options.store.transition(envelope.messageId,['reply_ready','outcome_unknown'],'outcome_unknown');
+          else if (!providerAccepted) this.options.store.transition(envelope.messageId,['processing'],'failed');
+          else this.options.store.transition(envelope.messageId,['processing'],'provider_accepted');
+        } else {
+          this.options.store.transition(envelope.messageId,providerAccepted?['provider_accepted','reply_ready']:['received'],providerAccepted?'outcome_unknown':'failed');
+        }
+      } catch {}
       this.diagnostic(stage,'error',{agent:localAgentId,group:scope?.groupId,message:envelope?.messageId,
         code:error?.code||error?.message,providerAccepted});
       return { handled:true,accepted:false,code:String(error?.code || error?.message || 'E2EE_CANARY_FAILED') };
     }
+  }
+
+  private async deliverStoredReply(row: any): Promise<boolean> {
+    if (!row?.message_id || !row?.local_agent_id || !row?.channel_id
+        || !row?.encrypted_reply || !row?.reply_message_id) throw new Error('E2EE_OUTBOX_ROW_INVALID');
+    const messageId = String(row.message_id);
+    const leaseOwner = `e2ee-delivery-${crypto.randomUUID()}`;
+    if (this.options.store.claimDelivery
+        && !this.options.store.claimDelivery(messageId,leaseOwner,60_000)) return false;
+    if (!this.options.store.claimDelivery) this.options.store.noteDeliveryAttempt?.(messageId);
+    try {
+      await this.options.deliverRaw(String(row.local_agent_id),String(row.channel_id),
+        String(row.encrypted_reply),String(row.reply_message_id));
+      if (this.options.store.finishDelivery) {
+        if (!this.options.store.finishDelivery(messageId,leaseOwner,true)) throw new Error('E2EE_DELIVERY_LEASE_LOST');
+      } else this.options.store.transition(messageId,['reply_ready','outcome_unknown'],'completed');
+      return true;
+    } catch (error) {
+      try {
+        if (this.options.store.finishDelivery) this.options.store.finishDelivery(messageId,leaseOwner,false);
+        else this.options.store.transition(messageId,['reply_ready','outcome_unknown'],'outcome_unknown');
+      } catch {}
+      throw error;
+    }
+  }
+
+  async recoverPendingReplies(limit = 50): Promise<{ delivered:number; failed:number }> {
+    const rows = this.options.store.pendingReplies?.(limit) || [];
+    let delivered = 0, failed = 0;
+    for (const row of rows) {
+      try { if (await this.deliverStoredReply(row)) delivered += 1; }
+      catch { failed += 1; }
+    }
+    return { delivered,failed };
   }
 
   private async prepareAttachment(agentId:string,targetScopeId:string,scope:any,plaintext:string,messageId:string): Promise<{
