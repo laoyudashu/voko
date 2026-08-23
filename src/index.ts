@@ -1943,200 +1943,80 @@ async function startMcpServer(args?: any, core?: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
   }
 
-  let e2eeCanaryRuntime: any = null;
+  let e2eeRuntime: any = null;
   let e2eeDatabase: any = null;
-  try {
-    const { CanaryRuntimePolicy } = require('./e2ee/canary-policy');
-    const { loadProductionE2eeConfig } = require('./e2ee/production-config');
-    const productionConfig = loadProductionE2eeConfig(process.env,(type: string) => databaseAPI.getConfigFromDb(type));
-    const canaryPolicy = new CanaryRuntimePolicy(process.env, false);
-    const productionEnabled = productionConfig.enabled;
-    if (canaryPolicy.enabled && productionEnabled) throw new Error('Canary and production E2EE cannot be enabled together');
-    if (canaryPolicy.enabled || productionEnabled) {
-      let endpoint = String(productionEnabled ? productionConfig.endpoint : process.env.VOKO_E2EE_CANARY_ENDPOINT || '').trim();
-      let endpointManifest = productionConfig.manifestPath;
-      if (productionEnabled && !endpoint) {
-        const { resolvePackagedE2eeRelease } = require('./e2ee/platform-package');
-        const packagedRelease = resolvePackagedE2eeRelease();
-        if (packagedRelease) {
-          endpoint = packagedRelease.executable;
-          endpointManifest = packagedRelease.manifestPath;
-        }
-      }
-      if (!endpoint || !path.isAbsolute(endpoint)) throw new Error(`${productionEnabled ? 'E2EE_PLATFORM_PACKAGE_MISSING' : 'VOKO_E2EE_CANARY_ENDPOINT must be an absolute path'}`);
-      if (productionEnabled) {
-        const { verifyNativeE2eeRelease } = require('./e2ee/native-release');
-        endpoint = verifyNativeE2eeRelease({ executable:endpoint,
-          manifestPath:endpointManifest,
-          publicKeyPem:productionConfig.publicKeyPem });
-      }
-      const { CanaryStore } = require('./e2ee/canary-store');
-      const { CanaryRuntime } = require('./e2ee/canary-runtime');
-      const { CanaryCryptoProcess } = require('./e2ee/canary-crypto-process');
+  const e2eeEnabled = !['false','0'].includes(String(process.env.VOKO_E2EE_PRODUCTION_ENABLED || 'true').toLowerCase());
+  if (e2eeEnabled) {
+    try {
+      const ownerToken = userEmail ? getUserAccessToken(db,userEmail) : null;
+      if (!ownerToken) throw new Error('E2EE_V2_OWNER_TOKEN_REQUIRED');
       const { DatabaseSync } = require('node:sqlite');
-      const defaultE2eePath = path.join(path.dirname(String(db._dbPath || '')), 'voko-e2ee.db');
-      const e2eePath = path.resolve(String(productionConfig.databasePath || defaultE2eePath));
-      if (e2eePath === path.resolve(String(db._dbPath || ''))) throw new Error('VOKO_E2EE_DB_PATH must differ from the main database');
-      fs.mkdirSync(path.dirname(e2eePath), { recursive: true });
+      const { E2eeV2Store } = require('./e2ee/v2-store');
+      const { E2eeV2DirectoryClient } = require('./e2ee/v2-directory-client');
+      const { E2eeV2Runtime } = require('./e2ee/v2-runtime');
+      const { serverAgentIdFromDid } = require('./core/agent-invitations');
+      const e2eePath = path.join(path.dirname(String(db._dbPath || '')),'voko-e2ee-v2.db');
+      fs.mkdirSync(path.dirname(e2eePath),{recursive:true});
       e2eeDatabase = new DatabaseSync(e2eePath);
       e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
-      let e2eeStore: any;
-      let e2eePolicy: any = canaryPolicy;
-      let productionDirectoryClient: any = null;
-      let migrated = { sessions:0,receipts:0 };
-      const e2eeOwnerToken = productionEnabled && userEmail ? getUserAccessToken(db,userEmail) : null;
-      if (productionEnabled) {
-        const { ProductionE2eeStore } = require('./e2ee/production-store');
-        const { ProductionE2eePolicy } = require('./e2ee/production-policy');
-        e2eeStore = new ProductionE2eeStore(e2eeDatabase);
-        e2eePolicy = new ProductionE2eePolicy(e2eeStore,true);
-      } else {
-        e2eeStore = new CanaryStore(e2eeDatabase);
-        migrated = e2eeStore.migrateLegacy(db);
-      }
-      e2eeCanaryRuntime = new CanaryRuntime({ policy: e2eePolicy, store: e2eeStore,
-        crypto: new CanaryCryptoProcess(endpoint), dispatcher,
-        channelStatusProvider: productionEnabled ? async (localAgentId: string, channelIds: string[]) => {
-          if (!productionDirectoryClient) throw new Error('E2EE_DIRECTORY_UNAVAILABLE');
-          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(localAgentId)?.did || '');
-          const serverAgentId = require('./core/agent-invitations').serverAgentIdFromDid(did);
-          if (!serverAgentId) return [];
-          const data = await productionDirectoryClient.conversationStatuses({ agentIds:[serverAgentId],visitorIds:channelIds });
-          return Array.isArray(data?.conversations) ? data.conversations : [];
-        } : undefined,
-        persistInbound: (agentId: string, message: any, plaintext: string, messageId: string, contentType = 1) => {
-          if (!messageHandler) return false;
-          const projected = messageHandler.handleAgentMessage(agentId, {
-            ...message, content: plaintext, contentType, messageId,
-            clientMsgNo: messageId,
-          }, true);
-          return Boolean(projected);
+      const store = new E2eeV2Store(e2eeDatabase,e2eePath);
+      const directory = new E2eeV2DirectoryClient({baseUrl:String(require('./endpoints.json').api.baseUrl || ''),token:ownerToken});
+      const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
+        WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
+        .flatMap((row:any)=>{
+          const serverAgentId=serverAgentIdFromDid(row.did);
+          return serverAgentId?[{localAgentId:String(row.agent_id),serverAgentId,agentDid:String(row.did)}]:[];
+        });
+      e2eeRuntime = new E2eeV2Runtime({store,directory,agents,dispatcher,
+        persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType=1)=>{
+          if(!messageHandler)return false;
+          return Boolean(messageHandler.handleAgentMessage(agentId,{...message,content:plaintext,contentType,messageId,
+            clientMsgNo:messageId},true));
         },
-        persistOutbound: (agentId: string, channelId: string, plaintext: string, messageId: string) => {
-          if (!messageHandler) throw new Error('E2EE_MESSAGE_HANDLER_UNAVAILABLE');
+        persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string)=>{
+          if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');
           messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId);
         },
-        deliverRaw: async (agentId: string, channelId: string, envelope: string, messageId: string) => {
-          const result = await agentManager.deliverEncrypted(agentId,channelId,envelope,messageId);
-          if (!result?.success) {
-            const error: any = new Error(result?.error || 'E2EE_REPLY_NOT_DELIVERED');
-            error.deliveryOutcome = result?.outcomeUnknown ? 'outcome_unknown' : 'not_delivered';
-            throw error;
-          }
-          return result;
-        },
-        downloadAttachment: productionEnabled && e2eeOwnerToken ? async (agentId: string, uploadId: string, targetScopeId: string) => {
-          const { getUploadDownload } = require('./server/oss');
-          const did = String(db.prepare('SELECT did FROM agents WHERE agent_id=?').get(agentId)?.did || '');
-          const serverAgentId = did.split(':').pop()?.replace(/-/g, '');
-          if (!serverAgentId || !/^[0-9a-f]{32}$/i.test(serverAgentId)) throw new Error('E2EE_ATTACHMENT_AGENT_IDENTITY_INVALID');
-          const canonicalAgentId = `${serverAgentId.slice(0,8)}-${serverAgentId.slice(8,12)}-${serverAgentId.slice(12,16)}-${serverAgentId.slice(16,20)}-${serverAgentId.slice(20)}`.toLowerCase();
-          const metadata = await getUploadDownload(uploadId,e2eeOwnerToken,canonicalAgentId,'private',targetScopeId);
-          const url = String(metadata?.url || '');
-          if (!/^https:\/\//i.test(url)) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_URL_INVALID');
-          const response = await fetch(url,{signal:AbortSignal.timeout(15_000)});
-          const length = Number(response.headers.get('content-length') || 0);
-          if (!response.ok || !Number.isSafeInteger(length) || length < 2 || length > 40*1024*1024) {
-            throw new Error('E2EE_ATTACHMENT_DOWNLOAD_INVALID');
-          }
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          if (bytes.byteLength !== length) throw new Error('E2EE_ATTACHMENT_DOWNLOAD_TRUNCATED');
-          return bytes;
-        } : undefined });
-      if (productionEnabled) {
-        const { E2eeDirectoryClient } = require('./e2ee/directory-client');
-        const { ProductionE2eeDirectoryWorker } = require('./e2ee/production-directory-worker');
-        const { PendingRecipientProcess } = require('./e2ee/canary-crypto-process');
-        const { serverAgentIdFromDid } = require('./core/agent-invitations');
-        const nodeCrypto = require('node:crypto');
-        const ownerToken = e2eeOwnerToken;
-        if (!ownerToken) throw new Error('E2EE production requires an authenticated owner token');
-        const apiBaseUrl = String(require('./endpoints.json').api.baseUrl || '');
-        const deviceGeneration = e2eeStore.deviceGeneration(() => nodeCrypto.randomUUID());
-        const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
-          WHERE publish_status='published' AND LOWER(owner_email)=LOWER(?) AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
-          .flatMap((row: any) => {
-            const serverAgentId = serverAgentIdFromDid(row.did);
-            if (!serverAgentId) return [];
-            const suffix = nodeCrypto.createHash('sha256').update(`${deviceGeneration}\0${serverAgentId}`).digest('base64url').slice(0,32);
-            const ownerScope = nodeCrypto.createHash('sha256').update(`voko-e2ee-owner/v1\0${String(userEmail).toLowerCase()}`).digest('base64url');
-            return [{ localAgentId:String(row.agent_id),serverAgentId,targetAgentDid:String(row.did),
-              ownerDeviceKeyId:`voko-lite-${suffix}`,ownerScope,bindingGeneration:1 }];
-          });
-        productionDirectoryClient = new E2eeDirectoryClient({ baseUrl:apiBaseUrl,token:ownerToken });
-        const directoryWorker = new ProductionE2eeDirectoryWorker({
-          client:productionDirectoryClient,store:e2eeStore,agents,
-          processFactory:(scope: any) => new PendingRecipientProcess(endpoint,scope),
-          applyCommit:(input: any) => new CanaryCryptoProcess(endpoint).applyCommit(input),
-          prepareAddMember:(input:any)=>new CanaryCryptoProcess(endpoint).prepareAddMember(input),
-          prepareRemoveDevice:(input:any)=>new CanaryCryptoProcess(endpoint).prepareRemoveDevice(input),
-          acceptPendingCommit:(input:any)=>new CanaryCryptoProcess(endpoint).acceptPendingCommit(input),
-          intervalMs:productionConfig.pollIntervalMs,
-          onError:(agentId: string,error: any) => {
-            if (error?.sharedServiceFailure) {
-              console.warn(`[E2EE] Directory服务暂不可用 affectedAgents=${Number(error.affectedAgents || 0)} retryInMs=${Number(error.retryAfterMs || 0)} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
-              return;
-            }
-            console.warn(`[E2EE] Directory同步失败 agent=${agentId} operation=${String(error?.operation || 'local')}: ${String(error?.code || error?.message || 'unknown')}`);
-          },
-          onRecovery:(failureCount: number) => console.warn(`[E2EE] Directory服务已恢复 consecutiveFailures=${failureCount}`),
-        });
-        await taskManager.start('e2ee-production-directory',() => directoryWorker.start());
-        await taskManager.start('e2ee-reply-outbox',() => {
-          let running = false;
-          const drain = async () => {
-            if (running) return;
-            running = true;
-            try { await e2eeCanaryRuntime.recoverPendingReplies(50); }
-            finally { running = false; }
-          };
-          void drain().catch((error: any) => console.warn('[E2EE] 回复Outbox恢复失败:', error?.message || 'unknown'));
-          const timer = setInterval(() => void drain().catch((error: any) =>
-            console.warn('[E2EE] 回复Outbox恢复失败:', error?.message || 'unknown')),2_000);
-          timer.unref?.();
-          return async () => clearInterval(timer);
-        });
-        console.warn(`[E2EE] 正式运行时已启用，已发布 Agent=${agents().length}`);
-      } else {
-        console.warn(`[E2EE Canary] 内部运行时已启用，精确范围=${canaryPolicy.count()}（生产发布仍关闭）`);
-      }
-      if (migrated.sessions || migrated.receipts) console.warn(`[E2EE] 已迁移旧运行状态 sessions=${migrated.sessions} receipts=${migrated.receipts}`);
-      await taskManager.start('e2ee-database', () => async () => { try { e2eeDatabase?.close(); } catch (_) {} });
+        deliverRaw:async(agentId:string,channelId:string,envelope:string,messageId:string)=>
+          agentManager.deliverEncrypted(agentId,channelId,envelope,messageId),
+      });
+      const initial=await e2eeRuntime.synchronizeAgentKeys();
+      console.warn(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
+      await taskManager.start('e2ee-v2-workers',()=>{
+        let running=false;
+        const run=async()=>{if(running)return;running=true;try{
+          await e2eeRuntime.synchronizeAgentKeys();
+          await e2eeRuntime.recover(50);
+        }finally{running=false;}};
+        void e2eeRuntime.recover(50).catch((error:any)=>console.warn('[E2EE] Outbox恢复失败:',error?.message||'unknown'));
+        const timer=setInterval(()=>void run().catch((error:any)=>console.warn('[E2EE] 后台同步失败:',error?.message||'unknown')),60_000);
+        timer.unref?.();
+        return async()=>{clearInterval(timer);e2eeRuntime?.close();try{e2eeDatabase?.close();}catch{}};
+      });
+    } catch (error:any) {
+      console.error('[E2EE] v2初始化失败，密文消息将等待重新投递:',error.message);
     }
-  } catch (error: any) {
-    console.error('[E2EE Canary] 初始化失败，所有 E2EE 消息将硬拒绝:', error.message);
   }
-  if (messageHandler) {
-    messageHandler.handleEncryptedMessage = async (agentId: string, data: any) => {
-      if (!e2eeCanaryRuntime) return { handled:true,accepted:false,code:'E2EE_CANARY_DISABLED' };
-      return e2eeCanaryRuntime.handle(agentId,data);
-    };
-  }
-  if (e2eeCanaryRuntime) {
-    const { CanaryMonitor } = require('./e2ee/canary-monitor');
-    const canaryMonitor = new CanaryMonitor(e2eeCanaryRuntime,{ onReport:(report: any) => {
-      try { require('./core/lite-bus').emit('e2ee-canary:status',report); } catch (_) {}
-    } });
-    await taskManager.start('e2ee-canary-monitor',() => canaryMonitor.start());
-  }
+  if (messageHandler) messageHandler.handleEncryptedMessage = async (agentId:string,data:any) =>
+    e2eeRuntime ? e2eeRuntime.handle(agentId,data) : {handled:true,accepted:false,code:'E2EE_V2_DISABLED'};
 
   // ── 接管 IM Hub 事件：主消息持久化后才向服务端 ACK ──
   agentManager.on('message', (msg?: any) => {
     const data = msg?.data || msg;
     try {
       if (Number(data?.contentType) === 13) {
-        if (!e2eeCanaryRuntime) {
+        if (!e2eeRuntime) {
           const error: any = new Error('E2EE_RUNTIME_UNAVAILABLE');
           error.code = 'E2EE_RUNTIME_UNAVAILABLE';
           console.warn('[E2EE] 运行时不可用，密文消息等待重新投递');
           data?.nack?.(error);
           return;
         }
-        void e2eeCanaryRuntime.handle(msg.agentId,data).then((result: any) => {
+        void e2eeRuntime.handle(msg.agentId,data).then((result: any) => {
           if (!result.accepted) console.warn(`[E2EE] 已拒绝消息: ${result.code || 'E2EE_REJECTED'}`);
           if (!data?.__e2eeReceiptAcked) data?.ack?.();
         }).catch((error: any) => {
-          console.error('[E2EE Canary] 处理异常:', error.message);
+          console.error('[E2EE] 处理异常:', error.message);
           data?.nack?.(error);
         });
         return;
@@ -2409,7 +2289,7 @@ async function startMcpServer(args?: any, core?: any) {
     trustedRemoteEnabled: ownerLinkModule.trustedRemoteEnabled,
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
-    e2eeCanaryRuntime,
+    e2eeCanaryRuntime: e2eeRuntime,
     uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;

@@ -5,7 +5,7 @@ const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { basename, join, resolve } = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const PROTOCOL_VERSION = 'voko.e2ee/1';
+const PROTOCOL_VERSION = 'voko.e2ee/2';
 const CONTENT_TYPE = 13;
 const FORMAT_VERSION = 1;
 
