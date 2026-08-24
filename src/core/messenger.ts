@@ -39,6 +39,13 @@ function sanitizeOwnerInterventionReply(content: string): string {
     .replace(/^(?:@[^\s，,：:]+(?:[\s，,：:]+|$))+/u, '')
     .trim();
 }
+
+function isProviderInternalErrorReply(content: string): boolean {
+  const normalized = String(content || '').trim();
+  return /^Ran into this error:\s*Request failed: Bad request \(400\):[\s\S]*reasoning_content/i.test(normalized)
+    || /^API call failed after \d+ retries:\s*Connection error\.?$/i.test(normalized)
+    || /^I stopped retrying terminal because it hit the tool-call guardrail \(same_tool_failure_halt\)/i.test(normalized);
+}
 const GROUP_CONTEXT_LIMIT = 10;
 const CAPABILITY_REQUEST_TYPE = 'voko.capability.request';
 const CAPABILITY_RESPONSE_TYPE = 'voko.capability.response';
@@ -1118,6 +1125,10 @@ class MessageHandler extends EventEmitter {
     // 过滤系统消息（全大写 + 下划线）
     if (/^[A-Z_]{3,}$/.test(content.trim())) {
       console.log(`[Agent回复] 跳过系统消息 contentLength=${content.trim().length}`);
+      return;
+    }
+    if (isProviderInternalErrorReply(content)) {
+      console.warn(`[Agent回复] 跳过 Provider 内部错误 agent=${agentId} contentLength=${content.trim().length}`);
       return;
     }
 

@@ -53,6 +53,24 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('does not persist or deliver Provider internal errors as Agent replies', async () => {
+    const fixture = createFixture();
+    try {
+      const internalErrors = [
+        'Ran into this error: Request failed: Bad request (400): The `reasoning_content` in the thinking mode must be passed back to the API.\n\nPlease retry if you think this is a transient or recoverable error.',
+        'API call failed after 3 retries: Connection error.',
+        'I stopped retrying terminal because it hit the tool-call guardrail (same_tool_failure_halt) after 4 repeated non-progressing attempts.',
+      ];
+      for (const content of internalErrors) {
+        await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'visitor-1', content });
+      }
+      assert.equal(fixture.db.prepare('SELECT COUNT(*) count FROM messages').get().count, 0);
+      assert.equal(fixture.delivered.length, 0);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('projects a deterministic E2EE reply into the UI only once', () => {
     const fixture = createFixture();
     try {
