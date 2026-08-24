@@ -15,7 +15,7 @@ const { readWorkBuddyAgentAvatar } = require('../core/dispatcher/workbuddy-agent
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderSystemFooter } = require('./footer');
 const { renderLanguageSwitcher } = require('./language-switcher');
-const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
+const { UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -127,7 +127,7 @@ function page(title, body, tFn, locale, db, opts) {
   const boot = '<script>window.__LOCALE__=' + JSON.stringify(loc) + ';window.__I18N__=' + JSON.stringify(getClientBundle(loc)) + '</script>';
   // 登录/切换用户等未登录页面（opts.footer===false）不渲染系统 footer，
   // 避免暴露运行时状态（IM 连接、PID、端口）与“错误上报”入口。
-  const footer = opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc);
+  const footer = (opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc)) + messageDialog(esc, tFn('common.toast.ok'));
   return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + UI_CONTROL_CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + copyControlScript() + '\n</body>\n</html>';
 }
 
@@ -424,7 +424,7 @@ function wizardJs(t) {
     next.disabled=step===1&&!(d.environment&&d.environment.detected&&d.environment.detected.length);
   }
   function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)}
-  function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
+  function fail(e){showVokoMessage(e.message||I.error);next.disabled=false;next.textContent=I.next}
   function checkName(){
     var name=nameInput.value.trim();
     if(!name){nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameTaken;return Promise.resolve(false)}

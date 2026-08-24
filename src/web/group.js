@@ -19,7 +19,7 @@ const { defaultGroupName } = require('../core/group-client');
 const { MESSAGE_CONTENT_CSS, createMessageRenderer, messageLabels, messageRendererScript } = require('./message-content');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const ENDPOINTS = require('../endpoints.json');
-const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
+const { UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
 
 const GROUP_TIP_CONTENT_TYPE = 12; // 与 core/messenger.js CONTENT_TYPE_GROUP_TIP 一致
 
@@ -147,7 +147,7 @@ function createGroupRouter(handlers, db) {
   const messageRoutes = new MessageRouteStore(db);
   const renderFooter = (tFn, locale) => renderSystemFooter(db, tFn, locale);
 
-  function renderPage(req,title,body,opt){const options=opt||{};return page(title,body,{...options,footer:options.footer===undefined?renderSystemFooter(db,req.t,req.locale):options.footer},req.t,req.locale);}
+  function renderPage(req,title,body,opt){const options=opt||{},footer=options.footer===undefined?renderSystemFooter(db,req.t,req.locale):options.footer;return page(title,body,{...options,footer:footer+messageDialog(esc,req.t('common.toast.ok'))},req.t,req.locale);}
 
   // 取 agent 展示名（nav/title 用）
   async function agentName(agentId){
@@ -281,7 +281,7 @@ function createGroupRouter(handlers, db) {
       const dissolveHtml=myRole==='owner'&&!isDissolved?'<div class="card gm-manage-card gm-danger-card" data-active-only><h3>'+L('web.group.dissolve.title')+'</h3><span class="meta">'+L('web.group.dissolve.desc')+'</span><button type="button" class="btn btn-danger btn-sm" style="margin-top:12px" data-agent-action="group.dissolve" onclick="return showDissolveDlg()">'+L('web.group.dissolve.button')+'</button></div>':'';
       const quitHtml='<div class="card gm-manage-card gm-danger-card"><h3>'+L('web.group.btn.quit')+'</h3><span class="meta">'+L('web.group.manage.quit_desc')+'</span><form id="group-quit-form" method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/quit"><button id="group-quit-btn" type="submit" class="btn btn-danger btn-sm" data-agent-action="group.quit" style="margin-top:12px" '+dis(canQuit)+'>'+L('web.group.btn.quit')+'</button>'+(myRole==='owner'&&!isDissolved?'<span id="group-owner-quit-note" class="meta" style="display:inline;margin-left:8px;min-height:0">'+L('web.group.quit_owner_warn')+'</span>':'')+'</form></div>';
       const statusText=isDissolved?L('web.group.dissolved.label'):L('web.group.status.active');
-      const groupInfoHtml='<div class="info-bar"><span>'+L('web.group.field.status')+': <strong id="group-status-text" style="color:'+(isDissolved?'#d93025':'#0f9d58')+'">'+statusText+'</strong></span>'+(ctx.notice?'<span>'+L('web.group.field.notice')+': '+esc(ctx.notice)+'</span>':'')+'</div>';
+      const groupInfoHtml='<div class="info-bar"><span style="display:inline-flex;align-items:center;gap:4px">'+L('web.group.field.id')+': <code id="group-id-text">'+esc(channelId)+'</code>'+copyButton({esc,label:L('common.btn.copy'),attrs:'data-voko-copy-target="#group-id-text"'})+'</span><span>'+L('web.group.field.status')+': <strong id="group-status-text" style="color:'+(isDissolved?'#d93025':'#0f9d58')+'">'+statusText+'</strong></span>'+(ctx.notice?'<span>'+L('web.group.field.notice')+': '+esc(ctx.notice)+'</span>':'')+'</div>';
       const dissolvedBanner='<div id="group-dissolved-banner" role="status" style="display:'+(isDissolved?'block':'none')+';padding:10px 14px;margin:0 0 12px;border:1px solid #d93025;border-radius:6px;background:#fce8e6;color:#b71c1c;font-weight:700">'+L('web.group.dissolved.label')+'</div>';
       // 入群申请（owner，有 pending 时显示）
       let applyHtml='';
@@ -467,7 +467,7 @@ function createGroupRouter(handlers, db) {
         +'var _inviteSelected=new Set();function _bindInviteCandidates(){document.querySelectorAll("input[name=inviteUids]").forEach(function(cb){if(!cb.disabled){cb.checked=_inviteSelected.has(cb.value);cb.addEventListener("change",function(){if(cb.checked)_inviteSelected.add(cb.value);else _inviteSelected.delete(cb.value);_updateInviteBtn()})}});document.querySelectorAll("button[data-invite-page]").forEach(function(b){b.addEventListener("click",function(){_loadInviteCandidates(b.getAttribute("data-invite-page"))})})}function _updateInviteBtn(){var b=document.getElementById("invite-submit-btn");if(b){b.disabled=!_inviteSelected.size;b.style.opacity=_inviteSelected.size?"1":"0.55"}};'
         +'function _loadInviteCandidates(page){var box=document.getElementById("invite-candidates"),input=document.getElementById("invite-search"),u=new URL(location.href);u.searchParams.set("partial","1");u.searchParams.set("wlPage",page||"1");if(input.value.trim())u.searchParams.set("keyword",input.value.trim());else u.searchParams.delete("keyword");fetch(u.toString(),{headers:{Accept:"application/json"}}).then(function(r){return r.json()}).then(function(r){if(!r.success)throw new Error("failed");box.innerHTML=r.html;_bindInviteCandidates();var visible=new URL(location.href);visible.searchParams.set("wlPage",page||"1");if(input.value.trim())visible.searchParams.set("keyword",input.value.trim());else visible.searchParams.delete("keyword");history.replaceState(null,"",visible)}).catch(function(){box.insertAdjacentHTML("afterbegin",'+inviteSearchErrorHtml+')})}'
         +'document.getElementById("invite-search-btn").addEventListener("click",function(){_loadInviteCandidates("1")});document.getElementById("invite-search").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();_loadInviteCandidates("1")}});_bindInviteCandidates();'
-        +'function inviteSubmit(){var uids=Array.from(_inviteSelected).join(",");document.getElementById("invite-members").value=uids;if(!uids){alert("'+esc(T('web.group.create.no_agents'))+'");return false}return true}'
+        +'function inviteSubmit(){var uids=Array.from(_inviteSelected).join(",");document.getElementById("invite-members").value=uids;if(!uids){showVokoMessage("'+esc(T('web.group.create.no_agents'))+'");return false}return true}'
         +'</script>'
         +linkJS
         +'<p style="margin-top:16px"><a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'?tab=members">'+L('web.group.invite_page_back')+'</a></p>';
@@ -952,13 +952,13 @@ function applyJoin(cid){
     .then(function(r){return r.json()})
     .then(function(d){
       if(btn){btn.disabled=false;btn.textContent=_GS.apply;}
-      if(!d.success){alert(esc(d.error||_GS.fail));return;}
+      if(!d.success){showVokoMessage(d.error||_GS.fail);return;}
       var s=d.status;
       if(s==='joined'||s==='already_member'){location.href='/agents/'+_GSA+'/g/'+cid;}
-      else if(s==='duplicate'){alert(_GS.dup);}
-      else{alert(_GS.pending);}
+      else if(s==='duplicate'){showVokoMessage(_GS.dup);}
+      else{showVokoMessage(_GS.pending);}
     })
-    .catch(function(e){if(btn){btn.disabled=false;btn.textContent=_GS.apply;}alert(esc(e.message||_GS.fail));});
+    .catch(function(e){if(btn){btn.disabled=false;btn.textContent=_GS.apply;}showVokoMessage(e.message||_GS.fail);});
 }
 window.doSearchGroup=doSearch;
 inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();doSearch();}});

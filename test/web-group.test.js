@@ -88,6 +88,15 @@ describe('Web group detail rendering', () => {
     assert.match(html, /window\.__IS_MANAGER__=false;/);
   });
 
+  it('shows a copyable group ID before the group status', async (t) => {
+    const html = await renderGroup(t, 'member');
+    const idPosition = html.indexOf('id="group-id-text"');
+    const statusPosition = html.indexOf('id="group-status-text"');
+    assert.ok(idPosition >= 0);
+    assert.ok(statusPosition > idPosition);
+    assert.match(html, /id="group-id-text">group-1<\/code><button[^>]*data-voko-copy-target="#group-id-text"/);
+  });
+
   it('renders the current-user label without duplicate parentheses', async (t) => {
     const html = await renderGroup(t, 'member');
     assert.match(html, /Agent One <span[^>]*>\uFF08\u4F60\uFF09<\/span>/);

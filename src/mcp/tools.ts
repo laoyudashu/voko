@@ -24,6 +24,7 @@ const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
 const { AgentProviderBindingService } = require('../core/agent-provider-binding');
 const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents');
+const { discoverProviderInstances } = require('../core/dispatcher/provider-instances');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
@@ -973,7 +974,7 @@ function createToolHandlers(cx: McpContext) {
     const where = ` WHERE ${conditions.join(' AND ')}`;
     const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
     const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
-      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
+      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,imUid,
        delivery_modes,publish_status,access_mode,visibility_type,owner_email,created_at FROM agents${where}
        ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
     );
@@ -981,7 +982,7 @@ function createToolHandlers(cx: McpContext) {
       let deliveryModes: string[] = [];
       try { deliveryModes = JSON.parse(r.delivery_modes || '[]'); } catch (_) {}
       return {
-        agentId: r.agent_id, agentName: r.agent_name, description: r.description,
+        agentId: r.agent_id, agentName: r.agent_name, imUid: r.imUid, description: r.description,
         shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
         backendInstanceId: r.backend_instance_id || null, deliveryModes,
         publishStatus: r.publish_status, accessMode: r.access_mode,
@@ -1429,10 +1430,7 @@ function createToolHandlers(cx: McpContext) {
       if (!row) return { success: false, error: 'Agent 不存在', code: 'AGENT_NOT_FOUND' };
       let instances: any[] = [];
       try {
-        instances = row.backend_type === 'workbuddy'
-          ? discoverWorkBuddyAgents()
-          : (createRegistrationOrchestrator({ db: cx.db }).inspectEnvironment().detected
-            .find((item: any) => item.type === row.backend_type)?.instances || []);
+        instances = discoverProviderInstances(row.backend_type);
       } catch (error: any) {
         return { success: false, error: error.message || '本机实例发现失败', code: 'INSTANCE_DISCOVERY_FAILED' };
       }

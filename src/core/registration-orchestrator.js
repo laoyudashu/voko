@@ -25,6 +25,7 @@ const {
 const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
 const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
+const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const PROVIDER_DISPLAY_PRIORITY = [
@@ -587,6 +588,7 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'openclaw',
         label: 'OpenClaw',
+        instanceTerm: getProviderInstanceTerm('openclaw'),
         instances: openclaw,
         supportsMultipleInstances: true,
         deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
@@ -597,6 +599,7 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'zeroclaw',
         label: 'ZeroClaw',
+        instanceTerm: getProviderInstanceTerm('zeroclaw'),
         instances: zeroclaw,
         supportsMultipleInstances: true,
         activityState: 'installed',
@@ -607,6 +610,7 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'hermes',
         label: 'Hermes',
+        instanceTerm: getProviderInstanceTerm('hermes'),
         instances: hermes,
         supportsMultipleInstances: true,
         deliveryModes: this.deliveryCapabilities('hermes', hermesGateway),
@@ -635,6 +639,7 @@ class RegistrationOrchestrator {
       detected.push({
         type,
         label: knownLabels.get(type) || type,
+        instanceTerm: getProviderInstanceTerm(type),
         instances: [],
         supportsMultipleInstances: false,
         ...sessionActivity(type),
@@ -701,12 +706,13 @@ class RegistrationOrchestrator {
 
   discoverProviderInstances(providerType) {
     const type = normalizeBackendType(providerType);
-    if (type !== 'workbuddy') return { success: false, error: '该 Agent 类型不支持实例发现' };
-    const discover = this.options.workBuddyAgents || discoverWorkBuddyAgents;
+    if (!supportsProviderInstances(type)) return { success: false, error: '该 Agent 类型不支持实例发现' };
     try {
-      return { success: true, providerType: type, instances: discover() };
+      const instances = type === 'workbuddy' && this.options.workBuddyAgents
+        ? this.options.workBuddyAgents() : discoverProviderInstances(type);
+      return { success: true, providerType: type, instances };
     } catch (error) {
-      return { success: false, error: `WorkBuddy 实例发现失败: ${error.message || error}` };
+      return { success: false, error: `${type} 实例发现失败: ${error.message || error}` };
     }
   }
 
@@ -714,20 +720,15 @@ class RegistrationOrchestrator {
     const type = normalizeBackendType(providerType);
     const known = this.db ? getBackendTypes(this.db) : [];
     const label = known.find((item) => item.value === type)?.label || type;
-    const allInstances = type === 'openclaw'
-      ? openclawInstances()
-      : type === 'hermes'
-        ? hermesInstances()
-        : type === 'zeroclaw'
-          ? zeroclawInstances()
-          : [];
+    const allInstances = supportsProviderInstances(type) ? discoverProviderInstances(type) : [];
     const matchedInstance = instanceId ? allInstances.find((instance) => instance.id === instanceId) : null;
     const instances = matchedInstance ? [matchedInstance] : allInstances;
     const provider = {
       type,
       label,
+      instanceTerm: getProviderInstanceTerm(type),
       instances,
-      supportsMultipleInstances: !!getProviderFamily(type)?.requiresInstance,
+      supportsMultipleInstances: supportsProviderInstances(type),
       deliveryModes: this.deliveryCapabilities(
         type,
         type === 'zeroclaw'

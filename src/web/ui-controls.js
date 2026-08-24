@@ -17,6 +17,8 @@ button,.btn{min-height:40px;padding:8px 18px;font-size:14px;line-height:1.4;bord
 .home-access-copy-item:disabled{cursor:not-allowed}
 .home-access-copy-item.is-copied{color:#168447}
 .home-access-copy-item.is-copied .home-copy-action-icon{color:#168447;background:#edf9f1}
+.voko-message-dialog{width:min(400px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;color:#1a1a2e;box-shadow:0 18px 60px rgba(21,31,46,.28)}
+.voko-message-dialog::backdrop{background:rgba(24,34,48,.48);backdrop-filter:blur(2px)}
 `;
 
 function copyButton(options = {}) {
@@ -31,4 +33,9 @@ function copyControlScript() {
   return '<script>(function(){if(window.__VOKO_COPY_READY__)return;window.__VOKO_COPY_READY__=true;var copyIcon='+JSON.stringify(COPY_ICON)+',copiedIcon='+JSON.stringify(COPIED_ICON)+';function fallback(value){var area=document.createElement("textarea");area.value=value;area.setAttribute("readonly","");area.style.position="fixed";area.style.opacity="0";document.body.appendChild(area);area.select();var ok=false;try{ok=document.execCommand("copy")}catch(_){}area.remove();return ok}window.vokoCopyText=async function(value,button){var ok=false;if(navigator.clipboard&&navigator.clipboard.writeText){try{await navigator.clipboard.writeText(String(value||""));ok=true}catch(_){}}if(!ok)ok=fallback(String(value||""));if(ok&&button){var iconSelector=button.getAttribute("data-voko-copy-icon-target"),icon=iconSelector?button.querySelector(iconSelector):button;if(!icon)icon=button;clearTimeout(button._vokoCopyTimer);icon.innerHTML=copiedIcon;button.classList.add("is-copied");button._vokoCopyTimer=setTimeout(function(){icon.innerHTML=copyIcon;button.classList.remove("is-copied")},1400)}return ok};document.addEventListener("click",function(event){var button=event.target.closest&&event.target.closest("[data-voko-copy-value],[data-voko-copy-target]");if(!button||button.disabled)return;var value=button.getAttribute("data-voko-copy-value");if(value===null){var target=document.querySelector(button.getAttribute("data-voko-copy-target"));value=target?("value" in target?target.value:target.textContent):""}window.vokoCopyText(value,button)})})();</script>';
 }
 
-module.exports = { COPY_ICON, COPIED_ICON, UI_CONTROL_CSS, copyButton, copyControlScript };
+function messageDialog(esc, closeLabel) {
+  const e = esc || ((value) => String(value == null ? '' : value));
+  return '<dialog id="voko-message-dialog" class="voko-message-dialog"><div style="padding:24px 26px 18px;text-align:center"><div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;margin:0 auto 12px;border-radius:50%;background:#e8f0fe;color:#1a73e8;font-size:22px;font-weight:800" aria-hidden="true">i</div><p data-role="voko-message-text" style="margin:0;color:#667085;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word"></p></div><div style="display:flex;justify-content:flex-end;padding:12px 20px;background:#f7f9fc;border-top:1px solid #e8ebef"><button type="button" data-role="voko-message-close" class="btn-sm" style="margin:0">'+e(closeLabel||'OK')+'</button></div></dialog><script>(function(){var d=document.getElementById("voko-message-dialog");if(!d)return;window.showVokoMessage=function(text){d.querySelector("[data-role=voko-message-text]").textContent=String(text||"");d.showModal()};d.querySelector("[data-role=voko-message-close]").addEventListener("click",function(){d.close()});d.addEventListener("click",function(e){if(e.target===d)d.close()})})();</script>';
+}
+
+module.exports = { COPY_ICON, COPIED_ICON, UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog };

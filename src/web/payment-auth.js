@@ -13,7 +13,7 @@ const { Router } = require('express');
 const { SUPPORTED_LOCALES, getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter } = require('./language-switcher');
 const { renderSystemFooter } = require('./footer');
-const { UI_CONTROL_CSS, copyControlScript } = require('./ui-controls');
+const { UI_CONTROL_CSS, copyControlScript, messageDialog } = require('./ui-controls');
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
@@ -39,7 +39,7 @@ function page(title,body,opt={},tFn,locale){
   const h1=ha?'<h1 style="display:flex;justify-content:space-between;align-items:center"><span>'+esc(title)+st+'</span>'+ha+'</h1>':'<h1>'+esc(title)+st+'</h1>';
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
-  footer+=copyControlScript();
+  footer+=messageDialog(esc,t('common.toast.ok'))+copyControlScript();
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
   return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+'\n</body>\n</html>'
 }
@@ -86,6 +86,12 @@ function bankSelectScript(tFn) {
 
 function createPaymentAuthRouter(handlers, db) {
   const R = Router();
+
+  function pricingReturnPath(value, agentId) {
+    const path = String(value || '');
+    const expected = '/agents/' + encodeURIComponent(agentId) + '/pricing';
+    return path === expected || path.startsWith(expected + '?') ? path : '';
+  }
 
   function currentOwnerEmail() {
     try {
@@ -162,7 +168,7 @@ function createPaymentAuthRouter(handlers, db) {
         'function validateBankCard(){var v=document.getElementById("pb").value.trim();if(v&&!/^\\d{16,19}$/.test(v)){showError("pb");return false}clearError("pb");return true}' +
         'function validatePhone(){var v=document.getElementById("pp").value.trim();if(v&&!/^1\\d{10}$/.test(v)){showError("pp");return false}clearError("pp");return true}' +
         'function validateForm(){var ok=true;var bc=document.getElementById("bankCode"),bn=document.getElementById("bankName");' +
-        'if(!bc.value||!bn.value){alert(V.bank_required);return false}' +
+        'if(!bc.value||!bn.value){showVokoMessage(V.bank_required);return false}' +
         'if(!validateIdCard())ok=false;' +
         'if(!validateBankCard())ok=false;' +
         'if(!validatePhone())ok=false;' +
@@ -225,20 +231,22 @@ function createPaymentAuthRouter(handlers, db) {
     const ownerEmail = currentOwnerEmail();
     const agent = db && ownerEmail ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents WHERE agent_id=? AND LOWER(TRIM(owner_email))=?').get(req.params.agentId, ownerEmail) : null;
     if (!agent) return res.status(404).send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + L('web.payment_auth.agent_not_found') + '</p><a href="/">' + L('common.btn.back') + '</a>'));
-    const auths = db && ownerEmail ? db.prepare("SELECT id,bank_name,bank_card FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all(ownerEmail) : [];
-    const options = auths.map(a => '<option value="' + esc(a.id) + '"' + (a.id === agent.payment_auth_id ? ' selected' : '') + '>' + esc((a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4)) + '</option>').join('');
+    const returnTo = pricingReturnPath(req.query.returnTo, agent.agent_id);
+    const auths = db && ownerEmail ? db.prepare("SELECT id,name,bank_name,bank_card FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all(ownerEmail) : [];
+    const options = auths.map(a => '<option value="' + esc(a.id) + '"' + (a.id === agent.payment_auth_id ? ' selected' : '') + '>' + esc((a.name || '') + ' · ' + (a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4)) + '</option>').join('');
     const select = options
       ? '<select id="paymentAuthId" name="paymentAuthId" required><option value="">' + L('web.payment_auth.bind_select_card') + '</option>' + options + '</select>'
       : '<p class="meta">' + L('web.payment_auth.no_verified_card') + ' <a href="/payment-auth">' + L('web.payment_auth.add_or_verify_card') + '</a></p>';
     const submit = options ? '<button type="submit" class="btn-success">' + L(agent.payment_auth_id ? 'web.payment_auth.change_card_btn' : 'web.payment_auth.bind_card_btn') + '</button>' : '';
-    const body = '<div class="card"><form method="POST" action="/agents/' + esc(agent.agent_id) + '/payment-auth"><p>' + esc(T('web.payment_auth.bind_for_agent', { name: agent.agent_name || agent.agent_id })) + '</p><label for="paymentAuthId">' + L('web.payment_auth.bind_card') + '</label>' + select + '<br>' + submit + '<a href="/" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>';
+    const body = '<div class="card"><form method="POST" action="/agents/' + esc(agent.agent_id) + '/payment-auth">' + (returnTo ? '<input type="hidden" name="returnTo" value="' + esc(returnTo) + '">' : '') + '<p>' + esc(T('web.payment_auth.bind_for_agent', { name: agent.agent_name || agent.agent_id })) + '</p><label for="paymentAuthId">' + L('web.payment_auth.bind_card') + '</label>' + select + '<br>' + submit + '<a href="' + esc(returnTo || '/') + '" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>';
     res.send(renderPage(req, T('web.payment_auth.bind_title'), body, { nav: '<a href="/">' + L('common.nav.home') + '</a> › ' + L('web.payment_auth.bind_title') }));
   });
 
   R.post('/agents/:agentId/payment-auth', async (req, res, next) => {
     try {
       const r = await handlers.bind_agent_payment_auth({ paymentAuthId: req.body.paymentAuthId, agentId: req.params.agentId });
-      r.success ? res.redirect('/') : res.send(renderPage(req, req.t('common.label.failed'), '<p class="error">' + esc(r.error) + '</p><a href="/agents/' + esc(req.params.agentId) + '/payment-auth">' + esc(req.t('common.btn.back')) + '</a>'));
+      const returnTo = pricingReturnPath(req.body.returnTo, req.params.agentId);
+      r.success ? res.redirect(returnTo || '/') : res.send(renderPage(req, req.t('common.label.failed'), '<p class="error">' + esc(r.error) + '</p><a href="/agents/' + esc(req.params.agentId) + '/payment-auth' + (returnTo ? '?returnTo=' + encodeURIComponent(returnTo) : '') + '">' + esc(req.t('common.btn.back')) + '</a>'));
     } catch (e) { next(e); }
   });
 

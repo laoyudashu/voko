@@ -22,6 +22,13 @@ test('private conversation stops initial bottom-follow when the user interacts w
 test('external, A2A, owner and group conversations use the same stable latest-message behavior', () => {
   assert.match(source, /initialLatestScrollScript\('#external-conversation-root',\{page:true\}\)/);
   assert.match(source, /initialLatestScrollScript\('#a2a-conversation-root',\{page:true\}\)/);
+  assert.match(source, /new MutationObserver\(latest\)/);
+  assert.match(source, /last\.scrollTop=last\.scrollHeight/);
+  assert.match(source, /addEventListener\("pageshow"/);
+  assert.match(source, /attempts>=10/);
+  assert.match(source, /if\(event\.persisted\)return/);
+  assert.match(source, /wasBottom\?freshBox\.scrollHeight:oldTop/);
+  assert.equal((source.match(/\|\|taskTotalPages/g) || []).length >= 2, true);
   assert.match(source, /initialLatestScrollScript\('\.owner-chat-transcript'\)/);
   assert.match(groupSource, /initialLatestScrollScript\('#msg-box'\)/);
   assert.match(groupSource, /new ResizeObserver\(latest\)/);

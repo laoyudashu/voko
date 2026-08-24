@@ -5,9 +5,9 @@ const express = require('express');
 const test = require('node:test');
 const { createWebRouter } = require('../build/web');
 
-test('agent detail exposes the shared icon copy control for the Agent ID', async (t) => {
+test('agent detail exposes the shared icon copy control for the IM UID instead of the internal Agent ID', async (t) => {
   const handlers = {
-    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', imUid: 'im-user-123', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
     list_conversations: async () => ({ conversations: [], total: 0 }),
     list_groups: async () => ({ groups: [], total: 0 }),
@@ -24,9 +24,17 @@ test('agent detail exposes the shared icon copy control for the Agent ID', async
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /class="voko-copy-button"/);
-  assert.match(html, /data-voko-copy-value="agent-copy-id"/);
+  assert.match(html, /IM UID: <code>im-user-123<\/code>/);
+  assert.match(html, /data-voko-copy-value="im-user-123"/);
+  assert.doesNotMatch(html, /ID: <code>agent-copy-id<\/code>/);
   assert.match(html, /window\.vokoCopyText/);
   assert.match(html, /classList\.add\("is-copied"\)/);
+  assert.match(html, /暂无会话/);
+  assert.match(html, /会话列表 \(0\)/);
+  assert.match(html, /群列表 \(0\)/);
+  assert.match(html, /data-agent-action="agent\.search" disabled/);
+  assert.doesNotMatch(html, /data-tab="a2a"/);
+  assert.doesNotMatch(html, /data-tab="external"/);
   const script = html.split('<script>').map((value) => value.split('</script>')[0]).find((value) => value.includes('__VOKO_COPY_READY__'));
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));

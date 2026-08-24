@@ -2,6 +2,7 @@ const { afterEach, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { OwnerInterventionNotifier } = require('../build/server/owner-intervention-notifier');
+const { initDatabase } = require('../build/core/database');
 
 // 复用 mock DB 风格（同 owner-intervention-group-resume.test.js），聚焦断言：
 // 邮件渠道主人回复"同意"时，autoApproveWhitelistIfFriendRequest 被调用，
@@ -27,34 +28,41 @@ function makeRow(overrides = {}) {
 }
 
 function makeNotifier({ row, reply, approve, resume }) {
-  let updateResult = { contentChanged: true };
-  const db = {
-    prepare() {
-      return {
-        run() { return { changes: 1 }; },
-        all() {
-          // _pollEmailReplies 的查询：未通知且待回复的行
-          return row.agent_notified ? [] : [row];
-        },
-        get() { return undefined; },
-      };
-    },
-  };
+  const db = initDatabase(':memory:', { silent: true });
+  const now = Date.now();
+  db.prepare(`INSERT INTO owner_interventions
+    (id,visitor_id,agent_id,session_key,problem,ask_time,status,email_message_id,
+     source_sender_uid,target_channel_id,target_channel_type,source_message_id,
+     agent_notified,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`).run(
+      row.id, row.visitor_id, row.agent_id, row.session_key, row.problem, now, row.status,
+      row.email_message_id, row.source_sender_uid, row.target_channel_id,
+      row.target_channel_type, row.source_message_id, now, now
+    );
   const databaseAPI = {
-    updateOwnerInterventionReply() { return updateResult; },
-    markAgentNotified() { row.agent_notified = 1; },
-    updateOwnerInterventionStatus(_id, status) { row.status = status; },
+    markAgentNotified(id) {
+      db.prepare('UPDATE owner_interventions SET agent_notified=1 WHERE id=?').run(id);
+      row.agent_notified = 1;
+    },
+    updateOwnerInterventionStatus(id, status) {
+      db.prepare('UPDATE owner_interventions SET status=? WHERE id=?').run(status, id);
+      row.status = status;
+    },
   };
   const notifier = new OwnerInterventionNotifier({
     db,
     databaseAPI,
     registry: {},
-    agentEmailApi: { async queryReply() { return reply; } },
+    agentEmailApi: { async pollReplies() {
+      return { events: [{ event_id: '1', message_id: row.email_message_id,
+        status: 'replied', raw_text: reply.raw_text, actor_email: null,
+        replied_at: reply.replied_at }], next_cursor: '1', has_more: false };
+    } },
     buildOwnerReplyPrompt: (_intervention, ownerReply) => `owner:${ownerReply}`,
     autoApproveWhitelistIfFriendRequest: approve,
     resumeOwnerIntervention: resume,
   });
-  return { notifier, getUpdateResult: () => updateResult };
+  return { notifier, db };
 }
 
 describe('Owner intervention email auto-approve (friend request)', () => {

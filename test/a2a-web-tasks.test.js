@@ -4,10 +4,10 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   assert.match(source, /listInboundTasks/); assert.match(source, /\/api\/a2a\/tasks/); assert.match(source, /tab-a2a/);
   assert.match(source, /authorizeA2AApi/); assert.match(source, /WEB_AUTH_REQUIRED/); assert.match(source, /Context <code>/);
   assert.match(source, /renderA2APrincipalRows\(a2aPanelRows,agentId,T\)/);
-  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable&&hasDeclaredCapabilities;/);
   assert.match(source, /showA2ATab\?tabBtn\('a2a'/);
   assert.match(source, /const a2aPrincipalTotal=new Set\(/);
-  assert.match(source, /a2aLabel=L\('web\.agent\.tab\.a2a_tasks'\)\+\(a2aPrincipalTotal\?/);
+  assert.match(source, /a2aLabel=L\('web\.agent\.tab\.a2a_tasks'\)\+' \('\+a2aPrincipalTotal\+'\)'/);
   assert.match(source, /taskTableA2A\?renderA2ATaskRows/);
   assert.match(source, /buildA2APrincipalGroups\(a2aRows,T,a2aKeyword\)/);
   assert.match(source, /name="a2aKeyword"/);
@@ -47,11 +47,13 @@ test('A2A tasks have a dedicated UI and do not enter visitor conversations', () 
   const route = source.match(/R\.get\('\/a2a-tasks'[\s\S]*?\n  \}\);/)[0];
   assert.match(source, /isolated from visitor conversations/); assert.doesNotMatch(route, /FROM messages|FROM conversations|INSERT INTO messages/);
 });
-test('A2A and REST Webhook tabs remain visible when a source has no messages', () => {
+test('A2A and REST Webhook tabs depend on capability declaration and active integration configuration', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /a2aReadAvailable=false/);
-  assert.match(source, /const showA2ATab=a2aReadAvailable;/);
-  assert.match(source, /const showExternalTab=a2aReadAvailable;/);
+  assert.match(source, /hasDeclaredCapabilities=Array\.isArray\(ability\)&&ability\.length>0/);
+  assert.match(source, /const showA2ATab=a2aReadAvailable&&hasDeclaredCapabilities;/);
+  assert.match(source, /const showExternalTab=a2aReadAvailable&&hasExternalIntegration;/);
+  assert.match(source, /item\.status==='active'/);
   assert.match(source, /const a2aPanel=showA2ATab\?/);
 });
 test('A2A and REST Webhook tabs use the trusted source channel instead of principal type inference', () => {
