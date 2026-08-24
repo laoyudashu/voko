@@ -7,6 +7,12 @@ export interface ProviderDeliveryReceipt {
   providerInstanceId?: string | null;
   deliveryMode?: string;
   adapterType?: string;
+  attachmentDelivery?: {
+    transportDelivered: boolean;
+    attachmentAccessed: boolean | null;
+    contentUnderstood: boolean | null;
+    mode: 'image' | 'embedded_resource' | 'resource_link' | 'staged_path' | 'none';
+  };
 }
 
 export type ProviderCoreEventType = 'accepted' | 'reply' | 'completed' | 'failed' | 'status';

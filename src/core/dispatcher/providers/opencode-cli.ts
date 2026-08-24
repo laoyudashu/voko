@@ -40,6 +40,7 @@ class OpenCodeCliProvider extends CliAdapter {
         ...(sessionId ? ['--session', sessionId] : []),
         '{prompt}',
       ],
+      instanceArgs: (instanceId: string) => ({ args: ['--agent', instanceId] }),
       sessionIdFromLine: (line: string) => {
         try {
           const event = JSON.parse(line);

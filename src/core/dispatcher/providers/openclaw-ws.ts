@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
 const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
@@ -1643,10 +1644,20 @@ class OpenClawWsProvider {
       });
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
-    const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
-    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
-      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId: providerTurnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const prompt = appendProviderAttachmentBoundary(
+      buildConversationDeliveryPrompt(this.db, effectivePayload, canResumeBinding), effectivePayload);
+    try {
+      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
+      return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+        deliveryMode: 'websocket', adapterType: 'openclaw-ws',
+        attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
+          attachmentAccessed: null, contentUnderstood: null,
+          mode: staged.attachments.length ? 'staged_path' : 'none' } };
+    } finally {
+      staged.cleanup();
+    }
     } catch (error) { releaseTurn(); throw error; }
   }
 

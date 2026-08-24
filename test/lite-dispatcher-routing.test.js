@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { createDispatcher } = require('../build/core/dispatcher');
 
@@ -68,6 +72,26 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   dispatchOnce(dispatcher);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, ['cli']);
+});
+
+test('dispatcher preserves attachment metadata without exposing its local path in every prompt', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-dispatch-attachment-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const filePath = path.join(root, 'report.json');
+  const bytes = Buffer.from('{"name":"transport-test"}');
+  fs.writeFileSync(filePath, bytes);
+  let received;
+  const target = provider('websocket', 100, []);
+  target.push = async payload => { received = payload; };
+  const dispatcher = createDispatcher({ db: dbFor(['websocket'], 'openclaw'), providers: { 'openclaw-ws': target } });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'visitor-1', content: 'inspect',
+    channelId: 'visitor-1', messageId: 'attachment-message', attachments: [{ path: filePath, name: 'report.json',
+      mediaType: 'application/json', size: bytes.length,
+      sha256: crypto.createHash('sha256').update(bytes).digest('hex') }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(received.attachments.length, 1);
+  assert.doesNotMatch(received.content, /Voko attachment boundary/);
+  assert.doesNotMatch(received.content, new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
 test('temporary delivery selection overrides persisted order without changing the database policy', async () => {

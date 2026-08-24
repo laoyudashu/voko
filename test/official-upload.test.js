@@ -10,7 +10,7 @@ test('official upload authorizes, uploads opaque fields, completes and binds wit
   global.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options });
     if (String(url).endsWith('/authorize')) return { ok: true, status: 201, json: async () => ({ success: true, data: {
-      uploadId: 'upload-1', endpoint: 'https://bucket.example', fields: { key: 'staging/one', policy: 'opaque', 'x-oss-security-token': 'temporary' }
+      uploadId: 'upload-1', endpoint: 'https://bucket.example', fields: { key: 'staging/one', policy: 'opaque', 'x-oss-security-token': 'temporary', 'Content-Type': 'application/octet-stream' }
     } }) };
     if (String(url) === 'https://bucket.example') return { ok: true, status: 204 };
     if (String(url).endsWith('/complete')) return { ok: true, status: 200, json: async () => ({ success: true, data: { url: 'https://files.example/final' } }) };
@@ -30,6 +30,7 @@ test('official upload authorizes, uploads opaque fields, completes and binds wit
     assert.deepEqual(JSON.parse(calls[0].options.body).targetScopeId, 'peer-1');
     assert.equal(calls[1].options.headers?.Authorization, undefined);
     assert.match(String(calls[1].options.body), /FormData/);
+    assert.equal(calls[1].options.body.get('file').type, 'application/octet-stream');
   } finally { global.fetch = originalFetch; delete process.env.VOKO_E2E_API_BASE_URL; }
 });
 

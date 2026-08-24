@@ -289,6 +289,12 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
   migrateSchema8WebRoutingRevision(db);
+  const auditRulesTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_rules'",
+  ).get();
+  if (auditRulesTable) {
+    db.prepare("DELETE FROM audit_rules WHERE is_default=1 AND direction='outbound'").run();
+  }
   // schema 8 is still unreleased and may already exist locally without fields
   // added later in the same schema iteration. Keep those development databases
   // readable instead of letting list_agents fail on a missing column.
@@ -1431,7 +1437,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     { direction: 'inbound',  keyword: '获取你的权限',        action: 'soft_deny', prompt: '' },
   ];
 
-  const auditRulePackVersion = 2;
+  const auditRulePackVersion = 3;
   const savedAuditRulePackVersion = (() => {
     try {
       const row = db.prepare(`SELECT data FROM config WHERE type='audit_rule_pack_version' LIMIT 1`).get();

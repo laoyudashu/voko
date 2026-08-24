@@ -21,11 +21,14 @@
 
 const { PushProvider } = require('../dispatcher/base-provider');
 const path = require('path');
+const os = require('os');
 const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 const { normalizeProviderFamily } = require('../provider-routing');
+const { appendProviderAttachmentBoundary, stageProviderAttachments,
+  cleanupExpiredProviderAttachmentStaging } = require('../dispatcher/provider-attachments');
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
@@ -52,6 +55,7 @@ export interface CliAdapterOptions {
   runtimeRequest?: RuntimeRequest;
   runtimeResolver?: AgentRuntimeResolver;
   argsForSession?: (sessionId: string | null, isNew: boolean) => string[];
+  instanceArgs?: (instanceId: string) => { args: string[]; position?: 'before' | 'after' };
   createManagedSessionId?: () => string | null;
   acceptsBinding?: (binding: any, agentId: string) => boolean;
   preparePrompt?: (prompt: string, context: {
@@ -131,6 +135,7 @@ class CliAdapter extends PushProvider {
     this._contextWindow = opts.contextWindow ?? 0;
     this._db = opts.db || null;
     this._cwd = opts.cwd || null;
+    cleanupExpiredProviderAttachmentStaging(path.join(path.resolve(this._cwd || os.tmpdir()), 'voko-provider-attachments'));
     this._adapterType = String(opts.adapterType || opts.matchType || opts.name || 'cli').replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
     this._bindingProviderType = normalizeProviderFamily(opts.bindingProviderType || opts.matchType || opts.name || '');
     this._runtimeRequest = opts.runtimeRequest || (process.platform === 'win32' ? null : {
@@ -141,6 +146,7 @@ class CliAdapter extends PushProvider {
     });
     this._runtimeResolver = opts.runtimeResolver || defaultAgentRuntimeResolver;
     this._argsForSession = opts.argsForSession || null;
+    this._instanceArgs = opts.instanceArgs || null;
     this._createManagedSessionId = opts.createManagedSessionId || null;
     this._acceptsBinding = opts.acceptsBinding || null;
     this._preparePrompt = opts.preparePrompt || null;
@@ -238,8 +244,11 @@ class CliAdapter extends PushProvider {
   }
 
   async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
-    const { agentId, fromUid, content, messageId } = payload;
+    const { agentId, fromUid, messageId } = payload;
     const turnId = String(payload.turnId || messageId || `cli-${Date.now()}`);
+    const staged = stageProviderAttachments(payload, { cwd: this._cwd || undefined, agentId, turnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const content = appendProviderAttachmentBoundary(payload.content, effectivePayload);
     if (!(payload as any).__vokoManagedRetry) {
       this.notifyProviderEvent({ type: 'accepted', agentId, messageId, turnId, terminal: false });
     }
@@ -272,10 +281,23 @@ class CliAdapter extends PushProvider {
 
     // 构造参数：args 含 {prompt} 占位则替换；否则 prompt 经 stdin 传入
     // （避开 Windows cmd.exe 对含换行多行命令行参数的破坏）
-    const configuredArgs = this._argsForSession
+    let configuredArgs = this._argsForSession
       ? this._argsForSession(nativeSessionId, newManagedSession)
       : this._args;
-    const preparedInvocation = this._prepareInvocation?.(payload, prompt) || null;
+    if (this._instanceArgs && this._db) {
+      try {
+        const row = this._db.prepare('SELECT backend_type, backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
+          .get(agentId) as { backend_type?: string; backend_instance_id?: string | null } | undefined;
+        const instanceId = row?.backend_type === this._matchType ? String(row?.backend_instance_id || '').trim() : '';
+        if (instanceId) {
+          const scoped = this._instanceArgs(instanceId);
+          configuredArgs = scoped.position === 'before'
+            ? [...scoped.args, ...configuredArgs]
+            : [...configuredArgs, ...scoped.args];
+        }
+      } catch (_) {}
+    }
+    const preparedInvocation = this._prepareInvocation?.(effectivePayload, prompt) || null;
     const invocationArgs = preparedInvocation?.args || configuredArgs;
     let useStdin = preparedInvocation
       ? preparedInvocation.stdinInput !== undefined
@@ -305,6 +327,7 @@ class CliAdapter extends PushProvider {
     }
     const runtime = this._runtimeRequest ? this._resolveRuntime() : null;
     if (runtime && (!runtime.available || !runtime.executable)) {
+      staged.cleanup();
       const unavailable = new Error(`${this._name} runtime not found`);
       (unavailable as any).deliveryOutcome = 'not_delivered';
       throw unavailable;
@@ -416,6 +439,7 @@ class CliAdapter extends PushProvider {
     try { preparedInvocation?.afterRun?.(); } catch (cleanupError) {
       if (!error) error = cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError));
     }
+    staged.cleanup();
 
     if (error && binding && this._sessionPersistence === 'transport' && !binding.strictSessionRoute
       && (error as any).deliveryOutcome === 'not_delivered' && !(payload as any).__vokoManagedRetry) {
@@ -471,9 +495,12 @@ class CliAdapter extends PushProvider {
       providerInstanceId: binding?.providerInstanceId || null,
       deliveryMode: 'cli',
       adapterType: this._adapterType,
+      attachmentDelivery: { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,
+        mode: staged.attachments.length ? 'staged_path' as const : 'none' as const },
     };
     this.notifyProviderEvent({ type: 'completed', agentId, messageId, turnId,
-      nativeSessionId: observedSessionId, terminal: true });
+      nativeSessionId: observedSessionId, terminal: true,
+      payload: { attachmentDelivery: receipt.attachmentDelivery } });
     return receipt;
   }
 

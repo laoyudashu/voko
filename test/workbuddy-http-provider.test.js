@@ -180,6 +180,79 @@ test('WorkBuddy exact session resume ignores history replay and returns only the
     && JSON.parse(call.init.body || '{}').method === 'session/resume'), true);
 });
 
+test('WorkBuddy sends verified image attachments as ACP image blocks', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-image-'));
+  const imagePath = path.join(dir, 'tongue.jpg');
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  fs.writeFileSync(imagePath, bytes);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const calls = [];
+  const provider = readyProvider(async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+    if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+    if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: 'connection-image' });
+    if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+    if (String(url).endsWith('/api/v1/acp')) {
+      const request = JSON.parse(init.body);
+      if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-image' });
+      if (request.method === 'session/prompt') return acpResponse(request, [
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '看到了图片' } },
+      ], { stopReason: 'end_turn' });
+      return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1,
+        agentCapabilities: { promptCapabilities: { image: true } } } : { protocolVersion: 1 });
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+  const receipt = await provider.push({ agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1',
+    channelType: 1, content: '[图片] tongue.jpg', rawContent: '[图片] tongue.jpg',
+    messageId: 'message-image', turnId: 'message-image', attachments: [{ path: imagePath, name: 'tongue.jpg',
+      mediaType: 'image/jpeg', size: bytes.length,
+      sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex') }] });
+  const prompt = calls.map(call => call.init.body && JSON.parse(call.init.body)).filter(Boolean)
+    .find(request => request.method === 'session/prompt').params.prompt;
+  assert.deepEqual(prompt[0], { type: 'text', text: '[图片] tongue.jpg' });
+  assert.deepEqual(prompt[1], { type: 'image', data: bytes.toString('base64'), mimeType: 'image/jpeg' });
+  assert.equal(calls.some(call => call.url.endsWith('/api/v1/runs')), false);
+  assert.equal(receipt.nativeSessionId, 'session-image');
+});
+
+test('WorkBuddy sends files as embedded resources when ACP advertises embedded context', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-file-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const filePath = path.join(root, 'report.txt');
+  const bytes = Buffer.from('transport-file-token');
+  fs.writeFileSync(filePath, bytes);
+  const calls = [];
+  const provider = readyProvider(async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+    if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+    if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: 'connection-file' });
+    if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+    if (String(url).endsWith('/api/v1/acp')) {
+      const request = JSON.parse(init.body);
+      if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-file' });
+      if (request.method === 'session/prompt') return acpResponse(request, [
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'received' } },
+      ], { stopReason: 'end_turn' });
+      return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1,
+        agentCapabilities: { promptCapabilities: { embeddedContext: true } } } : { protocolVersion: 1 });
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+  await provider.push({ agentId: 'agent-file', fromUid: 'visitor-file', content: '[附件] report.txt',
+    messageId: 'message-file', turnId: 'message-file', attachments: [{ path: filePath, name: 'report.txt',
+      mediaType: 'text/plain', size: bytes.length,
+      sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex') }] });
+  assert.equal(calls.some(call => call.url.endsWith('/api/v1/runs')), false);
+  const prompt = calls.map(call => call.init.body && JSON.parse(call.init.body)).filter(Boolean)
+    .find(request => request.method === 'session/prompt').params.prompt;
+  assert.deepEqual(prompt[1], { type: 'resource', resource: {
+    uri: 'voko-attachment:///report.txt', mimeType: 'text/plain', text: bytes.toString('utf8'),
+  } });
+});
+
 test('WorkBuddy cancellation targets only the recorded Run or exact ACP session', async () => {
   const calls = [];
   const provider = readyProvider(async (url, init = {}) => {
