@@ -230,7 +230,7 @@ class MessageHandler extends EventEmitter {
    * a normal reply, without sending that plaintext over IM.
    */
   persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string,
-    sourceMessageId?: string): string | null {
+    sourceMessageId?: string): { messageId: string; routeId: string | null; routeMetadata: Record<string, unknown> | null } {
     const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<AgentImUidRow>(agentId);
     const fromUid = agentRow?.imUid || 'voko';
     const { msgId, timestamp, inserted } = persistAgentMessage(this.db, agentId, channelId, content,
@@ -259,12 +259,24 @@ class MessageHandler extends EventEmitter {
         content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
       });
     }
-    return routeId;
+    const conversation = routeId
+      ? this._messageRoutes.getByMessage(msgId, agentId)?.conversation_id
+        ? this._routingConversations.getForScope(
+          this._messageRoutes.getByMessage(msgId, agentId).conversation_id, agentId, channelId, 1,
+        ) : null
+      : null;
+    const source = sourceMessageId ? this._messageRoutes.getByMessage(sourceMessageId, agentId) : null;
+    const routeMetadata = routeId ? { _voko: { protocolVersion: 1, routeId,
+      ...(source?.reply_to_route_id ? { replyToRouteId: source.reply_to_route_id } : {}),
+      ...(conversation?.wireConversationKey ? { canonicalConversationKey: conversation.wireConversationKey } : {}),
+    } } : null;
+    return { messageId: msgId, routeId, routeMetadata };
   }
 
   markE2eeAgentReplyDelivered(agentId: string, messageId: string): void {
     const route = this._messageRoutes.getByMessage(messageId, agentId);
     if (route?.direction === 'outbound') this._messageRoutes.setStatus(route.route_id, 'active');
+    this.db.prepare(`UPDATE messages SET status='sent' WHERE id=? AND agent_id=?`).run(messageId, agentId);
   }
 
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
@@ -470,6 +482,12 @@ class MessageHandler extends EventEmitter {
     }
     const inboundConversationId = this._resolveInboundConversation(agentId, fromUid, channelId,
       channelType || 1, messageId, data._voko || null);
+    if (data.e2eeStrictRoute && data._voko
+        && (data._voko.replyToRouteId || data._voko.conversationKey || data._voko.canonicalConversationKey)
+        && !inboundConversationId) {
+      console.warn(`[E2EE] 精确 Route Context 无法验证 agent=${agentId} code=E2EE_V2_ROUTE_CONTEXT_UNRESOLVED`);
+      return;
+    }
     const systemRoute = inboundConversationId ? { conversationId: inboundConversationId } : undefined;
 
     // 检查发布状态
@@ -1315,7 +1333,9 @@ class MessageHandler extends EventEmitter {
       console.error('[Agent回复] 投递失败:', (delivery as { error?: string })?.error || 'unknown error');
       return;
     }
-    if (outboundRouteId) {
+    const fullyDelivered=(delivery as { deliveryState?: string })?.deliveryState===undefined
+      ||(delivery as { deliveryState?: string })?.deliveryState==='delivered';
+    if (outboundRouteId&&fullyDelivered) {
       try { this._messageRoutes.setStatus(outboundRouteId, 'active'); } catch (_) {}
     }
 
@@ -1330,11 +1350,11 @@ class MessageHandler extends EventEmitter {
         : null;
       this.db.prepare(`
         UPDATE messages
-        SET status='sent',
+        SET status=?,
             message_seq=COALESCE(?, message_seq),
             client_msg_no=COALESCE(?, client_msg_no)
         WHERE id=?
-      `).run(messageSeq, clientMsgNo, msgId);
+      `).run(fullyDelivered?'sent':'pending',messageSeq, clientMsgNo, msgId);
     } catch (_) {}
 
   }

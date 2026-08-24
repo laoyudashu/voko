@@ -204,7 +204,8 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
       // 统一发送：落库 + 会话 + 投递 + UI 通知（sendMessage 内已 emit）
       try {
         const sent: any = await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text', 1, null, textMsgId, paymentRouteMetadata);
-        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false ? 'failed' : 'active');
+        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false
+          ? 'failed' : sent?.deliveryState === undefined || sent?.deliveryState === 'delivered' ? 'active' : 'pending');
       } catch (error) {
         if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
         throw error;
@@ -212,7 +213,7 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
     } else {
       // 兜底（未注入 sendMessage）：保留原 落库 + 投递 逻辑
       db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(textMsgId, fromUid, order.visitor_id, textMsg, order.visitor_id, 1, order.agent_id, timestamp, 1, 'sent', null, null, 0, 0, 0, 1);
+        .run(textMsgId, fromUid, order.visitor_id, textMsg, order.visitor_id, 1, order.agent_id, timestamp, 1, 'pending', null, null, 0, 0, 0, 1);
       db.prepare(`INSERT OR IGNORE INTO conversations (user_uid, channel_id, channel_type, name, last_message, last_timestamp, unread_count, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(fromUid, order.visitor_id, 1, order.visitor_id, textMsg, timestamp, 0, order.agent_id);
       db.prepare(`UPDATE conversations SET last_message = ?, last_timestamp = ? WHERE user_uid = ? AND channel_id = ?`)
@@ -220,7 +221,11 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
       if (deliver) {
         try {
           const sent: any = await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId, paymentRouteMetadata);
-          if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false ? 'failed' : 'active');
+          const accepted=sent?.success!==false;
+          const delivered=accepted&&(sent?.deliveryState===undefined||sent?.deliveryState==='delivered');
+          if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId,
+            accepted?(delivered?'active':'pending'):'failed');
+          db.prepare(`UPDATE messages SET status=? WHERE id=?`).run(delivered?'sent':accepted?'pending':'failed',textMsgId);
         } catch (error) {
           if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
           throw error;

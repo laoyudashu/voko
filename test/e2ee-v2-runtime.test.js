@@ -19,18 +19,25 @@ function fixture({failFirstDelivery=false,reviewOutbound}={}){
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
   const store=new E2eeV2Store(db,databasePath);
-  const guest=E2eeV2Crypto.generate();
+  const guestDevices=new Map();
+  function addGuestDevice(deviceId){const endpoint=E2eeV2Crypto.generate();const publicBundle=endpoint.publicBundle();
+    guestDevices.set(deviceId,{endpoint,publicBundle});return endpoint;}
+  const guest=addGuestDevice('guest-device');
   const guestPublic=guest.publicBundle();
   const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server'};
   let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null;
   const sessionScopes=[];
   const directoryClient={
     async registerAgentKey(input){registered=input;return{duplicate:false};},
-    async resolveGuestKey(input){
-      assert.equal(input.agentId,agent.serverAgentId);
-      assert.equal(input.deviceId,'guest-device');
-      assert.equal(input.keyId,guestPublic.keyId);
-      return{agentId:agent.serverAgentId,agentDid:agent.agentDid,deviceId:'guest-device',generation:1,publicBundle:guestPublic};
+    async resolveSender(input){
+      assert.equal(input.localAgentId,agent.serverAgentId);
+      const sender=guestDevices.get(input.senderDeviceId);
+      assert.ok(sender);
+      assert.equal(input.senderKeyId,sender.publicBundle.keyId);
+      return{peerKind:'guest',peerScopeId:`scope:${input.fromUid}`,
+        protocolConversationId:input.conversationKey,
+        sender:{deviceId:input.senderDeviceId,generation:1,keyId:sender.publicBundle.keyId,
+          publicBundle:sender.publicBundle}};
     },
   };
   const persisted={inbound:[],outbound:[],delivered:[]};
@@ -51,14 +58,17 @@ function fixture({failFirstDelivery=false,reviewOutbound}={}){
     await runtime.synchronizeAgentKeys();
     assert.ok(registered);
     const recipient=registered.publicBundle;
+    const senderDeviceId=overrides.senderDeviceId||'guest-device';
+    const sender=guestDevices.get(senderDeviceId);assert.ok(sender);
     const header={version:PROTOCOL,suite:SUITE,messageId,conversationId:'conversation-1',channelId:'guest-im-1',
-      agentDid:agent.agentDid,senderDeviceId:'guest-device',senderKeyId:guestPublic.keyId,
+      agentDid:agent.agentDid,senderDeviceId,senderKeyId:sender.publicBundle.keyId,
       recipientDeviceId:registered.deviceId,recipientKeyId:recipient.keyId,createdAtMs:Date.now(),contentKind:'text',...overrides};
-    return guest.seal(recipient,header,new TextEncoder().encode(plaintext));
+    return sender.endpoint.seal(recipient,header,new TextEncoder().encode(plaintext));
   }
-  function close(){runtime.close();guest.free();db.close();fs.rmSync(directory,{recursive:true,force:true});}
+  function close(){runtime.close();for(const sender of guestDevices.values())sender.endpoint.free();
+    db.close();fs.rmSync(directory,{recursive:true,force:true});}
   return{runtime,store,guest,guestPublic,agent,persisted,createEnvelope,close,
-    counts:()=>({providerCalls,deliveryCalls}),reply:()=>replyEnvelope,sessionScopes};
+    counts:()=>({providerCalls,deliveryCalls}),reply:()=>replyEnvelope,sessionScopes,addGuestDevice};
 }
 
 test('v2 runtime decrypts, persists, executes once and returns a decryptable reply',async()=>{
@@ -77,7 +87,9 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
     assert.equal(f.counts().providerCalls,1);
     assert.equal(f.store.receipt('message-1').state,'completed');
     const reply=f.reply();
-    assert.equal(new TextDecoder().decode(f.guest.open(JSON.parse(f.store.key('gym').public_bundle_json),reply)),'reply:hello');
+    const opened=JSON.parse(new TextDecoder().decode(f.guest.open(JSON.parse(f.store.key('gym').public_bundle_json),reply)));
+    assert.equal(opened.version,'voko.e2ee.payload/1');
+    assert.equal(opened.text,'reply:hello');
     const duplicate=await f.runtime.handle('gym',message);
     assert.equal(duplicate.code,'duplicate');
     assert.equal(f.counts().providerCalls,1);
@@ -123,8 +135,8 @@ test('v2 reviews the visible reply before persistence and encryption',async()=>{
     assert.equal(reviewed[0].content,'reply:review');
     assert.deepEqual(f.persisted.outbound.map(row=>row.plaintext),['safe replacement']);
     const reply=f.reply();
-    assert.equal(new TextDecoder().decode(f.guest.open(JSON.parse(f.store.key('gym').public_bundle_json),reply)),
-      'safe replacement');
+    const opened=JSON.parse(new TextDecoder().decode(f.guest.open(JSON.parse(f.store.key('gym').public_bundle_json),reply)));
+    assert.equal(opened.text,'safe replacement');
   }finally{f.close();}
 });
 
@@ -139,5 +151,20 @@ test('v2 Provider sessions stay isolated when two visitors reuse protocol conver
     }
     assert.equal(f.sessionScopes.length,2);
     assert.notEqual(f.sessionScopes[0],f.sessionScopes[1]);
+  }finally{f.close();}
+});
+
+test('two devices of the same visitor and protocol conversation reuse one Provider session scope',async()=>{
+  const f=fixture();
+  try{
+    f.addGuestDevice('guest-device-2');
+    for(const [messageId,senderDeviceId] of [['message-7','guest-device'],['message-8','guest-device-2']]){
+      const envelope=await f.createEnvelope(messageId,'same visitor',{senderDeviceId});
+      const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+        channelType:1,contentType:13,ack(){}});
+      assert.equal(result.accepted,true);
+    }
+    assert.equal(f.sessionScopes.length,2);
+    assert.equal(f.sessionScopes[0],f.sessionScopes[1]);
   }finally{f.close();}
 });

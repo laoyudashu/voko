@@ -28,6 +28,7 @@ export interface InboundMessage {
   _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
     conversationKey?: string; conversationStart?: boolean;
     conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
+  e2eeStrictRoute?: boolean;
 }
 
 export interface ForwardPayload {
@@ -134,6 +135,7 @@ export type Deliver = (
   channelType?: ChannelType,
   mentions?: Mention | null,
   localMsgId?: string | null,
+  metadata?: unknown,
 ) => Promise<DeliverResult>;
 
 export interface WorkerEntryLike {

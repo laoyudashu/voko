@@ -87,6 +87,7 @@ function setup(options = {}) {
       return { success: true };
     },
     uploadFileToOSS: options.uploadFileToOSS || (async (_filePath, objectName) => `https://oss.example/${objectName}`),
+    ...(options.secureOutboundRouter ? { secureOutboundRouter: options.secureOutboundRouter } : {}),
     enqueueOwnerIntervention: record => interventions.push(record),
     wukongim: {
       getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
@@ -209,6 +210,29 @@ await test('upload_and_send_file 将图片发送为图片消息', async () => {
     assert.strictEqual(sentMessages.length, 1);
     assert.strictEqual(sentMessages[0].messageType, 'image');
     assert.strictEqual(sentMessages[0].content, r.url);
+  } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
+});
+
+await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由且不暴露本地路径', async () => {
+  let ordinaryUploads = 0;
+  const secureOutboundRouter = { prepare: async (_agentId, _channelId, _channelType, _metadata, purpose) => {
+    assert.strictEqual(purpose, 'attachment');
+    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2 };
+  } };
+  const { handlers, sentMessages, cleanup } = setup({ secureOutboundRouter,
+    uploadFileToOSS: async () => { ordinaryUploads++; return 'https://must-not-upload.example/plain'; } });
+  const tmpFile = path.join(os.tmpdir(), 'voko-secure-attachment-' + Date.now() + '.txt');
+  fs.writeFileSync(tmpFile, 'classified');
+  try {
+    const r = await handlers.upload_and_send_file({ agentId: 'agentA', toUid: 'visitor1', filePath: tmpFile });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.securityMode, undefined, 'mock transport does not claim encryption');
+    assert.strictEqual(ordinaryUploads, 0, 'plaintext upload must not happen before secure router');
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].messageType, 'file');
+    assert.match(sentMessages[0].content, /^\{"url":"\/api\/e2ee-v2\/attachments\//);
+    assert.strictEqual(Object.hasOwn(r, 'filePath'), false);
+    assert.strictEqual(Object.hasOwn(r, 'ext'), false);
   } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
 });
 

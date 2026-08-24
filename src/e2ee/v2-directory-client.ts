@@ -24,7 +24,7 @@ export class E2eeV2DirectoryClient {
     bounded(options.token,'TOKEN',8192);
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<any> {
+  private async request(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<any> {
     const response = await (this.options.fetchImpl || fetch)(`${this.baseUrl}/api/external${path}`, {
       ...init,
       headers: {
@@ -33,7 +33,7 @@ export class E2eeV2DirectoryClient {
         ...(init.body ? { 'content-type':'application/json' } : {}),
         ...(init.headers || {}),
       },
-      signal: AbortSignal.timeout(this.options.timeoutMs || 10_000),
+      signal: AbortSignal.timeout(timeoutMs || this.options.timeoutMs || 10_000),
     });
     let body: any = null;
     try { body = await response.json(); } catch {}
@@ -70,6 +70,42 @@ export class E2eeV2DirectoryClient {
     agentId:string;agentDid:string;deviceId:string;generation:number;publicBundle:E2eeV2PublicBundle;
   }> {
     return this.request('/v1/e2ee/guest-keys/resolve',{ method:'POST',body:JSON.stringify(input) });
+  }
+
+  resolveRecipients(input: {
+    senderAgentId:string;
+    targetImUid:string;
+    conversationKey?:string;
+  }): Promise<{
+    peerKind:'guest'|'agent';
+    peerScopeId:string;
+    peerAgentDid?:string;
+    capability:'supported'|'unsupported'|'temporarily_unavailable';
+    protocolConversationId:string|null;
+    revision:string;
+    expiresAt:number;
+    recipients:Array<{deviceId:string;generation:number;keyId:string;publicBundle:E2eeV2PublicBundle}>;
+  }> {
+    return this.request('/v1/e2ee/recipients/resolve', {
+      method:'POST',body:JSON.stringify(input),
+    }, 1_200);
+  }
+
+  resolveSender(input: {
+    localAgentId:string;
+    fromUid:string;
+    senderDeviceId:string;
+    senderKeyId:string;
+    conversationKey?:string;
+  }): Promise<{
+    peerKind:'guest'|'agent';
+    peerScopeId:string;
+    protocolConversationId:string|null;
+    sender:{deviceId:string;generation:number;keyId:string;publicBundle:E2eeV2PublicBundle};
+  }> {
+    return this.request('/v1/e2ee/senders/resolve', {
+      method:'POST',body:JSON.stringify(input),
+    }, 1_200);
   }
 }
 

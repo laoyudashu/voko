@@ -386,15 +386,16 @@ class AgentWorkerManager extends EventEmitter {
     }
     try {
       const result: any = await this._deliver(agentId, visitorId, content, 'text', 1, null, msgId, routeMetadata);
-      const delivered = result?.success !== false;
-      if (routeId) new MessageRouteStore(this.db).setStatus(routeId, delivered ? 'active' : 'failed');
+      const accepted = result?.success !== false;
+      const delivered = accepted && (result?.deliveryState === undefined || result?.deliveryState === 'delivered');
+      if (routeId) new MessageRouteStore(this.db).setStatus(routeId, delivered ? 'active' : accepted ? 'pending' : 'failed');
       try {
         this.db?.prepare(`UPDATE messages SET status=?, message_seq=COALESCE(?, message_seq), client_msg_no=COALESCE(?, client_msg_no) WHERE id=?`)
-          .run(delivered ? 'sent' : 'failed', result?.messageSeq ?? null, result?.clientMsgNo ?? null, msgId);
+          .run(delivered ? 'sent' : accepted ? 'pending' : 'failed', result?.messageSeq ?? null, result?.clientMsgNo ?? null, msgId);
       } catch (error: unknown) {
         console.error('[sendSystemMessage] status update failed:', errorMessage(error));
       }
-      if (!delivered) return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
+      if (!accepted) return { notificationStatus: 'failed', notificationReason: 'delivery_failed' };
     } catch (error: unknown) {
       try { this.db?.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
       try { if (routeId && this.db) new MessageRouteStore(this.db).setStatus(routeId, 'failed'); } catch (_) {}

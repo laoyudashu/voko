@@ -85,7 +85,7 @@ const {
 const { generateOSSSignature } = require('./server/oss');
 const { resolveServerAgentIdForLocalAgent } = require('./core/agent-invitations');
 const { AgentWorkerManager } = require('./core/worker-manager');
-const { createDeliver, createSendMessage } = require('./core/send-message');
+const { createDeliver, createSecureDeliverProxy, createSendMessage } = require('./core/send-message');
 const {
   acquireInstanceLock,
   cleanupOrphanedWorkers,
@@ -539,11 +539,12 @@ function initCore(args?: any, options: any = {}) {
   });
   // 兼容旧依赖字段名；实际发送由共享 Hub 管理器完成。
   const wukongimSender = agentManager;
-  const deliver = createDeliver({ transportManager: agentManager });
+  const rawDeliver = createDeliver({ transportManager: agentManager });
+  const deliver = createSecureDeliverProxy(rawDeliver);
   const sendMessage = createSendMessage({ db, deliver, databaseAPI, agentWorkers: agentManager.workers, mainWindow: null });
   agentManager.setDeliver(deliver);
   agentManager.sendImMessage = sendMessage;  // 供 /api/message/send 等 HTTP 端点统一发送（自带兜底）
-  return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, deliver, sendMessage };
+  return { db, databaseAPI, agentRegistration, agentManager, wukongimSender, rawDeliver, deliver, sendMessage };
 }
 
 function printReadyBanner(db: any, port: number, ownerEmail: string | null, agentManager: any) {
@@ -1525,12 +1526,21 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     } catch (_error: any) { res.status(404).end(); }
   });
 
-  app.get('/api/e2ee-v2/attachments/:messageId', (req?: any, res?: any) => {
+  app.get('/api/e2ee-v2/attachments/:messageId', async (req?: any, res?: any) => {
     try {
       const agentId = String(req.query?.agentId || '');
       if (!agentId || !currentOwnsAgent(agentId) || !e2eeRuntime) return res.status(404).end();
       const row = e2eeRuntime.attachment(String(req.params.messageId || ''));
-      if (!row || String(row.local_agent_id) !== agentId || !fs.existsSync(String(row.local_path))) {
+      if (!row) {
+        const outbound = await e2eeRuntime.outboundAttachment(String(req.params.messageId || ''), agentId);
+        if (!outbound) return res.status(404).end();
+        const safeName = path.basename(outbound.fileName || 'attachment').replace(/["\\\r\n]/g, '_');
+        res.set('Cache-Control', 'private, no-store');
+        res.set('Content-Type', outbound.mediaType || 'application/octet-stream');
+        res.set('Content-Disposition', `${outbound.mediaType.startsWith('image/') ? 'inline' : 'attachment'}; filename="${safeName}"`);
+        return res.send(outbound.bytes);
+      }
+      if (String(row.local_agent_id) !== agentId || !fs.existsSync(String(row.local_path))) {
         return res.status(404).end();
       }
       const safeName = path.basename(String(row.file_name || 'attachment')).replace(/["\\\r\n]/g, '_');
@@ -1964,6 +1974,7 @@ async function startMcpServer(args?: any, core?: any) {
   }
 
   let e2eeRuntime: any = null;
+  let secureOutboundRouter: any = null;
   let e2eeDatabase: any = null;
   const e2eeEnabled = !['false','0'].includes(String(process.env.VOKO_E2EE_PRODUCTION_ENABLED || 'true').toLowerCase());
   if (e2eeEnabled) {
@@ -1996,7 +2007,14 @@ async function startMcpServer(args?: any, core?: any) {
         },
         persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>{
           if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');
-          messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId,sourceMessageId);
+          return messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId,sourceMessageId);
+        },
+        deliverSecureReply:async(input:any)=>{
+          if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
+          const persisted=messageHandler.persistE2eeAgentReply(input.agentId,input.channelId,input.content,
+            input.messageId,input.sourceMessageId);
+          return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
+            input.messageId,persisted.routeMetadata,{sourceReceiptMessageId:input.sourceMessageId});
         },
         markOutboundDelivered:(agentId:string,messageId:string)=>
           messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),
@@ -2013,21 +2031,84 @@ async function startMcpServer(args?: any, core?: any) {
           return new Uint8Array(await response.arrayBuffer());
         },
       });
+      const { SecureOutboundRouter } = require('./e2ee/secure-outbound-router');
+      const e2eeFlag = (name:string,defaultValue=true) => {
+        const value=process.env[name];
+        return value===undefined?defaultValue:!['false','0'].includes(String(value).toLowerCase());
+      };
+      secureOutboundRouter = new SecureOutboundRouter({store,directory,runtime:e2eeRuntime,
+        rawDeliver:deliver.rawDeliver || deliver,
+        deliverEncrypted:(agentId:string,channelId:string,envelope:string,transportMessageId:string)=>
+          agentManager.deliverEncrypted(agentId,channelId,envelope,transportMessageId),
+        uploadCiphertext:async(input:any)=>{
+          const descriptor=agents().find((row:any)=>row.localAgentId===input.agentId);
+          if(!descriptor)throw new Error('E2EE_V2_AGENT_IDENTITY_UNAVAILABLE');
+          const oss=require('./server/oss');
+          const uploaded=await oss.uploadToOfficialStorage({userAccessToken:ownerToken,
+            agentId:descriptor.serverAgentId,purpose:'e2ee_attachment',
+            fileName:`${input.businessMessageId}.voko-e2ee`,content:input.ciphertext,
+            contentType:'application/octet-stream',targetScopeType:'private',targetScopeId:input.channelId,
+            idempotencyKey:`e2ee-attachment-${input.businessMessageId}`});
+          await oss.bindUpload(uploaded.uploadId,ownerToken,'e2ee-message',input.businessMessageId);
+          return{uploadId:uploaded.uploadId,url:uploaded.url||uploaded.downloadPath};
+        },
+        resolveAgent:(localAgentId:string)=>{
+          const row=db.prepare('SELECT did,imUid FROM agents WHERE agent_id=? LIMIT 1').get(localAgentId) as any;
+          const serverAgentId=row?.did?serverAgentIdFromDid(row.did):null;
+          return serverAgentId&&row?.imUid?{serverAgentId,agentDid:String(row.did),imUid:String(row.imUid)}:null;
+        },
+        resolveRouteContext:(agentId:string,channelId:string,metadata:any)=>{
+          const voko=metadata?._voko;
+          let row:any=null;
+          if(voko?.routeId)row=db.prepare(`SELECT c.id,c.wire_conversation_key FROM provider_message_routes r
+            JOIN provider_routing_conversations c ON c.id=r.conversation_id
+            WHERE r.route_id=? AND r.agent_id=? AND r.channel_id=? AND r.channel_type=1
+              AND r.status IN ('pending','active') AND (r.expires_at IS NULL OR r.expires_at>?)
+              AND c.agent_id=? AND c.channel_id=? AND c.channel_type=1 AND c.status IN ('pending','active') LIMIT 1`)
+            .get(String(voko.routeId),agentId,channelId,Date.now(),agentId,channelId);
+          const wire=String(voko?.canonicalConversationKey||voko?.conversationKey||'');
+          if(voko?.routeId&&!row)throw new Error('E2EE_V2_ROUTE_INVALID');
+          if(row&&wire&&String(row.wire_conversation_key||'')!==wire)throw new Error('E2EE_V2_ROUTE_CONVERSATION_MISMATCH');
+          if(!row&&wire)row=db.prepare(`SELECT id,wire_conversation_key FROM provider_routing_conversations
+            WHERE agent_id=? AND channel_id=? AND channel_type=1 AND wire_conversation_key=?
+              AND status IN ('pending','active') LIMIT 1`).get(agentId,channelId,wire);
+          if(wire&&!row)throw new Error('E2EE_V2_CONVERSATION_INVALID');
+          return row?{routingConversationId:String(row.id),wireConversationKey:String(row.wire_conversation_key||wire)}
+            :{routingConversationId:'',wireConversationKey:''};
+        },
+        onBusinessDelivered:(agentId:string,messageId:string)=>
+          messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),
+        enabled:()=>e2eeFlag('VOKO_E2EE_SECURE_OUTBOUND_TEXT_ENABLED',true),
+        agentPeerEnabled:()=>e2eeFlag('VOKO_E2EE_AGENT_PEER_ENABLED',true),
+        attachmentsEnabled:()=>e2eeFlag('VOKO_E2EE_SECURE_OUTBOUND_ATTACHMENTS_ENABLED',true),
+      });
+      deliver.setSecureRouter?.(secureOutboundRouter);
       const initial=await e2eeRuntime.synchronizeAgentKeys();
       console.warn(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
       await taskManager.start('e2ee-v2-workers',()=>{
         let running=false;
         const run=async()=>{if(running)return;running=true;try{
           await e2eeRuntime.synchronizeAgentKeys();
-          await e2eeRuntime.recover(50);
-        }finally{running=false;}};
-        void e2eeRuntime.recover(50).catch((error:any)=>console.warn('[E2EE] Outbox恢复失败:',error?.message||'unknown'));
+           await e2eeRuntime.recover(50);
+           await secureOutboundRouter.recover(100);
+           await secureOutboundRouter.refreshActive(500);
+         }finally{running=false;}};
+        void Promise.all([e2eeRuntime.recover(50),secureOutboundRouter.recover(100)])
+          .catch((error:any)=>console.warn('[E2EE] Outbox恢复失败:',error?.message||'unknown'));
         const timer=setInterval(()=>void run().catch((error:any)=>console.warn('[E2EE] 后台同步失败:',error?.message||'unknown')),60_000);
         timer.unref?.();
-        return async()=>{clearInterval(timer);e2eeRuntime?.close();try{e2eeDatabase?.close();}catch{}};
+        return async()=>{clearInterval(timer);deliver.setSecureRouter?.(null);e2eeRuntime?.close();try{e2eeDatabase?.close();}catch{}};
       });
     } catch (error:any) {
       console.error('[E2EE] v2初始化失败，密文消息将等待重新投递:',error.message);
+      const raw=deliver.rawDeliver||deliver;
+      deliver.setSecureRouter?.({deliver:async(...args:any[])=>{
+        const channelId=String(args[1]||'');
+        const channelType=Number(args[4]||1);
+        if(channelType!==1||channelId.startsWith('owner_'))return raw(...args);
+        return{success:false,error:'E2EE_V2_STORE_UNAVAILABLE',securityMode:'plaintext',
+          securityReason:'e2ee_store_unavailable',encryptedDeviceCount:0,deliveryState:'queued'};
+      }});
     }
   }
   if (messageHandler) messageHandler.handleEncryptedMessage = async (agentId:string,data:any) =>
@@ -2248,6 +2329,7 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
   });
+  (cx as any).secureOutboundRouter = secureOutboundRouter;
   (cx as any).a2aMailboxClient = a2aMailboxClient;
   (cx as any).ownerPullService = ownerPullService;
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({

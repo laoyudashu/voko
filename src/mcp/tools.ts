@@ -292,6 +292,10 @@ type McpContext = Omit<LiteContext,
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
   uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string,
     uploadOptions?: { targetScopeType?: string; targetScopeId?: string }): Promise<unknown>;
+  secureOutboundRouter?: { prepare(agentId:string,channelId:string,channelType?:number,metadata?:unknown,
+    purpose?:'text'|'attachment'):Promise<{
+    success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;
+    encryptedDeviceCount:number }> };
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -507,6 +511,8 @@ function createdRegistrationData(value: unknown, fallbackAgentId: unknown): Crea
 }
 
 interface McpToolParams {
+  _e2eeAttachmentSource?: { filePath:string;fileName:string;mediaType:string };
+  _requestedMessageId?: string;
   ability?: unknown;
   action?: string;
   actionType?: string;
@@ -680,8 +686,7 @@ const ATTACHMENT_MIME_TYPES: Record<string, string> = {
 };
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
-async function uploadAttachment(cx: McpContext, p: McpToolParams) {
-  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
+function inspectAttachment(p: McpToolParams) {
   const fs = require('fs');
   const path = require('path');
   if (!p.filePath) return { success: false, error: '缺少 filePath' };
@@ -692,6 +697,15 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
   const fileName = p.fileName || path.basename(p.filePath);
   const ext = path.extname(fileName).toLowerCase();
   const mimeType = typeof p.contentType === 'string' ? p.contentType : (ATTACHMENT_MIME_TYPES[ext] || 'application/octet-stream');
+  return { success: true, filePath: p.filePath, fileName, fileSize: stat.size, mimeType,
+    contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 8, ext };
+}
+
+async function uploadAttachment(cx: McpContext, p: McpToolParams) {
+  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
+  const inspected = inspectAttachment(p);
+  if (!inspected.success) return inspected;
+  const { filePath, fileName, fileSize, mimeType, contentType, ext } = inspected as any;
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment';
   const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
   const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
@@ -699,7 +713,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
     const channelType = Number(p.channelType) === 2 ? 2 : 1;
     const targetScopeType = channelType === 2 ? 'group' : 'private';
     const targetScopeId = String(p.toUid || p.channelId || '').trim();
-    const uploadedUrl = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId,
+    const uploadedUrl = await cx.uploadFileToOSS(filePath, objectName, mimeType, p.agentId,
       { targetScopeType, targetScopeId });
     const url = String(uploadedUrl || '').startsWith('/api/uploads/')
       ? `${uploadedUrl}?channelType=${channelType}&channelId=${encodeURIComponent(targetScopeId)}`
@@ -708,9 +722,9 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
       success: true,
       url,
       fileName,
-      fileSize: stat.size,
+      fileSize,
       mimeType,
-      contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 8,
+      contentType,
     };
   } catch (e: any) {
     return { success: false, error: '上传失败: ' + e.message };
@@ -1784,7 +1798,9 @@ function createToolHandlers(cx: McpContext) {
       const mentions = channelType === 2 ? (p.mentions || null) : null;
       let pendingBinding: { id: string } | null = null;
       let isolateWithManagedSession = false;
-      const outboundMessageId = `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const outboundMessageId = p._requestedMessageId
+        && /^[A-Za-z0-9._-]{8,256}$/.test(p._requestedMessageId) ? p._requestedMessageId
+        : `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const caller = getProviderCaller();
       let routingConversation: any = null;
       let outboundRouteId: string | null = null;
@@ -1888,12 +1904,15 @@ function createToolHandlers(cx: McpContext) {
       }
 
       const routingConversationWasPending = routingConversation?.status === 'pending';
+      const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
+        ...(replyToRouteId ? { replyToRouteId } : {}),
+        ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
+        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) },
+        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
+        (p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : undefined);
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
-        outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
-          ...(replyToRouteId ? { replyToRouteId } : {}),
-          ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
-          ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) } } : undefined,
+        routeMetadata,
       );
       if (outboundRouteId) {
         try {
@@ -2206,10 +2225,94 @@ function createToolHandlers(cx: McpContext) {
     async upload_and_send_file(p: McpToolParams = {}) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
-      const uploaded = await uploadAttachment(cx, p);
-      if (!uploaded.success) return uploaded;
-
+      if (!p.agentId || !p.toUid) return { success: false, error: '缺少 agentId 或 toUid' };
       const channelType = inferChannelType(p);
+      const inspection = inspectAttachment(p);
+      if (!inspection.success) return inspection;
+      const inspected = inspection as { success:true;filePath:string;fileName:string;fileSize:number;
+        mimeType:string;contentType:number;ext:string };
+      const safeAttachmentInfo = { fileName: inspected.fileName, fileSize: inspected.fileSize,
+        mimeType: inspected.mimeType, contentType: inspected.contentType };
+      let effectiveConversationId = p.conversationId;
+      if (channelType === 1 && cx.secureOutboundRouter) {
+        let scopedConversation: RoutingConversation | null = null;
+        try {
+          if (p.conversationId) scopedConversation = routingConversations.getForScope(
+            p.conversationId, p.agentId, p.toUid, 1);
+          else if (p.replyToMessageId) {
+            const prior = messageRoutes.getByMessage(p.replyToMessageId, p.agentId);
+            if (prior?.conversation_id) scopedConversation = routingConversations.getForScope(
+              prior.conversation_id, p.agentId, p.toUid, 1);
+          }
+          if ((p.conversationId || p.replyToMessageId) && !scopedConversation) {
+            return { success: false, code: 'ROUTING_CONVERSATION_INVALID',
+              error: 'Conversation does not belong to the current Agent and channel' };
+          }
+          if (!scopedConversation) {
+            const caller = getProviderCaller();
+            if (caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
+              const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
+                'SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1', [p.agentId],
+              )[0];
+              const callerFamily = normalizeProviderFamily(caller.providerType);
+              if (callerFamily === normalizeProviderFamily(agent?.backend_type || '')) {
+                scopedConversation = routingConversations.resolveOrCreate({ agentId: p.agentId,
+                  providerFamily: callerFamily,
+                  providerInstanceKey: caller.providerInstanceId || caller.instanceId
+                    || agent?.backend_instance_id || '',
+                  nativeSessionId: caller.nativeSessionId, channelId: p.toUid, channelType: 1, origin: 'caller' });
+              }
+            }
+          }
+          if (!scopedConversation && p.webRequest === true) {
+            const current = routingConversations.listForScope(p.agentId, p.toUid, 1);
+            scopedConversation = current.length === 1
+              ? current[0]
+              : current.find((item: RoutingConversation) => item.status === 'pending')
+                || routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType: 1 });
+          }
+          if (scopedConversation) effectiveConversationId = scopedConversation.id;
+        } catch (error: any) {
+          return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
+        }
+        const preflightMetadata = scopedConversation?.wireConversationKey
+          ? { _voko: { protocolVersion: 1, conversationKey: scopedConversation.wireConversationKey } } : undefined;
+        const security = await cx.secureOutboundRouter.prepare(p.agentId, p.toUid, 1, preflightMetadata, 'attachment');
+        if (!security.success) return { ...safeAttachmentInfo, ...security, success: false };
+        if (security.securityMode === 'e2ee') {
+          const message = String(p.message || '').trim();
+          let textMessageId: string | undefined;
+          if (message) {
+            const textResult = await handlers.send_message({ agentId: p.agentId, toUid: p.toUid,
+              channelType, content: message, conversationId: effectiveConversationId,
+              replyToMessageId: p.replyToMessageId, webRequest: p.webRequest });
+            if (textResult?.success === false) return { ...safeAttachmentInfo, ...security, success: false, error: textResult.error };
+            textMessageId = textResult?.messageId;
+          }
+          const attachmentMessageId = `msg-${p.agentId}-${Date.now()}-${require('crypto').randomUUID()}`;
+          const localUrl = `/api/e2ee-v2/attachments/${encodeURIComponent(attachmentMessageId)}`
+            + `?agentId=${encodeURIComponent(p.agentId)}`;
+          const attachment = { url: localUrl, name: inspected.fileName, size: inspected.fileSize, type: inspected.mimeType };
+          const fileResult = await handlers.send_message({ agentId: p.agentId, toUid: p.toUid, channelType,
+            contentType: inspected.contentType,
+            content: inspected.contentType === 2 ? localUrl : attachment,
+            conversationId: effectiveConversationId, replyToMessageId: p.replyToMessageId, webRequest: p.webRequest,
+            _requestedMessageId: attachmentMessageId,
+            _e2eeAttachmentSource: { filePath: inspected.filePath, fileName: inspected.fileName,
+              mediaType: inspected.mimeType } });
+          return { ...safeAttachmentInfo, url: localUrl, textMessageId, messageId: fileResult?.messageId,
+            success: fileResult?.success !== false, ...(fileResult?.error ? { error: fileResult.error } : {}),
+            securityMode: fileResult?.securityMode, securityReason: fileResult?.securityReason,
+            encryptedDeviceCount: fileResult?.encryptedDeviceCount, deliveryState: fileResult?.deliveryState,
+            conversationId: fileResult?.conversationId ?? null, conversationStatus: fileResult?.conversationStatus ?? null,
+            conversationDisposition: fileResult?.conversationDisposition ?? null };
+        }
+      }
+
+      const uploadResult = await uploadAttachment(cx, p);
+      if (!uploadResult.success) return uploadResult;
+      const uploaded = uploadResult as { success:true;url:string;fileName:string;fileSize:number;
+        mimeType:string;contentType:number };
       const message = String(p.message || '').trim();
       let textMessageId: string | undefined;
       if (message) {
@@ -2219,7 +2322,7 @@ function createToolHandlers(cx: McpContext) {
           channelType,
           content: message,
           mentions: p.mentions,
-          conversationId: p.conversationId,
+          conversationId: effectiveConversationId,
           replyToMessageId: p.replyToMessageId,
           webRequest: p.webRequest,
         });
@@ -2240,7 +2343,7 @@ function createToolHandlers(cx: McpContext) {
         contentType: uploaded.contentType,
         content: uploaded.contentType === 2 ? uploaded.url : attachment,
         mentions: p.mentions,
-        conversationId: p.conversationId,
+        conversationId: effectiveConversationId,
         replyToMessageId: p.replyToMessageId,
         webRequest: p.webRequest,
       });

@@ -17,7 +17,7 @@ const { createAgentRegistration } = require('../build/core/agent-registration');
 const { createScheduler, createWatchdog } = require('../build/core/scheduler');
 const autoUpdater = require('../build/core/auto-updater');
 const { syncOfflineMessages } = require('../build/core/offline-sync');
-const { createDeliver, createSendMessage } = require('../build/core/send-message');
+const { createDeliver, createSecureDeliverProxy, createSendMessage } = require('../build/core/send-message');
 const { processPendingPaymentOrder, startPaymentPolling } = require('../build/core/payment');
 const { selectWindowsOpenclawCommand } = require('../build/core/dispatcher/providers/openclaw-ws');
 const { normalizeOfficialImServerUrl, normalizeOfficialPublicUrl } = require('../build/core/url-security');
@@ -1500,6 +1500,31 @@ test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () =
   assert.equal(result.messageSeq, 7);
   assert.equal(result.clientMsgNo, 'local-1');
   assert.equal(calls.length, 1);
+});
+
+test('secure delivery proxy changes every shared private-delivery caller without replacing raw delivery', async () => {
+  const rawCalls=[];const secureCalls=[];
+  const raw=async(...args)=>{rawCalls.push(args);return{success:true,messageId:args[6]};};
+  const proxy=createSecureDeliverProxy(raw);
+  await proxy('agent-1','visitor-1','plain','text',1,null,'plain-1');
+  proxy.setSecureRouter({deliver:async(...args)=>{secureCalls.push(args);return{success:true,messageId:args[6],
+    securityMode:'e2ee',securityReason:'recipient_supported',encryptedDeviceCount:1,deliveryState:'delivered'};}});
+  const protectedResult=await proxy('agent-1','visitor-1','secret','text',1,null,'secure-1');
+  await proxy.rawDeliver('agent-1','visitor-1','fixed-envelope','text',1,null,'raw-2');
+  assert.equal(protectedResult.securityMode,'e2ee');
+  assert.equal(secureCalls.length,1);
+  assert.equal(rawCalls.length,2);
+});
+
+test('Lite send-message keeps partial multi-device E2EE delivery pending', async () => {
+  const statusWrites=[];
+  const db={prepare(sql){return{get(){return sql.includes('SELECT imUid')?{imUid:'agent-uid'}:undefined;},
+    run(...args){if(sql.includes('message_seq=COALESCE'))statusWrites.push(args);}};}};
+  const send=createSendMessage({db,deliver:async(...args)=>({success:true,messageId:args[6],securityMode:'e2ee',
+    securityReason:'recipient_supported',encryptedDeviceCount:2,deliveryState:'partial'})});
+  const result=await send('agent-1','visitor-1','private','agent-uid','text',1);
+  assert.equal(result.deliveryState,'partial');
+  assert.equal(statusWrites.at(-1)[0],'pending');
 });
 
 test('Lite send-message normalizes content, persists it and passes the local id to delivery', async () => {
