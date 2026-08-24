@@ -1317,7 +1317,11 @@ function createWebRouter(handlers, db, opts={}){
     }catch(error){next(error)}
   });
 
-  R.use(createRegisterRouter(handlers, db, { webSessions: opts.webSessions }));
+  R.use(createRegisterRouter(handlers, db, {
+    webSessions: opts.webSessions,
+    uploadAgentIcon: opts.uploadAgentIcon,
+    readAgentIconCandidate: opts.readAgentIconCandidate,
+  }));
 
   // ────────── 银行卡管理 ──────────
   R.use(createPaymentAuthRouter(handlers, db));

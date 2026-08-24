@@ -11,6 +11,7 @@ const { VOKO_API_URL } = require('../core/api-signature');
 const { discoverHermes } = require('../server/hermes-discovery');
 const { getClientBundle } = require('../core/i18n');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { readWorkBuddyAgentAvatar } = require('../core/dispatcher/workbuddy-agents');
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderSystemFooter } = require('./footer');
 const { renderLanguageSwitcher } = require('./language-switcher');
@@ -18,6 +19,11 @@ const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+
+function iconExtension(mimeType) {
+  return ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' })[mimeType] || null;
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
@@ -94,6 +100,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .wizard-body{padding:30px 34px;min-height:500px}.wizard-panel{display:none}.wizard-panel.active{display:block}
 .wizard-footer{display:flex;gap:10px;padding:17px 34px;border-top:1px solid #e3e7ee;background:#fcfcfd}.wizard-footer .spacer{flex:1}
 .wizard-footer button{margin:0}.wide-field{max-width:720px}
+.basic-profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;max-width:760px}.basic-profile-grid .basic-span-2{grid-column:1/-1}.basic-section-title{margin:10px 0 0;padding:0 0 7px;border-bottom:1px solid #e4e7ec;font-size:16px;font-weight:700;color:#344054}.basic-icon-button{position:relative;display:block;width:92px;height:92px;min-width:92px;margin:4px 0 0;padding:0;overflow:hidden;border:2px dashed #b8c1cf;border-radius:16px;background:#f8fafc;color:#667085}.basic-icon-button:hover{background:#f1f5f9;border-color:#1a73e8;transform:none}.basic-icon-button.has-image{border-style:solid;background:#f2f4f7}.basic-icon-preview{display:none;width:100%;height:100%;object-fit:cover}.basic-icon-button.has-image .basic-icon-preview{display:block}.basic-icon-placeholder{display:flex;width:100%;height:100%;align-items:center;justify-content:center;font-size:34px;font-weight:300}.basic-icon-button.has-image .basic-icon-placeholder{display:none}.basic-icon-overlay{position:absolute;inset:auto 0 0;padding:5px 4px;background:rgba(17,24,39,.72);color:#fff;font-size:12px;opacity:0;transition:opacity .15s}.basic-icon-button:hover .basic-icon-overlay,.basic-icon-button:focus .basic-icon-overlay{opacity:1}
 .detect-banner{margin:18px 0;padding:11px 13px;border-radius:9px;background:#edf4ff;color:#2854a3;font-weight:600}
 .provider-list,.delivery-list{display:grid;gap:11px;margin-top:12px}
 .provider-card,.delivery-card{display:grid;grid-template-columns:22px minmax(0,1fr);gap:11px;border:1px solid #dfe4ec;border-radius:11px;padding:14px;cursor:pointer}
@@ -108,9 +115,9 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .priority-list{margin:8px 0 0;padding-left:22px}.result-card{padding:18px;border:1px solid #a8ddbf;border-radius:12px;background:#ecf8f1}
 .result-grid{display:grid;grid-template-columns:105px 1fr;gap:7px 12px;margin-top:15px;padding:13px;background:#fff;border-radius:9px}.result-grid dt{color:#667085}.result-grid dd{margin:0;font-weight:600}
 .security-notice{margin-top:16px;padding:12px 13px;border:1px solid #edcf92;border-radius:9px;background:#fff6e3;color:#704600}
-.loopback-tests>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.result-loopback.success{background:#0f9d58;border-color:#0b8043}.result-loopback.failed{background:#d93025;border-color:#b71c1c}.loopback-feedback{flex-basis:100%;min-height:18px;color:#0f7a43;font-size:13px}.loopback-feedback.error{color:#b42318}
 .registration-tabs{display:grid;grid-template-columns:1fr 1fr;padding:8px;background:#f4f6f9;border-bottom:1px solid #e3e7ee;gap:8px}.registration-tab{margin:0;background:transparent;color:#667085;border:0;border-radius:9px;padding:10px 14px}.registration-tab:hover{background:#fff;color:#1a73e8;transform:none}.registration-tab.active{background:#fff;color:#1a73e8;box-shadow:0 1px 5px rgba(20,40,80,.09)}.registration-pane[hidden]{display:none}.agent-register-pane{padding:30px 34px}.agent-register-pane h2{margin:0 0 6px}.agent-prompt{width:100%;min-height:360px;resize:vertical;background:#f8fafc;font-family:Consolas,'SFMono-Regular',monospace;font-size:13px;line-height:1.65}.agent-copy-row{display:flex;align-items:center;gap:12px;margin-top:12px}.agent-copy-row button{margin:0}
-@media(max-width:600px){.wizard-head,.wizard-body,.wizard-footer{padding-left:18px;padding-right:18px}.wizard-step{font-size:0}.wizard-step b{font-size:12px}.result-grid{grid-template-columns:82px 1fr}}`;
+.voko-confirm-dialog{width:min(420px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;color:#1a1a2e;box-shadow:0 18px 60px rgba(21,31,46,.28)}.voko-confirm-dialog::backdrop{background:rgba(24,34,48,.48);backdrop-filter:blur(2px)}.voko-confirm-body{padding:26px 28px 18px;text-align:center}.voko-confirm-icon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#fff4e5;color:#b45309;font-size:24px;font-weight:800}.voko-confirm-body p{margin:0;color:#667085;font-size:14px;line-height:1.65}.voko-confirm-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;background:#f7f9fc;border-top:1px solid #e8ebef}.voko-confirm-actions button{margin:0;min-width:96px}
+@media(max-width:600px){.wizard-head,.wizard-body,.wizard-footer{padding-left:18px;padding-right:18px}.wizard-step{font-size:0}.wizard-step b{font-size:12px}.result-grid{grid-template-columns:82px 1fr}.basic-profile-grid{grid-template-columns:1fr}.basic-profile-grid .basic-span-2{grid-column:auto}}`;
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
@@ -294,14 +301,14 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.provider.title')) + '</h3><p class="meta">' + esc(t('register.flow.provider.desc')) + '</p>'
     + '<div class="detect-banner" id="wf-detect">' + esc(t('register.flow.detecting')) + '</div><div id="wf-providers"></div></section>'
     + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
-    + '<div class="wide-field"><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required>'
-    + '<div class="name-status" id="wf-name-status"></div>'
-    + '<label for="wf-desc">' + esc(t('register.add.desc')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea>'
-    + '<label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select>'
-    + '<label for="wf-tags">Tags</label><input id="wf-tags">'
-    + '<label for="wf-icon">Icon</label><input id="wf-icon">'
-    + '<label for="wf-phone">Phone</label><input id="wf-phone">'
-    + '<label for="wf-address">Address</label><input id="wf-address"></div></section>'
+    + '<div class="basic-profile-grid"><div class="basic-span-2 basic-section-title">' + esc(t('register.flow.basic.section_profile')) + '</div>'
+    + '<div><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required><div class="name-status" id="wf-name-status"></div></div>'
+    + '<div><label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select></div>'
+    + '<div class="basic-span-2"><label for="wf-desc">' + esc(t('register.add.desc')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea></div>'
+    + '<div class="basic-span-2"><label for="wf-tags">' + esc(t('register.flow.basic.tags')) + '</label><input id="wf-tags" placeholder="' + esc(t('register.flow.basic.tags_placeholder')) + '"></div>'
+    + '<div class="basic-span-2"><label>' + esc(t('register.flow.basic.icon')) + '</label><button type="button" class="basic-icon-button" id="wf-icon-button" aria-label="' + esc(t('web.agent.edit.icon_change')) + '"><img class="basic-icon-preview" id="wf-icon-preview" alt="' + esc(t('register.flow.basic.icon')) + '"><span class="basic-icon-placeholder" aria-hidden="true">+</span><span class="basic-icon-overlay">' + esc(t('web.agent.edit.icon_change')) + '</span></button><input type="file" id="wf-icon-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div>'
+    + '<div><label for="wf-phone">' + esc(t('register.flow.basic.phone')) + '</label><input id="wf-phone" placeholder="' + esc(t('register.flow.basic.phone_placeholder')) + '"></div>'
+    + '<div><label for="wf-address">' + esc(t('register.flow.basic.address')) + '</label><input id="wf-address" placeholder="' + esc(t('register.flow.basic.address_placeholder')) + '"></div></div></section>'
     + '<section class="wizard-panel" data-step="3"><h3>' + esc(t('register.flow.delivery.title')) + '</h3><p class="meta" id="wf-delivery-desc"></p>'
     + '<div class="delivery-list" id="wf-deliveries"></div>'
     + '<div class="config-panel" id="wf-config"><h3 id="wf-config-title"></h3><p class="meta" id="wf-config-desc"></p><pre id="wf-config-log" style="display:none;max-height:180px;overflow:auto;background:#182033;color:#b8f7c8;padding:9px;border-radius:7px;white-space:pre-wrap"></pre>'
@@ -312,6 +319,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<section class="wizard-panel" data-step="4"><h3 id="wf-step4-title">' + esc(t('register.flow.access.title')) + '</h3><p class="meta" id="wf-access-desc">' + esc(t('register.flow.access.desc')) + '</p><div id="wf-result"></div></section>'
     + '</div>'
     + '<footer class="wizard-footer"><button type="button" class="btn-outline" id="wf-prev" style="visibility:hidden">' + esc(t('register.flow.previous')) + '</button><span class="spacer"></span><button type="button" id="wf-next">' + esc(t('register.flow.next')) + '</button></footer></div>'
+    + '<dialog id="wf-reselect-dialog" class="voko-confirm-dialog"><div class="voko-confirm-body"><div class="voko-confirm-icon" aria-hidden="true">!</div><p>' + esc(t('register.flow.basic.reselect_warning')) + '</p></div><div class="voko-confirm-actions"><button type="button" class="btn-outline" id="wf-reselect-cancel">' + esc(t('common.btn.cancel')) + '</button><button type="button" id="wf-reselect-confirm">' + esc(t('common.btn.confirm')) + '</button></div></dialog>'
     + '<section class="registration-pane agent-register-pane" id="registration-agent-pane" hidden>'
     + '<h2>' + esc(t('register.agent.title')) + '</h2><p class="meta">' + esc(t('register.agent.desc')) + '</p>'
     + '<textarea class="agent-prompt" id="agent-registration-prompt" readonly>' + esc(agentPrompt) + '</textarea>'
@@ -332,7 +340,6 @@ function wizardJs(t) {
     configure: t('register.flow.configure'), test: t('register.flow.test'),
     configuring: t('register.flow.configuring'), configured: t('register.flow.configured'),
     testing: t('register.flow.testing'), testOk: t('register.flow.test_ok'), testFailed: t('register.flow.test_failed'),
-    loopback: t('register.flow.loopback'), preflightOnly: t('register.flow.preflight_only'),
     configureDesc: t('register.flow.configure.desc'), configureConfirm: t('register.flow.configure.confirm'),
     create: t('register.add.create_btn'), creating: t('register.add.creating'),
     created: t('register.flow.done.created'), deliveryOrder: t('register.flow.delivery.order'),
@@ -343,6 +350,7 @@ function wizardJs(t) {
     provider: t('register.add.backend_type'), instanceLabel: t('register.flow.instance.label'),
     instanceLoading: t('web.agent.edit.instances_loading'), instanceNone: t('web.agent.edit.instances_none'),
     nameTaken: t('register.add.name_taken'),
+    nameCheckUnavailable: t('register.add.name_check_unavailable'),
     accessTitle: t('register.flow.access.title'), accessDesc: t('register.flow.access.desc'),
     privateMode: t('register.flow.access.private'), privateDesc: t('register.flow.access.private_desc'),
     publicMode: t('register.flow.access.public'), publicDesc: t('register.flow.access.public_desc'),
@@ -350,6 +358,8 @@ function wizardJs(t) {
     searchName: t('register.flow.done.search_name'), searchEmail: t('register.flow.done.search_email'),
     exactId: t('register.flow.done.exact_id'),
     copied: t('register.agent.copied'),
+    iconInvalid: t('web.agent.edit.icon_invalid'), iconTooLarge: t('web.agent.edit.icon_too_large'),
+    iconUploading: t('web.agent.edit.icon_uploading'), iconUploadFailed: t('web.agent.edit.icon_upload_failed'),
     error: t('register.create_failed_default'),
   };
   return `<script>
@@ -369,8 +379,17 @@ function wizardJs(t) {
   function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||d.detail||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}
-  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:document.getElementById('wf-icon').value,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
-  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=(s.tags||[]).join(', ');if(!document.getElementById('wf-icon').value.trim())document.getElementById('wf-icon').value=s.iconUrl||'';if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';if(s.category)document.getElementById('wf-category').value=s.category}
+  var suggestedIconPreview='',selectedIconFile=null,selectedIconObjectUrl='';
+  function localizedSuggestion(value){if(typeof value==='string')return value.trim();if(!value||typeof value!=='object')return '';var lang=(document.documentElement.lang||'en').split('-')[0];return String(value[lang]||value.zh||value.en||'').trim()}
+  function normalizedSuggestionTags(value){return(Array.isArray(value)?value:[]).map(localizedSuggestion).filter(Boolean)}
+  function clearSelectedIcon(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl);selectedIconFile=null;selectedIconObjectUrl=''}
+  function renderIconPreview(){var button=document.getElementById('wf-icon-button'),preview=document.getElementById('wf-icon-preview'),src=selectedIconObjectUrl||suggestedIconPreview;button.classList.toggle('has-image',!!src);if(src)preview.src=src;else preview.removeAttribute('src')}
+  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:'',useSuggestedIcon:!selectedIconFile,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
+  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=normalizedSuggestionTags(s.tags).join(', ');suggestedIconPreview=s.iconPreviewUrl||s.iconUrl||'';renderIconPreview();if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';if(s.category)document.getElementById('wf-category').value=s.category}
+  document.getElementById('wf-icon-button').addEventListener('click',function(){document.getElementById('wf-icon-file').click()});
+  document.getElementById('wf-icon-file').addEventListener('change',function(){var file=this.files&&this.files[0],allowed=['image/png','image/jpeg','image/webp','image/gif'];if(!file)return;if(allowed.indexOf(file.type)===-1){this.value='';return fail(new Error(I.iconInvalid))}if(file.size>500*1024){this.value='';return fail(new Error(I.iconTooLarge))}clearSelectedIcon();selectedIconFile=file;selectedIconObjectUrl=URL.createObjectURL(file);renderIconPreview()});
+  document.getElementById('wf-icon-preview').addEventListener('error',function(){if(selectedIconObjectUrl){clearSelectedIcon()}else suggestedIconPreview='';renderIconPreview()});
+  async function uploadSelectedIcon(agentId){if(!selectedIconFile)return null;var fd=new FormData();fd.append('file',selectedIconFile,selectedIconFile.name);var response=await fetch('/api/agents/'+encodeURIComponent(agentId)+'/icon',{method:'POST',body:fd}),data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||I.iconUploadFailed);return data}
   function beginDetection(){
     if(state&&state.environment){renderProviders(state.environment);return Promise.resolve(state)}
     setDetectionPending();
@@ -413,12 +432,12 @@ function wizardJs(t) {
     return fetch('/api/agent/check-name?name='+encodeURIComponent(name)).then(function(r){if(!r.ok)throw new Error('NAME_CHECK_UNAVAILABLE');return r.json()}).then(function(d){
       if(d.available){nameCheckedValue=name;nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';return true}
       nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameTaken;nameInput.className='error';return false
-    }).catch(function(){nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';return true})
+    }).catch(function(){nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameCheckUnavailable;nameInput.className='error';return false})
   }
   nameInput.addEventListener('blur',function(){if(step===2)next.disabled=true;checkName().then(function(ok){if(step===2)next.disabled=!ok})});
   nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===2)next.disabled=false});
   function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag '+(detected?'':'warn')+'">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
-  function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
+  function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var term=p.instanceTerm||I.instance,html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+term)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
   function renderProviders(env){
     var detected=env.detected||[];if(!detected.some(function(p){return p.type===selectedProvider})){selectedProvider=detected[0]?detected[0].type:'';selectedInstance=''}
     var html='<div class="group-label">'+escHtml(I.local)+'</div><div class="provider-list">';
@@ -460,28 +479,22 @@ function wizardJs(t) {
     if(step===1){if(!selectedProvider){next.disabled=true;return}api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){state=d;applySuggestion(d.suggestedBasicInfo);show(2);next.disabled=false}).catch(fail);return}
     if(step===2){checkName().then(function(ok){if(!ok){next.disabled=false;return}return api('set_basic_info',basicInfoPayload()).then(function(d){renderDeliveries(d);show(3);next.disabled=false})}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
-    if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
+    if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(async function(d){if(selectedIconFile){next.textContent=I.iconUploading;var uploaded=await uploadSelectedIcon(d.result.agentId);d.result.iconUrl=uploaded.iconUrl}state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
     discardDraft=true;
     try{sessionStorage.removeItem(draftKey)}catch(_){}
     location.href='/';
   };
-  prev.onclick=function(){if(step===2){if(window.confirm('返回后重新选择类型或实例会替换当前基本资料草稿。'))api('reselect_provider').then(function(d){state=d;nameInput.value='';document.getElementById('wf-desc').value='';document.getElementById('wf-tags').value='';document.getElementById('wf-icon').value='';document.getElementById('wf-phone').value='';document.getElementById('wf-address').value='';renderProviders(d.environment);show(1)}).catch(fail);return}if(step>1){show(step-1)}};
+  var reselectDialog=document.getElementById('wf-reselect-dialog');
+  function reselectProvider(){api('reselect_provider').then(function(d){state=d;nameInput.value='';document.getElementById('wf-desc').value='';document.getElementById('wf-tags').value='';clearSelectedIcon();suggestedIconPreview='';renderIconPreview();document.getElementById('wf-phone').value='';document.getElementById('wf-address').value='';renderProviders(d.environment);show(1)}).catch(fail)}
+  document.getElementById('wf-reselect-cancel').onclick=function(){reselectDialog.close()};
+  document.getElementById('wf-reselect-confirm').onclick=function(){reselectDialog.close();reselectProvider()};
+  reselectDialog.addEventListener('click',function(e){if(e.target===reselectDialog)reselectDialog.close()});
+  prev.onclick=function(){if(step===2){reselectDialog.showModal();return}if(step>1){show(step-1)}};
   root.addEventListener('input',saveDraft);
   root.addEventListener('change',saveDraft);
   window.addEventListener('pagehide',saveDraft);
+  window.addEventListener('pagehide',function(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl)});
   function renderResult(d){var r=d.result||{},p=r.provider||{},rows=(r.deliveryOrder||[]).map(function(m){var role=m.role==='primary'?I.priority:m.role==='fallback'?I.backup:m.role==='only'?I.only:I.finalFallback;return '<div>'+m.priority+'. '+escHtml(m.label)+' <span class="tag">'+escHtml(role)+'</span></div>'}).join('');document.getElementById('wf-step4-title').textContent=I.created;document.getElementById('wf-access-desc').textContent='';document.getElementById('wf-result').innerHTML='<div class="result-card"><h3>✓ '+escHtml(I.created)+'</h3><dl class="result-grid"><dt>'+escHtml(I.name)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.description)+'</dt><dd>'+escHtml(r.description||'-')+'</dd><dt>'+escHtml(I.category)+'</dt><dd>'+escHtml(r.category)+'</dd><dt>'+escHtml(I.provider)+'</dt><dd>'+escHtml(p.type||'others')+'</dd><dt>'+escHtml(I.instanceLabel)+'</dt><dd>'+escHtml(p.instanceName||'-')+'</dd><dt>'+escHtml(I.accessMode)+'</dt><dd>'+escHtml(r.accessMode==='public'?I.publicMode:I.privateMode)+'</dd><dt>'+escHtml(I.deliveryOrder)+'</dt><dd>'+rows+'</dd></dl><h4>'+escHtml(I.searchableBy)+'</h4><dl class="result-grid"><dt>'+escHtml(I.searchName)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.searchEmail)+'</dt><dd>'+escHtml(r.ownerEmail||root.dataset.email)+'</dd><dt>'+escHtml(I.exactId)+'</dt><dd>'+escHtml(r.agentId)+'</dd></dl><div class="security-notice"><strong>'+escHtml(I.securityTitle)+'</strong><br>'+escHtml(I.security)+'</div></div>'}
-  var renderResultBase=renderResult;
-  renderResult=function(d){
-    renderResultBase(d);
-    var r=d.result||{},target=document.querySelector('#wf-result .result-card');
-    var readiness=(r.deliveryReadiness||[]).filter(function(item){return item.selected&&item.mode!=='pull'});
-    if(target&&readiness.length){
-      var section=document.createElement('div');section.className='loopback-tests';
-      section.innerHTML=readiness.map(function(item){var control=item.supportsLoopback&&item.providerId?'<button type="button" class="result-loopback" data-mode="'+escHtml(item.mode)+'" data-provider-id="'+escHtml(item.providerId)+'">'+escHtml(I.loopback)+'</button>':'<span class="tag">'+escHtml(I.preflightOnly)+'</span>';return '<div><span>'+escHtml(item.label||item.mode)+'</span>'+control+'<span class="loopback-feedback" role="status" aria-live="polite"></span></div>'}).join('');
-      target.insertBefore(section,target.querySelector('.security-notice'));
-    }
-  };
-  document.getElementById('wf-result').addEventListener('click',function(e){var b=e.target.closest('.result-loopback');if(!b||b.disabled)return;var feedback=b.parentElement.querySelector('.loopback-feedback');b.disabled=true;b.classList.remove('success','failed');b.textContent=I.testing;if(feedback){feedback.textContent='';feedback.classList.remove('error')}api('loopback_test',{mode:b.dataset.mode,providerId:b.dataset.providerId,acknowledgeCost:true}).then(function(r){b.textContent=I.testOk;b.classList.add('success');if(feedback)feedback.textContent=r.detail||''}).catch(function(err){b.textContent=I.testFailed;b.classList.add('failed');if(feedback){feedback.textContent=err.message||I.testFailed;feedback.classList.add('error')}}).finally(function(){b.disabled=false})});
   start();
 })();
 </script>`;
@@ -830,7 +843,29 @@ function createRegisterRouter(handlers, db, options = {}) {
     db,
     sendCode: (params) => handlers.request_login_code(params),
     loginByCode: (params) => handlers.login_by_code(params),
-    completeAgent: (params) => handlers.create_agent_by_token(params),
+    completeAgent: async (params) => {
+      const { iconCandidate, ...createParams } = params;
+      const result = await handlers.create_agent_by_token(createParams);
+      if (!result?.success || createParams.iconUrl || !iconCandidate || !result.agentId) return result;
+      try {
+        const reader = options.readAgentIconCandidate || ((candidate) => {
+          if (candidate?.kind !== 'provider_instance_avatar' || candidate.providerType !== 'workbuddy') return null;
+          return (options.readWorkBuddyAgentAvatar || readWorkBuddyAgentAvatar)(candidate.instanceId);
+        });
+        const icon = await reader(iconCandidate);
+        const ext = icon && iconExtension(icon.mimeType);
+        if (!icon || !ext) return result;
+        const objectName = `agent-icons/${crypto.randomUUID()}.${ext}`;
+        const uploader = options.uploadAgentIcon
+          || ((data, name, mime) => require('../server/oss').uploadToOSS(name, data, mime));
+        const iconUrl = await uploader(icon.data, objectName, icon.mimeType, result.agentId);
+        const updated = await handlers.update_agent_profile({ agentId: result.agentId, iconUrl });
+        if (updated?.success === false || updated?.error) throw new Error(updated.error || 'ICON_PROFILE_UPDATE_FAILED');
+        return { ...result, iconUrl };
+      } catch (error) {
+        return { ...result, iconUploadError: String(error?.message || error) };
+      }
+    },
     getLoggedEmail,
   });
 
@@ -843,6 +878,17 @@ function createRegisterRouter(handlers, db, options = {}) {
       () => registrationOrchestrator.manage(input),
     );
     res.status(result.success === false ? 400 : 200).json(result);
+  });
+
+  R.get('/api/agent-registration/workbuddy-avatar/:instanceId', (req, res) => {
+    try {
+      const avatar = (options.readWorkBuddyAgentAvatar || readWorkBuddyAgentAvatar)(req.params.instanceId);
+      if (!avatar) return res.status(404).end();
+      res.set('Cache-Control', 'private, max-age=300');
+      res.type(avatar.mimeType).send(avatar.data);
+    } catch (_) {
+      return res.status(404).end();
+    }
   });
 
   // ═══════════════════════════════════════════════
@@ -916,24 +962,22 @@ function createRegisterRouter(handlers, db, options = {}) {
     const name = (req.query.name || '').trim();
     if (!name) return res.json({ available: false });
     try {
-      const path = '/api/external/v1/agents/search';
-      const body = { keyword: name, page: 1, limit: 10 };
-      const { getUserAccessToken } = require('../core/database');
-      const email = getLoggedEmail();
-      const token = email ? getUserAccessToken(db, email) : null;
-      if (!token) return res.status(401).json({ available: false, error: 'LOGIN_REQUIRED' });
-      const resp = await fetch(VOKO_API_URL + path, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token,
-        },
-        body: JSON.stringify(body),
-      });
+      const local = db?.prepare('SELECT 1 FROM agents WHERE LOWER(TRIM(agent_name))=LOWER(?) LIMIT 1').get(name);
+      if (local) return res.json({ available: false, source: 'local' });
+      const url = new URL('/api/public/agents', VOKO_API_URL);
+      url.searchParams.set('keyword', name);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('limit', '100');
+      const request = options.fetchImpl || fetch;
+      const resp = await request(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
       const data = await resp.json();
-      const agents = data.agents || data.data || [];
-      const taken = agents.some(a => (a.name || a.agentName || '').toLowerCase() === name.toLowerCase());
-      return res.json({ available: !taken });
+      if (data?.success !== true || !Array.isArray(data.data)) {
+        return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
+      }
+      const normalized = name.toLocaleLowerCase();
+      const taken = data.data.some(agent => String(agent?.name || agent?.agentName || '').trim().toLocaleLowerCase() === normalized);
+      return res.json({ available: !taken, source: 'remote' });
     } catch (_) {
       return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
     }

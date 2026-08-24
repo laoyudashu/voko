@@ -33,8 +33,17 @@ function localizedList(value: unknown): string[] {
   const selected = Array.isArray(value) ? value
     : (value && typeof value === 'object' ? ((value as any).zh || (value as any).en) : []);
   return Array.isArray(selected)
-    ? [...new Set(selected.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 20)
+    ? [...new Set(selected.map(localized).filter(Boolean))].slice(0, 20)
     : [];
+}
+
+function imageType(data: Buffer): string | null {
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return 'image/png';
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
+  if (data.length >= 6 && ['GIF87a', 'GIF89a'].includes(data.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  if (data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF'
+    && data.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return null;
 }
 
 function frontmatterName(markdown: string): string {
@@ -130,4 +139,17 @@ export function resolveWorkBuddyAgentTarget(id: unknown, options: Parameters<typ
   return inside(root, pluginRoot) ? { instance, pluginRoot } : null;
 }
 
-module.exports = { discoverWorkBuddyAgents, resolveWorkBuddyAgent, resolveWorkBuddyAgentTarget };
+export function readWorkBuddyAgentAvatar(id: unknown, options: Parameters<typeof discoverWorkBuddyAgents>[0] = {}):
+  { data: Buffer; mimeType: string } | null {
+  const target = resolveWorkBuddyAgentTarget(id, options);
+  if (!target?.instance.avatar) return null;
+  const avatarPath = path.resolve(target.pluginRoot, target.instance.avatar);
+  if (!inside(target.pluginRoot, avatarPath) || !fs.existsSync(avatarPath)) return null;
+  const stat = fs.statSync(avatarPath);
+  if (!stat.isFile() || stat.size <= 0 || stat.size > 500 * 1024) return null;
+  const data = fs.readFileSync(avatarPath);
+  const mimeType = imageType(data);
+  return mimeType ? { data, mimeType } : null;
+}
+
+module.exports = { discoverWorkBuddyAgents, resolveWorkBuddyAgent, resolveWorkBuddyAgentTarget, readWorkBuddyAgentAvatar };

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { discoverWorkBuddyAgents, resolveWorkBuddyAgentTarget } = require('../build/core/dispatcher/workbuddy-agents');
+const { discoverWorkBuddyAgents, resolveWorkBuddyAgentTarget, readWorkBuddyAgentAvatar } = require('../build/core/dispatcher/workbuddy-agents');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-agents-'));
@@ -19,9 +19,10 @@ function fixture(t) {
     fs.writeFileSync(path.join(pluginRoot, '.codebuddy-plugin', 'plugin.json'), JSON.stringify({
       name: id, plugin: id, expertType: 'agent', agentName: overrides.agentName || id,
       agents: [overrides.agentPath || `./agents/${id}.md`], displayName: { zh: `${id} 名称` },
-      displayDescription: { zh: `${id} 介绍` },
+      displayDescription: { zh: `${id} 介绍` }, tags: overrides.tags, avatar: overrides.avatar,
     }));
     fs.writeFileSync(path.join(pluginRoot, 'agents', `${id}.md`), `---\nname: ${overrides.frontmatterName || id}\ndescription: fixture\n---\nbody\n`);
+    if (overrides.avatarData) fs.writeFileSync(path.join(pluginRoot, overrides.avatar), overrides.avatarData);
   }
   return { root, plugins, add, save() { fs.writeFileSync(path.join(root, '.codebuddy-plugin', 'marketplace.json'),
     JSON.stringify({ name: 'my-experts', plugins })); } };
@@ -49,4 +50,25 @@ test('reports a corrupt marketplace as discovery failure instead of an empty lis
   const f = fixture(t);
   fs.writeFileSync(path.join(f.root, '.codebuddy-plugin', 'marketplace.json'), '{broken');
   assert.throws(() => discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false }), /manifest is invalid/);
+});
+
+test('localizes object-shaped tags and only reads verified plugin image bytes', (t) => {
+  const f = fixture(t);
+  const png = Buffer.from('89504e470d0a1a0a00000000', 'hex');
+  f.add('safe-agent', {
+    tags: [{ zh: '英语词汇', en: 'English vocabulary' }, { zh: '学习', en: 'Learning' }],
+    avatar: 'avatar.png', avatarData: png,
+  });
+  f.add('fake-image', { avatar: 'avatar.png', avatarData: Buffer.from('not an image') });
+  f.add('traversal-image', { avatar: '../outside.png' });
+  f.save();
+
+  const found = discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false });
+  assert.deepEqual(found.find(item => item.id === 'safe-agent').tags, ['英语词汇', '学习']);
+  const avatar = readWorkBuddyAgentAvatar('safe-agent', { root: f.root, requireRegisteredMarketplace: false });
+  assert.equal(avatar.mimeType, 'image/png');
+  assert.deepEqual(avatar.data, png);
+  assert.equal(readWorkBuddyAgentAvatar('fake-image', { root: f.root, requireRegisteredMarketplace: false }), null);
+  assert.equal(readWorkBuddyAgentAvatar('traversal-image', { root: f.root, requireRegisteredMarketplace: false }), null);
+  assert.equal(readWorkBuddyAgentAvatar('../../escape', { root: f.root, requireRegisteredMarketplace: false }), null);
 });

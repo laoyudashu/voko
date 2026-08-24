@@ -1152,6 +1152,7 @@ class RegistrationOrchestrator {
       category: cleanText(input.category, 64) || 'general',
       tags: Array.isArray(input.tags) ? input.tags.map(item => cleanText(item, 64)).filter(Boolean).slice(0, 20) : [],
       iconUrl: cleanText(input.iconUrl, 500),
+      iconCandidate: input.useSuggestedIcon === false ? null : (session.suggestedBasicInfo?.iconCandidate || null),
       contactPhone: cleanText(input.contactPhone || input.contact_phone, 64),
       address: cleanText(input.address, 500),
     };
@@ -1207,8 +1208,11 @@ class RegistrationOrchestrator {
       // and must not be persisted until the normal validated upload/storage path can run.
       iconUrl: '',
       iconCandidate: selected?.avatar
-        ? { kind: 'workbuddy_plugin_avatar', relativePath: selected.avatar, source: selected.source }
+        ? { kind: 'provider_instance_avatar', providerType, instanceId: selected.id, relativePath: selected.avatar, source: selected.source }
         : null,
+      iconPreviewUrl: providerType === 'workbuddy' && selected?.avatar
+        ? `/api/agent-registration/workbuddy-avatar/${encodeURIComponent(selected.id)}`
+        : '',
       contactPhone: selected?.contactPhone || '',
       address: selected?.address || '',
     };
@@ -1507,6 +1511,7 @@ class RegistrationOrchestrator {
       category: session.basicInfo.category,
       tags: session.basicInfo.tags,
       iconUrl: session.basicInfo.iconUrl,
+      iconCandidate: session.basicInfo.iconCandidate || null,
       contact_phone: session.basicInfo.contactPhone,
       address: session.basicInfo.address,
       backendType: session.provider.type,
@@ -1522,6 +1527,8 @@ class RegistrationOrchestrator {
       agentName: result.agentName || session.basicInfo.agentName,
       description: session.basicInfo.description,
       category: session.basicInfo.category,
+      iconUrl: result.iconUrl || session.basicInfo.iconUrl || '',
+      iconUploadError: result.iconUploadError || null,
       ownerEmail: session.email,
       accessMode: result.accessMode || session.accessMode,
       provider: session.provider,
