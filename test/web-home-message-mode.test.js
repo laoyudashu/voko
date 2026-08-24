@@ -77,7 +77,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /class="home-access-row home-access-visitor-row"/);
   assert.match(html, /class="home-access-row home-access-protocol-row"/);
   assert.match(html, />A2A Card<\/span>/);
-  assert.match(html, /data-voko-copy-value="im-home-uid"/);
+  assert.match(html, /class="home-access-compact-item home-access-copy-item"[^>]*data-voko-copy-value="im-home-uid"[^>]*data-voko-copy-icon-target="\.home-copy-action-icon"[^>]*>[\s\S]*?IM UID/);
   assert.match(html, />IM UID<\/span>/);
   assert.match(html, /\.home-access-protocol-row\{grid-template-columns:minmax\(0,\.9fr\) minmax\(0,\.85fr\) minmax\(0,1\.25fr\);gap:6px\}/);
   assert.match(html, /\.home-access-compact-item\+\.home-access-compact-item\{border-left:1px solid #d9e0e8;padding-left:6px\}/);
@@ -95,7 +95,8 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.doesNotMatch(html, /data-role="gen-owner-link"/);
   assert.doesNotMatch(html, /data-owner-agent/);
   assert.match(html, /href="\/trusted-remote"/);
-  assert.match(html, /class="voko-copy-button home-a2a-declare-link" href="\/agents\/agent-home\/caps"/);
+  assert.match(html, /class="home-access-compact-item home-access-compact-link home-a2a-declare-link" href="\/agents\/agent-home\/caps"/);
+  assert.match(html, /home-a2a-declare-link[^>]*>[\s\S]*?A2A Card[\s\S]*?voko-copy-button[\s\S]*?<\/a>/);
   assert.doesNotMatch(html, /home-a2a-declare-link[^>]*data-voko-copy/);
   assert.match(html, /\.home-copy-icon\{display:inline-flex/);
   assert.match(html, /<col style="width:35%"><col style="width:13%">/);
@@ -122,7 +123,7 @@ test('home keeps the A2A Card copy action after capabilities are declared and pu
   const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
   const html = await response.text();
   assert.equal(response.status, 200);
-  assert.match(html, /data-voko-copy-value="https:[^"]+\/a2a\/agents\/agent-home\/\.well-known\/agent-card\.json"/);
+  assert.match(html, /class="home-access-compact-item home-access-copy-item"[^>]*data-voko-copy-value="https:[^"]+\/a2a\/agents\/agent-home\/\.well-known\/agent-card\.json"[^>]*data-voko-copy-icon-target="\.home-copy-action-icon"[^>]*>[\s\S]*?A2A Card/);
   assert.doesNotMatch(html, /home-a2a-declare-link/);
 });
 
