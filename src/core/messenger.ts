@@ -13,6 +13,7 @@ const { isSystemMessageContent } = require('./i18n');
 const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
 const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
 const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
+const { reservedVisitorPrefix } = require('./visitor-id-policy');
 import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
 import type {
@@ -392,6 +393,15 @@ class MessageHandler extends EventEmitter {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward = false): ForwardPayload | undefined {
     const { fromUid, toUid, channelId, content, messageId, timestamp, channelType, contentType,
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
+
+    const reservedPrefix = reservedVisitorPrefix(fromUid);
+    if (reservedPrefix) {
+      console.warn(`[消息拒绝] 外部 visitorId 使用保留命名空间 prefix=${reservedPrefix} agentId=${agentId}`);
+      logEvent('message.rejected_reserved_visitor_id', {
+        level: 'warn', agentId, messageId, data: { reservedPrefix },
+      });
+      return;
+    }
 
     // 群聊消息走精简路径（@触发，跳过单聊特有的黑白名单/计费/会话模式）
     // WKSDK 有时对群消息报 channelType=1，兜底按 channelId 前缀判断

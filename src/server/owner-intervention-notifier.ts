@@ -26,6 +26,7 @@ const { logEvent } = require('../core/event-log');
 const { t, getLocale } = require('../core/i18n');
 const { settleOwnerForward } = require('../core/owner-intervention-forward');
 const { getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
+const { OWNER_INTERVENTION_TTL_MS, ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
 
 const EMAIL_REPLY_CHECKPOINT_NAMESPACE = 'owner_email_replies';
 const EMAIL_REPLY_CHECKPOINT_SCOPE = 'primary_owner';
@@ -117,6 +118,19 @@ class OwnerInterventionNotifier {
    * 处理单条记录：标记 is_sent=1 → 发送 → 更新 DB → 通知 UI
    */
   async _processRecord(record?: any) {
+    const persisted = this.db.prepare(
+      'SELECT status,expire_time FROM owner_interventions WHERE id=? LIMIT 1'
+    ).get(record.id);
+    const now = Date.now();
+    if (persisted && !['pending', 'awaiting'].includes(String(persisted.status))) return;
+    const expireTime = persisted?.expire_time ?? record.expireTime
+      ?? (record.skipReply ? null : ownerInterventionExpireTime(record.askTime));
+    if (expireTime != null && Number(expireTime) <= now) {
+      this.db.prepare(`UPDATE owner_interventions
+        SET status='expired',resolved_at=?,updated_at=?
+        WHERE id=? AND status IN ('pending','awaiting')`).run(now, now, record.id);
+      return;
+    }
     // 内存传入 skipReply 时立即落库，避免重试/重载后丢失导致轮询与 UI 误判
     if (record.skipReply) {
       try {
@@ -156,10 +170,15 @@ class OwnerInterventionNotifier {
 
       // 构造通知消息
       const locale = getLocale();
+      const deadlineText = !record.skipReply && expireTime != null
+        ? `\n${t('errors.intervention.deadline', {
+          deadline: new Date(Number(expireTime)).toLocaleString(locale === 'en' ? 'en-US' : locale === 'ja' ? 'ja-JP' : 'zh-CN'),
+        }, locale)}`
+        : '';
       const msgBody = `${t('errors.intervention.visitor', {}, locale)}${record.visitorId}
 ${t('errors.intervention.problem', {}, locale)}${record.problem}
 ${t('errors.intervention.suggestion', {}, locale)}${record.agentSuggestion || ""}
-${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}`;
+${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleString(locale === 'en' ? 'en-US' : locale === 'ja' ? 'ja-JP' : 'zh-CN')}${deadlineText}`;
 
       console.log('[OwnerInterventionNotifier] 发送通知, id:', record.id, 'channelType:', channelType);
       logEvent('owner_intervention.send_attempt', { id: record.id, agentId: record.agentId, visitorId: record.visitorId, messageId: record.parentMessageId, data: { attempt: (record.retry_count ?? record.retryCount ?? 0) + 1, channel: channelType } });
@@ -337,6 +356,14 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
 
   startEmailReplyPolling() {
     this.stopEmailReplyPolling();
+    // 旧版本创建的待回复记录没有截止时间，按原请求时间补齐 24 小时期限。
+    try {
+      this.db.prepare(`UPDATE owner_interventions
+        SET expire_time=ask_time+?,updated_at=?
+        WHERE status IN ('pending','awaiting')
+        AND COALESCE(skip_reply,0)=0
+        AND expire_time IS NULL`).run(OWNER_INTERVENTION_TTL_MS, Date.now());
+    } catch (_: any) {}
     // 清理历史脏数据：仅通知类（skip_reply / 支付成功）且已发邮件的不应再轮询
     try {
       const now = Date.now();
@@ -370,8 +397,7 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       this.db.prepare(
         `UPDATE owner_interventions
          SET status='expired', resolved_at=?, updated_at=?
-         WHERE email_message_id IS NOT NULL
-         AND status IN ('pending','awaiting')
+         WHERE status IN ('pending','awaiting')
          AND COALESCE(skip_reply, 0) = 0
          AND expire_time IS NOT NULL
          AND expire_time <= ?`
@@ -431,6 +457,8 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       ).get(event.message_id);
       let contentChanged = false;
       let storedRow = row;
+      const terminalLateReply = row && replyText
+        && ['expired', 'resolved', 'cancelled'].includes(String(row.status));
       if (row && replyText && ['pending', 'awaiting', 'replied'].includes(String(row.status))) {
         contentChanged = row.status !== 'replied';
         if (contentChanged) {
@@ -448,6 +476,13 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       if (!row) {
         logEvent('owner_intervention.email_reply_unmatched', {
           level: 'warn', id: eventId, data: { messageId: event.message_id },
+        });
+        return null;
+      }
+      if (terminalLateReply) {
+        logEvent('owner_intervention.email_reply_after_terminal', {
+          level: 'warn', id: row.id, data: { messageId: event.message_id, eventId,
+            terminalStatus: storedRow.status, action: 'discarded' },
         });
         return null;
       }

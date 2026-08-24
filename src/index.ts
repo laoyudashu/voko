@@ -959,6 +959,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { visitorId, message, agentId, messageId } = req.body || {};
       if (!agentId || !visitorId || !message) return res.json({ success: false, error: '缺少参数' });
+      const { reservedVisitorPrefix } = require('./core/visitor-id-policy');
+      const reservedPrefix = reservedVisitorPrefix(visitorId);
+      if (reservedPrefix) return res.status(400).json({ success: false,
+        code: 'VISITOR_ID_RESERVED', error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` });
       const dispatcher = (global as any).__dispatcher;
       if (!dispatcher) return res.json({ success: false, error: 'dispatcher 未初始化' });
       // 统一走 dispatcher 决策：连接就绪则 push，否则留库等 agent pull
@@ -975,6 +979,10 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     try {
       const { agentId, visitorId, content, interventionId, conversationId, sourceMessageId } = req.body || {};
       if (!agentId || !visitorId || !content) return res.json({ success: false, error: '缺少参数' });
+      const { reservedVisitorPrefix } = require('./core/visitor-id-policy');
+      const reservedPrefix = reservedVisitorPrefix(visitorId);
+      if (reservedPrefix) return res.status(400).json({ success: false,
+        code: 'VISITOR_ID_RESERVED', error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` });
       const dispatcher = (global as any).__dispatcher;
       if (!dispatcher) return res.json({ success: false, error: 'dispatcher 未初始化' });
       const preciseIntervention = isRoutingFeatureEnabled(db, 'web_intervention_precise_route_v1', true);

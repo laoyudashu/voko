@@ -40,6 +40,7 @@
   "errors.intervention.problem": "Problem: ",
   "errors.intervention.suggestion": "Suggestion: ",
   "errors.intervention.time": "Time: ",
+  "errors.intervention.deadline": "Reply deadline: {deadline} (24 hours after the intervention was created). Replies received after the deadline will be discarded and will not resume the Agent.",
   "errors.payment.agent_notification": "[Payment Notification]\nVisitor: {visitorId}\nAmount: ¥{amount}\nDescription: {description}\nOrder: {orderNo}\nTransaction: {transactionNo}",
   "errors.payment.owner_notification": "💰 Agent {agentId} received a payment of ¥{amount}.",
   "errors.payment.owner_suggestion": "Payment confirmed; no reply is required.",

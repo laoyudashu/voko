@@ -12,6 +12,8 @@ const { BANK_HEAD_OFFICES } = require('../bankHeadOffices');
 const ENDPOINTS = require('../endpoints.json');
 const { migrateOfficialHttpsUrls } = require('./https-migration');
 const { migrateLegacyCheckpoints } = require('./checkpoint-store');
+const { ownerInterventionExpireTime } = require('./owner-intervention-expiry');
+const { reservedVisitorPrefix } = require('./visitor-id-policy');
 
 type DatabaseSync = InstanceType<typeof Database>;
 type DbWrite = () => unknown | Promise<unknown>;
@@ -1729,6 +1731,9 @@ function createDatabaseAPI(db: DatabaseSync) {
 
     saveOwnerIntervention: (intervention: OwnerInterventionInput) => {
       try {
+        const reservedPrefix = reservedVisitorPrefix(intervention.visitorId);
+        if (reservedPrefix) return { success: false, code: 'VISITOR_ID_RESERVED',
+          error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` };
         let routingConversationId = intervention.routingConversationId || null;
         const explicitlyRouted = !!routingConversationId;
         if (!routingConversationId) {
@@ -1764,7 +1769,9 @@ function createDatabaseAPI(db: DatabaseSync) {
           intervention.problem,
           intervention.agentSuggestion || null,
           intervention.askTime,
-          intervention.expireTime || null,
+          intervention.skipReply
+            ? null
+            : (intervention.expireTime || ownerInterventionExpireTime(intervention.askTime)),
           intervention.status || 'pending',
           intervention.ownerReply || null,
           intervention.replyTime || null,
@@ -1860,17 +1867,26 @@ function createDatabaseAPI(db: DatabaseSync) {
     updateOwnerInterventionReply: (id: string, ownerReply: string, replyTime: number, channelType: number | string | null) => {
       try {
         const trimmedReply = (ownerReply || '').replace(/^[\n\r\s]+/, '').trim();
-        const row = db.prepare('SELECT owner_reply, agent_notified FROM owner_interventions WHERE id = ?').get(id);
+        const row = db.prepare('SELECT status, owner_reply, agent_notified FROM owner_interventions WHERE id = ?').get(id);
         if (!row) return { success: false, error: '记录不存在' };
+        if (['expired', 'resolved', 'cancelled'].includes(String(row.status))) {
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: row.status,
+            error: '介入请求已进入不可逆终态' };
+        }
         if (row.owner_reply === trimmedReply) {
           return { success: true, contentChanged: false, agentNotified: row.agent_notified === 1 };
         }
         const stmt = db.prepare(`
           UPDATE owner_interventions
           SET owner_reply = ?, reply_time = ?, status = 'replied', updated_at = ?, agent_notified = 0, channel_type = ?
-          WHERE id = ?
+          WHERE id = ? AND status NOT IN ('expired','resolved','cancelled')
         `);
-        stmt.run(trimmedReply, replyTime, Date.now(), channelType || null, id);
+        const result = stmt.run(trimmedReply, replyTime, Date.now(), channelType || null, id);
+        if (result.changes === 0) {
+          const latest = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: latest?.status || null,
+            error: '介入请求已进入不可逆终态' };
+        }
         return { success: true, contentChanged: true };
       } catch (e: any) {
         console.error('updateOwnerInterventionReply error:', e);
@@ -1916,12 +1932,24 @@ function createDatabaseAPI(db: DatabaseSync) {
 
     updateOwnerInterventionStatus: (id: string, status: string, resolvedAt: number | null) => {
       try {
+        const terminal = ['expired', 'resolved', 'cancelled'];
+        const current = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+        if (!current) return { success: false, error: '记录不存在' };
+        if (terminal.includes(String(current.status)) && current.status !== status) {
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: current.status,
+            error: '介入请求已进入不可逆终态' };
+        }
         const stmt = db.prepare(`
           UPDATE owner_interventions
           SET status = ?, resolved_at = ?, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND (status NOT IN ('expired','resolved','cancelled') OR status = ?)
         `);
-        stmt.run(status, resolvedAt || null, Date.now(), id);
+        const result = stmt.run(status, resolvedAt || null, Date.now(), id, status);
+        if (result.changes === 0) {
+          const latest = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: latest?.status || null,
+            error: '介入请求已进入不可逆终态' };
+        }
         return { success: true };
       } catch (e: any) {
         console.error('updateOwnerInterventionStatus error:', e);
@@ -1994,10 +2022,12 @@ function createDatabaseAPI(db: DatabaseSync) {
         const claimCutoff = Date.now() - 2 * 60 * 1000;
         const stmt = db.prepare(`
           SELECT * FROM owner_interventions
-          WHERE is_sent = 0 OR (is_sent = 2 AND updated_at <= ?)
+          WHERE (is_sent = 0 OR (is_sent = 2 AND updated_at <= ?))
+          AND status IN ('pending','awaiting')
+          AND (expire_time IS NULL OR expire_time > ?)
           ORDER BY ask_time ASC
         `);
-        return stmt.all(claimCutoff).map((row: OwnerInterventionRow) => ({
+        return stmt.all(claimCutoff, Date.now()).map((row: OwnerInterventionRow) => ({
           id: row.id, visitorId: row.visitor_id, agentId: row.agent_id || 'voko',
           sessionKey: row.session_key, problem: row.problem,
           agentSuggestion: row.agent_suggestion, askTime: row.ask_time,

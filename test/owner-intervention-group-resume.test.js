@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const EventEmitter = require('node:events');
 
-const { initDatabase } = require('../build/core/database');
+const { initDatabase, createDatabaseAPI } = require('../build/core/database');
 const { createDispatcher } = require('../build/core/dispatcher');
 const { MessageHandler } = require('../build/core/messenger');
 const { OwnerInterventionNotifier } = require('../build/server/owner-intervention-notifier');
@@ -224,9 +224,11 @@ test('多个 Agent 共用一次邮箱事件轮询并按 message_id 分别恢复'
     db, databaseAPI, registry: {},
     agentEmailApi: { async pollReplies({ cursor }) {
       pollCount += 1;
-      assert.equal(cursor, '0');
-      return { events: [
+      if (cursor === '0') return { events: [
         { event_id: '11', message_id: 'mail_a', raw_text: 'A 同意', replied_at: new Date().toISOString() },
+      ], next_cursor: '11', has_more: true };
+      assert.equal(cursor, '11');
+      return { events: [
         { event_id: '12', message_id: 'mail_b', raw_text: 'B 同意', replied_at: new Date().toISOString() },
       ], next_cursor: '12', has_more: false };
     } },
@@ -239,10 +241,68 @@ test('多个 Agent 共用一次邮箱事件轮询并按 message_id 分别恢复'
   try {
     await notifier._pollEmailReplies();
     assert.equal(pollCount, 1);
+    assert.deepEqual(resumed, [['agentA', 'A 同意']]);
+    await notifier._pollEmailReplies();
+    assert.equal(pollCount, 2);
     assert.deepEqual(resumed, [['agentA', 'A 同意'], ['agentB', 'B 同意']]);
     const checkpoint = db.prepare(`SELECT committed_value FROM sync_checkpoints
       WHERE namespace='owner_email_replies' AND scope_key='primary_owner'`).get();
     assert.equal(checkpoint.committed_value, '12');
+  } finally {
+    db.close();
+  }
+});
+
+test('到期介入无需邮件 ID 也会收敛，迟到邮件只推进游标', async () => {
+  const db = setupAgents();
+  const now = Date.now();
+  db.prepare(`INSERT INTO owner_interventions
+    (id,visitor_id,agent_id,session_key,problem,ask_time,expire_time,status,email_message_id,
+     agent_notified,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,0,?,?)`).run(
+      'oi_expired', 'owner', 'agentA', 'agent:agentA:owner', '过期确认', now - 1000,
+      now - 1, 'pending', 'mail_expired', now, now
+    );
+  db.prepare(`INSERT INTO owner_interventions
+    (id,visitor_id,agent_id,session_key,problem,ask_time,expire_time,status,
+     agent_notified,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,0,?,?)`).run(
+      'oi_unsent_expired', 'owner', 'agentB', 'agent:agentB:owner', '未发出确认', now - 1000,
+      now - 1, 'pending', now, now
+    );
+  db.prepare(`INSERT INTO owner_interventions
+    (id,visitor_id,agent_id,session_key,problem,ask_time,expire_time,status,
+     agent_notified,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,NULL,?,0,?,?)`).run(
+      'oi_legacy_expired', 'owner', 'agentB', 'agent:agentB:owner', '历史确认',
+      now - 25 * 60 * 60 * 1000, 'pending', now, now
+    );
+  let resumes = 0;
+  const notifier = new OwnerInterventionNotifier({
+    db, databaseAPI: {}, registry: {},
+    agentEmailApi: { async pollReplies() { return { events: [{
+      event_id: '21', message_id: 'mail_expired', status: 'replied', raw_text: '迟到回复',
+      replied_at: new Date().toISOString(),
+    }], next_cursor: '21', has_more: false }; } },
+    resumeOwnerIntervention: async () => { resumes += 1; return { success: true }; },
+  });
+  try {
+    notifier.startEmailReplyPolling();
+    notifier.stopEmailReplyPolling();
+    await notifier._pollEmailReplies();
+    const rows = db.prepare(`SELECT id,status,owner_reply FROM owner_interventions
+      WHERE id IN ('oi_expired','oi_legacy_expired','oi_unsent_expired') ORDER BY id`).all()
+      .map(row => ({ id: row.id, status: row.status, owner_reply: row.owner_reply }));
+    assert.deepEqual(rows, [
+      { id: 'oi_expired', status: 'expired', owner_reply: null },
+      { id: 'oi_legacy_expired', status: 'expired', owner_reply: null },
+      { id: 'oi_unsent_expired', status: 'expired', owner_reply: null },
+    ]);
+    assert.equal(resumes, 0);
+    assert.deepEqual(createDatabaseAPI(db).getPendingOwnerInterventions(), []);
+    const checkpoint = db.prepare(`SELECT committed_value FROM sync_checkpoints
+      WHERE namespace='owner_email_replies' AND scope_key='primary_owner'`).get();
+    assert.equal(checkpoint.committed_value, '21');
   } finally {
     db.close();
   }

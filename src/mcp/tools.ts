@@ -26,6 +26,8 @@ const { AgentProviderBindingService } = require('../core/agent-provider-binding'
 const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents');
 const { discoverProviderInstances } = require('../core/dispatcher/provider-instances');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
+const { ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
+const { reservedVisitorPrefix } = require('../core/visitor-id-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
@@ -2479,6 +2481,9 @@ function createToolHandlers(cx: McpContext) {
     // ─── 14-16. 人工介入 ───
 
     async ask_human_for_help(p: McpToolParams = {}) {
+      const reservedPrefix = reservedVisitorPrefix(p.visitorId);
+      if (reservedPrefix) return { success: false, code: 'VISITOR_ID_RESERVED',
+        error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` };
       const now = Date.now();
       const id = `mcp_${now}_${Math.random().toString(36).substr(2, 6)}`;
       const ownerChannelType = cx.getEnabledChannel?.()?.name || null;
@@ -2504,16 +2509,18 @@ function createToolHandlers(cx: McpContext) {
       const backendType = backendRow?.[0]?.backend_type || 'openclaw';
       const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
       cx.exec(`
-        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
-        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
-      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, sourceMessageId, routingConversationId]);
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
+        VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
+      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null,
+        now, ownerInterventionExpireTime(now), ownerChannelType, now, now, p.visitorId, targetChannelId,
+        targetChannelType, sourceMessageId, routingConversationId]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
           id, visitorId: p.visitorId, agentId: p.agentId,
           sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
           problem: p.problem, agentSuggestion: p.suggestion || '',
-          askTime: now, skipReply: 0, sourceSenderUid: p.visitorId,
+          askTime: now, expireTime: ownerInterventionExpireTime(now), skipReply: 0, sourceSenderUid: p.visitorId,
           routingConversationId,
           targetChannelId, targetChannelType, sourceMessageId,
         });
@@ -2522,9 +2529,15 @@ function createToolHandlers(cx: McpContext) {
     },
 
     async check_human_replies(p: McpToolParams = {}) {
+      const now = Date.now();
+      cx.exec(`UPDATE owner_interventions
+        SET status='expired',resolved_at=?,updated_at=?
+        WHERE agent_id=? AND status IN ('pending','awaiting')
+        AND expire_time IS NOT NULL AND expire_time<=?`, [now, now, p.agentId, now]);
       // 按 id 查单条
       if (p.id) {
-        const r = cx.query(`SELECT * FROM owner_interventions WHERE id=? AND agent_id=?`, [p.id, p.agentId])[0];
+        const r = cx.query(`SELECT * FROM owner_interventions
+          WHERE id=? AND agent_id=? AND status NOT IN ('expired','resolved','cancelled')`, [p.id, p.agentId])[0];
         return {
           success: true,
           interventions: r ? [{
@@ -2557,7 +2570,7 @@ function createToolHandlers(cx: McpContext) {
       const since = automaticCursor ? checkpoint!.timestamp : p.since;
 
       // 构造 SQL
-      const conditions = [`agent_id=?`, `status!='resolved'`];
+      const conditions = [`agent_id=?`, `status NOT IN ('expired','resolved','cancelled')`];
       const params: unknown[] = [p.agentId];
       if (p.visitorId) {
         conditions.push(`visitor_id=?`);
@@ -2608,7 +2621,8 @@ function createToolHandlers(cx: McpContext) {
 
     async close_human_request(p: McpToolParams = {}) {
       const now = Date.now();
-      const result = cx.exec(`UPDATE owner_interventions SET status='resolved', resolved_at=?, updated_at=? WHERE id=? AND agent_id=?`, [now, now, p.id, p.agentId]);
+      const result = cx.exec(`UPDATE owner_interventions SET status='resolved', resolved_at=?, updated_at=?
+        WHERE id=? AND agent_id=? AND status NOT IN ('expired','resolved','cancelled')`, [now, now, p.id, p.agentId]);
       return { success: true, closed: (result?.changes || 0) > 0 };
     },
 

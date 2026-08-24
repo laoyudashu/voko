@@ -44,6 +44,33 @@ test('check_human_replies composite cursor does not skip rows sharing a timestam
   }
 });
 
+test('check_human_replies atomically expires due rows and hides every terminal status', async () => {
+  const { db, handlers } = setup();
+  try {
+    const now = Date.now();
+    for (const [id, status, expireTime] of [
+      ['due', 'pending', now - 1],
+      ['expired', 'expired', now - 1000],
+      ['resolved', 'resolved', now + 1000],
+      ['cancelled', 'cancelled', now + 1000],
+      ['active', 'pending', now + 1000],
+    ]) {
+      db.prepare(`INSERT INTO owner_interventions
+        (id,visitor_id,session_key,problem,ask_time,expire_time,status,created_at,updated_at,agent_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+          id, 'visitor-a', 'session-a', id, now, expireTime, status, now, now, 'agent-a'
+        );
+    }
+    const result = await handlers.check_human_replies({ agentId: 'agent-a', since: 1, limit: 20 });
+    assert.deepEqual(result.interventions.map(row => row.id), ['active']);
+    assert.equal(db.prepare("SELECT status FROM owner_interventions WHERE id='due'").get().status, 'expired');
+    const byId = await handlers.check_human_replies({ agentId: 'agent-a', id: 'expired' });
+    assert.deepEqual(byId.interventions, []);
+  } finally {
+    db.close();
+  }
+});
+
 test('check_payments composite cursor does not skip rows sharing a timestamp', async () => {
   const { db, handlers } = setup();
   try {

@@ -176,7 +176,7 @@ class AgentEmailApi {
     if (key === this.lastQueryWarningKey && now - this.lastQueryWarningAt < 5 * 60 * 1000) return;
     this.lastQueryWarningKey = key;
     this.lastQueryWarningAt = now;
-    console.warn('[AgentEmailApi] queryReply 异常:', message);
+    console.warn('[AgentEmailApi] 邮件回复查询异常:', message);
   }
 
   /**
