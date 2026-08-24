@@ -1463,6 +1463,7 @@ function createWebRouter(handlers, db, opts={}){
       // 会话
       let convHtml='<p class="meta">'+L('web.agent.no_conversations')+'</p>';
       if(convs.length){
+        const listMessageRenderer=createMessageRenderer(messageLabels(T));
         let e2eeStates={};
         if(e2eeDebugUi){
           try{e2eeStates=await opts.e2eeRuntime?.getChannelEncryptionStatuses?.(agentId,convs.map(c=>String(c.channelId)))||{};}catch(_){e2eeStates={};}
@@ -1474,7 +1475,7 @@ function createWebRouter(handlers, db, opts={}){
         convHtml='<div class="table-wrap"><table><thead><tr><th>'+L('web.agent.col.visitor')+'</th><th>'+L('web.agent.col.last_msg')+'</th><th style="text-align:center">'+L('web.agent.col.last_from')+'</th><th style="text-align:center">'+L('web.agent.col.time')+'</th></tr></thead><tbody>';
         for(const c of convs){
           const lastFrom='<span class="meta">'+(c.lastIsMe===2||c.lastContentType===11?L('web.agent.last_from.system'):(c.needsReply?L('web.agent.last_from.visitor'):L('web.agent.last_from.ai')))+'</span>';
-          const msg=esc((c.lastMessage||'').length>60?(c.lastMessage||'').substring(0,60)+'…':c.lastMessage||'');
+          const msg=listMessageRenderer.previewHtml(c.lastContentType,c.lastMessage,60);
           const unreadBadge=c.unreadCount>0?' <span class="badge" style="background:#e74c3c;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px">'+c.unreadCount+'</span>':'';
           const visitorName=String(convNickMap[c.channelId]||c.name||c.channelId||'');
           const visitorLink='<a href="/agents/'+aId+'/c/'+esc(c.channelId)+'" title="'+esc(visitorName)+'" aria-label="'+esc(visitorName)+'" style="display:inline-block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(visitorName)+'</a>';

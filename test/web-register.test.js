@@ -92,6 +92,23 @@ async function setupServer(t, handlers, db) {
 }
 
 describe('Web POST /agent/add 注册流程', () => {
+  it('login renders six code cells, accepts paste through one input, and auto-submits at six digits', async (t) => {
+    const db = createDb(null);
+    const server = await setupServer(t, {}, db);
+    const response = await fetch(server.baseUrl + '/login?email=owner%40example.com');
+    const html = await response.text();
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual((html.match(/class="otp-cell(?: active)?"/g) || []).length, 6);
+    assert.match(html, /id="code" class="otp-input"[^>]*maxlength="6"[^>]*inputmode="numeric"[^>]*autocomplete="one-time-code"/);
+    assert.match(html, /name="action" value="verify"/);
+    assert.match(html, /codeInput\.value\.replace\(\/\\D\/g,""\)\.slice\(0,6\)/);
+    assert.match(html, /value\.length===6&&value!==lastSubmittedCode/);
+    assert.match(html, /loginForm\.requestSubmit\(\)/);
+    assert.match(html, /class="desc bug-report-subtle"/);
+    assert.doesNotMatch(html, /<button[^>]*type="submit"/);
+  });
+
   it('OAuth login routes proxy the session contract without exposing the token in HTML', async (t) => {
     const db = createDb(null);
     const startedProviders = [];

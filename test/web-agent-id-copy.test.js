@@ -56,6 +56,33 @@ test('agent detail truncates long visitor names and keeps the full name in a too
   assert.match(html, /width:180px;max-width:180px;white-space:nowrap;overflow:hidden/);
 });
 
+test('agent detail renders an attachment filename instead of raw JSON in the last-message column', async (t) => {
+  const attachment = JSON.stringify({ name: '1.tx.txt', fileName: '1.tx.txt',
+    url: '/api/e2ee-v2/attachments/e2ee-de05725a-89de-4d40-b034-f8db3f709b52?agentId=lawyer',
+    size: 5, mimeType: 'text/plain' });
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'lawyer', agentName: 'Lawyer', backendType: 'others', publishStatus: 'published' }] }),
+    get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
+    list_conversations: async () => ({ conversations: [{ channelId: 'visitor-file', name: 'File visitor',
+      lastMessage: attachment, lastTimestamp: 1, lastIsMe: 0, lastContentType: 1, needsReply: true, unreadCount: 0 }], total: 1 }),
+    list_groups: async () => ({ groups: [], total: 0 }),
+  };
+  const app = express();
+  app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, { refreshUserProfiles: async () => {} }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/lawyer`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /class="voko-paperclip-icon"/);
+  assert.match(html, />1\.tx\.txt</);
+  assert.doesNotMatch(html, /&quot;fileName&quot;/);
+});
+
 test('agent detail hides E2EE state in production and shows only active state in debug mode', async (t) => {
   const previousDebug = process.env.VOKO_E2EE_DEBUG_UI;
   delete process.env.VOKO_E2EE_DEBUG_UI;
