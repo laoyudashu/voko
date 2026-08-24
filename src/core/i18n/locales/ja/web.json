@@ -652,6 +652,7 @@
   "web.home.access.setup": "設定",
   "web.home.access.copy_visitor": "訪問者リンクをコピー",
   "web.home.access.copy_a2a": "Agent Card URL をコピー",
+  "web.home.access.declare_a2a": "能力宣言へ移動",
   "web.home.access.copy_im_uid": "IM UID をコピー",
   "web.home.access.external": "REST/Webhook",
   "web.home.access.external_loading": "取得中",

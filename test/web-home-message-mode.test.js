@@ -5,7 +5,7 @@ const express = require('express');
 const test = require('node:test');
 const { createWebRouter } = require('../build/web');
 
-function createDb() {
+function createDb(options = {}) {
   const runtime = {
     port: 3100,
     pid: 1234,
@@ -20,6 +20,10 @@ function createDb() {
             return { data: JSON.stringify({ 'owner@example.com': 'redacted-test-token' }) };
           }
           if (sql.includes("type='runtime'")) return { data: JSON.stringify(runtime) };
+          if (sql.includes('SELECT did,publish_status,ability FROM agents')) return {
+            did: 'did:wba:example.test:agent-home', publish_status: options.publishStatus || 'published',
+            ability: options.ability == null ? null : JSON.stringify(options.ability),
+          };
           if (sql.includes('SELECT short_link_url, imUid FROM agents')) return { short_link_url: null, imUid: 'im-home-uid' };
           return null;
         },
@@ -29,10 +33,10 @@ function createDb() {
   };
 }
 
-async function startApp(handlers) {
+async function startApp(handlers, options = {}) {
   const app = express();
   app.use(express.json());
-  app.use(createWebRouter(handlers, createDb(), { trustedRemoteEnabled: true }));
+  app.use(createWebRouter(handlers, createDb(options), { trustedRemoteEnabled: true, a2aModule: options.a2aModule }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
@@ -91,7 +95,8 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.doesNotMatch(html, /data-role="gen-owner-link"/);
   assert.doesNotMatch(html, /data-owner-agent/);
   assert.match(html, /href="\/trusted-remote"/);
-  assert.doesNotMatch(html, /href="\/agents\/agent-home\/caps"/);
+  assert.match(html, /class="voko-copy-button home-a2a-declare-link" href="\/agents\/agent-home\/caps"/);
+  assert.doesNotMatch(html, /home-a2a-declare-link[^>]*data-voko-copy/);
   assert.match(html, /\.home-copy-icon\{display:inline-flex/);
   assert.match(html, /<col style="width:35%"><col style="width:13%">/);
   assert.match(html, /\.home-access-action\{margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important/);
@@ -101,6 +106,24 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(source, /\.home-agent-short button,\.home-agent-short a/);
   assert.match(source, /setAgentAccessAvailability\(row,data\.imConnected===true\)/);
   assert.match(source, /if\(d\.pubStatus==="unpublished"\)/);
+});
+
+test('home keeps the A2A Card copy action after capabilities are declared and published', async (t) => {
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'agent-home', agentName: 'Home Agent', backendType: 'qwen', publishStatus: 'published' }] }),
+    get_status: async () => ({ success: true, agent: { imConnected: true, pullReady: true } }),
+  };
+  const server = await startApp(handlers, {
+    ability: [{ name: 'answer', description: 'Answer questions', tags: ['qa'], fields: [] }],
+    a2aModule: { enabled: true },
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /data-voko-copy-value="https:[^"]+\/a2a\/agents\/agent-home\/\.well-known\/agent-card\.json"/);
+  assert.doesNotMatch(html, /home-a2a-declare-link/);
 });
 
 test('home centers pagination in the search toolbar', async (t) => {

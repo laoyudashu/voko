@@ -862,6 +862,7 @@
   "web.home.access.setup": "设置",
   "web.home.access.copy_visitor": "复制访客链接",
   "web.home.access.copy_a2a": "复制 Agent Card 地址",
+  "web.home.access.declare_a2a": "前往能力声明",
   "web.home.access.copy_im_uid": "复制 IM UID",
   "web.home.access.external": "REST/Webhook",
   "web.home.access.external_loading": "获取中",
