@@ -4,6 +4,7 @@
   "register.login.desc": "输入邮箱获取验证码",
   "register.login.email": "邮箱",
   "register.login.send_code": "获取验证码",
+  "register.login.sending": "送信中…",
   "register.login.code": "验证码",
   "register.login.code_ph": "输入 6 位验证码",
   "register.login.login_btn": "登录",

@@ -106,6 +106,13 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /value\.length===6&&value!==lastSubmittedCode/);
     assert.match(html, /loginForm\.requestSubmit\(\)/);
     assert.match(html, /class="desc bug-report-subtle"/);
+    assert.match(html, /class="send-code-btn" id="send-btn"/);
+    assert.match(html, /id="send-feedback" class="alert send-code-feedback" aria-live="polite"/);
+    assert.match(html, /b\.textContent=I18N_SENDING/);
+    assert.match(html, /alert-success send-code-feedback active/);
+    assert.match(html, /alert-error send-code-feedback active/);
+    assert.match(html, /data-voko-language-switcher="1"/);
+    assert.match(html, /data-voko-language-select="1"/);
     assert.doesNotMatch(html, /<button[^>]*type="submit"/);
   });
 

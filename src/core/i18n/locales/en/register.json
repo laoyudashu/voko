@@ -4,6 +4,7 @@
   "register.login.desc": "Enter email to get code",
   "register.login.email": "Email",
   "register.login.send_code": "Send code",
+  "register.login.sending": "Sending…",
   "register.login.code": "Code",
   "register.login.code_ph": "Enter 6-digit code",
   "register.login.login_btn": "Login",
