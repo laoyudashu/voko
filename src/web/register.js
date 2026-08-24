@@ -324,6 +324,7 @@ function wizardJs(t) {
     next: t('register.flow.next'), enter: t('register.done.start'),
     detecting: t('register.flow.detecting'), detected: t('register.flow.detected'),
     local: t('register.flow.provider.local'), more: t('register.flow.provider.more'),
+    noDetected: t('register.flow.provider.none_detected'),
     others: t('db.backend_type.others'), othersDesc: t('register.flow.provider.others_desc'),
     detectedTag: t('register.flow.detected_tag'), manualTag: t('register.flow.manual_tag'),
     instance: t('register.flow.instance.title'), deliveryDesc: t('register.flow.delivery.for_provider'),
@@ -381,16 +382,16 @@ function wizardJs(t) {
   function openProviderStep(notifyError){
     if(state&&state.status==='created')return;
     show(1);
-    if(state&&state.environment){renderProviders(state.environment);next.disabled=false;return}
+    if(state&&state.environment){renderProviders(state.environment);next.disabled=!(state.environment.detected||[]).length;return}
     next.disabled=true;
     if(!regId){setDetectionPending();return}
-    beginDetection().then(function(){if(step===1)next.disabled=false}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
+    beginDetection().then(function(){if(step===1)next.disabled=!(state&&state.environment&&(state.environment.detected||[]).length)}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
   }
   steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){openProviderStep(false)}else if(target===2&&state&&state.provider){show(2)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
   function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
   function readDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||'null');return d&&d.email===root.dataset.email?d:null}catch(_){return null}}
-  function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
-  function applyDraftFields(d){if(!d)return;nameInput.value=d.name||nameInput.value;document.getElementById('wf-desc').value=d.description||'';if(d.category)document.getElementById('wf-category').value=d.category;selectedProvider=d.provider||'';selectedInstance=d.instance||'';selectedAccessMode=d.accessMode==='public'?'public':'private';moreProvidersExpanded=!!d.moreExpanded}
+  function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode}))}catch(_){}}
+  function applyDraftFields(d){if(!d)return;nameInput.value=d.name||nameInput.value;document.getElementById('wf-desc').value=d.description||'';if(d.category)document.getElementById('wf-category').value=d.category;selectedProvider=d.provider||'';selectedInstance=d.instance||'';selectedAccessMode=d.accessMode==='public'?'public':'private'}
   function restore(d){
     state=d;
     if(d.basicInfo){nameInput.value=d.basicInfo.agentName||nameInput.value;document.getElementById('wf-desc').value=d.basicInfo.description||'';document.getElementById('wf-category').value=d.basicInfo.category||'general'}
@@ -401,7 +402,7 @@ function wizardJs(t) {
     else if(d.status==='ready_to_create'){if(d.environment)renderProviders(d.environment);renderDeliveries(d);renderAccess();show(4)}
     else if(d.status==='created'){renderResult(d);show(4)}
     else show(1);
-    next.disabled=false;
+    next.disabled=step===1&&!(d.environment&&d.environment.detected&&d.environment.detected.length);
   }
   function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)}
   function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
@@ -418,19 +419,17 @@ function wizardJs(t) {
   nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===2)next.disabled=false});
   function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag '+(detected?'':'warn')+'">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
   function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
-  var moreProvidersExpanded=false;
   function renderProviders(env){
-    var detected=env.detected||[];if(!selectedProvider)selectedProvider=detected[0]?detected[0].type:'others';
+    var detected=env.detected||[];if(!detected.some(function(p){return p.type===selectedProvider})){selectedProvider=detected[0]?detected[0].type:'';selectedInstance=''}
     var html='<div class="group-label">'+escHtml(I.local)+'</div><div class="provider-list">';
     detected.forEach(function(p){html+=providerCard(p,true)+instancePanel(p)});
-    html+='</div><details id="wf-more-providers"'+(moreProvidersExpanded?' open':'')+'><summary class="group-label">'+escHtml(I.more)+'</summary><div class="provider-list">';
-    (env.more||[]).forEach(function(p){html+=providerCard(p,false)+instancePanel(p)});
-    html+=providerCard({type:'others',label:I.others,instances:[]},false)+'</div></details>';
+    html+=detected.length?'</div>':'<div class="provider-empty" role="status">'+escHtml(I.noDetected)+'</div></div>';
     document.getElementById('wf-providers').innerHTML=html;
-    document.getElementById('wf-more-providers').addEventListener('toggle',function(e){moreProvidersExpanded=e.target.open;saveDraft()});
     document.getElementById('wf-detect').textContent=I.detected.replace('{providers}',env.summary.providerCount).replace('{modes}',env.summary.deliveryModeCount);
+    if(step===1)next.disabled=!detected.length;
+    if(selectedProvider==='workbuddy'&&workbuddyLoad==='idle')setTimeout(loadWorkBuddy,0);
   }
-  function loadWorkBuddy(){workbuddyLoad='loading';workbuddyError='';renderProviders(state.environment);api('discover_provider_instances',{providerType:'workbuddy'}).then(function(d){var all=(state.environment.detected||[]).concat(state.environment.more||[]),p=all.find(function(x){return x.type==='workbuddy'});if(p)p.instances=d.instances||[];workbuddyLoad='done';renderProviders(state.environment)}).catch(function(e){workbuddyLoad='error';workbuddyError=e.message||I.error;renderProviders(state.environment)})}
+  function loadWorkBuddy(){workbuddyLoad='loading';workbuddyError='';renderProviders(state.environment);api('discover_provider_instances',{providerType:'workbuddy'}).then(function(d){var p=(state.environment.detected||[]).find(function(x){return x.type==='workbuddy'});if(p)p.instances=d.instances||[];workbuddyLoad='done';renderProviders(state.environment)}).catch(function(e){workbuddyLoad='error';workbuddyError=e.message||I.error;renderProviders(state.environment)})}
   document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment);if(selectedProvider==='workbuddy')loadWorkBuddy()}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
@@ -458,7 +457,7 @@ function wizardJs(t) {
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
   next.onclick=function(){
     next.disabled=true;
-    if(step===1){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){state=d;applySuggestion(d.suggestedBasicInfo);show(2);next.disabled=false}).catch(fail);return}
+    if(step===1){if(!selectedProvider){next.disabled=true;return}api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){state=d;applySuggestion(d.suggestedBasicInfo);show(2);next.disabled=false}).catch(fail);return}
     if(step===2){checkName().then(function(ok){if(!ok){next.disabled=false;return}return api('set_basic_info',basicInfoPayload()).then(function(d){renderDeliveries(d);show(3);next.disabled=false})}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
     if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
@@ -1111,14 +1110,21 @@ function createRegisterRouter(handlers, db, options = {}) {
 
           const started = await registrationOrchestrator.start({ email });
           if (!started.success) throw new Error(started.error || '无法启动注册流程');
-          const basic = registrationOrchestrator.setBasicInfo(started.registrationId, { agentName, category, description });
-          if (!basic.success) throw new Error(basic.error || '基本信息无效');
           const selectedProvider = registrationOrchestrator.selectProvider(started.registrationId, {
             providerType: backendType,
-            instanceId: req.body.openclawAgent || req.body.hermesProfile || undefined,
+            instanceId: req.body.backendInstanceId || req.body.workbuddyAgent
+              || req.body.openclawAgent || req.body.hermesProfile || undefined,
           });
           if (!selectedProvider.success) throw new Error(selectedProvider.error || 'Agent 类型无效');
-          const defaultModes = selectedProvider.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
+          const basic = registrationOrchestrator.setBasicInfo(started.registrationId, {
+            agentName, category, description,
+            tags: req.body.tags ? String(req.body.tags).replace(/，/g, ',').split(',').map(item => item.trim()).filter(Boolean) : [],
+            iconUrl: req.body.iconUrl || '',
+            contactPhone: req.body.contactPhone || req.body.contact_phone || '',
+            address: req.body.address || '',
+          });
+          if (!basic.success) throw new Error(basic.error || '基本信息无效');
+          const defaultModes = basic.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
           const selectedDelivery = registrationOrchestrator.selectDelivery(started.registrationId, { deliveryModes: defaultModes });
           if (!selectedDelivery.success) throw new Error(selectedDelivery.error || '消息接收方式无效');
           const completed = await registrationOrchestrator.complete(started.registrationId);

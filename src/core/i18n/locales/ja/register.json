@@ -83,6 +83,7 @@
   "register.flow.detecting": "● ローカル Agent 環境を検出中…",
   "register.flow.detected": "✓ {providers} 個の Agent 環境と {modes} 種類の受信方法を検出しました",
   "register.flow.provider.local": "ローカルで検出",
+  "register.flow.provider.none_detected": "利用可能なローカル Agent が検出されませんでした。対応する Agent をインストールまたは起動して、もう一度お試しください。",
   "register.flow.provider.more": "その他の Agent タイプ",
   "register.flow.provider.others_desc": "ローカルでは未検出です。手動で選択でき、既定では能動取得を使用します。",
   "register.flow.detected_tag": "検出済み",

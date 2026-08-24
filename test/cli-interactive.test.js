@@ -45,12 +45,18 @@ test('interactive registration follows the shared state machine and keeps pull e
   const buffered = outputBuffer();
   const manage = async (params) => {
     calls.push(params);
-    if (params.action === 'start') return { success: true, registrationId: 'reg-1', nextAction: { type: 'submit_basic_info' } };
-    if (params.action === 'set_basic_info') return {
+    if (params.action === 'start') return {
       success: true, registrationId: 'reg-1', nextAction: { type: 'select_provider' },
-      environment: { detected: [], fallback: { type: 'others', label: 'Others', instances: [] } },
+      environment: { detected: [{ type: 'workbuddy', label: 'WorkBuddy', instances: [] }], more: [{ type: 'codex', label: 'Codex' }], fallback: { type: 'others', label: 'Others', instances: [] } },
+    };
+    if (params.action === 'discover_provider_instances') return {
+      success: true, instances: [{ id: 'expert-one', name: 'Expert One' }],
     };
     if (params.action === 'select_provider') return {
+      success: true, registrationId: 'reg-1', suggestedBasicInfo: { agentName: 'Expert One', description: 'Suggested' },
+      deliveryModes: [{ mode: 'pull', label: 'Pull', status: 'ready', required: true, selected: true }],
+    };
+    if (params.action === 'set_basic_info') return {
       success: true, registrationId: 'reg-1', deliveryModes: [{ mode: 'pull', label: 'Pull', status: 'ready', required: true, selected: true }],
     };
     if (params.action === 'select_delivery') return { success: true, registrationId: 'reg-1' };
@@ -60,11 +66,28 @@ test('interactive registration follows the shared state machine and keeps pull e
   const result = await runInteractiveRegistration({}, {
     output: buffered.output,
     manage,
-    question: questions(['Headless Agent', 'Server agent', 'general', '', '']),
+    question: questions(['', '', '', '', '', '', '', '', '']),
   });
   assert.equal(result.result.agentId, 'agent-1');
+  assert.ok(calls.some((item) => item.action === 'discover_provider_instances'));
+  assert.equal(calls.find((item) => item.action === 'select_provider').instanceId, 'expert-one');
+  assert.equal(calls.find((item) => item.action === 'set_basic_info').agentName, 'Expert One');
   assert.deepEqual(calls.find((item) => item.action === 'select_delivery').deliveryModes, []);
   assert.equal(calls.find((item) => item.action === 'complete').accessMode, 'private');
+  assert.doesNotMatch(buffered.text(), /Codex|Others/);
+});
+
+test('interactive registration rejects an empty detected list without offering more or fallback providers', async () => {
+  const buffered = outputBuffer();
+  await assert.rejects(() => runInteractiveRegistration({}, {
+    output: buffered.output,
+    manage: async () => ({
+      success: true, registrationId: 'reg-empty', nextAction: { type: 'select_provider' },
+      environment: { detected: [], more: [{ type: 'codex', label: 'Codex' }], fallback: { type: 'others', label: 'Others' } },
+    }),
+    question: questions([]),
+  }), /No local Agent providers were detected/);
+  assert.doesNotMatch(buffered.text(), /Codex|Others/);
 });
 
 test('graphical-session detection preserves desktops and rejects SSH/headless sessions', () => {

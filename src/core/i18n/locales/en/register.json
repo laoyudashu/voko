@@ -83,6 +83,7 @@
   "register.flow.detecting": "● Detecting local Agent environments…",
   "register.flow.detected": "✓ Detected {providers} Agent environments and {modes} delivery modes",
   "register.flow.provider.local": "Detected locally",
+  "register.flow.provider.none_detected": "No local Agent providers were detected. Install or start a supported Agent and try again.",
   "register.flow.provider.more": "More Agent types",
   "register.flow.provider.others_desc": "Not detected locally; it can still be selected manually and will use active pull by default.",
   "register.flow.detected_tag": "Detected",

@@ -27,6 +27,24 @@ const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/
 const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
+const PROVIDER_DISPLAY_PRIORITY = [
+  'workbuddy', 'claude-code', 'codex', 'openclaw', 'hermes',
+  'github-copilot', 'cursor', 'gemini', 'codebuddy', 'qwen-office',
+  'qwen-code', 'trae', 'goose', 'opencode', 'cline', 'kiro', 'aider',
+  'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode', 'doubao',
+];
+const PROVIDER_DISPLAY_RANK = new Map(PROVIDER_DISPLAY_PRIORITY.map((type, index) => [type, index]));
+
+function sortProviderDisplay(items = []) {
+  return [...items].sort((left, right) => {
+    const leftRank = PROVIDER_DISPLAY_RANK.get(left.type) ?? PROVIDER_DISPLAY_PRIORITY.length;
+    const rightRank = PROVIDER_DISPLAY_RANK.get(right.type) ?? PROVIDER_DISPLAY_PRIORITY.length;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    const byLabel = String(left.label || left.type).localeCompare(String(right.label || right.type));
+    return byLabel || String(left.type).localeCompare(String(right.type));
+  });
+}
+
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
 const services = new WeakMap();
@@ -663,9 +681,10 @@ class RegistrationOrchestrator {
       }
     } catch (_) { /* 检测失败不影响整体环境扫描 */ }
 
-    const deliveryCount = new Set(detected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
+    const sortedDetected = sortProviderDisplay(detected);
+    const deliveryCount = new Set(sortedDetected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
-      detected,
+      detected: sortedDetected,
       more,
       fallback: {
         type: 'others',
@@ -673,8 +692,8 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('others'),
       },
       summary: {
-        providerCount: detected.length,
-        instanceCount: detected.reduce((sum, item) => sum + Math.max(item.instances.length, 1), 0),
+        providerCount: sortedDetected.length,
+        instanceCount: sortedDetected.reduce((sum, item) => sum + Math.max(item.instances.length, 1), 0),
         deliveryModeCount: deliveryCount,
       },
     };
@@ -1184,7 +1203,12 @@ class RegistrationOrchestrator {
       description: selected?.description || '',
       category: selected?.category || 'general',
       tags: selected?.tags || [],
-      iconUrl: selected?.avatar || '',
+      // A plugin-relative avatar is only an internal candidate. It is never a public URL
+      // and must not be persisted until the normal validated upload/storage path can run.
+      iconUrl: '',
+      iconCandidate: selected?.avatar
+        ? { kind: 'workbuddy_plugin_avatar', relativePath: selected.avatar, source: selected.source }
+        : null,
       contactPhone: selected?.contactPhone || '',
       address: selected?.address || '',
     };
@@ -1586,4 +1610,5 @@ module.exports = {
   detectCurrentAgentType,
   currentAgentTypeFromEnvironment,
   currentAgentTypeFromProcessRows,
+  sortProviderDisplay,
 };

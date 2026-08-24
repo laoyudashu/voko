@@ -16,6 +16,14 @@ describe('Lite MCP and channel contracts', () => {
     const whoami = tools.find((tool) => tool.name === 'voko_whoami');
     assert.ok(whoami);
     assert.match(whoami.description, /select an Agent explicitly/);
+    const registration = tools.find((tool) => tool.name === 'voko_manage_agent_registration');
+    assert.ok(registration.inputSchema.properties.action.enum.includes('reselect_provider'));
+    for (const field of ['tags', 'iconUrl', 'contactPhone', 'address']) {
+      assert.ok(registration.inputSchema.properties[field], `missing registration field ${field}`);
+    }
+    assert.match(registration.inputSchema.properties.action.description, /reselect_provider/);
+    const bindOnce = tools.find((tool) => tool.name === 'voko_bind_agent_instance_once');
+    assert.deepEqual(bindOnce.inputSchema.required, ['agentId', 'backendInstanceId']);
     assert.equal(tools.some((tool) => tool.name === 'voko_prepare_identity_handshake' || tool.name === 'voko_complete_identity_handshake'), false);
   });
 

@@ -83,6 +83,7 @@
   "register.flow.detecting": "● 正在检测本机 Agent 环境…",
   "register.flow.detected": "✓ 已检测到 {providers} 个 Agent 环境、{modes} 种消息接收方式",
   "register.flow.provider.local": "本机已检测到",
+  "register.flow.provider.none_detected": "未检测到可用的本机 Agent。请安装或启动受支持的 Agent 后重试。",
   "register.flow.provider.more": "更多 Agent 类型",
   "register.flow.provider.others_desc": "未检测到此类型；仍可手动选择，默认使用主动获取消息。",
   "register.flow.detected_tag": "已检测到",

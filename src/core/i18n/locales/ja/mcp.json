@@ -25,7 +25,7 @@
   "mcp.tool.verify_agent_email.p.category": "Agent 分类（可选，默认 general=通用助手；其它可选值见服务端 /api/agent-categories，如 education/finance/travel/entertainment/medical/other）",
   "mcp.tool.verify_agent_email.p.description": "Agent 描述（可选）",
   "mcp.tool.manage_agent_registration.desc": "Web、CLI、MCP、ローカル API で共有される再開可能な状態機械を通じて Agent を登録・追加します。各応答には registrationId、現在の状態、nextAction が含まれます。",
-  "mcp.tool.manage_agent_registration.p.action": "登録アクション：start、verify_email、set_basic_info、inspect_environment、select_provider、select_delivery、configure_delivery、configuration_status、test_delivery、complete、status",
+  "mcp.tool.manage_agent_registration.p.action": "登録アクション：start、verify_email、set_basic_info、inspect_environment、select_provider、reselect_provider、select_delivery、configure_delivery、configuration_status、preflight_delivery、test_delivery、loopback_test、cleanup_loopback、complete、status",
   "mcp.tool.manage_agent_registration.p.registrationId": "登録セッション ID。start 以外では必須です",
   "mcp.tool.manage_agent_registration.p.providerType": "Agent タイプ。該当するタイプがない場合は others を選択します",
   "mcp.tool.manage_agent_registration.p.instanceId": "ローカルで検出された Provider インスタンス ID。複数インスタンスの場合は必須です",

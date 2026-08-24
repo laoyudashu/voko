@@ -107,11 +107,19 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
 
     if (state.nextAction?.type === 'select_provider' || state.nextAction?.type === 'select_provider_instance') {
       const detected = Array.isArray(state.environment?.detected) ? state.environment.detected : [];
-      const providers = [...detected, state.environment?.fallback || { type: 'others', label: 'Others', instances: [] }];
+      const providers = detected;
+      if (!providers.length) throw new Error('No local Agent providers were detected; use MCP registration to select a provider explicitly');
       write(output, 'Available Agent providers:');
       providers.forEach((item: any, index: number) => write(output, `  ${index + 1}. ${item.label || item.type}`));
       const selected = providers[chooseIndex(String(await prompt.question('Provider [1]: ')), providers.length)];
-      const instances = Array.isArray(selected.instances) ? selected.instances : [];
+      let instances = Array.isArray(selected.instances) ? selected.instances : [];
+      if (selected.type === 'workbuddy') {
+        const discovered = await manage({
+          action: 'discover_provider_instances', registrationId: state.registrationId, providerType: 'workbuddy',
+        });
+        if (!discovered?.success) throw new Error(discovered?.error || 'Unable to discover WorkBuddy Agents');
+        instances = Array.isArray(discovered.instances) ? discovered.instances : [];
+      }
       let instanceId = '';
       if (instances.length > 1) {
         instances.forEach((item: any, index: number) => write(output, `  ${index + 1}. ${item.name || item.id}`));

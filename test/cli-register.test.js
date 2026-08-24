@@ -90,6 +90,12 @@ describe('CLI manage_agent_registration state flow', () => {
     assert.deepStrictEqual(convertParam('[cli,pull]', 'json'), ['cli', 'pull']);
     assert.deepStrictEqual(convertParam('["cli","pull"]', 'json'), ['cli', 'pull']);
   });
+
+  it('keeps extended profile and one-time binding parameters in the CLI bridge', () => {
+    const source = require('node:fs').readFileSync(require.resolve('../build/cli'), 'utf8');
+    assert.match(source, /manage_agent_registration:\s*\{[^\n]*tags: 'json'[^\n]*iconUrl: 'string'[^\n]*contactPhone: 'string'[^\n]*address: 'string'/);
+    assert.match(source, /bind_agent_instance_once:\s*\{ agentId: 'string', backendInstanceId: 'string' \}/);
+  });
 });
 
 describe('CLI create_agent_by_token 参数桥接', () => {

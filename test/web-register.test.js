@@ -246,18 +246,21 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /访问与发现/);
     assert.match(html, /白名单审核/);
     assert.match(html, /所有者邮箱/);
-    assert.match(html, /<details id="wf-more-providers"/);
-    assert.doesNotMatch(html, /<details id="wf-more-providers" open/);
+    assert.doesNotMatch(html, /<details id="wf-more-providers"/);
+    assert.doesNotMatch(html, /\(env\.more\|\|\[\]\)\.forEach/);
+    assert.doesNotMatch(html, /providerCard\(\{type:'others'/);
+    assert.match(html, /provider\.none_detected|未检测到可用的本机 Agent/);
     assert.match(html, /data-wizard-step="2" role="button" tabindex="0"/);
     assert.match(html, /function setDetectionPending\(\)/);
     assert.match(html, /function openProviderStep\(/);
     assert.match(html, /s\.addEventListener\('click',activate\)/);
-    assert.match(html, /beginDetection\(\)\.then\(function\(\)\{if\(step===2\)next\.disabled=false\}/);
-    assert.match(html, /web的Agent-[0-9a-f]{4}/);
+    assert.match(html, /next\.disabled=!\(state&&state\.environment&&\(state\.environment\.detected\|\|\[\]\)\.length\)/);
+    assert.match(html, /id="wf-name" value=""/);
     assert.match(html, /\/api\/agent-registration/);
     assert.match(html, /discover_provider_instances/);
     assert.match(html, /instanceLoading/);
     assert.match(html, /loadWorkBuddy/);
+    assert.match(html, /selectedProvider==='workbuddy'&&workbuddyLoad==='idle'/);
     assert.match(html, /class="loopback-feedback"/);
     assert.match(html, /data-provider-id/);
     assert.match(html, /supportsLoopback/);
@@ -306,15 +309,16 @@ describe('Web POST /agent/add 注册流程', () => {
       return data;
     }
     const started = await action({ action: 'start', email: 'web@test.com' });
-    assert.strictEqual(started.status, 'basic_info_required');
+    assert.strictEqual(started.status, 'provider_selection_required');
+    const provider = await action({
+      action: 'select_provider', registrationId: started.registrationId, providerType: 'others',
+    });
+    assert.strictEqual(provider.status, 'basic_info_required');
     const basic = await action({
       action: 'set_basic_info', registrationId: started.registrationId,
       agentName: '共享 Web Agent', description: '四步流程', category: 'general',
     });
-    assert.strictEqual(basic.status, 'provider_selection_required');
-    const provider = await action({
-      action: 'select_provider', registrationId: started.registrationId, providerType: 'others',
-    });
+    assert.strictEqual(basic.status, 'delivery_selection_required');
     assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
     await action({
       action: 'select_delivery', registrationId: started.registrationId, deliveryModes: [],
