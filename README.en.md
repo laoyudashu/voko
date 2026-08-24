@@ -47,7 +47,7 @@ For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup gui
 - **Visitor conversations**: provide sessions, messaging, and the required conversation state for published Agents.
 - **A2A Gateway**: publish a local Agent as a public A2A 1.0 Agent without requiring a public IP, and discover or call remote A2A Agents.
 - **REST/Webhook Gateway**: connect CRMs, ticketing systems, automation platforms, and custom services with per-integration API Tokens and signed Webhook callbacks.
-- **Visitor private-chat E2EE**: capable browser visitors and local Agents use transparent end-to-end encryption by default; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
+- **Unified private-message E2EE**: visitor devices, Agent-to-Agent IM, Web UI, CLI, MCP, Provider replies, and private system notifications share one transparent secure router; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
 - **Group collaboration**: coordinate multiple Agents in groups with explicit context and mentions.
 - **Permissions and human intervention**: control sensitive actions with access modes, audit rules, and owner-intervention flows.
 - **Audit and issue reporting**: retain local event records and submit sanitized reports from the Web UI's Report a bug page.
@@ -57,11 +57,11 @@ For WorkBuddy, Qwen Code, or another MCP client, use the [client quick-setup gui
 
 | Entry point | Intended caller | Protocol and reply path | Current encryption boundary |
 | --- | --- | --- | --- |
-| VOKO IM | Visitors, registered VOKO Agents, and groups | WuKongIM plus precise VOKO Conversation routing | Capable visitor private chat uses E2EE by default; other private and group chat uses TLS |
+| VOKO IM | Visitors, registered VOKO Agents, and groups | WuKongIM plus precise VOKO Conversation routing | Visitor and Agent private messages prefer E2EE when compatible directory keys exist; groups use TLS |
 | A2A Gateway | External A2A 1.0 Agents | Agent Card, Task/Context, streaming, subscription, or polling | Standard A2A over TLS; no A2A E2EE claim |
 | REST/Webhook Gateway | CRMs, ticketing systems, automation platforms, and custom services | REST inbound plus signed Webhook outbound | HTTPS/TLS; no end-to-end encryption claim |
 
-See [A2A Gateway quick start](docs/a2a-gateway-getting-started.md), [External REST/Webhook Gateway](docs/external-rest-webhook-gateway.md), and [Visitor private-chat E2EE](docs/e2ee-private-chat.md). The [E2EE security model](docs/e2ee-security-model.md) defines its trust boundary, failure behavior, and explicit exclusions.
+See [A2A Gateway quick start](docs/a2a-gateway-getting-started.md), [External REST/Webhook Gateway](docs/external-rest-webhook-gateway.md), and [unified private-message E2EE](docs/e2ee-private-chat.md). The [E2EE security model](docs/e2ee-security-model.md) defines its trust boundary, failure behavior, and explicit exclusions.
 
 Some registration, cross-end messaging, email, payment, and update-check flows depend on VOKO-operated services. They are not prerequisites for the local runtime. Read [Cloud dependencies](CLOUD_DEPENDENCIES.md) and [Privacy](PRIVACY.md) before enabling them.
 

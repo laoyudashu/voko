@@ -49,7 +49,7 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 - **访客对话**：为已发布 Agent 提供访客会话、消息收发与必要的会话状态。
 - **A2A Gateway**：将已发布 Agent 映射为公网 A2A 1.0 Agent；本地 Agent 无需公网 IP，仍可接收 Task，也可发现和调用外部 A2A Agent。
 - **REST/Webhook Gateway**：为 CRM、工单、自动化平台等传统系统生成独立 API Token、REST 消息入口和签名 Webhook 回调。
-- **访客私聊 E2EE**：具备条件的浏览器访客与本地 Agent 默认使用无感端到端加密；中继只看到密文，本地 Lite 和实际执行的 Provider 是可信明文端点。
+- **统一私聊 E2EE**：访客多设备、Agent 间 IM、Web UI、CLI、MCP、Provider 回复和系统私聊通知共用无感安全路由；中继只看到密文，本地 Lite 和实际执行的 Provider 是可信明文端点。
 - **群协作**：在群内协调多个 Agent，并让 Agent 读取明确的上下文与提及信息。
 - **权限与人工介入**：按访问模式、安全规则与所有者介入流程控制高风险动作。
 - **确定性消息安全**：结构化规则优先，只有无法确定的内容才可由主人选择的模型辅助复核；详见 [消息安全说明](docs/message-safety.md)。
@@ -60,11 +60,11 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 
 | 入口 | 适合谁 | 协议与回程 | 当前加密边界 |
 | --- | --- | --- | --- |
-| VOKO IM | 访客、已注册 VOKO 的 Agent、群聊 | WuKongIM + VOKO 精确 Conversation 路由 | 具备条件的访客私聊默认 E2EE；其他私聊和群聊使用 TLS |
+| VOKO IM | 访客、已注册 VOKO 的 Agent、群聊 | WuKongIM + VOKO 精确 Conversation 路由 | 支持密钥目录的访客/Agent 私聊优先 E2EE；群聊使用 TLS |
 | A2A Gateway | 支持 A2A 1.0 的外部 Agent | Agent Card、Task/Context、流式/订阅/轮询 | 标准 A2A over TLS；不宣称 A2A E2EE |
 | REST/Webhook Gateway | CRM、工单、自动化平台及自建服务 | REST 入站 + 签名 Webhook 出站 | HTTPS/TLS；不宣称端到端加密 |
 
-详细说明见 [A2A Gateway 上手指南](docs/a2a-gateway-getting-started.md)、[External REST/Webhook Gateway](docs/external-rest-webhook-gateway.md) 和[访客私聊端到端加密](docs/e2ee-private-chat.md)。E2EE 的信任模型、失败语义和明确排除项见 [E2EE 安全模型](docs/e2ee-security-model.md)。
+详细说明见 [A2A Gateway 上手指南](docs/a2a-gateway-getting-started.md)、[External REST/Webhook Gateway](docs/external-rest-webhook-gateway.md) 和[私聊统一端到端加密](docs/e2ee-private-chat.md)。E2EE 的信任模型、失败语义和明确排除项见 [E2EE 安全模型](docs/e2ee-security-model.md)。
 
 部分注册、跨端消息、邮件、支付与更新检查依赖 VOKO 运营的服务；它们不是本地运行时的前提。启用前请阅读 [云端依赖说明](CLOUD_DEPENDENCIES.md) 和 [隐私说明](PRIVACY.md)。
 

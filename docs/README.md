@@ -14,7 +14,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [A2A Gateway 上手指南](a2a-gateway-getting-started.md)：面向外部 A2A 调用方的适用场景、上手流程与快速排查。
 - [A2A Mailbox Gateway 与 Lite Bridge](a2a-mailbox.md)：公网 A2A 1.0 映射、外部 Agent 发现/调用、独立 Task UI、状态语义与安全边界。
 - [External REST/Webhook Gateway](external-rest-webhook-gateway.md)：传统系统的 REST 入站、Webhook 回程、凭证与任务语义。
-- [访客私聊端到端加密](e2ee-private-chat.md)：默认无感加密、适用范围、消息/附件路径和端点边界。
+- [私聊统一端到端加密](e2ee-private-chat.md)：访客多设备与 Agent 间 IM 的无感加密、统一出站决策、消息/附件路径和端点边界。
 - [E2EE 安全模型](e2ee-security-model.md)：`voko.e2ee/2` 的密码套件、可信路由、持久化与明确排除项。
 - [Provider 注册、投递与路由恢复](provider-delivery-routing.md)：注册入口、推荐通道、Pull 兜底和用户侧排障。
 - [Provider 兼容性矩阵](provider-compatibility.md)：已验证版本、平台边界和实测证据。
