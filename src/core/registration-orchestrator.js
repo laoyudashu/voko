@@ -516,7 +516,7 @@ class RegistrationOrchestrator {
         mustPause: true,
         instruction: '验证码只能由主人提供。不得读取邮箱、猜测验证码或重复触发发送。',
       },
-      basic_info_required: { type: 'submit_basic_info', required: ['agentName'], optional: ['description', 'category'] },
+      basic_info_required: { type: 'submit_basic_info', required: ['agentName'], optional: ['description', 'category', 'tags', 'iconUrl', 'contactPhone', 'address'] },
       provider_selection_required: session.providerLock
         ? { type: 'select_provider_instance', required: ['instanceId'], providerType: session.providerLock.type }
         : { type: 'select_provider', required: ['providerType'], optional: ['instanceId'] },
@@ -535,6 +535,7 @@ class RegistrationOrchestrator {
       status: session.status,
       email: session.email || null,
       basicInfo: session.basicInfo || null,
+      suggestedBasicInfo: session.suggestedBasicInfo || null,
       provider: session.provider || null,
       deliveryModes: session.deliveryModes || [],
       accessMode: session.accessMode || 'private',
@@ -1084,7 +1085,7 @@ class RegistrationOrchestrator {
     const session = {
       id: sessionId(),
       email,
-      status: loggedIn ? 'basic_info_required' : 'email_verification_required',
+      status: loggedIn ? 'provider_selection_required' : 'email_verification_required',
       environment: null,
       basicInfo: null,
       provider: null,
@@ -1098,6 +1099,7 @@ class RegistrationOrchestrator {
       createdAt: now(),
       updatedAt: now(),
     };
+    session.environment = this.inspectEnvironment();
     if (!loggedIn) {
       const sendCode = this.options.sendCode;
       if (typeof sendCode !== 'function') return { success: false, error: '验证码服务未就绪' };
@@ -1114,54 +1116,27 @@ class RegistrationOrchestrator {
     if (typeof loginByCode !== 'function') return { success: false, error: '验证码验证服务未就绪' };
     const verified = await loginByCode({ email: session.email, code: cleanText(code, 12) });
     if (!verified?.success) return { success: false, error: verified?.error || '验证码错误或已过期' };
-    session.status = 'basic_info_required';
+    session.environment = session.environment || this.inspectEnvironment();
+    session.status = 'provider_selection_required';
     session.ownerBound = true;
     return this._save(session);
   }
 
   setBasicInfo(id, input = {}) {
     const session = this._get(id);
+    if (!session.provider) return { success: false, error: '请先选择 Agent 类型和实例' };
     const agentName = cleanText(input.agentName, 120);
     if (!agentName) return { success: false, error: 'agentName 为必填字段' };
     session.basicInfo = {
       agentName,
       description: cleanText(input.description, 1000),
       category: cleanText(input.category, 64) || 'general',
+      tags: Array.isArray(input.tags) ? input.tags.map(item => cleanText(item, 64)).filter(Boolean).slice(0, 20) : [],
+      iconUrl: cleanText(input.iconUrl, 500),
+      contactPhone: cleanText(input.contactPhone || input.contact_phone, 64),
+      address: cleanText(input.address, 500),
     };
-    const currentType = session.registrationMode === 'agent'
-      ? (this.options.detectCurrentAgentType || detectCurrentAgentType)()
-      : null;
-    const currentInstance = currentType
-      ? (this.options.detectCurrentAgentInstance || detectCurrentAgentInstance)(currentType)
-      : null;
-    session.environment = currentType
-      ? this.inspectCurrentAgent(currentType, currentInstance)
-      : this.inspectEnvironment();
-    if (session.registrationMode === 'agent' && session.environment.detected.length === 1) {
-      const detected = session.environment.detected[0];
-      session.providerLock = {
-        type: detected.type,
-        label: detected.label,
-        source: currentType ? 'current_agent' : 'local_environment',
-        confidence: 'high',
-      };
-    }
-    const lockedProvider = session.providerLock
-      ? session.environment.detected.find((item) => item.type === session.providerLock.type)
-      : null;
-    if (lockedProvider && (lockedProvider.instances || []).length <= 1) {
-      const instance = lockedProvider.instances?.[0] || null;
-      session.provider = {
-        type: lockedProvider.type,
-        instanceId: instance?.id || null,
-        instanceName: instance?.name || null,
-        detected: true,
-      };
-      session.deliveryModes = lockedProvider.deliveryModes || this.deliveryCapabilities(lockedProvider.type);
-      session.status = 'delivery_selection_required';
-      return this._save(session);
-    }
-    session.status = 'provider_selection_required';
+    session.status = 'delivery_selection_required';
     return this._save(session);
   }
 
@@ -1203,6 +1178,16 @@ class RegistrationOrchestrator {
       instanceName: instances.find((item) => item.id === instanceId)?.name || null,
       detected: !!detected,
     };
+    const selected = instances.find((item) => item.id === instanceId) || null;
+    session.suggestedBasicInfo = {
+      agentName: selected?.name || '',
+      description: selected?.description || '',
+      category: selected?.category || 'general',
+      tags: selected?.tags || [],
+      iconUrl: selected?.avatar || '',
+      contactPhone: selected?.contactPhone || '',
+      address: selected?.address || '',
+    };
     delete session.pendingApproval;
     session.deliveryModes = this.deliveryCapabilities(
       providerType,
@@ -1210,7 +1195,19 @@ class RegistrationOrchestrator {
         ? { ...zeroclawReadiness(instanceId), instanceId }
         : undefined,
     );
-    session.status = 'delivery_selection_required';
+    session.status = 'basic_info_required';
+    return this._save(session);
+  }
+
+  reselectProvider(id) {
+    const session = this._get(id);
+    if (session.status === 'created') return { success: false, error: '已创建的 Agent 不能重新选择类型' };
+    session.provider = null;
+    session.basicInfo = null;
+    session.suggestedBasicInfo = null;
+    session.deliveryModes = [];
+    session.status = 'provider_selection_required';
+    session.warnings = [{ code: 'BASIC_INFO_DRAFT_REPLACED', message: '重新选择类型或实例后，基本资料草稿将由新的建议替换。' }];
     return this._save(session);
   }
 
@@ -1484,6 +1481,10 @@ class RegistrationOrchestrator {
       agentName: session.basicInfo.agentName,
       description: session.basicInfo.description,
       category: session.basicInfo.category,
+      tags: session.basicInfo.tags,
+      iconUrl: session.basicInfo.iconUrl,
+      contact_phone: session.basicInfo.contactPhone,
+      address: session.basicInfo.address,
       backendType: session.provider.type,
       instanceId: session.provider.instanceId,
       deliveryModes: session.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode),
@@ -1548,6 +1549,7 @@ class RegistrationOrchestrator {
         return this.discoverProviderInstances(input.providerType);
       }
       if (action === 'select_provider') return this.selectProvider(input.registrationId, input);
+      if (action === 'reselect_provider') return this.reselectProvider(input.registrationId);
       if (action === 'select_delivery') return this.selectDelivery(input.registrationId, input);
       if (action === 'configure_delivery') return this.configureDelivery(input.registrationId, input);
       if (action === 'configuration_status') return this.configurationStatus(input.registrationId, input.taskId);

@@ -277,7 +277,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
   const categoryOptions = (categories || []).map((category) =>
     '<option value="' + esc(category.code) + '"' + (category.code === 'general' ? ' selected' : '') + '>' + esc(category.label) + '</option>'
   ).join('');
-  const defaultName = uniqueDefaultAgentName(email, db, t);
+  const defaultName = '';
   const agentPrompt = t('register.agent.prompt');
   return '<div class="voko-logo">VOKO</div>'
     + '<main class="wizard" id="registration-wizard" data-email="' + esc(email) + '">'
@@ -285,19 +285,23 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<div class="registration-pane" id="registration-human-pane">'
     + '<header class="wizard-head"><h2>' + esc(t('register.add.title')) + '</h2><p>' + esc(t('register.flow.subtitle')) + '</p>'
     + '<div class="wizard-steps">'
-    + '<div class="wizard-step active" data-wizard-step="1" role="button" tabindex="0"><b>1</b>' + esc(t('register.flow.step.basic')) + '</div>'
-    + '<div class="wizard-step" data-wizard-step="2" role="button" tabindex="0"><b>2</b>' + esc(t('register.flow.step.provider')) + '</div>'
+    + '<div class="wizard-step active" data-wizard-step="1" role="button" tabindex="0"><b>1</b>' + esc(t('register.flow.step.provider')) + '</div>'
+    + '<div class="wizard-step" data-wizard-step="2" role="button" tabindex="0"><b>2</b>' + esc(t('register.flow.step.basic')) + '</div>'
     + '<div class="wizard-step" data-wizard-step="3" role="button" tabindex="0"><b>3</b>' + esc(t('register.flow.step.delivery')) + '</div>'
     + '<div class="wizard-step" data-wizard-step="4" role="button" tabindex="0"><b>4</b>' + esc(t('register.flow.step.done')) + '</div>'
     + '</div></header>'
     + '<div class="wizard-body">'
-    + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
+    + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.provider.title')) + '</h3><p class="meta">' + esc(t('register.flow.provider.desc')) + '</p>'
+    + '<div class="detect-banner" id="wf-detect">' + esc(t('register.flow.detecting')) + '</div><div id="wf-providers"></div></section>'
+    + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
     + '<div class="wide-field"><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required>'
     + '<div class="name-status" id="wf-name-status"></div>'
     + '<label for="wf-desc">' + esc(t('register.add.desc')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea>'
-    + '<label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select></div></section>'
-    + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.provider.title')) + '</h3><p class="meta">' + esc(t('register.flow.provider.desc')) + '</p>'
-    + '<div class="detect-banner" id="wf-detect">' + esc(t('register.flow.detecting')) + '</div><div id="wf-providers"></div></section>'
+    + '<label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select>'
+    + '<label for="wf-tags">Tags</label><input id="wf-tags">'
+    + '<label for="wf-icon">Icon</label><input id="wf-icon">'
+    + '<label for="wf-phone">Phone</label><input id="wf-phone">'
+    + '<label for="wf-address">Address</label><input id="wf-address"></div></section>'
     + '<section class="wizard-panel" data-step="3"><h3>' + esc(t('register.flow.delivery.title')) + '</h3><p class="meta" id="wf-delivery-desc"></p>'
     + '<div class="delivery-list" id="wf-deliveries"></div>'
     + '<div class="config-panel" id="wf-config"><h3 id="wf-config-title"></h3><p class="meta" id="wf-config-desc"></p><pre id="wf-config-log" style="display:none;max-height:180px;overflow:auto;background:#182033;color:#b8f7c8;padding:9px;border-radius:7px;white-space:pre-wrap"></pre>'
@@ -364,24 +368,25 @@ function wizardJs(t) {
   function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||d.detail||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}
-  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value}}
+  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:document.getElementById('wf-icon').value,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
+  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=(s.tags||[]).join(', ');if(!document.getElementById('wf-icon').value.trim())document.getElementById('wf-icon').value=s.iconUrl||'';if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';if(s.category)document.getElementById('wf-category').value=s.category}
   function beginDetection(){
     if(state&&state.environment){renderProviders(state.environment);return Promise.resolve(state)}
     setDetectionPending();
     if(!regId)return Promise.resolve(null);
     if(detectionPromise)return detectionPromise;
-    detectionPromise=checkName().then(function(ok){if(!ok){show(1);return null}return api('set_basic_info',basicInfoPayload())}).then(function(d){if(d){state=d;if(d.environment)renderProviders(d.environment)}return d}).catch(function(e){document.getElementById('wf-detect').textContent=e.message||I.error;document.getElementById('wf-providers').innerHTML='';throw e}).finally(function(){detectionPromise=null});
+    detectionPromise=api('inspect_environment').then(function(d){state=d;if(d.environment)renderProviders(d.environment);return d}).catch(function(e){document.getElementById('wf-detect').textContent=e.message||I.error;document.getElementById('wf-providers').innerHTML='';throw e}).finally(function(){detectionPromise=null});
     return detectionPromise;
   }
   function openProviderStep(notifyError){
     if(state&&state.status==='created')return;
-    show(2);
+    show(1);
     if(state&&state.environment){renderProviders(state.environment);next.disabled=false;return}
     next.disabled=true;
     if(!regId){setDetectionPending();return}
-    beginDetection().then(function(){if(step===2)next.disabled=false}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
+    beginDetection().then(function(){if(step===1)next.disabled=false}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
   }
-  steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){show(1)}else if(target===2){openProviderStep(false)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
+  steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){openProviderStep(false)}else if(target===2&&state&&state.provider){show(2)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
   function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
   function readDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||'null');return d&&d.email===root.dataset.email?d:null}catch(_){return null}}
   function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
@@ -390,14 +395,15 @@ function wizardJs(t) {
     state=d;
     if(d.basicInfo){nameInput.value=d.basicInfo.agentName||nameInput.value;document.getElementById('wf-desc').value=d.basicInfo.description||'';document.getElementById('wf-category').value=d.basicInfo.category||'general'}
     if(d.provider){selectedProvider=d.provider.type||selectedProvider;selectedInstance=d.provider.instanceId||selectedInstance}
-    if(d.status==='provider_selection_required'){renderProviders(d.environment);show(2)}
+    if(d.status==='provider_selection_required'){renderProviders(d.environment);show(1)}
+    else if(d.status==='basic_info_required'){if(d.environment)renderProviders(d.environment);applySuggestion(d.suggestedBasicInfo);show(2)}
     else if(d.status==='delivery_selection_required'){if(d.environment)renderProviders(d.environment);renderDeliveries(d);show(3)}
     else if(d.status==='ready_to_create'){if(d.environment)renderProviders(d.environment);renderDeliveries(d);renderAccess();show(4)}
     else if(d.status==='created'){renderResult(d);show(4)}
     else show(1);
     next.disabled=false;
   }
-  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)}
+  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)}
   function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
   function checkName(){
     var name=nameInput.value.trim();
@@ -408,8 +414,8 @@ function wizardJs(t) {
       nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameTaken;nameInput.className='error';return false
     }).catch(function(){nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';return true})
   }
-  nameInput.addEventListener('blur',function(){if(step===1)next.disabled=true;checkName().then(function(ok){if(step===1)next.disabled=!ok})});
-  nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===1)next.disabled=false});
+  nameInput.addEventListener('blur',function(){if(step===2)next.disabled=true;checkName().then(function(ok){if(step===2)next.disabled=!ok})});
+  nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===2)next.disabled=false});
   function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag '+(detected?'':'warn')+'">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
   function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
   var moreProvidersExpanded=false;
@@ -452,15 +458,15 @@ function wizardJs(t) {
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
   next.onclick=function(){
     next.disabled=true;
-    if(step===1){openProviderStep(true);return}
-    if(step===2){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){renderDeliveries(d);show(3);next.disabled=false}).catch(fail);return}
+    if(step===1){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){state=d;applySuggestion(d.suggestedBasicInfo);show(2);next.disabled=false}).catch(fail);return}
+    if(step===2){checkName().then(function(ok){if(!ok){next.disabled=false;return}return api('set_basic_info',basicInfoPayload()).then(function(d){renderDeliveries(d);show(3);next.disabled=false})}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
     if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
     discardDraft=true;
     try{sessionStorage.removeItem(draftKey)}catch(_){}
     location.href='/';
   };
-  prev.onclick=function(){if(step>1){show(step-1)}};
+  prev.onclick=function(){if(step===2){if(window.confirm('返回后重新选择类型或实例会替换当前基本资料草稿。'))api('reselect_provider').then(function(d){state=d;nameInput.value='';document.getElementById('wf-desc').value='';document.getElementById('wf-tags').value='';document.getElementById('wf-icon').value='';document.getElementById('wf-phone').value='';document.getElementById('wf-address').value='';renderProviders(d.environment);show(1)}).catch(fail);return}if(step>1){show(step-1)}};
   root.addEventListener('input',saveDraft);
   root.addEventListener('change',saveDraft);
   window.addEventListener('pagehide',saveDraft);

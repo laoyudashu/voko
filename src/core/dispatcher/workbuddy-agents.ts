@@ -8,6 +8,11 @@ export interface WorkBuddyAgentInstance {
   description: string;
   source: string;
   available: true;
+  tags?: string[];
+  category?: string;
+  avatar?: string;
+  contactPhone?: string;
+  address?: string;
 }
 
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -22,6 +27,14 @@ function localized(value: unknown): string {
   if (!value || typeof value !== 'object') return '';
   const item = value as Record<string, unknown>;
   return String(item.zh || item.en || '').trim();
+}
+
+function localizedList(value: unknown): string[] {
+  const selected = Array.isArray(value) ? value
+    : (value && typeof value === 'object' ? ((value as any).zh || (value as any).en) : []);
+  return Array.isArray(selected)
+    ? [...new Set(selected.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 20)
+    : [];
 }
 
 function frontmatterName(markdown: string): string {
@@ -73,12 +86,28 @@ export function discoverWorkBuddyAgents(options: {
       if (path.basename(agentFile, '.md') !== id || frontmatterName(fs.readFileSync(agentFile, 'utf8')) !== id
         || seen.has(id)) continue;
       seen.add(id);
+      let avatar: string | undefined;
+      if (typeof manifest.avatar === 'string' && !path.isAbsolute(manifest.avatar)) {
+        const avatarPath = path.resolve(pluginRoot, manifest.avatar);
+        if (inside(pluginRoot, avatarPath) && fs.existsSync(avatarPath) && fs.statSync(avatarPath).isFile()) {
+          avatar = path.relative(pluginRoot, avatarPath).split(path.sep).join('/');
+        }
+      }
+      const agentContact = manifest.agentContact && typeof manifest.agentContact === 'object'
+        ? manifest.agentContact : {};
       result.push({
         id,
         name: localized(manifest.displayName) || id,
         description: localized(manifest.displayDescription) || String(manifest.description || entry.description || '').trim(),
         source: `my-experts/${entry.name}`,
         available: true,
+        ...(localizedList(manifest.tags).length ? { tags: localizedList(manifest.tags) } : {}),
+        ...(typeof manifest.category === 'string' && manifest.category.trim() ? { category: manifest.category.trim() } : {}),
+        ...(avatar ? { avatar } : {}),
+        ...(typeof agentContact.phone === 'string' && agentContact.phone.trim()
+          ? { contactPhone: agentContact.phone.trim() } : {}),
+        ...(typeof agentContact.address === 'string' && agentContact.address.trim()
+          ? { address: agentContact.address.trim() } : {}),
       });
     } catch (_) {}
   }

@@ -26,12 +26,13 @@ const { normalizeOfficialPublicUrl } = require('../core/url-security');
 const { refreshUserProfiles } = require('../core/user-profile-cache');
 const { validateImUidExists } = require('../core/im-user-validation');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents');
 const { RoutingConversationStore, MessageRouteStore, isRoutingFeatureEnabled } = require('../core/provider-routing');
 const { loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../core/safety-classifier');
 const { SAFETY_MODEL_PRESETS, findSafetyModelPreset } = require('../core/safety-model-presets');
 const { COPY_ICON, UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
 
-const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
+const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw', 'workbuddy']);
 
 const CONVERSATION_TAB_CSS = `.conversation-tab-shell{grid-template-columns:30px minmax(0,1fr) 30px;gap:0;align-items:end;border-bottom:2px solid #e0e0e0}.conversation-tab-arrow{margin:0 0 -2px;min-width:30px;height:49px;padding:0;border:0;background:transparent;color:#687386;border-radius:6px;box-shadow:none}.conversation-tab-arrow:hover:not(:disabled){background:#eef4ff;color:#1a73e8}.conversation-tab-rail{gap:4px;scrollbar-width:none;padding:0 4px 2px}.conversation-tab-rail::-webkit-scrollbar{display:none}.conversation-tab-card{min-width:108px;padding:10px 20px;border:0;border-bottom:3px solid transparent;border-radius:6px;background:transparent;color:#666;font-size:16px;font-weight:600;box-shadow:none;margin-bottom:-2px}.conversation-tab-card:hover{border-bottom-color:#9fc1f7;background:transparent;color:#1a73e8}.conversation-tab-card.active{border-bottom-color:#1a73e8;background:transparent;color:#1a73e8;font-weight:700;box-shadow:none}.conversation-tab-new{border-style:solid;color:#1a73e8;background:transparent}@media(max-width:600px){.conversation-tab-shell{grid-template-columns:28px minmax(0,1fr) 28px}.conversation-tab-card{min-width:96px;padding:10px 14px}}`;
 const A2A_TASK_CARD_CSS='.a2a-task-card{padding:16px 18px}.a2a-task-card-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.a2a-task-card-title{display:flex;align-items:center;gap:9px;min-width:0;flex:1 1 320px}.a2a-task-card-title strong{font-size:17px;color:#1a1a2e}.a2a-task-card-id{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#667085;font-size:13px;text-decoration:none}.a2a-task-card-id:hover{color:#1a73e8;text-decoration:underline}.a2a-task-card-inline-meta{display:flex;align-items:center;gap:7px 14px;flex:0 0 auto;white-space:nowrap;color:#667085;font-size:13px}.a2a-task-card-inline-meta span{display:inline-flex;align-items:center;gap:5px}.a2a-task-card-inline-meta strong{color:#344054;font-weight:700}.a2a-task-card-chip{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:13px;line-height:1.4;font-weight:700}.a2a-task-card-chip.success{background:#e6f4ea;color:#137333}.a2a-task-card-chip.info{background:#e8f0fe;color:#1557b0}.a2a-task-card-message-count{color:#1557b0;font-weight:700}.a2a-task-messages{max-height:50vh;overflow-y:auto;border:1px solid #e4e7ec;padding:10px;border-radius:9px;background:#fbfcfe;margin-top:12px}.a2a-task-message-count{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;background:#f2f4f7;color:#667085;font-size:13px;font-weight:700}@media(max-width:600px){.a2a-task-card{padding:14px}.a2a-task-card-head{align-items:flex-start}.a2a-task-card-title{width:100%;flex-basis:100%}.a2a-task-card-id{font-size:12px}.a2a-task-card-inline-meta{width:100%;flex-wrap:wrap;white-space:normal;gap:7px 12px}.a2a-task-card-inline-meta span{width:auto}}';
@@ -1832,7 +1833,8 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
       res.json({success:true,types:types.map(t=>{
         const provider=environment.detected.find(x=>x.type===t.value);
         const instanceCapable=INSTANCE_BOUND_PROVIDER_TYPES.has(t.value);
-        return {value:t.value,label:t.value==='others'?T('db.backend_type.others'):t.label,detected:detected.has(t.value),instanceCapable,instances:instanceCapable?(provider?.instances||[]):[],currentInstanceId:currentType===t.value?currentInstanceId:null};
+        const instances=t.value==='workbuddy'?discoverWorkBuddyAgents():(provider?.instances||[]);
+        return {value:t.value,label:t.value==='others'?T('db.backend_type.others'):t.label,detected:detected.has(t.value),instanceCapable,instances:instanceCapable?instances:[],currentInstanceId:currentType===t.value?currentInstanceId:null};
       })});
     }catch(e){res.status(500).json({success:false,error:e.message})}
   });
@@ -1855,20 +1857,16 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
       var btInitValue='',btInitText=T('web.agent.edit.select_backend_type');
       if(p.backendType&&knownVals.includes(p.backendType)){var tm=btTypes.find(function(x){return x.value===p.backendType});btInitValue=p.backendType;btInitText=tm?(tm.value==='others'?T('db.backend_type.others'):tm.label):p.backendType;}
       else if(p.backendType){btInitValue=p.backendType;btInitText=T('db.backend_type.others');}
-      const backendField='<div><label for="bt">'+T('web.agent.edit.backend_type')+'</label>'
-        +'<p class="meta" style="margin:2px 0 6px">'+L('web.agent.edit.runtime_hint')+'</p>'
-        +'<div class="voko-select" id="bt-wrapper">'
-        +'<div class="voko-select-trigger" id="bt-trigger" tabindex="0"><span class="voko-select-text" id="bt-text">'+esc(btInitText)+'</span><span class="voko-select-arrow">▼</span></div>'
-        +'<div class="voko-select-dropdown" id="bt-dropdown">'
-        +'<input type="text" class="voko-select-search" id="bt-search" placeholder="'+esc(T('web.agent.edit.search_type_ph'))+'" autocomplete="off">'
-        +'<div class="voko-select-options" id="bt-options"><div class="voko-option voko-option-empty">'+L('web.agent.edit.types_load_on_open')+'</div></div></div>'
-        +'<input type="hidden" id="bt" name="backendType" value="'+esc(btInitValue)+'">'
-        +'</div></div>';
+      const backendField='<div><label for="bt-readonly">'+T('web.agent.edit.backend_type')+'</label>'
+        +'<p class="meta" style="margin:2px 0 6px">注册完成后类型永久锁定</p>'
+        +'<input id="bt-readonly" value="'+esc(btInitText)+'" readonly>'
+        +'<input type="hidden" id="bt" name="backendType" value="'+esc(btInitValue)+'"></div>';
       const instanceField='<div id="bt-instance-field" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid #dfe4ec;border-left:3px solid #a7c0f4;border-radius:8px;background:#fafcff;max-width:460px">'
         +'<label for="bt-instance">'+L('web.agent.edit.instance')+'</label>'
         +'<p class="meta" id="bt-instance-hint" style="margin:2px 0 5px">'+L('web.agent.edit.instance_hint')+'</p>'
         +'<select id="bt-instance" disabled><option value="">'+L('web.agent.edit.instances_loading')+'</option></select>'
-        +'<input type="hidden" id="bt-instance-value" name="backendInstanceId" value="'+esc(p.backendInstanceId||'')+'">'
+        +'<input type="hidden" id="bt-instance-value"'+(p.backendInstanceId?' name="backendInstanceId"':'')+' value="'+esc(p.backendInstanceId||'')+'">'
+        +(p.backendInstanceId?'':'<button type="button" class="btn-sm" id="bt-bind-once">绑定一次</button><span class="meta" id="bt-bind-status"></span>')
         +'</div>';
       const iconUrl=p.iconUrl||'/favicon.png';
       const iconField='<div><label>'+L('web.agent.edit.icon_url')+'</label>'

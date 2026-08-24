@@ -22,6 +22,8 @@ const { AgentIdentityBindingStore } = require('../core/provider-agent-identity')
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
+const { AgentProviderBindingService } = require('../core/agent-provider-binding');
+const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
@@ -61,8 +63,6 @@ function _hasControlBlock(content: string): boolean {
   return /\[STATE\]|\[\/STATE\]|\[FINAL\]|\[\/FINAL\]|\[VOKO A2A CONTROL\]/i.test(content);
 }
 import type { DatabaseLike } from '../types/database';
-
-const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
 
 // tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
 // 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
@@ -1329,6 +1329,10 @@ function createToolHandlers(cx: McpContext) {
         privateKey: data.privateKey,
         category: p.category || 'general',
         description: p.description,
+        tags: p.tags,
+        iconUrl: p.iconUrl,
+        contactPhone: p.contact_phone,
+        address: p.address,
         accessMode,
       });
       if (!regRes.success) return { success: false, error: regRes.error || '写入 agents 表失败' };
@@ -1417,6 +1421,45 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 3. 编辑 Agent 基础信息 ───
 
+    async bind_agent_instance_once(p: McpToolParams = {}) {
+      const row = cx.query(
+        `SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+        [p.agentId],
+      )[0];
+      if (!row) return { success: false, error: 'Agent 不存在', code: 'AGENT_NOT_FOUND' };
+      let instances: any[] = [];
+      try {
+        instances = row.backend_type === 'workbuddy'
+          ? discoverWorkBuddyAgents()
+          : (createRegistrationOrchestrator({ db: cx.db }).inspectEnvironment().detected
+            .find((item: any) => item.type === row.backend_type)?.instances || []);
+      } catch (error: any) {
+        return { success: false, error: error.message || '本机实例发现失败', code: 'INSTANCE_DISCOVERY_FAILED' };
+      }
+      if (!instances.length) return { success: false, error: '本机未发现可绑定实例', code: 'NO_PROVIDER_INSTANCES' };
+      try {
+        const result = await new AgentProviderBindingService(cx.db).bindInstanceOnce(p.agentId, {
+          backendInstanceId: p.backendInstanceId,
+          availableInstances: instances,
+          rebind: async ({ previous, next }: any) => {
+            const rebind = (global as any).__rebindAgentRuntime;
+            if (!rebind) {
+              try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_) {}
+              return undefined;
+            }
+            return rebind({
+              db: cx.db, agentId: p.agentId,
+              previous: { ...previous, deliveryModes: row.delivery_modes, imUid: row.imUid, imToken: row.imToken, imServerUrl: row.im_server_url },
+              next: { ...next, deliveryModes: row.delivery_modes, imUid: row.imUid, imToken: row.imToken, imServerUrl: row.im_server_url },
+            });
+          },
+        });
+        return { success: true, message: '实例绑定成功', binding: result.next, runtimeRebind: result.runtimeRebind };
+      } catch (error: any) {
+        return { success: false, error: error.message, code: error.code || 'INSTANCE_BIND_FAILED' };
+      }
+    },
+
     async update_agent_profile(p: McpToolParams = {}) {
       if (!cx.updateAgentProfile) {
         return { success: false, error: '当前环境不支持更新 Agent 资料' };
@@ -1461,21 +1504,13 @@ function createToolHandlers(cx: McpContext) {
         ? undefined
         : String(p.backendInstanceId || '').trim();
       const targetBackendType = normalizeBackendType(p.backendType || currentRow.backend_type || 'others');
-      // Validate the complete provider/instance pair before changing either field.
-      // This prevents a failed instance selection from leaving a partially changed backend type behind.
-      if (requestedInstanceId !== undefined && requestedInstanceId && !INSTANCE_BOUND_PROVIDER_TYPES.has(targetBackendType)) {
-        return { success: false, error: '仅 OpenClaw、Hermes 和 ZeroClaw 支持实例绑定' };
-      }
-      if (requestedInstanceId && requestedInstanceId !== String(currentRow.backend_instance_id || '').trim()) {
-        let provider = null;
-        try {
-          provider = createRegistrationOrchestrator({ db: cx.db }).inspectEnvironment()
-            .detected.find((item: any) => item.type === targetBackendType) || null;
-        } catch (_) {}
-        const instances = provider?.instances || [];
-        if (!instances.some((item: any) => String(item.id) === requestedInstanceId)) {
-          return { success: false, error: '所选 Agent 实例未在本机检测到，请刷新后重试' };
-        }
+      try {
+        new AgentProviderBindingService(cx.db).assertLockedUpdate(p.agentId, {
+          backendType: p.backendType,
+          backendInstanceId: p.backendInstanceId,
+        });
+      } catch (error: any) {
+        return { success: false, error: error.message, code: error.code || 'BACKEND_BINDING_LOCKED' };
       }
       const backendRebindResult: any[] = [];
       const backendChanged = p.backendType !== undefined

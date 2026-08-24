@@ -71,7 +71,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     {
       action: z.enum([
         'start', 'verify_email', 'set_basic_info', 'inspect_environment',
-        'select_provider', 'select_delivery', 'configure_delivery',
+        'select_provider', 'reselect_provider', 'select_delivery', 'configure_delivery',
         'configuration_status', 'preflight_delivery', 'test_delivery',
         'loopback_test', 'cleanup_loopback', 'complete', 'status',
       ]).describe(T('mcp.tool.manage_agent_registration.p.action')),
@@ -81,6 +81,10 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
       agentName: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.agentName')),
       description: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.description')),
       category: z.string().optional().describe(T('mcp.tool.verify_agent_email.p.category')),
+      tags: z.array(z.string()).optional().describe(T('mcp.tool.update_agent_profile.p.tags')),
+      iconUrl: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.iconUrl')),
+      contactPhone: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.contact_phone')),
+      address: z.string().optional().describe(T('mcp.tool.update_agent_profile.p.address')),
       providerType: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.providerType')),
       instanceId: z.string().optional().describe(T('mcp.tool.manage_agent_registration.p.instanceId')),
       deliveryModes: z.array(z.string()).optional().describe(T('mcp.tool.manage_agent_registration.p.deliveryModes')),
@@ -93,6 +97,20 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     },
     async (params: unknown) => {
       const r = await toolHandlers.manage_agent_registration(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    },
+    { destructiveHint: true }
+  );
+
+  server.tool(
+    'voko_bind_agent_instance_once',
+    'Bind one locally discovered Provider instance to a legacy unbound Agent. This operation can succeed only once.',
+    {
+      agentId: z.string().describe(T('mcp.param.agentId')),
+      backendInstanceId: z.string().min(1).describe('Stable machine-readable local Provider instance ID'),
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.bind_agent_instance_once(params);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     },
     { destructiveHint: true }

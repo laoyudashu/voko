@@ -136,7 +136,7 @@ describe('registerAgentInDb description 写入', () => {
       });
       const row = db.prepare('SELECT description, backend_type, category, imUid FROM agents WHERE agent_id=?').get('agent-up');
       assert.strictEqual(row.description, '新描述', 'description 应被更新');
-      assert.strictEqual(row.backend_type, 'gemini', 'backend_type 应被更新');
+      assert.strictEqual(row.backend_type, 'codex', '注册完成后的 backend_type 应保持锁定');
       assert.strictEqual(row.category, 'education', 'category 应被更新');
       assert.strictEqual(row.imUid, 'u2', 'imUid 应被更新');
     } finally { cleanupDb(db); }
@@ -190,8 +190,8 @@ describe('manage_agent_registration shared flow', () => {
       registrationId: started.registrationId,
       code: '123456',
     });
-    assert.strictEqual(verified.status, 'basic_info_required');
-    assert.strictEqual(verified.nextAction.type, 'submit_basic_info');
+    assert.strictEqual(verified.status, 'provider_selection_required');
+    assert.strictEqual(verified.nextAction.type, 'select_provider');
   });
 });
 

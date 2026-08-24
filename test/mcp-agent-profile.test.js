@@ -156,15 +156,16 @@ describe('MCP update_agent_profile delivery safety', () => {
     db.close();
   });
 
-  it('clears an incompatible instance and resets delivery to pull when the provider changes', async () => {
+  it('rejects changing backend type after registration', async () => {
     const { handlers, db } = makeHandlers('openclaw');
     const result = await handlers.update_agent_profile({ agentId: 'agent-1', backendType: 'hermes' });
 
-    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.code, 'BACKEND_TYPE_LOCKED');
     const row = db.prepare('SELECT backend_type, backend_instance_id, delivery_modes FROM agents WHERE agent_id=?').get('agent-1');
-    assert.strictEqual(row.backend_type, 'hermes');
-    assert.strictEqual(row.backend_instance_id, null);
-    assert.deepStrictEqual(JSON.parse(row.delivery_modes), ['pull']);
+    assert.strictEqual(row.backend_type, 'openclaw');
+    assert.strictEqual(row.backend_instance_id, 'old-instance');
+    assert.deepStrictEqual(JSON.parse(row.delivery_modes), ['websocket', 'pull']);
     db.close();
   });
 
@@ -188,7 +189,7 @@ describe('MCP update_agent_profile delivery safety', () => {
     });
 
     assert.strictEqual(result.success, false);
-    assert.match(result.error, /OpenClaw|Hermes|ZeroClaw/);
+    assert.strictEqual(result.code, 'BACKEND_TYPE_LOCKED');
     assert.strictEqual(writes.length, 0);
     db.close();
   });

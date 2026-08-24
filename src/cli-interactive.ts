@@ -105,12 +105,6 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
       if (!state?.success) throw new Error(state?.error || 'Email verification failed');
     }
 
-    const agentName = await askRequired(prompt, 'Agent name: ');
-    const description = String(await prompt.question('Description (optional): ')).trim();
-    const category = String(await prompt.question('Category [general]: ')).trim() || 'general';
-    state = await manage({ action: 'set_basic_info', registrationId: state.registrationId, agentName, description, category });
-    if (!state?.success) throw new Error(state?.error || 'Unable to save Agent information');
-
     if (state.nextAction?.type === 'select_provider' || state.nextAction?.type === 'select_provider_instance') {
       const detected = Array.isArray(state.environment?.detected) ? state.environment.detected : [];
       const providers = [...detected, state.environment?.fallback || { type: 'others', label: 'Others', instances: [] }];
@@ -126,6 +120,24 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
       state = await manage({ action: 'select_provider', registrationId: state.registrationId, providerType: selected.type, instanceId });
       if (!state?.success) throw new Error(state?.error || 'Unable to select Provider');
     }
+
+    const suggested = state.suggestedBasicInfo || {};
+    const suggestedName = String(suggested.agentName || '').trim();
+    const enteredName = String(await prompt.question(`Agent name${suggestedName ? ` [${suggestedName}]` : ''}: `)).trim();
+    const agentName = enteredName || suggestedName;
+    if (!agentName) throw new Error('Agent name is required');
+    const description = String(await prompt.question(`Description${suggested.description ? ` [${suggested.description}]` : ' (optional)'}: `)).trim()
+      || String(suggested.description || '');
+    const category = String(await prompt.question(`Category [${suggested.category || 'general'}]: `)).trim()
+      || String(suggested.category || 'general');
+    const tagsText = String(await prompt.question(`Tags, comma-separated${suggested.tags?.length ? ` [${suggested.tags.join(',')}]` : ''}: `)).trim();
+    const tags = (tagsText || (suggested.tags || []).join(',')).split(',').map((item: string) => item.trim()).filter(Boolean);
+    const iconUrl = String(await prompt.question(`Icon${suggested.iconUrl ? ` [${suggested.iconUrl}]` : ' (optional)'}: `)).trim() || String(suggested.iconUrl || '');
+    const contactPhone = String(await prompt.question(`Phone${suggested.contactPhone ? ` [${suggested.contactPhone}]` : ' (optional)'}: `)).trim() || String(suggested.contactPhone || '');
+    const address = String(await prompt.question(`Address${suggested.address ? ` [${suggested.address}]` : ' (optional)'}: `)).trim() || String(suggested.address || '');
+    state = await manage({ action: 'set_basic_info', registrationId: state.registrationId,
+      agentName, description, category, tags, iconUrl, contactPhone, address });
+    if (!state?.success) throw new Error(state?.error || 'Unable to save Agent information');
 
     for (const mode of state.deliveryModes || []) {
       if (mode.action !== 'configure') continue;
