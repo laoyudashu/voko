@@ -36,7 +36,8 @@ function createMockCore() {
     }),
   };
   const agentManager = { workers: new Map(), start: () => {}, stop: () => {}, getStatus: () => ({}) };
-  return { db, databaseAPI: {}, agentRegistration, agentManager, _calls: calls };
+  const updateAgentProfile = async (p) => { calls.updateAgentProfile = p; return { success: true }; };
+  return { db, databaseAPI: {}, agentRegistration, agentManager, updateAgentProfile, _calls: calls };
 }
 
 /** 捕获 runToolCommand 的 console.log 输出（结果 JSON） */
@@ -99,16 +100,24 @@ describe('CLI manage_agent_registration state flow', () => {
 });
 
 describe('CLI create_agent_by_token 参数桥接', () => {
-  it('完整字段经 CLI 传递到 registerAgentInDb', async () => {
-    const { core } = await runCli('create_agent_by_token', {
+  it('完整字段经 CLI 写入本地并同步到服务端资料', async () => {
+    const { out, core } = await runCli('create_agent_by_token', {
       email: 'a@b.com', agentName: 'Y',
       backendType: 'pi', category: 'service', description: '只读助手',
+      tags: ['只读', 'CLI'], iconUrl: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海',
     });
+    assert.strictEqual(JSON.parse(out).success, true);
     const reg = core._calls.registerAgentInDb;
     assert.ok(reg);
     assert.strictEqual(reg.backendType, 'pi');
     assert.strictEqual(reg.category, 'service');
     assert.strictEqual(reg.description, '只读助手');
+    assert.deepStrictEqual(core._calls.updateAgentProfile, {
+      agentId: 'cli-1', name: 'Y', description: '只读助手', category: 'service',
+      tags: ['只读', 'CLI'], icon_url: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海', backendType: 'pi',
+    });
   });
 
   it('缺 category → 默认 general', async () => {

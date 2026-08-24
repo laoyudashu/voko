@@ -250,6 +250,11 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /消息接收方式/);
     assert.match(html, /访问与发现/);
     assert.match(html, /白名单审核/);
+    assert.match(html, /for="wf-desc">描述（选填）<\/label>/);
+    assert.match(html, /for="wf-tags">标签（选填）<\/label>/);
+    assert.match(html, />图标（选填）<\/label>/);
+    assert.match(html, /for="wf-phone">电话（选填）<\/label><input id="wf-phone" placeholder="例如：\+86 138 0000 0000">/);
+    assert.match(html, /for="wf-address">地址（选填）<\/label><input id="wf-address" placeholder="例如：中国·上海">/);
     assert.match(html, /所有者邮箱/);
     assert.doesNotMatch(html, /<details id="wf-more-providers"/);
     assert.doesNotMatch(html, /\(env\.more\|\|\[\]\)\.forEach/);
@@ -274,8 +279,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /id="wf-reselect-dialog" class="voko-confirm-dialog"/);
     assert.match(html, /reselectDialog\.showModal\(\)/);
     assert.doesNotMatch(html, /window\.confirm\(/);
-    assert.match(html, /id="wf-phone" placeholder="选填"/);
-    assert.match(html, /id="wf-address" placeholder="选填"/);
+    assert.match(html, /id="wf-phone" placeholder="例如：\+86 138 0000 0000"/);
+    assert.match(html, /id="wf-address" placeholder="例如：中国·上海"/);
     assert.match(html, /已检测到 \{providers\} 种智能体类型、\{modes\} 种消息接收方式/);
     assert.match(html, /nameCheckUnavailable/);
     assert.match(html, /nameBlocked=true;nameStatus\.className='name-status taken';nameStatus\.textContent=I\.nameCheckUnavailable/);
@@ -464,6 +469,7 @@ describe('Web POST /agent/add 注册流程', () => {
       action: 'select_provider', registrationId: started.registrationId, providerType: 'others',
     });
     assert.strictEqual(provider.status, 'basic_info_required');
+    assert.match(provider.suggestedBasicInfo.agentName, /^web的others-[A-Za-z0-9]{6}$/);
     const basic = await action({
       action: 'set_basic_info', registrationId: started.registrationId,
       agentName: '共享 Web Agent', description: '四步流程', category: 'general',

@@ -97,6 +97,12 @@ describe('Web group detail rendering', () => {
     assert.match(html, /id="group-id-text">group-1<\/code><button[^>]*data-voko-copy-target="#group-id-text"/);
   });
 
+  it('does not repeat the group ID in the page heading', async (t) => {
+    const html = await renderGroup(t, 'member');
+    assert.match(html, /<h1>群聊: Test Group<\/h1>/);
+    assert.doesNotMatch(html, /<h1>群聊: Test Group（group-1）<\/h1>/);
+  });
+
   it('renders the current-user label without duplicate parentheses', async (t) => {
     const html = await renderGroup(t, 'member');
     assert.match(html, /Agent One <span[^>]*>\uFF08\u4F60\uFF09<\/span>/);

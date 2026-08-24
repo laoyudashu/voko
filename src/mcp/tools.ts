@@ -778,6 +778,28 @@ function createToolHandlers(cx: McpContext) {
       console.error(`[AgentRegistration] Provider runtime load failed agent=${agentId}:`, error?.message || String(error));
     }
   };
+  const syncRegisteredAgentProfile = async (agentId: string, p: McpToolParams, name: string, backendType: string) => {
+    const result = await cx.updateAgentProfile({
+      agentId,
+      name,
+      description: p.description ?? '',
+      category: p.category || 'general',
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      icon_url: p.iconUrl || '',
+      contact_phone: p.contact_phone || '',
+      address: p.address || '',
+      backendType,
+    });
+    if (result?.success === false) {
+      return {
+        success: false,
+        creationStatus: 'created',
+        agentId,
+        error: `Agent 已创建，但资料同步到服务端失败：${result.error || result.message || '未知错误'}`,
+      };
+    }
+    return null;
+  };
   const inferChannelType = (params: McpToolParams): number => {
     if (params.channelType !== undefined && params.channelType !== null) {
       return Number(params.channelType) === 2 ? 2 : 1;
@@ -1212,6 +1234,10 @@ function createToolHandlers(cx: McpContext) {
         agentName: data.agentName,
         category,
         description: p.description,
+        tags: p.tags,
+        iconUrl: p.iconUrl,
+        contactPhone: p.contact_phone,
+        address: p.address,
         did: data.did,
         publicKey: data.publicKey,
         privateKey: data.privateKey,
@@ -1240,6 +1266,9 @@ function createToolHandlers(cx: McpContext) {
       if (upRes && !upRes.success) {
         return { success: false, error: upRes.error || '更新绑定失败' };
       }
+
+      const profileSyncFailure = await syncRegisteredAgentProfile(agentId, p, data.agentName || p.agentName || agentId, backendType);
+      if (profileSyncFailure) return profileSyncFailure;
 
       if (cx.setAgentStatus) {
         await cx.setAgentStatus({
@@ -1366,6 +1395,10 @@ function createToolHandlers(cx: McpContext) {
       if (binding?.success === false) {
         return { success: false, error: binding.error || '更新绑定失败' };
       }
+
+      const profileName = data.name || data.agentName || p.agentName || agentId;
+      const profileSyncFailure = await syncRegisteredAgentProfile(agentId, p, profileName, backendType);
+      if (profileSyncFailure) return profileSyncFailure;
 
       let accessModeSynced = false;
       if (cx.setAgentStatus) {

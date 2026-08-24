@@ -340,7 +340,7 @@ function createGroupRouter(handlers, db) {
         +'</script>';
 
       const groupJsonLd={'@context':'https://schema.org','@type':'Group','name':ctx.groupName||channelId,'identifier':channelId,'member':(ctx.members||[]).map(m=>({'@type':'Person',name:m.nickname||m.uid,identifier:m.uid}))};
-      res.send(renderPage(req, L('web.group.detail_title')+': '+esc(ctx.groupName||channelId)+'（'+esc(channelId)+'）',
+      res.send(renderPage(req, L('web.group.detail_title')+': '+esc(ctx.groupName||channelId),
         dissolvedBanner+groupInfoHtml+gTabBar+msgPanel+memberPanel+opsPanel
         +initialLatestScrollScript('#msg-box')
         +kickDlg+dissolveDlg+quitDlg+dlgScript

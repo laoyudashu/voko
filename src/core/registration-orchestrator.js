@@ -46,6 +46,14 @@ function sortProviderDisplay(items = []) {
   });
 }
 
+function defaultAgentName(email, providerType) {
+  const ownerPrefix = String(email || '').split('@')[0].trim() || 'owner';
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let suffix = '';
+  for (let index = 0; index < 6; index++) suffix += alphabet[crypto.randomInt(alphabet.length)];
+  return `${ownerPrefix}的${providerType}-${suffix}`;
+}
+
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
 const services = new WeakMap();
@@ -1201,7 +1209,7 @@ class RegistrationOrchestrator {
     };
     const selected = instances.find((item) => item.id === instanceId) || null;
     session.suggestedBasicInfo = {
-      agentName: selected?.name || '',
+      agentName: selected?.name || defaultAgentName(session.email, providerType),
       description: selected?.description || '',
       category: selected?.category || 'general',
       tags: selected?.tags || [],

@@ -150,7 +150,7 @@ const { createToolHandlers } = require('../build/mcp/tools');
 
 /** 构造 mock cx：spy 记录被调用的方法，断言校验是否在前置触发 */
 function createMockCx() {
-  const calls = { sendCode: 0, loginByCode: 0, verifyCode: 0, verifyCodePreview: 0, createAgentByToken: 0, registerAgentInDb: 0, updateAgentBinding: 0, startAgentWorker: 0 };
+  const calls = { sendCode: 0, loginByCode: 0, verifyCode: 0, verifyCodePreview: 0, createAgentByToken: 0, registerAgentInDb: 0, updateAgentBinding: 0, updateAgentProfile: 0, startAgentWorker: 0 };
   return {
     _calls: calls,
     query: (sql) => {
@@ -167,6 +167,7 @@ function createMockCx() {
       registerAgentInDb: async () => { calls.registerAgentInDb++; return { success: true }; },
       updateAgentBinding: async () => { calls.updateAgentBinding++; return { success: true }; },
     },
+    updateAgentProfile: async () => { calls.updateAgentProfile++; return { success: true }; },
     startAgentWorker: () => { calls.startAgentWorker++; },
   };
 }
@@ -396,6 +397,35 @@ describe('create_agent_by_token 必填校验', () => {
     assert.strictEqual(captured.description, '描述');
     assert.strictEqual(captured.backendType, 'codex');
     assert.strictEqual(captured.ownerEmail, 'a@b.com');
+  });
+
+  it('字段齐全 → 名称和全部用户资料同步到服务端', async () => {
+    const cx = createMockCx();
+    let synced = null;
+    cx.updateAgentProfile = async (params) => { synced = params; cx._calls.updateAgentProfile++; return { success: true }; };
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: '完整资料', backendType: 'codex', category: 'technology',
+      description: '详细描述', tags: ['标签一', '标签二'], iconUrl: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海',
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(synced, {
+      agentId: 'new-1', name: '完整资料', description: '详细描述', category: 'technology',
+      tags: ['标签一', '标签二'], icon_url: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海', backendType: 'codex',
+    });
+  });
+
+  it('服务端资料同步失败 → 不静默报告注册成功', async () => {
+    const cx = createMockCx();
+    cx.updateAgentProfile = async () => ({ success: false, error: 'cloud unavailable' });
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: 'X', backendType: 'codex', description: '不能丢失',
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.creationStatus, 'created');
+    assert.strictEqual(result.agentId, 'new-1');
+    assert.match(result.error, /资料同步到服务端失败/);
   });
 
   it('拒绝客户端伪造其他登录邮箱', async () => {

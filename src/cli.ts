@@ -239,6 +239,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   }
   const { db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage } = core;
   const cx = createContext({ db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage });
+  if (typeof core.updateAgentProfile === 'function') cx.updateAgentProfile = core.updateAgentProfile;
 
   // 注入支付处理能力（与 MCP 保持一致，CLI 也需要 DApp 签名 + 调支付 API + 通知访客）
   cx.processPaymentOrder = (order?: any) => processPendingPaymentOrder(order, {
