@@ -1994,10 +1994,12 @@ async function startMcpServer(args?: any, core?: any) {
           return Boolean(messageHandler.handleAgentMessage(agentId,{...message,content:plaintext,contentType,messageId,
             clientMsgNo:messageId},true));
         },
-        persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string)=>{
+        persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>{
           if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');
-          messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId);
+          messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId,sourceMessageId);
         },
+        markOutboundDelivered:(agentId:string,messageId:string)=>
+          messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),
         reviewOutbound:(input:any)=>require('./e2ee/v2-outbound-policy').reviewE2eeOutboundReply({
           db,databaseAPI,enqueueIntervention:enqueueOwnerIntervention,...input,
         }),

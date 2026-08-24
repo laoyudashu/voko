@@ -606,6 +606,10 @@ interface McpToolParams {
   deliveryModes?: string[];
   conversationId?: string;
   replyToMessageId?: string;
+  /** Web UI browser-only draft: create a logical Conversation with the first send. */
+  webConversationStart?: boolean;
+  /** Existing Conversation that the browser-only draft was started from. */
+  parentConversationId?: string;
   remoteAgentKey?: string;
   idempotencyKey?: string;
   webRequest?: boolean;
@@ -1824,9 +1828,21 @@ function createToolHandlers(cx: McpContext) {
           }
           if (!routingConversation && p.webRequest === true) {
             const current = routingConversations.listForScope(p.agentId, p.toUid, channelType);
-            routingConversation = current.length === 1
-              ? current[0]
-              : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
+            if (p.webConversationStart === true) {
+              const parent = p.parentConversationId
+                ? routingConversations.getForScope(p.parentConversationId, p.agentId, p.toUid, channelType)
+                : null;
+              if (p.parentConversationId && (!parent || parent.status !== 'active')) {
+                throw new Error('Parent conversation is unavailable or outside the current Agent and channel');
+              }
+              routingConversation = current.find((item: RoutingConversation) => item.status === 'pending')
+                || routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType,
+                  parentConversationId: parent?.id || null });
+            } else {
+              routingConversation = current.length === 1
+                ? current[0]
+                : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
+            }
           }
           if (routingConversation) {
             outboundRouteId = messageRoutes.createPending({

@@ -38,6 +38,10 @@ test('web routes encode reflected query state and use a private upload directory
   assert.match(source, /jsonForInlineScript\(\{actionStatus:/);
   assert.match(source, /AGENT_ID='\+jsonForInlineScript\(agentId\)/);
   assert.match(source, /var aid='\+jsonForInlineScript\(agentId\)/);
+  assert.match(source, /id="web-conversation-start" value="0"/);
+  assert.match(source, /window\.__vokoConversationDraftActive=true/);
+  assert.match(source, /webConversationStart:webConversationStart==='1'/);
+  assert.doesNotMatch(source, /post\("\/api\/routing-conversations\/create"/);
   assert.match(source, /location\.href='\+jsonForInlineScript\(returnPath\)/);
   assert.doesNotMatch(source, /AGENT_ID='\+JSON\.stringify\(agentId\)/);
   assert.doesNotMatch(source, /var aid='\+JSON\.stringify\(agentId\)/);

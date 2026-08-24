@@ -211,6 +211,8 @@ class MessageHandler extends EventEmitter {
       if (conversation && metadata?.routeId) this._messageRoutes.recordInbound({ messageId,
         remoteRouteId: metadata.routeId, conversationId: conversation.id, agentId, peerUid: visitorId,
         channelId, channelType });
+      else if (conversation?.status === 'active') this._messageRoutes.claimInbound({ messageId,
+        conversationId: conversation.id, agentId, peerUid: visitorId, channelId, channelType });
       return conversation?.id || null;
     } catch (_) { return null; }
   }
@@ -227,18 +229,42 @@ class MessageHandler extends EventEmitter {
    * the Agent reply through the same local message/conversation projection as
    * a normal reply, without sending that plaintext over IM.
    */
-  persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string): void {
+  persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string,
+    sourceMessageId?: string): string | null {
     const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<AgentImUidRow>(agentId);
     const fromUid = agentRow?.imUid || 'voko';
     const { msgId, timestamp, inserted } = persistAgentMessage(this.db, agentId, channelId, content,
       fromUid, 'text', 1, null, messageId);
-    if (!inserted) return;
-    logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
-      data: { replyLength: content.length, channelType: 1, e2ee: true } });
-    this._notifyUI('agent-wukongim:message', {
-      agentId, fromUid, toUid: channelId, channelId, channelType: 1,
-      content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
-    });
+    let routeId: string | null = null;
+    try {
+      const existing = this._messageRoutes.getByMessage(msgId, agentId);
+      if (existing?.direction === 'outbound') routeId = existing.route_id;
+      else if (sourceMessageId) {
+        const source = this._messageRoutes.getByMessage(sourceMessageId, agentId);
+        const conversation = source?.conversation_id
+          ? this._routingConversations.getForScope(source.conversation_id, agentId, channelId, 1) : null;
+        if (source?.direction === 'inbound' && source.status === 'active' && conversation?.status === 'active'
+          && source.peer_uid === channelId && source.channel_id === channelId && Number(source.channel_type) === 1) {
+          routeId = this._messageRoutes.createPending({ messageId: msgId, conversationId: conversation.id,
+            replyToRouteId: source.reply_to_route_id || null, agentId, peerUid: channelId,
+            channelId, channelType: 1, direction: 'outbound' });
+        }
+      }
+    } catch (_) {}
+    if (inserted) {
+      logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
+        data: { replyLength: content.length, channelType: 1, e2ee: true } });
+      this._notifyUI('agent-wukongim:message', {
+        agentId, fromUid, toUid: channelId, channelId, channelType: 1,
+        content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
+      });
+    }
+    return routeId;
+  }
+
+  markE2eeAgentReplyDelivered(agentId: string, messageId: string): void {
+    const route = this._messageRoutes.getByMessage(messageId, agentId);
+    if (route?.direction === 'outbound') this._messageRoutes.setStatus(route.route_id, 'active');
   }
 
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */

@@ -33,12 +33,15 @@ function fixture({failFirstDelivery=false,reviewOutbound}={}){
       return{agentId:agent.serverAgentId,agentDid:agent.agentDid,deviceId:'guest-device',generation:1,publicBundle:guestPublic};
     },
   };
-  const persisted={inbound:[],outbound:[]};
+  const persisted={inbound:[],outbound:[],delivered:[]};
   const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);
       input.onProviderAccepted();return{reply:{content:`reply:${input.content}`}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId});return true;},
-    persistOutbound(agentId,channelId,plaintext,messageId){persisted.outbound.push({agentId,channelId,plaintext,messageId});},
+    persistOutbound(agentId,channelId,plaintext,messageId,sourceMessageId){
+      persisted.outbound.push({agentId,channelId,plaintext,messageId,sourceMessageId});
+    },
+    markOutboundDelivered(agentId,messageId){persisted.delivered.push({agentId,messageId});},
     reviewOutbound,
     async deliverRaw(_agentId,_channelId,envelope){deliveryCalls+=1;replyEnvelope=JSON.parse(envelope);
       if(failFirstDelivery&&deliveryCalls===1)return{success:false,error:'network unknown'};
@@ -69,6 +72,8 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
     assert.equal(message.acked,true);
     assert.deepEqual(f.persisted.inbound.map(row=>row.plaintext),['hello']);
     assert.deepEqual(f.persisted.outbound.map(row=>row.plaintext),['reply:hello']);
+    assert.deepEqual(f.persisted.outbound.map(row=>row.sourceMessageId),['message-1']);
+    assert.equal(f.persisted.delivered.length,1);
     assert.equal(f.counts().providerCalls,1);
     assert.equal(f.store.receipt('message-1').state,'completed');
     const reply=f.reply();

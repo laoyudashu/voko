@@ -83,6 +83,35 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
+  it('projects an E2EE request and reply onto the unique active Web conversation', () => {
+    const fixture = createFixture();
+    try {
+      const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
+        agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
+        nativeSessionId: 'e2ee-native-session', channelId: 'visitor-1', channelType: 1,
+      });
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        messageId: 'e2ee-inbound-route', clientMsgNo: 'e2ee-inbound-client',
+      }), true);
+      const inboundRoute = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
+        WHERE message_id='e2ee-inbound-route' AND direction='inbound'`).get();
+      assert.equal(inboundRoute.conversation_id, conversation.id);
+      assert.equal(inboundRoute.status, 'active');
+
+      fixture.handler.persistE2eeAgentReply('agent-1', 'visitor-1', 'encrypted reply',
+        'e2ee-outbound-route', 'e2ee-inbound-route');
+      const pending = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
+        WHERE message_id='e2ee-outbound-route' AND direction='outbound'`).get();
+      assert.equal(pending.conversation_id, conversation.id);
+      assert.equal(pending.status, 'pending');
+      fixture.handler.markE2eeAgentReplyDelivered('agent-1', 'e2ee-outbound-route');
+      assert.equal(fixture.db.prepare(`SELECT status FROM provider_message_routes
+        WHERE message_id='e2ee-outbound-route' AND direction='outbound'`).get().status, 'active');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('propagates a primary message persistence failure so the transport can NACK', () => {
     const fixture = createFixture();
     const originalPrepare = fixture.db.prepare.bind(fixture.db);

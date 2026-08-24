@@ -24,7 +24,8 @@ type RuntimeOptions={
   agents:()=>E2eeV2AgentDescriptor[];
   dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean;
-  persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string)=>void;
+  persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>void;
+  markOutboundDelivered?:(agentId:string,messageId:string)=>void;
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
   deliverRaw:(agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
   downloadAttachment?:(agent:E2eeV2AgentDescriptor,uploadId:string,channelId:string)=>Promise<Uint8Array>;
@@ -229,7 +230,7 @@ export class E2eeV2Runtime {
         recipientKeyId:recipient.keyId,createdAtMs:Date.now(),contentKind:'text' as const};
       const sealed=this.endpoint(agent.localAgentId).seal(recipient,header,textEncoder.encode(reply));
       const replyEnvelope=JSON.stringify(sealed);
-      this.options.persistOutbound(agent.localAgentId,envelope.channelId,reply,replyMessageId);
+      this.options.persistOutbound(agent.localAgentId,envelope.channelId,reply,replyMessageId,envelope.messageId);
       this.options.store.commitReply(envelope.messageId,replyMessageId,replyEnvelope);
       const delivered=await this.deliverReply(this.options.store.receipt(envelope.messageId)!);
       return{handled:true,accepted:true,code:delivered?undefined:'delivery_pending'};
@@ -274,6 +275,7 @@ export class E2eeV2Runtime {
     try{
       const result=await this.options.deliverRaw(row.local_agent_id,row.channel_id,row.reply_envelope_json,row.reply_message_id);
       if(!result?.success)throw new Error(String(result?.error||'E2EE_V2_REPLY_NOT_DELIVERED'));
+      this.options.markOutboundDelivered?.(row.local_agent_id,row.reply_message_id);
       if(!this.options.store.finishReply(row.message_id,owner,true))throw new Error('E2EE_V2_DELIVERY_LEASE_LOST');
       return true;
     }catch(error){

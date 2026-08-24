@@ -131,6 +131,28 @@ await test('send_message 省略 channelType 时按群频道 ID 自动识别', as
     assert.strictEqual(sentMessages[0].channelType, 2);
   } finally { cleanup(); }
 });
+await test('Web 新对话只在首条发送时创建，并保留来源 Conversation', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const conversations = new RoutingConversationStore(db);
+    const parent = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'web-parent-session', channelId: 'visitor1', channelType: 1, origin: 'caller' });
+    assert.equal(conversations.listForScope('agentA', 'visitor1', 1).length, 1);
+
+    const result = await handlers.send_message({ agentId: 'agentA', toUid: 'visitor1', content: 'first draft message',
+      channelType: 1, webRequest: true, webConversationStart: true, parentConversationId: parent.id });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.conversationDisposition, 'created');
+    assert.notStrictEqual(result.conversationId, parent.id);
+    const created = db.prepare(`SELECT parent_conversation_id,status FROM provider_routing_conversations
+      WHERE id=?`).get(result.conversationId);
+    assert.strictEqual(created.parent_conversation_id, parent.id);
+    assert.strictEqual(created.status, 'active');
+    assert.strictEqual(db.prepare(`SELECT conversation_id FROM provider_message_routes
+      WHERE direction='outbound' ORDER BY created_at DESC LIMIT 1`).get().conversation_id, result.conversationId);
+  } finally { cleanup(); }
+});
 await test('send_message 拒绝普通成员 @全体', async () => {
   const { handlers, sentMessages, cleanup } = setup({ activeOwner: 'b@b.com' });
   try {
