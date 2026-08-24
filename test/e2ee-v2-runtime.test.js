@@ -14,7 +14,8 @@ const {E2eeV2Runtime}=require('../build/e2ee/v2-runtime');
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
 
-function fixture({failFirstDelivery=false,reviewOutbound}={}){
+function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
+  deliverSecureReply,providerReply}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -34,7 +35,7 @@ function fixture({failFirstDelivery=false,reviewOutbound}={}){
       const sender=guestDevices.get(input.senderDeviceId);
       assert.ok(sender);
       assert.equal(input.senderKeyId,sender.publicBundle.keyId);
-      return{peerKind:'guest',peerScopeId:`scope:${input.fromUid}`,
+      return{peerKind,peerScopeId:`scope:${input.fromUid}`,
         protocolConversationId:input.conversationKey,
         sender:{deviceId:input.senderDeviceId,generation:1,keyId:sender.publicBundle.keyId,
           publicBundle:sender.publicBundle}};
@@ -43,13 +44,16 @@ function fixture({failFirstDelivery=false,reviewOutbound}={}){
   const persisted={inbound:[],outbound:[],delivered:[]};
   const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);
-      input.onProviderAccepted();return{reply:{content:`reply:${input.content}`}};}},
-    persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId});return true;},
+      for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
+      return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
+    persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
+      projectedMessageId:message.messageId,clientMsgNo:message.clientMsgNo});return true;},
     persistOutbound(agentId,channelId,plaintext,messageId,sourceMessageId){
       persisted.outbound.push({agentId,channelId,plaintext,messageId,sourceMessageId});
     },
     markOutboundDelivered(agentId,messageId){persisted.delivered.push({agentId,messageId});},
     reviewOutbound,
+    deliverSecureReply,
     async deliverRaw(_agentId,_channelId,envelope){deliveryCalls+=1;replyEnvelope=JSON.parse(envelope);
       if(failFirstDelivery&&deliveryCalls===1)return{success:false,error:'network unknown'};
       return{success:true};},
@@ -166,5 +170,77 @@ test('two devices of the same visitor and protocol conversation reuse one Provid
     }
     assert.equal(f.sessionScopes.length,2);
     assert.equal(f.sessionScopes[0],f.sessionScopes[1]);
+  }finally{f.close();}
+});
+
+test('Agent peer projection uses a receiver-scoped local id while preserving the business id',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const envelope=await f.createEnvelope('shared-business-message','agent peer');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.match(f.persisted.inbound[0].messageId,/^e2ee-peer-/);
+    assert.equal(f.persisted.inbound[0].projectedMessageId,f.persisted.inbound[0].messageId);
+    assert.equal(f.persisted.inbound[0].clientMsgNo,'shared-business-message');
+    assert.equal(f.persisted.outbound[0].sourceMessageId,f.persisted.inbound[0].messageId);
+    const conversation=f.store.conversationsForChannel('gym','guest-im-1')[0];
+    assert.equal(conversation.routing_conversation_id,'conversation-1');
+    assert.equal(conversation.wire_conversation_key,'conversation-1');
+    assert.equal(conversation.protocol_conversation_id,'conversation-1');
+  }finally{f.close();}
+});
+
+test('duplicate Provider accepted callbacks remain idempotent',async()=>{
+  const f=fixture({providerAcceptedCalls:2});
+  try{
+    const envelope=await f.createEnvelope('duplicate-accepted','accepted once');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(f.store.receipt('duplicate-accepted').state,'completed');
+    assert.equal(f.counts().providerCalls,1);
+    assert.equal(f.persisted.outbound.length,1);
+  }finally{f.close();}
+});
+
+test('Agent peer secure reply keeps projection and receipt identifiers separate',async()=>{
+  let replyInput=null;
+  const f=fixture({peerKind:'agent',async deliverSecureReply(input){replyInput=input;
+    return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('agent-business-id','reply routing');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.match(replyInput.sourceMessageId,/^e2ee-peer-/);
+    assert.equal(replyInput.sourceReceiptMessageId,'agent-business-id');
+    assert.equal(replyInput.protocolConversationId,'conversation-1');
+  }finally{f.close();}
+});
+
+test('Provider NO_REPLY completes without emitting an encrypted control message',async()=>{
+  const f=fixture({peerKind:'agent',providerReply:'NO_REPLY'});
+  try{
+    const envelope=await f.createEnvelope('agent-no-reply','stop here');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.code,'no_reply');
+    assert.equal(f.store.receipt('agent-no-reply').state,'completed');
+    assert.equal(f.persisted.outbound.length,0);
+    assert.equal(f.counts().deliveryCalls,0);
+  }finally{f.close();}
+});
+
+test('legacy encrypted Agent control messages complete without Provider execution',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const envelope=await f.createEnvelope('legacy-agent-control','NO_REPLY');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.code,'agent_control');
+    assert.equal(f.store.receipt('legacy-agent-control').state,'completed');
+    assert.equal(f.counts().providerCalls,0);
+    assert.equal(f.persisted.inbound.length,0);
   }finally{f.close();}
 });

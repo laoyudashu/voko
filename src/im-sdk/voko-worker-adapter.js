@@ -42,7 +42,11 @@ class VokoWorkerAdapter extends EventEmitter {
     const payload = message.content?.contentObj || message.content || {};
     const contentType = Number(message.contentType || payload.type || 0);
     let content = '';
-    if (contentType === ContentType.File) {
+    if (contentType === 13 && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const envelope = { ...payload };
+      delete envelope.type;
+      content = JSON.stringify(envelope);
+    } else if (contentType === ContentType.File) {
       content = JSON.stringify({ name: payload.name || payload.fileName || '', url: payload.url || '', size: payload.size || 0, type: payload.mime || payload.mimeType || payload.fileType || '' });
     } else if (contentType === ContentType.Text) content = payload.content || payload.text || '';
     else if (contentType === ContentType.Image) content = payload.url || '';

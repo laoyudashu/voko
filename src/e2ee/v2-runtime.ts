@@ -12,6 +12,7 @@ const ENVELOPE_KEYS=['agentDid','channelId','ciphertext','contentKind','conversa
   'recipientDeviceId','recipientKeyId','senderDeviceId','senderKeyId','signature','suite','version'];
 const textDecoder=new TextDecoder('utf-8',{fatal:true});
 const textEncoder=new TextEncoder();
+const INTERNAL_NO_REPLY=new Set(['NO_REPLY','HEARTBEAT_OK','ANNOUNCE_SKIP']);
 
 export interface E2eeV2AgentDescriptor {
   localAgentId:string;
@@ -27,7 +28,7 @@ type RuntimeOptions={
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean;
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
-    sourceMessageId:string;protocolConversationId:string})=>Promise<{success?:boolean;deliveryState?:string;
+    sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
@@ -74,6 +75,12 @@ function sessionScope(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope,peerSc
 function deterministicReplyId(envelope:E2eeV2Envelope):string {
   return `e2ee-v2-${crypto.createHash('sha256').update('VOKO-E2EE-V2-REPLY\0')
     .update(envelope.agentDid).update('\0').update(envelope.messageId).digest('base64url')}`;
+}
+
+function projectedInboundId(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope,peerKind:'guest'|'agent'):string {
+  if(peerKind==='guest')return envelope.messageId;
+  return `e2ee-peer-${crypto.createHash('sha256').update('VOKO-E2EE-V2-INBOUND\0')
+    .update(agent.localAgentId).update('\0').update(envelope.messageId).digest('base64url')}`;
 }
 
 export class E2eeV2Runtime {
@@ -225,26 +232,40 @@ export class E2eeV2Runtime {
       const plaintext=textDecoder.decode(opened);
       if(!plaintext.trim()||Buffer.byteLength(plaintext)>128*1024)throw new Error('E2EE_V2_PLAINTEXT_INVALID');
       const prepared=await this.prepareInput(agent,envelope,plaintext);
-      const routeScope=String(prepared.routeContext?.conversationKey
-        ||prepared.routeContext?.canonicalConversationKey||'');
+      const localMessageId=projectedInboundId(agent,envelope,sender.peerKind);
+      const routeScope=sender.peerKind==='agent'
+        ?envelope.conversationId
+        :String(prepared.routeContext?.conversationKey||prepared.routeContext?.canonicalConversationKey||'');
       this.options.store.saveConversation({localAgentId:agent.localAgentId,channelId:envelope.channelId,
         routingConversationId:routeScope,wireConversationKey:routeScope,
         protocolConversationId:envelope.conversationId,peerScopeId:sender.peerScopeId,peerKind:sender.peerKind,
         mode:'e2ee_active'});
+      if(sender.peerKind==='agent'&&envelope.contentKind==='text'
+          &&INTERNAL_NO_REPLY.has(prepared.displayContent.trim())){
+        if(!this.options.store.transition(envelope.messageId,['processing'],'completed')){
+          throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
+        }
+        return{handled:true,accepted:true,code:'agent_control'};
+      }
       const projected=this.options.persistInbound(agent.localAgentId,{...message,fromUid:envelope.channelId,
         channelId:envelope.channelId,channelType:1,content:prepared.displayContent,contentType:prepared.contentType,
-        messageId:envelope.messageId,clientMsgNo:envelope.messageId,
+        messageId:localMessageId,clientMsgNo:envelope.messageId,
         timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),_voko:prepared.routeContext||null,
         e2eeStrictRoute:Boolean(prepared.routeContext)},prepared.displayContent,
-        envelope.messageId,prepared.contentType);
+        localMessageId,prepared.contentType);
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
       const result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
         taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
         attachments:prepared.attachments,
-        onProviderAccepted:()=>{providerAccepted=true;
+        onProviderAccepted:()=>{if(providerAccepted)return;
           if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
+            if(this.options.store.receipt(envelope.messageId)?.state==='provider_accepted'){
+              providerAccepted=true;
+              return;
+            }
             throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
-          }} });
+          }
+          providerAccepted=true;} });
       let reply=String(result?.reply?.content||'');
       if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
       if(!providerAccepted){
@@ -258,11 +279,18 @@ export class E2eeV2Runtime {
           content:reply,messageId:envelope.messageId});
         if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
       }
+      if(INTERNAL_NO_REPLY.has(reply.trim())){
+        if(!this.options.store.transition(envelope.messageId,['provider_accepted'],'completed')){
+          throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
+        }
+        return{handled:true,accepted:true,code:'no_reply'};
+      }
       const replyMessageId=deterministicReplyId(envelope);
       if(this.options.deliverSecureReply){
         const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
           channelId:envelope.channelId,content:reply,messageId:replyMessageId,
-          sourceMessageId:envelope.messageId,protocolConversationId:envelope.conversationId});
+          sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
+          protocolConversationId:envelope.conversationId});
         if(delivered?.success===false){
           const failure=Object.assign(new Error(String(delivered.error||'E2EE_V2_REPLY_NOT_DELIVERED')),
             {outcomeUnknown:Boolean(delivered.outcomeUnknown)});
@@ -280,7 +308,7 @@ export class E2eeV2Runtime {
       const payload=JSON.stringify({version:E2EE_V2_PAYLOAD_VERSION,kind:'text',text:reply});
       const sealed=this.endpoint(agent.localAgentId).seal(recipient.bundle,header,textEncoder.encode(payload));
       const replyEnvelope=JSON.stringify(sealed);
-      this.options.persistOutbound(agent.localAgentId,envelope.channelId,reply,replyMessageId,envelope.messageId);
+      this.options.persistOutbound(agent.localAgentId,envelope.channelId,reply,replyMessageId,localMessageId);
       this.options.store.commitReply(envelope.messageId,replyMessageId,replyEnvelope);
       const delivered=await this.deliverReply(this.options.store.receipt(envelope.messageId)!);
       return{handled:true,accepted:true,code:delivered?undefined:'delivery_pending'};
