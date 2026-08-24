@@ -43,7 +43,15 @@ class VokoWorkerAdapter extends EventEmitter {
     const contentType = Number(message.contentType || payload.type || 0);
     let content = '';
     if (contentType === 13 && payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      const envelope = { ...payload };
+      let envelope = payload;
+      const keys = Object.keys(payload);
+      if (typeof payload.content === 'string' && keys.every((key) => key === 'type' || key === 'content')) {
+        try {
+          const parsed = JSON.parse(payload.content);
+          if (parsed && !Array.isArray(parsed) && parsed.version === 'voko.e2ee/2') envelope = parsed;
+        } catch {}
+      }
+      envelope = { ...envelope };
       delete envelope.type;
       content = JSON.stringify(envelope);
     } else if (contentType === ContentType.File) {
