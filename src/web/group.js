@@ -44,6 +44,10 @@ function ajaxPaginationScript(){
   return '<script>(function(){var selections={};function remember(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:checked:not(:disabled)").forEach(function(input){var key=form.action+"|"+input.name;(selections[key]||(selections[key]=new Set())).add(input.value)})})}function restore(region){region.querySelectorAll("form").forEach(function(form){form.querySelectorAll("input[type=checkbox][name]:not(:disabled)").forEach(function(input){var picked=selections[form.action+"|"+input.name];if(picked&&picked.has(input.value))input.checked=true})})}document.addEventListener("click",function(event){var link=event.target.closest("a[href*=\\"page=\\" i]");if(!link||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();var region=document.querySelector("main[data-voko-page-region]");if(!region)return location.assign(link.href);remember(region);region.setAttribute("aria-busy","true");fetch(link.href,{headers:{"X-Requested-With":"voko-pagination"}}).then(function(response){if(!response.ok)throw new Error("page request failed");return response.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");if(!next)throw new Error("page region missing");region.replaceWith(next);restore(next);history.pushState(null,"",link.href);next.scrollIntoView({block:"nearest"})}).catch(function(){location.assign(link.href)})});})();</script>'
 }
 
+function initialLatestScrollScript(selector){
+  return '<script>(function(){var box=document.querySelector('+jsonForInlineScript(selector)+');if(!box)return;var following=true,observer=null,timer=null;function latest(){if(following)box.scrollTop=box.scrollHeight}function stop(){following=false;if(observer)observer.disconnect();if(timer)clearTimeout(timer)}box.addEventListener("wheel",stop,{passive:true,once:true});box.addEventListener("touchstart",stop,{passive:true,once:true});box.addEventListener("pointerdown",stop,{passive:true,once:true});requestAnimationFrame(function(){latest();requestAnimationFrame(latest)});window.addEventListener("load",latest,{once:true});if(window.ResizeObserver){observer=new ResizeObserver(latest);observer.observe(box)}timer=setTimeout(stop,2000)})();</script>';
+}
+
 function page(title,body,opt={},tFn,locale){
   const t=tFn||(k=>k);
   const loc=locale||'zh';
@@ -338,7 +342,7 @@ function createGroupRouter(handlers, db) {
       const groupJsonLd={'@context':'https://schema.org','@type':'Group','name':ctx.groupName||channelId,'identifier':channelId,'member':(ctx.members||[]).map(m=>({'@type':'Person',name:m.nickname||m.uid,identifier:m.uid}))};
       res.send(renderPage(req, L('web.group.detail_title')+': '+esc(ctx.groupName||channelId)+'（'+esc(channelId)+'）',
         dissolvedBanner+groupInfoHtml+gTabBar+msgPanel+memberPanel+opsPanel
-        +'<script>(function(){var b=document.getElementById("msg-box");if(b)b.scrollTop=b.scrollHeight;})();</script>'
+        +initialLatestScrollScript('#msg-box')
         +kickDlg+dissolveDlg+quitDlg+dlgScript
         +'<p><a href="/agents/'+aId+'">← '+esc(aName)+'</a></p>',
         {nav:agentNav(agentId,aName,T)+' › <a href="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'">'+esc(ctx.groupName||channelId)+'</a>', jsonld:groupJsonLd, footer: renderFooter(T,req.locale)+messageRendererScript(T)+groupWsScript(agentId,channelId,myUid,ctx.members,groupStatus,isManager,T)+gTabScript()+mentionScript(T)+membersScript(T)}))
