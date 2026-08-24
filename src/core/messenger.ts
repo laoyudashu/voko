@@ -51,6 +51,7 @@ const CAPABILITY_REQUEST_TYPE = 'voko.capability.request';
 const CAPABILITY_RESPONSE_TYPE = 'voko.capability.response';
 
 interface AgentImUidRow { imUid: string }
+interface AgentExistsRow { found: number }
 interface AgentStatusRow {
   publish_status: string | null;
   owner_email: string | null;
@@ -469,7 +470,11 @@ class MessageHandler extends EventEmitter {
     }
 
     // 通知 UI + 系统通知（含提示音）
-    if (!isMe) { console.debug('[通知] 收到访客消息, agent=' + agentId + ' contentLength=' + String(content || '').length); }
+    if (!isMe) {
+      const senderKind = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
+        .get<AgentExistsRow>(fromUid) ? 'Agent' : '访客';
+      console.debug(`[通知] 收到${senderKind}消息, agent=${agentId} contentLength=${String(content || '').length}`);
+    }
     logEvent('message.received', { agentId, visitorId: fromUid, id: messageId, messageId });
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid, channelId,
@@ -480,8 +485,8 @@ class MessageHandler extends EventEmitter {
     if (!isMe) {
       try { notifyNewMessage(agentId, fromUid, content, timestamp); } catch {}
     }
-    const inboundConversationId = this._resolveInboundConversation(agentId, fromUid, channelId,
-      channelType || 1, messageId, data._voko || null);
+    const inboundConversationId = data.e2eeAgentPeer ? null : this._resolveInboundConversation(agentId, fromUid,
+      channelId, channelType || 1, messageId, data._voko || null);
     if (data.e2eeStrictRoute && data._voko
         && (data._voko.replyToRouteId || data._voko.conversationKey || data._voko.canonicalConversationKey)
         && !inboundConversationId) {
@@ -1356,6 +1361,8 @@ class MessageHandler extends EventEmitter {
         WHERE id=?
       `).run(fullyDelivered?'sent':'pending',messageSeq, clientMsgNo, msgId);
     } catch (_) {}
+    console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
+      `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
   }
 }

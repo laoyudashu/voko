@@ -47,7 +47,8 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
-      projectedMessageId:message.messageId,clientMsgNo:message.clientMsgNo});return true;},
+      projectedMessageId:message.messageId,clientMsgNo:message.clientMsgNo,routeContext:message._voko,
+      e2eeStrictRoute:message.e2eeStrictRoute,e2eeAgentPeer:message.e2eeAgentPeer});return true;},
     persistOutbound(agentId,channelId,plaintext,messageId,sourceMessageId){
       persisted.outbound.push({agentId,channelId,plaintext,messageId,sourceMessageId});
     },
@@ -183,6 +184,9 @@ test('Agent peer projection uses a receiver-scoped local id while preserving the
     assert.match(f.persisted.inbound[0].messageId,/^e2ee-peer-/);
     assert.equal(f.persisted.inbound[0].projectedMessageId,f.persisted.inbound[0].messageId);
     assert.equal(f.persisted.inbound[0].clientMsgNo,'shared-business-message');
+    assert.equal(f.persisted.inbound[0].routeContext,null);
+    assert.equal(f.persisted.inbound[0].e2eeStrictRoute,false);
+    assert.equal(f.persisted.inbound[0].e2eeAgentPeer,true);
     assert.equal(f.persisted.outbound[0].sourceMessageId,f.persisted.inbound[0].messageId);
     const conversation=f.store.conversationsForChannel('gym','guest-im-1')[0];
     assert.equal(conversation.routing_conversation_id,'conversation-1');

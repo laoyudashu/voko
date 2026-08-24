@@ -293,3 +293,17 @@ test('Agent peer routing conversations remain separate E2EE protocol contexts',a
       .map(row=>row.protocol_conversation_id).sort(),['wire-conversation-a','wire-conversation-b']);
   }finally{f.close();}
 });
+
+test('trusted inbound Agent context routes the secure reply without resolving a foreign local Route Context',async()=>{
+  const f=fixture({peerKind:'agent',routeContext:()=>{throw new Error('foreign route must not be resolved');}});
+  try{
+    const result=await f.router.deliver('gym','peer-agent-im','reply','text',1,null,'agent-reply-1',
+      {_voko:{protocolVersion:1,routeId:'foreign-route',canonicalConversationKey:'foreign-wire'}},
+      {protocolConversationId:'trusted-context-1'});
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(result.success,true);
+    assert.equal(f.directoryInputs[0].conversationKey,'trusted-context-1');
+    assert.equal(f.store.conversation('gym','peer-agent-im','trusted-context-1').protocol_conversation_id,
+      'trusted-context-1');
+  }finally{f.close();}
+});

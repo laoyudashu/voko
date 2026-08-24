@@ -144,9 +144,10 @@ export class SecureOutboundRouter {
     return{channelId:local.imUid,targetAgentDid:resolved.peerAgentDid};
   }
 
-  private async privateDecision(agentId:string,channelId:string,metadata:unknown):Promise<PrivateDecision>{
+  private async privateDecision(agentId:string,channelId:string,metadata:unknown,
+    trustedRoute?:{routingConversationId:string;wireConversationKey:string}):Promise<PrivateDecision>{
     let route:RouteContext;
-    try{route=this.routeContext(agentId,channelId,metadata);}catch(error){
+    try{route=trustedRoute?{...trustedRoute}:this.routeContext(agentId,channelId,metadata);}catch(error){
       return{mode:'blocked',error:errorCode(error),securityMode:'plaintext',reason:'invalid_route_context'};
     }
     const existing=this.existingConversation(agentId,channelId,route.routingConversationId);
@@ -282,7 +283,7 @@ export class SecureOutboundRouter {
 
   async deliver(agentId:string,channelId:string,content:string,messageType='text',channelType=1,
     mentions:unknown=null,localMsgId:string|null=null,metadata:unknown=null,
-    internal?:{sourceReceiptMessageId?:string}):Promise<SecureOutboundResult>{
+    internal?:{sourceReceiptMessageId?:string;protocolConversationId?:string}):Promise<SecureOutboundResult>{
     const args=[agentId,channelId,content,messageType,channelType,mentions,localMsgId,metadata];
     if(channelType!==1||String(channelId).startsWith('owner_')){
       return this.deliverPlaintext(args,'scope_not_e2ee');
@@ -305,7 +306,10 @@ export class SecureOutboundRouter {
       return this.deliverPlaintext(args,'attachment_router_pending');
     }
     const businessMessageId=localMsgId||`msg-${agentId}-${channelId}-${Date.now()}`;
-    const decision=await this.privateDecision(agentId,channelId,metadata);
+    const trustedRoute=internal?.protocolConversationId
+      ?{routingConversationId:internal.protocolConversationId,wireConversationKey:internal.protocolConversationId}
+      :undefined;
+    const decision=await this.privateDecision(agentId,channelId,metadata,trustedRoute);
     if(decision.mode==='plaintext')return this.deliverPlaintext(args,decision.reason);
     if(decision.mode==='blocked')return{success:false,error:decision.error,messageId:businessMessageId,
       securityMode:decision.securityMode,securityReason:decision.reason,encryptedDeviceCount:0,deliveryState:'queued'};

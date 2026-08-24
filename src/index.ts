@@ -2014,7 +2014,8 @@ async function startMcpServer(args?: any, core?: any) {
           const persisted=messageHandler.persistE2eeAgentReply(input.agentId,input.channelId,input.content,
             input.messageId,input.sourceMessageId);
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
-            input.messageId,persisted.routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId});
+            input.messageId,persisted.routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
+              protocolConversationId:input.protocolConversationId});
         },
         markOutboundDelivered:(agentId:string,messageId:string)=>
           messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),

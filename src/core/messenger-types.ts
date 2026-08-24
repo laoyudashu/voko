@@ -29,6 +29,7 @@ export interface InboundMessage {
     conversationKey?: string; conversationStart?: boolean;
     conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
   e2eeStrictRoute?: boolean;
+  e2eeAgentPeer?: boolean;
 }
 
 export interface ForwardPayload {

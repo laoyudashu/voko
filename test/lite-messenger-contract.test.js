@@ -112,6 +112,31 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
+  it('keeps an E2EE Agent peer out of foreign local Route Context and ordinary Provider dispatch', () => {
+    const fixture = createFixture();
+    try {
+      const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
+        agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
+        nativeSessionId: 'ordinary-native-session', channelId: 'peer-agent-uid', channelType: 1,
+      });
+      const projected = fixture.handler.handleAgentMessage('agent-1', inbound({
+        fromUid: 'peer-agent-uid', channelId: 'peer-agent-uid', messageId: 'e2ee-peer-projection',
+        clientMsgNo: 'e2ee-peer-business', content: 'agent peer request',
+        _voko: { protocolVersion: 1, routeId: 'foreign-route-id',
+          canonicalConversationKey: 'foreign-conversation-key' },
+        e2eeAgentPeer: true, e2eeStrictRoute: false,
+      }), true);
+      assert.equal(projected.messageId, 'e2ee-peer-projection');
+      assert.equal(fixture.dispatched.length, 0);
+      assert.equal(fixture.db.prepare(`SELECT COUNT(*) count FROM provider_message_routes
+        WHERE message_id='e2ee-peer-projection'`).get().count, 0);
+      assert.equal(new RoutingConversationStore(fixture.db).getForScope(
+        conversation.id, 'agent-1', 'peer-agent-uid', 1).id, conversation.id);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('propagates a primary message persistence failure so the transport can NACK', () => {
     const fixture = createFixture();
     const originalPrepare = fixture.db.prepare.bind(fixture.db);

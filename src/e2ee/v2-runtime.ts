@@ -247,11 +247,12 @@ export class E2eeV2Runtime {
         }
         return{handled:true,accepted:true,code:'agent_control'};
       }
+      const inboundRouteContext=sender.peerKind==='guest'?prepared.routeContext:undefined;
       const projected=this.options.persistInbound(agent.localAgentId,{...message,fromUid:envelope.channelId,
         channelId:envelope.channelId,channelType:1,content:prepared.displayContent,contentType:prepared.contentType,
         messageId:localMessageId,clientMsgNo:envelope.messageId,
-        timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),_voko:prepared.routeContext||null,
-        e2eeStrictRoute:Boolean(prepared.routeContext)},prepared.displayContent,
+        timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),_voko:inboundRouteContext||null,
+        e2eeStrictRoute:Boolean(inboundRouteContext),e2eeAgentPeer:sender.peerKind==='agent'},prepared.displayContent,
         localMessageId,prepared.contentType);
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
       const result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
@@ -296,6 +297,9 @@ export class E2eeV2Runtime {
             {outcomeUnknown:Boolean(delivered.outcomeUnknown)});
           throw failure;
         }
+        console.log(`[E2EE] Agent回复${delivered?.deliveryState==='delivered'?'已送达':'已进入可靠投递队列'} `+
+          `agent=${agent.localAgentId} peer=${sender.peerKind} `+
+          `message=${replyMessageId.slice(0,12)} conversation=${envelope.conversationId.slice(0,12)}`);
         return{handled:true,accepted:true,code:delivered?.deliveryState==='delivered'?undefined:'delivery_pending'};
       }
       const key=this.options.store.key(agent.localAgentId)!;
