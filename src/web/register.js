@@ -336,6 +336,7 @@ function wizardJs(t) {
     securityTitle: t('register.flow.security_title'), security: t('register.flow.security'),
     name: t('register.add.name'), description: t('register.add.desc'), category: t('register.add.category'),
     provider: t('register.add.backend_type'), instanceLabel: t('register.flow.instance.label'),
+    instanceLoading: t('web.agent.edit.instances_loading'), instanceNone: t('web.agent.edit.instances_none'),
     nameTaken: t('register.add.name_taken'),
     accessTitle: t('register.flow.access.title'), accessDesc: t('register.flow.access.desc'),
     privateMode: t('register.flow.access.private'), privateDesc: t('register.flow.access.private_desc'),
@@ -350,7 +351,7 @@ function wizardJs(t) {
 (function(){
   var I=${JSON.stringify(I)}, root=document.getElementById('registration-wizard');
   if(!root)return;
-  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null;
+  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null, workbuddyLoad='idle', workbuddyError='';
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
   var panels=Array.from(document.querySelectorAll('.wizard-panel')), steps=Array.from(document.querySelectorAll('.wizard-step'));
   var next=document.getElementById('wf-next'), prev=document.getElementById('wf-prev');
@@ -410,19 +411,21 @@ function wizardJs(t) {
   nameInput.addEventListener('blur',function(){if(step===1)next.disabled=true;checkName().then(function(ok){if(step===1)next.disabled=!ok})});
   nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===1)next.disabled=false});
   function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag '+(detected?'':'warn')+'">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
+  function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
   var moreProvidersExpanded=false;
   function renderProviders(env){
     var detected=env.detected||[];if(!selectedProvider)selectedProvider=detected[0]?detected[0].type:'others';
     var html='<div class="group-label">'+escHtml(I.local)+'</div><div class="provider-list">';
-    detected.forEach(function(p){html+=providerCard(p,true);if(selectedProvider===p.type&&p.instances&&p.instances.length){html+='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> '+escHtml(ins.name)+'</label>'});html+='</div>'}});
+    detected.forEach(function(p){html+=providerCard(p,true)+instancePanel(p)});
     html+='</div><details id="wf-more-providers"'+(moreProvidersExpanded?' open':'')+'><summary class="group-label">'+escHtml(I.more)+'</summary><div class="provider-list">';
-    (env.more||[]).forEach(function(p){html+=providerCard(p,false)});
+    (env.more||[]).forEach(function(p){html+=providerCard(p,false)+instancePanel(p)});
     html+=providerCard({type:'others',label:I.others,instances:[]},false)+'</div></details>';
     document.getElementById('wf-providers').innerHTML=html;
     document.getElementById('wf-more-providers').addEventListener('toggle',function(e){moreProvidersExpanded=e.target.open;saveDraft()});
     document.getElementById('wf-detect').textContent=I.detected.replace('{providers}',env.summary.providerCount).replace('{modes}',env.summary.deliveryModeCount);
   }
-  document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment)}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
+  function loadWorkBuddy(){workbuddyLoad='loading';workbuddyError='';renderProviders(state.environment);api('discover_provider_instances',{providerType:'workbuddy'}).then(function(d){var all=(state.environment.detected||[]).concat(state.environment.more||[]),p=all.find(function(x){return x.type==='workbuddy'});if(p)p.instances=d.instances||[];workbuddyLoad='done';renderProviders(state.environment)}).catch(function(e){workbuddyLoad='error';workbuddyError=e.message||I.error;renderProviders(state.environment)})}
+  document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment);if(selectedProvider==='workbuddy')loadWorkBuddy()}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
     var disabled=m.required||!usable, checked=m.required||m.selected;

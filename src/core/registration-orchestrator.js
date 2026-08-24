@@ -24,6 +24,7 @@ const {
 } = require('./dispatcher/qwen-office-command');
 const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
+const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -678,6 +679,17 @@ class RegistrationOrchestrator {
     };
   }
 
+  discoverProviderInstances(providerType) {
+    const type = normalizeBackendType(providerType);
+    if (type !== 'workbuddy') return { success: false, error: '该 Agent 类型不支持实例发现' };
+    const discover = this.options.workBuddyAgents || discoverWorkBuddyAgents;
+    try {
+      return { success: true, providerType: type, instances: discover() };
+    } catch (error) {
+      return { success: false, error: `WorkBuddy 实例发现失败: ${error.message || error}` };
+    }
+  }
+
   inspectCurrentAgent(providerType, instanceId = null) {
     const type = normalizeBackendType(providerType);
     const known = this.db ? getBackendTypes(this.db) : [];
@@ -1169,13 +1181,18 @@ class RegistrationOrchestrator {
     }
     const environment = session.environment || this.inspectEnvironment();
     const detected = environment.detected.find((item) => item.type === providerType);
-    const instances = detected?.instances || [];
+    const instances = providerType === 'workbuddy'
+      ? (this.options.workBuddyAgents || discoverWorkBuddyAgents)()
+      : detected?.instances || [];
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
     if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
     const family = getProviderFamily(providerType);
     if (family?.requiresInstance && !instanceId) {
       return { success: false, error: '该 Agent 类型必须绑定一个本机已检测到的实例' };
+    }
+    if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 WorkBuddy Agent 不存在或不可用' };
     }
     if (instanceId && instances.length && family?.validateInstance && !family.validateInstance(instanceId, instances)) {
       return { success: false, error: '所选实例不存在' };
@@ -1453,6 +1470,12 @@ class RegistrationOrchestrator {
     const session = this._get(id);
     if (session.status === 'created') return this.view(session);
     if (!session.basicInfo || !session.provider) return { success: false, error: '注册信息不完整' };
+    if (session.provider.type === 'workbuddy' && session.provider.instanceId) {
+      const instances = (this.options.workBuddyAgents || discoverWorkBuddyAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选 WorkBuddy Agent 已不存在或不可用，请返回上一步重新选择' };
+      }
+    }
     session.accessMode = input.accessMode === 'public' ? 'public' : 'private';
     const completeAgent = this.options.completeAgent;
     if (typeof completeAgent !== 'function') return { success: false, error: 'Agent 创建服务未就绪' };
@@ -1519,6 +1542,10 @@ class RegistrationOrchestrator {
           return this._save(session);
         }
         return { success: true, environment: this.inspectEnvironment() };
+      }
+      if (action === 'discover_provider_instances') {
+        this._get(input.registrationId);
+        return this.discoverProviderInstances(input.providerType);
       }
       if (action === 'select_provider') return this.selectProvider(input.registrationId, input);
       if (action === 'select_delivery') return this.selectDelivery(input.registrationId, input);

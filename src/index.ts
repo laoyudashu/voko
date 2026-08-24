@@ -1267,6 +1267,13 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         agent_name: d.agentName,
         category: d.category,
       };
+      const currentRoute: any = db.prepare('SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=?').get(agentId) || {};
+      const nextBackendType = F.backend_type === undefined ? String(currentRoute.backend_type || '') : String(F.backend_type || '');
+      const nextInstanceId = F.backend_instance_id === undefined ? String(currentRoute.backend_instance_id || '') : String(F.backend_instance_id || '');
+      if (nextBackendType === 'workbuddy' && nextInstanceId) {
+        const { resolveWorkBuddyAgent } = require('./core/dispatcher/workbuddy-agents');
+        if (!resolveWorkBuddyAgent(nextInstanceId)) return res.json({ success: false, error: '所选 WorkBuddy Agent 不存在或不可用' });
+      }
       const sets = [], vals = [];
       for (const [k, v] of Object.entries(F)) {
         if (v !== undefined) { sets.push(`${k} = ?`); vals.push(v); }

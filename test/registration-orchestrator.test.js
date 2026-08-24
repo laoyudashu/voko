@@ -544,6 +544,32 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('discovers WorkBuddy instances lazily and rejects stale instance bindings', async () => {
+    let instances = [
+      { id: 'english-vocab-coach', name: 'English Coach', description: 'Vocabulary', available: true },
+      { id: 'tcm-consultant', name: 'TCM', description: 'Consultation', available: true },
+    ];
+    const { db, service } = createService({ workBuddyAgents: () => instances });
+    try {
+      db.prepare("UPDATE config SET data=? WHERE type='agent_backend_types'").run(JSON.stringify([
+        { value: 'workbuddy', label: 'WorkBuddy' }, { value: 'others', label: 'Others' },
+      ]));
+      assert.deepEqual(service.discoverProviderInstances('workbuddy').instances, instances);
+      const started = await service.start({ email: 'owner@example.com' });
+      service.setBasicInfo(started.registrationId, { agentName: 'Bound WorkBuddy' });
+      const invalid = service.selectProvider(started.registrationId, { providerType: 'workbuddy', instanceId: 'missing' });
+      assert.strictEqual(invalid.success, false);
+      const selected = service.selectProvider(started.registrationId, {
+        providerType: 'workbuddy', instanceId: 'tcm-consultant',
+      });
+      assert.strictEqual(selected.provider.instanceId, 'tcm-consultant');
+      instances = [];
+      const stale = await service.complete(started.registrationId);
+      assert.strictEqual(stale.success, false);
+      assert.match(stale.error, /不存在或不可用/);
+    } finally { db.close(); }
+  });
+
   it('requires explicit approval before changing provider configuration', async () => {
     let setupCount = 0;
     const { db, service } = createService({

@@ -24,6 +24,7 @@ const { RouteResolver } = require('./route-resolver');
 const { DeliveryExecutor } = require('./delivery-executor');
 const { getProviderModularRollout, providerModularModeForFamily } = require('./provider-modular-rollout');
 const { ProviderEventGate } = require('./provider-event-gate');
+const { parseA2AState, extractA2AVisibleReply } = require('./parse-state');
 const crypto = require('crypto');
 
 interface DispatcherProvider {
@@ -121,6 +122,7 @@ interface IsolatedExecutionOptions {
   bindingGeneration?: number;
   attachments?: PushPayload['attachments'];
   attachmentOutputDirectory?: string;
+  peerUid?: string;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -996,7 +998,11 @@ ${body}
   }
 
   function _a2aScope(payload: PushPayload): string {
-    if (payload.channelType !== 2) return 'direct';
+    if (payload.channelType !== 2) {
+      const protocolContextId = String((payload as any).protocolContextId || '');
+      return (payload as any).executionScope === 'e2ee' && protocolContextId
+        ? `direct:conversation:${protocolContextId}` : 'direct';
+    }
     const conversationId = (payload as any).replyRouteContext?.conversationId;
     return conversationId ? `group:${payload.channelId}:conversation:${conversationId}` : `group:${payload.channelId}`;
   }
@@ -1129,7 +1135,8 @@ ${body}
         ? 'owner'
         : executionScope === 'owner_chat'
           ? 'owner_chat'
-        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged) ? 'agent_peer' : 'visitor';
+        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged
+          || (executionScope === 'e2ee' && (payload as any).sourceType === 'agent_peer')) ? 'agent_peer' : 'visitor';
       const isOwnerChat = sourceType === 'owner_chat';
       const baseProviderPayload = {
         ...routedPayload,
@@ -1381,6 +1388,29 @@ ${body}
       const error: any = new Error('E2EE_V2_SCOPE_REQUIRED');
       error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_SCOPE_REQUIRED'; throw error;
     }
+    const sourceType = options.sourceType === 'agent_peer' ? 'agent_peer' : 'visitor';
+    const peerUid = String(options.peerUid || '');
+    if (sourceType === 'agent_peer' && !_isAgentImUid(peerUid)) {
+      const error: any = new Error('E2EE_V2_AGENT_PEER_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_AGENT_PEER_REQUIRED'; throw error;
+    }
+    const workingPayload: PushPayload = {
+      agentId: options.agentId, fromUid: sourceType === 'agent_peer' ? peerUid : `e2ee:${options.contextId}`,
+      senderUid: sourceType === 'agent_peer' ? peerUid : 'e2ee', channelId: options.contextId, channelType: 1,
+      messageId: options.taskId, content: options.content, rawContent: options.content,
+      executionScope: 'e2ee', sourceType, protocolContextId: options.contextId,
+    };
+    const prepared = sourceType === 'agent_peer'
+      ? _prepareA2A(options.agentId, workingPayload) : { blocked: false, context: null };
+    if (prepared.blocked) return { reply: { content: 'NO_REPLY', done: true } };
+    if (prepared.delay) {
+      await new Promise<void>((resolve) => setTimeout(resolve, prepared.delay));
+      const localUid = _metaOf(options.agentId)?.imUid;
+      if (localUid && prepared.context
+          && _consumeConverged(localUid, peerUid, prepared.context.a2aScope)) {
+        return { reply: { content: 'NO_REPLY', done: true } };
+      }
+    }
     const turnId = `e2ee-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
@@ -1395,6 +1425,16 @@ ${body}
         error.code = String((reply as any).errorCode || 'E2EE_V2_PROVIDER_TURN_FAILED');
         error.deliveryOutcome = 'rejected'; rejectReply(error); return;
       }
+      if (sourceType === 'agent_peer') {
+        const parsed = parseA2AState(String(reply.content || '')).state;
+        const validConvergence = parsed?.converged === true && parsed?.expects_reply !== true
+          && Array.isArray(parsed?.agenda) && parsed.agenda.length === 0;
+        const localUid = _metaOf(options.agentId)?.imUid;
+        if (validConvergence && localUid) markConverged(localUid, peerUid,
+          prepared.context?.a2aScope || `direct:conversation:${options.contextId}`);
+        resolveReply({ ...reply, content: extractA2AVisibleReply(String(reply.content || '')) });
+        return;
+      }
       resolveReply(reply);
     });
     const timeout = setTimeout(() => {
@@ -1404,23 +1444,14 @@ ${body}
     timeout.unref?.();
     try {
       const delivery = await _doRoute(options.agentId, {
-        agentId: options.agentId,
-        fromUid: `e2ee:${options.contextId}`,
-        senderUid: 'e2ee',
-        channelId: options.contextId,
-        channelType: 1,
-        messageId: options.taskId,
+        ...workingPayload,
         turnId,
-        content: options.content,
-        rawContent: options.content,
         providerBinding: options.binding || null,
-        executionScope: 'e2ee',
-        sourceType: 'visitor',
         sessionScopeId: options.sessionScopeId,
         attachments: options.attachments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      });
+      }, prepared.context);
       if (delivery?.outcome !== 'delivered') {
         const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';

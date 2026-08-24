@@ -218,6 +218,23 @@ class MessageHandler extends EventEmitter {
     } catch (_) { return null; }
   }
 
+  _resolveE2eeAgentPeerConversation(agentId: string, peerUid: string, channelId: string,
+    messageId: string, protocolConversationId: string): string | null {
+    try {
+      const peer = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
+        .get<AgentExistsRow>(peerUid);
+      if (!peer || peerUid !== channelId) return null;
+      const conversation = this._routingConversations.resolveE2eeAgentPeerMirror(
+        agentId, channelId, protocolConversationId,
+      );
+      const existing = this._messageRoutes.getByMessage(messageId, agentId);
+      if (!existing) this._messageRoutes.claimInbound({ messageId, conversationId: conversation.id,
+        agentId, peerUid, channelId, channelType: 1 });
+      else if (existing.conversation_id !== conversation.id) return null;
+      return conversation.id;
+    } catch (_) { return null; }
+  }
+
   /** 设置 Hermes 处理器（延迟初始化） */
   setHermesHandler(handler: BackendHandlerLike) { this.hermesHandler = handler; }
   /** 设置 OpenClaw 处理器（延迟初始化） */
@@ -485,8 +502,14 @@ class MessageHandler extends EventEmitter {
     if (!isMe) {
       try { notifyNewMessage(agentId, fromUid, content, timestamp); } catch {}
     }
-    const inboundConversationId = data.e2eeAgentPeer ? null : this._resolveInboundConversation(agentId, fromUid,
-      channelId, channelType || 1, messageId, data._voko || null);
+    const inboundConversationId = data.e2eeAgentPeer
+      ? this._resolveE2eeAgentPeerConversation(agentId, fromUid, channelId, messageId,
+        String(data.e2eeProtocolConversationId || ''))
+      : this._resolveInboundConversation(agentId, fromUid, channelId, channelType || 1, messageId, data._voko || null);
+    if (data.e2eeAgentPeer && !inboundConversationId) {
+      console.warn(`[E2EE] Agent peer Conversation 无法绑定 agent=${agentId} code=E2EE_V2_AGENT_CONTEXT_UNRESOLVED`);
+      return;
+    }
     if (data.e2eeStrictRoute && data._voko
         && (data._voko.replyToRouteId || data._voko.conversationKey || data._voko.canonicalConversationKey)
         && !inboundConversationId) {

@@ -1,4 +1,5 @@
 import type { DatabaseLike } from '../types/database';
+const { resolveWorkBuddyAgent } = require('./dispatcher/workbuddy-agents');
 
 export interface AgentRoutingSnapshot {
   backendType: string;
@@ -60,6 +61,12 @@ export class AgentDeliveryPolicyStore {
   }): { previous: AgentRoutingSnapshot; next: AgentRoutingSnapshot } {
     const previous = this.get(agentId);
     if (!previous) throw new Error('Agent not found');
+    const nextBackendType = input.backendType === undefined ? previous.backendType : String(input.backendType || 'others').trim();
+    const nextInstanceId = input.backendInstanceId === undefined ? previous.backendInstanceId
+      : (String(input.backendInstanceId || '').trim() || null);
+    if (nextBackendType === 'workbuddy' && nextInstanceId && !resolveWorkBuddyAgent(nextInstanceId)) {
+      throw new Error('Bound WorkBuddy agent does not exist or is unavailable');
+    }
     const sets: string[] = [];
     const values: unknown[] = [];
     if (input.backendType !== undefined) {

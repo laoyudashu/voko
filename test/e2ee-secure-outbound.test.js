@@ -307,3 +307,19 @@ test('trusted inbound Agent context routes the secure reply without resolving a 
       'trusted-context-1');
   }finally{f.close();}
 });
+
+test('a stale sender-local Agent row cannot lock the authoritative protocol context',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'peer-agent-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'legacy-context',peerScopeId:'old-peer',
+      peerKind:'agent',mode:'locked',lockReason:'legacy stale row'});
+    const result=await f.router.deliver('gym','peer-agent-im','new turn','text',1,null,'agent-business-clean',
+      {_voko:{protocolVersion:1,conversationKey:'authoritative-context-1'}},
+      {protocolConversationId:'authoritative-context-1'});
+    assert.equal(result.success,true);
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(f.store.conversation('gym','peer-agent-im','authoritative-context-1').mode,'e2ee_active');
+    assert.equal(f.store.conversation('gym','peer-agent-im','routing-1').mode,'locked');
+  }finally{f.close();}
+});

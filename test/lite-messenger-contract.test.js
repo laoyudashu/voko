@@ -115,6 +115,11 @@ describe('Lite Messenger contract smoke', () => {
   it('keeps an E2EE Agent peer out of foreign local Route Context and ordinary Provider dispatch', () => {
     const fixture = createFixture();
     try {
+      const now = Date.now();
+      fixture.db.prepare(`INSERT INTO agents
+        (id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,backend_type,agent_name,created_at,updated_at)
+        VALUES (?,?,?,?,?,'published','public','goose',?,?,?)`)
+        .run('peer-row','peer-agent','peer-agent-uid','token','ws://fake','Peer Agent',now,now);
       const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
         agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
         nativeSessionId: 'ordinary-native-session', channelId: 'peer-agent-uid', channelType: 1,
@@ -125,11 +130,16 @@ describe('Lite Messenger contract smoke', () => {
         _voko: { protocolVersion: 1, routeId: 'foreign-route-id',
           canonicalConversationKey: 'foreign-conversation-key' },
         e2eeAgentPeer: true, e2eeStrictRoute: false,
+        e2eeProtocolConversationId: '67ad73dc-bc3d-4463-8e5b-7637765935f4',
       }), true);
       assert.equal(projected.messageId, 'e2ee-peer-projection');
       assert.equal(fixture.dispatched.length, 0);
-      assert.equal(fixture.db.prepare(`SELECT COUNT(*) count FROM provider_message_routes
-        WHERE message_id='e2ee-peer-projection'`).get().count, 0);
+      const mirrorRoute = fixture.db.prepare(`SELECT r.conversation_id,c.wire_conversation_key,c.provider_family,
+        c.native_session_id FROM provider_message_routes r JOIN provider_routing_conversations c
+          ON c.id=r.conversation_id WHERE r.message_id='e2ee-peer-projection'`).get();
+      assert.equal(mirrorRoute.wire_conversation_key, '67ad73dc-bc3d-4463-8e5b-7637765935f4');
+      assert.equal(mirrorRoute.provider_family, null);
+      assert.equal(mirrorRoute.native_session_id, null);
       assert.equal(new RoutingConversationStore(fixture.db).getForScope(
         conversation.id, 'agent-1', 'peer-agent-uid', 1).id, conversation.id);
     } finally {

@@ -15,6 +15,7 @@ const ENDPOINTS = require('../endpoints.json');
 const { t } = require('./i18n');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { AgentDeliveryPolicyStore, normalizeDeliveryModes } = require('./agent-delivery-policy');
+const { resolveWorkBuddyAgent } = require('./dispatcher/workbuddy-agents');
 const { PENDING_OWNER_SWITCH_CONFIG, stagePendingOwnerSwitch } = require('./owner-switch');
 const {
   normalizeOfficialImServerUrl,
@@ -535,6 +536,9 @@ function registerAgentInDbOnDb(db, {
   try {
     const now = Date.now();
     const backend = normalizeBackendType(backendType);
+    if (backend === 'workbuddy' && instanceId && !resolveWorkBuddyAgent(instanceId)) {
+      return { success: false, error: '所选 WorkBuddy Agent 不存在或不可用' };
+    }
     const imServerUrl = normalizeOfficialImServerUrl(serverUrl || DEFAULT_IM_SERVER_URL);
     const payRate = paymentFeeRate != null ? paymentFeeRate : 0.006;
     const usageRate = agentUsageFeeRate != null ? agentUsageFeeRate : 0.1;

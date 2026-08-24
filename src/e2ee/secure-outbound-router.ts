@@ -150,13 +150,11 @@ export class SecureOutboundRouter {
     try{route=trustedRoute?{...trustedRoute}:this.routeContext(agentId,channelId,metadata);}catch(error){
       return{mode:'blocked',error:errorCode(error),securityMode:'plaintext',reason:'invalid_route_context'};
     }
-    const existing=this.existingConversation(agentId,channelId,route.routingConversationId);
+    let existing=this.existingConversation(agentId,channelId,route.routingConversationId);
     if(existing&&!route.routingConversationId){
       route={...route,routingConversationId:existing.routing_conversation_id,
         wireConversationKey:existing.wire_conversation_key};
     }
-    if(existing?.mode==='locked')return{mode:'blocked',error:existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED',
-      securityMode:'e2ee',reason:'active_conversation_locked'};
     if(this.options.enabled?.()===false&&existing?.mode!=='e2ee_active'){
       return{mode:'plaintext',reason:'e2ee_upgrade_disabled'};
     }
@@ -180,6 +178,18 @@ export class SecureOutboundRouter {
       return{mode:'plaintext',reason:resolved.capability==='unsupported'
         ?'recipient_unsupported':'capability_unknown_fallback'};
     }
+    if(resolved.peerKind==='agent'){
+      const stableContext=String(resolved.protocolConversationId||'');
+      if(!stableContext)return{mode:'blocked',error:'E2EE_V2_AGENT_CONTEXT_REQUIRED',securityMode:'plaintext',
+        reason:'agent_context_unavailable'};
+      route={...route,routingConversationId:stableContext,wireConversationKey:stableContext};
+      // Historical sender-local routing ids are not authoritative Agent-peer
+      // contexts. Only the server-resolved protocol context may control reuse
+      // or locking, so stale duplicate rows cannot poison a valid context.
+      existing=this.existingConversation(agentId,channelId,stableContext);
+    }
+    if(existing?.mode==='locked')return{mode:'blocked',error:existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED',
+      securityMode:'e2ee',reason:'active_conversation_locked'};
     if(existing?.mode==='e2ee_active'&&(existing.peer_scope_id!==resolved.peerScopeId
         ||existing.peer_kind!==resolved.peerKind
         ||existing.protocol_conversation_id!==String(resolved.protocolConversationId))){
@@ -189,12 +199,6 @@ export class SecureOutboundRouter {
     }
     if(resolved.peerKind==='agent'&&this.options.agentPeerEnabled?.()===false&&existing?.mode!=='e2ee_active'){
       return{mode:'plaintext',reason:'agent_peer_e2ee_disabled'};
-    }
-    if(resolved.peerKind==='agent'&&!route.wireConversationKey){
-      const stableContext=String(resolved.protocolConversationId||'');
-      if(!stableContext)return{mode:'blocked',error:'E2EE_V2_AGENT_CONTEXT_REQUIRED',securityMode:'plaintext',
-        reason:'agent_context_unavailable'};
-      route={...route,routingConversationId:stableContext,wireConversationKey:stableContext};
     }
     return{mode:'e2ee',route,resolved};
   }

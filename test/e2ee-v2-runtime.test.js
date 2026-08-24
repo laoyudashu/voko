@@ -27,7 +27,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   const guestPublic=guest.publicBundle();
   const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server'};
   let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null;
-  const sessionScopes=[];
+  const sessionScopes=[],dispatcherInputs=[];
   const directoryClient={
     async registerAgentKey(input){registered=input;return{duplicate:false};},
     async resolveSender(input){
@@ -43,7 +43,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   };
   const persisted={inbound:[],outbound:[],delivered:[]};
   const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],
-    dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);
+    dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);dispatcherInputs.push(input);
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
@@ -73,7 +73,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   function close(){runtime.close();for(const sender of guestDevices.values())sender.endpoint.free();
     db.close();fs.rmSync(directory,{recursive:true,force:true});}
   return{runtime,store,guest,guestPublic,agent,persisted,createEnvelope,close,
-    counts:()=>({providerCalls,deliveryCalls}),reply:()=>replyEnvelope,sessionScopes,addGuestDevice};
+    counts:()=>({providerCalls,deliveryCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
 }
 
 test('v2 runtime decrypts, persists, executes once and returns a decryptable reply',async()=>{
@@ -192,6 +192,8 @@ test('Agent peer projection uses a receiver-scoped local id while preserving the
     assert.equal(conversation.routing_conversation_id,'conversation-1');
     assert.equal(conversation.wire_conversation_key,'conversation-1');
     assert.equal(conversation.protocol_conversation_id,'conversation-1');
+    assert.equal(f.dispatcherInputs[0].sourceType,'agent_peer');
+    assert.equal(f.dispatcherInputs[0].peerUid,'guest-im-1');
   }finally{f.close();}
 });
 

@@ -22,6 +22,23 @@ test('isolated execution captures reply without ordinary reply callback or bindi
   assert.match(provider.payload.content, /普通问候、问题和任务请求仍应正常回复/);
   assert.equal(provider.payload.providerBinding, null);
 });
+test('E2EE Agent peer uses Agent governance and strips control state from the visible reply', async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;setImmediate(()=>this.emit('agent.reply',{
+    agentId:payload.agentId,visitorId:payload.fromUid,turnId:payload.turnId,replyId:'e2ee-peer-reply',
+    content:'[STATE]{"goal":"finish","agenda":[],"turn":1,"proposal":"done","expects_reply":false,"converged":true}[/STATE]\n[FINAL]peer-visible result[/FINAL]',done:true}));
+    return{nativeSessionId:'provider-native-thread'};};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const result=await dispatcher.executeE2ee({agentId:'agent-1',taskId:'e2ee-task-1',
+    contextId:'67ad73dc-bc3d-4463-8e5b-7637765935f4',content:'peer request',
+    sourceType:'agent_peer',peerUid:'peer-agent-uid',sessionScopeId:'isolated-session-scope',timeoutMs:1000});
+  assert.equal(result.reply.content,'peer-visible result');
+  assert.equal(provider.payload.sourceType,'agent_peer');
+  assert.equal(provider.payload.securityContext.sourceType,'agent_peer');
+  assert.match(provider.payload.content,/\[VOKO A2A CONTROL\]/);
+  assert.equal(provider.payload.protocolContextId,'67ad73dc-bc3d-4463-8e5b-7637765935f4');
+  assert.equal(provider.payload.sessionScopeId,'isolated-session-scope');
+});
 test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
   const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
   await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'same',content:'x',executionScope:'a2a_mailbox'}),

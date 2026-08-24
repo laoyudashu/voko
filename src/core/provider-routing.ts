@@ -211,6 +211,39 @@ export class RoutingConversationStore {
       .get(clean(agentId, 128), clean(channelId, 192), Number(channelType) === 2 ? 2 : 1, key));
   }
 
+  /**
+   * Create the local UI mirror for an authenticated Agent-peer protocol
+   * conversation. It deliberately has no Provider-native identity: Provider
+   * execution remains bound by the isolated E2EE session scope.
+   */
+  resolveE2eeAgentPeerMirror(agentId: string, channelId: string, wireConversationKey: string): RoutingConversation {
+    const scopedAgentId = clean(agentId, 128);
+    const scopedChannelId = clean(channelId, 192);
+    const wireKey = clean(wireConversationKey, 128);
+    if (!scopedAgentId || !scopedChannelId || wireKey.length < 24 || !/^[A-Za-z0-9_-]+$/.test(wireKey)) {
+      throw new Error('E2EE Agent peer conversation identity is invalid');
+    }
+    const find = () => this.getForWireKey(scopedAgentId, scopedChannelId, 1, wireKey);
+    const existing = find();
+    if (existing) return existing;
+    const now = Date.now();
+    try {
+      this.db.prepare(`INSERT INTO provider_routing_conversations
+        (id,agent_id,provider_family,provider_instance_key,native_session_id,native_session_fingerprint,
+         wire_conversation_key,parent_conversation_id,merge_status,channel_id,channel_type,origin,status,
+         created_at,updated_at,last_used_at)
+        VALUES (?,?,NULL,NULL,NULL,NULL,?,NULL,'none',?,1,'web_system','active',?,?,?)`)
+        .run(crypto.randomUUID(), scopedAgentId, wireKey, scopedChannelId, now, now, now);
+    } catch (error) {
+      const raced = find();
+      if (raced) return raced;
+      throw error;
+    }
+    const created = find();
+    if (!created) throw new Error('Failed to create E2EE Agent peer conversation mirror');
+    return created;
+  }
+
   listForScope(agentId: string, channelId: string, channelType = 1): RoutingConversation[] {
     return this.db.prepare(`SELECT * FROM provider_routing_conversations
       WHERE agent_id=? AND channel_id=? AND channel_type=? AND status IN ('pending','active')

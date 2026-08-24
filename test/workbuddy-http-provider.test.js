@@ -70,6 +70,9 @@ test('WorkBuddy only resolves its bundled runtime and starts a text-only local s
     'bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
     '--session-id', 'voko-session', '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config',
   ]);
+  assert.deepEqual(workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session', {
+    agentId: 'expert-a', pluginRoot: 'C:\\safe\\expert-a',
+  }).slice(0, 5), ['bundled-cli', '--plugin-dir', 'C:\\safe\\expert-a', '--agent', 'expert-a']);
 });
 
 test('WorkBuddy request uses Gateway Protocol, opaque scopes and returns the native session', async () => {
@@ -185,12 +188,33 @@ test('WorkBuddy cancellation targets only the recorded Run or exact ACP session'
     if (String(url).endsWith('/api/v1/acp')) return acpResponse(JSON.parse(init.body), []);
     throw new Error(`unexpected ${url}`);
   });
-  provider._activeRuns.set('turn-run', 'run-1');
-  provider._activeAcp.set('turn-acp', { connectionId: 'connection-1', sessionId: 'session-1' });
+  const state = provider._currentState();
+  provider._activeRuns.set('turn-run', { runId: 'run-1', state });
+  provider._activeAcp.set('turn-acp', { connectionId: 'connection-1', sessionId: 'session-1', state });
   assert.deepEqual(await provider.cancelTurn('turn-run'), { canceled: true, outcome: 'delivered' });
   assert.deepEqual(await provider.cancelTurn('turn-acp'), { canceled: true, outcome: 'delivered' });
   assert.deepEqual(await provider.cancelTurn('missing'), { canceled: false, outcome: 'not_delivered' });
   const cancel = calls.find(call => call.url.endsWith('/api/v1/acp'));
   assert.equal(JSON.parse(cancel.init.body).method, 'session/cancel');
   assert.equal(JSON.parse(cancel.init.body).params.sessionId, 'session-1');
+});
+
+test('WorkBuddy bound agents use isolated server states and preserve ACP affinity', async () => {
+  const rows = new Map([['voko-a', 'expert-a'], ['voko-b', 'expert-b']]);
+  const provider = new WorkBuddyHttpProvider({ binPath: process.execPath,
+    db: { prepare: () => ({ get: (agentId) => ({ backend_instance_id: rows.get(agentId) }) }) },
+    resolveAgentTarget: id => ({ instance: { id }, pluginRoot: `C:\\experts\\${id}` }),
+  });
+  const stateA = provider._stateFor({ agentId: 'voko-a' });
+  const stateB = provider._stateFor({ agentId: 'voko-b' });
+  assert.notEqual(stateA, stateB);
+  assert.equal(provider._stateFor({ agentId: 'voko-a' }), stateA);
+  assert.equal(stateA.instanceId, 'expert-a');
+  assert.equal(stateB.instanceId, 'expert-b');
+  assert.throws(() => provider._stateFor({ agentId: 'voko-a', providerBinding: {
+    providerType: 'workbuddy', adapterType: 'workbuddy-http', deliveryMode: 'http',
+    providerInstanceId: 'expert-b', nativeSessionId: 'session-b',
+  } }), /binding is stale/);
+  provider._activeAcp.set('turn-a', { connectionId: 'c-a', sessionId: 's-a', state: stateA });
+  assert.equal(provider._activeAcp.get('turn-a').state, stateA);
 });

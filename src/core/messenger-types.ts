@@ -30,6 +30,8 @@ export interface InboundMessage {
     conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
   e2eeStrictRoute?: boolean;
   e2eeAgentPeer?: boolean;
+  /** Authenticated E2EE protocol context. Never accept this from raw IM input. */
+  e2eeProtocolConversationId?: string;
 }
 
 export interface ForwardPayload {

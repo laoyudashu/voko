@@ -252,11 +252,13 @@ export class E2eeV2Runtime {
         channelId:envelope.channelId,channelType:1,content:prepared.displayContent,contentType:prepared.contentType,
         messageId:localMessageId,clientMsgNo:envelope.messageId,
         timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),_voko:inboundRouteContext||null,
-        e2eeStrictRoute:Boolean(inboundRouteContext),e2eeAgentPeer:sender.peerKind==='agent'},prepared.displayContent,
+        e2eeStrictRoute:Boolean(inboundRouteContext),e2eeAgentPeer:sender.peerKind==='agent',
+        e2eeProtocolConversationId:sender.peerKind==='agent'?envelope.conversationId:undefined},prepared.displayContent,
         localMessageId,prepared.contentType);
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
       const result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
         taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
+        sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
         attachments:prepared.attachments,
         onProviderAccepted:()=>{if(providerAccepted)return;
           if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
