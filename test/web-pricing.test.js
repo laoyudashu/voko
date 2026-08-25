@@ -22,7 +22,7 @@ async function startPricingApp(t, { hasPayment = true, durationMinutes = 10 } = 
     get: () => {
       if (sql.includes('JOIN payment_auth')) return hasPayment ? { name: '张三', bank_name: '测试银行', bank_card: '6222000012345678' } : null;
       if (sql.includes("type='current_user_email'")) return { data: JSON.stringify('owner@example.com') };
-      if (sql.includes('FROM agents WHERE agent_id=')) return { agent_id: 'paid-agent', agent_name: 'Paid Agent', payment_auth_id: 'card-1' };
+      if (sql.includes('FROM agents WHERE agent_id=')) return { agent_id: 'paid-agent', agent_name: 'Paid Agent', payment_auth_id: 'card-1', payment_fee_rate: 0.012, agent_usage_fee_rate: 0.15 };
       return null;
     },
     all: () => sql.includes('FROM payment_auth WHERE')
@@ -125,6 +125,13 @@ test('receiving-card selector includes the bank-card owner name', async (t) => {
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /张三 · 测试银行 •••• 5678/);
+  assert.match(html, /服务费说明/);
+  assert.match(html, /支付手续费：1\.2%/);
+  assert.match(html, /收取 1\.2 元手续费，您实际到账 98\.8 元/);
+  assert.match(html, /订阅手续费：15%/);
+  assert.match(html, /收取 15 元手续费，您实际到账 85 元/);
+  assert.match(html, /结算周期说明/);
+  assert.match(html, /第二个工作日统一到账。如遇周末和节假日，顺延至下一个工作日。/);
 });
 
 test('successful card binding returns to pricing with paid mode selected', async (t) => {

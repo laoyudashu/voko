@@ -79,7 +79,7 @@ describe('registerAgentInDb description 写入', () => {
       });
       assert.strictEqual(r.success, true);
 
-      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, delivery_modes, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
+      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, delivery_modes, agent_name, access_mode, payment_fee_rate, agent_usage_fee_rate FROM agents WHERE agent_id=?').get('agent-desc');
       assert.strictEqual(row.description, '一个只读的代码分析助手');
       assert.strictEqual(row.category, 'technology');
       assert.strictEqual(row.backend_type, 'codex');
@@ -87,6 +87,8 @@ describe('registerAgentInDb description 写入', () => {
       assert.deepStrictEqual(JSON.parse(row.delivery_modes), ['cli', 'pull']);
       assert.strictEqual(row.agent_name, '我的Codex助手');
       assert.strictEqual(row.access_mode, 'public');
+      assert.strictEqual(row.payment_fee_rate, 0.006);
+      assert.strictEqual(row.agent_usage_fee_rate, 0.1);
     } finally { cleanupDb(db); }
   });
 
@@ -286,7 +288,10 @@ describe('verify_agent_email 必填校验', () => {
       success: true,
       data: {
         agentId: 'selected-2',
-        agents: [{ agentId: 'first-1' }, { agentId: 'selected-2' }],
+        agents: [
+          { agentId: 'first-1', payment_fee_rate: 0.006, agent_usage_fee_rate: 0.1 },
+          { agentId: 'selected-2', payment_fee_rate: 0.012, agent_usage_fee_rate: 0.2 },
+        ],
         imUid: 'uid-2',
         imToken: 'token-2',
         did: 'did:selected-2',
@@ -308,6 +313,8 @@ describe('verify_agent_email 必填校验', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(captured.agentId, 'selected-2');
     assert.strictEqual(captured.uid, 'uid-2');
+    assert.strictEqual(captured.paymentFeeRate, 0.012);
+    assert.strictEqual(captured.agentUsageFeeRate, 0.2);
   });
 
   it('多 Agent 响应未标识选中身份时停止写库和 Worker', async () => {
@@ -336,6 +343,31 @@ describe('verify_agent_email 必填校验', () => {
 });
 
 describe('create_agent_by_token 必填校验', () => {
+  it('将本次创建 Agent 的服务端费率原样写入本地', async () => {
+    const cx = createMockCx();
+    let captured = null;
+    cx.agentRegistration.createAgentByToken = async () => ({
+      success: true,
+      data: {
+        agentId: 'new-1', imUid: 'u', imToken: 't', did: 'd', publicKey: 'pk', privateKey: 'sk',
+        payment_fee_rate: 0.015, agent_usage_fee_rate: 0.25,
+      },
+    });
+    cx.agentRegistration.registerAgentInDb = async (params) => {
+      captured = params;
+      cx._calls.registerAgentInDb++;
+      return { success: true };
+    };
+
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: 'Fee Agent', backendType: 'codex',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(captured.paymentFeeRate, 0.015);
+    assert.strictEqual(captured.agentUsageFeeRate, 0.25);
+  });
+
   it('运行中注册先加载 Provider 并刷新路由，再启动 IM Worker', async () => {
     const cx = createMockCx();
     const order = [];

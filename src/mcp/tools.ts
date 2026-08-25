@@ -1214,9 +1214,10 @@ function createToolHandlers(cx: McpContext) {
       const accessMode = p.accessMode === 'public' ? 'public' : 'private';
       const category = p.category || 'general';
 
-      const firstAgent = data.agents[0];
-      const paymentFeeRate = optionalFeeRate(firstAgent.payment_fee_rate);
-      const agentUsageFeeRate = optionalFeeRate(firstAgent.agent_usage_fee_rate);
+      const selectedAgent = data.agents.find(agent => agent.agentId === agentId);
+      if (!selectedAgent) return { success: false, error: t('mcp.registration.invalid_response') };
+      const paymentFeeRate = optionalFeeRate(selectedAgent.payment_fee_rate);
+      const agentUsageFeeRate = optionalFeeRate(selectedAgent.agent_usage_fee_rate);
       if (Number.isNaN(paymentFeeRate) || Number.isNaN(agentUsageFeeRate)) {
         return { success: false, error: t('mcp.registration.invalid_response') };
       }
@@ -1344,8 +1345,13 @@ function createToolHandlers(cx: McpContext) {
       const data = createdRegistrationData(tokenResult.data, p.agentName);
       if (!data) return { success: false, error: t('mcp.registration.invalid_response') };
       const agentId = data.agentId;
+      const paymentFeeRate = optionalFeeRate(data.payment_fee_rate);
+      const agentUsageFeeRate = optionalFeeRate(data.agent_usage_fee_rate);
+      if (Number.isNaN(paymentFeeRate) || Number.isNaN(agentUsageFeeRate)) {
+        return { success: false, error: t('mcp.registration.invalid_response') };
+      }
 
-      // Step 2：写入 agents 表（loginToken/费率用默认）
+      // Step 2：写入 agents 表（旧服务端未返回费率时由落库层使用默认值）
       const regRes = await cx.agentRegistration.registerAgentInDb({
         agentId,
         uid: data.imUid,
@@ -1359,6 +1365,8 @@ function createToolHandlers(cx: McpContext) {
         did: data.did,
         publicKey: data.publicKey,
         privateKey: data.privateKey,
+        paymentFeeRate,
+        agentUsageFeeRate,
         category: p.category || 'general',
         description: p.description,
         tags: p.tags,
