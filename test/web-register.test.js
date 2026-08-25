@@ -281,6 +281,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /class="basic-profile-grid"/);
     assert.match(html, /class="basic-icon-preview"/);
     assert.match(html, /id="wf-icon-button"/);
+    assert.match(html, /DEFAULT_AGENT_ICON="data:image\/svg\+xml/);
+    assert.match(html, /selectedIconObjectUrl\|\|suggestedIconPreview\|\|DEFAULT_AGENT_ICON/);
     assert.match(html, /type="file" id="wf-icon-file"/);
     assert.match(html, /useSuggestedIcon:!selectedIconFile/);
     assert.match(html, /function uploadSelectedIcon\(agentId\)/);

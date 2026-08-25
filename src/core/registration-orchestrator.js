@@ -30,6 +30,7 @@ const { discoverQwenOfficeAgents } = require('./dispatcher/qwen-office-agents');
 const { discoverDuMateAgents } = require('./dispatcher/dumate-agents');
 const { isDuMateRuntimeAvailable } = require('./dispatcher/dumate-command');
 const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
+const { readProviderInstanceMetadata } = require('./dispatcher/provider-instance-metadata');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const PROVIDER_DISPLAY_PRIORITY = [
@@ -1313,22 +1314,25 @@ class RegistrationOrchestrator {
       detected: !!detected,
     };
     const selected = instances.find((item) => item.id === instanceId) || null;
+    const selectedProfile = selected
+      ? { ...selected, ...readProviderInstanceMetadata(providerType, selected.id) }
+      : null;
     session.suggestedBasicInfo = {
-      agentName: selected?.name || defaultAgentName(session.email, providerType),
-      description: selected?.description || '',
-      category: selected?.category || 'general',
-      tags: selected?.tags || [],
+      agentName: selectedProfile?.name || defaultAgentName(session.email, providerType),
+      description: selectedProfile?.description || '',
+      category: selectedProfile?.category || 'general',
+      tags: selectedProfile?.tags || [],
       // A plugin-relative avatar is only an internal candidate. It is never a public URL
       // and must not be persisted until the normal validated upload/storage path can run.
       iconUrl: '',
-      iconCandidate: selected?.avatar
-        ? { kind: 'provider_instance_avatar', providerType, instanceId: selected.id, relativePath: selected.avatar, source: selected.source }
+      iconCandidate: selectedProfile?.avatar
+        ? { kind: 'provider_instance_avatar', providerType, instanceId: selected.id, relativePath: selectedProfile.avatar, source: selectedProfile.source }
         : null,
-      iconPreviewUrl: providerType === 'workbuddy' && selected?.avatar
+      iconPreviewUrl: providerType === 'workbuddy' && selectedProfile?.avatar
         ? `/api/agent-registration/workbuddy-avatar/${encodeURIComponent(selected.id)}`
         : '',
-      contactPhone: selected?.contactPhone || '',
-      address: selected?.address || '',
+      contactPhone: selectedProfile?.contactPhone || '',
+      address: selectedProfile?.address || '',
     };
     delete session.pendingApproval;
     session.deliveryModes = this.deliveryCapabilities(

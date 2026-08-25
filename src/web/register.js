@@ -21,6 +21,10 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
+const DEFAULT_AGENT_ICON = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path fill="#1a73e8" d="M603 142c46 0 83 36 83 81v63h109c52 0 94 41 94 91v465c0 50-42 91-94 91H232c-52 0-93-41-93-91V377c0-50 42-91 94-91h109v-63c0-45 37-81 83-81h178zm192 234H232c-1 0-1 1-1 1v465c0 1 0 1 1 1h563c1 0 2 0 2-1V377c0-1-1-1-2-1zM443 560c25 0 46 20 46 45s-21 45-46 45H329c-26 0-47-20-47-45s21-45 47-45h114zm266 0c25 0 46 20 46 45s-21 45-46 45H594c-25 0-46-20-46-45s21-45 46-45h115zM434 232v54h159v-54H434z"/></svg>',
+);
+
 function iconExtension(mimeType) {
   return ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' })[mimeType] || null;
 }
@@ -364,7 +368,7 @@ function wizardJs(t) {
   };
   return `<script>
 (function(){
-  var I=${JSON.stringify(I)}, root=document.getElementById('registration-wizard');
+  var I=${JSON.stringify(I)},DEFAULT_AGENT_ICON=${JSON.stringify(DEFAULT_AGENT_ICON)},root=document.getElementById('registration-wizard');
   if(!root)return;
   var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null, workbuddyLoad='idle', workbuddyError='';
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
@@ -424,12 +428,12 @@ function wizardJs(t) {
     return available.has('general')?'general':(select.options[0]&&select.options[0].value)||'general';
   }
   function clearSelectedIcon(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl);selectedIconFile=null;selectedIconObjectUrl=''}
-  function renderIconPreview(){var button=document.getElementById('wf-icon-button'),preview=document.getElementById('wf-icon-preview'),src=selectedIconObjectUrl||suggestedIconPreview;button.classList.toggle('has-image',!!src);if(src)preview.src=src;else preview.removeAttribute('src')}
+  function renderIconPreview(){var button=document.getElementById('wf-icon-button'),preview=document.getElementById('wf-icon-preview'),src=selectedIconObjectUrl||suggestedIconPreview||DEFAULT_AGENT_ICON;button.classList.add('has-image');if(preview.src!==src)preview.src=src}
   function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value||'general',tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:'',useSuggestedIcon:!selectedIconFile,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
   function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=normalizedSuggestionTags(s.tags).join(', ');suggestedIconPreview=s.iconPreviewUrl||s.iconUrl||'';renderIconPreview();if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';document.getElementById('wf-category').value=inferredCategory(nameInput.value,document.getElementById('wf-desc').value,s.category)}
   document.getElementById('wf-icon-button').addEventListener('click',function(){document.getElementById('wf-icon-file').click()});
   document.getElementById('wf-icon-file').addEventListener('change',function(){var file=this.files&&this.files[0],allowed=['image/png','image/jpeg','image/webp','image/gif'];if(!file)return;if(allowed.indexOf(file.type)===-1){this.value='';return fail(new Error(I.iconInvalid))}if(file.size>500*1024){this.value='';return fail(new Error(I.iconTooLarge))}clearSelectedIcon();selectedIconFile=file;selectedIconObjectUrl=URL.createObjectURL(file);renderIconPreview()});
-  document.getElementById('wf-icon-preview').addEventListener('error',function(){if(selectedIconObjectUrl){clearSelectedIcon()}else suggestedIconPreview='';renderIconPreview()});
+  document.getElementById('wf-icon-preview').addEventListener('error',function(){if(selectedIconObjectUrl){clearSelectedIcon()}else if(suggestedIconPreview){suggestedIconPreview=''}else return;renderIconPreview()});
   async function uploadSelectedIcon(agentId){if(!selectedIconFile)return null;var fd=new FormData();fd.append('file',selectedIconFile,selectedIconFile.name);var response=await fetch('/api/agents/'+encodeURIComponent(agentId)+'/icon',{method:'POST',body:fd}),data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||I.iconUploadFailed);return data}
   function beginDetection(){
     if(state&&state.environment){renderProviders(state.environment);return Promise.resolve(state)}
