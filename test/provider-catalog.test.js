@@ -28,6 +28,23 @@ test('Qwen Office, Trae and CodeBuddy expose headless Push transports with Pull 
   assert.equal(getProviderFamily('trae-ide').type, 'trae');
 });
 
+test('DeepSeek Harness supports resumable Web Host plus one-shot Profile CLI and keeps Owner control disabled', () => {
+  const family = getProviderFamily('deepseek-harness');
+  assert.equal(family.requiresInstance, true);
+  assert.deepEqual(family.defaultDeliveryModes, ['http', 'cli', 'pull']);
+  const transport = getProviderTransport('deepseek-harness-http');
+  assert.equal(transport.supportsLoopback, false);
+  assert.equal(transport.owner, undefined);
+  assert.deepEqual(transport.exactSession, {
+    nativeSessionNamespace: 'deepseek-harness-web', restoreCompatibilityGroup: 'deepseek-harness-web-v1',
+  });
+  const cli = getProviderTransport('deepseek-harness-cli');
+  assert.deepEqual(cli.operations, ['push']);
+  assert.equal(cli.capabilities.sessionResume, false);
+  assert.equal(cli.capabilities.steer, false);
+  assert.equal(cli.exactSession, undefined);
+});
+
 test('loopback capability is explicit and special transports stay preflight-only', () => {
   for (const id of ['claude-cli', 'codex-cli', 'cline-acp', 'traecli-acp', 'codebuddy-acp', 'hermes-cli', 'hermes-http', 'openclaw-ws', 'zeroclaw-ws', 'qwen-office-cli']) {
     assert.equal(getProviderTransport(id).supportsLoopback, true, `${id} should expose a real loopback`);

@@ -609,7 +609,7 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     T('mcp.tool.agent_pricing.desc'),
     {
       agentId: z.string().describe(T('mcp.param.agentId')),
-      pricingModel: z.string().optional().describe(T('mcp.tool.agent_pricing.p.pricingModel')),
+      pricingModel: z.enum(['free', 'timed']).optional().describe(T('mcp.tool.agent_pricing.p.pricingModel')),
       price: z.number().positive().optional().describe(T('mcp.tool.agent_pricing.p.price')),
       durationMinutes: z.number().int().positive().optional().describe(T('mcp.tool.agent_pricing.p.durationMinutes')),
       trialMinutes: z.number().int().min(0).optional().describe(T('mcp.tool.agent_pricing.p.trialMinutes')),

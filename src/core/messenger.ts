@@ -583,11 +583,7 @@ class MessageHandler extends EventEmitter {
           return;
         }
       } else if (conv.session_status === 'active') {
-        if (conv.session_expire_at && conv.session_expire_at > Date.now()) {
-          if (conv.session_expire_at - Date.now() < 60000) {
-            this._sendSystemMessage(agentId, fromUid, 'expiring_soon', {}, timestamp, systemRoute);
-          }
-        } else {
+        if (!conv.session_expire_at || conv.session_expire_at <= Date.now()) {
           this.db.prepare('UPDATE conversations SET session_status=? WHERE user_uid=? AND channel_id=?').run('expired', toUid, channelId);
           if (isBuyCmd) {
             this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp, messageId);

@@ -24,12 +24,14 @@ const {
 } = require('./dispatcher/qwen-office-command');
 const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
+const { resolveDeepSeekHarnessRuntime } = require('./dispatcher/deepseek-harness-command');
 const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
+const { discoverQwenOfficeAgents } = require('./dispatcher/qwen-office-agents');
 const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const PROVIDER_DISPLAY_PRIORITY = [
-  'workbuddy', 'claude-code', 'codex', 'openclaw', 'hermes',
+  'workbuddy', 'deepseek-harness', 'claude-code', 'codex', 'openclaw', 'hermes',
   'github-copilot', 'cursor', 'gemini', 'codebuddy', 'qwen-office',
   'qwen-code', 'trae', 'goose', 'opencode', 'cline', 'kiro', 'aider',
   'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode', 'doubao',
@@ -168,6 +170,7 @@ function currentAgentTypeFromText(value) {
     ['opencode', /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/],
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
     ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:[\\/\s]|$)/],
+    ['deepseek-harness', /(?:^|[\\/\s])dsh(?:\.exe|\.cmd)?(?:\s|$)|deepseek-harness/],
     ['codebuddy', /(?:^|[\\/\s])(?:codebuddy|cbc)(?:\.exe|\.cmd)?(?:\s|$)/],
     ['doubao', /(?:^|[\\/\s])doubao(?:\.exe)?(?:\s|$)/],
     ['trae', /(?:^|[\\/\s])traecli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])trae(?:\.exe|\.cmd)?(?:\s|$)|trae\s+(?:work|solo)/],
@@ -624,6 +627,34 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('hermes', hermesGateway),
       });
     }
+    const deepseekHarness = discoverProviderInstances('deepseek-harness');
+    const deepseekHarnessRuntime = resolveDeepSeekHarnessRuntime();
+    if (deepseekHarness.length || deepseekHarnessRuntime.command) {
+      detected.push({
+        type: 'deepseek-harness',
+        label: 'DeepSeek Harness',
+        instanceTerm: getProviderInstanceTerm('deepseek-harness'),
+        instances: deepseekHarness,
+        supportsMultipleInstances: true,
+        activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('deepseek-harness'),
+      });
+    }
+    let qwenOfficeAgents = [];
+    try { qwenOfficeAgents = (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)(); }
+    catch (_) {}
+    const qwenOfficeRuntime = qwenOfficeReadiness(this.options);
+    if (qwenOfficeAgents.length || qwenOfficeRuntime.ready) {
+      detected.push({
+        type: 'qwen-office',
+        label: '千问办公 (QwenWork)',
+        instanceTerm: getProviderInstanceTerm('qwen-office'),
+        instances: qwenOfficeAgents,
+        supportsMultipleInstances: true,
+        activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('qwen-office'),
+      });
+    }
 
     const known = this.db ? getBackendTypes(this.db) : [];
     const knownLabels = new Map(known.map((item) => [item.value, item.label]));
@@ -643,7 +674,7 @@ class RegistrationOrchestrator {
                 ? !!this.options.codeBuddyCliAvailable()
                 : isCodeBuddyAvailable())
             : hasCommand(command);
-      if (type === 'openclaw' || type === 'hermes' || !available) continue;
+      if (type === 'openclaw' || type === 'hermes' || type === 'qwen-office' || !available) continue;
       detected.push({
         type,
         label: knownLabels.get(type) || type,
@@ -661,8 +692,9 @@ class RegistrationOrchestrator {
       detected.push({
         type: application.type,
         label: knownLabels.get(application.type) || application.label,
-        instances: [],
-        supportsMultipleInstances: false,
+        ...(application.type === 'qwen-office' ? { instanceTerm: getProviderInstanceTerm('qwen-office') } : {}),
+        instances: application.type === 'qwen-office' ? qwenOfficeAgents : [],
+        supportsMultipleInstances: application.type === 'qwen-office',
         activityState: 'installed',
         deliveryModes: this.deliveryCapabilities(application.type),
       });
@@ -717,7 +749,10 @@ class RegistrationOrchestrator {
     if (!supportsProviderInstances(type)) return { success: false, error: '该 Agent 类型不支持实例发现' };
     try {
       const instances = type === 'workbuddy' && this.options.workBuddyAgents
-        ? this.options.workBuddyAgents() : discoverProviderInstances(type);
+        ? this.options.workBuddyAgents()
+        : type === 'qwen-office' && this.options.qwenOfficeAgents
+          ? this.options.qwenOfficeAgents()
+          : discoverProviderInstances(type);
       return { success: true, providerType: type, instances };
     } catch (error) {
       return { success: false, error: `${type} 实例发现失败: ${error.message || error}` };
@@ -728,7 +763,10 @@ class RegistrationOrchestrator {
     const type = normalizeBackendType(providerType);
     const known = this.db ? getBackendTypes(this.db) : [];
     const label = known.find((item) => item.value === type)?.label || type;
-    const allInstances = supportsProviderInstances(type) ? discoverProviderInstances(type) : [];
+    const allInstances = supportsProviderInstances(type)
+      ? (type === 'qwen-office' && this.options.qwenOfficeAgents
+        ? this.options.qwenOfficeAgents() : discoverProviderInstances(type))
+      : [];
     const matchedInstance = instanceId ? allInstances.find((instance) => instance.id === instanceId) : null;
     const instances = matchedInstance ? [matchedInstance] : allInstances;
     const provider = {
@@ -852,6 +890,30 @@ class RegistrationOrchestrator {
           description: available
             ? 'VOKO 使用 WorkBuddy 内置 CodeBuddy HTTP API 和隔离会话自动投递；服务仅监听本机回环地址。'
             : '未检测到 WorkBuddy 内置 CodeBuddy CLI，当前使用主动获取。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'deepseek-harness') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      const presets = discoverProviderInstances('deepseek-harness');
+      const available = !!runtime.command && presets.length > 0;
+      return [
+        {
+          mode: 'http', label: 'DeepSeek Harness Web Host', role: 'primary',
+          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: available,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 通过本机回环 Web Host 创建或精确恢复 DSH Session；仅应选择专门的 VOKO-safe Agent Preset。主人审批和提问不会自动转发。'
+            : '未检测到可启动的 DeepSeek Harness Web profile 或 Agent Preset，当前使用主动获取。',
+        },
+        {
+          mode: 'cli', label: 'DeepSeek Harness Profile CLI（单次任务）', role: 'fallback',
+          status: runtime.command ? 'preflight_passed' : 'unavailable', selected: false, recommended: false,
+          action: runtime.command ? 'test' : null,
+          description: runtime.command
+            ? '通过 DSH Profile CLI 执行单次任务；内置 headless 每次创建新 Agent，不支持原生会话恢复或主人介入。'
+            : '未检测到 DeepSeek Harness CLI。',
         },
         pull,
       ];
@@ -1187,7 +1249,9 @@ class RegistrationOrchestrator {
     const detected = environment.detected.find((item) => item.type === providerType);
     const instances = providerType === 'workbuddy'
       ? (this.options.workBuddyAgents || discoverWorkBuddyAgents)()
-      : detected?.instances || [];
+      : providerType === 'qwen-office'
+        ? (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)()
+        : detected?.instances || [];
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
     if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
@@ -1197,6 +1261,12 @@ class RegistrationOrchestrator {
     }
     if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
       return { success: false, error: '所选 WorkBuddy Agent 不存在或不可用' };
+    }
+    if (providerType === 'qwen-office' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选千问办公专家套件不存在、清单无效或不可用' };
+    }
+    if (providerType === 'deepseek-harness' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 DeepSeek Harness Agent Preset 不存在或不可用' };
     }
     if (instanceId && instances.length && family?.validateInstance && !family.validateInstance(instanceId, instances)) {
       return { success: false, error: '所选实例不存在' };
@@ -1409,6 +1479,19 @@ class RegistrationOrchestrator {
       detail = ready
         ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
         : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
+    } else if (provider === 'deepseek-harness' && mode === 'http') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      const instances = discoverProviderInstances('deepseek-harness');
+      ready = !!runtime.command && instances.some((item) => item.id === session.provider?.instanceId);
+      detail = ready
+        ? '已检测到 DeepSeek Harness Web profile 和所选 Agent Preset；Provider 启动时将复核回环 API。主人审批和提问保持关闭。'
+        : 'DeepSeek Harness Web profile 或所选 Agent Preset 不可用。';
+    } else if (provider === 'deepseek-harness' && mode === 'cli') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      ready = !!runtime.command;
+      detail = ready
+        ? '已检测到 DeepSeek Harness CLI；Profile CLI 为单次任务模式，不建立可恢复的原生会话。'
+        : '未检测到 DeepSeek Harness CLI。';
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
         .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);
@@ -1508,6 +1591,12 @@ class RegistrationOrchestrator {
       const instances = (this.options.workBuddyAgents || discoverWorkBuddyAgents)();
       if (!instances.some((item) => item.id === session.provider.instanceId)) {
         return { success: false, error: '所选 WorkBuddy Agent 已不存在或不可用，请返回上一步重新选择' };
+      }
+    }
+    if (session.provider.type === 'qwen-office' && session.provider.instanceId) {
+      const instances = (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选千问办公专家套件已不存在、清单无效或不可用，请返回上一步重新选择' };
       }
     }
     session.accessMode = input.accessMode === 'public' ? 'public' : 'private';

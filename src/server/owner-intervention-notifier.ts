@@ -424,7 +424,10 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       );
       const cursor = checkpoint?.committedValue || '0';
       const page = await this.agentEmailApi.pollReplies({ cursor, limit: 100 });
-      if (!page) return;
+      if (!page) {
+        await this._queryPendingEmailReplies();
+        return;
+      }
       let processedCursor = cursor;
       for (const event of page.events) {
         const processed = this._storeEmailReplyEvent(event, processedCursor);
@@ -437,6 +440,58 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       console.warn('[OwnerInterventionNotifier] 邮件回复轮询错误:', e.message);
     } finally {
       this._pollingEmailReplies = false;
+    }
+  }
+
+  async _queryPendingEmailReplies() {
+    if (typeof this.agentEmailApi.queryReply !== 'function') return;
+    const rows = this.db.prepare(
+      `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
+              oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
+              oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+              COALESCE(oi.agent_notified, 0) AS agent_notified
+       FROM owner_interventions oi
+       WHERE oi.email_message_id IS NOT NULL
+       AND COALESCE(oi.skip_reply, 0) = 0
+       AND oi.status IN ('pending','awaiting')
+       AND (oi.expire_time IS NULL OR oi.expire_time > ?)
+       ORDER BY oi.ask_time ASC
+       LIMIT 20`
+    ).all(Date.now());
+    for (const row of rows) {
+      const reply = await this.agentEmailApi.queryReply({ message_id: row.email_message_id });
+      const replyText = String(reply?.raw_text || '').trim();
+      if (!reply?.has_reply || !replyText) continue;
+      const stored = this._storeQueriedEmailReply(row.id, replyText, reply.replied_at);
+      if (stored) await this._forwardEmailReply(stored, replyText, true);
+    }
+  }
+
+  _storeQueriedEmailReply(id: string, replyText: string, repliedAt?: string) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(
+        `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
+                oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
+                oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+                COALESCE(oi.agent_notified, 0) AS agent_notified
+         FROM owner_interventions oi WHERE oi.id=? LIMIT 1`
+      ).get(id);
+      if (!row || !['pending', 'awaiting'].includes(String(row.status))) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const replyTime = Date.parse(repliedAt || '') || Date.now();
+      this.db.prepare(`UPDATE owner_interventions
+        SET owner_reply=?,reply_time=?,status='replied',updated_at=?,agent_notified=0,channel_type='voko-email'
+        WHERE id=? AND status IN ('pending','awaiting')`)
+        .run(replyText, replyTime, Date.now(), id);
+      this.db.exec('COMMIT');
+      return { ...row, status: 'replied', owner_reply: replyText,
+        reply_time: replyTime, agent_notified: 0 };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
     }
   }
 

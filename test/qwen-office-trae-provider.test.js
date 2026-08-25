@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const qwenCommand = require('../build/core/dispatcher/qwen-office-command');
 const traeCommand = require('../build/core/dispatcher/trae-command');
 const { QwenOfficeCliProvider } = require('../build/core/dispatcher/providers/qwen-office-cli');
+const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const { TraeAcpProvider } = require('../build/core/dispatcher/providers/trae-acp');
 const { withTraeRuntimeLock } = require('../build/core/dispatcher/providers/trae-runtime-coordinator');
 
@@ -65,6 +66,71 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
+});
+
+test('QwenWork CLI provider maps the selected expert kit to cwd/plugin-dir and rejects stale instance bindings', async () => {
+  const selected = 'mt80hmwaywym3lje/health-rumor-crusher';
+  const db = {
+    prepare() {
+      return { get: () => ({ backend_type: 'qwen-office', backend_instance_id: selected }) };
+    },
+  };
+  const resolveAgentTarget = (id) => id === selected ? {
+    instance: { id: selected, name: '养生谣言粉碎机' },
+    workspaceRoot: 'C:\\qwenwork\\workspace\\mt80hmwaywym3lje',
+    pluginRoot: 'C:\\qwenwork\\workspace\\mt80hmwaywym3lje\\health-rumor-crusher',
+  } : null;
+  const provider = new QwenOfficeCliProvider({
+    binPath: 'C:\\tools\\qoderclicn.exe', db, resolveAgentTarget,
+  });
+  assert.equal(provider._instanceForAgent('agent-1'), selected);
+  assert.deepEqual(provider._instanceArgs(selected), {
+    args: [
+      '--cwd', 'C:\\qwenwork\\workspace\\mt80hmwaywym3lje',
+      '--plugin-dir', 'C:\\qwenwork\\workspace\\mt80hmwaywym3lje\\health-rumor-crusher',
+    ],
+    position: 'before',
+  });
+  assert.equal(provider.acceptsBinding({
+    providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli',
+    nativeSessionId: 'session-1', providerInstanceId: selected,
+  }, 'agent-1'), true);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli',
+    nativeSessionId: 'session-1', providerInstanceId: 'mt-other/other-kit',
+  }, 'agent-1'), false);
+  await assert.rejects(provider.push({
+    agentId: 'agent-1', fromUid: 'visitor-1', content: 'hello', messageId: 'message-1',
+    providerBinding: {
+      providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli',
+      nativeSessionId: 'session-1', providerInstanceId: 'mt-other/other-kit',
+    },
+  }), (error) => error.deliveryOutcome === 'not_delivered');
+});
+
+test('CLI delivery receipts persist the configured instance on the first native session', async () => {
+  const provider = new CliAdapter({
+    name: 'QWEN INSTANCE RECEIPT TEST',
+    cmd: process.execPath,
+    args: ['-e', "console.log(JSON.stringify({session_id:'native-session-1'}))"],
+    parser: 'raw',
+    matchType: 'qwen-office',
+    adapterType: 'qwen-office-cli',
+    bindingProviderType: 'qwen-office',
+    db: {
+      prepare: () => ({
+        get: () => ({ backend_type: 'qwen-office', backend_instance_id: 'mt80hmwaywym3lje/health-rumor-crusher' }),
+      }),
+    },
+    instanceArgs: () => ({ args: [] }),
+    sessionIdFromLine: (line) => JSON.parse(line).session_id,
+    requireSessionId: true,
+  });
+  const receipt = await provider.push({
+    agentId: 'agent-1', fromUid: 'visitor-1', content: 'hello', messageId: 'message-1',
+  });
+  assert.equal(receipt.nativeSessionId, 'native-session-1');
+  assert.equal(receipt.providerInstanceId, 'mt80hmwaywym3lje/health-rumor-crusher');
 });
 
 test('QwenWork CLI provider exposes an explicitly acknowledged safe loopback test', async () => {

@@ -16,6 +16,7 @@ function createFixture(overrides = {}) {
   const dispatched = [];
   const delivered = [];
   const notified = [];
+  const systemMessages = [];
   const handler = new MessageHandler(db, {
     dispatcher: {
       dispatch(agentId, payload) {
@@ -30,10 +31,13 @@ function createFixture(overrides = {}) {
     notifyUI(event, data) {
       notified.push({ event, data });
     },
+    sendSystemMessage(...args) {
+      systemMessages.push(args);
+    },
     ...overrides,
   });
 
-  return { db, handler, dispatched, delivered, notified };
+  return { db, handler, dispatched, delivered, notified, systemMessages };
 }
 
 function inbound(overrides = {}) {
@@ -187,6 +191,74 @@ describe('Lite Messenger contract smoke', () => {
       assert.equal(fixture.dispatched[0].agentId, 'agent-1');
       assert.equal(fixture.dispatched[0].payload.messageId, 'incoming-1');
       assert.equal(fixture.dispatched[0].payload.channelType, 1);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('announces timed pricing and starts the trial on the first inbound message', () => {
+    const fixture = createFixture();
+    try {
+      const now = Date.now();
+      fixture.db.prepare(`INSERT INTO agent_pricing
+        (id, agent_id, pricing_model, price, duration_minutes, trial_minutes, enabled, created_at, updated_at)
+        VALUES (?, ?, 'timed', ?, ?, ?, 1, ?, ?)`)
+        .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
+
+      fixture.handler.handleAgentMessage('agent-1', inbound());
+
+      assert.equal(fixture.systemMessages.length, 1);
+      assert.equal(fixture.systemMessages[0][2], 'trial_welcome');
+      assert.deepEqual(fixture.systemMessages[0][3], {
+        trialMinutes: 3,
+        price: 0.01,
+        durationMinutes: 60,
+      });
+      const conversation = fixture.db.prepare(
+        'SELECT session_status, session_expire_at FROM conversations WHERE user_uid=? AND channel_id=?',
+      ).get('agent-uid', 'visitor-1');
+      assert.equal(conversation.session_status, 'active');
+      assert.ok(conversation.session_expire_at > now);
+      assert.equal(fixture.dispatched.length, 1);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('stays silent before timed service expiry and notifies only after expiry', () => {
+    const fixture = createFixture();
+    try {
+      const now = Date.now();
+      fixture.db.prepare(`INSERT INTO agent_pricing
+        (id, agent_id, pricing_model, price, duration_minutes, trial_minutes, enabled, created_at, updated_at)
+        VALUES (?, ?, 'timed', ?, ?, ?, 1, ?, ?)`)
+        .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
+
+      fixture.handler.handleAgentMessage('agent-1', inbound());
+      fixture.db.prepare(`UPDATE conversations SET session_expire_at=?
+        WHERE user_uid=? AND channel_id=?`).run(Date.now() + 30000, 'agent-uid', 'visitor-1');
+      fixture.systemMessages.length = 0;
+      fixture.dispatched.length = 0;
+
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        messageId: 'incoming-2', messageSeq: 2, clientMsgNo: 'client-2',
+      }));
+      assert.equal(fixture.systemMessages.length, 0);
+      assert.equal(fixture.dispatched.length, 1);
+
+      fixture.db.prepare(`UPDATE conversations SET session_expire_at=?
+        WHERE user_uid=? AND channel_id=?`).run(Date.now() - 1, 'agent-uid', 'visitor-1');
+      fixture.systemMessages.length = 0;
+      fixture.dispatched.length = 0;
+
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        messageId: 'incoming-3', messageSeq: 3, clientMsgNo: 'client-3',
+      }));
+      assert.equal(fixture.systemMessages.length, 1);
+      assert.equal(fixture.systemMessages[0][2], 'session_expired');
+      assert.equal(fixture.dispatched.length, 0);
+      assert.equal(fixture.db.prepare(`SELECT session_status FROM conversations
+        WHERE user_uid=? AND channel_id=?`).get('agent-uid', 'visitor-1').session_status, 'expired');
     } finally {
       fixture.db.close();
     }

@@ -28,6 +28,7 @@ const DEFAULT_ROLLOUT: ProviderModularRollout = {
     aider: 'enabled',
     grok: 'enabled',
     reasonix: 'enabled',
+    'deepseek-harness': 'enabled',
   },
 };
 

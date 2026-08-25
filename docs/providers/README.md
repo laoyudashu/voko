@@ -39,7 +39,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [ZeroClaw](zeroclaw.md)：Agent alias、ACP、CLI state file 隔离和配置安全。
 - [Grok CLI](grok.md)：OAuth/API 配置、无工具 Plan CLI、原生 session 和代理检查。
 - [Qwen Code](qwen-code.md)：无头 safe/plan CLI、DeepSeek 配置、原生 session 续接和 Pull 兜底。
-- [千问办公](qwen-office.md)：QwenWork MCP 客户端配置、`qoderclicn` stream-json CLI、session 续接和 Pull 兜底。
+- [千问办公](qwen-office.md)：专家套件发现与精确实例绑定、`qoderclicn` stream-json CLI、session 续接和 Pull 兜底。
 - [Trae](trae.md)：Trae MCP 客户端配置、独立 `traecli` ACP、桌面入口边界和 Pull 兜底。
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
@@ -48,7 +48,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 
 ## 暂不提供专属指南的 Provider
 
-Amazon Q、ZCode、豆包、CodeBuddy 和 Others 当前没有本目录下的专属操作指南。CodeBuddy 已接入官方 ACP 并完成无模型协议初始化，完整模型回路验收前以[兼容性矩阵](../provider-compatibility.md)为准。WorkBuddy、千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
+Amazon Q、ZCode、豆包、CodeBuddy、DeepSeek Harness 和 Others 当前没有本目录下的专属操作指南。CodeBuddy 已接入官方 ACP 并完成无模型协议初始化；DeepSeek Harness 已接入可恢复的 Web Host 与单次任务 Profile CLI，但模型回复、访客安全配置和 Owner 介入仍待验收，完整结论以[兼容性矩阵](../provider-compatibility.md)为准。WorkBuddy、千问办公和 Trae 已有专属页面；它们的 Push 通道均依赖本机运行时预检，不满足前置条件时才回退 Pull。“可检测”“功能设计”或局部功能验证不等于完成了可发布的专属操作验收。
 
 ## 新增指南时的固定结构
 

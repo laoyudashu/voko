@@ -11,7 +11,7 @@ async function startPricingApp(t, { hasPayment = true, durationMinutes = 10 } = 
     get_agent_profile: async () => ({ success: true, data: { agentId: 'paid-agent', agentName: 'Paid Agent' } }),
     agent_pricing: async (params) => {
       if (Object.keys(params).length > 1) writes.push(params);
-      return { pricingModel: 'duration', price: 0.01, durationMinutes, trialMinutes: 0 };
+      return { pricingModel: 'timed', price: 0.01, durationMinutes, trialMinutes: 0 };
     },
     bind_agent_payment_auth: async () => ({ success: true }),
   };
@@ -46,6 +46,8 @@ test('pricing page renders the stored free-trial duration including zero', async
   assert.match(html, /id="pt" name="trialMinutes" type="number" min="0" step="1" required value="0"/);
   assert.match(html, /免费体验时长（分钟，0 表示不提供）/);
   assert.match(html, /class="pricing-trial"/);
+  assert.match(html, /<option value="timed" selected>/);
+  assert.doesNotMatch(html, /<option value="duration"/);
   assert.match(html, /input\.disabled=!paid\|\|blocked/);
   assert.match(html, /已绑定收款银行卡：<strong>张\* · 测试银行 •••• 5678<\/strong>/);
   assert.match(html, />重新绑定<\/a>/);
@@ -70,7 +72,7 @@ test('pricing form and JSON action preserve a zero free-trial duration', async (
   const formResponse = await fetch(`${base}/agents/paid-agent`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: '_action=set_pricing&pricingModel=duration&price=0.01&durationMinutes=10&trialMinutes=0',
+    body: '_action=set_pricing&pricingModel=timed&price=0.01&durationMinutes=10&trialMinutes=0',
     redirect: 'manual',
   });
   assert.equal(formResponse.status, 302);
@@ -79,7 +81,7 @@ test('pricing form and JSON action preserve a zero free-trial duration', async (
   const apiResponse = await fetch(`${base}/api/agents/paid-agent/action`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ _action: 'set_pricing', pricingModel: 'duration', price: 0.01, durationMinutes: 10, trialMinutes: 0 }),
+    body: JSON.stringify({ _action: 'set_pricing', pricingModel: 'timed', price: 0.01, durationMinutes: 10, trialMinutes: 0 }),
   });
   assert.equal(apiResponse.status, 200);
   assert.equal(writes[1].trialMinutes, 0);
@@ -98,7 +100,7 @@ test('pricing page blocks paid mode until a verified receiving card is configure
   const response = await fetch(`${base}/agents/paid-agent`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: '_action=set_pricing&pricingModel=duration&price=0.01&durationMinutes=10&trialMinutes=0',
+    body: '_action=set_pricing&pricingModel=timed&price=0.01&durationMinutes=10&trialMinutes=0',
     redirect: 'manual',
   });
   assert.equal(response.status, 302);
@@ -111,7 +113,7 @@ test('pricing API rejects invalid numeric paid settings', async (t) => {
   const response = await fetch(`${base}/api/agents/paid-agent/action`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ _action: 'set_pricing', pricingModel: 'duration', price: 0.01, durationMinutes: 1.5, trialMinutes: -1 }),
+    body: JSON.stringify({ _action: 'set_pricing', pricingModel: 'timed', price: 0.01, durationMinutes: 1.5, trialMinutes: -1 }),
   });
   const result = await response.json();
   assert.equal(result.success, false);
@@ -144,10 +146,10 @@ test('receiving-card selector includes the bank-card owner name', async (t) => {
 
 test('successful card binding returns to pricing with paid mode selected', async (t) => {
   const { base } = await startPricingApp(t);
-  const returnTo = '/agents/paid-agent/pricing?mode=duration';
+  const returnTo = '/agents/paid-agent/pricing?mode=timed';
   const page = await fetch(`${base}/agents/paid-agent/payment-auth?returnTo=${encodeURIComponent(returnTo)}`);
   const html = await page.text();
-  assert.match(html, /name="returnTo" value="\/agents\/paid-agent\/pricing\?mode=duration"/);
+  assert.match(html, /name="returnTo" value="\/agents\/paid-agent\/pricing\?mode=timed"/);
 
   const response = await fetch(`${base}/agents/paid-agent/payment-auth`, {
     method: 'POST',

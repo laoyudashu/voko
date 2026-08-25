@@ -83,6 +83,7 @@ const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
   'aider-cli': 'aider', 'grok-cli': 'grok', 'reasonix-cli': 'reasonix',
   'qwen-office-cli': 'qoderclicn', 'traecli-acp': 'traecli',
   'workbuddy-http': 'codebuddy', 'codebuddy-acp': 'codebuddy',
+  'deepseek-harness-cli': 'dsh',
 };
 
 export function getProviderVersionCommand(transportId: unknown): string | null {
@@ -202,6 +203,23 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true },
       exactSession: { nativeSessionNamespace: 'workbuddy-http', restoreCompatibilityGroup: 'workbuddy-http' },
       options: context => context.getProviderConfig?.('workbuddy-http') || {},
+    }),
+  ] },
+  { type: 'deepseek-harness', aliases: ['dsh'], label: 'DeepSeek Harness', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
+    transport({ id: 'deepseek-harness-http', mode: 'http', priority: 10, operations: ['push', 'steer'],
+      modulePath: './providers/deepseek-harness-http', exportName: 'DeepSeekHarnessHttpProvider',
+      safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
+      supportsLoopback: false,
+      capabilities: { asyncReply: true, sessionResume: true, cancel: true },
+      exactSession: { nativeSessionNamespace: 'deepseek-harness-web', restoreCompatibilityGroup: 'deepseek-harness-web-v1' },
+      options: context => context.getProviderConfig?.('deepseek-harness-http') || {},
+    }),
+    transport({ id: 'deepseek-harness-cli', mode: 'cli', priority: 20, operations: ['push'],
+      modulePath: './providers/deepseek-harness-cli', exportName: 'DeepSeekHarnessCliProvider',
+      safetyProfile: 'provider-managed-cli-one-shot', sandboxPolicyId: 'provider-managed-local',
+      supportsLoopback: false,
+      capabilities: { steer: false, sessionResume: false, cancel: false },
+      options: context => context.getProviderConfig?.('deepseek-harness-cli') || {},
     }),
   ] },
   { type: 'codebuddy', aliases: ['codebuddy-code', 'codebuddy-cli'], label: 'CodeBuddy', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [

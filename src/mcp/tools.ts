@@ -593,7 +593,7 @@ interface McpToolParams {
   paymentAuthId?: string;
   phone?: string;
   price?: number;
-  pricingModel?: string;
+  pricingModel?: 'free' | 'timed';
   problem?: string;
   providerType?: string;
   prompt?: string;
@@ -3139,6 +3139,9 @@ function createToolHandlers(cx: McpContext) {
     async agent_pricing(p: McpToolParams = {}) {
       // 设置了 pricingModel 则为写操作
       if (p.pricingModel) {
+        if (p.pricingModel !== 'free' && p.pricingModel !== 'timed') {
+          return { success: false, error: 'pricingModel 必须为 free 或 timed' };
+        }
         const now = Date.now();
         const isFree = p.pricingModel === 'free';
         const finalTrial = isFree ? null : (p.trialMinutes ?? 3);

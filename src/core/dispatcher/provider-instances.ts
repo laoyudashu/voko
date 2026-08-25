@@ -6,6 +6,7 @@ const { discoverHermes } = require('../../server/hermes-discovery');
 const { getHermesProfilesDir } = require('../hermes-paths');
 const { resolveZeroClawCommand } = require('./zeroclaw-command');
 const { discoverWorkBuddyAgents } = require('./workbuddy-agents');
+const { discoverQwenOfficeAgents } = require('./qwen-office-agents');
 
 export interface ProviderInstance {
   id: string;
@@ -15,13 +16,15 @@ export interface ProviderInstance {
 }
 
 const INSTANCE_PROVIDERS = new Set([
-  'openclaw', 'hermes', 'zeroclaw', 'workbuddy',
+  'openclaw', 'hermes', 'zeroclaw', 'workbuddy', 'qwen-office', 'deepseek-harness',
   'opencode', 'github-copilot', 'claude-code', 'codex', 'kiro',
 ]);
 const INSTANCE_TERMS: Record<string, string> = {
   openclaw: 'Agent', hermes: 'Profile', zeroclaw: 'Agent', workbuddy: 'Expert',
+  'qwen-office': 'Expert Kit',
   opencode: 'Agent', 'github-copilot': 'Agent', 'claude-code': 'Agent',
   codex: 'Profile', kiro: 'Agent', goose: 'Recipe',
+  'deepseek-harness': 'Agent Preset',
 };
 const discoveryCache = new Map<string, { at: number; instances: ProviderInstance[] }>();
 
@@ -112,6 +115,26 @@ function codexInstances(): ProviderInstance[] {
     .map((item) => ({ ...item, id: item.id.slice(0, -'.config'.length), name: item.id.slice(0, -'.config'.length) }));
 }
 
+function deepSeekHarnessInstances(home?: string): ProviderInstance[] {
+  const dshHome = path.resolve(String(home || process.env.DSH_HOME || path.join(os.homedir(), '.dsh')));
+  const roots = [
+    { path: path.join(dshHome, 'profiles', 'node_modules', '@deepseek-ai', 'dsh', 'config', 'agent-presets'), source: 'dsh_system_presets' },
+    { path: path.join(dshHome, '.agent-presets'), source: 'dsh_user_presets' },
+  ];
+  const items: ProviderInstance[] = [];
+  for (const root of roots) {
+    try {
+      for (const entry of fs.readdirSync(root.path, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const manifest = path.join(root.path, entry.name, 'agent.cordis.yml');
+        if (!fs.existsSync(manifest) || !fs.statSync(manifest).isFile()) continue;
+        items.push({ id: entry.name, name: entry.name, source: root.source });
+      }
+    } catch (_) {}
+  }
+  return cleanInstances(items, 'dsh_agent_presets');
+}
+
 export function supportsProviderInstances(providerType: unknown): boolean {
   return INSTANCE_PROVIDERS.has(String(providerType || '').trim());
 }
@@ -129,6 +152,8 @@ export function discoverProviderInstances(providerType: unknown): ProviderInstan
   else if (type === 'hermes') instances = hermesInstances();
   else if (type === 'zeroclaw') instances = zeroClawInstances();
   else if (type === 'workbuddy') instances = discoverWorkBuddyAgents();
+  else if (type === 'qwen-office') instances = discoverQwenOfficeAgents();
+  else if (type === 'deepseek-harness') instances = deepSeekHarnessInstances();
   else if (type === 'opencode') instances = fileStemInstances([
     path.join(os.homedir(), '.config', 'opencode', 'agents'),
   ], ['.md'], 'opencode_user_agents');
@@ -146,4 +171,4 @@ export function discoverProviderInstances(providerType: unknown): ProviderInstan
   return instances.map((item) => ({ ...item }));
 }
 
-module.exports = { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances };
+module.exports = { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances, deepSeekHarnessInstances };

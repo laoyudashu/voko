@@ -219,6 +219,7 @@ describe('shared registration orchestrator', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       qwenOfficeRuntimeAvailable: () => false,
+      qwenOfficeAgents: () => [],
       traeCliAvailable: () => false,
       installedApplications: () => ['千问办公 0.1.6', 'Trae (User) 3.5.81'],
       detectCurrentAgentType: () => null,
@@ -239,12 +240,43 @@ describe('shared registration orchestrator', () => {
   it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
     const service = new RegistrationOrchestrator({
       qwenOfficeRuntimeAvailable: () => true,
+      qwenOfficeAgents: () => [],
       traeCliAvailable: () => true,
     });
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
+  it('discovers QwenWork expert kits and requires an exact selection when more than one is present', async () => {
+    let agents = [
+      { id: 'mt80hmwaywym3lje/health-rumor-crusher', name: '养生谣言粉碎机', description: '健康信息核查', available: true },
+      { id: 'mt7zxd9zn555pwlu/tieban-shenshu', name: '铁板神数', description: '命理工具箱', available: true },
+    ];
+    const { db, service } = createService({
+      qwenOfficeRuntimeAvailable: () => true,
+      qwenOfficeAgents: () => agents,
+    });
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      const detected = started.environment.detected.find((item) => item.type === 'qwen-office');
+      assert.deepEqual(detected.instances.map((item) => item.id), agents.map((item) => item.id));
+      assert.equal(detected.supportsMultipleInstances, true);
+      assert.equal(service.selectProvider(started.registrationId, { providerType: 'qwen-office' }).success, false);
+      const selected = service.selectProvider(started.registrationId, {
+        providerType: 'qwen-office', instanceId: agents[1].id,
+      });
+      assert.equal(selected.provider.instanceId, agents[1].id);
+      assert.equal(selected.suggestedBasicInfo.agentName, '铁板神数');
+      service.setBasicInfo(started.registrationId, { agentName: '铁板神数' });
+      agents = [];
+      const stale = await service.complete(started.registrationId);
+      assert.equal(stale.success, false);
+      assert.match(stale.error, /已不存在.*清单无效.*不可用/);
+    } finally {
+      db.close();
+    }
   });
 
   it('detects standalone CodeBuddy separately from WorkBuddy and exposes ACP before Pull', () => {
@@ -713,6 +745,7 @@ describe('shared registration orchestrator', () => {
     let calls = 0;
     let received = null;
     const { db, service } = createService({
+      qwenOfficeAgents: () => [],
       runLoopbackTest: async (request) => {
         calls++;
         received = request;

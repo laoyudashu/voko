@@ -186,6 +186,16 @@ class CliAdapter extends PushProvider {
       && binding.deliveryMode === 'cli';
   }
 
+  _instanceForAgent(agentId: string): string | null {
+    if (!this._instanceArgs || !this._db) return null;
+    try {
+      const row = this._db.prepare('SELECT backend_type, backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
+        .get(agentId) as { backend_type?: string; backend_instance_id?: string | null } | undefined;
+      if (row?.backend_type !== this._matchType) return null;
+      return String(row?.backend_instance_id || '').trim() || null;
+    } catch (_) { return null; }
+  }
+
   isAvailable(_agentId: string): boolean {
     if (this._available !== null) return this._available;
     this._available = this._runtimeRequest ? this._resolveRuntime().available : checkCliAvailable(this._cmd);
@@ -284,17 +294,13 @@ class CliAdapter extends PushProvider {
     let configuredArgs = this._argsForSession
       ? this._argsForSession(nativeSessionId, newManagedSession)
       : this._args;
-    if (this._instanceArgs && this._db) {
+    const configuredInstanceId = this._instanceForAgent(agentId);
+    if (this._instanceArgs && configuredInstanceId) {
       try {
-        const row = this._db.prepare('SELECT backend_type, backend_instance_id FROM agents WHERE agent_id=? LIMIT 1')
-          .get(agentId) as { backend_type?: string; backend_instance_id?: string | null } | undefined;
-        const instanceId = row?.backend_type === this._matchType ? String(row?.backend_instance_id || '').trim() : '';
-        if (instanceId) {
-          const scoped = this._instanceArgs(instanceId);
-          configuredArgs = scoped.position === 'before'
-            ? [...scoped.args, ...configuredArgs]
-            : [...configuredArgs, ...scoped.args];
-        }
+        const scoped = this._instanceArgs(configuredInstanceId);
+        configuredArgs = scoped.position === 'before'
+          ? [...scoped.args, ...configuredArgs]
+          : [...configuredArgs, ...scoped.args];
       } catch (_) {}
     }
     const preparedInvocation = this._prepareInvocation?.(effectivePayload, prompt) || null;
@@ -460,7 +466,7 @@ class CliAdapter extends PushProvider {
         channelId,
         channelType,
         providerType: this._matchType,
-        providerInstanceId: binding?.providerInstanceId || null,
+        providerInstanceId: configuredInstanceId || binding?.providerInstanceId || null,
         nativeSessionId: observedSessionId,
         deliveryMode: 'cli',
         adapterType: this._adapterType,
@@ -470,7 +476,7 @@ class CliAdapter extends PushProvider {
         this._identityBindings?.bind({
           agentId,
           providerFamily: this._bindingProviderType,
-          providerInstanceKey: binding?.providerInstanceId || '',
+          providerInstanceKey: configuredInstanceId || binding?.providerInstanceId || '',
           nativeSessionId: observedSessionId,
           evidenceType: 'voko_created',
         });
@@ -492,7 +498,7 @@ class CliAdapter extends PushProvider {
     });
     const receipt = {
       nativeSessionId: observedSessionId,
-      providerInstanceId: binding?.providerInstanceId || null,
+      providerInstanceId: configuredInstanceId || binding?.providerInstanceId || null,
       deliveryMode: 'cli',
       adapterType: this._adapterType,
       attachmentDelivery: { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,

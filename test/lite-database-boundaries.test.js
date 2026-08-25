@@ -54,6 +54,26 @@ test('current Lite accepts the shared schema v8 marker', (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 });
 
+test('database initialization migrates duration pricing to the canonical timed model', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-pricing-model-'));
+  const dbPath = path.join(root, 'voko.db');
+  const first = initDatabase(dbPath, { silent: true });
+  const now = Date.now();
+  first.prepare(`INSERT INTO agent_pricing
+    (id, agent_id, pricing_model, price, duration_minutes, trial_minutes, enabled, created_at, updated_at)
+    VALUES (?, ?, 'duration', ?, ?, ?, 1, ?, ?)`)
+    .run('pricing-1', 'agent-1', 1, 60, 3, now, now);
+  first.close();
+
+  const reopened = initDatabase(dbPath, { silent: true });
+  assert.equal(
+    reopened.prepare('SELECT pricing_model FROM agent_pricing WHERE agent_id=?').get('agent-1').pricing_model,
+    'timed',
+  );
+  reopened.close();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+});
+
 test('older code refuses a database with a newer schema marker', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-newer-schema-'));
   const dbPath = path.join(root, 'voko.db');

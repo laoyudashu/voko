@@ -11,6 +11,7 @@ const { getRoutingFeaturePolicy, isRoutingFeatureEnabled, PRECISE_ROUTING_GREY_P
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 const { resolveWorkBuddyRuntime, probeWorkBuddyCliVersion } = require('./dispatcher/workbuddy-command');
 const { probeCodeBuddyCliVersion } = require('./dispatcher/codebuddy-command');
+const { resolveDeepSeekHarnessRuntime } = require('./dispatcher/deepseek-harness-command');
 const { getProviderFamily, getProviderVersionCommand } = require('./dispatcher/provider-catalog');
 const { evaluateProviderSandbox, probeProviderVersion } = require('./provider-sandbox');
 const { inspectMcpConfigs, migrateMcpConfigs } = require('./mcp-config-diagnostics');
@@ -47,6 +48,7 @@ const CLI_RUNTIME_CANDIDATES: Record<string, any[]> = {
   openhands: [{ kind: 'native', command: process.platform === 'win32' ? 'openhands.exe' : 'openhands' }],
   grok: [{ kind: 'native', command: 'grok' }],
   workbuddy: [],
+  'deepseek-harness': [],
   codebuddy: [
     { kind: 'node-package-bin', command: 'codebuddy', packageName: '@tencent-ai/codebuddy-code', binName: 'codebuddy' },
     { kind: 'node-package-bin', command: 'cbc', packageName: '@tencent-ai/codebuddy-code', binName: 'cbc' },
@@ -361,6 +363,17 @@ function inspectProviderRuntimes(agents: any[], checks: any[]): void {
         resolvedEntry: runtime.command ? path.basename(runtime.command) : null,
         spawnEnvironmentReady: !!runtime.command,
         reason: runtime.command ? null : 'WORKBUDDY_CLI_NOT_FOUND',
+      };
+    }
+    if (backend === 'deepseek-harness') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      return {
+        backend,
+        available: !!runtime.command,
+        runtimeKind: runtime.command ? 'node-package-bin' : null,
+        resolvedEntry: runtime.versionFile ? path.basename(path.dirname(runtime.versionFile)) : null,
+        spawnEnvironmentReady: !!runtime.command,
+        reason: runtime.command ? null : 'DEEPSEEK_HARNESS_NOT_FOUND',
       };
     }
     const resolved = resolver.resolve({

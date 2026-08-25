@@ -36,7 +36,11 @@ function createDb(options = {}) {
 async function startApp(handlers, options = {}) {
   const app = express();
   app.use(express.json());
-  app.use(createWebRouter(handlers, createDb(options), { trustedRemoteEnabled: true, a2aModule: options.a2aModule }));
+  app.use(createWebRouter(handlers, createDb(options), {
+    trustedRemoteEnabled: true,
+    a2aModule: options.a2aModule,
+    agentReviewStatuses: options.agentReviewStatuses,
+  }));
   const server = await new Promise((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
@@ -196,6 +200,30 @@ test('home disables access-entry actions when the agent is offline', async (t) =
   assert.match(html, /home-message-mode-picker\.is-dropup/);
   assert.match(html, /wrap\.getBoundingClientRect\(\)\.bottom-8/);
   assert.match(html, /menuRect\.bottom>bottomBoundary/);
+});
+
+test('home warns about pending review and disables every external access entry', async (t) => {
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'agent-home', agentName: 'Pending Agent', backendType: 'qwen', publishStatus: 'published' }] }),
+    get_status: async () => ({ success: true, agent: { imConnected: true, pullReady: true } }),
+  };
+  const server = await startApp(handlers, {
+    ability: [{ name: 'answer', description: 'Answer questions', tags: ['qa'], fields: [] }],
+    a2aModule: { enabled: true },
+    agentReviewStatuses: [{ agentId: 'agent-home', status: 1, auditStatus: 0 }],
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /data-agent-id="agent-home" data-audit-status="0"/);
+  assert.match(html, /待审核 · 对外能力暂不可用/);
+  assert.match(html, /class="home-agent-short is-agent-audit-blocked"/);
+  assert.match(html, /data-role="gen-link"[^>]*disabled/);
+  assert.doesNotMatch(html, /href="\/external-integrations\?agentId=agent-home"/);
+  assert.doesNotMatch(html, /data-voko-copy-value="im-home-uid"/);
+  assert.doesNotMatch(html, /data-voko-copy-value="https:[^"]+\/a2a\/agents\/agent-home/);
 });
 
 test('home preserves the agent list order when connection states differ', async (t) => {

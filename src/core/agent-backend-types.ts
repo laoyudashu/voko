@@ -54,6 +54,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'reasonix', label: 'Reasonix' },
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
+  { value: 'deepseek-harness', label: 'DeepSeek Harness' },
   { value: 'codebuddy', label: 'CodeBuddy' },
   { value: 'doubao', label: '豆包' },
   { value: 'trae', label: 'Trae' },
@@ -64,7 +65,7 @@ const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
     'zeroclaw',
     'qwen-code', 'qwen-office', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
-    'zcode', 'workbuddy', 'codebuddy', 'doubao', 'trae', 'cline', 'reasonix',
+    'zcode', 'workbuddy', 'deepseek-harness', 'codebuddy', 'doubao', 'trae', 'cline', 'reasonix',
   ].includes(type.value),
 );
 
@@ -105,6 +106,8 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'codebuddy-code': 'codebuddy',
   'codebuddy-cli': 'codebuddy',
   cbc: 'codebuddy',
+  dsh: 'deepseek-harness',
+  'deepseek-harness': 'deepseek-harness',
   'trae-ide': 'trae',
   'trae-work': 'trae',
   'trae-solo': 'trae',

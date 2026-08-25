@@ -291,6 +291,13 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
   migrateSchema8WebRoutingRevision(db);
+  const pricingTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_pricing'",
+  ).get();
+  if (pricingTable) {
+    // 旧 Web 曾写入 duration；单向迁移为唯一规范值 timed。
+    db.exec("UPDATE agent_pricing SET pricing_model = 'timed' WHERE pricing_model = 'duration'");
+  }
   const auditRulesTable = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_rules'",
   ).get();

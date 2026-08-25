@@ -8,7 +8,6 @@
   "visitor.trial_welcome": "Welcome! Your first {trialMinutes} minutes are free. After the trial, paid usage is required: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",
   "visitor.paid_welcome_back": "Welcome back! This Agent is a paid service: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",
   "visitor.paid_required": "This Agent requires paid usage: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",
-  "visitor.expiring_soon": "⏰ Your service is about to expire (less than 1 minute left). Reply \"buy\" to continue.",
   "visitor.session_expired": "⏰ Your service time has ended and the conversation was interrupted. Reply \"buy\" to renew and continue.",
   "visitor.reply_sensitive": "This reply contained sensitive information and was not delivered. Please ask again.",
   "visitor.payment_expired_timed": "Payment timed out and the order has expired. Reply \"buy\" to continue.",

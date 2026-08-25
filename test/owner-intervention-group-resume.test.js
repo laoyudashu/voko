@@ -253,6 +253,56 @@ test('多个 Agent 共用一次邮箱事件轮询并按 message_id 分别恢复'
   }
 });
 
+test('批量邮件回复轮询不可用时按待处理 message_id 查询并恢复', async () => {
+  const db = setupAgents();
+  const now = Date.now();
+  db.prepare(`INSERT INTO owner_interventions
+    (id,visitor_id,agent_id,session_key,problem,ask_time,expire_time,status,email_message_id,
+     routing_conversation_id,agent_notified,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,'pending',?,?,0,?,?)`).run(
+      'oi_query_fallback', 'owner', 'agentB', 'agent:agentB:owner', '确认继续', now,
+      now + 60_000, 'mail_query_fallback', 'conversation_exact', now, now
+    );
+  const queried = [];
+  const resumed = [];
+  const databaseAPI = {
+    markAgentNotified(id) {
+      db.prepare('UPDATE owner_interventions SET agent_notified=1 WHERE id=?').run(id);
+    },
+    updateOwnerInterventionStatus(id, status) {
+      db.prepare('UPDATE owner_interventions SET status=? WHERE id=?').run(status, id);
+    },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db, databaseAPI, registry: {},
+    agentEmailApi: {
+      async pollReplies() { return null; },
+      async queryReply({ message_id }) {
+        queried.push(message_id);
+        return { has_reply: true, raw_text: 'OWNER_DSH_ROUTE_OK', replied_at: new Date().toISOString() };
+      },
+    },
+    buildOwnerReplyPrompt: (_intervention, reply) => `owner:${reply}`,
+    resumeOwnerIntervention: async (intervention, prompt) => {
+      resumed.push([intervention.routingConversationId, prompt]);
+      return { success: true, deliveryOutcome: 'delivered' };
+    },
+  });
+  try {
+    await notifier._pollEmailReplies();
+    assert.deepEqual(queried, ['mail_query_fallback']);
+    assert.deepEqual(resumed, [['conversation_exact', 'owner:OWNER_DSH_ROUTE_OK']]);
+    const row = db.prepare(`SELECT status,owner_reply,agent_notified,channel_type
+      FROM owner_interventions WHERE id='oi_query_fallback'`).get();
+    assert.deepEqual({ ...row }, {
+      status: 'resolved', owner_reply: 'OWNER_DSH_ROUTE_OK', agent_notified: 1,
+      channel_type: 'voko-email',
+    });
+  } finally {
+    db.close();
+  }
+});
+
 test('到期介入无需邮件 ID 也会收敛，迟到邮件只推进游标', async () => {
   const db = setupAgents();
   const now = Date.now();
