@@ -101,6 +101,10 @@ interface OwnerInterventionRow {
   target_channel_type: number | null;
   source_message_id: string | null;
   routing_conversation_id?: string | null;
+  route_security_mode?: string | null;
+  e2ee_protocol_conversation_id?: string | null;
+  e2ee_session_scope_id?: string | null;
+  delivery_message_id?: string | null;
 }
 
 interface ConversationRow {
@@ -183,6 +187,10 @@ interface OwnerInterventionInput {
   targetChannelType?: number | null;
   sourceMessageId?: string | null;
   routingConversationId?: string | null;
+  routeSecurityMode?: string | null;
+  e2eeProtocolConversationId?: string | null;
+  e2eeSessionScopeId?: string | null;
+  deliveryMessageId?: string | null;
 }
 
 interface PaymentOrderInput {
@@ -658,6 +666,10 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       routing_conversation_id TEXT
+      ,route_security_mode TEXT
+      ,e2ee_protocol_conversation_id TEXT
+      ,e2ee_session_scope_id TEXT
+      ,delivery_message_id TEXT
     )
   `);
 
@@ -731,6 +743,18 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     }
     if (!tableInfo.some((col: TableInfoRow) => col.name === 'source_message_id')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN source_message_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'route_security_mode')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN route_security_mode TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'e2ee_protocol_conversation_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN e2ee_protocol_conversation_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'e2ee_session_scope_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN e2ee_session_scope_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'delivery_message_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN delivery_message_id TEXT`);
     }
     db.exec(`UPDATE owner_interventions
       SET source_sender_uid=COALESCE(source_sender_uid, visitor_id),
@@ -1766,8 +1790,8 @@ function createDatabaseAPI(db: DatabaseSync) {
         }
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO owner_interventions
-          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id, route_security_mode, e2ee_protocol_conversation_id, e2ee_session_scope_id, delivery_message_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         stmt.run(
           intervention.id,
@@ -1793,7 +1817,11 @@ function createDatabaseAPI(db: DatabaseSync) {
           intervention.targetChannelId || intervention.visitorId,
           intervention.targetChannelType || 1,
           intervention.sourceMessageId || null,
-          routingConversationId
+          routingConversationId,
+          intervention.routeSecurityMode || null,
+          intervention.e2eeProtocolConversationId || null,
+          intervention.e2eeSessionScopeId || null,
+          intervention.deliveryMessageId || null
         );
         return { success: true };
       } catch (e: any) {

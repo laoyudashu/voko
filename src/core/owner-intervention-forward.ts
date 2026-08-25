@@ -56,6 +56,11 @@ export function settleOwnerForward(
   id: string,
   value: unknown,
 ): OwnerForwardOutcome {
+  const requestedStatus = String((value as { interventionStatus?: unknown } | null | undefined)?.interventionStatus || '');
+  if (requestedStatus === 'delivering' || requestedStatus === 'delivery_failed') {
+    databaseAPI.updateOwnerInterventionStatus(id, requestedStatus, null);
+    return requestedStatus === 'delivering' ? 'outcome_unknown' : 'not_delivered';
+  }
   const outcome = normalizeOwnerForwardOutcome(value);
   if (outcome === 'delivered') {
     databaseAPI.markAgentNotified(id);

@@ -2094,8 +2094,14 @@ async function startMcpServer(args?: any, core?: any) {
           return row?{routingConversationId:String(row.id),wireConversationKey:String(row.wire_conversation_key||wire)}
             :{routingConversationId:'',wireConversationKey:''};
         },
-        onBusinessDelivered:(agentId:string,messageId:string)=>
-          messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),
+        onBusinessDelivered:(agentId:string,messageId:string)=>{
+          messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId);
+          const now=Date.now();
+          const settled=db.prepare(`UPDATE owner_interventions SET status='resolved',agent_notified=1,
+            resolved_at=?,updated_at=? WHERE agent_id=? AND delivery_message_id=?
+              AND status IN ('provider_accepted','delivering')`).run(now,now,agentId,messageId);
+          if(Number(settled?.changes||0)>0)console.log(`[OwnerIntervention] 访客消息 E2EE 投递闭环完成 messageId=${messageId} security=e2ee`);
+        },
         enabled:()=>e2eeFlag('VOKO_E2EE_SECURE_OUTBOUND_TEXT_ENABLED',true),
         agentPeerEnabled:()=>e2eeFlag('VOKO_E2EE_AGENT_PEER_ENABLED',true),
         attachmentsEnabled:()=>e2eeFlag('VOKO_E2EE_SECURE_OUTBOUND_ATTACHMENTS_ENABLED',true),
@@ -2277,7 +2283,7 @@ async function startMcpServer(args?: any, core?: any) {
       databaseAPI, openclawHandler, db,
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
-      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db),
+      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db, secureOutboundRouter, messageHandler),
     });
   } catch (e: any) {
     console.error('[Lite] 渠道初始化失败:', e.message);
@@ -2291,7 +2297,7 @@ async function startMcpServer(args?: any, core?: any) {
       buildOwnerReplyPrompt: registry.buildOwnerReplyPrompt,
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
-      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db),
+      resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db, secureOutboundRouter, messageHandler),
       autoApproveWhitelistIfFriendRequest: (intervention?: any, reply?: any) =>
         messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply),
     });
@@ -2558,7 +2564,7 @@ async function runRebindForRoute(db: any, agentId: string, previousSnap: any): P
  * @param {Function} [params.onAgentReply] - callback(data) 收到 agent 回复时触发
  * @returns {{ openclawHandler: object|null, hermesHandler: object|null }}
  */
-function createResumeOwnerIntervention(dispatcher?: any, db?: any) {
+function createResumeOwnerIntervention(dispatcher?: any, db?: any, secureOutboundRouter?: any, messageHandler?: any) {
   return async function resumeOwnerIntervention(intervention?: any, content?: any) {
     if (!dispatcher || !intervention?.agentId) return { success: false, error: 'dispatcher unavailable' };
     const channelType = Number(intervention.targetChannelType) === 2 ? 2 : 1;
@@ -2584,14 +2590,54 @@ function createResumeOwnerIntervention(dispatcher?: any, db?: any) {
       // 后续 Agent 间消息仍会重新进入常规 A2A 轮次与熔断保护。
       dispatcher.resetA2AForAgent?.(intervention.agentId, senderUid, `group:${channelId}`);
     }
-    const result = await dispatcher.steer(intervention.agentId, sessionTarget, content, {
+    const resumeContext = {
       channelType,
       channelId,
       senderUid,
       interventionId: intervention.id,
       interventionResume: true,
       replyRouteContext,
-    });
+    };
+    if (intervention.routeSecurityMode === 'e2ee_v2') {
+      if (!secureOutboundRouter || !messageHandler || !intervention.e2eeProtocolConversationId
+          || !intervention.sourceMessageId || typeof dispatcher.executeOwnerIntervention !== 'function') {
+        return { success: false, deliveryOutcome: 'not_delivered',
+          code: 'OWNER_REPLY_E2EE_ROUTE_UNAVAILABLE', error: 'The original E2EE route cannot be restored' };
+      }
+      const execution = await dispatcher.executeOwnerIntervention(
+        intervention.agentId, sessionTarget, content, resumeContext,
+      );
+      db?.prepare(`UPDATE owner_interventions SET status='provider_accepted',updated_at=?
+        WHERE id=? AND status='replied'`).run(Date.now(), intervention.id);
+      const reply = String(execution?.reply?.content || '').trim();
+      if (!reply) return { success: false, deliveryOutcome: 'rejected',
+        code: 'OWNER_INTERVENTION_PROVIDER_EMPTY_REPLY', error: 'Agent returned an empty owner-intervention reply' };
+      console.log(`[OwnerIntervention] Agent 答复已生成 id=${intervention.id} contentLength=${reply.length}`);
+      const messageId = `e2ee-v2-owner-${crypto.randomUUID()}`;
+      db?.prepare(`UPDATE owner_interventions SET delivery_message_id=?,status='delivering',updated_at=? WHERE id=?`)
+        .run(messageId, Date.now(), intervention.id);
+      const persisted = messageHandler.persistE2eeAgentReply(
+        intervention.agentId, channelId, reply, messageId, intervention.sourceMessageId,
+      );
+      const delivery = await secureOutboundRouter.deliver(
+        intervention.agentId, channelId, reply, 'text', 1, null, messageId, persisted.routeMetadata,
+        { sourceReceiptMessageId: intervention.sourceMessageId,
+          protocolConversationId: intervention.e2eeProtocolConversationId },
+      );
+      if (delivery?.success === false || delivery?.securityMode !== 'e2ee') {
+        return { success: false, deliveryOutcome: delivery?.outcomeUnknown ? 'outcome_unknown' : 'not_delivered',
+          code: 'OWNER_REPLY_E2EE_ROUTE_UNAVAILABLE', error: delivery?.error || 'E2EE delivery failed', delivery };
+      }
+      if (delivery.deliveryState !== 'delivered') {
+        db?.prepare(`UPDATE owner_interventions SET status='delivering',updated_at=? WHERE id=?`)
+          .run(Date.now(), intervention.id);
+        return { success: false, deliveryOutcome: 'outcome_unknown', interventionStatus: 'delivering', delivery };
+      }
+      messageHandler.markE2eeAgentReplyDelivered?.(intervention.agentId, messageId);
+      console.log(`[OwnerIntervention] 访客消息已通过 E2EE 成功送达 id=${intervention.id} conversation=${intervention.e2eeProtocolConversationId} messageId=${messageId} security=e2ee`);
+      return { success: true, deliveryOutcome: 'delivered', delivery };
+    }
+    const result = await dispatcher.steer(intervention.agentId, sessionTarget, content, resumeContext);
     if (result && typeof result === 'object' && 'deliveryOutcome' in result) return result;
     if (result === null || result === undefined || result === false) {
       return { success: false, deliveryOutcome: 'not_delivered', error: 'agent unavailable' };

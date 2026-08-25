@@ -27,6 +27,7 @@ const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents
 const { discoverProviderInstances } = require('../core/dispatcher/provider-instances');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
+const { resolveActiveOwnerInterventionContext } = require('../core/owner-intervention-active-context');
 const { reservedVisitorPrefix } = require('../core/visitor-id-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
@@ -2532,9 +2533,16 @@ function createToolHandlers(cx: McpContext) {
       if (targetChannelType === 2 && !p.channelId) {
         return { success: false, error: t('mcp.tool.ask_human_for_help.error.channelIdRequired') };
       }
-      const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
+      const requestedSourceMessageId = p.replyToMessageId || p.messageId || null;
+      const activeE2ee = targetChannelType === 1
+        ? resolveActiveOwnerInterventionContext(p.agentId, requestedSourceMessageId)
+        : { status: 'unavailable' };
+      if (activeE2ee.status === 'ambiguous') return { success: false, code: 'CONVERSATION_REQUIRED',
+        error: 'Multiple active E2EE conversations are available; provide the source message ID' };
+      const e2eeContext = activeE2ee.status === 'resolved' ? activeE2ee.context : null;
+      const targetChannelId = targetChannelType === 2 ? p.channelId : (e2eeContext?.channelId || p.visitorId);
       const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
-      const sourceMessageId = p.replyToMessageId || p.messageId || null;
+      const sourceMessageId = e2eeContext?.sourceMessageId || requestedSourceMessageId;
       const resolution = resolveOwnerInterventionConversation(cx.db, { agentId: p.agentId,
         channelId: targetChannelId, channelType: targetChannelType, caller: getProviderCaller(),
         sourceMessageId, conversationId: p.conversationId || null });
@@ -2550,11 +2558,12 @@ function createToolHandlers(cx: McpContext) {
       const backendType = backendRow?.[0]?.backend_type || 'openclaw';
       const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
       cx.exec(`
-        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
-        VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id, route_security_mode, e2ee_protocol_conversation_id, e2ee_session_scope_id)
+        VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)
       `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null,
         now, ownerInterventionExpireTime(now), ownerChannelType, now, now, p.visitorId, targetChannelId,
-        targetChannelType, sourceMessageId, routingConversationId]);
+        targetChannelType, sourceMessageId, routingConversationId, e2eeContext ? 'e2ee_v2' : 'standard',
+        e2eeContext?.protocolConversationId || null, e2eeContext?.sessionScopeId || null]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
@@ -2564,6 +2573,9 @@ function createToolHandlers(cx: McpContext) {
           askTime: now, expireTime: ownerInterventionExpireTime(now), skipReply: 0, sourceSenderUid: p.visitorId,
           routingConversationId,
           targetChannelId, targetChannelType, sourceMessageId,
+          routeSecurityMode: e2eeContext ? 'e2ee_v2' : 'standard',
+          e2eeProtocolConversationId: e2eeContext?.protocolConversationId || null,
+          e2eeSessionScopeId: e2eeContext?.sessionScopeId || null,
         });
       }
       return { success: true, interventionId: id, conversationId: routingConversationId };

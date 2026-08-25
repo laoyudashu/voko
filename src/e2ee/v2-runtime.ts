@@ -5,6 +5,7 @@ import { E2eeV2Crypto } from './v2-wasm';
 import type { E2eeV2ReceiptRow, E2eeV2Store } from './v2-store';
 import { decryptE2eeV2Attachment, parseE2eeV2Attachment } from './v2-attachment';
 import { decodeE2eePayload, E2EE_V2_PAYLOAD_VERSION } from './v2-payload';
+import { registerActiveOwnerInterventionContext } from '../core/owner-intervention-active-context';
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
@@ -281,19 +282,25 @@ export class E2eeV2Runtime {
         return{handled:true,accepted:true,code:'inbound_intercepted'};
       }
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
-      const result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
-        taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
-        sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
-        attachments:prepared.attachments,
-        onProviderAccepted:()=>{if(providerAccepted)return;
-          if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
-            if(this.options.store.receipt(envelope.messageId)?.state==='provider_accepted'){
-              providerAccepted=true;
-              return;
+      const releaseInterventionContext=registerActiveOwnerInterventionContext({agentId:agent.localAgentId,
+        channelId:envelope.channelId,protocolConversationId:envelope.conversationId,
+        sessionScopeId:scope,sourceMessageId:envelope.messageId});
+      let result:any;
+      try{
+        result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
+          taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
+          sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
+          attachments:prepared.attachments,
+          onProviderAccepted:()=>{if(providerAccepted)return;
+            if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
+              if(this.options.store.receipt(envelope.messageId)?.state==='provider_accepted'){
+                providerAccepted=true;
+                return;
+              }
+              throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
             }
-            throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
-          }
-          providerAccepted=true;} });
+            providerAccepted=true;} });
+      }finally{releaseInterventionContext();}
       let reply=String(result?.reply?.content||'');
       if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
       if(!providerAccepted){

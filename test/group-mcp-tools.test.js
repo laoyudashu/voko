@@ -20,6 +20,7 @@ const { createToolHandlers } = require('../build/mcp/tools');
 const { createDispatcher } = require('../build/core/dispatcher');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
+const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -571,6 +572,32 @@ await test('ask_human_for_help persists and emits the original group context', a
     assert.strictEqual(checked.interventions[0].channelId, 'room1');
     assert.strictEqual(checked.interventions[0].sourceSenderUid, 'visitor1');
   } finally { cleanup(); }
+});
+
+await test('ask_human_for_help binds a private intervention to the active E2EE route', async () => {
+  const { db, handlers, interventions, cleanup } = setup();
+  const release = registerActiveOwnerInterventionContext({
+    agentId: 'agentA', channelId: 'actor-private', protocolConversationId: 'protocol-private',
+    sessionScopeId: 'scope-private', sourceMessageId: 'source-private',
+  });
+  try {
+    const result = await handlers.ask_human_for_help({
+      agentId: 'agentA', visitorId: 'logical-visitor', problem: 'need owner decision',
+    });
+    assert.strictEqual(result.success, true);
+    const row = db.prepare('SELECT * FROM owner_interventions WHERE id=?').get(result.interventionId);
+    assert.strictEqual(row.visitor_id, 'logical-visitor');
+    assert.strictEqual(row.target_channel_id, 'actor-private');
+    assert.strictEqual(row.source_message_id, 'source-private');
+    assert.strictEqual(row.route_security_mode, 'e2ee_v2');
+    assert.strictEqual(row.e2ee_protocol_conversation_id, 'protocol-private');
+    assert.strictEqual(row.e2ee_session_scope_id, 'scope-private');
+    assert.strictEqual(interventions[0].targetChannelId, 'actor-private');
+    assert.strictEqual(interventions[0].routeSecurityMode, 'e2ee_v2');
+  } finally {
+    release();
+    cleanup();
+  }
 });
 
 await test('ask_human_for_help prefers the verified source message over an explicit conversation', async () => {

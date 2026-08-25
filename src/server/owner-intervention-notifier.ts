@@ -406,7 +406,8 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       const storedReplies = this.db.prepare(
         `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
                 oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
-                oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+                oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
                 COALESCE(oi.agent_notified, 0) AS agent_notified
          FROM owner_interventions oi
          WHERE oi.email_message_id IS NOT NULL
@@ -448,7 +449,8 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
     const rows = this.db.prepare(
       `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
               oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
-              oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+               oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+               oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
               COALESCE(oi.agent_notified, 0) AS agent_notified
        FROM owner_interventions oi
        WHERE oi.email_message_id IS NOT NULL
@@ -473,7 +475,8 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       const row = this.db.prepare(
         `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
                 oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
-                oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+                 oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                 oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
                 COALESCE(oi.agent_notified, 0) AS agent_notified
          FROM owner_interventions oi WHERE oi.id=? LIMIT 1`
       ).get(id);
@@ -506,7 +509,8 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       const row = this.db.prepare(
         `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
                 oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
-                oi.routing_conversation_id, oi.status, oi.owner_reply, oi.reply_time,
+                 oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                 oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
                 COALESCE(oi.agent_notified, 0) AS agent_notified
          FROM owner_interventions oi WHERE oi.email_message_id=? LIMIT 1`
       ).get(event.message_id);
@@ -562,7 +566,9 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id }, replyText
     );
     let forwardOutcome: string | null = null;
+    let requestedStatus: string | null = null;
     const settle = (result: unknown) => {
+      requestedStatus = String((result as any)?.interventionStatus || '') || null;
       forwardOutcome = settleOwnerForward(this.databaseAPI, row.id, result);
       return forwardOutcome;
     };
@@ -574,6 +580,9 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       targetChannelType: row.target_channel_type || 1,
       sourceMessageId: row.source_message_id || null,
       routingConversationId: row.routing_conversation_id || null,
+      routeSecurityMode: row.route_security_mode || 'standard',
+      e2eeProtocolConversationId: row.e2ee_protocol_conversation_id || null,
+      e2eeSessionScopeId: row.e2ee_session_scope_id || null,
     };
     if (this.resumeOwnerIntervention) {
       try {
@@ -585,13 +594,17 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
     } else {
       settle({ success: false, deliveryOutcome: 'not_delivered', error: 'exact resume handler unavailable' });
     }
-    const forwardStatus = forwardOutcome === 'delivered'
-      ? 'resolved' : (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected' ? 'unknown' : 'replied');
+    const forwardStatus = requestedStatus || (forwardOutcome === 'delivered'
+      ? 'resolved' : (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected' ? 'unknown' : 'replied'));
     bus.emit('owner-intervention:email-reply', {
       id: row.id, ownerReply: replyText, replyTime: row.reply_time, status: forwardStatus,
     });
     if (forwardOutcome === 'delivered') {
-      console.log('[OwnerInterventionNotifier] 主人回复已入库并成功转发, id:', row.id);
+      console.log(row.route_security_mode === 'e2ee_v2'
+        ? '[OwnerInterventionNotifier] 主人回复已入库，Agent 答复已通过 E2EE 送达访客, id:'
+        : '[OwnerInterventionNotifier] 主人回复已入库并已交给 Agent, id:', row.id);
+    } else if (requestedStatus === 'delivering') {
+      console.log('[OwnerInterventionNotifier] 主人回复已入库，Agent 答复已进入 E2EE 可靠投递队列, id:', row.id);
     } else if (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected') {
       console.warn('[OwnerInterventionNotifier] 主人回复已入库，自动转发结果未知，保留 Pull, id:', row.id);
     } else {

@@ -1705,6 +1705,55 @@ ${body}
     }
   }
 
+  async function executeOwnerIntervention(
+    agentId: string,
+    visitorId: string,
+    content: string,
+    replyContext: ReplyContext,
+  ): Promise<{ reply: ProviderReply; receipt: unknown }> {
+    const turnId = String(replyContext.interventionId || replyContext.turnId || `owner-intervention-${crypto.randomUUID()}`);
+    const sinkKey = `${agentId}::${turnId}`;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => {
+      resolveReply = resolve;
+      rejectReply = reject;
+    });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'OWNER_INTERVENTION_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = 'rejected';
+        rejectReply(error);
+        return;
+      }
+      resolveReply(reply);
+    });
+    const timer = setTimeout(() => {
+      _retireIsolatedTurn(sinkKey, { timedOut: true, taskId: turnId });
+      const error: any = new Error('Owner intervention Provider reply timed out');
+      error.code = 'OWNER_INTERVENTION_PROVIDER_REPLY_TIMEOUT';
+      error.deliveryOutcome = 'outcome_unknown';
+      rejectReply(error);
+    }, DEFAULT_PROVIDER_TURN_TIMEOUT_MS + PROVIDER_SETTLEMENT_GRACE_MS);
+    timer.unref?.();
+    try {
+      const receipt = await steer(agentId, visitorId, content, { ...replyContext, turnId });
+      if (!receipt) {
+        const error: any = new Error('Owner intervention Provider unavailable');
+        error.code = 'OWNER_INTERVENTION_PROVIDER_UNAVAILABLE';
+        error.deliveryOutcome = 'not_delivered';
+        throw error;
+      }
+      return { reply: await replyPromise, receipt };
+    } finally {
+      clearTimeout(timer);
+      _retireIsolatedTurn(sinkKey);
+    }
+  }
+
   async function start() {
     try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     try {
@@ -1757,7 +1806,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, executeE2ee, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeOwnerIntervention, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
