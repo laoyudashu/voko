@@ -4,6 +4,9 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+- Reworked Agent registration into a Provider-first flow with per-framework instance naming, type-scoped lazy discovery, editable profile suggestions, complete profile synchronization, required-category inference, and a default robot avatar in the Web UI.
+- Added selected-instance metadata suggestions for OpenClaw identities and Claude Code, GitHub Copilot, and OpenCode Agent frontmatter while keeping prompt bodies, local paths, and template placeholders private.
+- Added DuMate Plugin Pack discovery and exact loopback HTTP routing with Plugin Part and native-session validation, plus DeepSeek Harness Web Host/Profile CLI routing and Qwen Office Expert Kit discovery.
 - Added a public A2A 1.0 Mailbox Gateway with Agent Cards, durable Task/Context handling, streaming/subscription/polling, independent Lite storage, and local trusted execution.
 - Added per-Agent External REST/Webhook integrations with isolated credentials, REST ingestion, signed callbacks, task views, delivery diagnostics, and secure attachment handling.
 - Added production visitor-private-chat E2EE for supported browsers and Lite endpoints, including explicit opt-in, visible key state, non-downgrading active sessions, rebuild after key loss, encrypted attachments, and local plaintext delivery to the selected Provider.

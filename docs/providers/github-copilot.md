@@ -30,13 +30,15 @@ copilot login
 
 1. 启动 `voko start`，打开 `http://localhost:3100`，添加 Agent。
 2. Provider 选择 **GitHub Copilot CLI**（协议值为 `github-copilot`）。
-3. 推荐通道：
+3. 如果检测到 `~/.copilot/agents/*.md`，可选择一个 Copilot Agent。实例 ID 是文件名（不含 `.md`），不是仓库路径或原生 session；没有 Agent 文件时仍可不绑定实例注册。
+4. 选择 Agent 后，第二步从其 YAML frontmatter 读取 `name`、`description` 和 `tags` 作为可编辑建议，正文自定义指令不会作为公开资料。
+5. 推荐通道：
 
    ```text
    ACP → CLI → Pull
    ```
 
-4. 完成后检查：
+6. 完成后检查：
 
    ```powershell
    voko doctor --deep

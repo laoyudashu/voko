@@ -28,13 +28,13 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [Goose](goose.md)：Goose CLI、ACP、原生 session ID、CLI 降级和恢复。
 - [Cline](cline.md)：Cline ACP、Plan CLI、工具权限边界、降级和恢复。
 - [OpenHands](openhands.md)：OpenHands CLI 1.16.0 / SDK 1.21.0 的 ACP/CLI 适配器验证；当前 Catalog 仍为 Pull-only。
-- [OpenClaw](openclaw.md)：Gateway、实例选择、WebSocket、CLI 降级和 MCP 配置。
+- [OpenClaw](openclaw.md)：Gateway、实例选择、`IDENTITY.md` 资料建议、WebSocket、CLI 降级和 MCP 配置。
 - [Hermes](hermes.md)：profile、HTTP API、CLI 降级和 Gateway 排障。
-- [Codex](codex.md)：登录、只读 CLI、原生 thread ID 和 MCP 配置。
-- [Claude Code](claude-code.md)：登录、只读 CLI、原生 session ID、Pull 兜底和 MCP 配置。
-- [OpenCode](opencode.md)：ACP、CLI、临时工作目录、模型凭据和会话恢复。
+- [Codex](codex.md)：登录、Profile 选择、只读 CLI、原生 thread ID 和 MCP 配置。
+- [Claude Code](claude-code.md)：Agent 文件选择与资料建议、只读 CLI、原生 session ID、Pull 兜底和 MCP 配置。
+- [OpenCode](opencode.md)：Agent 文件选择与资料建议、ACP、CLI、模型凭据和会话恢复。
 - [Cursor Agent CLI](cursor-agent.md)：官方运行入口解析、ACP、Plan CLI 和 `--resume`。
-- [GitHub Copilot CLI](github-copilot.md)：OAuth 登录、ACP 安全参数、会话续接和 Pull 兜底。
+- [GitHub Copilot CLI](github-copilot.md)：OAuth 登录、Agent 文件资料建议、ACP 安全参数、会话续接和 Pull 兜底。
 - [Kiro CLI](kiro.md)：无交互 CLI、登录检查、`--resume-id` 和工具权限边界。
 - [ZeroClaw](zeroclaw.md)：Agent alias、ACP、CLI state file 隔离和配置安全。
 - [Grok CLI](grok.md)：OAuth/API 配置、无工具 Plan CLI、原生 session 和代理检查。
@@ -45,7 +45,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
 - [Reasonix](reasonix.md)：stdin、stream-json、dontAsk 权限、原生 session 和尾部参数注意事项。
-- [WorkBuddy](workbuddy.md)：桌面版内置 CodeBuddy HTTP、SSE、精确会话、取消和 Pull 兜底。
+- [WorkBuddy](workbuddy.md)：Expert 资料与头像预填、桌面版内置 CodeBuddy HTTP、SSE、精确会话、取消和 Pull 兜底。
 
 ## 暂不提供专属指南的 Provider
 

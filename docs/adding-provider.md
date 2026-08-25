@@ -174,6 +174,16 @@ CLI 的单次模型错误、授权等待或超时不应直接把整个 CLI 标�
 - 在选择和最终完成前复核实例仍存在，过期实例 fail-closed；
 - 只从受信本机配置读取资料建议。头像必须校验目录边界、大小和真实图片类型，再走正常上传/存储路径，不能把本机路径直接持久化为公开 URL。
 
+实例枚举和资料读取必须分阶段：第一步只枚举当前 Provider 的实例，不扫描所有类型的全部资料；用户选中实例、进入第二步后，才可调用 `src/core/dispatcher/provider-instance-metadata.js` 读取该实例的资料。新增解析器时遵守：
+
+- 只支持文档可证明且可定位到所选实例的文件；不根据最近进程、最近会话或全盘搜索猜测；
+- 单文件读取必须有明确大小上限，读取失败返回空建议，不能阻断仍可正常注册的 Provider；
+- 只提取显式身份字段或 frontmatter，例如名称、描述和标签；不得把 `SOUL.md`、系统提示词、正文指令或会话内容作为公开资料；
+- 识别并忽略未填写的模板占位符；资料建议覆盖实例枚举中的同名字段，但最终仍由用户编辑确认；
+- Provider 自带头像只能作为经过校验的 `iconCandidate`；注册页通用机器人头像仅为显示默认值，不生成虚假的上传记录或公开 URL。
+
+当前受控解析包括：OpenClaw 所选 workspace 的 `IDENTITY.md`，以及 Claude Code、GitHub Copilot、OpenCode 所选 Agent Markdown 的 frontmatter。WorkBuddy、千问办公和百度搭子继续使用各自发现器返回的受控清单资料。其他 Provider 没有可靠资料格式时只显示实例名称，不臆造解析规则。
+
 ### 3.6 注册后的 Provider 绑定
 
 注册完成后，`backend_type` 和非空 `backend_instance_id` 是持久路由身份，不是普通可编辑资料。所有更新入口必须经过 `AgentProviderBindingService` / `AgentDeliveryPolicyStore`：
