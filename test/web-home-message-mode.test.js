@@ -220,6 +220,9 @@ test('home warns about pending review and disables every external access entry',
   assert.match(html, /data-agent-id="agent-home" data-audit-status="0"/);
   assert.match(html, /待审核 · 对外能力暂不可用/);
   assert.match(html, /class="home-agent-short is-agent-audit-blocked"/);
+  assert.match(html, /class="home-agent-row is-audit-blocked"[^>]*data-agent-id="agent-home"/);
+  assert.match(html, /href="\/agents\/agent-home\/edit" class="btn btn-sm btn-outline home-agent-edit"/);
+  assert.match(html, /data-role="toggle-pub"[^>]*disabled/);
   assert.match(html, /data-role="gen-link"[^>]*disabled/);
   assert.doesNotMatch(html, /href="\/external-integrations\?agentId=agent-home"/);
   assert.doesNotMatch(html, /data-voko-copy-value="im-home-uid"/);
