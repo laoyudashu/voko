@@ -18,6 +18,7 @@ export interface E2eeV2AgentDescriptor {
   localAgentId:string;
   serverAgentId:string;
   agentDid:string;
+  imUid?:string;
 }
 
 type RuntimeOptions={
@@ -419,7 +420,8 @@ export class E2eeV2Runtime {
   async recover(limit=50):Promise<void>{
     for(const row of this.options.store.failedReceipts(limit)){
       const locked=this.options.store.conversationByProtocolId(row.local_agent_id,row.channel_id,row.conversation_id);
-      if(isTransientE2eeDirectoryError(row.error_code)||(row.error_code==='E2EE_V2_CONVERSATION_LOCKED'
+      if(row.error_code==='ERR_INVALID_ARG_TYPE'||isTransientE2eeDirectoryError(row.error_code)
+          ||(row.error_code==='E2EE_V2_CONVERSATION_LOCKED'
           &&(locked?.mode==='e2ee_active'||(locked?.mode==='locked'
             &&isTransientE2eeDirectoryError(locked.lock_reason))))){
         this.options.store.transition(row.message_id,['failed'],'received',row.error_code);
@@ -428,8 +430,10 @@ export class E2eeV2Runtime {
     for(const row of this.options.store.recoverable(limit)){
       if(row.reply_envelope_json){await this.deliverReply(row).catch(()=>false);continue;}
       if(row.state!=='received')continue;
+      const agent=this.agent(row.local_agent_id);
       const message={content:row.envelope_json,fromUid:row.channel_id,channelId:row.channel_id,channelType:1,
-        contentType:13,messageId:row.message_id,clientMsgNo:row.message_id,timestamp:Math.floor(row.created_at/1000)};
+        toUid:agent.imUid||agent.localAgentId,contentType:13,messageId:row.message_id,clientMsgNo:row.message_id,
+        timestamp:Math.floor(row.created_at/1000)};
       await this.handle(row.local_agent_id,message).catch(()=>undefined);
     }
   }

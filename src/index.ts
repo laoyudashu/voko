@@ -2007,12 +2007,13 @@ async function startMcpServer(args?: any, core?: any) {
       e2eeDatabase.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
       const store = new E2eeV2Store(e2eeDatabase,e2eePath);
       const directory = new E2eeV2DirectoryClient({baseUrl:String(require('./endpoints.json').api.baseUrl || ''),token:ownerToken});
-      const agents = () => (db.prepare(`SELECT agent_id,did FROM agents
+      const agents = () => (db.prepare(`SELECT agent_id,did,imUid FROM agents
         WHERE publish_status IN ('published','private') AND LOWER(owner_email)=LOWER(?)
           AND did IS NOT NULL AND TRIM(did)<>''`).all(userEmail) as any[])
         .flatMap((row:any)=>{
           const serverAgentId=serverAgentIdFromDid(row.did);
-          return serverAgentId?[{localAgentId:String(row.agent_id),serverAgentId,agentDid:String(row.did)}]:[];
+          return serverAgentId?[{localAgentId:String(row.agent_id),serverAgentId,agentDid:String(row.did),
+            imUid:String(row.imUid||'')}]:[];
         });
       e2eeRuntime = new E2eeV2Runtime({store,directory,agents,dispatcher,
         persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType=1)=>{

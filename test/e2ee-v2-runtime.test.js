@@ -25,7 +25,8 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     guestDevices.set(deviceId,{endpoint,publicBundle});return endpoint;}
   const guest=addGuestDevice('guest-device');
   const guestPublic=guest.publicBundle();
-  const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server'};
+  const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server',
+    imUid:'agent-im-1'};
   let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
   const sessionScopes=[],dispatcherInputs=[];
   const directoryClient={
@@ -52,7 +53,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
       projectedMessageId:message.messageId,clientMsgNo:message.clientMsgNo,routeContext:message._voko,
-      e2eeStrictRoute:message.e2eeStrictRoute,e2eeAgentPeer:message.e2eeAgentPeer});return true;},
+      toUid:message.toUid,e2eeStrictRoute:message.e2eeStrictRoute,e2eeAgentPeer:message.e2eeAgentPeer});return true;},
     persistOutbound(agentId,channelId,plaintext,messageId,sourceMessageId){
       persisted.outbound.push({agentId,channelId,plaintext,messageId,sourceMessageId});
     },
@@ -176,6 +177,7 @@ test('historical pre-Provider locked receipt is recovered exactly once after tra
     await f.runtime.recover();
     assert.equal(f.store.receipt(envelope.messageId).state,'completed');
     assert.equal(f.counts().providerCalls,1);
+    assert.equal(f.persisted.inbound[0].toUid,'agent-im-1');
   }finally{f.close();}
 });
 
