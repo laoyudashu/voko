@@ -144,6 +144,25 @@ export class SecureOutboundRouter {
     return{channelId:local.imUid,targetAgentDid:resolved.peerAgentDid};
   }
 
+  private replyRecipients(agentId:string,channelId:string,resolved:Resolution,
+    sourceReceiptMessageId?:string):Recipient[]{
+    if(resolved.peerKind!=='guest'||resolved.recipients.length<=1)return resolved.recipients;
+    const receipt=sourceReceiptMessageId
+      ?this.options.store.receipt(sourceReceiptMessageId)
+      :this.options.store.latestReceipt(agentId,channelId,String(resolved.protocolConversationId||''));
+    if(!receipt&&!sourceReceiptMessageId)return resolved.recipients;
+    if(!receipt||receipt.local_agent_id!==agentId||receipt.channel_id!==channelId
+        ||receipt.conversation_id!==resolved.protocolConversationId){
+      throw new Error('E2EE_V2_REPLY_RECIPIENT_AMBIGUOUS');
+    }
+    let envelope:any;
+    try{envelope=JSON.parse(receipt.envelope_json);}catch{throw new Error('E2EE_V2_REPLY_RECIPIENT_INVALID');}
+    const recipient=resolved.recipients.find(row=>row.deviceId===envelope.senderDeviceId
+      &&row.keyId===envelope.senderKeyId);
+    if(!recipient)throw new Error('E2EE_V2_REPLY_RECIPIENT_UNAVAILABLE');
+    return[recipient];
+  }
+
   private async privateDecision(agentId:string,channelId:string,metadata:unknown,
     trustedRoute?:{routingConversationId:string;wireConversationKey:string}):Promise<PrivateDecision>{
     let route:RouteContext;
@@ -342,7 +361,8 @@ export class SecureOutboundRouter {
       const payload=encodeE2eeTextPayload(content,decision.route.metadata);
       const protocolConversationId=String(decision.resolved.protocolConversationId);
       const envelopeRoute=this.envelopeRoute(agentId,channelId,decision.resolved);
-      const envelopes=decision.resolved.recipients.map(recipient=>({recipientDeviceId:recipient.deviceId,
+      const recipients=this.replyRecipients(agentId,channelId,decision.resolved,internal?.sourceReceiptMessageId);
+      const envelopes=recipients.map(recipient=>({recipientDeviceId:recipient.deviceId,
         recipientKeyId:recipient.keyId,transportMessageId:transportId(businessMessageId,recipient.deviceId,recipient.keyId),
         fixedEnvelopeJson:this.options.runtime.sealOutbound(agentId,{messageId:businessMessageId,
           conversationId:protocolConversationId,channelId:envelopeRoute.channelId,

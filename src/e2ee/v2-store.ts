@@ -284,6 +284,12 @@ export class E2eeV2Store {
     return (this.db.prepare('SELECT * FROM e2ee_v2_receipts WHERE message_id=?').get(messageId) as E2eeV2ReceiptRow|undefined) || null;
   }
 
+  latestReceipt(localAgentId:string,channelId:string,conversationId:string):E2eeV2ReceiptRow|null{
+    const row=this.db.prepare(`SELECT * FROM e2ee_v2_receipts WHERE local_agent_id=? AND channel_id=?
+      AND conversation_id=? ORDER BY created_at DESC LIMIT 1`).get(localAgentId,channelId,conversationId) as E2eeV2ReceiptRow|undefined;
+    return row||null;
+  }
+
   claim(messageId: string, owner: string, leaseMs = 180_000): boolean {
     const now=Date.now();
     return this.db.prepare(`UPDATE e2ee_v2_receipts SET state='processing',lease_owner=?,lease_expires_at=?,updated_at=?

@@ -64,6 +64,35 @@ test('secure outbound seals one business message for every active guest device',
   }finally{f.close();}
 });
 
+test('a reply with multiple directory candidates returns only to its verified inbound device',async()=>{
+  const f=fixture();
+  try{
+    f.store.reserve({messageId:'source-device-2',digest:'digest-device-2',localAgentId:'gym',
+      channelId:'guest-im',conversationId:'guest-conversation',envelopeJson:JSON.stringify({
+        senderDeviceId:'device-2',senderKeyId:'key-2'})});
+    f.store.transition('source-device-2',['received'],'provider_accepted');
+    const result=await f.router.deliver('gym','guest-im','reply','text',1,null,'reply-device-2',null,
+      {sourceReceiptMessageId:'source-device-2',protocolConversationId:'guest-conversation'});
+    assert.equal(result.encryptedDeviceCount,1);
+    assert.equal(f.encrypted.length,1);
+    assert.equal(f.encrypted[0].envelope.recipientDeviceId,'device-2');
+    assert.deepEqual(f.store.outboundEnvelopes('reply-device-2').map(row=>row.recipient_device_id),['device-2']);
+  }finally{f.close();}
+});
+
+test('a conversation system message follows the latest verified inbound device instead of broadcasting',async()=>{
+  const f=fixture();
+  try{
+    f.store.reserve({messageId:'latest-device-1',digest:'digest-device-1',localAgentId:'gym',
+      channelId:'guest-im',conversationId:'guest-conversation',envelopeJson:JSON.stringify({
+        senderDeviceId:'device-1',senderKeyId:'key-1'})});
+    const result=await f.router.deliver('gym','guest-im','system','text',1,null,'system-device-1');
+    assert.equal(result.encryptedDeviceCount,1);
+    assert.equal(f.encrypted.length,1);
+    assert.equal(f.encrypted[0].envelope.recipientDeviceId,'device-1');
+  }finally{f.close();}
+});
+
 test('supported recipient snapshot is cached and avoids a second directory query',async()=>{
   const f=fixture();
   try{
@@ -224,10 +253,11 @@ test('group messages bypass E2EE and preserve the raw delivery path',async()=>{
   }finally{f.close();}
 });
 
-test('Provider reply receipt and fixed multi-device outbox commit atomically before delivery',async()=>{
+test('Provider reply receipt and fixed origin-device outbox commit atomically before delivery',async()=>{
   const f=fixture();
   try{
-    f.store.reserve({messageId:'source-1',digest:'digest-1',envelopeJson:'{}',localAgentId:'gym',
+    f.store.reserve({messageId:'source-1',digest:'digest-1',envelopeJson:JSON.stringify({
+      senderDeviceId:'device-1',senderKeyId:'key-1'}),localAgentId:'gym',
       channelId:'guest-im',conversationId:'guest-conversation'});
     assert.equal(f.store.claim('source-1','provider-worker'),true);
     assert.equal(f.store.transition('source-1',['processing'],'provider_accepted'),true);
@@ -236,7 +266,7 @@ test('Provider reply receipt and fixed multi-device outbox commit atomically bef
     assert.equal(result.deliveryState,'delivered');
     assert.equal(f.store.receipt('source-1').state,'completed');
     assert.equal(f.store.receipt('source-1').reply_message_id,'business-reply-1');
-    assert.equal(f.store.outboundEnvelopes('business-reply-1').length,2);
+    assert.deepEqual(f.store.outboundEnvelopes('business-reply-1').map(row=>row.recipient_device_id),['device-1']);
     assert.deepEqual(f.delivered,[{agentId:'gym',messageId:'business-reply-1'}]);
   }finally{f.close();}
 });
