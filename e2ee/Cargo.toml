@@ -11,3 +11,11 @@ rust-version = "1.88"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[profile.web]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+strip = "symbols"

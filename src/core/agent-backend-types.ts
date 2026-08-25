@@ -45,6 +45,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'pi', label: 'Pi Coding Agent' },
   { value: 'qwen-code', label: 'Qwen Code' },
   { value: 'qwen-office', label: '千问办公 (QwenWork)' },
+  { value: 'dumate', label: '百度搭子 (DuMate)' },
   { value: 'kiro', label: 'Kiro CLI' },
   { value: 'github-copilot', label: 'GitHub Copilot CLI' },
   { value: 'openhands', label: 'OpenHands' },
@@ -54,17 +55,18 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'reasonix', label: 'Reasonix' },
   { value: 'zcode', label: 'ZCode' },
   { value: 'workbuddy', label: 'WorkBuddy' },
+  { value: 'deepseek-harness', label: 'DeepSeek Harness' },
   { value: 'codebuddy', label: 'CodeBuddy' },
-  { value: 'doubao', label: '豆包' },
+  { value: 'doubao', label: '豆包办公' },
   { value: 'trae', label: 'Trae' },
   { value: 'others', label: '其他' },
 ];
 
 const DISCOVERABLE_ADDITIONS = DEFAULT_BACKEND_TYPES.filter(
   (type) => [
-    'zeroclaw',
+    'zeroclaw', 'dumate',
     'qwen-code', 'qwen-office', 'kiro', 'github-copilot', 'openhands', 'aider', 'amazon-q',
-    'zcode', 'workbuddy', 'codebuddy', 'doubao', 'trae', 'cline', 'reasonix',
+    'zcode', 'workbuddy', 'deepseek-harness', 'codebuddy', 'doubao', 'trae', 'cline', 'reasonix',
   ].includes(type.value),
 );
 
@@ -94,6 +96,8 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   qwenworkcn: 'qwen-office',
   'qwen-office': 'qwen-office',
   '千问办公': 'qwen-office',
+  dumate: 'dumate',
+  '百度搭子': 'dumate',
   'kiro-cli': 'kiro',
   copilot: 'github-copilot',
   'copilot-cli': 'github-copilot',
@@ -105,6 +109,8 @@ const BACKEND_TYPE_ALIASES: Record<string, string> = {
   'codebuddy-code': 'codebuddy',
   'codebuddy-cli': 'codebuddy',
   cbc: 'codebuddy',
+  dsh: 'deepseek-harness',
+  'deepseek-harness': 'deepseek-harness',
   'trae-ide': 'trae',
   'trae-work': 'trae',
   'trae-solo': 'trae',

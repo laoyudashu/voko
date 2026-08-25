@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
 const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
@@ -1418,7 +1419,7 @@ class OpenClawWsProvider {
         sessionKey: sessionKey,
         message: structuredMsg,
         deliver: false,
-        idempotencyKey: this.generateId()
+        idempotencyKey: String(extraData?.messageId || extraData?.turnId || this.generateId())
       }
     });
   }
@@ -1537,6 +1538,7 @@ class OpenClawWsProvider {
 
   /** 长连接通道：路由优先级高于 CLI 兜底（数大优先）。 */
   get priority() { return 10; }
+  getTurnTimeoutMs(): number { return 60_000; }
 
   /** 归属判断：backend_type 为 openclaw 的 agent 归本 provider。 */
   match(_agentId: string, meta?: AgentMeta | null): boolean {
@@ -1643,10 +1645,20 @@ class OpenClawWsProvider {
       });
     }
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
-    const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
-    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
-      deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId: providerTurnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const prompt = appendProviderAttachmentBoundary(
+      buildConversationDeliveryPrompt(this.db, effectivePayload, canResumeBinding), effectivePayload);
+    try {
+      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
+      return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+        deliveryMode: 'websocket', adapterType: 'openclaw-ws',
+        attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
+          attachmentAccessed: null, contentUnderstood: null,
+          mode: staged.attachments.length ? 'staged_path' : 'none' } };
+    } finally {
+      staged.cleanup();
+    }
     } catch (error) { releaseTurn(); throw error; }
   }
 

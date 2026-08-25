@@ -6,7 +6,7 @@ Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契�
 
 本文说明 **VOKO 调用本机 Claude Code CLI** 时的安装、登录、注册、会话恢复和排障。Claude Code 作为 MCP 客户端调用 VOKO 时，属于另一条独立方向，见第 5 节。
 
-> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或配置批准使用 Web/交互式注册。Claude Code 当前没有 VOKO ACP，接收消息选择 `CLI → Pull`；不要把本地路径或 session 文件名当作 Provider Instance。
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或配置批准使用 Web/交互式注册。Claude Code 当前没有 VOKO ACP，接收消息选择 `CLI → Pull`；可选择 `~/.claude/agents/*.md` 中的 Agent，但不要把本地路径或 session 文件名当作实例 ID。
 
 ## 1. 安装、版本和登录
 
@@ -38,21 +38,22 @@ voko doctor --deep
 这里配置的是 **VOKO → Claude Code**，不是 Claude Code 的 MCP 配置：
 
 1. 在 VOKO 注册流程中选择 Provider 类型 `claude-code`。
-2. 使用当前 VOKO 主人邮箱完成归属；需要验证码时只在交互终端或 Web 流程中手工输入。
-3. 选择投递顺序：
+2. 如果检测到 `~/.claude/agents/*.md`，可选择其中一个 Agent。实例 ID 是文件名（不含 `.md`），不是绝对路径或 Claude session。
+3. 使用当前 VOKO 主人邮箱完成归属；需要验证码时只在交互终端或 Web 流程中手工输入。
+4. 选择投递顺序：
 
    ```text
    CLI → Pull
    ```
 
-4. 完成注册后检查：
+5. 完成注册后检查：
 
    ```powershell
    voko doctor --deep
    voko status --json
    ```
 
-Claude Code 当前没有 VOKO ACP 主通道，也不需要填写 OpenClaw Agent ID、Hermes profile 或其他 Provider Instance。`backend_instance_id` 保持为空；不要把 Claude 的本地路径或会话文件名当成 Instance。
+选择 Agent 后，第二步会从该 Markdown 文件的 YAML frontmatter 中读取 `name`、`description` 和 `tags` 作为可编辑建议；正文指令不会作为公开描述。未检测到 Agent 文件时仍可不绑定实例并使用 Claude Code CLI。Claude Code 当前没有 VOKO ACP 主通道；不要把本地路径或会话文件名当成 `backend_instance_id`。
 
 如果注册时只有 Pull：先确认 `claude --version` 和 `claude auth status`，再重启 VOKO。新 Agent 加入已运行的旧进程时，旧 Dispatcher 路由缓存可能尚未包含 CLI 状态。
 

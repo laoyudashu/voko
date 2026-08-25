@@ -13,7 +13,7 @@ import { A2AScopeResolver } from './scope';
 import { A2AAttachmentWorkspace } from './attachment-workspace';
 
 interface A2ABridgeRuntimeOptions { database: DatabaseSync; mainDatabase?: any; dispatcher: any; env?: NodeJS.ProcessEnv;
-  delay?: (ms: number) => Promise<void>; onError?: (code: string) => void }
+  delay?: (ms: number) => Promise<void>; onError?: (code: string) => void; onRecovery?: (code: string) => void }
 class A2ABridgeRuntime {
   private stopped = false;
   constructor(private readonly options: A2ABridgeRuntimeOptions) {}
@@ -55,7 +55,14 @@ class A2ABridgeRuntime {
     };
     const worker = new A2ABridgeWorker({ client, store, scopes, availability, verify: (value) => {
       const envelope = validateEnvelope(value); if (!verifyEnvelope(envelope, gatewayPublicKey)) throw new Error('Invalid A2A Gateway signature'); return envelope;
-    }, execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
+    }, verifyExpiredRetry: (value) => {
+      const candidate = value as any; const expiresAt = Date.parse(candidate?.timestamps?.expiresAt);
+      if (!Number.isFinite(expiresAt) || expiresAt >= Date.now()) throw new Error('A2A_LOCAL_RETRY_NOT_EXPIRED');
+      const envelope = validateEnvelope(value, { now: expiresAt });
+      if (!verifyEnvelope(envelope, gatewayPublicKey, { now: expiresAt })) throw new Error('Invalid A2A Gateway signature');
+      return envelope;
+    }, expireRetry: (eventId, envelope) => processor.expireBeforeDelivery(eventId, envelope),
+    execute: (envelope) => processor.process(envelope), concurrency: executionConcurrency });
     const outbox = new A2AEventOutboxWorker(store, client); const outboundResults = new A2AOutboundResultWorker(store, client);
     for (const command of store.listProcessingCommands()) {
       try {
@@ -73,10 +80,31 @@ class A2ABridgeRuntime {
     }
     const delay = this.options.delay || ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.stopped = false;
+    const errorSummaryMs = 5 * 60 * 1000;
     const runLoop = (component: string, work: () => Promise<boolean>, idleMs: number) => void (async () => {
+      let lastError = ''; let totalFailures = 0; let suppressedFailures = 0; let lastReportAt = 0;
       while (!this.stopped) {
-        try { if (!await work()) await delay(idleMs); }
-        catch (error) { this.options.onError?.(`${component}: ${error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR'}`);
+        try {
+          const didWork = await work();
+          if (totalFailures > 0) {
+            this.options.onRecovery?.(`${component}: 服务已恢复，此前连续失败 ${totalFailures} 次`);
+            lastError = ''; totalFailures = 0; suppressedFailures = 0; lastReportAt = 0;
+          }
+          if (!didWork) await delay(idleMs);
+        }
+        catch (error) {
+          const message = error instanceof Error ? error.message : 'A2A_BRIDGE_ERROR';
+          const now = Date.now(); totalFailures += 1;
+          if (message !== lastError) {
+            lastError = message; suppressedFailures = 0; lastReportAt = now;
+            this.options.onError?.(`${component}: ${message}`);
+          } else {
+            suppressedFailures += 1;
+            if (now - lastReportAt >= errorSummaryMs) {
+              this.options.onError?.(`${component}: 相同错误在过去周期内重复 ${suppressedFailures} 次 (${message})`);
+              suppressedFailures = 0; lastReportAt = now;
+            }
+          }
           if (!this.stopped) await delay(5000); }
       }
     })();

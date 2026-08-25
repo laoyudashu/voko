@@ -11,12 +11,23 @@ const { VOKO_API_URL } = require('../core/api-signature');
 const { discoverHermes } = require('../server/hermes-discovery');
 const { getClientBundle } = require('../core/i18n');
 const { createRegistrationOrchestrator } = require('../core/registration-orchestrator');
+const { readWorkBuddyAgentAvatar } = require('../core/dispatcher/workbuddy-agents');
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderSystemFooter } = require('./footer');
-const { UI_CONTROL_CSS, copyButton, copyControlScript } = require('./ui-controls');
+const { renderLanguageSwitcher } = require('./language-switcher');
+const { UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+
+const DEFAULT_AGENT_ICON = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><path fill="#1a73e8" d="M603 142c46 0 83 36 83 81v63h109c52 0 94 41 94 91v465c0 50-42 91-94 91H232c-52 0-93-41-93-91V377c0-50 42-91 94-91h109v-63c0-45 37-81 83-81h178zm192 234H232c-1 0-1 1-1 1v465c0 1 0 1 1 1h563c1 0 2 0 2-1V377c0-1-1-1-2-1zM443 560c25 0 46 20 46 45s-21 45-46 45H329c-26 0-47-20-47-45s21-45 47-45h114zm266 0c25 0 46 20 46 45s-21 45-46 45H594c-25 0-46-20-46-45s21-45 46-45h115zM434 232v54h159v-54H434z"/></svg>',
+);
+
+function iconExtension(mimeType) {
+  return ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' })[mimeType] || null;
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
@@ -57,6 +68,14 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .code-row{display:flex;gap:8px;align-items:flex-end;margin-top:8px}
 .code-row input{flex:1}
 .code-row button{margin:0;padding:11px 18px;min-width:80px}
+.otp-wrap{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:6px}
+.otp-cell{height:52px;display:flex;align-items:center;justify-content:center;border:2px solid #e0e4ea;border-radius:10px;background:#f8f9fb;font-size:22px;font-weight:700;transition:border-color .2s,box-shadow .2s,background .2s}
+.otp-wrap:focus-within .otp-cell.active{border-color:#1a73e8;box-shadow:0 0 0 4px rgba(26,115,232,.1);background:#fff}
+.otp-input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;opacity:0;cursor:text}
+.otp-help{min-height:18px;margin:8px 0 0;text-align:center;color:#888;font-size:12px}
+.bug-report-subtle{margin:18px 0 0!important;font-size:12px!important}.bug-report-subtle a{color:#9aa1ab;font-weight:400}
+.login-language{display:flex;justify-content:flex-end;margin:-8px -10px 12px}.send-code-btn{width:100%;margin:0;background:#1a73e8;color:#fff;border:2px solid #1a73e8}.send-code-btn:hover{background:#1557b0;color:#fff}
+.send-code-feedback{display:none;margin:8px 0 0;padding:8px 10px;font-size:13px;text-align:center}.send-code-feedback.active{display:block}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
 .form-actions{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:8px}
 .form-actions .btn{flex:1;margin:0}
@@ -71,7 +90,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .voko-option{padding:9px 14px;font-size:15px;color:#1a1a2e;cursor:pointer;transition:background 0.12s}
 .voko-option:hover{background:#e8f0fe}
 .voko-option.selected{background:#e8f0fe;color:#1a73e8;font-weight:600}
-@media(max-width:480px){.card{padding:20px 18px}}
+@media(max-width:480px){.card{padding:20px 18px}.otp-wrap{gap:6px}.otp-cell{height:47px;border-radius:8px}}
 .voko-logo{text-align:center;margin-bottom:24px;font-size:20px;font-weight:700;color:#1a73e8;letter-spacing:1px}
 .wizard{background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(20,40,80,.09);width:min(920px,100%);overflow:hidden}
 .wizard-head{padding:26px 34px 22px;border-bottom:1px solid #e3e7ee}
@@ -85,6 +104,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .wizard-body{padding:30px 34px;min-height:500px}.wizard-panel{display:none}.wizard-panel.active{display:block}
 .wizard-footer{display:flex;gap:10px;padding:17px 34px;border-top:1px solid #e3e7ee;background:#fcfcfd}.wizard-footer .spacer{flex:1}
 .wizard-footer button{margin:0}.wide-field{max-width:720px}
+.basic-profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;max-width:760px}.basic-profile-grid .basic-span-2{grid-column:1/-1}.basic-section-title{margin:10px 0 0;padding:0 0 7px;border-bottom:1px solid #e4e7ec;font-size:16px;font-weight:700;color:#344054}.basic-icon-button{position:relative;display:block;width:92px;height:92px;min-width:92px;margin:4px 0 0;padding:0;overflow:hidden;border:2px dashed #b8c1cf;border-radius:16px;background:#f8fafc;color:#667085}.basic-icon-button:hover{background:#f1f5f9;border-color:#1a73e8;transform:none}.basic-icon-button.has-image{border-style:solid;background:#f2f4f7}.basic-icon-preview{display:none;width:100%;height:100%;object-fit:cover}.basic-icon-button.has-image .basic-icon-preview{display:block}.basic-icon-placeholder{display:flex;width:100%;height:100%;align-items:center;justify-content:center;font-size:34px;font-weight:300}.basic-icon-button.has-image .basic-icon-placeholder{display:none}.basic-icon-overlay{position:absolute;inset:auto 0 0;padding:5px 4px;background:rgba(17,24,39,.72);color:#fff;font-size:12px;opacity:0;transition:opacity .15s}.basic-icon-button:hover .basic-icon-overlay,.basic-icon-button:focus .basic-icon-overlay{opacity:1}
 .detect-banner{margin:18px 0;padding:11px 13px;border-radius:9px;background:#edf4ff;color:#2854a3;font-weight:600}
 .provider-list,.delivery-list{display:grid;gap:11px;margin-top:12px}
 .provider-card,.delivery-card{display:grid;grid-template-columns:22px minmax(0,1fr);gap:11px;border:1px solid #dfe4ec;border-radius:11px;padding:14px;cursor:pointer}
@@ -99,9 +119,9 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .priority-list{margin:8px 0 0;padding-left:22px}.result-card{padding:18px;border:1px solid #a8ddbf;border-radius:12px;background:#ecf8f1}
 .result-grid{display:grid;grid-template-columns:105px 1fr;gap:7px 12px;margin-top:15px;padding:13px;background:#fff;border-radius:9px}.result-grid dt{color:#667085}.result-grid dd{margin:0;font-weight:600}
 .security-notice{margin-top:16px;padding:12px 13px;border:1px solid #edcf92;border-radius:9px;background:#fff6e3;color:#704600}
-.loopback-tests>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}.result-loopback.success{background:#0f9d58;border-color:#0b8043}.result-loopback.failed{background:#d93025;border-color:#b71c1c}.loopback-feedback{flex-basis:100%;min-height:18px;color:#0f7a43;font-size:13px}.loopback-feedback.error{color:#b42318}
 .registration-tabs{display:grid;grid-template-columns:1fr 1fr;padding:8px;background:#f4f6f9;border-bottom:1px solid #e3e7ee;gap:8px}.registration-tab{margin:0;background:transparent;color:#667085;border:0;border-radius:9px;padding:10px 14px}.registration-tab:hover{background:#fff;color:#1a73e8;transform:none}.registration-tab.active{background:#fff;color:#1a73e8;box-shadow:0 1px 5px rgba(20,40,80,.09)}.registration-pane[hidden]{display:none}.agent-register-pane{padding:30px 34px}.agent-register-pane h2{margin:0 0 6px}.agent-prompt{width:100%;min-height:360px;resize:vertical;background:#f8fafc;font-family:Consolas,'SFMono-Regular',monospace;font-size:13px;line-height:1.65}.agent-copy-row{display:flex;align-items:center;gap:12px;margin-top:12px}.agent-copy-row button{margin:0}
-@media(max-width:600px){.wizard-head,.wizard-body,.wizard-footer{padding-left:18px;padding-right:18px}.wizard-step{font-size:0}.wizard-step b{font-size:12px}.result-grid{grid-template-columns:82px 1fr}}`;
+.voko-confirm-dialog{width:min(420px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;color:#1a1a2e;box-shadow:0 18px 60px rgba(21,31,46,.28)}.voko-confirm-dialog::backdrop{background:rgba(24,34,48,.48);backdrop-filter:blur(2px)}.voko-confirm-body{padding:26px 28px 18px;text-align:center}.voko-confirm-icon{display:flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#fff4e5;color:#b45309;font-size:24px;font-weight:800}.voko-confirm-body p{margin:0;color:#667085;font-size:14px;line-height:1.65}.voko-confirm-actions{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;background:#f7f9fc;border-top:1px solid #e8ebef}.voko-confirm-actions button{margin:0;min-width:96px}
+@media(max-width:600px){.wizard-head,.wizard-body,.wizard-footer{padding-left:18px;padding-right:18px}.wizard-step{font-size:0}.wizard-step b{font-size:12px}.result-grid{grid-template-columns:82px 1fr}.basic-profile-grid{grid-template-columns:1fr}.basic-profile-grid .basic-span-2{grid-column:auto}}`;
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
@@ -111,7 +131,7 @@ function page(title, body, tFn, locale, db, opts) {
   const boot = '<script>window.__LOCALE__=' + JSON.stringify(loc) + ';window.__I18N__=' + JSON.stringify(getClientBundle(loc)) + '</script>';
   // 登录/切换用户等未登录页面（opts.footer===false）不渲染系统 footer，
   // 避免暴露运行时状态（IM 连接、PID、端口）与“错误上报”入口。
-  const footer = opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc);
+  const footer = (opts && opts.footer === false ? '' : renderSystemFooter(db, tFn, loc)) + messageDialog(esc, tFn('common.toast.ok'));
   return '<!DOCTYPE html>\n<html lang="' + lang + '">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — ' + esc(title) + '</title>\n<style>' + CSS + UI_CONTROL_CSS + '</style>\n' + boot + '\n</head>\n<body>\n' + body + footer + copyControlScript() + '\n</body>\n</html>';
 }
 
@@ -122,22 +142,24 @@ function page(title, body, tFn, locale, db, opts) {
 const LOGIN_JS = null; // 兼容占位，实际用 loginJs(t)
 
 function loginJs(t, popup) {
+  const sendCode = JSON.stringify(t('register.login.send_code'));
+  const sending = JSON.stringify(t('register.login.sending'));
   const sent = JSON.stringify(t('register.login.sent'));
   const resend = JSON.stringify(t('register.login.resend'));
   const sendFailed = JSON.stringify(t('register.login.send_failed'));
   const oauthWaiting = JSON.stringify(t('register.login.oauth_waiting'));
   const oauthFailed = JSON.stringify(t('register.login.oauth_failed'));
-  return '<script>var LOGIN_POPUP=' + JSON.stringify(!!popup) + ',I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ',I18N_OAUTH_WAITING=' + oauthWaiting + ',I18N_OAUTH_FAILED=' + oauthFailed + ';setTimeout(function(){if(document.querySelector(".alert-error")){var m=document.getElementById("sent-msg");if(m)m.remove()}},0);async function sendCode(){var e=document.getElementById("email").value.trim();if(!e)return;var b=document.getElementById("send-btn");var s=document.getElementById("sent-msg");var se=document.getElementById("sent-email");if(b)b.disabled=true;try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.style.display="block";se.textContent=e;var c=60;var timer=setInterval(function(){b.textContent=I18N_RESEND+"("+c+"s)";c--;if(c<0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);var cd=document.getElementById("code");if(cd)cd.focus()}catch(err){if(b)b.disabled=false;window.alert(err.message||I18N_SEND_FAILED)}}async function oauthLogin(provider){var buttons=document.querySelectorAll(".oauth-btn"),status=document.getElementById("oauth-status");buttons.forEach(function(b){b.disabled=true});status.className="oauth-status active";status.textContent=I18N_OAUTH_WAITING;try{var r=await fetch("/api/login/oauth/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:provider})}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_OAUTH_FAILED);var popup=window.open(d.authorizeUrl,"_blank");if(!popup)throw new Error(I18N_OAUTH_FAILED);try{popup.opener=null}catch(e){}var delay=Math.max(2,d.pollIntervalSeconds||2)*1000,deadline=Date.parse(d.expiresAt)||Date.now()+600000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,delay)});var sr=await fetch("/api/login/oauth/status/"+encodeURIComponent(d.sessionId)),sd=await sr.json();if(sr.status===410)throw new Error(sd.error||I18N_OAUTH_FAILED);if(!sr.ok||!sd.success)throw new Error(sd.error||I18N_OAUTH_FAILED);if(sd.status==="failed")throw new Error((sd.error&&sd.error.message)||I18N_OAUTH_FAILED);if(sd.status==="authorized"){var er=await fetch("/api/login/oauth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:d.sessionId,exchangeCode:sd.exchangeCode})}),ed=await er.json();if(!er.ok||!ed.success)throw new Error(ed.error||I18N_OAUTH_FAILED);location.href="/login/oauth/complete"+(LOGIN_POPUP?"?popup=1":"");return}}throw new Error(I18N_OAUTH_FAILED)}catch(err){status.className="oauth-status error";status.textContent=err.message||I18N_OAUTH_FAILED;buttons.forEach(function(b){b.disabled=false})}}fetch("/api/login/oauth/providers").then(function(r){return r.json()}).then(function(d){if(!d.success)return;(d.providers||[]).forEach(function(p){var b=document.querySelector("[data-oauth-provider="+p.id+"]");if(b)b.hidden=false})}).catch(function(){})</'+'script>';
+  return '<script>var LOGIN_POPUP=' + JSON.stringify(!!popup) + ',I18N_SEND_CODE=' + sendCode + ',I18N_SENDING=' + sending + ',I18N_SENT=' + sent + ',I18N_RESEND=' + resend + ',I18N_SEND_FAILED=' + sendFailed + ',I18N_OAUTH_WAITING=' + oauthWaiting + ',I18N_OAUTH_FAILED=' + oauthFailed + ';var loginForm=document.getElementById("login-form"),codeInput=document.getElementById("code"),otpCells=Array.from(document.querySelectorAll(".otp-cell")),lastSubmittedCode="";function renderCode(){if(!codeInput)return;var value=codeInput.value.replace(/\\D/g,"").slice(0,6);codeInput.value=value;otpCells.forEach(function(cell,index){cell.textContent=value[index]||"";cell.classList.toggle("active",value.length<6&&index===value.length)});if(value.length===6&&value!==lastSubmittedCode){lastSubmittedCode=value;loginForm.requestSubmit()}}if(codeInput){codeInput.addEventListener("input",renderCode);renderCode()}async function sendCode(){var e=document.getElementById("email").value.trim(),b=document.getElementById("send-btn"),s=document.getElementById("send-feedback");if(!e){document.getElementById("email").reportValidity();return}b.disabled=true;b.textContent=I18N_SENDING;s.className="alert send-code-feedback";s.textContent="";try{var r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"action=sendCode&email="+encodeURIComponent(e)});var d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_SEND_FAILED);s.className="alert alert-success send-code-feedback active";s.textContent=I18N_SENT+" "+e;var c=60;b.textContent=I18N_RESEND+" ("+c+"s)";var timer=setInterval(function(){c--;b.textContent=I18N_RESEND+" ("+c+"s)";if(c<=0){clearInterval(timer);b.disabled=false;b.textContent=I18N_RESEND}},1000);if(codeInput)codeInput.focus()}catch(err){b.disabled=false;b.textContent=I18N_SEND_CODE;s.className="alert alert-error send-code-feedback active";s.textContent=err.message||I18N_SEND_FAILED}}async function oauthLogin(provider){var buttons=document.querySelectorAll(".oauth-btn"),status=document.getElementById("oauth-status");buttons.forEach(function(b){b.disabled=true});status.className="oauth-status active";status.textContent=I18N_OAUTH_WAITING;try{var r=await fetch("/api/login/oauth/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:provider})}),d=await r.json();if(!r.ok||!d.success)throw new Error(d.error||I18N_OAUTH_FAILED);var popup=window.open(d.authorizeUrl,"_blank");if(!popup)throw new Error(I18N_OAUTH_FAILED);try{popup.opener=null}catch(e){}var delay=Math.max(2,d.pollIntervalSeconds||2)*1000,deadline=Date.parse(d.expiresAt)||Date.now()+600000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,delay)});var sr=await fetch("/api/login/oauth/status/"+encodeURIComponent(d.sessionId)),sd=await sr.json();if(sr.status===410)throw new Error(sd.error||I18N_OAUTH_FAILED);if(!sr.ok||!sd.success)throw new Error(sd.error||I18N_OAUTH_FAILED);if(sd.status==="failed")throw new Error((sd.error&&sd.error.message)||I18N_OAUTH_FAILED);if(sd.status==="authorized"){var er=await fetch("/api/login/oauth/exchange",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:d.sessionId,exchangeCode:sd.exchangeCode})}),ed=await er.json();if(!er.ok||!ed.success)throw new Error(ed.error||I18N_OAUTH_FAILED);location.href="/login/oauth/complete"+(LOGIN_POPUP?"?popup=1":"");return}}throw new Error(I18N_OAUTH_FAILED)}catch(err){status.className="oauth-status error";status.textContent=err.message||I18N_OAUTH_FAILED;buttons.forEach(function(b){b.disabled=false})}}fetch("/api/login/oauth/providers").then(function(r){return r.json()}).then(function(d){if(!d.success)return;(d.providers||[]).forEach(function(p){var b=document.querySelector("[data-oauth-provider="+p.id+"]");if(b)b.hidden=false})}).catch(function(){})</'+'script>';
 }
 
-function loginBody(email, err, tFn, popup) {
+function loginBody(email, err, tFn, popup, locale) {
   const t = tFn || (k => k);
   var alertHtml = err ? '<div class="alert alert-error">' + esc(err) + '</div>' : '';
-  alertHtml += '<div class="alert alert-success" id="sent-msg" style="display:none">' + esc(t('register.login.sent')) + ' <span id="sent-email"></span></div>';
   const googleIcon = '<svg class="oauth-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.6h3.3c1.9-1.8 2.9-4.4 2.9-7.5Z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.7-2.3l-3.3-2.6c-.9.6-2.1 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-3.9V7.4H3.1a10 10 0 0 0 0 9.2L6.5 14Z"/><path fill="#EA4335" d="M12 6c1.5 0 2.8.5 3.9 1.5l2.9-2.9A9.8 9.8 0 0 0 3.1 7.4l3.4 2.7A5.9 5.9 0 0 1 12 6Z"/></svg>';
   const githubIcon = '<svg class="oauth-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.2.8-.5v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C14.5 4.8 15.5 5 15.5 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 12 .7Z"/></svg>';
   return '<div class="voko-logo">VOKO</div>'
     + '<div class="card">'
+    + '<div class="login-language">' + renderLanguageSwitcher(locale) + '</div>'
     + '<h2>' + esc(t('register.login.title')) + '</h2>'
     + '<p class="desc">' + esc(t('register.login.desc')) + '</p>'
     + alertHtml
@@ -146,19 +168,20 @@ function loginBody(email, err, tFn, popup) {
     + '<label for="email">' + esc(t('register.login.email')) + '</label>'
     + '<input type="email" id="email" name="email" value="' + esc(email) + '" required autocomplete="email" autofocus placeholder="you@example.com">'
     + '<div class="code-row" style="margin-top:8px">'
-    + '<button type="button" class="btn-outline" style="flex:1;margin:0" id="send-btn" onclick="sendCode()">' + esc(t('register.login.send_code')) + '</button>'
+    + '<button type="button" class="send-code-btn" id="send-btn" onclick="sendCode()">' + esc(t('register.login.send_code')) + '</button>'
     + '</div>'
+    + '<div id="send-feedback" class="alert send-code-feedback" aria-live="polite"></div>'
     + '<label for="code" style="margin-top:12px">' + esc(t('register.login.code')) + '</label>'
-    + '<div class="code-row">'
-    + '<input type="text" id="code" name="code" required maxlength="6" autocomplete="one-time-code" placeholder="' + esc(t('register.login.code_ph')) + '">'
-    + '<button type="submit" name="action" value="verify" class="btn-success" style="margin:0">' + esc(t('register.login.login_btn')) + '</button>'
-    + '</div>'
+    + '<div class="otp-wrap"><span class="otp-cell active" aria-hidden="true"></span><span class="otp-cell" aria-hidden="true"></span><span class="otp-cell" aria-hidden="true"></span><span class="otp-cell" aria-hidden="true"></span><span class="otp-cell" aria-hidden="true"></span><span class="otp-cell" aria-hidden="true"></span>'
+    + '<input type="text" id="code" class="otp-input" name="code" required maxlength="6" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" aria-label="' + esc(t('register.login.code')) + '"></div>'
+    + '<input type="hidden" name="action" value="verify">'
+    + '<p class="otp-help">' + esc(t('register.login.code_ph')) + '</p>'
     + '</form>'
     + '<div class="oauth-buttons">'
     + '<button type="button" class="oauth-btn" data-oauth-provider="google" onclick="oauthLogin(\'google\')">' + googleIcon + '<span>' + esc(t('register.login.google')) + '</span></button>'
     + '<button type="button" class="oauth-btn" data-oauth-provider="github" onclick="oauthLogin(\'github\')">' + githubIcon + '<span>' + esc(t('register.login.github')) + '</span></button>'
     + '</div><div id="oauth-status" class="oauth-status"></div>'
-    + '<p class="desc" style="margin-top:18px"><a href="/bug-report">' + esc(t('web.bug_report.link')) + '</a></p>'
+    + '<p class="desc bug-report-subtle"><a href="/bug-report">' + esc(t('web.bug_report.link')) + '</a></p>'
     + '</div>';
 }
 
@@ -221,7 +244,7 @@ function addAgentBody(email, categories, openclawAgents, hermesProfiles, db, tFn
     + '<input type="text" id="an" name="agentName" value="' + esc(defaultName) + '" required placeholder="' + esc(t('register.add.name_ph')) + '">'
     + '<div class="name-status" id="name-status"></div>'
     // 描述
-    + '<label for="desc">' + esc(t('register.add.desc')) + '</label>'
+    + '<label for="desc">' + esc(t('register.add.desc')) + esc(t('register.flow.basic.optional')) + '</label>'
     + '<textarea id="desc" name="description" rows="2" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea>'
     // 分类
     + '<label for="cat">' + esc(t('register.add.category')) + '</label>'
@@ -265,7 +288,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
   const categoryOptions = (categories || []).map((category) =>
     '<option value="' + esc(category.code) + '"' + (category.code === 'general' ? ' selected' : '') + '>' + esc(category.label) + '</option>'
   ).join('');
-  const defaultName = uniqueDefaultAgentName(email, db, t);
+  const defaultName = '';
   const agentPrompt = t('register.agent.prompt');
   return '<div class="voko-logo">VOKO</div>'
     + '<main class="wizard" id="registration-wizard" data-email="' + esc(email) + '">'
@@ -273,19 +296,23 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<div class="registration-pane" id="registration-human-pane">'
     + '<header class="wizard-head"><h2>' + esc(t('register.add.title')) + '</h2><p>' + esc(t('register.flow.subtitle')) + '</p>'
     + '<div class="wizard-steps">'
-    + '<div class="wizard-step active" data-wizard-step="1" role="button" tabindex="0"><b>1</b>' + esc(t('register.flow.step.basic')) + '</div>'
-    + '<div class="wizard-step" data-wizard-step="2" role="button" tabindex="0"><b>2</b>' + esc(t('register.flow.step.provider')) + '</div>'
+    + '<div class="wizard-step active" data-wizard-step="1" role="button" tabindex="0"><b>1</b>' + esc(t('register.flow.step.provider')) + '</div>'
+    + '<div class="wizard-step" data-wizard-step="2" role="button" tabindex="0"><b>2</b>' + esc(t('register.flow.step.basic')) + '</div>'
     + '<div class="wizard-step" data-wizard-step="3" role="button" tabindex="0"><b>3</b>' + esc(t('register.flow.step.delivery')) + '</div>'
     + '<div class="wizard-step" data-wizard-step="4" role="button" tabindex="0"><b>4</b>' + esc(t('register.flow.step.done')) + '</div>'
     + '</div></header>'
     + '<div class="wizard-body">'
-    + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
-    + '<div class="wide-field"><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required>'
-    + '<div class="name-status" id="wf-name-status"></div>'
-    + '<label for="wf-desc">' + esc(t('register.add.desc')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea>'
-    + '<label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select></div></section>'
-    + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.provider.title')) + '</h3><p class="meta">' + esc(t('register.flow.provider.desc')) + '</p>'
+    + '<section class="wizard-panel active" data-step="1"><h3>' + esc(t('register.flow.provider.title')) + '</h3><p class="meta">' + esc(t('register.flow.provider.desc')) + '</p>'
     + '<div class="detect-banner" id="wf-detect">' + esc(t('register.flow.detecting')) + '</div><div id="wf-providers"></div></section>'
+    + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
+    + '<div class="basic-profile-grid"><div class="basic-span-2 basic-section-title">' + esc(t('register.flow.basic.section_profile')) + '</div>'
+    + '<div><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required><div class="name-status" id="wf-name-status"></div></div>'
+    + '<div><label for="wf-category">' + esc(t('register.add.category')) + ' *</label><select id="wf-category" required>' + categoryOptions + '</select></div>'
+    + '<div class="basic-span-2"><label for="wf-desc">' + esc(t('register.add.desc')) + esc(t('register.flow.basic.optional')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea></div>'
+    + '<div class="basic-span-2"><label for="wf-tags">' + esc(t('register.flow.basic.tags')) + esc(t('register.flow.basic.optional')) + '</label><input id="wf-tags" placeholder="' + esc(t('register.flow.basic.tags_placeholder')) + '"></div>'
+    + '<div class="basic-span-2"><label>' + esc(t('register.flow.basic.icon')) + esc(t('register.flow.basic.optional')) + '</label><button type="button" class="basic-icon-button" id="wf-icon-button" aria-label="' + esc(t('web.agent.edit.icon_change')) + '"><img class="basic-icon-preview" id="wf-icon-preview" alt="' + esc(t('register.flow.basic.icon')) + '"><span class="basic-icon-placeholder" aria-hidden="true">+</span><span class="basic-icon-overlay">' + esc(t('web.agent.edit.icon_change')) + '</span></button><input type="file" id="wf-icon-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div>'
+    + '<div><label for="wf-phone">' + esc(t('register.flow.basic.phone')) + esc(t('register.flow.basic.optional')) + '</label><input id="wf-phone" placeholder="' + esc(t('register.flow.basic.phone_placeholder')) + '"></div>'
+    + '<div><label for="wf-address">' + esc(t('register.flow.basic.address')) + esc(t('register.flow.basic.optional')) + '</label><input id="wf-address" placeholder="' + esc(t('register.flow.basic.address_placeholder')) + '"></div></div></section>'
     + '<section class="wizard-panel" data-step="3"><h3>' + esc(t('register.flow.delivery.title')) + '</h3><p class="meta" id="wf-delivery-desc"></p>'
     + '<div class="delivery-list" id="wf-deliveries"></div>'
     + '<div class="config-panel" id="wf-config"><h3 id="wf-config-title"></h3><p class="meta" id="wf-config-desc"></p><pre id="wf-config-log" style="display:none;max-height:180px;overflow:auto;background:#182033;color:#b8f7c8;padding:9px;border-radius:7px;white-space:pre-wrap"></pre>'
@@ -296,6 +323,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<section class="wizard-panel" data-step="4"><h3 id="wf-step4-title">' + esc(t('register.flow.access.title')) + '</h3><p class="meta" id="wf-access-desc">' + esc(t('register.flow.access.desc')) + '</p><div id="wf-result"></div></section>'
     + '</div>'
     + '<footer class="wizard-footer"><button type="button" class="btn-outline" id="wf-prev" style="visibility:hidden">' + esc(t('register.flow.previous')) + '</button><span class="spacer"></span><button type="button" id="wf-next">' + esc(t('register.flow.next')) + '</button></footer></div>'
+    + '<dialog id="wf-reselect-dialog" class="voko-confirm-dialog"><div class="voko-confirm-body"><div class="voko-confirm-icon" aria-hidden="true">!</div><p>' + esc(t('register.flow.basic.reselect_warning')) + '</p></div><div class="voko-confirm-actions"><button type="button" class="btn-outline" id="wf-reselect-cancel">' + esc(t('common.btn.cancel')) + '</button><button type="button" id="wf-reselect-confirm">' + esc(t('common.btn.confirm')) + '</button></div></dialog>'
     + '<section class="registration-pane agent-register-pane" id="registration-agent-pane" hidden>'
     + '<h2>' + esc(t('register.agent.title')) + '</h2><p class="meta">' + esc(t('register.agent.desc')) + '</p>'
     + '<textarea class="agent-prompt" id="agent-registration-prompt" readonly>' + esc(agentPrompt) + '</textarea>'
@@ -308,6 +336,7 @@ function wizardJs(t) {
     next: t('register.flow.next'), enter: t('register.done.start'),
     detecting: t('register.flow.detecting'), detected: t('register.flow.detected'),
     local: t('register.flow.provider.local'), more: t('register.flow.provider.more'),
+    noDetected: t('register.flow.provider.none_detected'),
     others: t('db.backend_type.others'), othersDesc: t('register.flow.provider.others_desc'),
     detectedTag: t('register.flow.detected_tag'), manualTag: t('register.flow.manual_tag'),
     instance: t('register.flow.instance.title'), deliveryDesc: t('register.flow.delivery.for_provider'),
@@ -315,7 +344,6 @@ function wizardJs(t) {
     configure: t('register.flow.configure'), test: t('register.flow.test'),
     configuring: t('register.flow.configuring'), configured: t('register.flow.configured'),
     testing: t('register.flow.testing'), testOk: t('register.flow.test_ok'), testFailed: t('register.flow.test_failed'),
-    loopback: t('register.flow.loopback'), preflightOnly: t('register.flow.preflight_only'),
     configureDesc: t('register.flow.configure.desc'), configureConfirm: t('register.flow.configure.confirm'),
     create: t('register.add.create_btn'), creating: t('register.add.creating'),
     created: t('register.flow.done.created'), deliveryOrder: t('register.flow.delivery.order'),
@@ -324,7 +352,9 @@ function wizardJs(t) {
     securityTitle: t('register.flow.security_title'), security: t('register.flow.security'),
     name: t('register.add.name'), description: t('register.add.desc'), category: t('register.add.category'),
     provider: t('register.add.backend_type'), instanceLabel: t('register.flow.instance.label'),
+    instanceLoading: t('web.agent.edit.instances_loading'), instanceNone: t('web.agent.edit.instances_none'),
     nameTaken: t('register.add.name_taken'),
+    nameCheckUnavailable: t('register.add.name_check_unavailable'),
     accessTitle: t('register.flow.access.title'), accessDesc: t('register.flow.access.desc'),
     privateMode: t('register.flow.access.private'), privateDesc: t('register.flow.access.private_desc'),
     publicMode: t('register.flow.access.public'), publicDesc: t('register.flow.access.public_desc'),
@@ -332,13 +362,15 @@ function wizardJs(t) {
     searchName: t('register.flow.done.search_name'), searchEmail: t('register.flow.done.search_email'),
     exactId: t('register.flow.done.exact_id'),
     copied: t('register.agent.copied'),
+    iconInvalid: t('web.agent.edit.icon_invalid'), iconTooLarge: t('web.agent.edit.icon_too_large'),
+    iconUploading: t('web.agent.edit.icon_uploading'), iconUploadFailed: t('web.agent.edit.icon_upload_failed'),
     error: t('register.create_failed_default'),
   };
   return `<script>
 (function(){
-  var I=${JSON.stringify(I)}, root=document.getElementById('registration-wizard');
+  var I=${JSON.stringify(I)},DEFAULT_AGENT_ICON=${JSON.stringify(DEFAULT_AGENT_ICON)},root=document.getElementById('registration-wizard');
   if(!root)return;
-  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null;
+  var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null, workbuddyLoad='idle', workbuddyError='';
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
   var panels=Array.from(document.querySelectorAll('.wizard-panel')), steps=Array.from(document.querySelectorAll('.wizard-step'));
   var next=document.getElementById('wf-next'), prev=document.getElementById('wf-prev');
@@ -351,41 +383,93 @@ function wizardJs(t) {
   function api(action,data){return fetch('/api/agent-registration',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({action:action,registrationId:regId},data||{}))}).then(async function(r){var d=await r.json();if(!r.ok||d.success===false)throw new Error(d.error||d.detail||I.error);return d})}
   function show(n){step=n;panels.forEach(function(p,i){p.classList.toggle('active',i===n-1)});steps.forEach(function(s,i){s.classList.toggle('active',i===n-1);s.classList.toggle('done',i<n-1)});prev.style.visibility=n===1||state&&state.status==='created'?'hidden':'visible';next.textContent=n===4?(state&&state.status==='created'?I.enter:I.create):I.next;saveDraft()}
   function setDetectionPending(){document.getElementById('wf-detect').textContent=I.detecting;document.getElementById('wf-providers').innerHTML=''}
-  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value}}
+  var suggestedIconPreview='',selectedIconFile=null,selectedIconObjectUrl='';
+  function localizedSuggestion(value){if(typeof value==='string')return value.trim();if(!value||typeof value!=='object')return '';var lang=(document.documentElement.lang||'en').split('-')[0];return String(value[lang]||value.zh||value.en||'').trim()}
+  function normalizedSuggestionTags(value){return(Array.isArray(value)?value:[]).map(localizedSuggestion).filter(Boolean)}
+  function inferredCategory(name,description,suggested){
+    var select=document.getElementById('wf-category'),available=new Set(Array.from(select.options).map(function(option){return option.value}));
+    if(suggested&&available.has(suggested))return suggested;
+    var content=(String(name||'')+' '+String(description||'')).toLowerCase();
+    var rules=[
+      ['medical',['医疗','医学','医生','诊断','药物','疾病','症状','治疗','医院','临床','处方','medical','medicine','clinical','doctor','diagnosis','drug','disease','symptom','treatment','hospital','prescription']],
+      ['health_fitness',['健康','养生','健身','营养','减脂','瑜伽','体能','康养','health','fitness','wellness','nutrition','workout','yoga','exercise']],
+      ['finance',['金融','财务','投资','股票','基金','证券','保险','银行','会计','税务','理财','finance','financial','investment','stock','fund','securities','insurance','banking','accounting','tax']],
+      ['education',['教育','学习','教学','课程','考试','题库','作业','培训','辅导','education','learning','teaching','course','exam','homework','training','tutoring']],
+      ['technology',['科技','技术','编程','代码','软件','开发','人工智能','算法','数据库','云计算','网络安全','technology','coding','software','developer','artificial intelligence','algorithm','database','cloud computing','cybersecurity']],
+      ['business',['商务','商业','企业','创业','销售','营销','客户关系','合同','供应链','人力资源','business','enterprise','startup','sales','marketing','crm','contract','supply chain','human resources']],
+      ['productivity',['效率','办公','工作流','任务管理','项目管理','日程','笔记','文档协作','productivity','workflow','task management','project management','calendar','note taking','document collaboration']],
+      ['travel',['旅行','旅游','行程','酒店','景点','机票','签证','度假','攻略','travel','trip','itinerary','hotel','attraction','flight','visa','vacation']],
+      ['navigation',['导航','地图','路线','定位','公交','地铁','路况','navigation','map','route planning','location','transit','traffic']],
+      ['food_drink',['美食','饮食','菜谱','烹饪','餐厅','咖啡','茶饮','酒水','烘焙','food','drink','recipe','cooking','restaurant','coffee','tea','wine','baking']],
+      ['food',['餐饮','食材','菜单','厨师','meal','ingredient','menu','chef']],
+      ['entertainment',['娱乐','电影','电视剧','综艺','游戏','动漫','短剧','演出','entertainment','movie','television','variety show','game','anime','show']],
+      ['books',['书籍','图书','小说','阅读','文学','出版','书评','有声书','book','novel','reading','literature','publishing','book review','audiobook']],
+      ['music',['音乐','歌曲','歌手','作曲','乐器','歌词','音频','播客','music','song','singer','composition','instrument','lyrics','audio','podcast']],
+      ['news',['新闻','资讯','时事','热点','媒体','快讯','舆情','news','current affairs','headline','media','breaking news','public opinion']],
+      ['magazines',['报刊','杂志','期刊','专栏','刊物','magazine','periodical','journal','column','publication']],
+      ['photo_video',['摄影','照片','视频','图像','相机','剪辑','修图','直播','photo','video','image','camera','editing','retouching','livestream']],
+      ['shopping',['购物','商品','比价','电商','优惠券','促销','订单','物流','shopping','merchandise','price comparison','ecommerce','coupon','promotion','order tracking','delivery']],
+      ['social',['社交','社区','交友','聊天','群组','人脉','论坛','social','community','friendship','chat','group','networking','forum']],
+      ['sports',['体育','赛事','球队','球员','比分','足球','篮球','跑步','户外运动','sports','tournament','team','player','score','football','basketball','running','outdoor']],
+      ['weather',['天气','气象','温度','降雨','台风','空气质量','灾害预警','weather','forecast','temperature','rainfall','typhoon','air quality','warning']],
+      ['lifestyle',['生活','命理','占卜','星座','运势','家居','育儿','宠物','时尚','美容','婚恋','lifestyle','fortune','astrology','home living','parenting','pet care','fashion','beauty','relationship']],
+      ['utilities',['实用程序','转换器','计算器','扫描仪','压缩解压','文件管理','密码管理','utilities','converter','calculator','scanner','compression tool','file manager','password manager']],
+      ['service',['客服','预约','售后','政务办理','维修服务','家政服务','法律咨询','customer support','reservation','after-sales','government affairs','repair service','housekeeping','legal consultation']],
+      ['reference',['百科全书','词典','语言翻译','资料检索','encyclopedia','dictionary','language translation','research lookup']]
+    ];
+    var best='general',bestScore=0;
+    for(var i=0;i<rules.length;i++){
+      if(!available.has(rules[i][0]))continue;
+      var score=0;
+      rules[i][1].forEach(function(keyword){var lengthBonus=Math.min(keyword.length,8);if(String(name||'').toLowerCase().indexOf(keyword)>=0)score+=20+lengthBonus;else if(String(description||'').toLowerCase().indexOf(keyword)>=0)score+=5+lengthBonus});
+      if(score>bestScore){best=rules[i][0];bestScore=score}
+    }
+    if(bestScore>0)return best;
+    return available.has('general')?'general':(select.options[0]&&select.options[0].value)||'general';
+  }
+  function clearSelectedIcon(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl);selectedIconFile=null;selectedIconObjectUrl=''}
+  function renderIconPreview(){var button=document.getElementById('wf-icon-button'),preview=document.getElementById('wf-icon-preview'),src=selectedIconObjectUrl||suggestedIconPreview||DEFAULT_AGENT_ICON;button.classList.add('has-image');if(preview.src!==src)preview.src=src}
+  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value||'general',tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:'',useSuggestedIcon:!selectedIconFile,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
+  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=normalizedSuggestionTags(s.tags).join(', ');suggestedIconPreview=s.iconPreviewUrl||s.iconUrl||'';renderIconPreview();if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';document.getElementById('wf-category').value=inferredCategory(nameInput.value,document.getElementById('wf-desc').value,s.category)}
+  document.getElementById('wf-icon-button').addEventListener('click',function(){document.getElementById('wf-icon-file').click()});
+  document.getElementById('wf-icon-file').addEventListener('change',function(){var file=this.files&&this.files[0],allowed=['image/png','image/jpeg','image/webp','image/gif'];if(!file)return;if(allowed.indexOf(file.type)===-1){this.value='';return fail(new Error(I.iconInvalid))}if(file.size>500*1024){this.value='';return fail(new Error(I.iconTooLarge))}clearSelectedIcon();selectedIconFile=file;selectedIconObjectUrl=URL.createObjectURL(file);renderIconPreview()});
+  document.getElementById('wf-icon-preview').addEventListener('error',function(){if(selectedIconObjectUrl){clearSelectedIcon()}else if(suggestedIconPreview){suggestedIconPreview=''}else return;renderIconPreview()});
+  async function uploadSelectedIcon(agentId){if(!selectedIconFile)return null;var fd=new FormData();fd.append('file',selectedIconFile,selectedIconFile.name);var response=await fetch('/api/agents/'+encodeURIComponent(agentId)+'/icon',{method:'POST',body:fd}),data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||I.iconUploadFailed);return data}
   function beginDetection(){
     if(state&&state.environment){renderProviders(state.environment);return Promise.resolve(state)}
     setDetectionPending();
     if(!regId)return Promise.resolve(null);
     if(detectionPromise)return detectionPromise;
-    detectionPromise=checkName().then(function(ok){if(!ok){show(1);return null}return api('set_basic_info',basicInfoPayload())}).then(function(d){if(d){state=d;if(d.environment)renderProviders(d.environment)}return d}).catch(function(e){document.getElementById('wf-detect').textContent=e.message||I.error;document.getElementById('wf-providers').innerHTML='';throw e}).finally(function(){detectionPromise=null});
+    detectionPromise=api('inspect_environment').then(function(d){state=d;if(d.environment)renderProviders(d.environment);return d}).catch(function(e){document.getElementById('wf-detect').textContent=e.message||I.error;document.getElementById('wf-providers').innerHTML='';throw e}).finally(function(){detectionPromise=null});
     return detectionPromise;
   }
   function openProviderStep(notifyError){
     if(state&&state.status==='created')return;
-    show(2);
-    if(state&&state.environment){renderProviders(state.environment);next.disabled=false;return}
+    show(1);
+    if(state&&state.environment){renderProviders(state.environment);next.disabled=!(state.environment.detected||[]).length;return}
     next.disabled=true;
     if(!regId){setDetectionPending();return}
-    beginDetection().then(function(){if(step===2)next.disabled=false}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
+    beginDetection().then(function(){if(step===1)next.disabled=!(state&&state.environment&&(state.environment.detected||[]).length)}).catch(function(e){next.disabled=false;if(notifyError)fail(e)});
   }
-  steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){show(1)}else if(target===2){openProviderStep(false)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
+  steps.forEach(function(s){var target=Number(s.dataset.wizardStep);var activate=function(){if(target===1){openProviderStep(false)}else if(target===2&&state&&state.provider){show(2)}};s.addEventListener('click',activate);s.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();activate()}})});
   function escHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
   function readDraft(){try{var d=JSON.parse(sessionStorage.getItem(draftKey)||'null');return d&&d.email===root.dataset.email?d:null}catch(_){return null}}
-  function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode,moreExpanded:moreProvidersExpanded}))}catch(_){}}
-  function applyDraftFields(d){if(!d)return;nameInput.value=d.name||nameInput.value;document.getElementById('wf-desc').value=d.description||'';if(d.category)document.getElementById('wf-category').value=d.category;selectedProvider=d.provider||'';selectedInstance=d.instance||'';selectedAccessMode=d.accessMode==='public'?'public':'private';moreProvidersExpanded=!!d.moreExpanded}
+  function saveDraft(){if(discardDraft)return;try{sessionStorage.setItem(draftKey,JSON.stringify({email:root.dataset.email,registrationId:regId,step:step,name:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,provider:selectedProvider,instance:selectedInstance,accessMode:selectedAccessMode}))}catch(_){}}
+  function applyDraftFields(d){if(!d)return;nameInput.value=d.name||nameInput.value;document.getElementById('wf-desc').value=d.description||'';if(d.category)document.getElementById('wf-category').value=d.category;selectedProvider=d.provider||'';selectedInstance=d.instance||'';selectedAccessMode=d.accessMode==='public'?'public':'private'}
   function restore(d){
     state=d;
     if(d.basicInfo){nameInput.value=d.basicInfo.agentName||nameInput.value;document.getElementById('wf-desc').value=d.basicInfo.description||'';document.getElementById('wf-category').value=d.basicInfo.category||'general'}
     if(d.provider){selectedProvider=d.provider.type||selectedProvider;selectedInstance=d.provider.instanceId||selectedInstance}
-    if(d.status==='provider_selection_required'){renderProviders(d.environment);show(2)}
+    if(d.status==='provider_selection_required'){renderProviders(d.environment);show(1)}
+    else if(d.status==='basic_info_required'){if(d.environment)renderProviders(d.environment);applySuggestion(d.suggestedBasicInfo);show(2)}
     else if(d.status==='delivery_selection_required'){if(d.environment)renderProviders(d.environment);renderDeliveries(d);show(3)}
     else if(d.status==='ready_to_create'){if(d.environment)renderProviders(d.environment);renderDeliveries(d);renderAccess();show(4)}
     else if(d.status==='created'){renderResult(d);show(4)}
     else show(1);
-    next.disabled=false;
+    next.disabled=step===1&&!(d.environment&&d.environment.detected&&d.environment.detected.length);
   }
-  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;saveDraft();if(step===2)openProviderStep(false);else next.disabled=false}).catch(fail)}
-  function fail(e){window.alert(e.message||I.error);next.disabled=false;next.textContent=I.next}
+  function start(){var forceNew=new URLSearchParams(location.search).get('new')==='1';if(forceNew){try{sessionStorage.removeItem(draftKey)}catch(_){}try{history.replaceState(null,'',location.pathname)}catch(_){}}restoredDraft=forceNew?null:readDraft();applyDraftFields(restoredDraft);if(restoredDraft&&restoredDraft.registrationId){regId=restoredDraft.registrationId;api('status').then(restore).catch(function(){sessionStorage.removeItem(draftKey);regId='';api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)});return}api('start',{email:root.dataset.email}).then(function(d){regId=d.registrationId;restore(d)}).catch(fail)}
+  function fail(e){showVokoMessage(e.message||I.error);next.disabled=false;next.textContent=I.next}
   function checkName(){
     var name=nameInput.value.trim();
     if(!name){nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameTaken;return Promise.resolve(false)}
@@ -393,24 +477,24 @@ function wizardJs(t) {
     return fetch('/api/agent/check-name?name='+encodeURIComponent(name)).then(function(r){if(!r.ok)throw new Error('NAME_CHECK_UNAVAILABLE');return r.json()}).then(function(d){
       if(d.available){nameCheckedValue=name;nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';return true}
       nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameTaken;nameInput.className='error';return false
-    }).catch(function(){nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';return true})
+    }).catch(function(){nameBlocked=true;nameStatus.className='name-status taken';nameStatus.textContent=I.nameCheckUnavailable;nameInput.className='error';return false})
   }
-  nameInput.addEventListener('blur',function(){if(step===1)next.disabled=true;checkName().then(function(ok){if(step===1)next.disabled=!ok})});
-  nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===1)next.disabled=false});
+  nameInput.addEventListener('blur',function(){if(step===2)next.disabled=true;checkName().then(function(ok){if(step===2)next.disabled=!ok})});
+  nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===2)next.disabled=false});
   function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag '+(detected?'':'warn')+'">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
-  var moreProvidersExpanded=false;
+  function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';if(!p.instances||!p.instances.length)return p.type==='workbuddy'&&workbuddyLoad==='done'?'<div class="instance-panel">'+escHtml(I.instanceNone)+'</div>':'';var term=p.instanceTerm||I.instance,html='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+term)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
   function renderProviders(env){
-    var detected=env.detected||[];if(!selectedProvider)selectedProvider=detected[0]?detected[0].type:'others';
+    var detected=env.detected||[];if(!detected.some(function(p){return p.type===selectedProvider})){selectedProvider=detected[0]?detected[0].type:'';selectedInstance=''}
     var html='<div class="group-label">'+escHtml(I.local)+'</div><div class="provider-list">';
-    detected.forEach(function(p){html+=providerCard(p,true);if(selectedProvider===p.type&&p.instances&&p.instances.length){html+='<div class="instance-panel"><strong>'+escHtml(p.instances.length+' '+I.instance)+'</strong>';p.instances.forEach(function(ins,i){var checked=selectedInstance?selectedInstance===ins.id:i===0;if(checked&&!selectedInstance)selectedInstance=ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> '+escHtml(ins.name)+'</label>'});html+='</div>'}});
-    html+='</div><details id="wf-more-providers"'+(moreProvidersExpanded?' open':'')+'><summary class="group-label">'+escHtml(I.more)+'</summary><div class="provider-list">';
-    (env.more||[]).forEach(function(p){html+=providerCard(p,false)});
-    html+=providerCard({type:'others',label:I.others,instances:[]},false)+'</div></details>';
+    detected.forEach(function(p){html+=providerCard(p,true)+instancePanel(p)});
+    html+=detected.length?'</div>':'<div class="provider-empty" role="status">'+escHtml(I.noDetected)+'</div></div>';
     document.getElementById('wf-providers').innerHTML=html;
-    document.getElementById('wf-more-providers').addEventListener('toggle',function(e){moreProvidersExpanded=e.target.open;saveDraft()});
     document.getElementById('wf-detect').textContent=I.detected.replace('{providers}',env.summary.providerCount).replace('{modes}',env.summary.deliveryModeCount);
+    if(step===1)next.disabled=!detected.length;
+    if(selectedProvider==='workbuddy'&&workbuddyLoad==='idle')setTimeout(loadWorkBuddy,0);
   }
-  document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment)}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
+  function loadWorkBuddy(){workbuddyLoad='loading';workbuddyError='';renderProviders(state.environment);api('discover_provider_instances',{providerType:'workbuddy'}).then(function(d){var p=(state.environment.detected||[]).find(function(x){return x.type==='workbuddy'});if(p)p.instances=d.instances||[];workbuddyLoad='done';renderProviders(state.environment)}).catch(function(e){workbuddyLoad='error';workbuddyError=e.message||I.error;renderProviders(state.environment)})}
+  document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment);if(selectedProvider==='workbuddy')loadWorkBuddy()}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
   function modeCard(m){
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
     var disabled=m.required||!usable, checked=m.required||m.selected;
@@ -437,31 +521,25 @@ function wizardJs(t) {
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
   next.onclick=function(){
     next.disabled=true;
-    if(step===1){openProviderStep(true);return}
-    if(step===2){api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){renderDeliveries(d);show(3);next.disabled=false}).catch(fail);return}
+    if(step===1){if(!selectedProvider){next.disabled=true;return}api('select_provider',{providerType:selectedProvider,instanceId:selectedInstance}).then(function(d){state=d;applySuggestion(d.suggestedBasicInfo);show(2);next.disabled=false}).catch(fail);return}
+    if(step===2){checkName().then(function(ok){if(!ok){next.disabled=false;return}return api('set_basic_info',basicInfoPayload()).then(function(d){renderDeliveries(d);show(3);next.disabled=false})}).catch(fail);return}
     if(step===3){api('select_delivery',{deliveryModes:selectedModes()}).then(function(d){state=d;renderAccess();show(4);next.disabled=false}).catch(fail);return}
-    if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(function(d){state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
+    if(step===4&&(!state||state.status!=='created')){next.textContent=I.creating;api('complete',{accessMode:selectedAccessMode}).then(async function(d){if(selectedIconFile){next.textContent=I.iconUploading;var uploaded=await uploadSelectedIcon(d.result.agentId);d.result.iconUrl=uploaded.iconUrl}state=d;renderResult(d);show(4);next.disabled=false}).catch(fail);return}
     discardDraft=true;
     try{sessionStorage.removeItem(draftKey)}catch(_){}
     location.href='/';
   };
-  prev.onclick=function(){if(step>1){show(step-1)}};
+  var reselectDialog=document.getElementById('wf-reselect-dialog');
+  function reselectProvider(){api('reselect_provider').then(function(d){state=d;nameInput.value='';document.getElementById('wf-desc').value='';document.getElementById('wf-tags').value='';clearSelectedIcon();suggestedIconPreview='';renderIconPreview();document.getElementById('wf-phone').value='';document.getElementById('wf-address').value='';renderProviders(d.environment);show(1)}).catch(fail)}
+  document.getElementById('wf-reselect-cancel').onclick=function(){reselectDialog.close()};
+  document.getElementById('wf-reselect-confirm').onclick=function(){reselectDialog.close();reselectProvider()};
+  reselectDialog.addEventListener('click',function(e){if(e.target===reselectDialog)reselectDialog.close()});
+  prev.onclick=function(){if(step===2){reselectDialog.showModal();return}if(step>1){show(step-1)}};
   root.addEventListener('input',saveDraft);
   root.addEventListener('change',saveDraft);
   window.addEventListener('pagehide',saveDraft);
+  window.addEventListener('pagehide',function(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl)});
   function renderResult(d){var r=d.result||{},p=r.provider||{},rows=(r.deliveryOrder||[]).map(function(m){var role=m.role==='primary'?I.priority:m.role==='fallback'?I.backup:m.role==='only'?I.only:I.finalFallback;return '<div>'+m.priority+'. '+escHtml(m.label)+' <span class="tag">'+escHtml(role)+'</span></div>'}).join('');document.getElementById('wf-step4-title').textContent=I.created;document.getElementById('wf-access-desc').textContent='';document.getElementById('wf-result').innerHTML='<div class="result-card"><h3>✓ '+escHtml(I.created)+'</h3><dl class="result-grid"><dt>'+escHtml(I.name)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.description)+'</dt><dd>'+escHtml(r.description||'-')+'</dd><dt>'+escHtml(I.category)+'</dt><dd>'+escHtml(r.category)+'</dd><dt>'+escHtml(I.provider)+'</dt><dd>'+escHtml(p.type||'others')+'</dd><dt>'+escHtml(I.instanceLabel)+'</dt><dd>'+escHtml(p.instanceName||'-')+'</dd><dt>'+escHtml(I.accessMode)+'</dt><dd>'+escHtml(r.accessMode==='public'?I.publicMode:I.privateMode)+'</dd><dt>'+escHtml(I.deliveryOrder)+'</dt><dd>'+rows+'</dd></dl><h4>'+escHtml(I.searchableBy)+'</h4><dl class="result-grid"><dt>'+escHtml(I.searchName)+'</dt><dd>'+escHtml(r.agentName)+'</dd><dt>'+escHtml(I.searchEmail)+'</dt><dd>'+escHtml(r.ownerEmail||root.dataset.email)+'</dd><dt>'+escHtml(I.exactId)+'</dt><dd>'+escHtml(r.agentId)+'</dd></dl><div class="security-notice"><strong>'+escHtml(I.securityTitle)+'</strong><br>'+escHtml(I.security)+'</div></div>'}
-  var renderResultBase=renderResult;
-  renderResult=function(d){
-    renderResultBase(d);
-    var r=d.result||{},target=document.querySelector('#wf-result .result-card');
-    var readiness=(r.deliveryReadiness||[]).filter(function(item){return item.selected&&item.mode!=='pull'});
-    if(target&&readiness.length){
-      var section=document.createElement('div');section.className='loopback-tests';
-      section.innerHTML=readiness.map(function(item){var control=item.supportsLoopback&&item.providerId?'<button type="button" class="result-loopback" data-mode="'+escHtml(item.mode)+'" data-provider-id="'+escHtml(item.providerId)+'">'+escHtml(I.loopback)+'</button>':'<span class="tag">'+escHtml(I.preflightOnly)+'</span>';return '<div><span>'+escHtml(item.label||item.mode)+'</span>'+control+'<span class="loopback-feedback" role="status" aria-live="polite"></span></div>'}).join('');
-      target.insertBefore(section,target.querySelector('.security-notice'));
-    }
-  };
-  document.getElementById('wf-result').addEventListener('click',function(e){var b=e.target.closest('.result-loopback');if(!b||b.disabled)return;var feedback=b.parentElement.querySelector('.loopback-feedback');b.disabled=true;b.classList.remove('success','failed');b.textContent=I.testing;if(feedback){feedback.textContent='';feedback.classList.remove('error')}api('loopback_test',{mode:b.dataset.mode,providerId:b.dataset.providerId,acknowledgeCost:true}).then(function(r){b.textContent=I.testOk;b.classList.add('success');if(feedback)feedback.textContent=r.detail||''}).catch(function(err){b.textContent=I.testFailed;b.classList.add('failed');if(feedback){feedback.textContent=err.message||I.testFailed;feedback.classList.add('error')}}).finally(function(){b.disabled=false})});
   start();
 })();
 </script>`;
@@ -810,7 +888,29 @@ function createRegisterRouter(handlers, db, options = {}) {
     db,
     sendCode: (params) => handlers.request_login_code(params),
     loginByCode: (params) => handlers.login_by_code(params),
-    completeAgent: (params) => handlers.create_agent_by_token(params),
+    completeAgent: async (params) => {
+      const { iconCandidate, ...createParams } = params;
+      const result = await handlers.create_agent_by_token(createParams);
+      if (!result?.success || createParams.iconUrl || !iconCandidate || !result.agentId) return result;
+      try {
+        const reader = options.readAgentIconCandidate || ((candidate) => {
+          if (candidate?.kind !== 'provider_instance_avatar' || candidate.providerType !== 'workbuddy') return null;
+          return (options.readWorkBuddyAgentAvatar || readWorkBuddyAgentAvatar)(candidate.instanceId);
+        });
+        const icon = await reader(iconCandidate);
+        const ext = icon && iconExtension(icon.mimeType);
+        if (!icon || !ext) return result;
+        const objectName = `agent-icons/${crypto.randomUUID()}.${ext}`;
+        const uploader = options.uploadAgentIcon
+          || ((data, name, mime) => require('../server/oss').uploadToOSS(name, data, mime));
+        const iconUrl = await uploader(icon.data, objectName, icon.mimeType, result.agentId);
+        const updated = await handlers.update_agent_profile({ agentId: result.agentId, iconUrl });
+        if (updated?.success === false || updated?.error) throw new Error(updated.error || 'ICON_PROFILE_UPDATE_FAILED');
+        return { ...result, iconUrl };
+      } catch (error) {
+        return { ...result, iconUploadError: String(error?.message || error) };
+      }
+    },
     getLoggedEmail,
   });
 
@@ -823,6 +923,17 @@ function createRegisterRouter(handlers, db, options = {}) {
       () => registrationOrchestrator.manage(input),
     );
     res.status(result.success === false ? 400 : 200).json(result);
+  });
+
+  R.get('/api/agent-registration/workbuddy-avatar/:instanceId', (req, res) => {
+    try {
+      const avatar = (options.readWorkBuddyAgentAvatar || readWorkBuddyAgentAvatar)(req.params.instanceId);
+      if (!avatar) return res.status(404).end();
+      res.set('Cache-Control', 'private, max-age=300');
+      res.type(avatar.mimeType).send(avatar.data);
+    } catch (_) {
+      return res.status(404).end();
+    }
   });
 
   // ═══════════════════════════════════════════════
@@ -896,24 +1007,22 @@ function createRegisterRouter(handlers, db, options = {}) {
     const name = (req.query.name || '').trim();
     if (!name) return res.json({ available: false });
     try {
-      const path = '/api/external/v1/agents/search';
-      const body = { keyword: name, page: 1, limit: 10 };
-      const { getUserAccessToken } = require('../core/database');
-      const email = getLoggedEmail();
-      const token = email ? getUserAccessToken(db, email) : null;
-      if (!token) return res.status(401).json({ available: false, error: 'LOGIN_REQUIRED' });
-      const resp = await fetch(VOKO_API_URL + path, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token,
-        },
-        body: JSON.stringify(body),
-      });
+      const local = db?.prepare('SELECT 1 FROM agents WHERE LOWER(TRIM(agent_name))=LOWER(?) LIMIT 1').get(name);
+      if (local) return res.json({ available: false, source: 'local' });
+      const url = new URL('/api/public/agents', VOKO_API_URL);
+      url.searchParams.set('keyword', name);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('limit', '100');
+      const request = options.fetchImpl || fetch;
+      const resp = await request(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
       const data = await resp.json();
-      const agents = data.agents || data.data || [];
-      const taken = agents.some(a => (a.name || a.agentName || '').toLowerCase() === name.toLowerCase());
-      return res.json({ available: !taken });
+      if (data?.success !== true || !Array.isArray(data.data)) {
+        return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
+      }
+      const normalized = name.toLocaleLowerCase();
+      const taken = data.data.some(agent => String(agent?.name || agent?.agentName || '').trim().toLocaleLowerCase() === normalized);
+      return res.json({ available: !taken, source: 'remote' });
     } catch (_) {
       return res.status(503).json({ available: false, error: 'NAME_CHECK_UNAVAILABLE' });
     }
@@ -928,7 +1037,7 @@ function createRegisterRouter(handlers, db, options = {}) {
     const email = req.query.email || '';
     const err = req.query.err || '';
     const popup = req.query.popup === '1';
-    let body = loginBody(email, err, req.t, popup);
+    let body = loginBody(email, err, req.t, popup, req.locale);
     res.send(page(req.t('register.login.page_title'), body, req.t, req.locale, db, { footer: false }) + loginJs(req.t, popup));
   });
 
@@ -1090,14 +1199,21 @@ function createRegisterRouter(handlers, db, options = {}) {
 
           const started = await registrationOrchestrator.start({ email });
           if (!started.success) throw new Error(started.error || '无法启动注册流程');
-          const basic = registrationOrchestrator.setBasicInfo(started.registrationId, { agentName, category, description });
-          if (!basic.success) throw new Error(basic.error || '基本信息无效');
           const selectedProvider = registrationOrchestrator.selectProvider(started.registrationId, {
             providerType: backendType,
-            instanceId: req.body.openclawAgent || req.body.hermesProfile || undefined,
+            instanceId: req.body.backendInstanceId || req.body.workbuddyAgent
+              || req.body.openclawAgent || req.body.hermesProfile || undefined,
           });
           if (!selectedProvider.success) throw new Error(selectedProvider.error || 'Agent 类型无效');
-          const defaultModes = selectedProvider.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
+          const basic = registrationOrchestrator.setBasicInfo(started.registrationId, {
+            agentName, category, description,
+            tags: req.body.tags ? String(req.body.tags).replace(/，/g, ',').split(',').map(item => item.trim()).filter(Boolean) : [],
+            iconUrl: req.body.iconUrl || '',
+            contactPhone: req.body.contactPhone || req.body.contact_phone || '',
+            address: req.body.address || '',
+          });
+          if (!basic.success) throw new Error(basic.error || '基本信息无效');
+          const defaultModes = basic.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode);
           const selectedDelivery = registrationOrchestrator.selectDelivery(started.registrationId, { deliveryModes: defaultModes });
           if (!selectedDelivery.success) throw new Error(selectedDelivery.error || '消息接收方式无效');
           const completed = await registrationOrchestrator.complete(started.registrationId);

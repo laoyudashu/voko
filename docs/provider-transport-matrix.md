@@ -40,9 +40,11 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor
 | OpenClaw | WebSocket, CLI, Pull | Profile/session ID | Async/streaming or final | Dispatcher | Dispatcher only |
 | Hermes | HTTP, CLI, Pull | Profile/session ID | Async or final | Dispatcher | Dispatcher only; queued CLI failures remain asynchronous |
 | CLI-only families (Claude Code, Codex, Gemini, Pi, Qwen Code, Kiro, Aider, Grok, Reasonix) | CLI, Pull | Provider-specific | Final | Dispatcher | Pull after confirmed `not_delivered` |
-| Qwen Office | CLI, Pull | QwenWork `session_id` | stream-json final | Dispatcher | `qoderclicn` unavailable/auth failure falls back to Pull |
+| Qwen Office | CLI, Pull | Expert-kit instance + QwenWork `session_id` | stream-json final | Dispatcher | `--cwd` + `--plugin-dir` pins the selected kit; stale instance/session bindings fail closed, and confirmed `not_delivered` may fall back to Pull |
+| DuMate | HTTP, Pull | Plugin Pack Agent + DuMate `sessionId` | HTTP event stream / committed final | Dispatcher | VOKO starts an isolated loopback `dumate-opencode` service, sends the selected Plugin Part, and verifies `activePlugins`; instance/session mismatch fails closed |
 | Trae | ACP, Pull | Agent-issued ACP session ID | ACP streaming | Dispatcher | Desktop `trae` is MCP client only; `traecli` is required for ACP |
 | WorkBuddy | HTTP, Pull | WorkBuddy session ID | SSE streaming | Dispatcher | HTTP accepts once; uncertain results never create a second Run |
+| DeepSeek Harness | Web Host HTTP, Profile CLI, Pull | Web Host: persisted Session ID scoped to one Agent Preset; CLI: none (one-shot) | Web Host: committed messages after correlated `turn/end`; CLI: successful exit plus stdout | Dispatcher | Web Host supports exact resume/steer. The shipped `headless` CLI creates a fresh Agent per invocation and is never used for a bound conversation |
 | CodeBuddy | ACP, Pull | Agent-issued ACP session ID | ACP streaming | Dispatcher | Official standalone CodeBuddy CLI only; embedded WorkBuddy CLI is not auto-selected |
 | Pull-only families (OpenHands, Amazon Q, ZCode, Doubao, Others when no Push transport is registered) | Pull | None required | On demand | N/A | N/A |
 

@@ -121,6 +121,45 @@ test('queryReply 对重复的非 JSON 网关响应只告警一次', async () => 
   assert.doesNotMatch(warnings[0].join(' '), /Bad Gateway/);
 });
 
+test('pollReplies 每次只请求一页并保留十进制字符串游标', async () => {
+  const api = new AgentEmailApi({
+    apiBaseUrl: 'https://api.example.test',
+    getUserAccessToken: () => 'user-token',
+  });
+  let requests = 0;
+  await withFetch(async (url, options) => {
+    requests += 1;
+    assert.equal(url, 'https://api.example.test/api/external/v1/email/replies/poll');
+    assert.deepEqual(JSON.parse(options.body), { cursor: '9007199254740993', limit: 100 });
+    return new Response(JSON.stringify({ success: true, data: {
+      events: [{ event_id: '9007199254740994', message_id: 'mail-1', external_id: 'oi-1',
+        status: 'replied', raw_text: '同意', actor_email: 'owner@example.com',
+        replied_at: '2026-08-24T13:30:00Z' }],
+      next_cursor: '9007199254740994', has_more: true,
+    } }), { status: 200 });
+  }, async () => {
+    const page = await api.pollReplies({ cursor: '9007199254740993', limit: 100 });
+    assert.equal(page.events[0].event_id, '9007199254740994');
+    assert.equal(page.has_more, true);
+  });
+  assert.equal(requests, 1);
+});
+
+test('pollReplies 对旧服务端 404 不回退逐 message_id 查询', async () => {
+  const api = new AgentEmailApi({
+    apiBaseUrl: 'https://api.example.test',
+    getUserAccessToken: () => 'user-token',
+  });
+  let requests = 0;
+  await withFetch(async () => {
+    requests += 1;
+    return new Response(JSON.stringify({ success: false }), { status: 404 });
+  }, async () => {
+    assert.equal(await api.pollReplies({ cursor: '0', limit: 100 }), null);
+  });
+  assert.equal(requests, 1);
+});
+
 test('VOKO Email Handler 从 Agent DID 构造邮件并保持 messageId 契约', async () => {
   const calls = [];
   const handler = new VokoEmailHandler({}, {
@@ -131,9 +170,11 @@ test('VOKO Email Handler 从 Agent DID 构造邮件并保持 messageId 契约', 
       },
     },
     db: {
-      prepare() {
+      prepare(sql) {
         return {
-          get: () => ({ did: 'did:voko:agent-1', agent_name: 'Gym' }),
+          get: () => sql.includes('FROM agents')
+            ? ({ did: 'did:voko:agent-1', agent_name: 'Gym' })
+            : ({ nickname: '小明' }),
         };
       },
     },
@@ -152,6 +193,7 @@ test('VOKO Email Handler 从 Agent DID 构造邮件并保持 messageId 契约', 
   });
   assert.equal(calls[0][0], 'did:voko:agent-1');
   assert.equal(calls[0][1], '需要主人确认');
+  assert.equal(calls[0][2].subject, '[VOKO] Gym 请求主人介入：小明（visitor-1）');
   assert.equal(calls[0][2].context.visitor_id, 'visitor-1');
 });
 

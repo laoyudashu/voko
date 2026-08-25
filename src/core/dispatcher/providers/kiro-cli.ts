@@ -21,6 +21,7 @@ class KiroCliProvider extends CliAdapter {
         ...(sessionId ? ['--resume-id', sessionId] : []),
         '{prompt}',
       ],
+      instanceArgs: (instanceId: string) => ({ args: ['--agent', instanceId] }),
       sessionIdFromLine: (line: string) => {
         try {
           const event = JSON.parse(line);

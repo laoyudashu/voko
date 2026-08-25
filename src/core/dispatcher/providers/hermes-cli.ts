@@ -2,6 +2,8 @@ const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
+const os = require('node:os');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -58,6 +60,7 @@ class HermesCliProvider extends PushProvider {
   }
 
   get priority() { return 1; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === 'hermes';
@@ -154,9 +157,11 @@ class HermesCliProvider extends PushProvider {
     const sessionKey = hasBindingLabel
       ? payload.providerBinding!.nativeSessionId
       : `hermes:${agentId}:${sessionIdentity}`;
-    const deliveryContent = buildConversationDeliveryPrompt(
-      this._db, payload, false, this._contextWindow,
-    );
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const deliveryContent = appendProviderAttachmentBoundary(buildConversationDeliveryPrompt(
+      this._db, effectivePayload, false, this._contextWindow,
+    ), effectivePayload);
     const notification = _buildNotification(agentId, fromUid, deliveryContent);
     // Windows 下 -z 经 cmd.exe 传多行/含元字符的 notification 会被截断或注入，净化为单行
     const safeNotification = process.platform === 'win32' ? sanitizeCmdArg(notification) : notification;
@@ -204,6 +209,8 @@ class HermesCliProvider extends PushProvider {
       }
       if (approvalPending) throw new Error('Hermes pending approval');
       throw err;
+    } finally {
+      staged.cleanup();
     }
   }
 

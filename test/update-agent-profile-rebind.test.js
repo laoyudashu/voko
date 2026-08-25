@@ -50,7 +50,7 @@ describe('update_agent_profile 运行时重绑定（覆盖 MCP/CLI/Web 三入口
     global.__dispatcher = savedDispatcher;
   });
 
-  it('backend_type 变更（others→hermes）：调用 rebind，prev=others/next=hermes，返回带 runtimeRebind', async () => {
+  it('backend_type 变更（others→hermes）：注册后类型锁定，不调用 rebind', async () => {
     const { dir, db } = makeFixture();
     try {
       const rebindCalls = [];
@@ -61,14 +61,10 @@ describe('update_agent_profile 运行时重绑定（覆盖 MCP/CLI/Web 三入口
       const handlers = createToolHandlers(makeCx(db, { rebind: true }));
       const r = await handlers.update_agent_profile({ agentId: 'agent-1', backendType: 'hermes' });
 
-      assert.equal(r.success, true);
-      assert.ok(r.runtimeRebind, '返回应带 runtimeRebind');
-      assert.equal(rebindCalls.length, 1);
-      assert.equal(rebindCalls[0].previous.backendType, 'others');
-      assert.equal(rebindCalls[0].next.backendType, 'hermes');
-      assert.equal(rebindCalls[0].agentId, 'agent-1');
-      // DB 已落地
-      assert.equal(db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get('agent-1').backend_type, 'hermes');
+      assert.equal(r.success, false);
+      assert.match(r.error, /Agent 注册完成后不能更改类型/);
+      assert.equal(rebindCalls.length, 0);
+      assert.equal(db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get('agent-1').backend_type, 'others');
     } finally { cleanup(dir, db); }
   });
 
@@ -101,7 +97,7 @@ describe('update_agent_profile 运行时重绑定（覆盖 MCP/CLI/Web 三入口
     } finally { cleanup(dir, db); }
   });
 
-  it('缺失 rebind（旧环境）：退化为 invalidateMeta，不报错（向后兼容）', async () => {
+  it('缺失 rebind 时仍拒绝变更 backend_type，不触发 invalidateMeta', async () => {
     const { dir, db } = makeFixture();
     try {
       delete global.__rebindAgentRuntime;
@@ -110,8 +106,9 @@ describe('update_agent_profile 运行时重绑定（覆盖 MCP/CLI/Web 三入口
       const handlers = createToolHandlers(makeCx(db));
       const r = await handlers.update_agent_profile({ agentId: 'agent-1', backendType: 'hermes' });
 
-      assert.equal(r.success, true);
-      assert.equal(invalidated, true, '退化时应调用 invalidateMeta');
+      assert.equal(r.success, false);
+      assert.match(r.error, /Agent 注册完成后不能更改类型/);
+      assert.equal(invalidated, false);
       assert.equal(r.runtimeRebind, undefined, '无 rebind 时不带 runtimeRebind 字段');
     } finally { cleanup(dir, db); }
   });

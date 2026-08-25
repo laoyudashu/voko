@@ -15,10 +15,12 @@
 1. 优先使用 MCP 工具 `voko_manage_agent_registration`；MCP 不可用时使用 `voko manage_agent_registration --action start --registration-mode agent`。
 2. 除 `start` 外始终复用同一个 `registrationId`，按照每次响应的 `nextAction` 继续。
 3. 先执行环境检测，再选择 VOKO 识别出的 `providerType`；不要自行猜测 Provider 类型或伪造 `instanceId`。
-4. 只选择状态为 `ready` 的自动接收方式，并始终保留 `pull`。
-5. 注册完成后检查 `activeAutomaticMode`、`automaticReadyModes`、`deliveryStatus.methods` 和 IM 连接状态；如果刚修改 PATH、登录状态或 Provider 配置，重启 VOKO 后再测试。
-6. 发送测试消息时不要并行重试。若结果不明确，先查看状态或通过 Pull 读取，避免同一访客消息重复投递。
-7. 回复具体消息优先传`replyToMessageId`；只有主动续接或多Session选择时才显式传VOKO `conversationId`。接口兼容与返回字段见[消息接口契约](mcp-message-conversations.md)。
+4. Provider 存在多个实例时选择真实的 Agent、Profile、Recipe、Expert Kit 或 Agent Preset；界面名称按框架自身术语显示。
+5. 确认第二步的名称、描述、分类、标签、图标、电话和地址。资料建议只是可编辑预填，注册时提交的最终值才会同步到服务端。
+6. 只选择状态为 `ready` 的自动接收方式，并始终保留 `pull`。
+7. 注册完成后检查 `activeAutomaticMode`、`automaticReadyModes`、`deliveryStatus.methods` 和 IM 连接状态；如果刚修改 PATH、登录状态或 Provider 配置，重启 VOKO 后再测试。
+8. 发送测试消息时不要并行重试。若结果不明确，先查看状态或通过 Pull 读取，避免同一访客消息重复投递。
+9. 回复具体消息优先传`replyToMessageId`；只有主动续接或多Session选择时才显式传VOKO `conversationId`。接口兼容与返回字段见[消息接口契约](mcp-message-conversations.md)。
 
 ## 1. 注册入口和注册模式
 
@@ -32,6 +34,17 @@
 | 无图形交互式注册 | `human` | `voko manage_agent_registration --interactive` | 服务器或 SSH 终端有 TTY，但没有浏览器。 |
 
 Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕过主人确认。遇到 `request_owner_email`、`submit_email_code` 或配置批准动作时，应暂停并向主人请求输入或批准。
+
+### 1.1 Web 注册的四步顺序
+
+Web、MCP 和交互式 CLI 共用同一个 Provider-first 状态机：
+
+1. 检测并选择 Provider；只做轻量环境和实例枚举，不在这一阶段读取所有框架的详细资料。
+2. 选择实例后，只读取该实例可公开的显式资料并生成可编辑建议。OpenClaw 读取所选 workspace 的 `IDENTITY.md`；Claude Code、GitHub Copilot 和 OpenCode 读取所选 Agent Markdown 的 frontmatter；WorkBuddy、千问办公和百度搭子使用各自受控清单中的资料。
+3. 选择已通过预检的消息接收方式。
+4. 核对并创建 Agent；注册类型在创建后锁定，实例型 Provider 保存真实 `backend_instance_id`。
+
+资料读取是按需、单实例和有大小边界的。VOKO 不会把完整 `SOUL.md`、系统提示词、会话正文、Token 或本机路径作为注册描述。未取得可靠资料时使用“主人邮箱前缀 + `的` + Provider 类型 + `-` + 六位随机字符串”的默认名称；第二步显示默认机器人头像，但该展示头像不会伪装成用户上传文件。用户填写或确认的描述、分类、标签、图标、电话和地址会按最终表单值保存并同步。
 
 ## 2. 消息接收方式和使用场景
 
@@ -74,6 +87,9 @@ Agent 通过 MCP 或普通 CLI 调用时不要传 `registrationMode=human` 绕�
 | Reasonix | `cli → pull` | 使用 stdin、stream-json、dontAsk；不要在参数末尾添加 `-`。 |
 | Gemini CLI | `cli → pull` | 需要 Docker sandbox；headless 调用使用 `--skip-trust`，连续消息由 VOKO context window 续接。 |
 | 千问办公（QwenWork） | `cli → pull` | 使用安装包内 `qoderclicn` 的 stream-json CLI；未登录、运行时缺失或明确未送达时回退 Pull。 |
+| 百度搭子（DuMate） | `http → pull` | 选择真实 Plugin Pack Agent；VOKO 管理本机回环 HTTP 服务并校验 `activePlugins`，实例或会话不匹配时 fail closed。 |
+| DeepSeek Harness | `http → cli → pull` | Web Host HTTP 使用 Agent Preset 和持久 Session；Profile CLI 是无恢复能力的单次任务备选。 |
+| WorkBuddy | `http → pull` | 选择桌面版已发现的 Expert；HTTP/SSE Run 接受后不因未知结果重复创建任务。 |
 | Trae | `acp → pull` | 使用独立 `traecli acp serve`；桌面 `trae.cmd` 仅作为 MCP 客户端，未安装 `traecli` 时 ACP 标记不可用。 |
 
 不同 Agent、不同访客、私聊和群聊会分别保存会话绑定。不要在注册描述、MCP 参数或日志中填写或传播原生 session ID、Token 或私密配置路径。

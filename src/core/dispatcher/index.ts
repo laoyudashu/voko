@@ -24,6 +24,7 @@ const { RouteResolver } = require('./route-resolver');
 const { DeliveryExecutor } = require('./delivery-executor');
 const { getProviderModularRollout, providerModularModeForFamily } = require('./provider-modular-rollout');
 const { ProviderEventGate } = require('./provider-event-gate');
+const { parseA2AState, extractA2AVisibleReply } = require('./parse-state');
 const crypto = require('crypto');
 
 interface DispatcherProvider {
@@ -36,6 +37,7 @@ interface DispatcherProvider {
   start?(): unknown;
   stop?(): unknown;
   healthCheck?(): unknown;
+  getTurnTimeoutMs?(): number;
   setAvailabilityProviderId?(providerId: string): void;
   on?(event: string, handler: (payload: any) => void): unknown;
   off?(event: string, handler: (payload: any) => void): unknown;
@@ -111,7 +113,7 @@ interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
   sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
-  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee' | 'e2ee_canary';
+  executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
@@ -121,6 +123,8 @@ interface IsolatedExecutionOptions {
   bindingGeneration?: number;
   attachments?: PushPayload['attachments'];
   attachmentOutputDirectory?: string;
+  peerUid?: string;
+  ownerInterventionCreated?: Promise<void>;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -162,6 +166,41 @@ function deliveryOutcome(error: unknown): DeliveryOutcome {
   const explicit = (error as any)?.deliveryOutcome;
   if (explicit === 'not_delivered' || explicit === 'outcome_unknown' || explicit === 'rejected') return explicit;
   return 'outcome_unknown';
+}
+
+function isInternalProviderProtocol(content: unknown): boolean {
+  if (typeof content !== 'string') return false;
+  const compact = content.trim().slice(0, 4096).replace(/\s+/g, '');
+  return /^<\|{1,2}DSML\|{1,2}(?:tool_calls|invoke|parameter)>/i.test(compact)
+    || /^<\/?(?:tool_calls?|function_calls?|invoke)(?:\s|>)/i.test(content.trim());
+}
+
+const DEFAULT_PROVIDER_TURN_TIMEOUT_MS = 120_000;
+const PROVIDER_SETTLEMENT_GRACE_MS = 15_000;
+const MIN_TURN_DEADLINE_MS = 5_000;
+const MAX_TURN_DEADLINE_MS = 600_000;
+
+function clampTurnDeadlineMs(value: number): number {
+  return Math.min(MAX_TURN_DEADLINE_MS, Math.max(MIN_TURN_DEADLINE_MS, value));
+}
+
+function providerTurnTimeoutMs(provider: DispatcherProvider): number {
+  try {
+    const value = Number(provider.getTurnTimeoutMs?.());
+    if (Number.isFinite(value) && value > 0) return value;
+  } catch (_) {}
+  return DEFAULT_PROVIDER_TURN_TIMEOUT_MS;
+}
+
+function resolveTurnDeadlineMs(provider: DispatcherProvider, explicitTimeoutMs?: number): { configuredMs: number; waitMs: number } {
+  const configuredMs = providerTurnTimeoutMs(provider);
+  const explicit = Number(explicitTimeoutMs);
+  return {
+    configuredMs,
+    waitMs: clampTurnDeadlineMs(Number.isFinite(explicit) && explicit > 0
+      ? explicit
+      : configuredMs + PROVIDER_SETTLEMENT_GRACE_MS),
+  };
 }
 
 // ── A2A（agent-to-agent）对话收敛配置 ──
@@ -250,24 +289,69 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
   const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
-  const _retiredIsolatedTurns = new Map<string, number>();
+  interface RetiredIsolatedTurn {
+    retiredAt: number;
+    timedOut: boolean;
+    providerId?: string;
+    taskId?: string;
+    waitMs?: number;
+  }
+  const _retiredIsolatedTurns = new Map<string, RetiredIsolatedTurn>();
   const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
-  function _retireIsolatedTurn(key: string): void {
+  function _retireIsolatedTurn(key: string, details?: Omit<RetiredIsolatedTurn, 'retiredAt'>): void {
     _isolatedReplySinks.delete(key);
     const now = Date.now();
-    _retiredIsolatedTurns.set(key, now);
+    const previous = _retiredIsolatedTurns.get(key);
+    _retiredIsolatedTurns.set(key, details
+      ? { retiredAt: now, ...details }
+      : previous || { retiredAt: now, timedOut: false });
     if (_retiredIsolatedTurns.size > 1000) {
-      for (const [oldKey, retiredAt] of _retiredIsolatedTurns) {
-        if (now - retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
+      for (const [oldKey, retired] of _retiredIsolatedTurns) {
+        if (now - retired.retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
       }
     }
   }
-  function _isRetiredIsolatedTurn(key: string): boolean {
-    const retiredAt = _retiredIsolatedTurns.get(key);
-    if (!retiredAt) return false;
-    if (Date.now() - retiredAt < ISOLATED_TURN_TTL_MS) return true;
+  function _retiredIsolatedTurn(key: string): RetiredIsolatedTurn | null {
+    const retired = _retiredIsolatedTurns.get(key);
+    if (!retired) return null;
+    if (Date.now() - retired.retiredAt < ISOLATED_TURN_TTL_MS) return retired;
     _retiredIsolatedTurns.delete(key);
-    return false;
+    return null;
+  }
+
+  function _createTurnDeadline(input: {
+    scope: 'E2EE_V2' | 'A2A' | 'OWNER'; turnId: string; sinkKey: string; taskId: string;
+    explicitTimeoutMs?: number; reject: (error: Error) => void;
+  }) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active: { providerId: string; configuredMs: number; waitMs: number; startedAt: number } | null = null;
+    let expired = false;
+    const timeoutError = () => {
+      const error: any = new Error(`${input.scope} Provider reply timed out`);
+      error.deliveryOutcome = 'outcome_unknown';
+      error.code = `${input.scope}_PROVIDER_REPLY_TIMEOUT`;
+      return error;
+    };
+    return {
+      select(providerId: string, provider: DispatcherProvider) {
+        if (expired) throw timeoutError();
+        if (timer) clearTimeout(timer);
+        const timeout = resolveTurnDeadlineMs(provider, input.explicitTimeoutMs);
+        active = { providerId, ...timeout, startedAt: Date.now() };
+        console.log(`[Dispatcher] Provider deadline selected scope=${input.scope} providerId=${providerId} configuredTimeoutMs=${timeout.configuredMs} waitMs=${timeout.waitMs} turnId=${input.turnId}`);
+        timer = setTimeout(() => {
+          expired = true;
+          const selected = active!;
+          _retireIsolatedTurn(input.sinkKey, { timedOut: true, providerId: selected.providerId,
+            taskId: input.taskId, waitMs: selected.waitMs });
+          const actualWaitMs = Date.now() - selected.startedAt;
+          console.error(`[Dispatcher] Provider result unknown scope=${input.scope} providerId=${selected.providerId} configuredTimeoutMs=${selected.configuredMs} waitMs=${selected.waitMs} actualWaitMs=${actualWaitMs} turnId=${input.turnId}`);
+          input.reject(timeoutError());
+        }, timeout.waitMs);
+        timer.unref?.();
+      },
+      clear() { if (timer) clearTimeout(timer); timer = null; },
+    };
   }
   function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
     if (!_providerEventGate.accept(event)) return false;
@@ -370,8 +454,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
           const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
-          if (replyTurnKey && _isRetiredIsolatedTurn(replyTurnKey)) {
-            console.warn(`[Dispatcher] 丢弃已结束 isolated turn 的迟到回复 agent=${reply.agentId || '-'} turn=${reply.turnId}`);
+          const retired = replyTurnKey ? _retiredIsolatedTurn(replyTurnKey) : null;
+          if (replyTurnKey && retired) {
+            const delayMs = Math.max(0, Date.now() - retired.retiredAt);
+            console.warn(`[Dispatcher] isolated_late_reply_dropped agent=${reply.agentId || '-'} turnId=${reply.turnId} providerId=${retired.providerId || _providerIds.get(p) || 'unknown'} taskId=${retired.taskId || '-'} messageId=${reply.replyId || '-'} timedOut=${retired.timedOut} delayMs=${delayMs}`);
             return;
           }
           if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee|e2ee-canary):/.test(String(reply.visitorId || ''))) {
@@ -379,6 +465,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
             return;
           }
           const providerId = _providerIds.get(p) || 'unregistered';
+          if (reply.done !== false && isInternalProviderProtocol(reply.content)) {
+            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'}`);
+            const isolatedSink = reply.turnId
+              ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+              : undefined;
+            if (isolatedSink) isolatedSink({ ...reply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
+              errorCode: 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT', deliveryOutcome: 'outcome_unknown' });
+            return;
+          }
           _acceptProviderEvent({
             eventId: reply.replyId
               ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
@@ -996,7 +1091,11 @@ ${body}
   }
 
   function _a2aScope(payload: PushPayload): string {
-    if (payload.channelType !== 2) return 'direct';
+    if (payload.channelType !== 2) {
+      const protocolContextId = String((payload as any).protocolContextId || '');
+      return (payload as any).executionScope === 'e2ee' && protocolContextId
+        ? `direct:conversation:${protocolContextId}` : 'direct';
+    }
     const conversationId = (payload as any).replyRouteContext?.conversationId;
     return conversationId ? `group:${payload.channelId}:conversation:${conversationId}` : `group:${payload.channelId}`;
   }
@@ -1114,6 +1213,7 @@ ${body}
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
+    onProviderAttempt?: (providerId: string, provider: DispatcherProvider) => void,
   ): Promise<any> {
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
@@ -1129,7 +1229,8 @@ ${body}
         ? 'owner'
         : executionScope === 'owner_chat'
           ? 'owner_chat'
-        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged) ? 'agent_peer' : 'visitor';
+        : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged
+          || (executionScope === 'e2ee' && (payload as any).sourceType === 'agent_peer')) ? 'agent_peer' : 'visitor';
       const isOwnerChat = sourceType === 'owner_chat';
       const baseProviderPayload = {
         ...routedPayload,
@@ -1152,7 +1253,7 @@ ${body}
         ...(a2aContext || {})
       };
       const isolated = executionScope === 'a2a_mailbox' || executionScope === 'owner_link'
-        || executionScope === 'owner_chat' || executionScope === 'e2ee' || executionScope === 'e2ee_canary';
+        || executionScope === 'owner_chat' || executionScope === 'e2ee';
       if (!isolated) _rememberReplyContext(agentId, baseProviderPayload.fromUid, replyContext);
       const routeByProvider = new Map<DispatcherProvider, RouteCacheEntry>();
       const payloadByProvider = new Map<DispatcherProvider, PushPayload>();
@@ -1173,6 +1274,7 @@ ${body}
             target: nextRoute.provider,
           };
         },
+        onAttempt: (candidate: any) => onProviderAttempt?.(candidate.providerId, candidate.target),
         invoke: async (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
           if (executionScope === 'a2a_mailbox') {
@@ -1293,15 +1395,16 @@ ${body}
     _isolatedReplySinks.set(sinkKey, reply => {
       if (reply.done === false) return;
       if (reply.error) { const error: any=new Error(String(reply.error));error.code=String((reply as any).errorCode||'OWNER_PROVIDER_TURN_FAILED');
-        error.deliveryOutcome='rejected';rejectReply(error);return; }
+        error.deliveryOutcome=String((reply as any).deliveryOutcome||'rejected');rejectReply(error);return; }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => { _retireIsolatedTurn(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    const deadline = _createTurnDeadline({ scope: 'OWNER', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const route = _ownerRouteEntry(options.agentId);
       if (!route) { const error = new Error('Owner Provider transport is not supported or safely verified');
         (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_RUNTIME_UNSUPPORTED'; throw error; }
+      deadline.select(route.providerId, route.provider);
       const selectedBinding = _bindingForRoute(options.agentId, options.binding || null, route);
       if (options.binding?.strictSessionRoute && !selectedBinding) { const error = new Error('Owner Provider cannot restore the precise session');
         (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error; }
@@ -1321,7 +1424,7 @@ ${body}
       catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
       return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
         provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
-    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
+    } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1345,15 +1448,18 @@ ${body}
     let rejectReply!: (error: Error) => void;
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     void replyPromise.catch(() => undefined);
-    _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
-    const timeout = setTimeout(() => {
-      _retireIsolatedTurn(sinkKey);
-      const error: any = new Error(`${prefix} Provider reply timed out`);
-      error.deliveryOutcome = 'outcome_unknown';
-      error.code = `${prefix.toUpperCase()}_PROVIDER_REPLY_TIMEOUT`;
-      rejectReply(error);
-    }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'ISOLATED_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = String((reply as any).deliveryOutcome || 'rejected');
+        rejectReply(error); return;
+      }
+      resolveReply(reply);
+    });
+    const deadline = _createTurnDeadline({ scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const delivery = await _doRoute(options.agentId, {
         agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
@@ -1364,7 +1470,7 @@ ${body}
         protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
         attachments: options.attachments, attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      });
+      }, null, (providerId, provider) => deadline.select(providerId, provider));
       if (delivery?.outcome !== 'delivered') {
         const error = new Error(`${prefix} Provider delivery ${delivery?.outcome || 'failed'}`);
         (error as any).deliveryOutcome = delivery?.outcome || 'outcome_unknown';
@@ -1373,13 +1479,36 @@ ${body}
       }
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
-    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
+    } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
     if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
-      const error: any = new Error('E2EE_CANARY_SCOPE_REQUIRED');
-      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_CANARY_SCOPE_REQUIRED'; throw error;
+      const error: any = new Error('E2EE_V2_SCOPE_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_SCOPE_REQUIRED'; throw error;
+    }
+    const sourceType = options.sourceType === 'agent_peer' ? 'agent_peer' : 'visitor';
+    const peerUid = String(options.peerUid || '');
+    if (sourceType === 'agent_peer' && !_isAgentImUid(peerUid)) {
+      const error: any = new Error('E2EE_V2_AGENT_PEER_REQUIRED');
+      error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_AGENT_PEER_REQUIRED'; throw error;
+    }
+    const workingPayload: PushPayload = {
+      agentId: options.agentId, fromUid: sourceType === 'agent_peer' ? peerUid : `e2ee:${options.contextId}`,
+      senderUid: sourceType === 'agent_peer' ? peerUid : 'e2ee', channelId: options.contextId, channelType: 1,
+      messageId: options.taskId, content: options.content, rawContent: options.content,
+      executionScope: 'e2ee', sourceType, protocolContextId: options.contextId,
+    };
+    const prepared = sourceType === 'agent_peer'
+      ? _prepareA2A(options.agentId, workingPayload) : { blocked: false, context: null };
+    if (prepared.blocked) return { reply: { content: 'NO_REPLY', done: true } };
+    if (prepared.delay) {
+      await new Promise<void>((resolve) => setTimeout(resolve, prepared.delay));
+      const localUid = _metaOf(options.agentId)?.imUid;
+      if (localUid && prepared.context
+          && _consumeConverged(localUid, peerUid, prepared.context.a2aScope)) {
+        return { reply: { content: 'NO_REPLY', done: true } };
+      }
     }
     const turnId = `e2ee-${crypto.randomUUID()}`;
     const sinkKey = `${options.agentId}::${turnId}`;
@@ -1392,53 +1521,50 @@ ${body}
       if (reply.done === false) return;
       if (reply.error) {
         const error: any = new Error(String(reply.error));
-        error.code = String((reply as any).errorCode || 'E2EE_CANARY_PROVIDER_TURN_FAILED');
-        error.deliveryOutcome = 'rejected'; rejectReply(error); return;
+        error.code = String((reply as any).errorCode || 'E2EE_V2_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = String((reply as any).deliveryOutcome || 'rejected'); rejectReply(error); return;
+      }
+      if (sourceType === 'agent_peer') {
+        const parsed = parseA2AState(String(reply.content || '')).state;
+        const validConvergence = parsed?.converged === true && parsed?.expects_reply !== true
+          && Array.isArray(parsed?.agenda) && parsed.agenda.length === 0;
+        const localUid = _metaOf(options.agentId)?.imUid;
+        if (validConvergence && localUid) markConverged(localUid, peerUid,
+          prepared.context?.a2aScope || `direct:conversation:${options.contextId}`);
+        resolveReply({ ...reply, content: extractA2AVisibleReply(String(reply.content || '')) });
+        return;
       }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => {
-      _retireIsolatedTurn(sinkKey);
-      rejectReply(new Error('E2EE Canary Provider reply timed out'));
-    }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    const deadline = _createTurnDeadline({ scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const delivery = await _doRoute(options.agentId, {
-        agentId: options.agentId,
-        fromUid: `e2ee:${options.contextId}`,
-        senderUid: 'e2ee',
-        channelId: options.contextId,
-        channelType: 1,
-        messageId: options.taskId,
+        ...workingPayload,
         turnId,
-        content: options.content,
-        rawContent: options.content,
         providerBinding: options.binding || null,
-        executionScope: 'e2ee',
-        sourceType: 'visitor',
         sessionScopeId: options.sessionScopeId,
         attachments: options.attachments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      });
+      }, prepared.context, (providerId, provider) => deadline.select(providerId, provider));
       if (delivery?.outcome !== 'delivered') {
-        const error: any = new Error(`E2EE Canary Provider delivery ${delivery?.outcome || 'failed'}`);
+        const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
-        error.code = delivery?.errorCode || 'E2EE_CANARY_PROVIDER_DELIVERY_FAILED';
+        error.code = delivery?.errorCode || 'E2EE_V2_PROVIDER_DELIVERY_FAILED';
         throw error;
       }
       options.onProviderAccepted?.(receipt);
-      return { reply: await replyPromise, receipt };
+      const reply = options.ownerInterventionCreated
+        ? await Promise.race([replyPromise,
+          options.ownerInterventionCreated.then(() => ({ content: 'NO_REPLY', done: true } as ProviderReply))])
+        : await replyPromise;
+      return { reply, receipt };
     } finally {
-      clearTimeout(timeout);
+      deadline.clear();
       _retireIsolatedTurn(sinkKey);
     }
   }
-
-  // Compatibility alias for the internal Canary harness. Both paths use the
-  // same isolated Provider scope; production enablement is controlled by the
-  // E2EE runtime policy, not by Dispatcher routing.
-  const executeCanary = executeE2ee;
 
   function dispatch(agentId: string, payload: PushPayload): void {
     const provider = _routeProvider(agentId, 'push');
@@ -1609,6 +1735,55 @@ ${body}
     }
   }
 
+  async function executeOwnerIntervention(
+    agentId: string,
+    visitorId: string,
+    content: string,
+    replyContext: ReplyContext,
+  ): Promise<{ reply: ProviderReply; receipt: unknown }> {
+    const turnId = String(replyContext.interventionId || replyContext.turnId || `owner-intervention-${crypto.randomUUID()}`);
+    const sinkKey = `${agentId}::${turnId}`;
+    let resolveReply!: (reply: ProviderReply) => void;
+    let rejectReply!: (error: Error) => void;
+    const replyPromise = new Promise<ProviderReply>((resolve, reject) => {
+      resolveReply = resolve;
+      rejectReply = reject;
+    });
+    void replyPromise.catch(() => undefined);
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'OWNER_INTERVENTION_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = 'rejected';
+        rejectReply(error);
+        return;
+      }
+      resolveReply(reply);
+    });
+    const timer = setTimeout(() => {
+      _retireIsolatedTurn(sinkKey, { timedOut: true, taskId: turnId });
+      const error: any = new Error('Owner intervention Provider reply timed out');
+      error.code = 'OWNER_INTERVENTION_PROVIDER_REPLY_TIMEOUT';
+      error.deliveryOutcome = 'outcome_unknown';
+      rejectReply(error);
+    }, DEFAULT_PROVIDER_TURN_TIMEOUT_MS + PROVIDER_SETTLEMENT_GRACE_MS);
+    timer.unref?.();
+    try {
+      const receipt = await steer(agentId, visitorId, content, { ...replyContext, turnId });
+      if (!receipt) {
+        const error: any = new Error('Owner intervention Provider unavailable');
+        error.code = 'OWNER_INTERVENTION_PROVIDER_UNAVAILABLE';
+        error.deliveryOutcome = 'not_delivered';
+        throw error;
+      }
+      return { reply: await replyPromise, receipt };
+    } finally {
+      clearTimeout(timer);
+      _retireIsolatedTurn(sinkKey);
+    }
+  }
+
   async function start() {
     try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     try {
@@ -1661,7 +1836,7 @@ ${body}
 
   const getRoutingStats = () => ({ ...routingStats });
   const getProviderEventStats = () => Object.fromEntries(_providerEventCounts);
-  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeCanary, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
+  return { dispatch, executeOwner, executeIsolated, executeE2ee, executeOwnerIntervention, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
@@ -1670,4 +1845,4 @@ ${body}
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
-module.exports = { createDispatcher };
+module.exports = { createDispatcher, resolveTurnDeadlineMs };

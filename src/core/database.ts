@@ -12,6 +12,8 @@ const { BANK_HEAD_OFFICES } = require('../bankHeadOffices');
 const ENDPOINTS = require('../endpoints.json');
 const { migrateOfficialHttpsUrls } = require('./https-migration');
 const { migrateLegacyCheckpoints } = require('./checkpoint-store');
+const { ownerInterventionExpireTime } = require('./owner-intervention-expiry');
+const { reservedVisitorPrefix } = require('./visitor-id-policy');
 
 type DatabaseSync = InstanceType<typeof Database>;
 type DbWrite = () => unknown | Promise<unknown>;
@@ -99,6 +101,10 @@ interface OwnerInterventionRow {
   target_channel_type: number | null;
   source_message_id: string | null;
   routing_conversation_id?: string | null;
+  route_security_mode?: string | null;
+  e2ee_protocol_conversation_id?: string | null;
+  e2ee_session_scope_id?: string | null;
+  delivery_message_id?: string | null;
 }
 
 interface ConversationRow {
@@ -181,6 +187,10 @@ interface OwnerInterventionInput {
   targetChannelType?: number | null;
   sourceMessageId?: string | null;
   routingConversationId?: string | null;
+  routeSecurityMode?: string | null;
+  e2eeProtocolConversationId?: string | null;
+  e2eeSessionScopeId?: string | null;
+  deliveryMessageId?: string | null;
 }
 
 interface PaymentOrderInput {
@@ -289,6 +299,36 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
   migrateSchema8WebRoutingRevision(db);
+  const interventionTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_interventions'",
+  ).get();
+  if (interventionTable) {
+    const interventionColumns = db.prepare('PRAGMA table_info(owner_interventions)').all() as TableInfoRow[];
+    const additiveColumns = [
+      ['route_security_mode', 'TEXT'],
+      ['e2ee_protocol_conversation_id', 'TEXT'],
+      ['e2ee_session_scope_id', 'TEXT'],
+      ['delivery_message_id', 'TEXT'],
+    ];
+    for (const [name, type] of additiveColumns) {
+      if (!interventionColumns.some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE owner_interventions ADD COLUMN ${name} ${type}`);
+      }
+    }
+  }
+  const pricingTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_pricing'",
+  ).get();
+  if (pricingTable) {
+    // 旧 Web 曾写入 duration；单向迁移为唯一规范值 timed。
+    db.exec("UPDATE agent_pricing SET pricing_model = 'timed' WHERE pricing_model = 'duration'");
+  }
+  const auditRulesTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_rules'",
+  ).get();
+  if (auditRulesTable) {
+    db.prepare("DELETE FROM audit_rules WHERE is_default=1 AND direction='outbound'").run();
+  }
   // schema 8 is still unreleased and may already exist locally without fields
   // added later in the same schema iteration. Keep those development databases
   // readable instead of letting list_agents fail on a missing column.
@@ -643,6 +683,10 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       routing_conversation_id TEXT
+      ,route_security_mode TEXT
+      ,e2ee_protocol_conversation_id TEXT
+      ,e2ee_session_scope_id TEXT
+      ,delivery_message_id TEXT
     )
   `);
 
@@ -716,6 +760,18 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     }
     if (!tableInfo.some((col: TableInfoRow) => col.name === 'source_message_id')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN source_message_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'route_security_mode')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN route_security_mode TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'e2ee_protocol_conversation_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN e2ee_protocol_conversation_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'e2ee_session_scope_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN e2ee_session_scope_id TEXT`);
+    }
+    if (!tableInfo.some((col: TableInfoRow) => col.name === 'delivery_message_id')) {
+      db.exec(`ALTER TABLE owner_interventions ADD COLUMN delivery_message_id TEXT`);
     }
     db.exec(`UPDATE owner_interventions
       SET source_sender_uid=COALESCE(source_sender_uid, visitor_id),
@@ -1431,7 +1487,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     { direction: 'inbound',  keyword: '获取你的权限',        action: 'soft_deny', prompt: '' },
   ];
 
-  const auditRulePackVersion = 2;
+  const auditRulePackVersion = 3;
   const savedAuditRulePackVersion = (() => {
     try {
       const row = db.prepare(`SELECT data FROM config WHERE type='audit_rule_pack_version' LIMIT 1`).get();
@@ -1723,6 +1779,9 @@ function createDatabaseAPI(db: DatabaseSync) {
 
     saveOwnerIntervention: (intervention: OwnerInterventionInput) => {
       try {
+        const reservedPrefix = reservedVisitorPrefix(intervention.visitorId);
+        if (reservedPrefix) return { success: false, code: 'VISITOR_ID_RESERVED',
+          error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` };
         let routingConversationId = intervention.routingConversationId || null;
         const explicitlyRouted = !!routingConversationId;
         if (!routingConversationId) {
@@ -1748,8 +1807,8 @@ function createDatabaseAPI(db: DatabaseSync) {
         }
         const stmt = db.prepare(`
           INSERT OR REPLACE INTO owner_interventions
-          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, owner_reply, reply_time, parent_message_id, channel_type, resolved_at, created_at, updated_at, agent_id, skip_reply, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id, route_security_mode, e2ee_protocol_conversation_id, e2ee_session_scope_id, delivery_message_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         stmt.run(
           intervention.id,
@@ -1758,7 +1817,9 @@ function createDatabaseAPI(db: DatabaseSync) {
           intervention.problem,
           intervention.agentSuggestion || null,
           intervention.askTime,
-          intervention.expireTime || null,
+          intervention.skipReply
+            ? null
+            : (intervention.expireTime || ownerInterventionExpireTime(intervention.askTime)),
           intervention.status || 'pending',
           intervention.ownerReply || null,
           intervention.replyTime || null,
@@ -1773,7 +1834,11 @@ function createDatabaseAPI(db: DatabaseSync) {
           intervention.targetChannelId || intervention.visitorId,
           intervention.targetChannelType || 1,
           intervention.sourceMessageId || null,
-          routingConversationId
+          routingConversationId,
+          intervention.routeSecurityMode || null,
+          intervention.e2eeProtocolConversationId || null,
+          intervention.e2eeSessionScopeId || null,
+          intervention.deliveryMessageId || null
         );
         return { success: true };
       } catch (e: any) {
@@ -1854,17 +1919,26 @@ function createDatabaseAPI(db: DatabaseSync) {
     updateOwnerInterventionReply: (id: string, ownerReply: string, replyTime: number, channelType: number | string | null) => {
       try {
         const trimmedReply = (ownerReply || '').replace(/^[\n\r\s]+/, '').trim();
-        const row = db.prepare('SELECT owner_reply, agent_notified FROM owner_interventions WHERE id = ?').get(id);
+        const row = db.prepare('SELECT status, owner_reply, agent_notified FROM owner_interventions WHERE id = ?').get(id);
         if (!row) return { success: false, error: '记录不存在' };
+        if (['expired', 'resolved', 'cancelled'].includes(String(row.status))) {
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: row.status,
+            error: '介入请求已进入不可逆终态' };
+        }
         if (row.owner_reply === trimmedReply) {
           return { success: true, contentChanged: false, agentNotified: row.agent_notified === 1 };
         }
         const stmt = db.prepare(`
           UPDATE owner_interventions
           SET owner_reply = ?, reply_time = ?, status = 'replied', updated_at = ?, agent_notified = 0, channel_type = ?
-          WHERE id = ?
+          WHERE id = ? AND status NOT IN ('expired','resolved','cancelled')
         `);
-        stmt.run(trimmedReply, replyTime, Date.now(), channelType || null, id);
+        const result = stmt.run(trimmedReply, replyTime, Date.now(), channelType || null, id);
+        if (result.changes === 0) {
+          const latest = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: latest?.status || null,
+            error: '介入请求已进入不可逆终态' };
+        }
         return { success: true, contentChanged: true };
       } catch (e: any) {
         console.error('updateOwnerInterventionReply error:', e);
@@ -1910,12 +1984,24 @@ function createDatabaseAPI(db: DatabaseSync) {
 
     updateOwnerInterventionStatus: (id: string, status: string, resolvedAt: number | null) => {
       try {
+        const terminal = ['expired', 'resolved', 'cancelled'];
+        const current = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+        if (!current) return { success: false, error: '记录不存在' };
+        if (terminal.includes(String(current.status)) && current.status !== status) {
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: current.status,
+            error: '介入请求已进入不可逆终态' };
+        }
         const stmt = db.prepare(`
           UPDATE owner_interventions
           SET status = ?, resolved_at = ?, updated_at = ?
-          WHERE id = ?
+          WHERE id = ? AND (status NOT IN ('expired','resolved','cancelled') OR status = ?)
         `);
-        stmt.run(status, resolvedAt || null, Date.now(), id);
+        const result = stmt.run(status, resolvedAt || null, Date.now(), id, status);
+        if (result.changes === 0) {
+          const latest = db.prepare('SELECT status FROM owner_interventions WHERE id=?').get(id);
+          return { success: false, code: 'INTERVENTION_TERMINAL', status: latest?.status || null,
+            error: '介入请求已进入不可逆终态' };
+        }
         return { success: true };
       } catch (e: any) {
         console.error('updateOwnerInterventionStatus error:', e);
@@ -1988,10 +2074,12 @@ function createDatabaseAPI(db: DatabaseSync) {
         const claimCutoff = Date.now() - 2 * 60 * 1000;
         const stmt = db.prepare(`
           SELECT * FROM owner_interventions
-          WHERE is_sent = 0 OR (is_sent = 2 AND updated_at <= ?)
+          WHERE (is_sent = 0 OR (is_sent = 2 AND updated_at <= ?))
+          AND status IN ('pending','awaiting')
+          AND (expire_time IS NULL OR expire_time > ?)
           ORDER BY ask_time ASC
         `);
-        return stmt.all(claimCutoff).map((row: OwnerInterventionRow) => ({
+        return stmt.all(claimCutoff, Date.now()).map((row: OwnerInterventionRow) => ({
           id: row.id, visitorId: row.visitor_id, agentId: row.agent_id || 'voko',
           sessionKey: row.session_key, problem: row.problem,
           agentSuggestion: row.agent_suggestion, askTime: row.ask_time,

@@ -21,6 +21,8 @@ const { PushProvider } = require('../dispatcher/base-provider');
 const { checkCliAvailable, killTree } = require('./cli-spawner');
 const { buildConversationRecoveryPrompt } = require('../dispatcher/conversation-context');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
+const { buildAcpAttachmentPrompt, stageProviderAttachments, providerMediaType,
+  cleanupExpiredProviderAttachmentStaging } = require('../dispatcher/provider-attachments');
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 import type { DatabaseLike } from '../../types/database';
@@ -55,7 +57,7 @@ export interface AcpAdapterOptions {
 
 interface AcpSession {
   sessionId: string;
-  prompt(content: string): Promise<void>;
+  prompt(content: string | Array<Record<string, string | number>>): Promise<void>;
   nextUpdate(): Promise<AcpUpdate>;
   dispose(): void;
 }
@@ -85,6 +87,8 @@ interface AcpAgentState {
   transportAlive: boolean;
   transportClose: (() => void | Promise<void>) | null;
   agentCtx: AcpAgentContext | null;
+  imagePromptSupported: boolean;
+  embeddedContextSupported: boolean;
   agentIds: Set<string>;
   lifecycleEpoch: number;
   sessions: Map<string, AcpSession>;
@@ -204,6 +208,7 @@ class AcpAdapter extends PushProvider {
     // session 工作目录：默认系统临时目录，避免 agent 把 VOKO 项目根（含 node_modules）
     // 当成工作区去扫描/索引，产生巨量输出导致 OOM
     this._cwd = options.cwd || os.tmpdir();
+    cleanupExpiredProviderAttachmentStaging(path.join(path.resolve(this._cwd), 'voko-provider-attachments'));
 
     // 已经 start() 过
     this._started = false;
@@ -403,7 +408,8 @@ class AcpAdapter extends PushProvider {
         if (previous) await previous;
         const receipt = await this._pushViaAcp(payload);
         this.notifyProviderEvent({ type: 'completed', agentId, messageId: payload.messageId,
-          turnId, nativeSessionId: receipt.nativeSessionId, terminal: true });
+          turnId, nativeSessionId: receipt.nativeSessionId, terminal: true,
+          payload: { attachmentDelivery: receipt.attachmentDelivery || null } });
         return receipt;
       } catch (err) {
         console.error(`[${this._logPrefix}] push via ACP 失败 agent=${agentId}: ${errorMessage(err)}`);
@@ -574,14 +580,20 @@ class AcpAdapter extends PushProvider {
     const cacheKey = Array.from(state.sessions.entries()).find(([, value]) => value === session)?.[0] || sessionKey;
     const needsRecovery = this._recoveryNeededSessions.delete(cacheKey);
     let fullContent = '';
+    const needsPathFallback = !!payload.attachments?.some(attachment =>
+      !state.embeddedContextSupported
+      && !(state.imagePromptSupported && providerMediaType(attachment).startsWith('image/')));
+    const staged = needsPathFallback
+      ? stageProviderAttachments(payload, { cwd: this._cwd, agentId, turnId }) : null;
+    const deliveryPayload = staged ? { ...payload, attachments: staged.attachments } : payload;
 
     try {
       console.error(`[${this._logPrefix}:${agentId}] 发送 session/prompt...`);
-      const promptPromise = session.prompt(
-        needsRecovery
-          ? this._wrapVisitorPrompt(content, payload)
-          : this._wrapVisitorPrompt(content),
-      );
+      const promptText = needsRecovery
+        ? this._wrapVisitorPrompt(content, payload)
+        : this._wrapVisitorPrompt(content);
+      const promptPromise = session.prompt(buildAcpAttachmentPrompt(promptText, deliveryPayload,
+        { imageSupported: state.imagePromptSupported, embeddedContextSupported: state.embeddedContextSupported }));
       promptPromise.catch((err: unknown) =>
         console.error(`[${this._logPrefix}:${agentId}] session/prompt 失败: ${errorMessage(err)}`)
       );
@@ -636,21 +648,29 @@ class AcpAdapter extends PushProvider {
 
       if (stopReceived) await promptPromise;
     } catch (err) {
+      staged?.cleanup();
       state.sessions.delete(cacheKey);
       this._deleteSessionHandle(agentId, fromUid);
       if (!(err as any)?.deliveryOutcome) (err as any).deliveryOutcome = 'outcome_unknown';
       throw err;
     }
+    staged?.cleanup();
 
     this.emit('agent.reply', {
       agentId, visitorId: fromUid,
       content: fullContent, done: true, sessionKey,
       turnId, replyId: turnId,
     });
+    const attachmentMode = !payload.attachments?.length ? 'none'
+      : state.embeddedContextSupported ? 'embedded_resource'
+        : state.imagePromptSupported && payload.attachments.every(item => providerMediaType(item).startsWith('image/')) ? 'image'
+          : staged ? 'staged_path' : 'resource_link';
     return {
       nativeSessionId: session.sessionId,
       deliveryMode: this._adapterType.includes('ws') ? 'acp_ws' : 'acp',
       adapterType: this._adapterType,
+      attachmentDelivery: { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,
+        mode: attachmentMode },
     };
   }
 
@@ -755,6 +775,8 @@ class AcpAdapter extends PushProvider {
       transportAlive: true,
       transportClose: null,
       agentCtx: null,
+      imagePromptSupported: false,
+      embeddedContextSupported: false,
       agentIds: associatedAgentIds,
       lifecycleEpoch,
       sessions: new Map(),       // sessionKey → ActiveSession
@@ -869,10 +891,12 @@ class AcpAdapter extends PushProvider {
       if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch || this._providerStopped) return;
       const initialize = (sdk.methods as any).agent?.initialize;
       if (initialize) {
-        await agentCtx.request(initialize, {
+        const initialized: any = await agentCtx.request(initialize, {
           protocolVersion: sdk.PROTOCOL_VERSION || 1,
           clientCapabilities: {},
         });
+        state.imagePromptSupported = initialized?.agentCapabilities?.promptCapabilities?.image === true;
+        state.embeddedContextSupported = initialized?.agentCapabilities?.promptCapabilities?.embeddedContext === true;
       }
       console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;

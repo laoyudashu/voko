@@ -6,6 +6,7 @@ const { runCli, killTree, checkCliAvailable } = require('../../adapters/cli-spaw
 const { createParser } = require('../../adapters/cli-parsers');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
 const {
   isolatedOpenCodeEnv,
   buildOpenCodeVisitorContent,
@@ -225,9 +226,11 @@ class OpenCodeAttachProvider extends PushProvider {
         });
     const savedSession = activeBinding?.nativeSessionId
       || ((payload as any).__vokoManagedRetry ? null : this._loadSession(agentId, fromUid));
-    const deliveryContent = buildConversationDeliveryPrompt(
-      this._db, payload, Boolean(savedSession), this._contextWindow,
-    );
+    const staged = stageProviderAttachments(payload, { cwd: this._cwd, agentId, turnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const deliveryContent = appendProviderAttachmentBoundary(buildConversationDeliveryPrompt(
+      this._db, effectivePayload, Boolean(savedSession), this._contextWindow,
+    ), effectivePayload);
     const prompt = buildOpenCodeVisitorContent(agentId, fromUid, deliveryContent);
     const args = [
       'run', '--attach', `http://127.0.0.1:${this._port}`, '--format', 'json',
@@ -243,6 +246,7 @@ class OpenCodeAttachProvider extends PushProvider {
         fullContent = (fullContent + chunk).slice(0, MAX_REPLY_CHARS);
       },
     });
+    try {
     const result = await runCli({
       cmd: this._cmd,
       args,
@@ -297,7 +301,13 @@ class OpenCodeAttachProvider extends PushProvider {
     });
     return { nativeSessionId: observedSession || null,
       providerInstanceId: activeBinding?.providerInstanceId || null,
-      deliveryMode: 'attach', adapterType: ADAPTER_TYPE };
+      deliveryMode: 'attach', adapterType: ADAPTER_TYPE,
+      attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
+        attachmentAccessed: null, contentUnderstood: null,
+        mode: staged.attachments.length ? 'staged_path' : 'none' } };
+    } finally {
+      staged.cleanup();
+    }
   }
 
   useDispatcherSessionPersistence(): void {

@@ -1,0 +1,54 @@
+# 百度搭子（DuMate）Provider
+
+VOKO 可以发现本机 DuMate 用户 Agent（Plugin Pack），注册时绑定到指定实例，并通过独立的本机回环服务进行精准对话和原生会话续接。
+
+## 支持范围
+
+- 发现：扫描 DuMate `qianfan_desk_xdg/*/data/plugins/user/*` 下的用户 Plugin Pack。
+- 注册：保存稳定的 Plugin Pack `name` 为 `backend_instance_id`，例如 `stock-assistant`。
+- 精准路由：首次消息发送 DuMate `{ "type": "plugin", "name": "stock-assistant" }` 部件。
+- 回复：读取原生会话中 `phase: "final_answer"` 的文本。
+- Resume：持久化 DuMate `sessionId`，后续消息复用该会话。
+- 隔离：VOKO 启动独立 `dumate-opencode serve`，只监听 `127.0.0.1`，不暴露到局域网。
+
+## 发现与注册契约
+
+实例目录名必须与 `.claude-plugin/plugin.json` 的 `name` 一致；清单中必须存在同名 Agent；Agent 的 `prompt` 必须指向 Plugin Pack 内真实存在的 Markdown 文件。无效、越界或重复的清单不会显示在注册页面。
+
+`股票小助手` 的稳定实例 ID 是 `stock-assistant`，注册后保存为 `backend_instance_id`。
+
+## 精准路由与 Resume
+
+`stock-assistant` 不是普通 OpenCode Agent，不能使用 `--agent stock-assistant`。该参数找不到实例时会回退默认 Agent，无法满足精准路由。
+
+VOKO 在新会话首条消息中发送：
+
+```json
+{
+  "agent": "build",
+  "parts": [
+    { "type": "plugin", "name": "stock-assistant" },
+    { "type": "text", "text": "访客消息" }
+  ]
+}
+```
+
+发送后必须验证 `activePlugins` 包含所选实例。Resume 同时校验 provider、adapter、实例 ID、原生 `sessionId` 和 `activePlugins`；任一条件不满足都停止投递，不允许回退默认 Agent。
+
+## 运行时与安全
+
+Windows 默认发现：
+
+```text
+C:\Program Files\DuMate\resources\extra-resource\opencode\bin\dumate-opencode.exe
+```
+
+可通过 `VOKO_DUMATE_CLI_BIN` 覆盖。Provider 在 `~/.voko/provider-data/dumate/<instanceId>` 为每个 Agent 建立独立且持久的数据目录，仅复制所选 Plugin Pack；服务重启后仍能恢复原生 session。服务启动后调用 `/global/runtime/ready`。
+
+- 服务只监听随机本机回环端口。当前 DuMate 内部 DB 回调不会携带 `OPENCODE_SERVER_PASSWORD`，启用该变量会导致自身请求返回 401，因此 Provider 不虚报认证能力，也不允许非回环监听。
+- 不连接 DuMate 桌面私有服务，不读取内部 `DUMATE_INAPP_KEY`。
+- 实例、会话或 `activePlugins` 不匹配时 fail closed。
+
+## ACP 状态
+
+DuMate ACP v1 的握手、建会话和提示已经真实验收，但当前版本出现过 ACP 最终消息事件为空、HTTP 原生会话中实际存在最终文本的问题；标准 ACP 也未验证出 Plugin Part 的正式映射。因此当前 Provider 使用已验收的 HTTP 会话接口完成精准路由和 Resume，不把 ACP 作为生产主通道。

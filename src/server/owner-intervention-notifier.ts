@@ -25,6 +25,11 @@ const bus = require('../core/lite-bus');
 const { logEvent } = require('../core/event-log');
 const { t, getLocale } = require('../core/i18n');
 const { settleOwnerForward } = require('../core/owner-intervention-forward');
+const { getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
+const { OWNER_INTERVENTION_TTL_MS, ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
+
+const EMAIL_REPLY_CHECKPOINT_NAMESPACE = 'owner_email_replies';
+const EMAIL_REPLY_CHECKPOINT_SCOPE = 'primary_owner';
 
 class OwnerInterventionNotifier {
   [key: string]: any;
@@ -113,6 +118,19 @@ class OwnerInterventionNotifier {
    * 处理单条记录：标记 is_sent=1 → 发送 → 更新 DB → 通知 UI
    */
   async _processRecord(record?: any) {
+    const persisted = this.db.prepare(
+      'SELECT status,expire_time FROM owner_interventions WHERE id=? LIMIT 1'
+    ).get(record.id);
+    const now = Date.now();
+    if (persisted && !['pending', 'awaiting'].includes(String(persisted.status))) return;
+    const expireTime = persisted?.expire_time ?? record.expireTime
+      ?? (record.skipReply ? null : ownerInterventionExpireTime(record.askTime));
+    if (expireTime != null && Number(expireTime) <= now) {
+      this.db.prepare(`UPDATE owner_interventions
+        SET status='expired',resolved_at=?,updated_at=?
+        WHERE id=? AND status IN ('pending','awaiting')`).run(now, now, record.id);
+      return;
+    }
     // 内存传入 skipReply 时立即落库，避免重试/重载后丢失导致轮询与 UI 误判
     if (record.skipReply) {
       try {
@@ -152,10 +170,15 @@ class OwnerInterventionNotifier {
 
       // 构造通知消息
       const locale = getLocale();
+      const deadlineText = !record.skipReply && expireTime != null
+        ? `\n${t('errors.intervention.deadline', {
+          deadline: new Date(Number(expireTime)).toLocaleString(locale === 'en' ? 'en-US' : locale === 'ja' ? 'ja-JP' : 'zh-CN'),
+        }, locale)}`
+        : '';
       const msgBody = `${t('errors.intervention.visitor', {}, locale)}${record.visitorId}
 ${t('errors.intervention.problem', {}, locale)}${record.problem}
 ${t('errors.intervention.suggestion', {}, locale)}${record.agentSuggestion || ""}
-${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}`;
+${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleString(locale === 'en' ? 'en-US' : locale === 'ja' ? 'ja-JP' : 'zh-CN')}${deadlineText}`;
 
       console.log('[OwnerInterventionNotifier] 发送通知, id:', record.id, 'channelType:', channelType);
       logEvent('owner_intervention.send_attempt', { id: record.id, agentId: record.agentId, visitorId: record.visitorId, messageId: record.parentMessageId, data: { attempt: (record.retry_count ?? record.retryCount ?? 0) + 1, channel: channelType } });
@@ -333,6 +356,14 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
 
   startEmailReplyPolling() {
     this.stopEmailReplyPolling();
+    // 旧版本创建的待回复记录没有截止时间，按原请求时间补齐 24 小时期限。
+    try {
+      this.db.prepare(`UPDATE owner_interventions
+        SET expire_time=ask_time+?,updated_at=?
+        WHERE status IN ('pending','awaiting')
+        AND COALESCE(skip_reply,0)=0
+        AND expire_time IS NULL`).run(OWNER_INTERVENTION_TTL_MS, Date.now());
+    } catch (_: any) {}
     // 清理历史脏数据：仅通知类（skip_reply / 支付成功）且已发邮件的不应再轮询
     try {
       const now = Date.now();
@@ -366,105 +397,44 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
       this.db.prepare(
         `UPDATE owner_interventions
          SET status='expired', resolved_at=?, updated_at=?
-         WHERE email_message_id IS NOT NULL
-         AND status IN ('pending','awaiting')
+         WHERE status IN ('pending','awaiting')
          AND COALESCE(skip_reply, 0) = 0
          AND expire_time IS NOT NULL
          AND expire_time <= ?`
       ).run(now, now, now);
 
-      const rows = this.db.prepare(
+      const storedReplies = this.db.prepare(
         `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
                 oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
-                oi.status, oi.owner_reply, oi.reply_time, COALESCE(oi.agent_notified, 0) AS agent_notified
+                oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
+                COALESCE(oi.agent_notified, 0) AS agent_notified
          FROM owner_interventions oi
          WHERE oi.email_message_id IS NOT NULL
          AND COALESCE(oi.skip_reply, 0) = 0
-         AND (
-           (oi.status IN ('pending','awaiting') AND (oi.expire_time IS NULL OR oi.expire_time > ?))
-           OR (oi.status='replied' AND COALESCE(oi.agent_notified, 0)=0 AND oi.owner_reply IS NOT NULL)
-         )`
-      ).all(now);
-      for (const row of rows) {
-        const reply = row.status === 'replied' && row.owner_reply
-          ? { has_reply: true, raw_text: row.owner_reply, replied_at: row.reply_time, stored: true }
-          : await this.agentEmailApi.queryReply({ message_id: row.email_message_id });
-        if (reply?.terminal === 'not_found') {
-          this.databaseAPI.markOwnerInterventionEmailUnavailable(row.id, now);
-          continue;
-        }
-        if (reply?.has_reply && reply.raw_text) {
-          const replyTime = Date.parse(reply.replied_at) || Number(reply.replied_at) || Date.now();
-          const updateResult = reply.stored
-            ? { contentChanged: false }
-            : this.databaseAPI.updateOwnerInterventionReply(
-              row.id, reply.raw_text, replyTime, 'voko-email'
-            );
+         AND oi.status='replied'
+         AND COALESCE(oi.agent_notified, 0)=0
+         AND oi.owner_reply IS NOT NULL`
+      ).all();
+      for (const row of storedReplies) {
+        await this._forwardEmailReply(row, row.owner_reply, false);
+      }
 
-          // 转发回复给 agent（和渠道回复一致）
-          let forwardOutcome: string | null = null;
-          if ((updateResult?.contentChanged || Number(row.agent_notified) !== 1) && row.session_key && row.agent_id) {
-            // 好友申请自动审批：主人回复"同意"时自动加入白名单（与 IM 渠道一致）
-            if (updateResult?.contentChanged && this.autoApproveWhitelistIfFriendRequest) {
-              this.autoApproveWhitelistIfFriendRequest(
-                {
-                  id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
-                  sessionKey: row.session_key, problem: row.problem,
-                },
-                reply.raw_text
-              );
-            }
-            const forwardMsg = this.buildOwnerReplyPrompt(
-              { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id },
-              reply.raw_text
-            );
-            const settle = (result: unknown) => {
-              forwardOutcome = settleOwnerForward(this.databaseAPI, row.id, result);
-              return forwardOutcome;
-            };
-            const intervention = {
-              id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
-              sessionKey: row.session_key, problem: row.problem,
-              sourceSenderUid: row.source_sender_uid || row.visitor_id,
-              targetChannelId: row.target_channel_id || row.visitor_id,
-              targetChannelType: row.target_channel_type || 1,
-              sourceMessageId: row.source_message_id || null,
-              routingConversationId: row.routing_conversation_id || null,
-            };
-            if (this.resumeOwnerIntervention) {
-              try {
-                const result = await this.resumeOwnerIntervention(intervention, forwardMsg);
-                settle(result);
-              } catch (err: any) {
-                settle(err);
-                console.error('[OwnerInterventionNotifier] resume owner intervention failed:', err.message);
-              }
-            } else {
-              settle({ success: false, deliveryOutcome: 'not_delivered', error: 'exact resume handler unavailable' });
-            }
-          }
-
-          // 通知 UI 定向更新（推一条，不重载）
-          const forwardStatus = forwardOutcome === 'delivered'
-            ? 'resolved'
-            : (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected' ? 'unknown' : 'replied');
-          bus.emit('owner-intervention:email-reply', {
-            id: row.id,
-            ownerReply: reply.raw_text,
-            replyTime,
-            status: forwardStatus,
-          });
-
-
-          if (forwardOutcome === 'delivered') {
-            console.log('[OwnerInterventionNotifier] 主人回复已入库并成功转发, id:', row.id);
-          } else if (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected') {
-            console.warn('[OwnerInterventionNotifier] 主人回复已入库，自动转发结果未知，保留 Pull, id:', row.id);
-          } else {
-            console.log('[OwnerInterventionNotifier] 主人回复已入库，通道确认未投递，等待重试, id:', row.id);
-          }
-        } else if (this._isEmailReplyExpired(reply, now)) {
-          this.databaseAPI.updateOwnerInterventionStatus(row.id, 'expired', now);
+      const checkpoint = getCheckpoint(
+        this.db, EMAIL_REPLY_CHECKPOINT_NAMESPACE, EMAIL_REPLY_CHECKPOINT_SCOPE
+      );
+      const cursor = checkpoint?.committedValue || '0';
+      const page = await this.agentEmailApi.pollReplies({ cursor, limit: 100 });
+      if (!page) {
+        await this._queryPendingEmailReplies();
+        return;
+      }
+      let processedCursor = cursor;
+      for (const event of page.events) {
+        const processed = this._storeEmailReplyEvent(event, processedCursor);
+        processedCursor = event.event_id;
+        if (processed) {
+          await this._forwardEmailReply(processed.row, processed.replyText, processed.contentChanged);
         }
       }
     } catch (e: any) {
@@ -474,11 +444,172 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
     }
   }
 
-  _isEmailReplyExpired(reply?: any, now: any = Date.now()) {
-    if (!reply) return false;
-    if (reply.status === 'expired') return true;
-    const expiresAt = Date.parse(reply.expires_at);
-    return !reply.has_reply && Number.isFinite(expiresAt) && expiresAt <= now;
+  async _queryPendingEmailReplies() {
+    if (typeof this.agentEmailApi.queryReply !== 'function') return;
+    const rows = this.db.prepare(
+      `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
+              oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
+               oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+               oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
+              COALESCE(oi.agent_notified, 0) AS agent_notified
+       FROM owner_interventions oi
+       WHERE oi.email_message_id IS NOT NULL
+       AND COALESCE(oi.skip_reply, 0) = 0
+       AND oi.status IN ('pending','awaiting')
+       AND (oi.expire_time IS NULL OR oi.expire_time > ?)
+       ORDER BY oi.ask_time ASC
+       LIMIT 20`
+    ).all(Date.now());
+    for (const row of rows) {
+      const reply = await this.agentEmailApi.queryReply({ message_id: row.email_message_id });
+      const replyText = String(reply?.raw_text || '').trim();
+      if (!reply?.has_reply || !replyText) continue;
+      const stored = this._storeQueriedEmailReply(row.id, replyText, reply.replied_at);
+      if (stored) await this._forwardEmailReply(stored, replyText, true);
+    }
+  }
+
+  _storeQueriedEmailReply(id: string, replyText: string, repliedAt?: string) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(
+        `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
+                oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
+                 oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                 oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
+                COALESCE(oi.agent_notified, 0) AS agent_notified
+         FROM owner_interventions oi WHERE oi.id=? LIMIT 1`
+      ).get(id);
+      if (!row || !['pending', 'awaiting'].includes(String(row.status))) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const replyTime = Date.parse(repliedAt || '') || Date.now();
+      this.db.prepare(`UPDATE owner_interventions
+        SET owner_reply=?,reply_time=?,status='replied',updated_at=?,agent_notified=0,channel_type='voko-email'
+        WHERE id=? AND status IN ('pending','awaiting')`)
+        .run(replyText, replyTime, Date.now(), id);
+      this.db.exec('COMMIT');
+      return { ...row, status: 'replied', owner_reply: replyText,
+        reply_time: replyTime, agent_notified: 0 };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  _storeEmailReplyEvent(event?: any, currentCursor: string = '0') {
+    const eventId = String(event?.event_id || '');
+    if (!/^(0|[1-9]\d*)$/.test(eventId) || BigInt(eventId) <= BigInt(currentCursor)) {
+      throw new Error(`Invalid email reply event cursor: ${eventId}`);
+    }
+    const replyText = String(event?.raw_text || '').trim();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(
+        `SELECT oi.id, oi.email_message_id, oi.agent_id, oi.visitor_id, oi.session_key, oi.problem,
+                oi.source_sender_uid, oi.target_channel_id, oi.target_channel_type, oi.source_message_id,
+                 oi.routing_conversation_id, oi.route_security_mode, oi.e2ee_protocol_conversation_id,
+                 oi.e2ee_session_scope_id, oi.status, oi.owner_reply, oi.reply_time,
+                COALESCE(oi.agent_notified, 0) AS agent_notified
+         FROM owner_interventions oi WHERE oi.email_message_id=? LIMIT 1`
+      ).get(event.message_id);
+      let contentChanged = false;
+      let storedRow = row;
+      const terminalLateReply = row && replyText
+        && ['expired', 'resolved', 'cancelled'].includes(String(row.status));
+      if (row && replyText && ['pending', 'awaiting', 'replied'].includes(String(row.status))) {
+        contentChanged = row.status !== 'replied';
+        if (contentChanged) {
+          const replyTime = Date.parse(event.replied_at) || Date.now();
+          this.db.prepare(`UPDATE owner_interventions
+            SET owner_reply=?,reply_time=?,status='replied',updated_at=?,agent_notified=0,channel_type='voko-email'
+            WHERE id=? AND status IN ('pending','awaiting','replied')`)
+            .run(replyText, replyTime, Date.now(), row.id);
+          storedRow = { ...row, status: 'replied', owner_reply: replyText,
+            reply_time: replyTime, agent_notified: 0 };
+        }
+      }
+      setCheckpoint(this.db, EMAIL_REPLY_CHECKPOINT_NAMESPACE, EMAIL_REPLY_CHECKPOINT_SCOPE, 'sequence', eventId);
+      this.db.exec('COMMIT');
+      if (!row) {
+        logEvent('owner_intervention.email_reply_unmatched', {
+          level: 'warn', id: eventId, data: { messageId: event.message_id },
+        });
+        return null;
+      }
+      if (terminalLateReply) {
+        logEvent('owner_intervention.email_reply_after_terminal', {
+          level: 'warn', id: row.id, data: { messageId: event.message_id, eventId,
+            terminalStatus: storedRow.status, action: 'discarded' },
+        });
+        return null;
+      }
+      const storedReplyText = String(storedRow?.owner_reply || '').trim();
+      if (!storedReplyText || storedRow.status !== 'replied' || Number(storedRow.agent_notified) === 1) return null;
+      return { row: storedRow, replyText: storedReplyText, contentChanged };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+  }
+
+  async _forwardEmailReply(row?: any, replyText?: string, contentChanged: boolean = false) {
+    if (!row?.session_key || !row?.agent_id || !replyText || Number(row.agent_notified) === 1) return;
+    if (contentChanged && this.autoApproveWhitelistIfFriendRequest) {
+      this.autoApproveWhitelistIfFriendRequest({
+        id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
+        sessionKey: row.session_key, problem: row.problem,
+      }, replyText);
+    }
+    const forwardMsg = this.buildOwnerReplyPrompt(
+      { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id }, replyText
+    );
+    let forwardOutcome: string | null = null;
+    let requestedStatus: string | null = null;
+    const settle = (result: unknown) => {
+      requestedStatus = String((result as any)?.interventionStatus || '') || null;
+      forwardOutcome = settleOwnerForward(this.databaseAPI, row.id, result);
+      return forwardOutcome;
+    };
+    const intervention = {
+      id: row.id, visitorId: row.visitor_id, agentId: row.agent_id,
+      sessionKey: row.session_key, problem: row.problem,
+      sourceSenderUid: row.source_sender_uid || row.visitor_id,
+      targetChannelId: row.target_channel_id || row.visitor_id,
+      targetChannelType: row.target_channel_type || 1,
+      sourceMessageId: row.source_message_id || null,
+      routingConversationId: row.routing_conversation_id || null,
+      routeSecurityMode: row.route_security_mode || 'standard',
+      e2eeProtocolConversationId: row.e2ee_protocol_conversation_id || null,
+      e2eeSessionScopeId: row.e2ee_session_scope_id || null,
+    };
+    if (this.resumeOwnerIntervention) {
+      try {
+        settle(await this.resumeOwnerIntervention(intervention, forwardMsg));
+      } catch (err: any) {
+        settle(err);
+        console.error('[OwnerInterventionNotifier] resume owner intervention failed:', err.message);
+      }
+    } else {
+      settle({ success: false, deliveryOutcome: 'not_delivered', error: 'exact resume handler unavailable' });
+    }
+    const forwardStatus = requestedStatus || (forwardOutcome === 'delivered'
+      ? 'resolved' : (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected' ? 'unknown' : 'replied'));
+    bus.emit('owner-intervention:email-reply', {
+      id: row.id, ownerReply: replyText, replyTime: row.reply_time, status: forwardStatus,
+    });
+    if (forwardOutcome === 'delivered') {
+      console.log(row.route_security_mode === 'e2ee_v2'
+        ? '[OwnerInterventionNotifier] 主人回复已入库，Agent 答复已通过 E2EE 送达访客, id:'
+        : '[OwnerInterventionNotifier] 主人回复已入库并已交给 Agent, id:', row.id);
+    } else if (requestedStatus === 'delivering') {
+      console.log('[OwnerInterventionNotifier] 主人回复已入库，Agent 答复已进入 E2EE 可靠投递队列, id:', row.id);
+    } else if (forwardOutcome === 'outcome_unknown' || forwardOutcome === 'rejected') {
+      console.warn('[OwnerInterventionNotifier] 主人回复已入库，自动转发结果未知，保留 Pull, id:', row.id);
+    } else {
+      console.log('[OwnerInterventionNotifier] 主人回复已入库，通道确认未投递，等待重试, id:', row.id);
+    }
   }
 }
 

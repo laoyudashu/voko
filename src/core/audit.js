@@ -15,20 +15,6 @@ function normalizeAuditText(value) {
     .toLowerCase();
 }
 
-function luhnValid(value) {
-  const digits = String(value || '').replace(/[ -]/g, '');
-  if (!/^\d{12,19}$/.test(digits) || /^(\d)\1+$/.test(digits)) return false;
-  let sum = 0;
-  let double = false;
-  for (let i = digits.length - 1; i >= 0; i--) {
-    let digit = Number(digits[i]);
-    if (double) { digit *= 2; if (digit > 9) digit -= 9; }
-    sum += digit;
-    double = !double;
-  }
-  return sum % 10 === 0;
-}
-
 function isValidChineseId(value) {
   const id = String(value || '').toUpperCase();
   if (!/^\d{17}[\dX]$/.test(id) || /^(\d)\1{16}[\dX]$/.test(id)) return false;
@@ -71,10 +57,6 @@ function deterministicSignals(message, direction) {
       if (match && !looksLikePlaceholder(match[0])) {
         return { verdict: 'deny', action: 'hard_deny', source: 'validator', reasonCode: item.code, category: 'credential_exposure' };
       }
-    }
-    const numberCandidates = raw.match(/\b(?:\d[ -]?){12,19}\b/g) || [];
-    if (numberCandidates.some(luhnValid)) {
-      return { verdict: 'deny', action: 'hard_deny', source: 'validator', reasonCode: 'payment_card', category: 'pii_exposure' };
     }
     const idCandidates = raw.match(/\b\d{17}[\dXx]\b/g) || [];
     if (idCandidates.some(isValidChineseId)) {
@@ -194,5 +176,5 @@ function triggerManualSendAuditIntervention(data, auditResult, db, databaseAPI, 
   }
 }
 
-module.exports = { checkAuditRules, normalizeAuditText, deterministicSignals, luhnValid, isValidChineseId,
+module.exports = { checkAuditRules, normalizeAuditText, deterministicSignals, isValidChineseId,
   substitutePromptVariables, triggerManualSendAuditIntervention };

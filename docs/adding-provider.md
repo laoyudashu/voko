@@ -6,7 +6,7 @@
 
 本文只定义**开发实现规范**。通道顺序、投递结果、路由缓存、Binding 所有权和灰度不变量以 [Provider Transport 行为矩阵](provider-transport-matrix.md) 为唯一真相源；注册和操作者排障以 [统一注册与投递路由](provider-delivery-routing.md) 为准；测试命令和真机证据以 [测试指南](testing.md) 与兼容性矩阵为准。不要在本页或 Provider 专属页重新定义这些通用规则。
 
-## 当前架构基线（2026-08）
+## 当前架构基线（2026-08-25）
 
 当前 Provider 主链路已经统一为：
 
@@ -45,6 +45,10 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor → S
 8. 无图形环境如何完成 Provider 自身登录和模型配置？哪些步骤必须由用户操作？
 9. Windows、Linux、macOS分别有哪些官方入口、shim、wrapper和配置差异？
 10. 访客消息如何在无工具、无写权限、无项目配置的安全边界内运行？
+11. Provider 是否能够发现可路由的实例/profile/Agent？“支持实例发现”和“注册时必须选择实例”是两件事，分别如何处理？
+12. 哪些 transport 能恢复同一个精确原生 Session？它们的 `nativeSessionNamespace` 和 `restoreCompatibilityGroup` 是什么？
+13. 是否支持图片或文件？原始附件如何校验、隔离 staging、清理并在 receipt 中报告投递层级？
+14. 是否真的需要主人专属控制通道？普通访客 Push 和具备工作区权限的 Owner I/O 必须使用不同能力声明和验收门槛。
 
 不能回答 Session、结果分类和安全边界时，先以 Pull-only 接入，不要先写一个会串会话或重复投递的 Push Provider。
 
@@ -60,16 +64,24 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor → S
 - 每个 transport 的唯一 `id`、`mode`、`priority`、`operations`、模块路径和 `safetyProfile`；
 - 如构造函数不是标准形式，增加明确 factory，而不是在多个入口分散特判；
 - 提供无副作用 `preflightDelivery`；模型驱动的 loopback 必须由调用方明确同意。
+- 只有确认能恢复精确原生 Session 时才声明 `exactSession`；只有实现隔离闭环、challenge 校验和清理时才声明 `supportsLoopback=true`；
+- 普通 Provider 不声明 `owner`。只有经过独立 Owner 执行安全设计和真机验收的 transport 才能启用该能力。
 
 `pull` 始终是最终兜底。Catalog 的默认顺序、注册预检、状态页和 Dispatcher 必须一致。
 
-当前 `ProviderTransportDefinition` 的关键契约是：`id`（全局唯一）、`family`、`mode`、`priority`、`operations`、`capabilities`、`modulePath`、`safetyProfile`、`sandboxPolicyId` 和 `create(context)`。`create(context)` 可以读取该 transport 的受控配置，但不得在 Catalog 中增加 `factoryKind`、Provider 名称分支或跨 transport fallback。Catalog 的 `preflight`/`loopback` 只能用于显式的注册或测试流程，不能把模型调用偷偷放入 `isAvailable()`。
+当前 `ProviderTransportDefinition` 的关键契约是：`id`（全局唯一）、`family`、`mode`、`priority`、`operations`、`capabilities`、`modulePath`、`safetyProfile`、`sandboxPolicyId`、可选的 `exactSession` / `owner`、`supportsLoopback` 和 `create(context)`。`create(context)` 可以读取该 transport 的受控配置，但不得在 Catalog 中增加 `factoryKind`、Provider 名称分支或跨 transport fallback。Catalog 的 `preflight`/`loopback` 只能用于显式的注册或测试流程，不能把模型调用偷偷放入 `isAvailable()`。
+
+`cli()` / `acp()` helper 当前默认声明 `supportsLoopback=true`，并为该 transport 建立同名 `exactSession` namespace。新增 transport 不能因为复用了 helper 就继承未经证明的能力：不能安全执行真实闭环时显式设置 `supportsLoopback:false`；不能恢复原生精确 Session 时显式设置 `exactSession:undefined`。`capabilities.sessionResume` 也不等于跨 transport 精确恢复。
+
+如果使用新的 `sandboxPolicyId`，必须同时在 `src/core/provider-sandbox.ts` 定义所有声明平台上的五维策略、失败策略和证据；命令型 Provider 还要在 Catalog 的版本探测映射中登记真实命令，或由 transport 的 `_resolveRuntime()` 返回实际 executable。未知或未验证版本只能展示为未知/未验证，不能宣称沙箱已验证生效。
 
 `delivery_modes` 的解释固定为：`null` 使用默认优先级并保留旧数据的 Pull fallback；`[]` 表示不允许 Push、只留库；非空数组严格按用户给出的顺序选择；`pull` 只表示按需接收。修改该字段后必须同时清理 Agent 的 meta、push、steer 路由缓存；Provider 恢复也不能越过显式顺序抢占当前通道。
 
 ### 3.2 Backend 类型和别名
 
 在 `src/core/agent-backend-types.ts` 增加默认类型、显示名称和必要 alias。规范化必须只有一个 canonical family；不要让 `foo-cli`、`foo-acp` 成为两个互不兼容的 Provider 身份。
+
+已有数据库会优先读取持久化的 `agent_backend_types`。新增正式类型时还要确认 `DISCOVERABLE_ADDITIONS` 的增量 seed；只改 `DEFAULT_BACKEND_TYPES` 可能只对新数据库生效。Catalog alias 与 `BACKEND_TYPE_ALIASES` 必须同步测试，但 transport ID 不应进入持久 backend family。
 
 如存量数据库需要修正 `delivery_modes` 或类型名称，使用幂等 schema migration：
 
@@ -80,14 +92,14 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor → S
 
 ### 3.3 Runtime Resolver
 
-在 `src/core/runtime/agent-runtime-resolver.ts` 增加真实运行入口解析，使以下位置使用同一结果：
+`src/core/runtime/agent-runtime-resolver.ts` 是消费 `RuntimeRequest` 的通用解析器。新增 Provider 通常不应在该文件增加 family 分支，而应在 Provider 专属的 `*-command.ts` / `*-runtime.ts` 或 adapter 中构造同一个 `RuntimeRequest`，使以下位置使用同一结果：
 
 - 注册预检；
 - Doctor；
 - Dispatcher/Adapter 真正 spawn；
 - Provider 自身健康检查。
 
-解析结果应包含实际入口和 `pathEntries`。不要执行 `.bashrc`，不要通过 shell 启动，不要只用 `command -v` 后又在 spawn 时使用另一套 PATH。Unix 要避免误选 WSL 中的 Windows shim；Windows 要覆盖 `.cmd`、`.ps1`、Node wrapper和官方安装目录；macOS要验证 GUI 应用附带 CLI 的实际位置。
+`RuntimeRequest` 至少包含稳定的 `providerId`、`mode`、候选入口，以及需要时的 `providerInstanceId` / `configRevision`。解析结果应包含实际 executable、`argvPrefix` 和 `pathEntries`。不要执行 `.bashrc`，不要通过 shell 启动，不要只用 `command -v` 后又在 spawn 时使用另一套 PATH。Unix 要避免误选 WSL 中的 Windows shim；Windows 要区分原生 `.exe`、Node package bin、`.cmd` shim 和显式 Node wrapper，不能把 `.cmd` 当原生 executable 直接 spawn；macOS要验证 GUI 应用附带 CLI 的实际位置。
 
 入口存在只表示“可执行文件可解析”，不表示登录、模型、连接或进程健康。
 
@@ -141,7 +153,47 @@ CLI 的单次模型错误、授权等待或超时不应直接把整个 CLI 标�
 - MCP/普通 CLI Agent调用不能绕过主人确认；
 - 同一个 Provider实例可以服务多个 VOKO Agent，不以实例重复阻止注册。
 
-如果 Provider没有稳定实例概念，`requiresInstance=false`，不要虚构实例。
+当前注册尚未完全由 Catalog 自动生成。新增正式 Provider 时必须逐项核对现有入口，而不能以“已加入 Catalog”为完成：
+
+- `PROVIDER_DISPLAY_PRIORITY`、`CLI_COMMANDS` / `PULL_ONLY_CLI_COMMANDS`、必要的 `CLI_SESSION_ROOTS`、`CLI_DELIVERY_METADATA` 和桌面应用检测；
+- `_deliveryCapabilities()` 的通道文案、ready/configuration 状态和默认选中策略；
+- `preflightDelivery()` 使用与实际 spawn 相同的 Provider runtime request，不以 mode 名或猜测命令代替；
+- `src/core/doctor.ts` 的 runtime 候选和专属 deep probe；
+- Web、MCP、CLI 共用的 Provider-first 状态顺序：先选择 Provider/实例，再用实例资料生成可编辑建议，最后选择 delivery 和完成注册。
+
+### 3.5.1 实例发现与资料建议
+
+“可发现实例”和 `requiresInstance=true` 不等价。某个 family 可以允许选择 profile/Agent，但不强制每次注册都绑定；只有没有实例就无法精确路由时才设置 `requiresInstance=true`。
+
+如果 Provider 没有稳定实例概念，设置 `requiresInstance=false`，不要虚构实例。
+
+当前 Web、MCP 和注册流程实际通过 `src/core/dispatcher/provider-instances.ts` 的 `supportsProviderInstances()`、`getProviderInstanceTerm()` 和 `discoverProviderInstances()` 消费实例。Catalog 的 `listInstances`/`validateInstance` 不能替代这条实际入口。新增实例型 Provider 时必须：
+
+- 返回稳定、非空、去重的 `id` 和可显示 `name`；
+- 把 `id` 映射到真实 Provider selector 参数，不使用工作区、进程或 VOKO Agent ID冒充；
+- 在选择和最终完成前复核实例仍存在，过期实例 fail-closed；
+- 只从受信本机配置读取资料建议。头像必须校验目录边界、大小和真实图片类型，再走正常上传/存储路径，不能把本机路径直接持久化为公开 URL。
+
+实例枚举和资料读取必须分阶段：第一步只枚举当前 Provider 的实例，不扫描所有类型的全部资料；用户选中实例、进入第二步后，才可调用 `src/core/dispatcher/provider-instance-metadata.js` 读取该实例的资料。新增解析器时遵守：
+
+- 只支持文档可证明且可定位到所选实例的文件；不根据最近进程、最近会话或全盘搜索猜测；
+- 单文件读取必须有明确大小上限，读取失败返回空建议，不能阻断仍可正常注册的 Provider；
+- 只提取显式身份字段或 frontmatter，例如名称、描述和标签；不得把 `SOUL.md`、系统提示词、正文指令或会话内容作为公开资料；
+- 识别并忽略未填写的模板占位符；资料建议覆盖实例枚举中的同名字段，但最终仍由用户编辑确认；
+- Provider 自带头像只能作为经过校验的 `iconCandidate`；注册页通用机器人头像仅为显示默认值，不生成虚假的上传记录或公开 URL。
+
+当前受控解析包括：OpenClaw 所选 workspace 的 `IDENTITY.md`，以及 Claude Code、GitHub Copilot、OpenCode 所选 Agent Markdown 的 frontmatter。WorkBuddy、千问办公和百度搭子继续使用各自发现器返回的受控清单资料。其他 Provider 没有可靠资料格式时只显示实例名称，不臆造解析规则。
+
+### 3.6 注册后的 Provider 绑定
+
+注册完成后，`backend_type` 和非空 `backend_instance_id` 是持久路由身份，不是普通可编辑资料。所有更新入口必须经过 `AgentProviderBindingService` / `AgentDeliveryPolicyStore`：
+
+- 已注册 Agent 的 backend family 不可更换；
+- 已绑定的非空实例不可改绑；
+- 旧的未绑定 Agent 只能通过 `bind_agent_instance_once` 对当前 family 的存活实例原子补绑一次；
+- `delivery_modes` 可以按策略更新，但必须保留 Pull并使受影响的路由、Session和状态缓存失效。
+
+不要在 Web、MCP、CLI 或数据库旁路中直接改写这些字段。
 
 ## 4. Session、Conversation 与精确路由
 
@@ -166,6 +218,8 @@ messageId / replyToRouteId
 - VOKO或Provider重启后，持久化 binding仍应恢复；内存缓存只用于加速。
 - Agent可见接口只交换VOKO `conversationId`：发送结果、Pull和历史消息均返回可空ID；`get_chat_history`可按ID过滤；`list_routing_conversations`用于重启后发现。不得向这些接口暴露Provider原生Session ID。
 - 新增字段必须保持兼容：未传`conversationId`继续走频道级旧流程，旧消息返回`conversationId: null`；只有显式传入非法或越权ID时才fail-closed。
+- `providerBinding.sourceScope` 必须隔离普通 Conversation、可信 Owner 和 A2A；transport 不能把一个 scope 的 binding 当成另一个 scope 的“最近会话”。
+- `strictSessionRoute=true` 时必须校验 binding version、family、instance、adapter、`nativeSessionNamespace` 和 `restoreCompatibilityGroup`。任一不兼容都返回 `not_delivered`，不得创建新 Session 或换普通 transport。
 
 Provider原生 Session失效时，将 binding标记 stale。本条消息是否允许创建新 Session取决于投递是否确定未发生，不能无条件重试。
 
@@ -174,6 +228,16 @@ Provider原生 Session失效时，将 binding标记 stale。本条消息是否�
 使用现有 `ProviderSessionCoordinator` 和 `ProviderConversationBindingStore`，不要为新 Provider 建第二套 binding 表或内存“最近会话”。Coordinator 负责 caller-origin / VOKO-managed binding 的解析、pending 预留、版本校验、激活、stale/discard 和配置变化失效；transport 只接收已经解析的 binding，恢复或创建原生 Session，并在 receipt 中返回实际 `nativeSessionId`、`providerInstanceId`、`deliveryMode` 和 `adapterType`。
 
 同一 adapter 的短暂断线可以继续使用 binding；跨 ACP、Attach、CLI、HTTP、WS 切换时，只有明确证明能恢复同一个原生 Session 才能复用，否则必须创建独立 binding 或留在 Pull。caller-origin binding 不因后台 availability 或自动 fallback 改写。并发创建必须通过 bindingVersion / pending 事务收敛，不能由 transport 直接写表绕过 Coordinator。
+
+### 4.2 A2A、E2EE 与 Owner 的隔离执行
+
+A2A、E2EE Agent peer、Owner Link 和 Owner Chat 是隔离执行来源，不复用普通访客回复队列，也不允许按常规通道自由降级。新增 Provider若要承载这些来源，必须保留 `turnId` 和来源 scope，并满足调用方给出的精确 adapter/Session约束：
+
+- A2A 必须有已验证 principal scope、session scope、protocol context 和 binding generation；
+- A2A transport 必须在 Catalog 明确声明兼容的 `exactSession`，并实现无副作用 `canRestoreExactSession()`；
+- 隔离回合的迟到回复或缺少 `turnId` 的回复必须丢弃，不能消费普通访客的排队上下文；
+- 精确恢复失败时任务留在原来源队列等待恢复，不转成普通新会话；
+- Owner Chat 只能走显式的 Owner native I/O bridge，普通 visitor `push()` 不能成为其后备通道。
 
 ## 5. 投递与诊断实现边界
 
@@ -187,6 +251,20 @@ Provider原生 Session失效时，将 binding标记 stale。本条消息是否�
 - `not_delivered`、`outcome_unknown` 和 `rejected` 的分类必须来自真实发送阶段，不能用统一的“失败”掩盖结果不确定性；
 - Pull-only 和后端能力诊断必须是只读的，不启动 Gateway、不调用模型、不改变 IM 心跳；
 - 新增或变更 `delivery_modes`、Provider 配置和 binding 时清理受影响的缓存，并覆盖 availability generation 和并发 Session 测试。
+
+### 5.1 附件投递
+
+`PushPayload.attachments` 中的附件是已解密但仍不可信的本机文件描述，包含绝对 `path`、`name`、`mediaType`、`size` 和 `sha256`。Provider不能直接信任路径或扩展名：
+
+- 优先复用 `src/core/dispatcher/provider-attachments.ts`；每次读取前验证绝对路径、普通文件、大小和 SHA-256；
+- CLI或只接受路径的 Provider使用每回合隔离 staging目录和安全文件名，完成、失败、超时或启动时清理过期目录；
+- ACP/HTTP按真实能力发送 image、embedded resource或resource link，不把“模型理解了内容”当作 transport投递成功条件；
+- receipt和终态事件返回 `attachmentDelivery`，分别描述 transport是否交付、是否确认访问、是否确认理解以及实际 mode；未知值保持 `null`，不猜测；
+- 文件发生变化、超过限制或无法验证时 fail-closed，不把附件静默降级成未经校验的本机路径。
+
+### 5.2 Provider 核心事件
+
+自定义 transport 应通过 `notifyProviderEvent()` 或等价的 `provider.event` 发出 `accepted`、`reply`、`completed`、`failed`、`status` 事件，并携带稳定的 `eventId`、精确 `providerId`、`agentId`、`messageId` / `turnId` 和终态标记。一个 turn 到达终态后不得再接受迟到的非状态事件；外部协议本身仍需使用持久 idempotency/CAS，不能把进程内 `ProviderEventGate` 当成跨重启的唯一去重机制。
 
 状态字段、`methods[]` 和 `voko doctor` 展示以行为矩阵为准；注册和操作者排障请链接到[统一注册与投递路由](provider-delivery-routing.md)。
 
@@ -202,6 +280,10 @@ Provider接入不是获得本机任意操作权限。必须：
 - `preflight`、Doctor、状态页和 `whoami` 都必须只读、无模型调用、无自动学习或改绑；
 - 旧异步回调使用 lifecycle epoch/turn claim隔离，Provider停止或超时后不得复活并发送回复；
 - 清理握手定时器、子进程、stream transport、文件监控和事件监听器。
+
+`sandboxPolicyId` 不是文案标签。复用已有 policy 前要证明五个维度和失败策略一致；新增 policy 要覆盖声明平台，并把真实版本、证据来源和验证日期写入受控验证记录。`voko doctor --deep` 可以做显式深度探测，但普通 preflight、状态页和每消息路由不得启动容器、模型或改写 Provider配置。
+
+Owner能力是额外的高权限契约。默认不声明 `owner`；只有 transport能证明支持的平台、`chat_only`/`workspace_write`执行范围、强制隔离、精确恢复、安全取消、可靠 `not_delivered` 和必要的 native I/O bridge 时才可 opt-in。Owner内容不得因为权限较高而绕过调用者身份、配置摘要、会话和终态检查。
 
 ## 7. `whoami` 与可信调用者身份
 
@@ -226,6 +308,9 @@ Provider family可以由注册类型准确确定，但同类型多 Agent时仍�
 - Windows/Linux/macOS入口解析；
 - 最小 PATH、NVM、`~/.local/bin`、WSL混合 PATH、wrapper/shim；
 - Doctor、注册预检和spawn使用相同入口。
+- `DISCOVERABLE_ADDITIONS` 能把新正式类型增量加入已有数据库，Catalog alias与backend alias归一一致；
+- 每个 transport的 sandbox policy在所有声明平台存在，版本探测只返回脱敏的规范化元数据；
+- `supportsLoopback`和`exactSession`均按transport显式测试，不能由helper默认值冒充能力。
 
 ### 生命周期与路由
 
@@ -237,6 +322,9 @@ Provider family可以由注册类型准确确定，但同类型多 Agent时仍�
 - VOKO重启、Provider重启后恢复；
 - 主通道终止后只回复一次，恢复后下一条重新升级；
 - 精确 Session不可恢复时转 Pull，不投递到最近 Session。
+- strict A2A binding的namespace、compatibility group和generation不匹配时不调用Provider；
+- 普通 Conversation、A2A、E2EE peer、Owner Link和Owner Chat的回复上下文互不消费；
+- Provider核心事件重复、终态后迟到和缺少精确turn关联时被拒绝。
 
 ### 结果和安全
 
@@ -246,6 +334,10 @@ Provider family可以由注册类型准确确定，但同类型多 Agent时仍�
 - 超时后子进程和监听器清理；
 - 访客文本不能注入命令、放开工具或读取项目；
 - 日志、Web、MCP、Doctor不泄露正文、Token、原生 Session或本机路径。
+- 附件绝对路径、大小、哈希、staging文件名和清理均通过；文件变化时fail-closed；
+- receipt不把“transport已交付”误报为“模型已访问/理解”；
+- 注册后backend family/已绑定instance不可更改，旧未绑定Agent只允许原子补绑一次；
+- Owner能力默认关闭，普通Provider不能进入Owner Chat后备路由。
 
 ### 消息类型和旁路
 
@@ -312,9 +404,14 @@ Provider 专属命令、版本、实例语义和已验证平台写入[兼容性�
 提交前逐项确认：
 
 - `src/core/dispatcher/provider-catalog.ts` 中 transport ID 唯一，所有 family 默认保留 `pull`，Pull-only family 不伪造 Push 可用性；
+- `exactSession`、`supportsLoopback`、`owner`和`capabilities`只声明已验证能力；helper默认值已逐项复核；
 - Provider 通过 `ProviderRuntimeRegistry` 接入 availability，`stopAll()` 后无重复监听，事件带精确 `providerId` 和 generation；
 - Dispatcher 的 `push`/`steer` 缓存、TTL、generation 和 `delivery_modes` 顺序测试通过，`outcome_unknown` 没有跨通道重投；
 - Session 由 `ProviderSessionCoordinator` 收敛，跨 transport 不传递不兼容 binding；
+- Provider family已按计划加入 `provider-modular-rollout.ts` 的 `shadow` / `enabled` 策略；未进入统一持久化时明确保留transport所有权，不模糊两套状态；
+- `agent-backend-types.ts`、`provider-instances.ts`、registration orchestrator、Doctor、Web/MCP/CLI注册入口和实际spawn使用同一个canonical family与runtime request；
+- 注册后的backend/instance绑定锁定，实例发现和资料建议不暴露或持久化不可信本机路径；
 - `voko doctor --json` / `--deep`、runtime snapshot 和 Web 状态能区分 IM 在线、自动接收能力和 Pull-only；
 - Windows npm shim、Unix shebang、缺失命令、路径变化和 ACP 握手失败均有 Resolver/Adapter 测试；
+- 文字、图片和文件覆盖完整附件校验、隔离staging、receipt语义与失败清理；A2A/E2EE/Owner隔离路由覆盖精确Session和迟到回复；
 - 不实现或调用已删除的旧 handler/旧 factory 入口，`npm run test:ci`、`npm run test:e2e` 和 `npm run github:preflight` 均通过。

@@ -31,6 +31,31 @@ test('worker normalization keeps only versioned route metadata outside visible c
   assert.equal(JSON.stringify(normalized.content).includes('route-a'), false);
 });
 
+test('worker normalization removes only the IM transport type from an E2EE envelope', () => {
+  const adapter = Object.create(VokoWorkerAdapter.prototype);
+  const envelope = { version: 'voko.e2ee/2', suite: 'suite', messageId: 'message',
+    conversationId: 'conversation', channelId: 'sender', agentDid: 'did:wba:agent',
+    senderDeviceId: 'sender-device', senderKeyId: 'sender-key', recipientDeviceId: 'recipient-device',
+    recipientKeyId: 'recipient-key', createdAtMs: 1, contentKind: 'text', enc: 'enc',
+    ciphertext: 'ciphertext', signature: 'signature' };
+  const normalized = adapter._normalizeMessage({ fromUid: 'sender', channelId: 'sender', contentType: 13,
+    content: { contentObj: { type: 13, ...envelope } } });
+  assert.deepEqual(JSON.parse(normalized.content), envelope);
+  assert.equal(normalized.contentType, 13);
+});
+
+test('worker normalization accepts the strict legacy guest E2EE content wrapper', () => {
+  const adapter = Object.create(VokoWorkerAdapter.prototype);
+  const envelope = { version: 'voko.e2ee/2', suite: 'suite', messageId: 'message',
+    conversationId: 'conversation', channelId: 'sender', agentDid: 'did:wba:agent',
+    senderDeviceId: 'sender-device', senderKeyId: 'sender-key', recipientDeviceId: 'recipient-device',
+    recipientKeyId: 'recipient-key', createdAtMs: 1, contentKind: 'text', enc: 'enc',
+    ciphertext: 'ciphertext', signature: 'signature' };
+  const normalized = adapter._normalizeMessage({ fromUid: 'sender', channelId: 'sender', contentType: 13,
+    content: { contentObj: { type: 13, content: JSON.stringify(envelope) } } });
+  assert.deepEqual(JSON.parse(normalized.content), envelope);
+});
+
 test('client text, image and file helpers encode route metadata', async () => {
   const client = Object.create(VokoIMClient.prototype);
   const payloads = [];

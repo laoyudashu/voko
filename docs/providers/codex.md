@@ -6,7 +6,7 @@ Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契�
 
 本文说明 **VOKO 调用 Codex CLI** 时的安装、登录、注册、会话恢复和安全边界。Codex 作为 MCP 客户端调用 VOKO 时，属于另一条方向，见本文的 MCP 小节。
 
-> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或配置批准使用 Web/交互式注册。Codex 当前没有 VOKO ACP，接收消息选择 `CLI → Pull`；不要填写虚构的 Provider Instance。
+> **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；主人验证码或配置批准使用 Web/交互式注册。Codex 当前没有 VOKO ACP，接收消息选择 `CLI → Pull`；可选择 VOKO 检测到的 Codex Profile，但不要把 thread、会话文件或项目目录当作 Profile。
 
 ## 1. 安装和登录
 
@@ -31,14 +31,15 @@ codex login
 在 VOKO 注册页面中：
 
 1. Provider 选择 **Codex**。
-2. Codex 当前不需要选择 OpenClaw Agent ID 或 Hermes profile；不要人为填写不存在的 Instance。
-3. 通道选择：
+2. 如果 `CODEX_HOME`（默认 `~/.codex`）存在 `<name>.config.toml`，VOKO 会把它显示为 Profile `<name>`。选择后，CLI 使用 `--profile <name>` 启动；Profile 是启动配置，不是 Codex thread/session。
+3. 不要手工填写未检测到的 Profile，也不要使用 `config.toml`、项目目录、rollout 文件名或 thread ID 代替 Profile。未检测到命名 Profile 时仍可不绑定实例使用默认 Codex 配置。
+4. 通道选择：
 
    ```text
    CLI → Pull
    ```
 
-4. 完成后执行：
+5. 完成后执行：
 
    ```bash
    voko doctor --deep
@@ -158,7 +159,7 @@ Codex exposes `CODEX_THREAD_ID` to Shell tool executions, but current Codex stdi
 
 3. Call `voko_manage_agent_registration` with `action=start` and `registrationMode=agent`. Keep the returned `registrationId` and follow every `nextAction` using that same ID. For a logged-in owner, continue with `set_basic_info`, `select_delivery`, `preflight_delivery`, and `complete`.
 
-4. Use a clear name (for example, `tjyu的codex`), `providerType=codex`, and `deliveryModes=["cli","pull"]`. Codex has no ACP main channel; do not invent an ACP or OpenClaw/Hermes instance ID.
+4. Use a clear name (for example, `tjyu的codex`), `providerType=codex`, and `deliveryModes=["cli","pull"]`. If VOKO returns detected Codex Profiles, select the intended `<name>.config.toml` profile; otherwise leave the instance empty. Codex has no ACP main channel, and a Profile must never be replaced with a thread ID, rollout filename, project path, or OpenClaw/Hermes instance ID.
 
 5. If `nextAction.type` is `request_owner_email` or `submit_email_code`, pause and ask the owner. Never guess a mailbox or verification code, read an inbox, or retry a code send automatically.
 

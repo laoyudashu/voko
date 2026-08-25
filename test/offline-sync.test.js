@@ -82,15 +82,15 @@ describe('offline route metadata decoding', () => {
 
 describe('E2EE offline rejection classification', () => {
   it('quarantines permanently invalid ciphertext instead of poisoning the channel cursor', () => {
-    for (const code of ['E2EE_ENVELOPE_INVALID', 'E2EE_ROUTE_REJECTED', 'E2EE_SCOPE_REJECTED',
-      'E2EE_SENDER_DEVICE_CHANGED', 'E2EE_MESSAGE_ID_CONFLICT']) {
+    for (const code of ['E2EE_V2_ENVELOPE_INVALID', 'E2EE_V2_ROUTE_MISMATCH',
+      'E2EE_V2_SENDER_KEY_MISMATCH', 'E2EE_V2_MESSAGE_ID_CONFLICT']) {
       assert.equal(isPermanentE2eeRejection(code), true);
     }
   });
 
   it('retains transient runtime failures for retry', () => {
-    for (const code of ['E2EE_CANARY_DISABLED', 'E2EE_CANARY_SESSION_LOCKED',
-      'E2EE_PROVIDER_EXECUTION_UNAVAILABLE', 'E2EE_ENDPOINT_EXITED_1']) {
+    for (const code of ['E2EE_V2_DISABLED', 'E2EE_V2_DIRECTORY_UNAVAILABLE',
+      'E2EE_V2_PROVIDER_DELIVERY_FAILED', 'E2EE_V2_REPLY_NOT_DELIVERED']) {
       assert.equal(isPermanentE2eeRejection(code), false);
     }
   });
@@ -114,6 +114,15 @@ describe('Payload 解码', () => {
     const { content, contentType } = decodePayload(PAYLOAD_VISITOR);
     assert.ok(content.includes('问题有点多'));
     assert.equal(contentType, 1);
+  });
+
+  it('还原消息同步中扁平化的 type 13 E2EE envelope', () => {
+    const envelope={version:'voko.e2ee/2',suite:'X25519-HKDF-SHA256-CHACHA20POLY1305',
+      messageId:'message-1',conversationId:'conversation-1',channelId:'guest-1',agentDid:'did:wba:agent',
+      senderDeviceId:'sender-device',senderKeyId:'sender-key',recipientDeviceId:'recipient-device',
+      recipientKeyId:'recipient-key',createdAtMs:1,contentKind:'text',enc:'enc',ciphertext:'ciphertext',signature:'signature'};
+    const payload=Buffer.from(JSON.stringify({...envelope,type:13})).toString('base64');
+    assert.deepEqual(decodeOfflinePayload(payload),{content:JSON.stringify(envelope),type:13,_voko:null});
   });
 
   it('空 payload 返回默认值', () => {

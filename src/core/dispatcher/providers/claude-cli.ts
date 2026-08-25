@@ -53,6 +53,7 @@ class ClaudeCliProvider extends CliAdapter {
         ...(sessionId ? (isNew ? ['--session-id', sessionId] : ['--resume', sessionId]) : []),
         '--permission-mode', 'plan',
       ],
+      instanceArgs: (instanceId: string) => ({ args: ['--agent', instanceId] }),
       sessionIdFromLine: (line: string) => {
         try {
           const event = JSON.parse(line);

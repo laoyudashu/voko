@@ -55,8 +55,13 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
   try {
     const decoded = JSON.parse(Buffer.from(payload, 'base64').toString()) as DecodedOfflinePayload;
     const metadata = decoded?._voko;
+    let content=typeof decoded?.content === 'string' ? decoded.content : undefined;
+    if(!content&&decoded?.type===13&&(decoded as any)?.version==='voko.e2ee/2'){
+      const {type: _type,_voko: _metadata,...envelope}=decoded as any;
+      content=JSON.stringify(envelope);
+    }
     return {
-      content: typeof decoded?.content === 'string' ? decoded.content : undefined,
+      content,
       type: typeof decoded?.type === 'number' ? decoded.type : undefined,
       _voko: metadata?.protocolVersion === 1
         ? {
@@ -116,11 +121,10 @@ function errorMessage(error: unknown): string {
 }
 
 const PERMANENT_E2EE_REJECTIONS = new Set([
-  'E2EE_ENVELOPE_INVALID',
-  'E2EE_ROUTE_REJECTED',
-  'E2EE_SCOPE_REJECTED',
-  'E2EE_SENDER_DEVICE_CHANGED',
-  'E2EE_MESSAGE_ID_CONFLICT',
+  'E2EE_V2_ENVELOPE_INVALID',
+  'E2EE_V2_ROUTE_MISMATCH',
+  'E2EE_V2_SENDER_KEY_MISMATCH',
+  'E2EE_V2_MESSAGE_ID_CONFLICT',
 ]);
 
 function isPermanentE2eeRejection(code: unknown): boolean {

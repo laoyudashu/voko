@@ -28,7 +28,7 @@ test('E2EE web release is deterministic and pins protocol, source and every asse
     const second = exportRelease(options);
     assert.deepEqual(second, first);
     assert.deepEqual(readFileSync(join(f.outputDir, 'voko-e2ee-manifest.json')), firstBytes);
-    assert.equal(first.protocolVersion, 'voko.e2ee/1');
+    assert.equal(first.protocolVersion, 'voko.e2ee/2');
     assert.equal(first.contentType, 13);
     assert.equal(Object.keys(first.assets).length, 2);
     assert.deepEqual(verifyRelease(f.outputDir), first);

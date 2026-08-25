@@ -150,13 +150,26 @@ If both are supplied, the verified reply target takes precedence. A successful r
 }
 ```
 
+Private IM sends also report the selected transport security without adding a required input:
+
+```json
+{
+  "securityMode": "e2ee",
+  "securityReason": "recipient_supported",
+  "encryptedDeviceCount": 2,
+  "deliveryState": "delivered"
+}
+```
+
+`securityMode` is `e2ee` or `plaintext`; `deliveryState` is `delivered`, `queued`, or `partial`. A never-encrypted peer may use plaintext when it is confirmed unsupported or temporarily unavailable. A Conversation that has already used E2EE fails closed instead of silently downgrading. Groups do not enter this private-message decision path.
+
 `conversationDisposition` is `created`, `reused`, or `null`. A null Conversation means the compatible channel-level send succeeded without a precise Provider Session association.
 
 ## Upload and send a local attachment
 
 ### `voko_upload_and_send_file`
 
-The tool accepts the same optional `conversationId` and `replyToMessageId`. If `message` is supplied with the attachment, the text and attachment are sent through the same selected Conversation. Its response includes `messageId`, optional `textMessageId`, and the same nullable Conversation fields as `voko_send_message`.
+The tool accepts the same optional `conversationId` and `replyToMessageId`. If `message` is supplied with the attachment, the text and attachment use the same selected Conversation, recipient-device snapshot, and security mode. Its response includes `messageId`, optional `textMessageId`, the same nullable Conversation fields as `voko_send_message`, and the security fields above.
 
 Do not use `voko_send_message` to upload a local path. It may send an image or file that already has a public URL; local files must use `voko_upload_and_send_file`.
 

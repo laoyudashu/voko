@@ -21,10 +21,10 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   let uploaded;
   let updated;
   const handlers = {
-    get_agent_profile: async () => ({ success: true, data: { agentId: 'gym', agentName: 'Gym', iconUrl: 'https://files.example/old.png' } }),
+    get_agent_profile: async () => ({ success: true, data: { agentId: 'gym', agentName: 'Gym', backendType: 'workbuddy', backendInstanceId: null, iconUrl: 'https://files.example/old.png' } }),
     update_agent_profile: async (params) => { updated = params; return { success: true }; },
   };
-  const db = { prepare: () => ({ get: () => null, all: () => [] }) };
+  const db = { prepare: (sql) => ({ get: () => sql.includes('backend_instance_id FROM agents') ? { backend_type: 'workbuddy', backend_instance_id: 'tcm-consultant' } : null, all: () => [] }) };
   const app = express();
   app.use(express.raw({ type: 'multipart/form-data', limit: '6mb' }));
   app.use((req, _res, next) => { if (Buffer.isBuffer(req.body)) req.rawBody = req.body; next(); });
@@ -62,16 +62,48 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   assert.match(html, /form\.getAttribute\("action"\)\|\|location\.href/);
   assert.match(html, /id="voko-auth-email"/);
   assert.doesNotMatch(html, /window\.open\("\/reauth"/);
+  assert.strictEqual((html.match(/class="voko-auth-otp-cell(?: active)?"/g) || []).length, 6);
+  assert.match(html, /id="voko-auth-code" class="voko-auth-otp-input"[^>]*maxlength="6"[^>]*inputmode="numeric"[^>]*autocomplete="one-time-code"/);
+  assert.match(html, /code\.value\.replace\(\/\\D\/g,""\)\.slice\(0,6\)/);
+  assert.match(html, /value\.length===6&&value!==lastSubmittedCode/);
+  assert.match(html, /verify\.click\(\)/);
   assert.match(html, /dlg\.showModal\(\);code\.focus\(\)/);
   assert.match(html, /file\.size>500\*1024/);
   assert.match(html, /id="bt-instance-field"/);
+  assert.match(html, /id="bt-instance-field" style="display:block;/);
   assert.match(html, /id="bt-instance"/);
+  assert.match(html, /id="bt-instance"[^>]*disabled><option value="">正在加载可用实例…<\/option>/);
+  assert.match(html, /id="bt-instance-value" name="backendInstanceId" value="tcm-consultant"/);
+  assert.doesNotMatch(html, /id="bt-bind-once"/);
+  assert.match(html, /isel\.disabled=!!INITIAL_INSTANCE/);
+  const webSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  assert.match(webSource, /id="bt-bind-once" style="flex:none">绑定<\/button>/);
+  assert.doesNotMatch(webSource, /id="bt-bind-once">绑定一次<\/button>/);
+  assert.match(html, /id="bt-readonly"[^>]*readonly[^>]*background:#f2f4f7;color:#98a2b3;cursor:not-allowed/);
+  assert.doesNotMatch(html, /注册完成后类型永久锁定/);
+  assert.match(webSource, /display:flex;align-items:flex-end;gap:8px/);
+  assert.match(webSource, /id="bt-instance" style="flex:1;min-width:0;margin:3px 0 0"/);
+  assert.match(html, /class="edit-profile-details"[^>]*>[\s\S]*for="short_description"[\s\S]*for="tags"[\s\S]*id="agent-icon-button"/);
+  assert.match(html, /class="edit-backend-details"[^>]*>[\s\S]*id="bt-instance-field"[\s\S]*class="edit-contact-details"[^>]*>[\s\S]*for="contact_phone"[\s\S]*for="address"/);
+  assert.match(html, /class="edit-contact-details" style="margin-top:auto"/);
+  assert.match(html, /id="bt-instance-label">Expert<\/label>/);
+  assert.doesNotMatch(html, /需要绑定本机已检测到的实例/);
+  assert.doesNotMatch(html, /id="bt-instance-hint"/);
   assert.match(html, /INITIAL_TYPE=/);
   assert.match(html, /ivalue\.value="";bt\.value=opt\.getAttribute/);
   const backendScript = html.match(/<script>\(function\(\)\{var w=document\.getElementById\("bt-wrapper"\)[\s\S]*?<\/script>/)?.[0]
     .replace(/^<script>/, '').replace(/<\/script>$/, '');
   assert.ok(backendScript);
   assert.doesNotThrow(() => new Function(backendScript));
+
+  const instanceResponse = await previousFetch(`${base}/api/agent-backend-types?agentId=gym`);
+  const instancePayload = await instanceResponse.json();
+  const workbuddy = instancePayload.types.find((item) => item.value === 'workbuddy');
+  assert.deepEqual(workbuddy.instances, [{ id: 'tcm-consultant', name: 'tcm-consultant' }]);
+  assert.equal(workbuddy.currentInstanceId, 'tcm-consultant');
+  assert.equal(workbuddy.instanceTerm, 'Expert');
+  assert.match(webSource, /currentInstances=discoverProviderInstances\(currentType\)/);
+  assert.doesNotMatch(webSource, /inspectEnvironment\(\)\.detected\s*\.find/);
 
   const boundary = '----voko-icon-test';
   const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('test-image')]);

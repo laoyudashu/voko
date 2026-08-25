@@ -1,10 +1,12 @@
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
 const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const deliveryBus = require('../../lite-bus');
 import type { ChildProcess } from 'child_process';
@@ -726,6 +728,7 @@ class HermesHttpProvider extends PushProvider {
 
   /** 长连接通道：路由优先级高于 CLI 兜底（数大优先）。 */
   get priority() { return 10; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   /** 归属判断：backend_type 为 hermes 的 agent 归本 provider。 */
   match(_agentId: string, meta?: AgentMeta | null): boolean {
@@ -792,10 +795,21 @@ class HermesHttpProvider extends PushProvider {
         adapterType: 'hermes-http', expectedVersion: payload.providerBinding?.bindingVersion ?? 0,
       });
     }
-    const prompt = buildConversationDeliveryPrompt(this.db, payload, canResumeBinding);
-    await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
-    return { nativeSessionId: sessionKey, providerInstanceId: profileId,
-      deliveryMode: 'http', adapterType: 'hermes-http' };
+    const providerTurnId = String(turnId || messageId || `hermes-http-${Date.now()}`);
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId: providerTurnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const prompt = appendProviderAttachmentBoundary(
+      buildConversationDeliveryPrompt(this.db, effectivePayload, canResumeBinding), effectivePayload);
+    try {
+      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+      return { nativeSessionId: sessionKey, providerInstanceId: profileId,
+        deliveryMode: 'http', adapterType: 'hermes-http',
+        attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
+          attachmentAccessed: null, contentUnderstood: null,
+          mode: staged.attachments.length ? 'staged_path' : 'none' } };
+    } finally {
+      staged.cleanup();
+    }
   }
 
   async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

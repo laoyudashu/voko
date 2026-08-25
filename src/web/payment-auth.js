@@ -13,19 +13,32 @@ const { Router } = require('express');
 const { SUPPORTED_LOCALES, getClientBundle } = require('../core/i18n');
 const { renderLanguageFooter } = require('./language-switcher');
 const { renderSystemFooter } = require('./footer');
-const { UI_CONTROL_CSS, copyControlScript } = require('./ui-controls');
+const { UI_CONTROL_CSS, copyControlScript, messageDialog } = require('./ui-controls');
 
 // ═══════════════════════════════════════════════════════════════
 //  CSS
 // ═══════════════════════════════════════════════════════════════
 
-const CSS = `@charset "UTF-8";*{box-sizing:border-box}body{font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC','Hiragino Sans GB',sans-serif;background:#f5f7fa;color:#1a1a2e;margin:0;padding:20px;font-size:18px;line-height:1.7;max-width:1100px;margin-left:auto;margin-right:auto;-webkit-font-smoothing:antialiased}a{color:#1a73e8;font-weight:600;padding:4px 2px;display:inline-block}h1{font-size:24px;border-bottom:3px solid #1a73e8;padding-bottom:8px;margin:0 0 10px 0}h2{font-size:20px;margin:18px 0 8px 0;color:#1a1a2e}h3{font-size:17px;margin:0 0 4px 0;color:#1a73e8}nav{font-size:14px;color:#666;margin-bottom:10px;padding:6px 0;border-bottom:1px solid #ddd}.table-wrap{width:100%;overflow-x:auto;margin:6px 0 12px 0}table{width:100%;min-width:500px;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.06)}th,td{padding:10px 12px;text-align:left;border:1px solid #e0e0e0;font-size:15px;white-space:nowrap}th{background:#e8f0fe;font-weight:700;font-size:14px}tr:nth-child(even){background:#fafbfc}label{display:block;margin-top:10px;font-weight:700;font-size:15px;color:#1a1a2e}input,select,textarea{width:100%;max-width:460px;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;outline:none}input:focus,select:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12)}button,.btn{display:inline-block;margin-top:10px;padding:10px 22px;min-width:100px;font-size:16px;font-weight:700;cursor:pointer;text-align:center;font-family:inherit;background:#1a73e8;color:#fff;border:2px solid #1557b0;border-radius:6px;text-decoration:none}button:hover{background:#1557b0}.btn-success{background:#0f9d58;border-color:#0b8043}.btn-success:hover{background:#0b8043}.btn-danger{background:#d93025;border-color:#b71c1c}.btn-danger:hover{background:#b71c1c}.error{color:#d93025;font-weight:600}.meta{color:#888;font-size:14px}.card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,0.04)}.btn-xs{padding:8px 14px;min-width:auto;min-height:36px;font-size:14px;font-weight:700;display:inline-block;margin:0;line-height:1.4;border-radius:4px;text-decoration:none}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}.form-grid .full{grid-column:1/-1}@media(max-width:700px){.form-grid{grid-template-columns:1fr}}.voko-select{position:relative;width:100%;max-width:460px}.voko-select-trigger{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;cursor:pointer;user-select:none}.voko-select-trigger:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12);outline:none}.voko-select-arrow{font-size:11px;color:#888;margin-left:8px}.voko-select-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:100;margin-top:4px;background:#fff;border:2px solid #b0b0b0;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden}.voko-select-search{width:100%;padding:10px 12px;margin:0;background:#fff;color:#1a1a2e;border:none;border-bottom:1px solid #e0e0e0;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box}.voko-select-options{max-height:220px;overflow-y:auto;padding:4px 0}.voko-option{padding:9px 14px;font-size:15px;color:#1a1a2e;cursor:pointer}.voko-option:hover{background:#e8f0fe}.voko-option-empty{color:#999!important;cursor:default}.field-error-text{display:none;color:#d93025;font-size:13px;margin-top:2px}.field-error-text.show{display:block}input.error{border-color:#d93025!important;box-shadow:0 0 0 3px rgba(217,48,37,0.12)!important}`;
+const CSS = `@charset "UTF-8";*{box-sizing:border-box}body{font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC','Hiragino Sans GB',sans-serif;background:#f5f7fa;color:#1a1a2e;margin:0;padding:20px;font-size:18px;line-height:1.7;max-width:1100px;margin-left:auto;margin-right:auto;-webkit-font-smoothing:antialiased}a{color:#1a73e8;font-weight:600;padding:4px 2px;display:inline-block}h1{font-size:24px;border-bottom:3px solid #1a73e8;padding-bottom:8px;margin:0 0 10px 0}h2{font-size:20px;margin:18px 0 8px 0;color:#1a1a2e}h3{font-size:17px;margin:0 0 4px 0;color:#1a73e8}nav{font-size:14px;color:#666;margin-bottom:10px;padding:6px 0;border-bottom:1px solid #ddd}.table-wrap{width:100%;overflow-x:auto;margin:6px 0 12px 0}table{width:100%;min-width:500px;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,0.06)}th,td{padding:10px 12px;text-align:left;border:1px solid #e0e0e0;font-size:15px;white-space:nowrap}th{background:#e8f0fe;font-weight:700;font-size:14px}tr:nth-child(even){background:#fafbfc}label{display:block;margin-top:10px;font-weight:700;font-size:15px;color:#1a1a2e}input,select,textarea{width:100%;max-width:460px;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;outline:none}input:focus,select:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12)}button,.btn{display:inline-block;margin-top:10px;padding:10px 22px;min-width:100px;font-size:16px;font-weight:700;cursor:pointer;text-align:center;font-family:inherit;background:#1a73e8;color:#fff;border:2px solid #1557b0;border-radius:6px;text-decoration:none}button:hover{background:#1557b0}.btn-success{background:#0f9d58;border-color:#0b8043}.btn-success:hover{background:#0b8043}button:disabled,.btn-success:disabled{background:#e5e7eb;border-color:#cbd0d8;color:#8a94a3;cursor:not-allowed}.btn-danger{background:#d93025;border-color:#b71c1c}.btn-danger:hover{background:#b71c1c}.error{color:#d93025;font-weight:600}.meta{color:#888;font-size:14px}.card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,0.04)}.fee-notice{background:#f7faff;border-color:#c8daf5}.fee-notice h2{margin:0 0 8px;font-size:18px}.fee-notice h2:not(:first-child){margin-top:14px;padding-top:12px;border-top:1px solid #dce7f7}.fee-notice p{margin:5px 0;font-size:15px}.fee-notice .fee-detail{color:#5f6368;font-size:14px;padding-left:1.25em}.payment-card-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.payment-card-row select{flex:1 1 320px;margin-top:3px}.payment-card-row button{flex:0 0 auto;margin-top:3px}.btn-xs{padding:8px 14px;min-width:auto;min-height:36px;font-size:14px;font-weight:700;display:inline-block;margin:0;line-height:1.4;border-radius:4px;text-decoration:none}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}.form-grid .full{grid-column:1/-1}@media(max-width:700px){.form-grid{grid-template-columns:1fr}}.voko-select{position:relative;width:100%;max-width:460px}.voko-select-trigger{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;margin-top:3px;background:#fff;color:#1a1a2e;border:2px solid #b0b0b0;border-radius:6px;font-size:16px;font-family:inherit;cursor:pointer;user-select:none}.voko-select-trigger:focus{border-color:#1a73e8;box-shadow:0 0 0 3px rgba(26,115,232,0.12);outline:none}.voko-select-arrow{font-size:11px;color:#888;margin-left:8px}.voko-select-dropdown{display:none;position:absolute;top:100%;left:0;right:0;z-index:100;margin-top:4px;background:#fff;border:2px solid #b0b0b0;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden}.voko-select-search{width:100%;padding:10px 12px;margin:0;background:#fff;color:#1a1a2e;border:none;border-bottom:1px solid #e0e0e0;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box}.voko-select-options{max-height:220px;overflow-y:auto;padding:4px 0}.voko-option{padding:9px 14px;font-size:15px;color:#1a1a2e;cursor:pointer}.voko-option:hover{background:#e8f0fe}.voko-option-empty{color:#999!important;cursor:default}.field-error-text{display:none;color:#d93025;font-size:13px;margin-top:2px}.field-error-text.show{display:block}input.error{border-color:#d93025!important;box-shadow:0 0 0 3px rgba(217,48,37,0.12)!important}`;
 
 // ═══════════════════════════════════════════════════════════════
 //  工具函数
 // ═══════════════════════════════════════════════════════════════
 
 function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+
+function feeDisplay(value, fallback) {
+  const parsed = Number(value);
+  const rate = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback;
+  const compact = number => String(Number(number.toFixed(2)));
+  return { percent: compact(rate * 100), fee: compact(rate * 100), net: compact(100 - rate * 100) };
+}
+
+function maskOwnerName(value) {
+  const chars = Array.from(String(value || '').trim());
+  if (!chars.length) return '';
+  return chars[0] + '*'.repeat(Math.max(1, chars.length - 1));
+}
 
 function page(title,body,opt={},tFn,locale){
   const t=tFn||(k=>k);
@@ -39,7 +52,7 @@ function page(title,body,opt={},tFn,locale){
   const h1=ha?'<h1 style="display:flex;justify-content:space-between;align-items:center"><span>'+esc(title)+st+'</span>'+ha+'</h1>':'<h1>'+esc(title)+st+'</h1>';
   let footer=opt.footer||'';
   if(!footer.includes('data-voko-language-switcher'))footer+=renderLanguageFooter(loc);
-  footer+=copyControlScript();
+  footer+=messageDialog(esc,t('common.toast.ok'))+copyControlScript();
   const lang=loc==='en'?'en':(loc==='ja'?'ja':'zh-CN');
   return '<!DOCTYPE html>\n<html lang="'+lang+'">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<link rel="icon" href="/favicon.png">\n<title>VOKO — '+esc(title)+'</title>\n<style>'+CSS+'</style>\n'+i18nBoot+'\n</head>\n<body>\n<nav role="navigation" aria-label="'+esc(t('common.nav.aria_label'))+'">'+nav+'</nav>\n'+h1+'\n<main aria-label="'+esc(title)+'">'+msg+body+'</main>'+footer+jd+'\n</body>\n</html>'
 }
@@ -86,6 +99,16 @@ function bankSelectScript(tFn) {
 
 function createPaymentAuthRouter(handlers, db) {
   const R = Router();
+
+  function pricingReturnPath(value, agentId) {
+    const path = String(value || '');
+    const expected = '/agents/' + encodeURIComponent(agentId) + '/pricing';
+    const queryIndex = path.indexOf('?');
+    const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
+    if (pathname !== expected) return '';
+    const params = new URLSearchParams(queryIndex === -1 ? '' : path.slice(queryIndex + 1));
+    return params.get('mode') === 'timed' ? expected + '?mode=timed' : expected;
+  }
 
   function currentOwnerEmail() {
     try {
@@ -162,7 +185,7 @@ function createPaymentAuthRouter(handlers, db) {
         'function validateBankCard(){var v=document.getElementById("pb").value.trim();if(v&&!/^\\d{16,19}$/.test(v)){showError("pb");return false}clearError("pb");return true}' +
         'function validatePhone(){var v=document.getElementById("pp").value.trim();if(v&&!/^1\\d{10}$/.test(v)){showError("pp");return false}clearError("pp");return true}' +
         'function validateForm(){var ok=true;var bc=document.getElementById("bankCode"),bn=document.getElementById("bankName");' +
-        'if(!bc.value||!bn.value){alert(V.bank_required);return false}' +
+        'if(!bc.value||!bn.value){showVokoMessage(V.bank_required);return false}' +
         'if(!validateIdCard())ok=false;' +
         'if(!validateBankCard())ok=false;' +
         'if(!validatePhone())ok=false;' +
@@ -223,22 +246,33 @@ function createPaymentAuthRouter(handlers, db) {
   R.get('/agents/:agentId/payment-auth', (req, res) => {
     const T = req.t, L = k => esc(T(k));
     const ownerEmail = currentOwnerEmail();
-    const agent = db && ownerEmail ? db.prepare('SELECT agent_id, agent_name, payment_auth_id FROM agents WHERE agent_id=? AND LOWER(TRIM(owner_email))=?').get(req.params.agentId, ownerEmail) : null;
+    const agent = db && ownerEmail ? db.prepare('SELECT agent_id, agent_name, payment_auth_id, payment_fee_rate, agent_usage_fee_rate FROM agents WHERE agent_id=? AND LOWER(TRIM(owner_email))=?').get(req.params.agentId, ownerEmail) : null;
     if (!agent) return res.status(404).send(renderPage(req, T('web.payment_auth.not_found_title'), '<p class="error">' + L('web.payment_auth.agent_not_found') + '</p><a href="/">' + L('common.btn.back') + '</a>'));
-    const auths = db && ownerEmail ? db.prepare("SELECT id,bank_name,bank_card FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all(ownerEmail) : [];
-    const options = auths.map(a => '<option value="' + esc(a.id) + '"' + (a.id === agent.payment_auth_id ? ' selected' : '') + '>' + esc((a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4)) + '</option>').join('');
+    const returnTo = pricingReturnPath(req.query.returnTo, agent.agent_id);
+    const auths = db && ownerEmail ? db.prepare("SELECT id,name,bank_name,bank_card FROM payment_auth WHERE LOWER(TRIM(owner_email))=? AND UPPER(COALESCE(receiver_apply_status,''))='COMPLETED' ORDER BY updated_at DESC").all(ownerEmail) : [];
+    const options = auths.map(a => {
+      const cardLabel = maskOwnerName(a.name) + ' · ' + (a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4);
+      const confirmMessage = T('web.payment_auth.change_confirm', { name: agent.agent_name || agent.agent_id, card: cardLabel });
+      return '<option value="' + esc(a.id) + '" data-confirm-message="' + esc(confirmMessage) + '"' + (a.id === agent.payment_auth_id ? ' selected' : '') + '>' + esc((a.name || '') + ' · ' + (a.bank_name || '') + ' •••• ' + String(a.bank_card || '').slice(-4)) + '</option>';
+    }).join('');
     const select = options
       ? '<select id="paymentAuthId" name="paymentAuthId" required><option value="">' + L('web.payment_auth.bind_select_card') + '</option>' + options + '</select>'
       : '<p class="meta">' + L('web.payment_auth.no_verified_card') + ' <a href="/payment-auth">' + L('web.payment_auth.add_or_verify_card') + '</a></p>';
-    const submit = options ? '<button type="submit" class="btn-success">' + L(agent.payment_auth_id ? 'web.payment_auth.change_card_btn' : 'web.payment_auth.bind_card_btn') + '</button>' : '';
-    const body = '<div class="card"><form method="POST" action="/agents/' + esc(agent.agent_id) + '/payment-auth"><p>' + esc(T('web.payment_auth.bind_for_agent', { name: agent.agent_name || agent.agent_id })) + '</p><label for="paymentAuthId">' + L('web.payment_auth.bind_card') + '</label>' + select + '<br>' + submit + '<a href="/" class="btn" style="margin-left:8px">' + L('common.btn.cancel') + '</a></form></div>';
+    const submit = options ? '<button id="payment-auth-submit" type="submit" class="btn-success" disabled>' + L(agent.payment_auth_id ? 'web.payment_auth.change_card_btn' : 'web.payment_auth.bind_card_btn') + '</button>' : '';
+    const paymentFee = feeDisplay(agent.payment_fee_rate, 0.006);
+    const subscriptionFee = feeDisplay(agent.agent_usage_fee_rate, 0.1);
+    const feeNotice = '<section class="card fee-notice" aria-label="' + L('web.payment_auth.fee_title') + '"><h2>' + L('web.payment_auth.fee_title') + '</h2><p><strong>' + esc(T('web.payment_auth.payment_fee_label', { percent: paymentFee.percent })) + '</strong></p><p class="fee-detail">' + esc(T('web.payment_auth.payment_fee_detail', paymentFee)) + '</p><p><strong>' + esc(T('web.payment_auth.subscription_fee_label', { percent: subscriptionFee.percent })) + '</strong></p><p class="fee-detail">' + esc(T('web.payment_auth.subscription_fee_detail', subscriptionFee)) + '</p><h2>' + L('web.payment_auth.settlement_title') + '</h2><p class="fee-detail">' + L('web.payment_auth.settlement_detail') + '</p></section>';
+    const changeDialog = agent.payment_auth_id ? '<dialog id="payment-auth-confirm" class="voko-message-dialog"><div style="padding:24px 26px 18px;text-align:center"><div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;margin:0 auto 12px;border-radius:50%;background:#fff4e5;color:#b45309;font-size:22px;font-weight:800" aria-hidden="true">!</div><p data-role="confirm-message" style="margin:0;color:#667085;font-size:14px;line-height:1.7;white-space:pre-wrap"></p></div><div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 20px;background:#f7f9fc;border-top:1px solid #e8ebef"><button type="button" class="btn btn-outline" data-role="confirm-cancel" style="margin:0">' + L('common.btn.cancel') + '</button><button type="button" class="btn-success" data-role="confirm-submit" style="margin:0">' + L('common.btn.confirm') + '</button></div></dialog>' : '';
+    const bindingScript = options ? '<script>(function(){var form=document.querySelector("form[action=\"/agents/' + esc(agent.agent_id) + '/payment-auth\"]"),select=document.getElementById("paymentAuthId"),submit=document.getElementById("payment-auth-submit"),initial=' + JSON.stringify(agent.payment_auth_id || '') + ',confirmed=false,dialog=document.getElementById("payment-auth-confirm");if(!form||!select||!submit)return;function refresh(){submit.disabled=!select.value||select.value===initial}select.addEventListener("change",function(){confirmed=false;refresh()});form.addEventListener("submit",function(event){if(!initial||confirmed||select.value===initial)return;event.preventDefault();var option=select.options[select.selectedIndex];dialog.querySelector("[data-role=confirm-message]").textContent=option.dataset.confirmMessage||"";dialog.showModal()});if(dialog){dialog.querySelector("[data-role=confirm-cancel]").addEventListener("click",function(){dialog.close()});dialog.querySelector("[data-role=confirm-submit]").addEventListener("click",function(){confirmed=true;dialog.close();form.requestSubmit(submit)});dialog.addEventListener("click",function(event){if(event.target===dialog)dialog.close()})}refresh()})();</script>' : '';
+    const body = '<div class="card"><form method="POST" action="/agents/' + esc(agent.agent_id) + '/payment-auth">' + (returnTo ? '<input type="hidden" name="returnTo" value="' + esc(returnTo) + '">' : '') + '<p>' + esc(T('web.payment_auth.bind_for_agent', { name: agent.agent_name || agent.agent_id })) + '</p><label for="paymentAuthId">' + L('web.payment_auth.bind_card') + '</label><div class="payment-card-row">' + select + submit + '</div></form></div>' + feeNotice + changeDialog + bindingScript;
     res.send(renderPage(req, T('web.payment_auth.bind_title'), body, { nav: '<a href="/">' + L('common.nav.home') + '</a> › ' + L('web.payment_auth.bind_title') }));
   });
 
   R.post('/agents/:agentId/payment-auth', async (req, res, next) => {
     try {
       const r = await handlers.bind_agent_payment_auth({ paymentAuthId: req.body.paymentAuthId, agentId: req.params.agentId });
-      r.success ? res.redirect('/') : res.send(renderPage(req, req.t('common.label.failed'), '<p class="error">' + esc(r.error) + '</p><a href="/agents/' + esc(req.params.agentId) + '/payment-auth">' + esc(req.t('common.btn.back')) + '</a>'));
+      const returnTo = pricingReturnPath(req.body.returnTo, req.params.agentId);
+      r.success ? res.redirect(returnTo || '/') : res.send(renderPage(req, req.t('common.label.failed'), '<p class="error">' + esc(r.error) + '</p><a href="/agents/' + esc(req.params.agentId) + '/payment-auth' + (returnTo ? '?returnTo=' + encodeURIComponent(returnTo) : '') + '">' + esc(req.t('common.btn.back')) + '</a>'));
     } catch (e) { next(e); }
   });
 

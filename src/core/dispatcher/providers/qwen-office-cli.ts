@@ -4,16 +4,34 @@ const { runCli } = require('../../adapters/cli-spawner');
 const { createParser } = require('../../adapters/cli-parsers');
 const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
 const { resolveQwenOfficeCommand, qwenOfficeRuntimeRequest } = require('../qwen-office-command');
+const { resolveQwenOfficeAgentTarget } = require('../qwen-office-agents');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
+import type { ProviderDeliveryReceipt, PushPayload } from '../types';
+import type { QwenOfficeAgentTarget } from '../qwen-office-agents';
+
+type ResolveAgentTarget = (id: unknown) => QwenOfficeAgentTarget | null;
+type QwenOfficeCliProviderOptions = CliProviderOptions & {
+  binPath?: string;
+  resolveAgentTarget?: ResolveAgentTarget;
+};
+
+function deliveryError(message: string): Error {
+  const error: any = new Error(message);
+  error.deliveryOutcome = 'not_delivered';
+  return error;
+}
 
 /**
  * QwenWork's bundled qoderclicn stream-json transport.  Tool access and
  * permission prompts stay disabled for unattended VOKO messages.
  */
 class QwenOfficeCliProvider extends CliAdapter {
-  constructor(options: CliProviderOptions = {}) {
-    const configuredCommand = String((options as any).binPath || '').trim();
+  private readonly _resolveAgentTarget: ResolveAgentTarget;
+
+  constructor(options: QwenOfficeCliProviderOptions = {}) {
+    const configuredCommand = String(options.binPath || '').trim();
     const command = configuredCommand || resolveQwenOfficeCommand();
+    const resolveAgentTarget = options.resolveAgentTarget || resolveQwenOfficeAgentTarget;
     const baseArgs = [
       '--print',
       '--output-format', 'stream-json',
@@ -32,6 +50,10 @@ class QwenOfficeCliProvider extends CliAdapter {
       timeout: 180000,
       adapterType: 'qwen-office-cli',
       bindingProviderType: 'qwen-office',
+      instanceArgs: (instanceId: string) => {
+        const target = resolveAgentTarget(instanceId);
+        return { args: target ? ['--cwd', target.workspaceRoot, '--plugin-dir', target.pluginRoot] : [], position: 'before' };
+      },
       argsForSession: (sessionId: string | null) => [
         ...baseArgs,
         ...(sessionId ? ['--resume', sessionId] : []),
@@ -56,15 +78,55 @@ class QwenOfficeCliProvider extends CliAdapter {
       db: options.db,
       contextWindow: options.contextWindow,
       cwd: options.cwd || os.tmpdir(),
+      sessionPersistence: options.sessionPersistence,
     });
+    this._resolveAgentTarget = resolveAgentTarget;
   }
 
-  acceptsBinding(binding: any): boolean {
+  acceptsBinding(binding: any, agentId = ''): boolean {
+    const configuredInstance = this._instanceForAgent(agentId) || '';
+    const boundInstance = String(binding?.providerInstanceId || '').trim();
     return binding?.providerType === 'qwen-office'
       && binding.adapterType === 'qwen-office-cli'
       && binding.deliveryMode === 'cli'
       && typeof binding.nativeSessionId === 'string'
-      && binding.nativeSessionId.length > 0;
+      && binding.nativeSessionId.length > 0
+      && boundInstance === configuredInstance;
+  }
+
+  isAvailable(agentId: string): boolean {
+    if (!super.isAvailable(agentId)) return false;
+    const instanceId = this._instanceForAgent(agentId);
+    return !instanceId || !!this._resolveAgentTarget(instanceId);
+  }
+
+  async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
+    const base = await super.preflightDelivery(agentId);
+    if (base.ok !== true) return base;
+    const instanceId = this._instanceForAgent(agentId);
+    if (instanceId && !this._resolveAgentTarget(instanceId)) {
+      return { ok: false, status: 'unavailable', sideEffects: false, code: 'QWEN_OFFICE_EXPERT_KIT_UNAVAILABLE' };
+    }
+    return { ...base, ...(instanceId ? { providerInstanceId: instanceId, routing: 'cwd+plugin-dir' } : {}) };
+  }
+
+  async canRestoreExactSession(binding: PushPayload['providerBinding'], agentId: string): Promise<boolean> {
+    if (!binding || !this.acceptsBinding(binding, agentId)) return false;
+    const instanceId = this._instanceForAgent(agentId);
+    if (instanceId && !this._resolveAgentTarget(instanceId)) return false;
+    return super.canRestoreExactSession(binding, agentId);
+  }
+
+  async push(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
+    const instanceId = this._instanceForAgent(payload.agentId) || '';
+    const boundInstance = String(payload.providerBinding?.providerInstanceId || '').trim();
+    if (boundInstance && boundInstance !== instanceId) {
+      throw deliveryError('QwenWork expert-kit binding is stale');
+    }
+    if (instanceId && !this._resolveAgentTarget(instanceId)) {
+      throw deliveryError('Bound QwenWork expert kit is unavailable');
+    }
+    return super.push(payload);
   }
 
   async runLoopbackTest(_agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -79,6 +141,11 @@ class QwenOfficeCliProvider extends CliAdapter {
     if (!runtime.available || !runtime.executable) {
       return { ok: false, status: 'unavailable', code: 'QWEN_OFFICE_CLI_UNAVAILABLE', detail: runtime.reason || 'QwenWork CLI is unavailable' };
     }
+    const instanceId = this._instanceForAgent(_agentId);
+    const target = instanceId ? this._resolveAgentTarget(instanceId) : null;
+    if (instanceId && !target) {
+      return { ok: false, status: 'unavailable', code: 'QWEN_OFFICE_EXPERT_KIT_UNAVAILABLE' };
+    }
 
     let reply = '';
     const parser = createParser({
@@ -89,12 +156,16 @@ class QwenOfficeCliProvider extends CliAdapter {
     const prompt = `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`;
     const result = await runCli({
       cmd: runtime.executable,
-      args: [...runtime.argvPrefix, ...this._args],
+      args: [
+        ...runtime.argvPrefix,
+        ...(target ? ['--cwd', target.workspaceRoot, '--plugin-dir', target.pluginRoot] : []),
+        ...this._args,
+      ],
       stdinInput: JSON.stringify({
         type: 'user',
         message: { role: 'user', content: [{ type: 'text', text: prompt }] },
       }),
-      cwd: this._cwd || os.tmpdir(),
+      cwd: target?.workspaceRoot || this._cwd || os.tmpdir(),
       env: withRuntimePath({ ...this._env }, runtime),
       tag: 'qwen-office-cli-loopback',
       timeout: 120000,

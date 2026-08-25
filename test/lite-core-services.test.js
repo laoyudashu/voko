@@ -17,7 +17,7 @@ const { createAgentRegistration } = require('../build/core/agent-registration');
 const { createScheduler, createWatchdog } = require('../build/core/scheduler');
 const autoUpdater = require('../build/core/auto-updater');
 const { syncOfflineMessages } = require('../build/core/offline-sync');
-const { createDeliver, createSendMessage } = require('../build/core/send-message');
+const { createDeliver, createSecureDeliverProxy, createSendMessage } = require('../build/core/send-message');
 const { processPendingPaymentOrder, startPaymentPolling } = require('../build/core/payment');
 const { selectWindowsOpenclawCommand } = require('../build/core/dispatcher/providers/openclaw-ws');
 const { normalizeOfficialImServerUrl, normalizeOfficialPublicUrl } = require('../build/core/url-security');
@@ -1502,6 +1502,31 @@ test('Lite delivery uses the shared Hub and awaits SENDACK metadata', async () =
   assert.equal(calls.length, 1);
 });
 
+test('secure delivery proxy changes every shared private-delivery caller without replacing raw delivery', async () => {
+  const rawCalls=[];const secureCalls=[];
+  const raw=async(...args)=>{rawCalls.push(args);return{success:true,messageId:args[6]};};
+  const proxy=createSecureDeliverProxy(raw);
+  await proxy('agent-1','visitor-1','plain','text',1,null,'plain-1');
+  proxy.setSecureRouter({deliver:async(...args)=>{secureCalls.push(args);return{success:true,messageId:args[6],
+    securityMode:'e2ee',securityReason:'recipient_supported',encryptedDeviceCount:1,deliveryState:'delivered'};}});
+  const protectedResult=await proxy('agent-1','visitor-1','secret','text',1,null,'secure-1');
+  await proxy.rawDeliver('agent-1','visitor-1','fixed-envelope','text',1,null,'raw-2');
+  assert.equal(protectedResult.securityMode,'e2ee');
+  assert.equal(secureCalls.length,1);
+  assert.equal(rawCalls.length,2);
+});
+
+test('Lite send-message keeps partial multi-device E2EE delivery pending', async () => {
+  const statusWrites=[];
+  const db={prepare(sql){return{get(){return sql.includes('SELECT imUid')?{imUid:'agent-uid'}:undefined;},
+    run(...args){if(sql.includes('message_seq=COALESCE'))statusWrites.push(args);}};}};
+  const send=createSendMessage({db,deliver:async(...args)=>({success:true,messageId:args[6],securityMode:'e2ee',
+    securityReason:'recipient_supported',encryptedDeviceCount:2,deliveryState:'partial'})});
+  const result=await send('agent-1','visitor-1','private','agent-uid','text',1);
+  assert.equal(result.deliveryState,'partial');
+  assert.equal(statusWrites.at(-1)[0],'pending');
+});
+
 test('Lite send-message normalizes content, persists it and passes the local id to delivery', async () => {
   const writes = [];
   const db = {
@@ -1596,7 +1621,7 @@ test('Lite payment processing claims once, creates a remote order and sends its 
   }); };
   t.after(() => { global.fetch = originalFetch; });
 
-  await processPendingPaymentOrder({
+  const result = await processPendingPaymentOrder({
     id: 'local-1',
     agent_id: 'agent-1',
     visitor_id: 'visitor-1',
@@ -1609,6 +1634,7 @@ test('Lite payment processing claims once, creates a remote order and sends its 
     sendMessage: async (...args) => {
       assert.equal(updates.at(-1)?.update.status, 'created');
       sent.push(args);
+      return { success: true, deliveryState: 'delivered', messageId: args[7] };
     },
   });
 
@@ -1619,6 +1645,74 @@ test('Lite payment processing claims once, creates a remote order and sends its 
   assert.deepEqual(updates.at(-1), {
     id: 'local-1',
     update: { status: 'created', order_no: 'order-1', pay_url: 'https://pay.test/order-1' },
+  });
+  assert.equal(result.orderCreated, true);
+  assert.equal(result.sentToVisitor, true);
+  assert.equal(result.deliveryStatus, 'delivered');
+  assert.equal(result.visitorId, 'visitor-1');
+  assert.match(result.messageId, /^pay_msg_/);
+});
+
+test('Lite payment processing reports pending and failed visitor delivery explicitly', async (t) => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, options) => ({
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: {
+        payUrl: `https://pay.test/${JSON.parse(options.body).clientOrderId}`,
+        orderNo: `remote-${JSON.parse(options.body).clientOrderId}`,
+        queryToken: 'query-1',
+      },
+    }),
+  });
+  t.after(() => { global.fetch = originalFetch; });
+
+  const runCase = async (id, sendResult) => {
+    const updates = [];
+    const db = {
+      exec() {},
+      prepare(sql) {
+        return {
+          get: () => sql.includes('private_key') ? { private_key: TEST_PRIVATE_KEY } : { imUid: 'agent-uid' },
+          run: () => ({ changes: 1 }),
+          all: () => [],
+        };
+      },
+    };
+    const result = await processPendingPaymentOrder({
+      id, agent_id: 'agent-1', visitor_id: 'visitor-1', amount: 1, description: 'test',
+    }, {
+      db,
+      databaseAPI: {
+        getAgentDid: () => 'did:test:agent-1',
+        updatePaymentOrder: (orderId, update) => updates.push({ orderId, update }),
+        getPaymentOrdersByStatus: () => [],
+        saveOwnerIntervention() {},
+      },
+      endpoints: { payment: { baseUrl: 'https://pay.test' } },
+      sendMessage: async () => sendResult,
+    });
+    return { result, updates };
+  };
+
+  const pending = await runCase('pending-1', { success: true, deliveryState: 'pending', messageId: 'msg-pending' });
+  assert.equal(pending.result.orderCreated, true);
+  assert.equal(pending.result.sentToVisitor, false);
+  assert.equal(pending.result.deliveryStatus, 'pending');
+  assert.equal(pending.result.messageId, 'msg-pending');
+  assert.equal(pending.updates.at(-1).update.result, undefined);
+
+  const failed = await runCase('failed-1', { success: false, error: 'SENDACK rejected', messageId: 'msg-failed' });
+  assert.equal(failed.result.orderCreated, true);
+  assert.equal(failed.result.sentToVisitor, false);
+  assert.equal(failed.result.deliveryStatus, 'failed');
+  assert.equal(failed.result.error, 'SENDACK rejected');
+  assert.deepEqual(failed.updates.at(-1).update, {
+    status: 'created',
+    order_no: 'remote-failed-1',
+    pay_url: 'https://pay.test/failed-1',
+    result: 'SENDACK rejected',
   });
 });
 

@@ -5,9 +5,9 @@ const express = require('express');
 const test = require('node:test');
 const { createWebRouter } = require('../build/web');
 
-test('agent detail exposes the shared icon copy control for the Agent ID', async (t) => {
+test('agent detail exposes the shared icon copy control for the IM UID instead of the internal Agent ID', async (t) => {
   const handlers = {
-    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', backendType: 'others', publishStatus: 'published' }] }),
+    list_agents: async () => ({ agents: [{ agentId: 'agent-copy-id', agentName: 'Copy Test', imUid: 'im-user-123', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
     list_conversations: async () => ({ conversations: [], total: 0 }),
     list_groups: async () => ({ groups: [], total: 0 }),
@@ -24,9 +24,17 @@ test('agent detail exposes the shared icon copy control for the Agent ID', async
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /class="voko-copy-button"/);
-  assert.match(html, /data-voko-copy-value="agent-copy-id"/);
+  assert.match(html, /IM UID: <code>im-user-123<\/code>/);
+  assert.match(html, /data-voko-copy-value="im-user-123"/);
+  assert.doesNotMatch(html, /ID: <code>agent-copy-id<\/code>/);
   assert.match(html, /window\.vokoCopyText/);
   assert.match(html, /classList\.add\("is-copied"\)/);
+  assert.match(html, /暂无会话/);
+  assert.match(html, /会话列表 \(0\)/);
+  assert.match(html, /群列表 \(0\)/);
+  assert.match(html, /data-agent-action="agent\.search" disabled/);
+  assert.doesNotMatch(html, /data-tab="a2a"/);
+  assert.doesNotMatch(html, /data-tab="external"/);
   const script = html.split('<script>').map((value) => value.split('</script>')[0]).find((value) => value.includes('__VOKO_COPY_READY__'));
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
@@ -56,7 +64,40 @@ test('agent detail truncates long visitor names and keeps the full name in a too
   assert.match(html, /width:180px;max-width:180px;white-space:nowrap;overflow:hidden/);
 });
 
-test('agent detail renders authoritative E2EE conversation key states', async (t) => {
+test('agent detail renders an attachment filename instead of raw JSON in the last-message column', async (t) => {
+  const attachment = JSON.stringify({ name: '1.tx.txt', fileName: '1.tx.txt',
+    url: '/api/e2ee-v2/attachments/e2ee-de05725a-89de-4d40-b034-f8db3f709b52?agentId=lawyer',
+    size: 5, mimeType: 'text/plain' });
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId: 'lawyer', agentName: 'Lawyer', backendType: 'others', publishStatus: 'published' }] }),
+    get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
+    list_conversations: async () => ({ conversations: [{ channelId: 'visitor-file', name: 'File visitor',
+      lastMessage: attachment, lastTimestamp: 1, lastIsMe: 0, lastContentType: 1, needsReply: true, unreadCount: 0 }], total: 1 }),
+    list_groups: async () => ({ groups: [], total: 0 }),
+  };
+  const app = express();
+  app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, { refreshUserProfiles: async () => {} }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/lawyer`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /class="voko-paperclip-icon"/);
+  assert.match(html, />1\.tx\.txt</);
+  assert.doesNotMatch(html, /&quot;fileName&quot;/);
+});
+
+test('agent detail hides E2EE state in production and shows only active state in debug mode', async (t) => {
+  const previousDebug = process.env.VOKO_E2EE_DEBUG_UI;
+  delete process.env.VOKO_E2EE_DEBUG_UI;
+  t.after(() => {
+    if (previousDebug === undefined) delete process.env.VOKO_E2EE_DEBUG_UI;
+    else process.env.VOKO_E2EE_DEBUG_UI = previousDebug;
+  });
   const handlers = {
     list_agents: async () => ({ agents: [{ agentId: 'agent-e2ee', agentName: 'E2EE Test', backendType: 'others', publishStatus: 'published' }] }),
     get_status: async () => ({ agent: { imConnected: true }, warnings: [] }),
@@ -72,7 +113,7 @@ test('agent detail renders authoritative E2EE conversation key states', async (t
   const app = express();
   app.use(createWebRouter(handlers, { prepare: () => ({ get: () => null, all: () => [] }) }, {
     refreshUserProfiles: async () => {},
-    e2eeCanaryRuntime: {
+    e2eeRuntime: {
       isChannelActive: (_agentId, channelId) => channelId === 'visitor-secure',
       getChannelEncryptionStatuses: async () => ({
         'visitor-secure':'active','visitor-available':'available','visitor-checking':'checking',
@@ -86,16 +127,19 @@ test('agent detail renders authoritative E2EE conversation key states', async (t
   });
   t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
-  const html = await response.text();
-  assert.equal(response.status, 200);
-  assert.equal((html.match(/aria-label="端到端加密已启用"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="双方支持端到端加密，尚未启用"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="正在检测或建立端到端加密"/g) || []).length, 1);
-  assert.equal((html.match(/aria-label="端到端加密异常，请在访客端重试"/g) || []).length, 1);
-  assert.match(html, /attributeName="opacity" values="1;.25;1"/);
-  assert.match(html, /Secure visitor<\/a> <svg role="img"/);
-  assert.doesNotMatch(html, /Plain visitor<\/a> <svg role="img"/);
+  const productionResponse = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
+  const productionHtml = await productionResponse.text();
+  assert.equal(productionResponse.status, 200);
+  assert.doesNotMatch(productionHtml, /aria-label="端到端加密已启用"/);
+
+  process.env.VOKO_E2EE_DEBUG_UI = 'true';
+  const debugResponse = await fetch(`http://127.0.0.1:${server.address().port}/agents/agent-e2ee`);
+  const debugHtml = await debugResponse.text();
+  assert.equal(debugResponse.status, 200);
+  assert.equal((debugHtml.match(/aria-label="端到端加密已启用"/g) || []).length, 1);
+  assert.doesNotMatch(debugHtml, /双方支持端到端加密|正在检测或建立端到端加密|端到端加密异常/);
+  assert.match(debugHtml, /Secure visitor<\/a> <svg role="img"/);
+  assert.doesNotMatch(debugHtml, /Available visitor<\/a> <svg role="img"/);
 });
 
 test('empty conversation detail still renders the reply composer', async (t) => {

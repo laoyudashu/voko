@@ -1,12 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
-const { checkAuditRules, normalizeAuditText, luhnValid, isValidChineseId } = require('../build/core/audit');
+const { checkAuditRules, normalizeAuditText, isValidChineseId } = require('../build/core/audit');
 const { classifyUncertain, loadSafetyClassifierConfig, saveSafetyClassifierConfig, testSafetyClassifierConfig } = require('../build/core/safety-classifier');
 const { SAFETY_MODEL_PRESETS, findSafetyModelPreset } = require('../build/core/safety-model-presets');
 const { LLMClient } = require('../build/core/llm-client');
 const { wrapPushContent } = require('../build/core/dispatcher/safety-prompt');
+const { initDatabase } = require('../build/core/database');
 
 function ruleDb(rules = [], classifierConfig = null) {
   return {
@@ -64,6 +68,27 @@ test('ordinary technical and payment discussions are not blocked', () => {
   }
 });
 
+test('new databases do not initialize outbound card audit rules', () => {
+  const db = initDatabase(':memory:', { silent: true });
+  const outbound = db.prepare('SELECT keyword FROM audit_rules WHERE direction = ?').all('outbound');
+  assert.deepEqual(outbound, []);
+  db.close();
+});
+
+test('startup removes legacy default outbound audit rules', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-audit-'));
+  const dbPath = path.join(dir, 'voko.db');
+  let db = initDatabase(dbPath, { silent: true });
+  db.prepare(`INSERT INTO audit_rules
+    (id,direction,keyword,action,prompt,is_default,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)`).run('legacy-card', 'outbound', '银行卡', 'allow', '', 1, Date.now(), Date.now());
+  db.close();
+  db = initDatabase(dbPath, { silent: true });
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audit_rules WHERE direction='outbound'").get().count, 0);
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('structured secret and private-key values are blocked', () => {
   const db = ruleDb();
   const values = [
@@ -83,12 +108,12 @@ test('placeholder secrets do not trigger credential blocking', () => {
   assert.equal(result.verdict, 'allow');
 });
 
-test('validated card and Chinese identity values use checksums', () => {
-  assert.equal(luhnValid('4111 1111 1111 1111'), true);
-  assert.equal(luhnValid('4111 1111 1111 1112'), false);
+test('card-like numbers are allowed while validated Chinese identity values are blocked', () => {
   assert.equal(isValidChineseId('11010519491231002X'), true);
   assert.equal(isValidChineseId('110105194912310021'), false);
-  assert.equal(checkAuditRules('card 4111 1111 1111 1111', 'outbound', ruleDb()).verdict, 'deny');
+  assert.equal(checkAuditRules('card 4111 1111 1111 1111', 'outbound', ruleDb()).verdict, 'allow');
+  assert.equal(checkAuditRules('timestamp 1787572164706', 'outbound', ruleDb()).verdict, 'allow');
+  assert.equal(checkAuditRules('id 11010519491231002X', 'outbound', ruleDb()).verdict, 'deny');
 });
 
 test('explicit injection is denied and ambiguous exfiltration is uncertain', () => {

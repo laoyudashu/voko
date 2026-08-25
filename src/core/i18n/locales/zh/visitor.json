@@ -8,7 +8,6 @@
   "visitor.trial_welcome": "欢迎使用本Agent！首次可免费试用 {trialMinutes} 分钟。试用结束后需付费，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
   "visitor.paid_welcome_back": "欢迎回来！该 Agent 为付费服务，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
   "visitor.paid_required": "本Agent需付费使用，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
-  "visitor.expiring_soon": "⏰ 您的服务即将到期（剩余不到 1 分钟），如需继续使用请回复\"购买\"。",
   "visitor.session_expired": "⏰ 服务时间已到，对话已中断。如需继续使用，请回复\"购买\"续费。",
   "visitor.reply_sensitive": "该回复包含敏感信息，未能发送，请重新提问。",
   "visitor.payment_expired_timed": "支付超时，订单已过期。如需继续使用请回复\"购买\"。",

@@ -2,6 +2,8 @@ const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
+const os = require('node:os');
 const { buildOpenClawSessionKey } = require('../openclaw-session');
 const { resolveOpenClawRuntime, runtimeSpawnOptions } = require('../openclaw-command');
 import type { DatabaseLike } from '../../../types/database';
@@ -50,6 +52,7 @@ class OpenClawCliProvider extends PushProvider {
 
   /** CLI 兜底通道：长连接不通时才用，优先级低。 */
   get priority() { return 1; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === 'openclaw';
@@ -94,9 +97,11 @@ class OpenClawCliProvider extends PushProvider {
       });
     }
 
-    const deliveryContent = buildConversationDeliveryPrompt(
-      this._db, payload, canResumeBinding, this._contextWindow,
-    );
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
+    const deliveryContent = appendProviderAttachmentBoundary(buildConversationDeliveryPrompt(
+      this._db, effectivePayload, canResumeBinding, this._contextWindow,
+    ), effectivePayload);
     console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=${canResumeBinding ? 'resume' : 'new-or-recovery'}`);
 
     const notification = _buildNotification(agentId, fromUid, deliveryContent, sessionKey);
@@ -141,7 +146,10 @@ class OpenClawCliProvider extends PushProvider {
         throw new Error('OpenClaw returned no reply text');
       }
       return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
-        deliveryMode: 'cli', adapterType: 'openclaw-cli' };
+        deliveryMode: 'cli', adapterType: 'openclaw-cli',
+        attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
+          attachmentAccessed: null, contentUnderstood: null,
+          mode: staged.attachments.length ? 'staged_path' : 'none' } };
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
       if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
@@ -151,6 +159,8 @@ class OpenClawCliProvider extends PushProvider {
         this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
       }
       throw err;
+    } finally {
+      staged.cleanup();
     }
   }
 

@@ -21,6 +21,13 @@ test('conversation rendering uses the peer Agent name for SSR and live messages'
   assert.match(web, /m\.isMe===true\|\|m\.isMe===1/);
 });
 
+test('conversation live updates seed deduplication with server-rendered message ids', () => {
+  const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
+  assert.match(web, /const renderedMessageIds=Object\.fromEntries\(msgs\.map\(m=>String\(m\.messageId\|\|m\.id\|\|''\)\)/);
+  assert.match(web, /,_seen='\+jsonForInlineScript\(renderedMessageIds\)\+';'/);
+  assert.doesNotMatch(web, /,_seen=\{\};/);
+});
+
 test('invitation email delivery failures render as a warning instead of success', () => {
   const web = fs.readFileSync(path.join(root, 'src/web/index.js'), 'utf8');
   assert.match(web, /r\.result==='email_failed'/);

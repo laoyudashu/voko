@@ -27,6 +27,19 @@ class A2ATaskProcessor {
     this.event(request, 'working', { deliveryState: 'DELIVERY_UNKNOWN', reasonCode: 'LITE_RESTART_DURING_EXECUTION' },
       'WORKING', 'DELIVERY_UNKNOWN');
   }
+  expireBeforeDelivery(commandEventId: string, request: A2AEnvelope): boolean {
+    return this.store.expireRetryCommand(commandEventId, (_taskId, sequence, eventId) => {
+      const createdAt = new Date();
+      return signEnvelope({ version: 'voko.a2a/1', kind: 'event', operation: 'failed', eventId,
+        gatewayTaskId: request.gatewayTaskId, contextId: request.contextId,
+        gatewayMessageId: request.gatewayMessageId, executionId: request.executionId,
+        producerId: this.identity.producerId, producerEpoch: this.identity.producerEpoch, producerSequence: sequence,
+        agentId: request.agentId, caller: { principalId: request.agentId, actorKind: 'agent', provenance: 'registered' },
+        payload: { reasonCode: 'A2A_COMMAND_EXPIRED_BEFORE_DELIVERY' }, trace: request.trace,
+        timestamps: { createdAt: createdAt.toISOString(), expiresAt: new Date(createdAt.getTime() + 3_600_000).toISOString() } } as A2AEnvelope,
+      this.identity.keyId, this.identity.privateKey);
+    });
+  }
   async process(request: A2AEnvelope): Promise<void> {
     if (request.kind === 'control' && request.operation === 'cancel') {
       const state = this.store.getTaskState(request.gatewayTaskId);

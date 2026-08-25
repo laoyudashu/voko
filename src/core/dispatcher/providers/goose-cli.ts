@@ -5,6 +5,8 @@ const { resolveGooseCommand, resolveGooseRuntime, isGooseRuntimeAvailable } = re
 const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
+const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
+const os = require('os');
 import type { DatabaseLike } from '../../../types/database';
 import type { PushPayload, AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata } from '../types';
 
@@ -98,7 +100,8 @@ class GooseCliProvider extends PushProvider {
       if (turnKey) this._rememberCompletedTurn(turnKey);
       this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId,
         messageId: payload.messageId, turnId: turnId || payload.messageId,
-        nativeSessionId: receipt?.nativeSessionId || null, terminal: true });
+        nativeSessionId: receipt?.nativeSessionId || null, terminal: true,
+        payload: { attachmentDelivery: receipt?.attachmentDelivery || null } });
       return receipt;
     }, (error) => {
       if (turnKey && (error as any)?.deliveryOutcome !== 'not_delivered') this._rememberCompletedTurn(turnKey);
@@ -132,7 +135,10 @@ class GooseCliProvider extends PushProvider {
     const turnId = String(payload.turnId || payload.messageId || `goose-cli-${Date.now()}`);
     const turn = { epoch: this._lifecycleEpoch, turnId };
     this._activeTurns.set(scope.key, turn);
+    const staged = stageProviderAttachments(payload, { cwd: os.tmpdir(), agentId, turnId });
+    const effectivePayload = staged.attachments.length ? { ...payload, attachments: staged.attachments } : payload;
     const isCurrent = () => this._activeTurns.get(scope.key) === turn && this._lifecycleEpoch === turn.epoch;
+    try {
     let binding = this.acceptsBinding(payload.providerBinding) ? payload.providerBinding : null;
     if (!binding && this._bindingStore) {
       const active = this._bindingStore.getActive(agentId, scope.channelId, scope.channelType);
@@ -163,7 +169,8 @@ class GooseCliProvider extends PushProvider {
     }
 
     const hasSession = !!sessionId;
-    const deliveryContent = buildConversationDeliveryPrompt(this._db, payload, hasSession, this._contextWindow);
+    const deliveryContent = appendProviderAttachmentBoundary(
+      buildConversationDeliveryPrompt(this._db, effectivePayload, hasSession, this._contextWindow), effectivePayload);
     const notification = `session: ${scope.logicalName}\n\n${deliveryContent}`;
     let result;
     try {
@@ -227,8 +234,13 @@ class GooseCliProvider extends PushProvider {
     } else {
       console.error(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} no reply text`);
     }
-    if (this._activeTurns.get(scope.key) === turn) this._activeTurns.delete(scope.key);
-    return sessionId ? { nativeSessionId: sessionId, deliveryMode: 'cli', adapterType: 'goose-cli' } : {};
+    return sessionId ? { nativeSessionId: sessionId, deliveryMode: 'cli', adapterType: 'goose-cli',
+      attachmentDelivery: { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,
+        mode: staged.attachments.length ? 'staged_path' as const : 'none' as const } } : {};
+    } finally {
+      staged.cleanup();
+      if (this._activeTurns.get(scope.key) === turn) this._activeTurns.delete(scope.key);
+    }
   }
 
   private _execute(input: string, sessionId: string | null, createName: string | null) {

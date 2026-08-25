@@ -22,7 +22,13 @@ const { AgentIdentityBindingStore } = require('../core/provider-agent-identity')
 const { MessageRouteStore, RoutingConversationStore, fingerprintProviderSession,
   isRoutingPolicyEligible, normalizeProviderFamily } = require('../core/provider-routing');
 const { AgentDeliveryPolicyStore } = require('../core/agent-delivery-policy');
+const { AgentProviderBindingService } = require('../core/agent-provider-binding');
+const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents');
+const { discoverProviderInstances } = require('../core/dispatcher/provider-instances');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
+const { ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
+const { resolveActiveOwnerInterventionContext, notifyOwnerInterventionCreated } = require('../core/owner-intervention-active-context');
+const { reservedVisitorPrefix } = require('../core/visitor-id-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
 // 注意：入站剥离逻辑（_stripInboundControlBlock）与出站的 extractA2AVisibleReply 不同——
@@ -61,8 +67,6 @@ function _hasControlBlock(content: string): boolean {
   return /\[STATE\]|\[\/STATE\]|\[FINAL\]|\[\/FINAL\]|\[VOKO A2A CONTROL\]/i.test(content);
 }
 import type { DatabaseLike } from '../types/database';
-
-const INSTANCE_BOUND_PROVIDER_TYPES = new Set(['openclaw', 'hermes', 'zeroclaw']);
 
 // tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
 // 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
@@ -292,6 +296,10 @@ type McpContext = Omit<LiteContext,
   checkReceiveChannel?(agentId?: string): { ok: boolean; channel?: string; suggest?: string | null };
   uploadFileToOSS?(filePath?: string, objectName?: string, mimeType?: string, agentId?: string,
     uploadOptions?: { targetScopeType?: string; targetScopeId?: string }): Promise<unknown>;
+  secureOutboundRouter?: { prepare(agentId:string,channelId:string,channelType?:number,metadata?:unknown,
+    purpose?:'text'|'attachment'):Promise<{
+    success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;
+    encryptedDeviceCount:number }> };
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -507,6 +515,8 @@ function createdRegistrationData(value: unknown, fallbackAgentId: unknown): Crea
 }
 
 interface McpToolParams {
+  _e2eeAttachmentSource?: { filePath:string;fileName:string;mediaType:string };
+  _requestedMessageId?: string;
   ability?: unknown;
   action?: string;
   actionType?: string;
@@ -584,7 +594,7 @@ interface McpToolParams {
   paymentAuthId?: string;
   phone?: string;
   price?: number;
-  pricingModel?: string;
+  pricingModel?: 'free' | 'timed';
   problem?: string;
   providerType?: string;
   prompt?: string;
@@ -606,6 +616,10 @@ interface McpToolParams {
   deliveryModes?: string[];
   conversationId?: string;
   replyToMessageId?: string;
+  /** Web UI browser-only draft: create a logical Conversation with the first send. */
+  webConversationStart?: boolean;
+  /** Existing Conversation that the browser-only draft was started from. */
+  parentConversationId?: string;
   remoteAgentKey?: string;
   idempotencyKey?: string;
   webRequest?: boolean;
@@ -676,8 +690,7 @@ const ATTACHMENT_MIME_TYPES: Record<string, string> = {
 };
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
-async function uploadAttachment(cx: McpContext, p: McpToolParams) {
-  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
+function inspectAttachment(p: McpToolParams) {
   const fs = require('fs');
   const path = require('path');
   if (!p.filePath) return { success: false, error: '缺少 filePath' };
@@ -688,6 +701,15 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
   const fileName = p.fileName || path.basename(p.filePath);
   const ext = path.extname(fileName).toLowerCase();
   const mimeType = typeof p.contentType === 'string' ? p.contentType : (ATTACHMENT_MIME_TYPES[ext] || 'application/octet-stream');
+  return { success: true, filePath: p.filePath, fileName, fileSize: stat.size, mimeType,
+    contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 8, ext };
+}
+
+async function uploadAttachment(cx: McpContext, p: McpToolParams) {
+  if (!cx.uploadFileToOSS) return { success: false, error: '上传服务不可用' };
+  const inspected = inspectAttachment(p);
+  if (!inspected.success) return inspected;
+  const { filePath, fileName, fileSize, mimeType, contentType, ext } = inspected as any;
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment';
   const dir = IMAGE_EXTENSIONS.has(ext) ? 'chat/images' : 'chat/files';
   const objectName = `${dir}/${Date.now()}-${require('crypto').randomUUID()}-${safeName}`;
@@ -695,7 +717,7 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
     const channelType = Number(p.channelType) === 2 ? 2 : 1;
     const targetScopeType = channelType === 2 ? 'group' : 'private';
     const targetScopeId = String(p.toUid || p.channelId || '').trim();
-    const uploadedUrl = await cx.uploadFileToOSS(p.filePath, objectName, mimeType, p.agentId,
+    const uploadedUrl = await cx.uploadFileToOSS(filePath, objectName, mimeType, p.agentId,
       { targetScopeType, targetScopeId });
     const url = String(uploadedUrl || '').startsWith('/api/uploads/')
       ? `${uploadedUrl}?channelType=${channelType}&channelId=${encodeURIComponent(targetScopeId)}`
@@ -704,9 +726,9 @@ async function uploadAttachment(cx: McpContext, p: McpToolParams) {
       success: true,
       url,
       fileName,
-      fileSize: stat.size,
+      fileSize,
       mimeType,
-      contentType: IMAGE_EXTENSIONS.has(ext) ? 2 : 8,
+      contentType,
     };
   } catch (e: any) {
     return { success: false, error: '上传失败: ' + e.message };
@@ -756,6 +778,28 @@ function createToolHandlers(cx: McpContext) {
       // Agent creation remains successful with Pull as the safe fallback.
       console.error(`[AgentRegistration] Provider runtime load failed agent=${agentId}:`, error?.message || String(error));
     }
+  };
+  const syncRegisteredAgentProfile = async (agentId: string, p: McpToolParams, name: string, backendType: string) => {
+    const result = await cx.updateAgentProfile({
+      agentId,
+      name,
+      description: p.description ?? '',
+      category: p.category || 'general',
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      icon_url: p.iconUrl || '',
+      contact_phone: p.contact_phone || '',
+      address: p.address || '',
+      backendType,
+    });
+    if (result?.success === false) {
+      return {
+        success: false,
+        creationStatus: 'created',
+        agentId,
+        error: `Agent 已创建，但资料同步到服务端失败：${result.error || result.message || '未知错误'}`,
+      };
+    }
+    return null;
   };
   const inferChannelType = (params: McpToolParams): number => {
     if (params.channelType !== undefined && params.channelType !== null) {
@@ -955,7 +999,7 @@ function createToolHandlers(cx: McpContext) {
     const where = ` WHERE ${conditions.join(' AND ')}`;
     const total = Number(cx.query<{ total: number }>(`SELECT COUNT(*) AS total FROM agents${where}`, params)[0]?.total || 0);
     const rows = cx.query<AgentDbRow & { backend_instance_id?: string | null; delivery_modes?: string | null }>(
-      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,
+      `SELECT agent_id,agent_name,description,short_description,category,backend_type,backend_instance_id,imUid,
        delivery_modes,publish_status,access_mode,visibility_type,owner_email,created_at FROM agents${where}
        ORDER BY created_at ASC LIMIT ? OFFSET ?`, [...params, limit, offset],
     );
@@ -963,7 +1007,7 @@ function createToolHandlers(cx: McpContext) {
       let deliveryModes: string[] = [];
       try { deliveryModes = JSON.parse(r.delivery_modes || '[]'); } catch (_) {}
       return {
-        agentId: r.agent_id, agentName: r.agent_name, description: r.description,
+        agentId: r.agent_id, agentName: r.agent_name, imUid: r.imUid, description: r.description,
         shortDescription: r.short_description, category: r.category, backendType: r.backend_type,
         backendInstanceId: r.backend_instance_id || null, deliveryModes,
         publishStatus: r.publish_status, accessMode: r.access_mode,
@@ -1171,9 +1215,10 @@ function createToolHandlers(cx: McpContext) {
       const accessMode = p.accessMode === 'public' ? 'public' : 'private';
       const category = p.category || 'general';
 
-      const firstAgent = data.agents[0];
-      const paymentFeeRate = optionalFeeRate(firstAgent.payment_fee_rate);
-      const agentUsageFeeRate = optionalFeeRate(firstAgent.agent_usage_fee_rate);
+      const selectedAgent = data.agents.find(agent => agent.agentId === agentId);
+      if (!selectedAgent) return { success: false, error: t('mcp.registration.invalid_response') };
+      const paymentFeeRate = optionalFeeRate(selectedAgent.payment_fee_rate);
+      const agentUsageFeeRate = optionalFeeRate(selectedAgent.agent_usage_fee_rate);
       if (Number.isNaN(paymentFeeRate) || Number.isNaN(agentUsageFeeRate)) {
         return { success: false, error: t('mcp.registration.invalid_response') };
       }
@@ -1191,6 +1236,10 @@ function createToolHandlers(cx: McpContext) {
         agentName: data.agentName,
         category,
         description: p.description,
+        tags: p.tags,
+        iconUrl: p.iconUrl,
+        contactPhone: p.contact_phone,
+        address: p.address,
         did: data.did,
         publicKey: data.publicKey,
         privateKey: data.privateKey,
@@ -1219,6 +1268,9 @@ function createToolHandlers(cx: McpContext) {
       if (upRes && !upRes.success) {
         return { success: false, error: upRes.error || '更新绑定失败' };
       }
+
+      const profileSyncFailure = await syncRegisteredAgentProfile(agentId, p, data.agentName || p.agentName || agentId, backendType);
+      if (profileSyncFailure) return profileSyncFailure;
 
       if (cx.setAgentStatus) {
         await cx.setAgentStatus({
@@ -1294,8 +1346,13 @@ function createToolHandlers(cx: McpContext) {
       const data = createdRegistrationData(tokenResult.data, p.agentName);
       if (!data) return { success: false, error: t('mcp.registration.invalid_response') };
       const agentId = data.agentId;
+      const paymentFeeRate = optionalFeeRate(data.payment_fee_rate);
+      const agentUsageFeeRate = optionalFeeRate(data.agent_usage_fee_rate);
+      if (Number.isNaN(paymentFeeRate) || Number.isNaN(agentUsageFeeRate)) {
+        return { success: false, error: t('mcp.registration.invalid_response') };
+      }
 
-      // Step 2：写入 agents 表（loginToken/费率用默认）
+      // Step 2：写入 agents 表（旧服务端未返回费率时由落库层使用默认值）
       const regRes = await cx.agentRegistration.registerAgentInDb({
         agentId,
         uid: data.imUid,
@@ -1309,8 +1366,14 @@ function createToolHandlers(cx: McpContext) {
         did: data.did,
         publicKey: data.publicKey,
         privateKey: data.privateKey,
+        paymentFeeRate,
+        agentUsageFeeRate,
         category: p.category || 'general',
         description: p.description,
+        tags: p.tags,
+        iconUrl: p.iconUrl,
+        contactPhone: p.contact_phone,
+        address: p.address,
         accessMode,
       });
       if (!regRes.success) return { success: false, error: regRes.error || '写入 agents 表失败' };
@@ -1341,6 +1404,10 @@ function createToolHandlers(cx: McpContext) {
       if (binding?.success === false) {
         return { success: false, error: binding.error || '更新绑定失败' };
       }
+
+      const profileName = data.name || data.agentName || p.agentName || agentId;
+      const profileSyncFailure = await syncRegisteredAgentProfile(agentId, p, profileName, backendType);
+      if (profileSyncFailure) return profileSyncFailure;
 
       let accessModeSynced = false;
       if (cx.setAgentStatus) {
@@ -1399,6 +1466,42 @@ function createToolHandlers(cx: McpContext) {
 
     // ─── 3. 编辑 Agent 基础信息 ───
 
+    async bind_agent_instance_once(p: McpToolParams = {}) {
+      const row = cx.query(
+        `SELECT backend_type, backend_instance_id, delivery_modes, imUid, imToken, im_server_url FROM agents WHERE agent_id = ?`,
+        [p.agentId],
+      )[0];
+      if (!row) return { success: false, error: 'Agent 不存在', code: 'AGENT_NOT_FOUND' };
+      let instances: any[] = [];
+      try {
+        instances = discoverProviderInstances(row.backend_type);
+      } catch (error: any) {
+        return { success: false, error: error.message || '本机实例发现失败', code: 'INSTANCE_DISCOVERY_FAILED' };
+      }
+      if (!instances.length) return { success: false, error: '本机未发现可绑定实例', code: 'NO_PROVIDER_INSTANCES' };
+      try {
+        const result = await new AgentProviderBindingService(cx.db).bindInstanceOnce(p.agentId, {
+          backendInstanceId: p.backendInstanceId,
+          availableInstances: instances,
+          rebind: async ({ previous, next }: any) => {
+            const rebind = (global as any).__rebindAgentRuntime;
+            if (!rebind) {
+              try { (global as any).__dispatcher?.invalidateMeta?.(p.agentId); } catch (_) {}
+              return undefined;
+            }
+            return rebind({
+              db: cx.db, agentId: p.agentId,
+              previous: { ...previous, deliveryModes: row.delivery_modes, imUid: row.imUid, imToken: row.imToken, imServerUrl: row.im_server_url },
+              next: { ...next, deliveryModes: row.delivery_modes, imUid: row.imUid, imToken: row.imToken, imServerUrl: row.im_server_url },
+            });
+          },
+        });
+        return { success: true, message: '实例绑定成功', binding: result.next, runtimeRebind: result.runtimeRebind };
+      } catch (error: any) {
+        return { success: false, error: error.message, code: error.code || 'INSTANCE_BIND_FAILED' };
+      }
+    },
+
     async update_agent_profile(p: McpToolParams = {}) {
       if (!cx.updateAgentProfile) {
         return { success: false, error: '当前环境不支持更新 Agent 资料' };
@@ -1443,21 +1546,13 @@ function createToolHandlers(cx: McpContext) {
         ? undefined
         : String(p.backendInstanceId || '').trim();
       const targetBackendType = normalizeBackendType(p.backendType || currentRow.backend_type || 'others');
-      // Validate the complete provider/instance pair before changing either field.
-      // This prevents a failed instance selection from leaving a partially changed backend type behind.
-      if (requestedInstanceId !== undefined && requestedInstanceId && !INSTANCE_BOUND_PROVIDER_TYPES.has(targetBackendType)) {
-        return { success: false, error: '仅 OpenClaw、Hermes 和 ZeroClaw 支持实例绑定' };
-      }
-      if (requestedInstanceId && requestedInstanceId !== String(currentRow.backend_instance_id || '').trim()) {
-        let provider = null;
-        try {
-          provider = createRegistrationOrchestrator({ db: cx.db }).inspectEnvironment()
-            .detected.find((item: any) => item.type === targetBackendType) || null;
-        } catch (_) {}
-        const instances = provider?.instances || [];
-        if (!instances.some((item: any) => String(item.id) === requestedInstanceId)) {
-          return { success: false, error: '所选 Agent 实例未在本机检测到，请刷新后重试' };
-        }
+      try {
+        new AgentProviderBindingService(cx.db).assertLockedUpdate(p.agentId, {
+          backendType: p.backendType,
+          backendInstanceId: p.backendInstanceId,
+        });
+      } catch (error: any) {
+        return { success: false, error: error.message, code: error.code || 'BACKEND_BINDING_LOCKED' };
       }
       const backendRebindResult: any[] = [];
       const backendChanged = p.backendType !== undefined
@@ -1780,7 +1875,9 @@ function createToolHandlers(cx: McpContext) {
       const mentions = channelType === 2 ? (p.mentions || null) : null;
       let pendingBinding: { id: string } | null = null;
       let isolateWithManagedSession = false;
-      const outboundMessageId = `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const outboundMessageId = p._requestedMessageId
+        && /^[A-Za-z0-9._-]{8,256}$/.test(p._requestedMessageId) ? p._requestedMessageId
+        : `msg-${p.agentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const caller = getProviderCaller();
       let routingConversation: any = null;
       let outboundRouteId: string | null = null;
@@ -1824,9 +1921,21 @@ function createToolHandlers(cx: McpContext) {
           }
           if (!routingConversation && p.webRequest === true) {
             const current = routingConversations.listForScope(p.agentId, p.toUid, channelType);
-            routingConversation = current.length === 1
-              ? current[0]
-              : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
+            if (p.webConversationStart === true) {
+              const parent = p.parentConversationId
+                ? routingConversations.getForScope(p.parentConversationId, p.agentId, p.toUid, channelType)
+                : null;
+              if (p.parentConversationId && (!parent || parent.status !== 'active')) {
+                throw new Error('Parent conversation is unavailable or outside the current Agent and channel');
+              }
+              routingConversation = current.find((item: RoutingConversation) => item.status === 'pending')
+                || routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType,
+                  parentConversationId: parent?.id || null });
+            } else {
+              routingConversation = current.length === 1
+                ? current[0]
+                : routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType });
+            }
           }
           if (routingConversation) {
             outboundRouteId = messageRoutes.createPending({
@@ -1872,12 +1981,15 @@ function createToolHandlers(cx: McpContext) {
       }
 
       const routingConversationWasPending = routingConversation?.status === 'pending';
+      const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
+        ...(replyToRouteId ? { replyToRouteId } : {}),
+        ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
+        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) },
+        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
+        (p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : undefined);
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
-        outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
-          ...(replyToRouteId ? { replyToRouteId } : {}),
-          ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
-          ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) } } : undefined,
+        routeMetadata,
       );
       if (outboundRouteId) {
         try {
@@ -2190,10 +2302,94 @@ function createToolHandlers(cx: McpContext) {
     async upload_and_send_file(p: McpToolParams = {}) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
-      const uploaded = await uploadAttachment(cx, p);
-      if (!uploaded.success) return uploaded;
-
+      if (!p.agentId || !p.toUid) return { success: false, error: '缺少 agentId 或 toUid' };
       const channelType = inferChannelType(p);
+      const inspection = inspectAttachment(p);
+      if (!inspection.success) return inspection;
+      const inspected = inspection as { success:true;filePath:string;fileName:string;fileSize:number;
+        mimeType:string;contentType:number;ext:string };
+      const safeAttachmentInfo = { fileName: inspected.fileName, fileSize: inspected.fileSize,
+        mimeType: inspected.mimeType, contentType: inspected.contentType };
+      let effectiveConversationId = p.conversationId;
+      if (channelType === 1 && cx.secureOutboundRouter) {
+        let scopedConversation: RoutingConversation | null = null;
+        try {
+          if (p.conversationId) scopedConversation = routingConversations.getForScope(
+            p.conversationId, p.agentId, p.toUid, 1);
+          else if (p.replyToMessageId) {
+            const prior = messageRoutes.getByMessage(p.replyToMessageId, p.agentId);
+            if (prior?.conversation_id) scopedConversation = routingConversations.getForScope(
+              prior.conversation_id, p.agentId, p.toUid, 1);
+          }
+          if ((p.conversationId || p.replyToMessageId) && !scopedConversation) {
+            return { success: false, code: 'ROUTING_CONVERSATION_INVALID',
+              error: 'Conversation does not belong to the current Agent and channel' };
+          }
+          if (!scopedConversation) {
+            const caller = getProviderCaller();
+            if (caller?.providerType && caller?.nativeSessionId && caller?.evidence) {
+              const agent = cx.query<{ backend_type?: string; backend_instance_id?: string }>(
+                'SELECT backend_type,backend_instance_id FROM agents WHERE agent_id=? LIMIT 1', [p.agentId],
+              )[0];
+              const callerFamily = normalizeProviderFamily(caller.providerType);
+              if (callerFamily === normalizeProviderFamily(agent?.backend_type || '')) {
+                scopedConversation = routingConversations.resolveOrCreate({ agentId: p.agentId,
+                  providerFamily: callerFamily,
+                  providerInstanceKey: caller.providerInstanceId || caller.instanceId
+                    || agent?.backend_instance_id || '',
+                  nativeSessionId: caller.nativeSessionId, channelId: p.toUid, channelType: 1, origin: 'caller' });
+              }
+            }
+          }
+          if (!scopedConversation && p.webRequest === true) {
+            const current = routingConversations.listForScope(p.agentId, p.toUid, 1);
+            scopedConversation = current.length === 1
+              ? current[0]
+              : current.find((item: RoutingConversation) => item.status === 'pending')
+                || routingConversations.createPending({ agentId: p.agentId, channelId: p.toUid, channelType: 1 });
+          }
+          if (scopedConversation) effectiveConversationId = scopedConversation.id;
+        } catch (error: any) {
+          return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
+        }
+        const preflightMetadata = scopedConversation?.wireConversationKey
+          ? { _voko: { protocolVersion: 1, conversationKey: scopedConversation.wireConversationKey } } : undefined;
+        const security = await cx.secureOutboundRouter.prepare(p.agentId, p.toUid, 1, preflightMetadata, 'attachment');
+        if (!security.success) return { ...safeAttachmentInfo, ...security, success: false };
+        if (security.securityMode === 'e2ee') {
+          const message = String(p.message || '').trim();
+          let textMessageId: string | undefined;
+          if (message) {
+            const textResult = await handlers.send_message({ agentId: p.agentId, toUid: p.toUid,
+              channelType, content: message, conversationId: effectiveConversationId,
+              replyToMessageId: p.replyToMessageId, webRequest: p.webRequest });
+            if (textResult?.success === false) return { ...safeAttachmentInfo, ...security, success: false, error: textResult.error };
+            textMessageId = textResult?.messageId;
+          }
+          const attachmentMessageId = `msg-${p.agentId}-${Date.now()}-${require('crypto').randomUUID()}`;
+          const localUrl = `/api/e2ee-v2/attachments/${encodeURIComponent(attachmentMessageId)}`
+            + `?agentId=${encodeURIComponent(p.agentId)}`;
+          const attachment = { url: localUrl, name: inspected.fileName, size: inspected.fileSize, type: inspected.mimeType };
+          const fileResult = await handlers.send_message({ agentId: p.agentId, toUid: p.toUid, channelType,
+            contentType: inspected.contentType,
+            content: inspected.contentType === 2 ? localUrl : attachment,
+            conversationId: effectiveConversationId, replyToMessageId: p.replyToMessageId, webRequest: p.webRequest,
+            _requestedMessageId: attachmentMessageId,
+            _e2eeAttachmentSource: { filePath: inspected.filePath, fileName: inspected.fileName,
+              mediaType: inspected.mimeType } });
+          return { ...safeAttachmentInfo, url: localUrl, textMessageId, messageId: fileResult?.messageId,
+            success: fileResult?.success !== false, ...(fileResult?.error ? { error: fileResult.error } : {}),
+            securityMode: fileResult?.securityMode, securityReason: fileResult?.securityReason,
+            encryptedDeviceCount: fileResult?.encryptedDeviceCount, deliveryState: fileResult?.deliveryState,
+            conversationId: fileResult?.conversationId ?? null, conversationStatus: fileResult?.conversationStatus ?? null,
+            conversationDisposition: fileResult?.conversationDisposition ?? null };
+        }
+      }
+
+      const uploadResult = await uploadAttachment(cx, p);
+      if (!uploadResult.success) return uploadResult;
+      const uploaded = uploadResult as { success:true;url:string;fileName:string;fileSize:number;
+        mimeType:string;contentType:number };
       const message = String(p.message || '').trim();
       let textMessageId: string | undefined;
       if (message) {
@@ -2203,7 +2399,7 @@ function createToolHandlers(cx: McpContext) {
           channelType,
           content: message,
           mentions: p.mentions,
-          conversationId: p.conversationId,
+          conversationId: effectiveConversationId,
           replyToMessageId: p.replyToMessageId,
           webRequest: p.webRequest,
         });
@@ -2224,7 +2420,7 @@ function createToolHandlers(cx: McpContext) {
         contentType: uploaded.contentType,
         content: uploaded.contentType === 2 ? uploaded.url : attachment,
         mentions: p.mentions,
-        conversationId: p.conversationId,
+        conversationId: effectiveConversationId,
         replyToMessageId: p.replyToMessageId,
         webRequest: p.webRequest,
       });
@@ -2327,6 +2523,9 @@ function createToolHandlers(cx: McpContext) {
     // ─── 14-16. 人工介入 ───
 
     async ask_human_for_help(p: McpToolParams = {}) {
+      const reservedPrefix = reservedVisitorPrefix(p.visitorId);
+      if (reservedPrefix) return { success: false, code: 'VISITOR_ID_RESERVED',
+        error: `visitorId 使用 VOKO 保留命名空间：${reservedPrefix}` };
       const now = Date.now();
       const id = `mcp_${now}_${Math.random().toString(36).substr(2, 6)}`;
       const ownerChannelType = cx.getEnabledChannel?.()?.name || null;
@@ -2334,9 +2533,17 @@ function createToolHandlers(cx: McpContext) {
       if (targetChannelType === 2 && !p.channelId) {
         return { success: false, error: t('mcp.tool.ask_human_for_help.error.channelIdRequired') };
       }
-      const targetChannelId = targetChannelType === 2 ? p.channelId : p.visitorId;
-      const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
-      const sourceMessageId = p.replyToMessageId || p.messageId || null;
+      const requestedSourceMessageId = p.replyToMessageId || p.messageId || null;
+      const activeE2ee = targetChannelType === 1
+        ? resolveActiveOwnerInterventionContext(p.agentId, requestedSourceMessageId)
+        : { status: 'unavailable' };
+      if (activeE2ee.status === 'ambiguous') return { success: false, code: 'CONVERSATION_REQUIRED',
+        error: 'Multiple active E2EE conversations are available; provide the source message ID' };
+      const e2eeContext = activeE2ee.status === 'resolved' ? activeE2ee.context : null;
+      const visitorId = e2eeContext?.visitorId || p.visitorId;
+      const targetChannelId = targetChannelType === 2 ? p.channelId : (e2eeContext?.channelId || p.visitorId);
+      const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : visitorId;
+      const sourceMessageId = e2eeContext?.sourceMessageId || requestedSourceMessageId;
       const resolution = resolveOwnerInterventionConversation(cx.db, { agentId: p.agentId,
         channelId: targetChannelId, channelType: targetChannelType, caller: getProviderCaller(),
         sourceMessageId, conversationId: p.conversationId || null });
@@ -2352,27 +2559,40 @@ function createToolHandlers(cx: McpContext) {
       const backendType = backendRow?.[0]?.backend_type || 'openclaw';
       const prefix = backendType === 'hermes' ? 'hermes' : 'agent';
       cx.exec(`
-        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id)
-        VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?)
-      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null, now, ownerChannelType, now, now, p.visitorId, targetChannelId, targetChannelType, sourceMessageId, routingConversationId]);
+        INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id, route_security_mode, e2ee_protocol_conversation_id, e2ee_session_scope_id)
+        VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)
+      `, [id, p.agentId, visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null,
+        now, ownerInterventionExpireTime(now), ownerChannelType, now, now, visitorId, targetChannelId,
+        targetChannelType, sourceMessageId, routingConversationId, e2eeContext ? 'e2ee_v2' : 'standard',
+        e2eeContext?.protocolConversationId || null, e2eeContext?.sessionScopeId || null]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
-          id, visitorId: p.visitorId, agentId: p.agentId,
+          id, visitorId, agentId: p.agentId,
           sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
           problem: p.problem, agentSuggestion: p.suggestion || '',
-          askTime: now, skipReply: 0, sourceSenderUid: p.visitorId,
+          askTime: now, expireTime: ownerInterventionExpireTime(now), skipReply: 0, sourceSenderUid: visitorId,
           routingConversationId,
           targetChannelId, targetChannelType, sourceMessageId,
+          routeSecurityMode: e2eeContext ? 'e2ee_v2' : 'standard',
+          e2eeProtocolConversationId: e2eeContext?.protocolConversationId || null,
+          e2eeSessionScopeId: e2eeContext?.sessionScopeId || null,
         });
       }
+      if (e2eeContext) notifyOwnerInterventionCreated(e2eeContext);
       return { success: true, interventionId: id, conversationId: routingConversationId };
     },
 
     async check_human_replies(p: McpToolParams = {}) {
+      const now = Date.now();
+      cx.exec(`UPDATE owner_interventions
+        SET status='expired',resolved_at=?,updated_at=?
+        WHERE agent_id=? AND status IN ('pending','awaiting')
+        AND expire_time IS NOT NULL AND expire_time<=?`, [now, now, p.agentId, now]);
       // 按 id 查单条
       if (p.id) {
-        const r = cx.query(`SELECT * FROM owner_interventions WHERE id=? AND agent_id=?`, [p.id, p.agentId])[0];
+        const r = cx.query(`SELECT * FROM owner_interventions
+          WHERE id=? AND agent_id=? AND status NOT IN ('expired','resolved','cancelled')`, [p.id, p.agentId])[0];
         return {
           success: true,
           interventions: r ? [{
@@ -2405,7 +2625,7 @@ function createToolHandlers(cx: McpContext) {
       const since = automaticCursor ? checkpoint!.timestamp : p.since;
 
       // 构造 SQL
-      const conditions = [`agent_id=?`, `status!='resolved'`];
+      const conditions = [`agent_id=?`, `status NOT IN ('expired','resolved','cancelled')`];
       const params: unknown[] = [p.agentId];
       if (p.visitorId) {
         conditions.push(`visitor_id=?`);
@@ -2456,7 +2676,8 @@ function createToolHandlers(cx: McpContext) {
 
     async close_human_request(p: McpToolParams = {}) {
       const now = Date.now();
-      const result = cx.exec(`UPDATE owner_interventions SET status='resolved', resolved_at=?, updated_at=? WHERE id=? AND agent_id=?`, [now, now, p.id, p.agentId]);
+      const result = cx.exec(`UPDATE owner_interventions SET status='resolved', resolved_at=?, updated_at=?
+        WHERE id=? AND agent_id=? AND status NOT IN ('expired','resolved','cancelled')`, [now, now, p.id, p.agentId]);
       return { success: true, closed: (result?.changes || 0) > 0 };
     },
 
@@ -2505,15 +2726,20 @@ function createToolHandlers(cx: McpContext) {
       } catch (error: any) {
         return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
       }
-      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null });
+      const paymentOrder = { id: orderId, agent_id: p.agentId, visitor_id: p.visitorId,
+        from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending',
+        created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null };
+      cx.savePaymentOrder(paymentOrder);
       // 同步处理 pending 订单（DID 签名 → 调支付 API → 生成二维码 → 通知访客）
       // 注意：必须等待处理完成，否则 MCP 返回成功但访客收不到支付链接
+      let paymentResult: DynamicRow | null = null;
+      let processingError = '';
       if (cx.processPaymentOrder) {
         try {
-          await cx.processPaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '' });
+          paymentResult = await cx.processPaymentOrder(paymentOrder) as DynamicRow;
         } catch (err: any) {
           console.error('[MCP] 处理支付订单失败:', err.message);
-          return { success: false, error: '支付订单处理失败: ' + err.message, orderId };
+          processingError = err?.message || String(err);
         }
       }
       // 确认订单是否真的处理成功（不再为 pending）
@@ -2521,19 +2747,19 @@ function createToolHandlers(cx: McpContext) {
       const finalStatus = processedOrder?.[0]?.status || 'unknown';
       if (!['created', 'paid'].includes(finalStatus)) {
         console.error('[MCP] 支付订单处理异常，状态未变更:', orderId);
-        return { success: false, error: processedOrder?.[0]?.result || '支付订单处理失败', orderId, status: finalStatus };
+        return { success: false, orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+          error: processedOrder?.[0]?.result || processingError || '支付订单处理失败', orderId, status: finalStatus };
       }
-      if (finalStatus === 'created' && processedOrder?.[0]?.result) {
-        return {
-          success: false,
-          error: t('mcp.payment.delivery_failed', { error: processedOrder[0].result }),
-          orderId,
-          orderNo: processedOrder[0].order_no,
-          payUrl: processedOrder[0].pay_url,
-          status: finalStatus
-        };
-      }
-      return { success: true, orderId, orderNo: processedOrder?.[0]?.order_no, payUrl: processedOrder?.[0]?.pay_url, status: finalStatus };
+      const reportedDeliveryStatus = String(paymentResult?.deliveryStatus || '');
+      const deliveryStatus = ['delivered', 'pending', 'failed'].includes(reportedDeliveryStatus)
+        ? reportedDeliveryStatus : processedOrder?.[0]?.result || processingError ? 'failed' : 'unknown';
+      const deliveryError = deliveryStatus === 'failed'
+        ? String(paymentResult?.error || processedOrder?.[0]?.result || processingError || '访客消息投递失败')
+        : undefined;
+      return { success: true, orderCreated: true, sentToVisitor: deliveryStatus === 'delivered',
+        deliveryStatus, deliveryError, visitorId: p.visitorId, orderId,
+        orderNo: processedOrder?.[0]?.order_no, payUrl: processedOrder?.[0]?.pay_url,
+        messageId: paymentResult?.messageId, status: finalStatus };
     },
 
     // ─── 18. 查询支付 ───
@@ -2863,6 +3089,7 @@ function createToolHandlers(cx: McpContext) {
 
       const agent = cx.query<PaymentAgentRow>(`SELECT owner_email, did, private_key FROM agents WHERE agent_id = ?`, [agentId])[0];
       if (!agent) return { success: false, error: '未找到 Agent' };
+      if (String(agent.owner_email || '').trim().toLowerCase() !== currentOwner) return { success: false, error: 'Agent 不属于当前登录用户' };
       if (!agent.did) return { success: false, error: 'Agent 未注册 DID' };
       if (!agent.private_key) return { success: false, error: 'Agent 未配置私钥' };
 
@@ -2926,6 +3153,9 @@ function createToolHandlers(cx: McpContext) {
     async agent_pricing(p: McpToolParams = {}) {
       // 设置了 pricingModel 则为写操作
       if (p.pricingModel) {
+        if (p.pricingModel !== 'free' && p.pricingModel !== 'timed') {
+          return { success: false, error: 'pricingModel 必须为 free 或 timed' };
+        }
         const now = Date.now();
         const isFree = p.pricingModel === 'free';
         const finalTrial = isFree ? null : (p.trialMinutes ?? 3);

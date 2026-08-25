@@ -192,7 +192,8 @@ function createProtocolConnection(ws, req, { faults, events, connections, nextMe
       try { content = decodeContent(state.crypto.decryptBytes(packet.encryptedPayload)); } catch (_) {}
       state.sendCount += 1;
       events.push({ target: 'im', direction: 'send', uid: state.uid, packet, content });
-      const rule = faults.consume('im');
+      const channelFaultTarget = packet.channelId ? `im:${state.uid}:${packet.channelId}` : null;
+      const rule = (channelFaultTarget && faults.consume(channelFaultTarget)) || faults.consume('im');
       if (rule?.delayMs) await new Promise(resolve => setTimeout(resolve, rule.delayMs));
       if (rule?.mode === '1006') return ws.terminate();
       if (rule?.mode === 'sendack-lost') {

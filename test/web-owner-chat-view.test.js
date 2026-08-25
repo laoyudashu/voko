@@ -42,6 +42,8 @@ test('owner chat tab is hidden until an Agent has a real owner message', async t
   assert.equal(response.status, 200);
   assert.doesNotMatch(html, /data-tab="owner"/);
   assert.match(html, /owner-chat:updated/);
+  assert.match(html, /includeAgentMessages=true/);
+  assert.match(html, /agent-wukongim:message/);
   assert.match(html, /requestAnimationFrame\(scrollToLatest\)/);
   assert.doesNotMatch(html, /setInterval/);
 });

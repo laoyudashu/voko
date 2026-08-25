@@ -11,6 +11,10 @@ class Provider extends EventEmitter {
 function db() { return { prepare(sql) { return { get: () => sql.includes('FROM agents')
   ? { backend_type: 'codex', backend_instance_id: null, delivery_modes: '["cli"]', imUid: 'im-agent' } : undefined,
   all: () => [], run: () => ({ changes: 1 }) }; } }; }
+function keepEventLoopAlive(promise) {
+  const timer = setInterval(() => {}, 1000);
+  return promise.finally(() => clearInterval(timer));
+}
 test('isolated execution captures reply without ordinary reply callback or binding commit', async () => {
   const provider = new Provider(); const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply: reply => ordinary.push(reply) });
@@ -21,6 +25,37 @@ test('isolated execution captures reply without ordinary reply callback or bindi
   assert.equal(provider.payload.securityContext.sourceType, 'agent_peer');
   assert.match(provider.payload.content, /普通问候、问题和任务请求仍应正常回复/);
   assert.equal(provider.payload.providerBinding, null);
+});
+test('E2EE Agent peer uses Agent governance and strips control state from the visible reply', async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;setImmediate(()=>this.emit('agent.reply',{
+    agentId:payload.agentId,visitorId:payload.fromUid,turnId:payload.turnId,replyId:'e2ee-peer-reply',
+    content:'[STATE]{"goal":"finish","agenda":[],"turn":1,"proposal":"done","expects_reply":false,"converged":true}[/STATE]\n[FINAL]peer-visible result[/FINAL]',done:true}));
+    return{nativeSessionId:'provider-native-thread'};};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const result=await dispatcher.executeE2ee({agentId:'agent-1',taskId:'e2ee-task-1',
+    contextId:'67ad73dc-bc3d-4463-8e5b-7637765935f4',content:'peer request',
+    sourceType:'agent_peer',peerUid:'peer-agent-uid',sessionScopeId:'isolated-session-scope',timeoutMs:1000});
+  assert.equal(result.reply.content,'peer-visible result');
+  assert.equal(provider.payload.sourceType,'agent_peer');
+  assert.equal(provider.payload.securityContext.sourceType,'agent_peer');
+  assert.match(provider.payload.content,/\[VOKO A2A CONTROL\]/);
+  assert.equal(provider.payload.protocolContextId,'67ad73dc-bc3d-4463-8e5b-7637765935f4');
+  assert.equal(provider.payload.sessionScopeId,'isolated-session-scope');
+});
+test('E2EE owner intervention ends the original turn without waiting for a Provider reply', async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;return{nativeSessionId:'provider-native-thread'};};
+  let markIntervention;
+  const interventionCreated=new Promise(resolve=>{markIntervention=resolve;});
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'e2ee-owner-task',
+    contextId:'e2ee-owner-context',content:'need owner',sourceType:'visitor',
+    sessionScopeId:'e2ee-owner-scope',timeoutMs:1000,ownerInterventionCreated:interventionCreated});
+  await new Promise(resolve=>setImmediate(resolve));
+  markIntervention();
+  const result=await pending;
+  assert.equal(result.reply.content,'NO_REPLY');
 });
 test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
   const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
@@ -108,9 +143,9 @@ test('isolated reply timeout is handled while Provider delivery is still pending
     return { nativeSessionId: 'slow-native-session' }; };
   const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply(reply) { ordinary.push(reply); } });
-  await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
+  await assert.rejects(keepEventLoopAlive(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
     contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
-    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 10 }), error => {
+    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 5_000 })), error => {
       assert.match(error.message, /Provider reply timed out/);
       assert.equal(error.deliveryOutcome, 'outcome_unknown');
       assert.equal(error.code, 'A2A_PROVIDER_REPLY_TIMEOUT');
@@ -121,6 +156,49 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   provider.emit('agent.reply', { agentId: 'agent-1', visitorId: provider.payload.fromUid,
     replyId: 'missing-turn', content: 'unattributed isolated result', done: true });
   assert.equal(ordinary.length, 0, 'late or unattributed isolated replies must never enter the ordinary message path');
+});
+
+test('E2EE and Owner Chat timeouts use stable outcome-unknown results', async () => {
+  const e2eeProvider = new Provider();
+  e2eeProvider.push = payload => { e2eeProvider.payload = payload; return { nativeSessionId: 'e2ee-timeout-session' }; };
+  const ownerProvider = new Provider();
+  ownerProvider.pushOwner = payload => { ownerProvider.payload = payload; return { nativeSessionId: 'owner-timeout-session' }; };
+  const e2eeDispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': e2eeProvider }, onAgentReply() {} });
+  const ownerDispatcher = createDispatcher({ db: db(), providers: { 'codex-app-server': ownerProvider }, onAgentReply() {} });
+  const transport = ownerDispatcher.getOwnerTransportStatus('agent-1');
+  const ownerExecutionContext = { sourceType:'owner_chat',authority:'verified_owner_conversation',executionScope:'owner_chat',
+    ownerConversationId:'owner-timeout-context',commandMessageId:'owner-timeout-task',configDigest:transport.configDigest,
+    providerId:transport.providerId };
+  const [e2ee, owner] = await keepEventLoopAlive(Promise.allSettled([
+    e2eeDispatcher.executeE2ee({ agentId:'agent-1',taskId:'e2ee-timeout-task',contextId:'e2ee-timeout-context',
+      content:'wait',sessionScopeId:'e2ee-timeout-scope',timeoutMs:5_000 }),
+    ownerDispatcher.executeOwner({ agentId:'agent-1',taskId:'owner-timeout-task',contextId:'owner-timeout-context',
+      content:'wait',sourceType:'owner_chat',executionScope:'owner_chat',ownerExecutionContext,timeoutMs:5_000 }),
+  ]));
+  for (const [result, code] of [[e2ee, 'E2EE_V2_PROVIDER_REPLY_TIMEOUT'], [owner, 'OWNER_PROVIDER_REPLY_TIMEOUT']]) {
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason.code, code);
+    assert.equal(result.reason.deliveryOutcome, 'outcome_unknown');
+  }
+});
+
+test('internal Provider tool protocol is never delivered as a final reply', async () => {
+  const provider = new Provider();
+  provider.push = function(payload) {
+    setImmediate(() => this.emit('agent.reply', { agentId:payload.agentId,visitorId:payload.fromUid,
+      turnId:payload.turnId,replyId:'internal-protocol',done:true,
+      content:'< | | DSML | | tool_calls>\n< | | DSML | | invoke name="Read">' }));
+    return { nativeSessionId:'internal-protocol-session' };
+  };
+  const ordinary = [];
+  const dispatcher = createDispatcher({ db:db(),providers:{'codex-cli':provider},onAgentReply:reply=>ordinary.push(reply) });
+  await assert.rejects(dispatcher.executeE2ee({ agentId:'agent-1',taskId:'internal-task',contextId:'internal-context',
+    content:'hello',sessionScopeId:'internal-scope',timeoutMs:5_000 }), error => {
+    assert.equal(error.code, 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT');
+    assert.equal(error.deliveryOutcome, 'outcome_unknown');
+    return true;
+  });
+  assert.equal(ordinary.length, 0);
 });
 
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {

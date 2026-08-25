@@ -46,7 +46,8 @@ async function uploadToOfficialStorage(options: any) {
   if (authorized.completed) return { uploadId: authorized.uploadId, url: authorized.url || authorized.downloadPath };
   const form = new FormData();
   for (const [key, value] of Object.entries(authorized.fields || {})) form.append(key, String(value));
-  form.append('file', new Blob([buffer], { type: options.contentType || 'application/octet-stream' }), options.fileName || 'file');
+  const authorizedContentType = String(authorized.fields?.['Content-Type'] || options.contentType || 'application/octet-stream');
+  form.append('file', new Blob([buffer], { type: authorizedContentType }), options.fileName || 'file');
   const response = await fetch(authorized.endpoint, { method: 'POST', body: form,
     signal: AbortSignal.timeout(Number(process.env.VOKO_OSS_UPLOAD_TIMEOUT_MS) || 30000) });
   if (!response.ok) throw uploadError('UPLOAD_OBJECT_REJECTED', `对象存储拒绝上传 (${response.status})`, response.status);

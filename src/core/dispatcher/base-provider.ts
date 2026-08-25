@@ -41,6 +41,9 @@ class PushProvider extends EventEmitter {
    * protocol falls back (for example ACP -> restricted CLI). */
   get fallbackModes(): string[] { return []; }
 
+  /** Provider 执行一轮的权威上限；无明确限制时统一按 120 秒。 */
+  getTurnTimeoutMs(): number { return 120_000; }
+
   /** Optional readiness probe for an internal fallback mode. */
   isFallbackAvailable(_agentId: string, _mode: string): boolean { return false; }
 

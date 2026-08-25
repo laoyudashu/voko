@@ -28,6 +28,12 @@ export interface InboundMessage {
   _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
     conversationKey?: string; conversationStart?: boolean;
     conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
+  e2eeStrictRoute?: boolean;
+  e2eeAgentPeer?: boolean;
+  /** Authenticated E2EE protocol context. Never accept this from raw IM input. */
+  e2eeProtocolConversationId?: string;
+  /** Local-only business-policy disposition. Never accept this from raw IM input. */
+  _vokoInboundIntercepted?: string;
 }
 
 export interface ForwardPayload {
@@ -134,6 +140,7 @@ export type Deliver = (
   channelType?: ChannelType,
   mentions?: Mention | null,
   localMsgId?: string | null,
+  metadata?: unknown,
 ) => Promise<DeliverResult>;
 
 export interface WorkerEntryLike {

@@ -29,8 +29,9 @@ opencode auth login
 ## 2. VOKO 注册
 
 1. 启动 `voko start`，打开 `http://localhost:3100`，添加 Agent。
-2. Provider 选择 **OpenCode**。`backend_instance_id` 不需要填写 OpenCode 项目名；OpenCode 会话由 VOKO 按 Agent 和访客会话绑定。
-3. 推荐通道：
+2. Provider 选择 **OpenCode**。如果检测到 `~/.config/opencode/agents/*.md`，可选择一个 Agent；实例 ID 是文件名（不含 `.md`），不是 OpenCode 项目名或原生 session。
+3. 选择 Agent 后，第二步从其 YAML frontmatter 读取 `name`、`description` 和 `tags` 作为可编辑建议，正文提示词不会公开或上传。没有 Agent 文件时仍可不绑定实例注册。
+4. 推荐通道：
 
    ```text
    ACP → Attach → CLI → Pull
@@ -42,7 +43,7 @@ opencode auth login
    CLI → Pull
    ```
 
-4. 完成注册后执行：
+5. 完成注册后执行：
 
    ```powershell
    voko doctor --deep

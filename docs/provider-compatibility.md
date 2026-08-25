@@ -13,12 +13,12 @@
 | OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 选择 `openclaw.json` 中的 Agent ID；Windows OpenClaw 2026.6.1 实测；详见 [OpenClaw 专属指南](providers/openclaw.md)。 |
 | Hermes | MCP、CLI、本机接口 | HTTP → Hermes CLI → Pull | profile 隔离、连续对话和通道降级已回归 | Windows + Ubuntu 真机完整回归 | `backend_instance_id` 是 Hermes profile；Ubuntu Hermes 0.19.1、Windows 0.19.0；Linux 可自动发现官方 venv 入口；详见 [Hermes 专属指南](providers/hermes.md)。 |
 | Goose | MCP、CLI、本机接口 | `acp-goose`: ACP → CLI → Pull；`goose`: CLI → Pull | Goose 原生 session ID 在 CLI/ACP 间保持；ACP 断开后可降级并恢复 | Windows 实机 ACP→CLI→ACP 与 CLI 会话验证 | Windows Goose 1.38.0；直接启动 `goose.exe`，提示词经 stdin 传入；详见 [Goose 专属指南](providers/goose.md)。 |
-| Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | Windows 实机 CLI 会话验证 | 使用 `codex exec --json --sandbox read-only`；不需要 Provider Instance；详见 [Codex 专属指南](providers/codex.md)。 |
-| Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与原生 session 恢复已验证 | Windows 实机 CLI 会话验证 | 托管路径禁用工具、Chrome、项目指令和写操作；详见 [Claude Code 专属指南](providers/claude-code.md)。 |
-| OpenCode | MCP、CLI、本机接口 | ACP / attach（已配置服务时）→ OpenCode CLI → Pull | ACP/CLI 指定会话、连续对话和恢复已验证；Attach 完成入口预检 | Windows 真机 ACP/CLI 会话验证 | ACP、attach 与 CLI 是独立路径；保留角色隔离与权限约束；详见 [OpenCode 专属指南](providers/opencode.md)。 |
+| Codex | MCP、CLI、本机接口 | Codex CLI（thread / session）→ Pull | 发送、回复、原生恢复已验证；按会话隔离 | Windows 实机 CLI 会话验证 | 可选择 `CODEX_HOME` 下 `<name>.config.toml` 对应的 Profile；Profile 是启动配置，不是 thread/session。使用 `codex exec --json --sandbox read-only`；详见 [Codex 专属指南](providers/codex.md)。 |
+| Claude Code | MCP、CLI、本机接口 | Claude Code CLI 持久会话 → Pull | 连续对话与原生 session 恢复已验证 | Windows 实机 CLI 会话验证 | 可选择 `~/.claude/agents/*.md` Agent，并从 frontmatter 生成可编辑资料建议；托管路径禁用工具、Chrome、项目指令和写操作；详见 [Claude Code 专属指南](providers/claude-code.md)。 |
+| OpenCode | MCP、CLI、本机接口 | ACP / attach（已配置服务时）→ OpenCode CLI → Pull | ACP/CLI 指定会话、连续对话和恢复已验证；Attach 完成入口预检 | Windows 真机 ACP/CLI 会话验证 | 可选择 `~/.config/opencode/agents/*.md` Agent；ACP、attach 与 CLI 是独立路径；保留角色隔离与权限约束；详见 [OpenCode 专属指南](providers/opencode.md)。 |
 | Cursor Agent CLI | MCP、CLI、本机接口 | Cursor ACP → Cursor CLI（`--resume`）→ Pull | ACP、CLI 原生恢复和连续对话已验证 | Windows 真机 ACP/CLI 会话验证 | 官方运行入口解析；ACP 工具默认拒绝，CLI 使用只读 plan 模式；详见 [Cursor 专属指南](providers/cursor-agent.md)。 |
 | Kiro CLI | MCP、CLI、本机接口 | Kiro CLI（Hook session / `--resume-id`）→ Pull | 首次会话、精确 session 识别和续接已验证 | Windows 真机 CLI 会话验证 | 非交互、无预授权工具模式；详见 [Kiro 专属指南](providers/kiro.md)。 |
-| GitHub Copilot CLI | MCP、CLI、本机接口 | ACP → 受限 Copilot CLI → Pull | ACP 隔离会话、连续对话和受限 CLI 备选配置已覆盖 | Windows 真机 ACP/续接验证 | 禁用自定义指令、内置 MCP、远程导出和自动更新；工具白名单为空；详见 [Copilot 专属指南](providers/github-copilot.md)。 |
+| GitHub Copilot CLI | MCP、CLI、本机接口 | ACP → 受限 Copilot CLI → Pull | ACP 隔离会话、连续对话和受限 CLI 备选配置已覆盖 | Windows 真机 ACP/续接验证 | 可选择 `~/.copilot/agents/*.md` Agent，并从 frontmatter 生成可编辑资料建议；禁用自定义指令、内置 MCP、远程导出和自动更新；工具白名单为空；详见 [Copilot 专属指南](providers/github-copilot.md)。 |
 | Qwen Code | MCP、CLI、本机接口 | Qwen CLI → Pull | 原生 session 与 `--resume` 恢复已验证 | Windows 真机 CLI/session 验证 | Qwen Code 0.21.7；safe/plan、零工具预算和受限 stdin；详见 [Qwen Code 专属指南](providers/qwen-code.md)。 |
 | Aider | MCP、CLI、本机接口 | Aider ask 模式 CLI → Pull | 隔离、哈希命名的历史文件可恢复 | Windows 真机 CLI/session 验证 | Aider 0.86.2；ask/dry-run、no-git、无浏览器和无 Shell 建议；详见 [Aider 专属指南](providers/aider.md)。 |
 | Cline | MCP、CLI、本机接口 | Cline ACP → Cline Plan CLI → Pull | ACP 隔离会话；CLI `--json` JSONL 输出已适配；ACP 退出后可健康恢复 | Windows 实机 ACP→CLI→ACP 回路验收 | ACP 使用 `cline --acp`；CLI 使用 plan/JSONL 模式并拒绝外部访客工具权限；CLI 需要先完成 `cline auth`。 |
@@ -38,9 +38,11 @@ Ubuntu 24.04.4 LTS 的 18 个 Provider 版本、注册结果、推荐通道和�
 | 类型 | VOKO → Agent | 当前结论 | 说明 |
 | --- | --- | --- | --- |
 | Amazon Q | Pull | 待验证 | 尚未确认 Windows / Ubuntu 当前版本是否具备稳定且可限制权限的非交互模式。 |
-| 千问办公（QwenWork） | QwenWork CLI → Pull | 已接入并完成 Windows 真机完整链路验收 | QwenWork 0.1.6 / qoderclicn 1.0.47；已验证随机 challenge、真实 IM 入站、CLI 自动交付、模型回复、IM 回传、SENDACK、单次落库及 A2A 收敛；详见 [千问办公专属指南](providers/qwen-office.md)。 |
+| 千问办公（QwenWork） | 精确专家套件 CLI → Pull | 旧版完整链路已验收；当前版专家套件发现与路由已做无模型验证 | QwenWork 0.1.6 / qoderclicn 1.0.47 已验证随机 challenge、真实 IM、模型回复、SENDACK、单次落库及 A2A 收敛。QwenWork 0.1.8 / qoderclicn 1.1.18 已验证两套本地专家套件发现、插件清单和 `--cwd` + `--plugin-dir` 路由；新版真实模型回路仍需显式执行“验证消息链路”。详见 [千问办公专属指南](providers/qwen-office.md)。 |
+| 百度搭子（DuMate） | 精确 Agent HTTP → Pull | Plugin Pack 发现、Plugin Part 精准激活和原生 Session Resume 已接入 | VOKO 选择 `.claude-plugin/plugin.json` 对应的稳定 Agent ID，通过独立本机回环 `dumate-opencode` 服务投递，并复核 `activePlugins`；实例或会话不一致时 fail closed。ACP 最终消息映射尚不足以作为生产主通道。详见 [百度搭子专属指南](providers/dumate.md)。 |
 | Trae / TraeWork | Trae CLI ACP → Pull | 已接入（桌面 MCP 客户端 + 独立 traecli ACP） | 本机 TraeWork CN 0.1.51、Trae CLI 0.120.52；ACP initialize 与 DeepSeek 配置识别通过，但当前 Enterprise 发行版首次模型请求仍要求不存在的企业 Keyring 凭证，模型回复/续聊待验收。桌面会话不作为 Push 目标；详见 [Trae 专属指南](providers/trae.md)。 |
 | WorkBuddy | HTTP → Pull | Windows 真机 HTTP/SSE 已验证 | VOKO 使用桌面版内置 CodeBuddy CLI 启动仅监听 `127.0.0.1` 的本机 HTTP 服务；支持流式回复、精确会话和取消。HTTP API 仍属 Beta，启动时会复核实际契约。 |
+| DeepSeek Harness | Web Host HTTP → Profile CLI → Pull | 已接入；本机 rc.7 启动和 API/preset 发现已验证，模型回路待验收 | Web Host 使用 `backend_instance_id` 对应的 `agentPreset` 和持久 Session ID 精确路由。Profile CLI 支持自定义 profile（默认 `headless`），但内置 headless 每次创建新 Agent，只用于无绑定的单次任务。ACP fresh Session 和 CLI one-shot 均不参与恢复或 Owner 介入。内置配置含本机工具，不等于 VOKO-safe 访客配置。 |
 | CodeBuddy | ACP → Pull | 官方 ACP 初始化已验证，模型回路待独立 CLI 真机验收 | VOKO 只检测独立安装的 `@tencent-ai/codebuddy-code` / `codebuddy`，不把 WorkBuddy 内置 CLI 当成 CodeBuddy；ACP 禁用工具并忽略外部 MCP 配置。 |
 | 豆包等无可靠自动入口的桌面 Agent | Pull | 仅检测 / 按宿主集成 | 请让 Agent 用 VOKO CLI、MCP 或本机接口主动获取新消息。 |
 

@@ -24,7 +24,41 @@ const {
 } = require('./dispatcher/qwen-office-command');
 const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
+const { resolveDeepSeekHarnessRuntime } = require('./dispatcher/deepseek-harness-command');
+const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
+const { discoverQwenOfficeAgents } = require('./dispatcher/qwen-office-agents');
+const { discoverDuMateAgents } = require('./dispatcher/dumate-agents');
+const { isDuMateRuntimeAvailable } = require('./dispatcher/dumate-command');
+const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
+const { readProviderInstanceMetadata } = require('./dispatcher/provider-instance-metadata');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
+
+const PROVIDER_DISPLAY_PRIORITY = [
+  'workbuddy', 'qwen-office', 'dumate', 'doubao', 'openclaw', 'hermes',
+  'claude-code', 'codex', 'deepseek-harness',
+  'github-copilot', 'cursor', 'gemini', 'codebuddy',
+  'qwen-code', 'trae', 'goose', 'opencode', 'cline', 'kiro', 'aider',
+  'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode',
+];
+const PROVIDER_DISPLAY_RANK = new Map(PROVIDER_DISPLAY_PRIORITY.map((type, index) => [type, index]));
+
+function sortProviderDisplay(items = []) {
+  return [...items].sort((left, right) => {
+    const leftRank = PROVIDER_DISPLAY_RANK.get(left.type) ?? PROVIDER_DISPLAY_PRIORITY.length;
+    const rightRank = PROVIDER_DISPLAY_RANK.get(right.type) ?? PROVIDER_DISPLAY_PRIORITY.length;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    const byLabel = String(left.label || left.type).localeCompare(String(right.label || right.type));
+    return byLabel || String(left.type).localeCompare(String(right.type));
+  });
+}
+
+function defaultAgentName(email, providerType) {
+  const ownerPrefix = String(email || '').split('@')[0].trim() || 'owner';
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let suffix = '';
+  for (let index = 0; index < 6; index++) suffix += alphabet[crypto.randomInt(alphabet.length)];
+  return `${ownerPrefix}的${providerType}-${suffix}`;
+}
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const SESSION_CONFIG_TYPE = 'agent_registration_sessions';
@@ -107,8 +141,9 @@ function qwenOfficeReadiness(options = {}) {
 const DESKTOP_APPLICATIONS = [
   { type: 'zcode', label: 'ZCode', pattern: /\bzcode\b/i },
   { type: 'workbuddy', label: 'WorkBuddy', pattern: /\bworkbuddy\b/i },
-  { type: 'doubao', label: '豆包', pattern: /豆包|\bdoubao\b/i },
+  { type: 'doubao', label: '豆包办公', pattern: /豆包|\bdoubao\b/i },
   { type: 'qwen-office', label: '千问办公 (QwenWork)', pattern: /千问办公|qwenwork(?:cn)?/i },
+  { type: 'dumate', label: '百度搭子 (DuMate)', pattern: /百度搭子|\bdumate\b/i },
   { type: 'trae', label: 'Trae', pattern: /\btrae(?:\s*\(user\))?\b|trae\s+(?:work|solo)/i },
 ];
 const SESSION_EXTENSIONS = new Set(['.json', '.jsonl', '.db', '.sqlite', '.sqlite3']);
@@ -131,6 +166,7 @@ function currentAgentTypeFromText(value) {
     ['gemini', /(?:^|[\\/\s])gemini(?:\.exe)?(?:\s|$)/],
     ['qwen-code', /(?:^|[\\/\s])qwen(?:\.exe)?(?:\s|$)|qwen-code/],
     ['qwen-office', /(?:^|[\\/\s])qwenworkcn(?:\.exe)?(?:\s|$)|qwenwork(?:\.exe)?(?:\s|$)|qoderclicn(?:\.exe)?(?:\s|$)|千问办公/],
+    ['dumate', /(?:^|[\\/\s])dumate(?:-opencode)?(?:\.exe)?(?:\s|$)|百度搭子/],
     ['kiro', /(?:^|[\\/\s])kiro-cli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])kiro(?:\.exe)?(?:\s|$)/],
     ['github-copilot', /(?:^|[\\/\s])copilot(?:\.exe)?(?:\s|$)|github-copilot/],
     ['openhands', /(?:^|[\\/\s])openhands(?:\.exe)?(?:\s|$)/],
@@ -140,6 +176,7 @@ function currentAgentTypeFromText(value) {
     ['opencode', /(?:^|[\\/\s])opencode(?:\.exe)?(?:\s|$)/],
     ['zcode', /(?:^|[\\/\s])zcode(?:\.exe)?(?:\s|$)/],
     ['workbuddy', /(?:^|[\\/\s])workbuddy(?:\.exe)?(?:[\\/\s]|$)/],
+    ['deepseek-harness', /(?:^|[\\/\s])dsh(?:\.exe|\.cmd)?(?:\s|$)|deepseek-harness/],
     ['codebuddy', /(?:^|[\\/\s])(?:codebuddy|cbc)(?:\.exe|\.cmd)?(?:\s|$)/],
     ['doubao', /(?:^|[\\/\s])doubao(?:\.exe)?(?:\s|$)/],
     ['trae', /(?:^|[\\/\s])traecli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])trae(?:\.exe|\.cmd)?(?:\s|$)|trae\s+(?:work|solo)/],
@@ -414,7 +451,7 @@ class RegistrationOrchestrator {
     if (!this.db) return;
     try {
       const stored = this._readStoredSessions();
-      for (const [id, session] of Object.entries(stored)) {
+      for (const [id, session] of stored) {
         if (isRegistrationId(id) && session && typeof session === 'object' && session.id === id && session.updatedAt >= now() - SESSION_TTL_MS) {
           this.sessions.set(id, session);
         }
@@ -424,8 +461,15 @@ class RegistrationOrchestrator {
 
   _readStoredSessions() {
     const row = this.db.prepare('SELECT data FROM config WHERE type=?').get(SESSION_CONFIG_TYPE);
-    const stored = row?.data ? JSON.parse(row.data) : {};
-    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const parsed = row?.data ? JSON.parse(row.data) : {};
+    const stored = new Map();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return stored;
+    for (const [id, session] of Object.entries(parsed)) {
+      if (isRegistrationId(id) && session && typeof session === 'object' && !Array.isArray(session)) {
+        stored.set(id, session);
+      }
+    }
+    return stored;
   }
 
   _persistSession(session) {
@@ -436,12 +480,12 @@ class RegistrationOrchestrator {
       transactionStarted = true;
       const cutoff = now() - SESSION_TTL_MS;
       const stored = this._readStoredSessions();
-      for (const [id, existing] of Object.entries(stored)) {
-        if (!existing || typeof existing !== 'object' || existing.updatedAt < cutoff) delete stored[id];
+      for (const [id, existing] of stored) {
+        if (existing.updatedAt < cutoff) stored.delete(id);
       }
-      stored[session.id] = session;
+      stored.set(session.id, session);
       this.db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
-        .run(SESSION_CONFIG_TYPE, JSON.stringify(stored), now());
+        .run(SESSION_CONFIG_TYPE, JSON.stringify(Object.fromEntries(stored)), now());
       this.db.exec('COMMIT');
     } catch (_) {
       if (transactionStarted) {
@@ -477,7 +521,7 @@ class RegistrationOrchestrator {
     if (this.db) {
       try {
         const stored = this._readStoredSessions();
-        const persisted = stored[sessionId];
+        const persisted = stored.get(sessionId);
         if (persisted && typeof persisted === 'object' && persisted.updatedAt >= now() - SESSION_TTL_MS) {
           this.sessions.set(sessionId, persisted);
         }
@@ -515,7 +559,7 @@ class RegistrationOrchestrator {
         mustPause: true,
         instruction: '验证码只能由主人提供。不得读取邮箱、猜测验证码或重复触发发送。',
       },
-      basic_info_required: { type: 'submit_basic_info', required: ['agentName'], optional: ['description', 'category'] },
+      basic_info_required: { type: 'submit_basic_info', required: ['agentName'], optional: ['description', 'category', 'tags', 'iconUrl', 'contactPhone', 'address'] },
       provider_selection_required: session.providerLock
         ? { type: 'select_provider_instance', required: ['instanceId'], providerType: session.providerLock.type }
         : { type: 'select_provider', required: ['providerType'], optional: ['instanceId'] },
@@ -534,6 +578,7 @@ class RegistrationOrchestrator {
       status: session.status,
       email: session.email || null,
       basicInfo: session.basicInfo || null,
+      suggestedBasicInfo: session.suggestedBasicInfo || null,
       provider: session.provider || null,
       deliveryModes: session.deliveryModes || [],
       accessMode: session.accessMode || 'private',
@@ -567,6 +612,7 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'openclaw',
         label: 'OpenClaw',
+        instanceTerm: getProviderInstanceTerm('openclaw'),
         instances: openclaw,
         supportsMultipleInstances: true,
         deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
@@ -577,6 +623,7 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'zeroclaw',
         label: 'ZeroClaw',
+        instanceTerm: getProviderInstanceTerm('zeroclaw'),
         instances: zeroclaw,
         supportsMultipleInstances: true,
         activityState: 'installed',
@@ -587,9 +634,48 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'hermes',
         label: 'Hermes',
+        instanceTerm: getProviderInstanceTerm('hermes'),
         instances: hermes,
         supportsMultipleInstances: true,
         deliveryModes: this.deliveryCapabilities('hermes', hermesGateway),
+      });
+    }
+    const deepseekHarness = discoverProviderInstances('deepseek-harness');
+    const deepseekHarnessRuntime = resolveDeepSeekHarnessRuntime();
+    if (deepseekHarness.length || deepseekHarnessRuntime.command) {
+      detected.push({
+        type: 'deepseek-harness',
+        label: 'DeepSeek Harness',
+        instanceTerm: getProviderInstanceTerm('deepseek-harness'),
+        instances: deepseekHarness,
+        supportsMultipleInstances: true,
+        activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('deepseek-harness'),
+      });
+    }
+    let qwenOfficeAgents = [];
+    try { qwenOfficeAgents = (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)(); }
+    catch (_) {}
+    const qwenOfficeRuntime = qwenOfficeReadiness(this.options);
+    if (qwenOfficeAgents.length || qwenOfficeRuntime.ready) {
+      detected.push({
+        type: 'qwen-office',
+        label: '千问办公 (QwenWork)',
+        instanceTerm: getProviderInstanceTerm('qwen-office'),
+        instances: qwenOfficeAgents,
+        supportsMultipleInstances: true,
+        activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('qwen-office'),
+      });
+    }
+    let dumateAgents = [];
+    try { dumateAgents = (this.options.dumateAgents || discoverDuMateAgents)(); } catch (_) {}
+    const dumateAvailable = isDuMateRuntimeAvailable();
+    if (dumateAgents.length || dumateAvailable) {
+      detected.push({
+        type: 'dumate', label: '百度搭子 (DuMate)', instanceTerm: getProviderInstanceTerm('dumate'),
+        instances: dumateAgents, supportsMultipleInstances: true, activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('dumate'),
       });
     }
 
@@ -611,10 +697,11 @@ class RegistrationOrchestrator {
                 ? !!this.options.codeBuddyCliAvailable()
                 : isCodeBuddyAvailable())
             : hasCommand(command);
-      if (type === 'openclaw' || type === 'hermes' || !available) continue;
+      if (type === 'openclaw' || type === 'hermes' || type === 'qwen-office' || !available) continue;
       detected.push({
         type,
         label: knownLabels.get(type) || type,
+        instanceTerm: getProviderInstanceTerm(type),
         instances: [],
         supportsMultipleInstances: false,
         ...sessionActivity(type),
@@ -628,8 +715,9 @@ class RegistrationOrchestrator {
       detected.push({
         type: application.type,
         label: knownLabels.get(application.type) || application.label,
-        instances: [],
-        supportsMultipleInstances: false,
+        ...(['qwen-office', 'dumate'].includes(application.type) ? { instanceTerm: getProviderInstanceTerm(application.type) } : {}),
+        instances: application.type === 'qwen-office' ? qwenOfficeAgents : application.type === 'dumate' ? dumateAgents : [],
+        supportsMultipleInstances: ['qwen-office', 'dumate'].includes(application.type),
         activityState: 'installed',
         deliveryModes: this.deliveryCapabilities(application.type),
       });
@@ -661,9 +749,10 @@ class RegistrationOrchestrator {
       }
     } catch (_) { /* 检测失败不影响整体环境扫描 */ }
 
-    const deliveryCount = new Set(detected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
+    const sortedDetected = sortProviderDisplay(detected);
+    const deliveryCount = new Set(sortedDetected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
-      detected,
+      detected: sortedDetected,
       more,
       fallback: {
         type: 'others',
@@ -671,31 +760,48 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('others'),
       },
       summary: {
-        providerCount: detected.length,
-        instanceCount: detected.reduce((sum, item) => sum + Math.max(item.instances.length, 1), 0),
+        providerCount: sortedDetected.length,
+        instanceCount: sortedDetected.reduce((sum, item) => sum + Math.max(item.instances.length, 1), 0),
         deliveryModeCount: deliveryCount,
       },
     };
+  }
+
+  discoverProviderInstances(providerType) {
+    const type = normalizeBackendType(providerType);
+    if (!supportsProviderInstances(type)) return { success: false, error: '该 Agent 类型不支持实例发现' };
+    try {
+      const instances = type === 'workbuddy' && this.options.workBuddyAgents
+        ? this.options.workBuddyAgents()
+        : type === 'qwen-office' && this.options.qwenOfficeAgents
+          ? this.options.qwenOfficeAgents()
+          : type === 'dumate' && this.options.dumateAgents
+            ? this.options.dumateAgents()
+          : discoverProviderInstances(type);
+      return { success: true, providerType: type, instances };
+    } catch (error) {
+      return { success: false, error: `${type} 实例发现失败: ${error.message || error}` };
+    }
   }
 
   inspectCurrentAgent(providerType, instanceId = null) {
     const type = normalizeBackendType(providerType);
     const known = this.db ? getBackendTypes(this.db) : [];
     const label = known.find((item) => item.value === type)?.label || type;
-    const allInstances = type === 'openclaw'
-      ? openclawInstances()
-      : type === 'hermes'
-        ? hermesInstances()
-        : type === 'zeroclaw'
-          ? zeroclawInstances()
-          : [];
+    const allInstances = supportsProviderInstances(type)
+      ? (type === 'qwen-office' && this.options.qwenOfficeAgents
+        ? this.options.qwenOfficeAgents()
+        : type === 'dumate' && this.options.dumateAgents ? this.options.dumateAgents()
+        : discoverProviderInstances(type))
+      : [];
     const matchedInstance = instanceId ? allInstances.find((instance) => instance.id === instanceId) : null;
     const instances = matchedInstance ? [matchedInstance] : allInstances;
     const provider = {
       type,
       label,
+      instanceTerm: getProviderInstanceTerm(type),
       instances,
-      supportsMultipleInstances: !!getProviderFamily(type)?.requiresInstance,
+      supportsMultipleInstances: supportsProviderInstances(type),
       deliveryModes: this.deliveryCapabilities(
         type,
         type === 'zeroclaw'
@@ -811,6 +917,41 @@ class RegistrationOrchestrator {
           description: available
             ? 'VOKO 使用 WorkBuddy 内置 CodeBuddy HTTP API 和隔离会话自动投递；服务仅监听本机回环地址。'
             : '未检测到 WorkBuddy 内置 CodeBuddy CLI，当前使用主动获取。',
+        },
+        pull,
+      ];
+    }
+    if (type === 'dumate') {
+      const available = isDuMateRuntimeAvailable();
+      return [{
+        mode: 'http', label: 'DuMate HTTP 精准对话', role: 'primary',
+        status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+        action: available ? 'test' : null,
+        description: available
+          ? 'VOKO 管理独立回环 dumate-opencode 服务，通过 Plugin Part 精准激活所选 Agent，并续接原生会话。'
+          : '未检测到 DuMate 内置 dumate-opencode。',
+      }, pull];
+    }
+    if (type === 'deepseek-harness') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      const presets = discoverProviderInstances('deepseek-harness');
+      const available = !!runtime.command && presets.length > 0;
+      return [
+        {
+          mode: 'http', label: 'DeepSeek Harness Web Host', role: 'primary',
+          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: available,
+          action: available ? 'test' : null,
+          description: available
+            ? 'VOKO 通过本机回环 Web Host 创建或精确恢复 DSH Session；仅应选择专门的 VOKO-safe Agent Preset。主人审批和提问不会自动转发。'
+            : '未检测到可启动的 DeepSeek Harness Web profile 或 Agent Preset，当前使用主动获取。',
+        },
+        {
+          mode: 'cli', label: 'DeepSeek Harness Profile CLI（单次任务）', role: 'fallback',
+          status: runtime.command ? 'preflight_passed' : 'unavailable', selected: false, recommended: false,
+          action: runtime.command ? 'test' : null,
+          description: runtime.command
+            ? '通过 DSH Profile CLI 执行单次任务；内置 headless 每次创建新 Agent，不支持原生会话恢复或主人介入。'
+            : '未检测到 DeepSeek Harness CLI。',
         },
         pull,
       ];
@@ -1072,7 +1213,7 @@ class RegistrationOrchestrator {
     const session = {
       id: sessionId(),
       email,
-      status: loggedIn ? 'basic_info_required' : 'email_verification_required',
+      status: loggedIn ? 'provider_selection_required' : 'email_verification_required',
       environment: null,
       basicInfo: null,
       provider: null,
@@ -1086,6 +1227,7 @@ class RegistrationOrchestrator {
       createdAt: now(),
       updatedAt: now(),
     };
+    session.environment = this.inspectEnvironment();
     if (!loggedIn) {
       const sendCode = this.options.sendCode;
       if (typeof sendCode !== 'function') return { success: false, error: '验证码服务未就绪' };
@@ -1102,54 +1244,28 @@ class RegistrationOrchestrator {
     if (typeof loginByCode !== 'function') return { success: false, error: '验证码验证服务未就绪' };
     const verified = await loginByCode({ email: session.email, code: cleanText(code, 12) });
     if (!verified?.success) return { success: false, error: verified?.error || '验证码错误或已过期' };
-    session.status = 'basic_info_required';
+    session.environment = session.environment || this.inspectEnvironment();
+    session.status = 'provider_selection_required';
     session.ownerBound = true;
     return this._save(session);
   }
 
   setBasicInfo(id, input = {}) {
     const session = this._get(id);
+    if (!session.provider) return { success: false, error: '请先选择 Agent 类型和实例' };
     const agentName = cleanText(input.agentName, 120);
     if (!agentName) return { success: false, error: 'agentName 为必填字段' };
     session.basicInfo = {
       agentName,
       description: cleanText(input.description, 1000),
       category: cleanText(input.category, 64) || 'general',
+      tags: Array.isArray(input.tags) ? input.tags.map(item => cleanText(item, 64)).filter(Boolean).slice(0, 20) : [],
+      iconUrl: cleanText(input.iconUrl, 500),
+      iconCandidate: input.useSuggestedIcon === false ? null : (session.suggestedBasicInfo?.iconCandidate || null),
+      contactPhone: cleanText(input.contactPhone || input.contact_phone, 64),
+      address: cleanText(input.address, 500),
     };
-    const currentType = session.registrationMode === 'agent'
-      ? (this.options.detectCurrentAgentType || detectCurrentAgentType)()
-      : null;
-    const currentInstance = currentType
-      ? (this.options.detectCurrentAgentInstance || detectCurrentAgentInstance)(currentType)
-      : null;
-    session.environment = currentType
-      ? this.inspectCurrentAgent(currentType, currentInstance)
-      : this.inspectEnvironment();
-    if (session.registrationMode === 'agent' && session.environment.detected.length === 1) {
-      const detected = session.environment.detected[0];
-      session.providerLock = {
-        type: detected.type,
-        label: detected.label,
-        source: currentType ? 'current_agent' : 'local_environment',
-        confidence: 'high',
-      };
-    }
-    const lockedProvider = session.providerLock
-      ? session.environment.detected.find((item) => item.type === session.providerLock.type)
-      : null;
-    if (lockedProvider && (lockedProvider.instances || []).length <= 1) {
-      const instance = lockedProvider.instances?.[0] || null;
-      session.provider = {
-        type: lockedProvider.type,
-        instanceId: instance?.id || null,
-        instanceName: instance?.name || null,
-        detected: true,
-      };
-      session.deliveryModes = lockedProvider.deliveryModes || this.deliveryCapabilities(lockedProvider.type);
-      session.status = 'delivery_selection_required';
-      return this._save(session);
-    }
-    session.status = 'provider_selection_required';
+    session.status = 'delivery_selection_required';
     return this._save(session);
   }
 
@@ -1169,13 +1285,31 @@ class RegistrationOrchestrator {
     }
     const environment = session.environment || this.inspectEnvironment();
     const detected = environment.detected.find((item) => item.type === providerType);
-    const instances = detected?.instances || [];
+    const instances = providerType === 'workbuddy'
+      ? (this.options.workBuddyAgents || discoverWorkBuddyAgents)()
+      : providerType === 'qwen-office'
+        ? (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)()
+        : providerType === 'dumate'
+          ? (this.options.dumateAgents || discoverDuMateAgents)()
+        : detected?.instances || [];
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
     if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
     const family = getProviderFamily(providerType);
     if (family?.requiresInstance && !instanceId) {
       return { success: false, error: '该 Agent 类型必须绑定一个本机已检测到的实例' };
+    }
+    if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 WorkBuddy Agent 不存在或不可用' };
+    }
+    if (providerType === 'qwen-office' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选千问办公专家套件不存在、清单无效或不可用' };
+    }
+    if (providerType === 'dumate' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 DuMate Agent 不存在、清单无效或不可用' };
+    }
+    if (providerType === 'deepseek-harness' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 DeepSeek Harness Agent Preset 不存在或不可用' };
     }
     if (instanceId && instances.length && family?.validateInstance && !family.validateInstance(instanceId, instances)) {
       return { success: false, error: '所选实例不存在' };
@@ -1186,6 +1320,27 @@ class RegistrationOrchestrator {
       instanceName: instances.find((item) => item.id === instanceId)?.name || null,
       detected: !!detected,
     };
+    const selected = instances.find((item) => item.id === instanceId) || null;
+    const selectedProfile = selected
+      ? { ...selected, ...readProviderInstanceMetadata(providerType, selected.id) }
+      : null;
+    session.suggestedBasicInfo = {
+      agentName: selectedProfile?.name || defaultAgentName(session.email, providerType),
+      description: selectedProfile?.description || '',
+      category: selectedProfile?.category || 'general',
+      tags: selectedProfile?.tags || [],
+      // A plugin-relative avatar is only an internal candidate. It is never a public URL
+      // and must not be persisted until the normal validated upload/storage path can run.
+      iconUrl: '',
+      iconCandidate: selectedProfile?.avatar
+        ? { kind: 'provider_instance_avatar', providerType, instanceId: selected.id, relativePath: selectedProfile.avatar, source: selectedProfile.source }
+        : null,
+      iconPreviewUrl: providerType === 'workbuddy' && selectedProfile?.avatar
+        ? `/api/agent-registration/workbuddy-avatar/${encodeURIComponent(selected.id)}`
+        : '',
+      contactPhone: selectedProfile?.contactPhone || '',
+      address: selectedProfile?.address || '',
+    };
     delete session.pendingApproval;
     session.deliveryModes = this.deliveryCapabilities(
       providerType,
@@ -1193,7 +1348,19 @@ class RegistrationOrchestrator {
         ? { ...zeroclawReadiness(instanceId), instanceId }
         : undefined,
     );
-    session.status = 'delivery_selection_required';
+    session.status = 'basic_info_required';
+    return this._save(session);
+  }
+
+  reselectProvider(id) {
+    const session = this._get(id);
+    if (session.status === 'created') return { success: false, error: '已创建的 Agent 不能重新选择类型' };
+    session.provider = null;
+    session.basicInfo = null;
+    session.suggestedBasicInfo = null;
+    session.deliveryModes = [];
+    session.status = 'provider_selection_required';
+    session.warnings = [{ code: 'BASIC_INFO_DRAFT_REPLACED', message: '重新选择类型或实例后，基本资料草稿将由新的建议替换。' }];
     return this._save(session);
   }
 
@@ -1358,6 +1525,25 @@ class RegistrationOrchestrator {
       detail = ready
         ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
         : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
+    } else if (provider === 'dumate' && mode === 'http') {
+      const instances = (this.options.dumateAgents || discoverDuMateAgents)();
+      ready = isDuMateRuntimeAvailable() && instances.some((item) => item.id === session.provider?.instanceId);
+      detail = ready
+        ? '已检测到 dumate-opencode 和所选 Agent；Provider 启动时将复核 Plugin Part 精准路由。'
+        : 'dumate-opencode 或所选 DuMate Agent 不可用。';
+    } else if (provider === 'deepseek-harness' && mode === 'http') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      const instances = discoverProviderInstances('deepseek-harness');
+      ready = !!runtime.command && instances.some((item) => item.id === session.provider?.instanceId);
+      detail = ready
+        ? '已检测到 DeepSeek Harness Web profile 和所选 Agent Preset；Provider 启动时将复核回环 API。主人审批和提问保持关闭。'
+        : 'DeepSeek Harness Web profile 或所选 Agent Preset 不可用。';
+    } else if (provider === 'deepseek-harness' && mode === 'cli') {
+      const runtime = resolveDeepSeekHarnessRuntime();
+      ready = !!runtime.command;
+      detail = ready
+        ? '已检测到 DeepSeek Harness CLI；Profile CLI 为单次任务模式，不建立可恢复的原生会话。'
+        : '未检测到 DeepSeek Harness CLI。';
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
         .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);
@@ -1453,6 +1639,24 @@ class RegistrationOrchestrator {
     const session = this._get(id);
     if (session.status === 'created') return this.view(session);
     if (!session.basicInfo || !session.provider) return { success: false, error: '注册信息不完整' };
+    if (session.provider.type === 'workbuddy' && session.provider.instanceId) {
+      const instances = (this.options.workBuddyAgents || discoverWorkBuddyAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选 WorkBuddy Agent 已不存在或不可用，请返回上一步重新选择' };
+      }
+    }
+    if (session.provider.type === 'qwen-office' && session.provider.instanceId) {
+      const instances = (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选千问办公专家套件已不存在、清单无效或不可用，请返回上一步重新选择' };
+      }
+    }
+    if (session.provider.type === 'dumate' && session.provider.instanceId) {
+      const instances = (this.options.dumateAgents || discoverDuMateAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选 DuMate Agent 已不存在或不可用，请返回上一步重新选择' };
+      }
+    }
     session.accessMode = input.accessMode === 'public' ? 'public' : 'private';
     const completeAgent = this.options.completeAgent;
     if (typeof completeAgent !== 'function') return { success: false, error: 'Agent 创建服务未就绪' };
@@ -1461,6 +1665,11 @@ class RegistrationOrchestrator {
       agentName: session.basicInfo.agentName,
       description: session.basicInfo.description,
       category: session.basicInfo.category,
+      tags: session.basicInfo.tags,
+      iconUrl: session.basicInfo.iconUrl,
+      iconCandidate: session.basicInfo.iconCandidate || null,
+      contact_phone: session.basicInfo.contactPhone,
+      address: session.basicInfo.address,
       backendType: session.provider.type,
       instanceId: session.provider.instanceId,
       deliveryModes: session.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode),
@@ -1474,6 +1683,8 @@ class RegistrationOrchestrator {
       agentName: result.agentName || session.basicInfo.agentName,
       description: session.basicInfo.description,
       category: session.basicInfo.category,
+      iconUrl: result.iconUrl || session.basicInfo.iconUrl || '',
+      iconUploadError: result.iconUploadError || null,
       ownerEmail: session.email,
       accessMode: result.accessMode || session.accessMode,
       provider: session.provider,
@@ -1520,7 +1731,12 @@ class RegistrationOrchestrator {
         }
         return { success: true, environment: this.inspectEnvironment() };
       }
+      if (action === 'discover_provider_instances') {
+        this._get(input.registrationId);
+        return this.discoverProviderInstances(input.providerType);
+      }
       if (action === 'select_provider') return this.selectProvider(input.registrationId, input);
+      if (action === 'reselect_provider') return this.reselectProvider(input.registrationId);
       if (action === 'select_delivery') return this.selectDelivery(input.registrationId, input);
       if (action === 'configure_delivery') return this.configureDelivery(input.registrationId, input);
       if (action === 'configuration_status') return this.configurationStatus(input.registrationId, input.taskId);
@@ -1557,4 +1773,5 @@ module.exports = {
   detectCurrentAgentType,
   currentAgentTypeFromEnvironment,
   currentAgentTypeFromProcessRows,
+  sortProviderDisplay,
 };

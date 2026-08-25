@@ -103,9 +103,10 @@ async function updateLite(options: { installDir?: string; spawn?: any; exit?: (c
  * @type {Object<string, Object<string, string>>}
  */
 const TOOL_PARAM_SCHEMAS = {
-  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', acknowledgeCost: 'boolean', registrationMode: 'string' },
+  manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', tags: 'json', iconUrl: 'string', contactPhone: 'string', address: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', acknowledgeCost: 'boolean', registrationMode: 'string' },
   bug_report: { action: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string', ownerEmail: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string', backendInstanceId: 'string' },
+  bind_agent_instance_once: { agentId: 'string', backendInstanceId: 'string' },
   set_agent_status:        { agentId: 'string', status: 'number', visibility: 'number' },
   get_status:              { agentId: 'string' },
   get_agent_profile:       { agentId: 'string' },
@@ -238,6 +239,7 @@ async function runToolCommand(toolName?: any, rawParams?: any, core?: any, cliCt
   }
   const { db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage } = core;
   const cx = createContext({ db, databaseAPI, agentRegistration, agentManager, deliver, wukongimSender, sendMessage });
+  if (typeof core.updateAgentProfile === 'function') cx.updateAgentProfile = core.updateAgentProfile;
 
   // 注入支付处理能力（与 MCP 保持一致，CLI 也需要 DApp 签名 + 调支付 API + 通知访客）
   cx.processPaymentOrder = (order?: any) => processPendingPaymentOrder(order, {

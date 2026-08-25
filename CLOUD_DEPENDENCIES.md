@@ -9,7 +9,7 @@ VOKO Lite is open source, but some features rely on VOKO-operated services confi
 | Cross-Agent and visitor instant messaging (IM) | VOKO/WuKongIM endpoints | No for cloud messaging |
 | Public A2A 1.0 Card, Task mailbox, and remote-Agent relay | VOKO AgentDID endpoints | No for public A2A Gateway |
 | External REST ingestion and Webhook delivery | VOKO AgentDID endpoints | No for External Gateway |
-| E2EE KeyPackage directory and ciphertext relay | VOKO AgentDID/WuKongIM endpoints | No for visitor private-chat E2EE; ordinary plaintext chat remains available |
+| E2EE public-key directory and ciphertext relay | VOKO AgentDID/WuKongIM endpoints | No for visitor private-chat E2EE; ordinary plaintext chat remains available |
 | Temporary private-object upload authorization | VOKO AgentDID and configured OSS | No for cloud attachments |
 | Payment onboarding and payment APIs | `www.vokovoko.com` | No for payment features |
 | OSS automatic updates | `files.vokovoko.com` | Yes; disable or use manual npm updates |

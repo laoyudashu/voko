@@ -12,7 +12,7 @@ Depending on enabled features, VOKO can process:
 - authentication tokens and agent credentials;
 - A2A Task/Context identifiers, states, events, remote-principal metadata, and Artifacts;
 - External Gateway integration metadata, API-token hashes, Webhook configuration, delivery state, and task content;
-- E2EE routing metadata, device/key identifiers, epochs, ciphertext size, and encrypted message or attachment payloads.
+- E2EE routing metadata, device/key identifiers, ciphertext size, and encrypted message or attachment payloads.
 
 Some registration, cross-Agent/visitor IM, update, and payment flows depend on VOKO-operated cloud services. Data retained in the local database stays on the operator's machine unless a selected feature sends it to a VOKO-operated service; such sent data is outside the local-only trust boundary.
 

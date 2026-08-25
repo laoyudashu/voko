@@ -13,6 +13,7 @@ const { isSystemMessageContent } = require('./i18n');
 const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./dispatcher/parse-state');
 const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
 const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
+const { reservedVisitorPrefix } = require('./visitor-id-policy');
 import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
 import type {
@@ -39,11 +40,19 @@ function sanitizeOwnerInterventionReply(content: string): string {
     .replace(/^(?:@[^\s，,：:]+(?:[\s，,：:]+|$))+/u, '')
     .trim();
 }
+
+function isProviderInternalErrorReply(content: string): boolean {
+  const normalized = String(content || '').trim();
+  return /^Ran into this error:\s*Request failed: Bad request \(400\):[\s\S]*reasoning_content/i.test(normalized)
+    || /^API call failed after \d+ retries:\s*Connection error\.?$/i.test(normalized)
+    || /^I stopped retrying terminal because it hit the tool-call guardrail \(same_tool_failure_halt\)/i.test(normalized);
+}
 const GROUP_CONTEXT_LIMIT = 10;
 const CAPABILITY_REQUEST_TYPE = 'voko.capability.request';
 const CAPABILITY_RESPONSE_TYPE = 'voko.capability.response';
 
 interface AgentImUidRow { imUid: string }
+interface AgentExistsRow { found: number }
 interface AgentStatusRow {
   publish_status: string | null;
   owner_email: string | null;
@@ -204,7 +213,26 @@ class MessageHandler extends EventEmitter {
       if (conversation && metadata?.routeId) this._messageRoutes.recordInbound({ messageId,
         remoteRouteId: metadata.routeId, conversationId: conversation.id, agentId, peerUid: visitorId,
         channelId, channelType });
+      else if (conversation?.status === 'active') this._messageRoutes.claimInbound({ messageId,
+        conversationId: conversation.id, agentId, peerUid: visitorId, channelId, channelType });
       return conversation?.id || null;
+    } catch (_) { return null; }
+  }
+
+  _resolveE2eeAgentPeerConversation(agentId: string, peerUid: string, channelId: string,
+    messageId: string, protocolConversationId: string): string | null {
+    try {
+      const peer = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
+        .get<AgentExistsRow>(peerUid);
+      if (!peer || peerUid !== channelId) return null;
+      const conversation = this._routingConversations.resolveE2eeAgentPeerMirror(
+        agentId, channelId, protocolConversationId,
+      );
+      const existing = this._messageRoutes.getByMessage(messageId, agentId);
+      if (!existing) this._messageRoutes.claimInbound({ messageId, conversationId: conversation.id,
+        agentId, peerUid, channelId, channelType: 1 });
+      else if (existing.conversation_id !== conversation.id) return null;
+      return conversation.id;
     } catch (_) { return null; }
   }
 
@@ -220,17 +248,54 @@ class MessageHandler extends EventEmitter {
    * the Agent reply through the same local message/conversation projection as
    * a normal reply, without sending that plaintext over IM.
    */
-  persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string): void {
+  persistE2eeAgentReply(agentId: string, channelId: string, content: string, messageId: string,
+    sourceMessageId?: string): { messageId: string; routeId: string | null; routeMetadata: Record<string, unknown> | null } {
     const agentRow = this.db.prepare('SELECT imUid FROM agents WHERE agent_id = ?').get<AgentImUidRow>(agentId);
     const fromUid = agentRow?.imUid || 'voko';
-    const { msgId, timestamp } = persistAgentMessage(this.db, agentId, channelId, content,
+    const { msgId, timestamp, inserted } = persistAgentMessage(this.db, agentId, channelId, content,
       fromUid, 'text', 1, null, messageId);
-    logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
-      data: { replyLength: content.length, channelType: 1, e2ee: true } });
-    this._notifyUI('agent-wukongim:message', {
-      agentId, fromUid, toUid: channelId, channelId, channelType: 1,
-      content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
-    });
+    let routeId: string | null = null;
+    try {
+      const existing = this._messageRoutes.getByMessage(msgId, agentId);
+      if (existing?.direction === 'outbound') routeId = existing.route_id;
+      else if (sourceMessageId) {
+        const source = this._messageRoutes.getByMessage(sourceMessageId, agentId);
+        const conversation = source?.conversation_id
+          ? this._routingConversations.getForScope(source.conversation_id, agentId, channelId, 1) : null;
+        if (source?.direction === 'inbound' && source.status === 'active' && conversation?.status === 'active'
+          && source.peer_uid === channelId && source.channel_id === channelId && Number(source.channel_type) === 1) {
+          routeId = this._messageRoutes.createPending({ messageId: msgId, conversationId: conversation.id,
+            replyToRouteId: source.reply_to_route_id || null, agentId, peerUid: channelId,
+            channelId, channelType: 1, direction: 'outbound' });
+        }
+      }
+    } catch (_) {}
+    if (inserted) {
+      logEvent('message.replied', { agentId, visitorId: channelId, id: msgId, messageId: msgId,
+        data: { replyLength: content.length, channelType: 1, e2ee: true } });
+      this._notifyUI('agent-wukongim:message', {
+        agentId, fromUid, toUid: channelId, channelId, channelType: 1,
+        content, contentType: 1, messageId: msgId, timestamp, isMe: true, e2ee: true,
+      });
+    }
+    const conversation = routeId
+      ? this._messageRoutes.getByMessage(msgId, agentId)?.conversation_id
+        ? this._routingConversations.getForScope(
+          this._messageRoutes.getByMessage(msgId, agentId).conversation_id, agentId, channelId, 1,
+        ) : null
+      : null;
+    const source = sourceMessageId ? this._messageRoutes.getByMessage(sourceMessageId, agentId) : null;
+    const routeMetadata = routeId ? { _voko: { protocolVersion: 1, routeId,
+      ...(source?.reply_to_route_id ? { replyToRouteId: source.reply_to_route_id } : {}),
+      ...(conversation?.wireConversationKey ? { canonicalConversationKey: conversation.wireConversationKey } : {}),
+    } } : null;
+    return { messageId: msgId, routeId, routeMetadata };
+  }
+
+  markE2eeAgentReplyDelivered(agentId: string, messageId: string): void {
+    const route = this._messageRoutes.getByMessage(messageId, agentId);
+    if (route?.direction === 'outbound') this._messageRoutes.setStatus(route.route_id, 'active');
+    this.db.prepare(`UPDATE messages SET status='sent' WHERE id=? AND agent_id=?`).run(messageId, agentId);
   }
 
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
@@ -328,6 +393,16 @@ class MessageHandler extends EventEmitter {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward = false): ForwardPayload | undefined {
     const { fromUid, toUid, channelId, content, messageId, timestamp, channelType, contentType,
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
+    const markIntercepted = (reason: string) => { data._vokoInboundIntercepted = reason; };
+
+    const reservedPrefix = reservedVisitorPrefix(fromUid);
+    if (reservedPrefix) {
+      console.warn(`[消息拒绝] 外部 visitorId 使用保留命名空间 prefix=${reservedPrefix} agentId=${agentId}`);
+      logEvent('message.rejected_reserved_visitor_id', {
+        level: 'warn', agentId, messageId, data: { reservedPrefix },
+      });
+      return;
+    }
 
     // 群聊消息走精简路径（@触发，跳过单聊特有的黑白名单/计费/会话模式）
     // WKSDK 有时对群消息报 channelType=1，兜底按 channelId 前缀判断
@@ -423,7 +498,11 @@ class MessageHandler extends EventEmitter {
     }
 
     // 通知 UI + 系统通知（含提示音）
-    if (!isMe) { console.debug('[通知] 收到访客消息, agent=' + agentId + ' contentLength=' + String(content || '').length); }
+    if (!isMe) {
+      const senderKind = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
+        .get<AgentExistsRow>(fromUid) ? 'Agent' : '访客';
+      console.debug(`[通知] 收到${senderKind}消息, agent=${agentId} contentLength=${String(content || '').length}`);
+    }
     logEvent('message.received', { agentId, visitorId: fromUid, id: messageId, messageId });
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid, channelId,
@@ -434,8 +513,20 @@ class MessageHandler extends EventEmitter {
     if (!isMe) {
       try { notifyNewMessage(agentId, fromUid, content, timestamp); } catch {}
     }
-    const inboundConversationId = this._resolveInboundConversation(agentId, fromUid, channelId,
-      channelType || 1, messageId, data._voko || null);
+    const inboundConversationId = data.e2eeAgentPeer
+      ? this._resolveE2eeAgentPeerConversation(agentId, fromUid, channelId, messageId,
+        String(data.e2eeProtocolConversationId || ''))
+      : this._resolveInboundConversation(agentId, fromUid, channelId, channelType || 1, messageId, data._voko || null);
+    if (data.e2eeAgentPeer && !inboundConversationId) {
+      console.warn(`[E2EE] Agent peer Conversation 无法绑定 agent=${agentId} code=E2EE_V2_AGENT_CONTEXT_UNRESOLVED`);
+      return;
+    }
+    if (data.e2eeStrictRoute && data._voko
+        && (data._voko.replyToRouteId || data._voko.conversationKey || data._voko.canonicalConversationKey)
+        && !inboundConversationId) {
+      console.warn(`[E2EE] 精确 Route Context 无法验证 agent=${agentId} code=E2EE_V2_ROUTE_CONTEXT_UNRESOLVED`);
+      return;
+    }
     const systemRoute = inboundConversationId ? { conversationId: inboundConversationId } : undefined;
 
     // 检查发布状态
@@ -443,6 +534,7 @@ class MessageHandler extends EventEmitter {
     if (agentStatusRow && agentStatusRow.publish_status !== 'published' && agentStatusRow.publish_status !== 'private') {
       const ownerEmail = agentStatusRow.owner_email || '管理员';
       this._sendSystemMessage(agentId, fromUid, 'agent_unpublished', { ownerEmail }, timestamp, systemRoute);
+      markIntercepted('agent_unpublished');
       return;
     }
 
@@ -452,6 +544,7 @@ class MessageHandler extends EventEmitter {
     if (agentStatusRow && this.ac) {
       if (this.ac.isBlacklisted(this.db, agentId, fromUid)) {
         this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp, systemRoute);
+        markIntercepted('blacklisted');
         return;
       }
       if (agentStatusRow.access_mode === 'private') {
@@ -460,6 +553,7 @@ class MessageHandler extends EventEmitter {
           if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
             this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp, systemRoute);
             this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp, messageId, inboundConversationId);
+            markIntercepted('friend_request_received');
             return;
           }
         }
@@ -481,6 +575,7 @@ class MessageHandler extends EventEmitter {
             this._sendSystemMessage(agentId, fromUid, 'trial_welcome', { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           } else {
             this._sendSystemMessage(agentId, fromUid, 'paid_welcome_back', { price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
+            markIntercepted('paid_welcome_back');
             return;
           }
         } else {
@@ -490,20 +585,18 @@ class MessageHandler extends EventEmitter {
             const paidSysCode = pricingRow.trial_minutes > 0 ? 'trial_welcome' : 'paid_required';
             this._sendSystemMessage(agentId, fromUid, paidSysCode, { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           }
+          markIntercepted(isBuyCmd ? 'payment_created' : 'payment_required');
           return;
         }
       } else if (conv.session_status === 'active') {
-        if (conv.session_expire_at && conv.session_expire_at > Date.now()) {
-          if (conv.session_expire_at - Date.now() < 60000) {
-            this._sendSystemMessage(agentId, fromUid, 'expiring_soon', {}, timestamp, systemRoute);
-          }
-        } else {
+        if (!conv.session_expire_at || conv.session_expire_at <= Date.now()) {
           this.db.prepare('UPDATE conversations SET session_status=? WHERE user_uid=? AND channel_id=?').run('expired', toUid, channelId);
           if (isBuyCmd) {
             this._createPendingPayment(agentId, fromUid, toUid, pricingRow, timestamp, messageId);
           } else {
             this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
           }
+          markIntercepted(isBuyCmd ? 'payment_created' : 'session_expired');
           return;
         }
       } else if (conv.session_status === 'expired') {
@@ -512,6 +605,7 @@ class MessageHandler extends EventEmitter {
         } else {
           this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
         }
+        markIntercepted(isBuyCmd ? 'payment_created' : 'session_expired');
         return;
       }
     }
@@ -530,6 +624,7 @@ class MessageHandler extends EventEmitter {
         }
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: fromUid, messageId, data: { ruleId: auditResult.matchedKeyword, direction: 'inbound', action: auditResult.action } });
         this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
+        markIntercepted('audit_hard_deny');
         return;
       }
       if (auditResult.action === 'soft_deny') {
@@ -541,7 +636,10 @@ class MessageHandler extends EventEmitter {
     // 检查会话模式：MANUAL 时不转发
     if (channelId) {
       const convMode = this.db.prepare(`SELECT mode FROM conversations WHERE channel_id = ? AND agent_id = ?`).get<ConversationModeRow>(channelId, agentId);
-      if (convMode && convMode.mode === 'MANUAL') return;
+      if (convMode && convMode.mode === 'MANUAL') {
+        markIntercepted('manual_mode');
+        return;
+      }
     }
 
     // 消息是 agent 自己的回复回流，不再次转发
@@ -1119,6 +1217,10 @@ class MessageHandler extends EventEmitter {
       console.log(`[Agent回复] 跳过系统消息 contentLength=${content.trim().length}`);
       return;
     }
+    if (isProviderInternalErrorReply(content)) {
+      console.warn(`[Agent回复] 跳过 Provider 内部错误 agent=${agentId} contentLength=${content.trim().length}`);
+      return;
+    }
 
     const hasGroupTarget = typeof visitorId === 'string' && visitorId.startsWith('group:');
     const isGroupReply = data.channelType === 2 || hasGroupTarget;
@@ -1277,7 +1379,9 @@ class MessageHandler extends EventEmitter {
       console.error('[Agent回复] 投递失败:', (delivery as { error?: string })?.error || 'unknown error');
       return;
     }
-    if (outboundRouteId) {
+    const fullyDelivered=(delivery as { deliveryState?: string })?.deliveryState===undefined
+      ||(delivery as { deliveryState?: string })?.deliveryState==='delivered';
+    if (outboundRouteId&&fullyDelivered) {
       try { this._messageRoutes.setStatus(outboundRouteId, 'active'); } catch (_) {}
     }
 
@@ -1292,12 +1396,14 @@ class MessageHandler extends EventEmitter {
         : null;
       this.db.prepare(`
         UPDATE messages
-        SET status='sent',
+        SET status=?,
             message_seq=COALESCE(?, message_seq),
             client_msg_no=COALESCE(?, client_msg_no)
         WHERE id=?
-      `).run(messageSeq, clientMsgNo, msgId);
+      `).run(fullyDelivered?'sent':'pending',messageSeq, clientMsgNo, msgId);
     } catch (_) {}
+    console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
+      `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
   }
 }

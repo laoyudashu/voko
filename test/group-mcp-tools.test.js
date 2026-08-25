@@ -20,6 +20,7 @@ const { createToolHandlers } = require('../build/mcp/tools');
 const { createDispatcher } = require('../build/core/dispatcher');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
+const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -87,6 +88,7 @@ function setup(options = {}) {
       return { success: true };
     },
     uploadFileToOSS: options.uploadFileToOSS || (async (_filePath, objectName) => `https://oss.example/${objectName}`),
+    ...(options.secureOutboundRouter ? { secureOutboundRouter: options.secureOutboundRouter } : {}),
     enqueueOwnerIntervention: record => interventions.push(record),
     wukongim: {
       getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
@@ -129,6 +131,28 @@ await test('send_message 省略 channelType 时按群频道 ID 自动识别', as
     const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '省略类型的群消息' });
     assert.strictEqual(r.success, true);
     assert.strictEqual(sentMessages[0].channelType, 2);
+  } finally { cleanup(); }
+});
+await test('Web 新对话只在首条发送时创建，并保留来源 Conversation', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const conversations = new RoutingConversationStore(db);
+    const parent = conversations.resolveOrCreate({ agentId: 'agentA', providerFamily: 'codex',
+      nativeSessionId: 'web-parent-session', channelId: 'visitor1', channelType: 1, origin: 'caller' });
+    assert.equal(conversations.listForScope('agentA', 'visitor1', 1).length, 1);
+
+    const result = await handlers.send_message({ agentId: 'agentA', toUid: 'visitor1', content: 'first draft message',
+      channelType: 1, webRequest: true, webConversationStart: true, parentConversationId: parent.id });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.conversationDisposition, 'created');
+    assert.notStrictEqual(result.conversationId, parent.id);
+    const created = db.prepare(`SELECT parent_conversation_id,status FROM provider_routing_conversations
+      WHERE id=?`).get(result.conversationId);
+    assert.strictEqual(created.parent_conversation_id, parent.id);
+    assert.strictEqual(created.status, 'active');
+    assert.strictEqual(db.prepare(`SELECT conversation_id FROM provider_message_routes
+      WHERE direction='outbound' ORDER BY created_at DESC LIMIT 1`).get().conversation_id, result.conversationId);
   } finally { cleanup(); }
 });
 await test('send_message 拒绝普通成员 @全体', async () => {
@@ -187,6 +211,29 @@ await test('upload_and_send_file 将图片发送为图片消息', async () => {
     assert.strictEqual(sentMessages.length, 1);
     assert.strictEqual(sentMessages[0].messageType, 'image');
     assert.strictEqual(sentMessages[0].content, r.url);
+  } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
+});
+
+await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由且不暴露本地路径', async () => {
+  let ordinaryUploads = 0;
+  const secureOutboundRouter = { prepare: async (_agentId, _channelId, _channelType, _metadata, purpose) => {
+    assert.strictEqual(purpose, 'attachment');
+    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2 };
+  } };
+  const { handlers, sentMessages, cleanup } = setup({ secureOutboundRouter,
+    uploadFileToOSS: async () => { ordinaryUploads++; return 'https://must-not-upload.example/plain'; } });
+  const tmpFile = path.join(os.tmpdir(), 'voko-secure-attachment-' + Date.now() + '.txt');
+  fs.writeFileSync(tmpFile, 'classified');
+  try {
+    const r = await handlers.upload_and_send_file({ agentId: 'agentA', toUid: 'visitor1', filePath: tmpFile });
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.securityMode, undefined, 'mock transport does not claim encryption');
+    assert.strictEqual(ordinaryUploads, 0, 'plaintext upload must not happen before secure router');
+    assert.strictEqual(sentMessages.length, 1);
+    assert.strictEqual(sentMessages[0].messageType, 'file');
+    assert.match(sentMessages[0].content, /^\{"url":"\/api\/e2ee-v2\/attachments\//);
+    assert.strictEqual(Object.hasOwn(r, 'filePath'), false);
+    assert.strictEqual(Object.hasOwn(r, 'ext'), false);
   } finally { try { fs.unlinkSync(tmpFile); } catch (_) {} cleanup(); }
 });
 
@@ -525,6 +572,33 @@ await test('ask_human_for_help persists and emits the original group context', a
     assert.strictEqual(checked.interventions[0].channelId, 'room1');
     assert.strictEqual(checked.interventions[0].sourceSenderUid, 'visitor1');
   } finally { cleanup(); }
+});
+
+await test('ask_human_for_help binds a private intervention to the active E2EE route', async () => {
+  const { db, handlers, interventions, cleanup } = setup();
+  const release = registerActiveOwnerInterventionContext({
+    agentId: 'agentA', channelId: 'actor-private', protocolConversationId: 'protocol-private',
+    sessionScopeId: 'scope-private', sourceMessageId: 'source-private', visitorId: 'verified-visitor',
+  });
+  try {
+    const result = await handlers.ask_human_for_help({
+      agentId: 'agentA', visitorId: 'logical-visitor', problem: 'need owner decision',
+    });
+    assert.strictEqual(result.success, true);
+    const row = db.prepare('SELECT * FROM owner_interventions WHERE id=?').get(result.interventionId);
+    assert.strictEqual(row.visitor_id, 'verified-visitor');
+    assert.strictEqual(row.source_sender_uid, 'verified-visitor');
+    assert.strictEqual(row.target_channel_id, 'actor-private');
+    assert.strictEqual(row.source_message_id, 'source-private');
+    assert.strictEqual(row.route_security_mode, 'e2ee_v2');
+    assert.strictEqual(row.e2ee_protocol_conversation_id, 'protocol-private');
+    assert.strictEqual(row.e2ee_session_scope_id, 'scope-private');
+    assert.strictEqual(interventions[0].targetChannelId, 'actor-private');
+    assert.strictEqual(interventions[0].routeSecurityMode, 'e2ee_v2');
+  } finally {
+    release();
+    cleanup();
+  }
 });
 
 await test('ask_human_for_help prefers the verified source message over an explicit conversation', async () => {

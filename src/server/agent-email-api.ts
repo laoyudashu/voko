@@ -45,6 +45,22 @@ interface EmailReplyResult {
   terminal?: 'not_found';
 }
 
+interface EmailReplyEvent {
+  event_id: string;
+  message_id: string;
+  external_id: string | null;
+  status: string;
+  raw_text: string | null;
+  actor_email: string | null;
+  replied_at: string | null;
+}
+
+interface EmailReplyPage {
+  events: EmailReplyEvent[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -91,12 +107,44 @@ function parseReplyResult(value: unknown): EmailReplyResult | null {
   };
 }
 
+function unsignedIntegerString(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  try {
+    return BigInt(value) <= 18446744073709551615n ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseReplyPage(value: unknown): EmailReplyPage | null {
+  if (!isRecord(value) || value.success !== true || !isRecord(value.data)) return null;
+  const cursor = unsignedIntegerString(value.data.next_cursor);
+  if (!cursor || !Array.isArray(value.data.events) || typeof value.data.has_more !== 'boolean') return null;
+  const events: EmailReplyEvent[] = [];
+  for (const item of value.data.events) {
+    if (!isRecord(item)) return null;
+    const eventId = unsignedIntegerString(item.event_id);
+    if (!eventId || typeof item.message_id !== 'string' || typeof item.status !== 'string') return null;
+    events.push({
+      event_id: eventId,
+      message_id: item.message_id,
+      external_id: nullableString(item.external_id),
+      status: item.status,
+      raw_text: nullableString(item.raw_text),
+      actor_email: nullableString(item.actor_email),
+      replied_at: nullableString(item.replied_at),
+    });
+  }
+  return { events, next_cursor: cursor, has_more: value.data.has_more };
+}
+
 /**
  * Agent Email API — 服务端交互邮件 API 客户端
  *
  * 封装两个端点：
  *   POST /api/external/v1/email/send         — 发信
  *   POST /api/external/v1/email/reply/query  — 查回复
+ *   POST /api/external/v1/email/replies/poll — 按游标拉取主人邮箱回复事件
  *
  * 使用方式：
  *   const api = new AgentEmailApi({ apiBaseUrl, getUserAccessToken });
@@ -128,7 +176,7 @@ class AgentEmailApi {
     if (key === this.lastQueryWarningKey && now - this.lastQueryWarningAt < 5 * 60 * 1000) return;
     this.lastQueryWarningKey = key;
     this.lastQueryWarningAt = now;
-    console.warn('[AgentEmailApi] queryReply 异常:', message);
+    console.warn('[AgentEmailApi] 邮件回复查询异常:', message);
   }
 
   /**
@@ -265,6 +313,45 @@ class AgentEmailApi {
       return parseReplyResult(payload);
     } catch (error: unknown) {
       this.warnQueryOnce(`network:${errorMessage(error)}`, errorMessage(error));
+      return null;
+    }
+  }
+
+  async pollReplies(
+    { cursor = '0', limit = 100 }: { cursor?: string; limit?: number } = {},
+  ): Promise<EmailReplyPage | null> {
+    const token = this.getUserAccessToken();
+    if (!token || !this.apiBaseUrl || !unsignedIntegerString(cursor)
+      || !Number.isInteger(limit) || limit < 1 || limit > 100) return null;
+    try {
+      const resp = await fetch(`${this.apiBaseUrl}/api/external/v1/email/replies/poll`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ cursor, limit }),
+      });
+      const text = await resp.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        this.warnQueryOnce(`poll-non-json:${resp.status}`, `HTTP ${resp.status} 返回非 JSON 响应`);
+        return null;
+      }
+      if (!resp.ok) {
+        const compatibility = resp.status === 404 || resp.status === 405
+          ? '服务端版本不支持邮箱回复事件轮询'
+          : responseError(payload, resp.status);
+        this.warnQueryOnce(`poll-http:${resp.status}`, compatibility);
+        return null;
+      }
+      const page = parseReplyPage(payload);
+      if (!page) this.warnQueryOnce('poll-invalid-payload', '邮箱回复事件响应格式无效');
+      return page;
+    } catch (error: unknown) {
+      this.warnQueryOnce(`poll-network:${errorMessage(error)}`, errorMessage(error));
       return null;
     }
   }

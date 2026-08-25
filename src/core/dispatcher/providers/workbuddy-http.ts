@@ -1,11 +1,17 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
+const path = require('node:path');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { spawn } = require('node:child_process');
 const { PushProvider } = require('../base-provider');
 const { killTree } = require('../../adapters/cli-spawner');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { resolveWorkBuddyRuntime, workBuddySpawnCommand, probeWorkBuddyCliVersion } = require('../workbuddy-command');
+const { resolveWorkBuddyAgentTarget } = require('../workbuddy-agents');
+const { buildAcpAttachmentPrompt, stageProviderAttachments, providerMediaType,
+  cleanupExpiredProviderAttachmentStaging } = require('../provider-attachments');
 import type { ChildProcess } from 'node:child_process';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -23,6 +29,7 @@ interface Options {
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   spawnImpl?: typeof spawn;
+  resolveAgentTarget?: typeof resolveWorkBuddyAgentTarget;
 }
 
 function deliveryError(message: string, outcome: 'not_delivered' | 'outcome_unknown' | 'rejected'): Error {
@@ -55,9 +62,23 @@ function mergeMarkdown(current: string, incoming: string): string {
   return (current + incoming).slice(0, MAX_REPLY_CHARS);
 }
 
-function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string): string[] {
-  return [...argsPrefix, '--serve', '--host', '127.0.0.1', '--port', String(port),
-    '--session-id', sessionId, '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config'];
+function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string,
+  target: { agentId?: string; pluginRoot?: string; dataFile?: string } = {}): string[] {
+  const dataTools = target.dataFile
+    ? ['--tools', 'Read,Write', '--allowedTools', `Read(${target.dataFile})`, `Write(${target.dataFile})`]
+    : ['--tools', ''];
+  return [...argsPrefix, ...(target.pluginRoot ? ['--plugin-dir', target.pluginRoot] : []),
+    ...(target.agentId ? ['--agent', target.agentId] : []), '--serve', '--host', '127.0.0.1', '--port', String(port),
+    '--session-id', sessionId, '--permission-mode', 'dontAsk', ...dataTools, '--strict-mcp-config'];
+}
+
+interface ServerState {
+  instanceId: string | null;
+  pluginRoot: string | null;
+  dataFile: string | null;
+  server: ChildProcess | null;
+  serverPromise: Promise<void> | null;
+  port: number;
 }
 
 class WorkBuddyHttpProvider extends PushProvider {
@@ -65,30 +86,72 @@ class WorkBuddyHttpProvider extends PushProvider {
   _contextWindow: number;
   _cwd: string;
   _runtime: ReturnType<typeof resolveWorkBuddyRuntime>;
-  _server: ChildProcess | null = null;
-  _serverPromise: Promise<void> | null = null;
-  _port = 0;
+  _stateContext = new AsyncLocalStorage();
+  _states = new Map<string, ServerState>();
   _startupTimeoutMs: number;
   _requestTimeoutMs: number;
   _fetch: typeof fetch;
   _spawn: typeof spawn;
+  _resolveAgentTarget: typeof resolveWorkBuddyAgentTarget;
   _inflight = new Map<string, Promise<unknown>>();
-  _activeRuns = new Map<string, string>();
-  _activeAcp = new Map<string, { connectionId: string; sessionId: string }>();
+  _activeRuns = new Map<string, { runId: string; state: ServerState }>();
+  _activeAcp = new Map<string, { connectionId: string; sessionId: string; state: ServerState }>();
 
   constructor(options: Options = {}) {
     super();
     this._db = options.db || null;
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
+    cleanupExpiredProviderAttachmentStaging(path.join(path.resolve(this._cwd), 'voko-provider-attachments'));
     this._runtime = resolveWorkBuddyRuntime({ configuredCommand: options.binPath });
     this._startupTimeoutMs = Math.max(1000, Number(options.startupTimeoutMs || 20_000));
     this._requestTimeoutMs = Math.max(1000, Number(options.requestTimeoutMs || 180_000));
     this._fetch = options.fetchImpl || fetch;
     this._spawn = options.spawnImpl || spawn;
+    this._resolveAgentTarget = options.resolveAgentTarget || resolveWorkBuddyAgentTarget;
+    this._states.set('', { instanceId: null, pluginRoot: null, dataFile: null, server: null, serverPromise: null, port: 0 });
+  }
+
+  _currentState(): ServerState { return (this._stateContext.getStore() as ServerState | undefined) || this._states.get('')!; }
+  get _server(): ChildProcess | null { return this._currentState().server; }
+  set _server(value: ChildProcess | null) { this._currentState().server = value; }
+  get _serverPromise(): Promise<void> | null { return this._currentState().serverPromise; }
+  set _serverPromise(value: Promise<void> | null) { this._currentState().serverPromise = value; }
+  get _port(): number { return this._currentState().port; }
+  set _port(value: number) { this._currentState().port = value; }
+
+  _configuredInstance(agentId: string): string {
+    try {
+      const row = this._db?.prepare('SELECT backend_instance_id FROM agents WHERE agent_id=? AND backend_type=?')
+        .get(agentId, 'workbuddy');
+      return String(row?.backend_instance_id || '').trim();
+    } catch (_) { return ''; }
+  }
+
+  _stateFor(payload: PushPayload): ServerState {
+    const instanceId = this._configuredInstance(payload.agentId);
+    const boundInstance = String(payload.providerBinding?.providerInstanceId || '').trim();
+    if (boundInstance && boundInstance !== instanceId) throw deliveryError('WorkBuddy instance binding is stale', 'not_delivered');
+    if (!instanceId) return this._states.get('')!;
+    const target = this._resolveAgentTarget(instanceId);
+    if (!target) throw deliveryError('Bound WorkBuddy agent is unavailable', 'not_delivered');
+    let state = this._states.get(instanceId);
+    if (!state) {
+      const dataKey = String(target.agentId || instanceId);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(dataKey)) throw deliveryError('WorkBuddy data path is invalid', 'rejected');
+      const workBuddyRoot = path.resolve(os.homedir(), '.workbuddy');
+      const dataRoot = path.resolve(workBuddyRoot, dataKey);
+      if (!dataRoot.startsWith(`${workBuddyRoot}${path.sep}`)) throw deliveryError('WorkBuddy data path is invalid', 'rejected');
+      fs.mkdirSync(dataRoot, { recursive: true });
+      state = { instanceId, pluginRoot: target.pluginRoot, dataFile: path.join(dataRoot, 'data.json'),
+        server: null, serverPromise: null, port: 0 };
+      this._states.set(instanceId, state);
+    }
+    return state;
   }
 
   get priority() { return 10; }
+  getTurnTimeoutMs(): number { return this._requestTimeoutMs; }
   get capabilities() { return ['http', 'streaming', 'async_reply', 'session_resume', 'cancel']; }
   get sessionMode() { return 'agent-issued-id' as const; }
   match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'workbuddy'; }
@@ -139,7 +202,10 @@ class WorkBuddyHttpProvider extends PushProvider {
       const launch = workBuddySpawnCommand(this._runtime);
       if (!launch) throw deliveryError('WorkBuddy launch command is unavailable', 'not_delivered');
       this._port = await findFreePort();
-      const args = workBuddyServeArgs(launch.argsPrefix, this._port, `voko-${crypto.randomUUID()}`);
+      const state = this._currentState();
+      const args = workBuddyServeArgs(launch.argsPrefix, this._port, `voko-${crypto.randomUUID()}`,
+        { agentId: state.instanceId || undefined, pluginRoot: state.pluginRoot || undefined,
+          dataFile: state.dataFile || undefined });
       const child = this._spawn(launch.command, args, {
         cwd: this._cwd, env: { ...process.env, NO_COLOR: '1' }, windowsHide: true,
         detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
@@ -206,10 +272,14 @@ class WorkBuddyHttpProvider extends PushProvider {
   }
 
   async canRestoreExactSession(binding: PushPayload['providerBinding'], agentId: string): Promise<boolean> {
-    if (!binding || !this.acceptsBinding(binding) || !this._server || this._server.exitCode !== null || !this._port) return false;
+    if (!binding || !this.acceptsBinding(binding)) return false;
     try {
-      const history = await this._fetchJson(`/api/v1/sessions/${encodeURIComponent(binding.nativeSessionId)}/history`, {}, 2500);
-      return history?.data?.sessionId === binding.nativeSessionId && this.match(agentId, { backend_type: 'workbuddy' });
+      const state = this._stateFor({ agentId, providerBinding: binding } as PushPayload);
+      if (!state.server || state.server.exitCode !== null || !state.port) return false;
+      return await this._stateContext.run(state, async () => {
+        const history = await this._fetchJson(`/api/v1/sessions/${encodeURIComponent(binding.nativeSessionId)}/history`, {}, 2500);
+        return history?.data?.sessionId === binding.nativeSessionId && this.match(agentId, { backend_type: 'workbuddy' });
+      });
     } catch { return false; }
   }
 
@@ -338,30 +408,50 @@ class WorkBuddyHttpProvider extends PushProvider {
     } catch {}
   }
 
-  async _pushExistingSession(payload: PushPayload, turnId: string, nativeSessionId: string): Promise<unknown> {
+  async _pushAcpSession(payload: PushPayload, turnId: string, existingSessionId = ''): Promise<unknown> {
     const scope = this._scope(payload);
+    let nativeSessionId = existingSessionId;
     let connectionId = '';
     let promptStarted = false;
+    let staged: ReturnType<typeof stageProviderAttachments> | null = null;
     try {
       const connected = await this._fetchJson('/api/v1/acp/connect', { method: 'POST' }, 5000);
       connectionId = String(connected?.connectionId || connected?.data?.connectionId || '');
       if (!connectionId) throw deliveryError('WorkBuddy ACP connection was not established', 'not_delivered');
-      await this._acpRequest(connectionId, 'initialize', {
+      const initialized = await this._acpRequest(connectionId, 'initialize', {
         protocolVersion: 1,
         clientInfo: { name: 'VOKO', version: '1' },
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
-      // CodeBuddy 2.115.0 requires cwd although its published resume example omits it.
-      await this._acpRequest(connectionId, 'session/resume', { sessionId: nativeSessionId, cwd: this._cwd }, nativeSessionId);
+      const promptCapabilities = initialized?.agentCapabilities?.promptCapabilities || {};
+      const needsPathFallback = !!payload.attachments?.some(attachment =>
+        promptCapabilities.embeddedContext !== true
+        && !(promptCapabilities.image === true && providerMediaType(attachment).startsWith('image/')));
+      if (needsPathFallback) staged = stageProviderAttachments(payload,
+        { cwd: this._cwd, agentId: payload.agentId, turnId });
+      const deliveryPayload = staged ? { ...payload, attachments: staged.attachments } : payload;
+      if (nativeSessionId) {
+        // CodeBuddy 2.115.0 requires cwd although its published resume example omits it.
+        await this._acpRequest(connectionId, 'session/resume', { sessionId: nativeSessionId, cwd: this._cwd }, nativeSessionId);
+      } else {
+        const created = await this._acpRequest(connectionId, 'session/new', {
+          cwd: this._cwd, mcpServers: [],
+        });
+        nativeSessionId = String(created?.sessionId || '');
+        if (!nativeSessionId) throw deliveryError('WorkBuddy ACP session was not created', 'not_delivered');
+      }
       let reply = '';
       let stopReason = '';
-      this._activeAcp.set(turnId, { connectionId, sessionId: nativeSessionId });
+      this._activeAcp.set(turnId, { connectionId, sessionId: nativeSessionId, state: this._currentState() });
       promptStarted = true;
       this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
         turnId, nativeSessionId, terminal: false });
-      const prompt = buildConversationDeliveryPrompt(this._db, payload, true, this._contextWindow);
+      const prompt = buildConversationDeliveryPrompt(this._db, deliveryPayload, true, this._contextWindow);
       const result = await this._acpRequest(connectionId, 'session/prompt', {
-        sessionId: nativeSessionId, prompt: [{ type: 'text', text: prompt }],
+        sessionId: nativeSessionId, prompt: buildAcpAttachmentPrompt(prompt, deliveryPayload, {
+          imageSupported: promptCapabilities.image === true,
+          embeddedContextSupported: promptCapabilities.embeddedContext === true,
+        }),
       }, nativeSessionId, update => {
         const historyReplay = update?._meta?.['codebuddy.ai/historyReplay'] === true;
         if (!historyReplay && update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
@@ -381,9 +471,16 @@ class WorkBuddyHttpProvider extends PushProvider {
       if (!reply) throw deliveryError('WorkBuddy resumed the session but returned no reply', 'outcome_unknown');
       this.emit('agent.reply', { agentId: payload.agentId, visitorId: payload.fromUid, content: reply, done: true,
         sessionKey: `workbuddy:${scope.conversationId}`, turnId, replyId: turnId });
+      const attachmentMode = !payload.attachments?.length ? 'none'
+        : promptCapabilities.embeddedContext === true ? 'embedded_resource'
+          : promptCapabilities.image === true && payload.attachments.every(item => providerMediaType(item).startsWith('image/'))
+            ? 'image' : staged ? 'staged_path' : 'resource_link';
+      const attachmentDelivery = { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,
+        mode: attachmentMode };
       this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
-        turnId, nativeSessionId, terminal: true });
-      return { nativeSessionId, providerInstanceId: null, deliveryMode: 'http', adapterType: ADAPTER_TYPE };
+        turnId, nativeSessionId, terminal: true, payload: { attachmentDelivery } });
+      return { nativeSessionId, providerInstanceId: this._currentState().instanceId, deliveryMode: 'http', adapterType: ADAPTER_TYPE,
+        attachmentDelivery };
     } catch (error) {
       if ((error as any)?.deliveryOutcome) throw error;
       throw deliveryError(promptStarted
@@ -391,6 +488,7 @@ class WorkBuddyHttpProvider extends PushProvider {
         : 'WorkBuddy could not restore the exact session', promptStarted ? 'outcome_unknown' : 'not_delivered');
     } finally {
       this._activeAcp.delete(turnId);
+      staged?.cleanup();
       if (connectionId) await this._disconnectAcp(connectionId);
     }
   }
@@ -398,20 +496,28 @@ class WorkBuddyHttpProvider extends PushProvider {
   async push(payload: PushPayload): Promise<unknown> {
     const turnId = String(payload.turnId || payload.messageId || '');
     if (!turnId) throw deliveryError('WorkBuddy delivery requires a stable message id', 'not_delivered');
-    const existing = this._inflight.get(turnId);
+    const state = this._stateFor(payload);
+    const inflightKey = `${state.instanceId || ''}\0${turnId}`;
+    const existing = this._inflight.get(inflightKey);
     if (existing) return existing;
-    const task = this._pushOnce(payload, turnId).finally(() => {
-      if (this._inflight.get(turnId) === task) this._inflight.delete(turnId);
+    const task = this._stateContext.run(state, () => this._pushOnce(payload, turnId)).finally(() => {
+      if (this._inflight.get(inflightKey) === task) this._inflight.delete(inflightKey);
       this._activeRuns.delete(turnId);
     });
-    this._inflight.set(turnId, task);
+    this._inflight.set(inflightKey, task);
     return task;
   }
 
   async _pushOnce(payload: PushPayload, turnId: string): Promise<unknown> {
     await this._ensureServer();
-    const boundSession = this.acceptsBinding(payload.providerBinding) ? String(payload.providerBinding?.nativeSessionId || '') : '';
-    if (boundSession) return this._pushExistingSession(payload, turnId, boundSession);
+    const bindingInstance = String(payload.providerBinding?.providerInstanceId || '').trim();
+    const currentInstance = this._currentState().instanceId || '';
+    const boundSession = this.acceptsBinding(payload.providerBinding) && bindingInstance === currentInstance
+      ? String(payload.providerBinding?.nativeSessionId || '') : '';
+    if (payload.attachments?.length) {
+      return this._pushAcpSession(payload, turnId, boundSession);
+    }
+    if (boundSession) return this._pushAcpSession(payload, turnId, boundSession);
     const scope = this._scope(payload);
     const hasSession = Boolean(payload.providerBinding?.nativeSessionId);
     const prompt = buildConversationDeliveryPrompt(this._db, payload, hasSession, this._contextWindow);
@@ -436,7 +542,7 @@ class WorkBuddyHttpProvider extends PushProvider {
     }
     const runId = String(accepted?.data?.runId || '');
     if (!runId) throw deliveryError('WorkBuddy accepted the request without a run id', 'outcome_unknown');
-    this._activeRuns.set(turnId, runId);
+    this._activeRuns.set(turnId, { runId, state: this._currentState() });
     this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
       turnId, nativeSessionId: payload.providerBinding?.nativeSessionId || null, terminal: false });
     const result = await this._streamAcceptedRun(runId, turnId);
@@ -448,7 +554,7 @@ class WorkBuddyHttpProvider extends PushProvider {
     });
     this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
       turnId, nativeSessionId, terminal: true });
-    return { nativeSessionId, providerInstanceId: null, deliveryMode: 'http', adapterType: ADAPTER_TYPE };
+    return { nativeSessionId, providerInstanceId: this._currentState().instanceId, deliveryMode: 'http', adapterType: ADAPTER_TYPE };
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {
@@ -463,14 +569,14 @@ class WorkBuddyHttpProvider extends PushProvider {
     const activeAcp = this._activeAcp.get(String(turnId || ''));
     if (activeAcp) {
       try {
-        await this._acpRequest(activeAcp.connectionId, 'session/cancel', { sessionId: activeAcp.sessionId }, activeAcp.sessionId, undefined, true);
+        await this._stateContext.run(activeAcp.state, () => this._acpRequest(activeAcp.connectionId, 'session/cancel', { sessionId: activeAcp.sessionId }, activeAcp.sessionId, undefined, true));
         return { canceled: true, outcome: 'delivered' };
       } catch { return { canceled: false, outcome: 'outcome_unknown' }; }
     }
-    const runId = this._activeRuns.get(String(turnId || ''));
-    if (!runId) return { canceled: false, outcome: 'not_delivered' };
+    const activeRun = this._activeRuns.get(String(turnId || ''));
+    if (!activeRun) return { canceled: false, outcome: 'not_delivered' };
     try {
-      const result = await this._fetchJson(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }, 5000);
+      const result = await this._stateContext.run(activeRun.state, () => this._fetchJson(`/api/v1/runs/${encodeURIComponent(activeRun.runId)}/cancel`, { method: 'POST' }, 5000));
       return { canceled: result?.data?.status === 'cancelled', outcome: result?.data?.status === 'cancelled' ? 'delivered' : 'outcome_unknown' };
     } catch { return { canceled: false, outcome: 'outcome_unknown' }; }
   }
@@ -512,7 +618,7 @@ class WorkBuddyHttpProvider extends PushProvider {
   }
 
   async stop(): Promise<void> {
-    this._disposeServer('provider-stopped');
+    for (const state of this._states.values()) this._stateContext.run(state, () => this._disposeServer('provider-stopped'));
     this._inflight.clear();
     this._activeRuns.clear();
     this._activeAcp.clear();

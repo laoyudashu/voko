@@ -1,4 +1,5 @@
 import type { DatabaseLike } from '../types/database';
+const { AgentProviderBindingService } = require('./agent-provider-binding');
 
 export interface AgentRoutingSnapshot {
   backendType: string;
@@ -60,6 +61,10 @@ export class AgentDeliveryPolicyStore {
   }): { previous: AgentRoutingSnapshot; next: AgentRoutingSnapshot } {
     const previous = this.get(agentId);
     if (!previous) throw new Error('Agent not found');
+    new AgentProviderBindingService(this.db).assertLockedUpdate(agentId, {
+      backendType: input.backendType,
+      backendInstanceId: input.backendInstanceId,
+    });
     const sets: string[] = [];
     const values: unknown[] = [];
     if (input.backendType !== undefined) {

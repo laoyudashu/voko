@@ -187,7 +187,7 @@ function createOnOwnerReply(channelName: string, deps: ChannelRegistryDeps) {
       const settle = (result: unknown) => settleOwnerForward(databaseAPI, intervention.id, result);
       const reportOutcome = (outcome: string) => {
         if (outcome === 'delivered') {
-          console.log(`[${logTag}] 主人回复已入库并成功转发`);
+          console.log(`[${logTag}] 主人回复已入库并已交给 Agent`);
         } else if (outcome === 'outcome_unknown' || outcome === 'rejected') {
           console.warn(`[${logTag}] 主人回复已入库，自动转发结果未知，保留 Pull`);
         } else {

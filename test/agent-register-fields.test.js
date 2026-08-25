@@ -79,7 +79,7 @@ describe('registerAgentInDb description 写入', () => {
       });
       assert.strictEqual(r.success, true);
 
-      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, delivery_modes, agent_name, access_mode FROM agents WHERE agent_id=?').get('agent-desc');
+      const row = db.prepare('SELECT description, category, backend_type, backend_instance_id, delivery_modes, agent_name, access_mode, payment_fee_rate, agent_usage_fee_rate FROM agents WHERE agent_id=?').get('agent-desc');
       assert.strictEqual(row.description, '一个只读的代码分析助手');
       assert.strictEqual(row.category, 'technology');
       assert.strictEqual(row.backend_type, 'codex');
@@ -87,6 +87,8 @@ describe('registerAgentInDb description 写入', () => {
       assert.deepStrictEqual(JSON.parse(row.delivery_modes), ['cli', 'pull']);
       assert.strictEqual(row.agent_name, '我的Codex助手');
       assert.strictEqual(row.access_mode, 'public');
+      assert.strictEqual(row.payment_fee_rate, 0.006);
+      assert.strictEqual(row.agent_usage_fee_rate, 0.1);
     } finally { cleanupDb(db); }
   });
 
@@ -136,7 +138,7 @@ describe('registerAgentInDb description 写入', () => {
       });
       const row = db.prepare('SELECT description, backend_type, category, imUid FROM agents WHERE agent_id=?').get('agent-up');
       assert.strictEqual(row.description, '新描述', 'description 应被更新');
-      assert.strictEqual(row.backend_type, 'gemini', 'backend_type 应被更新');
+      assert.strictEqual(row.backend_type, 'codex', '注册完成后的 backend_type 应保持锁定');
       assert.strictEqual(row.category, 'education', 'category 应被更新');
       assert.strictEqual(row.imUid, 'u2', 'imUid 应被更新');
     } finally { cleanupDb(db); }
@@ -150,7 +152,7 @@ const { createToolHandlers } = require('../build/mcp/tools');
 
 /** 构造 mock cx：spy 记录被调用的方法，断言校验是否在前置触发 */
 function createMockCx() {
-  const calls = { sendCode: 0, loginByCode: 0, verifyCode: 0, verifyCodePreview: 0, createAgentByToken: 0, registerAgentInDb: 0, updateAgentBinding: 0, startAgentWorker: 0 };
+  const calls = { sendCode: 0, loginByCode: 0, verifyCode: 0, verifyCodePreview: 0, createAgentByToken: 0, registerAgentInDb: 0, updateAgentBinding: 0, updateAgentProfile: 0, startAgentWorker: 0 };
   return {
     _calls: calls,
     query: (sql) => {
@@ -167,6 +169,7 @@ function createMockCx() {
       registerAgentInDb: async () => { calls.registerAgentInDb++; return { success: true }; },
       updateAgentBinding: async () => { calls.updateAgentBinding++; return { success: true }; },
     },
+    updateAgentProfile: async () => { calls.updateAgentProfile++; return { success: true }; },
     startAgentWorker: () => { calls.startAgentWorker++; },
   };
 }
@@ -190,8 +193,8 @@ describe('manage_agent_registration shared flow', () => {
       registrationId: started.registrationId,
       code: '123456',
     });
-    assert.strictEqual(verified.status, 'basic_info_required');
-    assert.strictEqual(verified.nextAction.type, 'submit_basic_info');
+    assert.strictEqual(verified.status, 'provider_selection_required');
+    assert.strictEqual(verified.nextAction.type, 'select_provider');
   });
 });
 
@@ -285,7 +288,10 @@ describe('verify_agent_email 必填校验', () => {
       success: true,
       data: {
         agentId: 'selected-2',
-        agents: [{ agentId: 'first-1' }, { agentId: 'selected-2' }],
+        agents: [
+          { agentId: 'first-1', payment_fee_rate: 0.006, agent_usage_fee_rate: 0.1 },
+          { agentId: 'selected-2', payment_fee_rate: 0.012, agent_usage_fee_rate: 0.2 },
+        ],
         imUid: 'uid-2',
         imToken: 'token-2',
         did: 'did:selected-2',
@@ -307,6 +313,8 @@ describe('verify_agent_email 必填校验', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(captured.agentId, 'selected-2');
     assert.strictEqual(captured.uid, 'uid-2');
+    assert.strictEqual(captured.paymentFeeRate, 0.012);
+    assert.strictEqual(captured.agentUsageFeeRate, 0.2);
   });
 
   it('多 Agent 响应未标识选中身份时停止写库和 Worker', async () => {
@@ -335,6 +343,31 @@ describe('verify_agent_email 必填校验', () => {
 });
 
 describe('create_agent_by_token 必填校验', () => {
+  it('将本次创建 Agent 的服务端费率原样写入本地', async () => {
+    const cx = createMockCx();
+    let captured = null;
+    cx.agentRegistration.createAgentByToken = async () => ({
+      success: true,
+      data: {
+        agentId: 'new-1', imUid: 'u', imToken: 't', did: 'd', publicKey: 'pk', privateKey: 'sk',
+        payment_fee_rate: 0.015, agent_usage_fee_rate: 0.25,
+      },
+    });
+    cx.agentRegistration.registerAgentInDb = async (params) => {
+      captured = params;
+      cx._calls.registerAgentInDb++;
+      return { success: true };
+    };
+
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: 'Fee Agent', backendType: 'codex',
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(captured.paymentFeeRate, 0.015);
+    assert.strictEqual(captured.agentUsageFeeRate, 0.25);
+  });
+
   it('运行中注册先加载 Provider 并刷新路由，再启动 IM Worker', async () => {
     const cx = createMockCx();
     const order = [];
@@ -396,6 +429,35 @@ describe('create_agent_by_token 必填校验', () => {
     assert.strictEqual(captured.description, '描述');
     assert.strictEqual(captured.backendType, 'codex');
     assert.strictEqual(captured.ownerEmail, 'a@b.com');
+  });
+
+  it('字段齐全 → 名称和全部用户资料同步到服务端', async () => {
+    const cx = createMockCx();
+    let synced = null;
+    cx.updateAgentProfile = async (params) => { synced = params; cx._calls.updateAgentProfile++; return { success: true }; };
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: '完整资料', backendType: 'codex', category: 'technology',
+      description: '详细描述', tags: ['标签一', '标签二'], iconUrl: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海',
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(synced, {
+      agentId: 'new-1', name: '完整资料', description: '详细描述', category: 'technology',
+      tags: ['标签一', '标签二'], icon_url: 'https://example.com/icon.png',
+      contact_phone: '+86 13800000000', address: '中国·上海', backendType: 'codex',
+    });
+  });
+
+  it('服务端资料同步失败 → 不静默报告注册成功', async () => {
+    const cx = createMockCx();
+    cx.updateAgentProfile = async () => ({ success: false, error: 'cloud unavailable' });
+    const result = await createToolHandlers(cx).create_agent_by_token({
+      email: 'a@b.com', agentName: 'X', backendType: 'codex', description: '不能丢失',
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.creationStatus, 'created');
+    assert.strictEqual(result.agentId, 'new-1');
+    assert.match(result.error, /资料同步到服务端失败/);
   });
 
   it('拒绝客户端伪造其他登录邮箱', async () => {

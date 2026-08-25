@@ -42,7 +42,19 @@ class VokoWorkerAdapter extends EventEmitter {
     const payload = message.content?.contentObj || message.content || {};
     const contentType = Number(message.contentType || payload.type || 0);
     let content = '';
-    if (contentType === ContentType.File) {
+    if (contentType === 13 && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      let envelope = payload;
+      const keys = Object.keys(payload);
+      if (typeof payload.content === 'string' && keys.every((key) => key === 'type' || key === 'content')) {
+        try {
+          const parsed = JSON.parse(payload.content);
+          if (parsed && !Array.isArray(parsed) && parsed.version === 'voko.e2ee/2') envelope = parsed;
+        } catch {}
+      }
+      envelope = { ...envelope };
+      delete envelope.type;
+      content = JSON.stringify(envelope);
+    } else if (contentType === ContentType.File) {
       content = JSON.stringify({ name: payload.name || payload.fileName || '', url: payload.url || '', size: payload.size || 0, type: payload.mime || payload.mimeType || payload.fileType || '' });
     } else if (contentType === ContentType.Text) content = payload.content || payload.text || '';
     else if (contentType === ContentType.Image) content = payload.url || '';
@@ -139,7 +151,7 @@ class VokoWorkerAdapter extends EventEmitter {
   async deliverEncrypted(agentId, channelId, envelope, localMsgId) {
     try {
       const parsedEnvelope = JSON.parse(String(envelope || ''))
-      if (!parsedEnvelope || parsedEnvelope.version !== 'voko.e2ee/1') {
+      if (!parsedEnvelope || parsedEnvelope.version !== 'voko.e2ee/2') {
         throw new Error('E2EE_REPLY_ENVELOPE_INVALID')
       }
       const result = await this.pool.sendRaw(agentId, channelId, ChannelType.Person,

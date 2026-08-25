@@ -15,6 +15,7 @@ const ENDPOINTS = require('../endpoints.json');
 const { t } = require('./i18n');
 const { normalizeBackendType } = require('./agent-backend-types');
 const { AgentDeliveryPolicyStore, normalizeDeliveryModes } = require('./agent-delivery-policy');
+const { validateProviderSelection } = require('./agent-provider-binding');
 const { PENDING_OWNER_SWITCH_CONFIG, stagePendingOwnerSwitch } = require('./owner-switch');
 const {
   normalizeOfficialImServerUrl,
@@ -524,6 +525,10 @@ function registerAgentInDbOnDb(db, {
   category,
   categoryLabel,
   description,
+  tags,
+  iconUrl,
+  contactPhone,
+  address,
   did,
   publicKey,
   privateKey,
@@ -535,6 +540,7 @@ function registerAgentInDbOnDb(db, {
   try {
     const now = Date.now();
     const backend = normalizeBackendType(backendType);
+    const selection = validateProviderSelection({ backendType: backend, backendInstanceId: instanceId });
     const imServerUrl = normalizeOfficialImServerUrl(serverUrl || DEFAULT_IM_SERVER_URL);
     const payRate = paymentFeeRate != null ? paymentFeeRate : 0.006;
     const usageRate = agentUsageFeeRate != null ? agentUsageFeeRate : 0.1;
@@ -567,16 +573,30 @@ function registerAgentInDbOnDb(db, {
         login_token = excluded.login_token,
         payment_fee_rate = excluded.payment_fee_rate,
         agent_usage_fee_rate = excluded.agent_usage_fee_rate,
-        access_mode = excluded.access_mode, backend_type = excluded.backend_type,
-        backend_instance_id = excluded.backend_instance_id,
+        access_mode = excluded.access_mode,
         delivery_modes = excluded.delivery_modes, updated_at = excluded.updated_at
     `).run(
       `agent-${agentId}`, agentId, uid, token, imServerUrl, ownerEmail || null,
       agentName || null, category || null, resolvedCategoryLabel || null, description || null,
       did || null, publicKey || null, privateKey || null, loginToken || null,
       payRate, usageRate,
-      resolvedAccessMode, backend, instanceId || null, resolvedDeliveryModes, now, now
+      resolvedAccessMode, selection.backendType, selection.backendInstanceId, resolvedDeliveryModes, now, now
     );
+
+    const profile = [
+      ['tags', tags === undefined ? undefined : (Array.isArray(tags) ? JSON.stringify(tags) : tags || null)],
+      ['icon_url', iconUrl === undefined ? undefined : iconUrl || null],
+      ['contact_phone', contactPhone === undefined ? undefined : contactPhone || null],
+      ['address', address === undefined ? undefined : address || null],
+    ].filter(([, value]) => value !== undefined);
+    if (profile.length) {
+      const columns = new Set(db.prepare('PRAGMA table_info(agents)').all().map(row => row.name));
+      const supported = profile.filter(([column]) => columns.has(column));
+      if (supported.length) {
+        db.prepare(`UPDATE agents SET ${supported.map(([column]) => `${column}=?`).join(', ')} WHERE agent_id=?`)
+          .run(...supported.map(([, value]) => value), agentId);
+      }
+    }
 
     console.log('[AgentRegistration] registerAgentInDb success:', agentId);
     return { success: true };

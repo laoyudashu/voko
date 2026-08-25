@@ -14,8 +14,8 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [A2A Gateway 上手指南](a2a-gateway-getting-started.md)：面向外部 A2A 调用方的适用场景、上手流程与快速排查。
 - [A2A Mailbox Gateway 与 Lite Bridge](a2a-mailbox.md)：公网 A2A 1.0 映射、外部 Agent 发现/调用、独立 Task UI、状态语义与安全边界。
 - [External REST/Webhook Gateway](external-rest-webhook-gateway.md)：传统系统的 REST 入站、Webhook 回程、凭证与任务语义。
-- [访客私聊端到端加密](e2ee-private-chat.md)：适用范围、钥匙状态、建立/重建流程和常见故障。
-- [E2EE 安全模型](e2ee-security-model.md)：生产访客私聊的信任边界、明文端点、失败关闭和明确排除项。
+- [私聊统一端到端加密](e2ee-private-chat.md)：访客多设备与 Agent 间 IM 的无感加密、统一出站决策、消息/附件路径和端点边界。
+- [E2EE 安全模型](e2ee-security-model.md)：`voko.e2ee/2` 的密码套件、可信路由、持久化与明确排除项。
 - [Provider 注册、投递与路由恢复](provider-delivery-routing.md)：注册入口、推荐通道、Pull 兜底和用户侧排障。
 - [Provider 兼容性矩阵](provider-compatibility.md)：已验证版本、平台边界和实测证据。
 - [Provider 专属指南](providers/README.md)：某个框架的安装、登录、配置和特殊排障。
@@ -30,9 +30,6 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 
 ### 证据、发布和维护
 
-- [E2EE 资源预算](e2ee-resource-budget.md)：内存、延迟、并发和压力测试证据。
-- [E2EE 外部审计指南](e2ee-audit-guide.md)：固定审计提交、源码清单、评审范围和问题闭环。
-- [E2EE 内部 Canary 运维](e2ee-canary-operations.md)：历史灰度与故障演练资料，不是普通用户启用指南。
 - [Ubuntu Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)：Provider 版本、注册结果、消息连续性和 Linux 限制。
 - [Contributing](../CONTRIBUTING.md)：代码变更、测试和提交要求。
 - [Release process](../RELEASING.md)：发布、密钥扫描和 npm 发布门禁。

@@ -27,7 +27,7 @@
   "mcp.tool.verify_agent_email.p.category": "Agent 分类（可选，默认 general=通用助手；其它可选值见服务端 /api/agent-categories，如 education/finance/travel/entertainment/medical/other）",
   "mcp.tool.verify_agent_email.p.description": "Agent 描述（可选）",
   "mcp.tool.manage_agent_registration.desc": "通过可恢复的状态机注册或新增 Agent。每次响应都会返回 registrationId、当前状态和 nextAction；Web、CLI、MCP 与本地 API 共用同一注册流程。",
-  "mcp.tool.manage_agent_registration.p.action": "注册动作：start、verify_email、set_basic_info、inspect_environment、select_provider、select_delivery、configure_delivery、configuration_status、test_delivery、complete 或 status",
+  "mcp.tool.manage_agent_registration.p.action": "注册动作：start、verify_email、set_basic_info、inspect_environment、select_provider、reselect_provider、select_delivery、configure_delivery、configuration_status、preflight_delivery、test_delivery、loopback_test、cleanup_loopback、complete 或 status",
   "mcp.tool.manage_agent_registration.p.registrationId": "注册会话 ID；除 start 外均需传入",
   "mcp.tool.manage_agent_registration.p.providerType": "Agent 类型；未匹配到支持类型时选择 others",
   "mcp.tool.manage_agent_registration.p.instanceId": "本机探测到的 Provider 实例 ID；多实例时必填",
@@ -146,7 +146,7 @@
   "mcp.tool.close_human_request.desc": "处理完主人回复后，调用此工具标记介入请求为已解决。主人会收到\"已处理完毕\"通知",
   "mcp.tool.close_human_request.p.id": "介入请求 ID（ask_human_for_help 返回的 interventionId）",
 
-  "mcp.tool.create_payment.desc": "向访客发起收款请求。VOKO 会检查支付配置，创建支付订单。若未配置支付认证将返回错误，需要先通知主人配置",
+  "mcp.tool.create_payment.desc": "向访客发起收款请求。VOKO 会检查支付配置、创建订单并发送支付链接；结果中的 orderCreated、sentToVisitor 和 deliveryStatus 分别表示订单是否创建、是否已确认发送给访客及投递状态。若未配置支付认证将返回错误，需要先通知主人配置",
   "mcp.tool.create_payment.p.agentId": "哪个 Agent 收款",
   "mcp.tool.create_payment.p.visitorId": "向谁收款",
   "mcp.tool.create_payment.p.amount": "金额（元）",

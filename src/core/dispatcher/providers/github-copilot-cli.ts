@@ -19,6 +19,7 @@ class GitHubCopilotCliProvider extends CliAdapter {
         '--no-color',
         ...COPILOT_SAFETY_ARGS,
       ],
+      instanceArgs: (instanceId: string) => ({ args: ['--agent', instanceId] }),
       parser: 'raw',
       matchType: 'github-copilot',
       adapterType: 'github-copilot-cli',

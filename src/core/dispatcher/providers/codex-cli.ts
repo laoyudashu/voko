@@ -29,6 +29,7 @@ class CodexCliProvider extends CliAdapter {
       argsForSession: (sessionId: string | null) => sessionId
         ? ['--sandbox', 'read-only', 'exec', 'resume', sessionId, '--json', '--skip-git-repo-check', '-']
         : ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '-'],
+      instanceArgs: (instanceId: string) => ({ args: ['--profile', instanceId], position: 'before' }),
       sessionIdFromLine: (line: string) => {
         try {
           const event = JSON.parse(line);

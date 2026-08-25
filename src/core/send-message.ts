@@ -49,6 +49,24 @@ type Deliver = (
   metadata?: unknown,
 ) => Promise<SendResult>;
 
+type SecureRouterLike = { deliver: Deliver };
+
+function createSecureDeliverProxy(rawDeliver: Deliver): Deliver & {
+  setSecureRouter: (router: SecureRouterLike | null) => void;
+  rawDeliver: Deliver;
+} {
+  let secureRouter: SecureRouterLike | null = null;
+  const proxy = (async (...args: Parameters<Deliver>) => secureRouter
+    ? secureRouter.deliver(...args)
+    : rawDeliver(...args)) as Deliver & {
+      setSecureRouter: (router: SecureRouterLike | null) => void;
+      rawDeliver: Deliver;
+    };
+  proxy.setSecureRouter = (router) => { secureRouter = router; };
+  proxy.rawDeliver = rawDeliver;
+  return proxy;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -133,6 +151,7 @@ function persistAgentMessage(
   if (messageType === 'image') contentType = 2;
   else if (messageType === 'file') contentType = 8;
 
+  let inserted = true;
   try {
     db.prepare(`
       INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention)
@@ -144,7 +163,10 @@ function persistAgentMessage(
       console.error('[sendMessage] 写入消息失败:', message);
       throw e;
     }
+    inserted = false;
   }
+
+  if (!inserted) return { msgId, timestamp, contentType, inserted };
 
   try {
     const agentRow = db.prepare(`SELECT imUid FROM agents WHERE agent_id = ?`).get<{ imUid?: string }>(agentId);
@@ -160,7 +182,7 @@ function persistAgentMessage(
     }
   } catch (_) {} // 并发写可能触发 UNIQUE，不影响功能
 
-  return { msgId, timestamp, contentType };
+  return { msgId, timestamp, contentType, inserted };
 }
 
 /**
@@ -243,15 +265,16 @@ function createSendMessage({ db, deliver, databaseAPI, enqueueIntervention }: {
     }
 
     try {
+      const delivered = sendResult.deliveryState === undefined || sendResult.deliveryState === 'delivered';
       const messageSeq = Number.isFinite(Number(sendResult.messageSeq)) ? Number(sendResult.messageSeq) : null;
       const clientMsgNo = sendResult.clientMsgNo ? String(sendResult.clientMsgNo) : null;
       db.prepare(`
         UPDATE messages
-        SET status='sent',
+        SET status=?,
             message_seq=COALESCE(?, message_seq),
             client_msg_no=COALESCE(?, client_msg_no)
         WHERE id=?
-      `).run(messageSeq, clientMsgNo, msgId);
+      `).run(delivered ? 'sent' : 'pending', messageSeq, clientMsgNo, msgId);
     } catch (_) {}
 
     return {
@@ -260,8 +283,12 @@ function createSendMessage({ db, deliver, databaseAPI, enqueueIntervention }: {
       serverMessageId: sendResult.serverMessageId,
       clientMsgNo: sendResult.clientMsgNo,
       messageSeq: sendResult.messageSeq,
+      securityMode: sendResult.securityMode || 'plaintext',
+      securityReason: sendResult.securityReason || 'recipient_unsupported',
+      encryptedDeviceCount: Number(sendResult.encryptedDeviceCount || 0),
+      deliveryState: sendResult.deliveryState || 'delivered',
     };
   };
 }
 
-module.exports = { createDeliver, createSendMessage, persistAgentMessage };
+module.exports = { createDeliver, createSecureDeliverProxy, createSendMessage, persistAgentMessage };

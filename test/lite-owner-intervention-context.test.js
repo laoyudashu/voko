@@ -53,10 +53,18 @@ describe('Lite owner intervention context', () => {
 
     assert.equal(result.success, true);
     assert.equal(inserted.length, 1);
-    assert.equal(inserted[0][7], 'voko-email');
+    assert.equal(inserted[0][7] - inserted[0][6], 24 * 60 * 60 * 1000);
+    assert.equal(inserted[0][8], 'voko-email');
     assert.equal(enqueued.length, 1);
     assert.equal(enqueued[0].id, result.interventionId);
     assert.equal(enqueued[0].targetChannelId, 'group-1');
     assert.equal(enqueued[0].targetChannelType, 2);
+    assert.equal(enqueued[0].expireTime - enqueued[0].askTime, 24 * 60 * 60 * 1000);
+
+    const rejected = await handlers.ask_human_for_help({
+      agentId: 'gym', visitorId: 'cron:forged', problem: '不应创建',
+    });
+    assert.equal(rejected.code, 'VISITOR_ID_RESERVED');
+    assert.equal(inserted.length, 1);
   });
 });

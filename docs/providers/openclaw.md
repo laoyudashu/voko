@@ -86,6 +86,8 @@ agent:<openclaw-agent-id>:<visitor-id>
 
 - `backend_instance_id`：OpenClaw 配置中的 Agent ID，用来选择 workspace。
 - `native_session_id`：某个 VOKO 会话使用的 OpenClaw session key。
+
+注册第一步只枚举 `openclaw.json` 中的 Agent，不读取每个 workspace 的详细资料。选定 Agent 进入第二步后，VOKO 才读取该 workspace 的 `IDENTITY.md`，并仅从显式的 `Name/名字/名称`、`Creature/角色/身份/定位`、`Vibe/风格` 字段生成可编辑的名称、描述和标签建议。未填写的模板占位符会被忽略；`SOUL.md`、`AGENTS.md`、系统提示词和正文指令不会作为公开资料上传。
 - `channelType/channelId`：VOKO 的私聊/群聊边界。
 
 不同 VOKO Agent、不同访客、私聊和群聊不会共享 session。不要把一个实例 ID 当成 session ID，也不要手动把访客的 session key 复制给另一个 Agent。

@@ -19,6 +19,9 @@ test('shared copy control uses one icon interaction and a checked success state'
   assert.match(script, /copiedIcon=.*m5 12/);
   assert.match(script, /classList\.add\("is-copied"\)/);
   assert.match(script, /classList\.remove\("is-copied"\)/);
+  assert.match(script, /getAttribute\("data-voko-copy-icon-target"\)/);
+  assert.match(script, /button\.querySelector\(iconSelector\)/);
+  assert.match(script, /icon\.innerHTML=copiedIcon/);
   assert.match(script, /navigator\.clipboard\.writeText/);
 });
 
@@ -28,4 +31,5 @@ test('shared controls define consistent default, compact and table sizes', () =>
   assert.match(UI_CONTROL_CSS, /\.btn-xs\{min-height:26px/);
   assert.match(UI_CONTROL_CSS, /\.voko-copy-button\{[^}]*width:28px[^}]*height:28px/);
   assert.match(UI_CONTROL_CSS, /\.voko-copy-button\.is-copied\{color:#168447/);
+  assert.match(UI_CONTROL_CSS, /\.home-access-copy-item\.is-copied \.home-copy-action-icon\{color:#168447;background:#edf9f1\}/);
 });

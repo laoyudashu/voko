@@ -156,6 +156,28 @@ class A2ALocalTaskStore {
     this.db.prepare("UPDATE a2a_local_inbox SET status='received',execution_state='retry',next_attempt_at=?,error_code=? WHERE event_id=?")
       .run(Date.now() + delayMs, errorCode, eventId);
   }
+  expireRetryCommand(eventId: string, build: (taskId: string, sequence: number, eventId: string) => unknown): boolean {
+    const now = Date.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(`SELECT inbox.gateway_task_id,task.last_producer_sequence,task.standard_state
+        FROM a2a_local_inbox inbox JOIN a2a_local_tasks task ON task.gateway_task_id=inbox.gateway_task_id
+        WHERE inbox.event_id=? AND inbox.status='received' AND inbox.execution_state='retry'`).get(eventId) as
+        { gateway_task_id: string; last_producer_sequence: number; standard_state: StandardTaskState } | undefined;
+      if (!row || TERMINAL_STATES.has(row.standard_state)) { this.db.exec('COMMIT'); return false; }
+      const sequence = row.last_producer_sequence + 1; const terminalEventId = crypto.randomUUID();
+      const envelope = build(row.gateway_task_id, sequence, terminalEventId);
+      this.db.prepare(`UPDATE a2a_local_inbox SET status='processed',execution_state='processed',processed_at=?,
+        error_code='A2A_COMMAND_EXPIRED_BEFORE_DELIVERY',envelope_json=NULL,next_attempt_at=NULL WHERE event_id=?`).run(now, eventId);
+      this.db.prepare(`UPDATE a2a_local_tasks SET last_producer_sequence=?,standard_state='FAILED',delivery_state='DEAD_LETTER',
+        finished_at=COALESCE(finished_at,?),updated_at=? WHERE gateway_task_id=?`).run(sequence, now, now, row.gateway_task_id);
+      this.db.prepare(`INSERT INTO a2a_local_outbox
+        (event_id,gateway_task_id,producer_sequence,operation,envelope_json,status,next_attempt_at,created_at,updated_at)
+        VALUES (?, ?, ?, 'failed', ?, 'pending', ?, ?, ?)`).run(
+        terminalEventId, row.gateway_task_id, sequence, JSON.stringify(envelope), now, now, now);
+      this.db.exec('COMMIT'); return true;
+    } catch (error) { try { this.db.exec('ROLLBACK'); } catch (_) {} throw error; }
+  }
   enqueueEvent(eventId: string, taskId: string, sequence: number, operation: string, envelope: unknown): boolean {
     const now = Date.now();
     const result = this.db.prepare(`INSERT OR IGNORE INTO a2a_local_outbox

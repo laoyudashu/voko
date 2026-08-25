@@ -27,7 +27,7 @@
   "mcp.tool.verify_agent_email.p.category": "Agent category (optional, defaults to general; other values from server /api/agent-categories, e.g. education/finance/travel/entertainment/medical/other)",
   "mcp.tool.verify_agent_email.p.description": "Agent description (optional)",
   "mcp.tool.manage_agent_registration.desc": "Register or add an Agent through a resumable state machine shared by Web, CLI, MCP, and the local API. Every response returns the registrationId, current status, and nextAction.",
-  "mcp.tool.manage_agent_registration.p.action": "Registration action: start, verify_email, set_basic_info, inspect_environment, select_provider, select_delivery, configure_delivery, configuration_status, test_delivery, complete, or status",
+  "mcp.tool.manage_agent_registration.p.action": "Registration action: start, verify_email, set_basic_info, inspect_environment, select_provider, reselect_provider, select_delivery, configure_delivery, configuration_status, preflight_delivery, test_delivery, loopback_test, cleanup_loopback, complete, or status",
   "mcp.tool.manage_agent_registration.p.registrationId": "Registration session ID; required for every action except start",
   "mcp.tool.manage_agent_registration.p.providerType": "Agent type; choose others when no supported type matches",
   "mcp.tool.manage_agent_registration.p.instanceId": "Locally detected provider instance ID; required when multiple instances exist",
@@ -146,7 +146,7 @@
   "mcp.tool.close_human_request.desc": "After handling the owner's reply, call this tool to mark the intervention request as resolved. The owner will receive a \"resolved\" notification.",
   "mcp.tool.close_human_request.p.id": "Intervention request ID (the interventionId returned by ask_human_for_help)",
 
-  "mcp.tool.create_payment.desc": "Initiate a payment request to a visitor. VOKO checks the payment configuration and creates a payment order. If no payment authentication is configured, an error will be returned — notify the owner to configure it first.",
+  "mcp.tool.create_payment.desc": "Initiate a payment request to a visitor. VOKO checks the payment configuration, creates the order, and sends its link. The orderCreated, sentToVisitor, and deliveryStatus result fields report order creation, confirmed visitor delivery, and delivery state. If payment authentication is missing, notify the owner to configure it first.",
   "mcp.tool.create_payment.p.agentId": "Which Agent is requesting payment",
   "mcp.tool.create_payment.p.visitorId": "Who to charge",
   "mcp.tool.create_payment.p.amount": "Amount (yuan)",

@@ -8,6 +8,7 @@ const path = require('node:path');
 const { createDatabaseAPI, initDatabase } = require('../build/core/database');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { AgentWorkerManager } = require('../build/core/worker-manager');
+const { createToolHandlers } = require('../build/mcp/tools');
 
 test('payment orders persist their routing conversation column', () => {
   const db = initDatabase(':memory:', { silent: true });
@@ -83,5 +84,54 @@ test('payment system notifications create an active route in the selected conver
     assert.equal(deliveredMetadata._voko.conversationKey, conversation.wireConversationKey);
     assert.ok(deliveredMetadata._voko.routeId);
     assert.equal(deliveredMetadata._voko.replyToRouteId, inboundRouteId);
+  } finally { db.close(); }
+});
+
+test('create_payment returns the visitor delivery result and keeps the selected conversation', async () => {
+  const db = initDatabase(':memory:', { silent: true });
+  try {
+    const now = Date.now();
+    db.prepare(`INSERT INTO payment_auth
+      (id,owner_email,receiver_apply_status,created_at,updated_at) VALUES (?,?,?,?,?)`)
+      .run('auth-pay', 'owner@example.com', 'COMPLETED', now, now);
+    db.prepare(`INSERT INTO agents
+      (id,agent_id,imUid,imToken,im_server_url,publish_status,created_at,updated_at,backend_type,did,private_key,payment_auth_id)
+      VALUES (?,?,?,?,?,'published',?,?,?,?,?,?)`)
+      .run('row-pay', 'agent-pay', 'im-pay', 'token', 'https://im.test', now, now,
+        'openclaw', 'did:test:agent-pay', 'private-key', 'auth-pay');
+    const conversation = new RoutingConversationStore(db).createPending({
+      agentId: 'agent-pay', channelId: 'visitor-pay', channelType: 1,
+    });
+    const databaseAPI = createDatabaseAPI(db);
+    let processedOrder = null;
+    const handlers = createToolHandlers({
+      db,
+      query: (sql, params = []) => db.prepare(sql).all(...params),
+      exec: (sql, params = []) => db.prepare(sql).run(...params),
+      getPaymentAuth: () => ({ id: 'auth-pay' }),
+      getAgentImUid: () => 'im-pay',
+      savePaymentOrder: (order) => databaseAPI.savePaymentOrder(order),
+      processPaymentOrder: async (order) => {
+        processedOrder = order;
+        db.prepare(`UPDATE payment_orders SET status='created',order_no=?,pay_url=?,updated_at=? WHERE id=?`)
+          .run('ORDER-1', 'https://pay.test/ORDER-1', Date.now(), order.id);
+        return { orderCreated: true, sentToVisitor: false, deliveryStatus: 'failed',
+          orderId: order.id, visitorId: order.visitor_id, messageId: 'pay-message-1', error: 'SENDACK rejected' };
+      },
+    });
+
+    const result = await handlers.create_payment({
+      agentId: 'agent-pay', visitorId: 'visitor-pay', amount: 0.1,
+      description: 'test', conversationId: conversation.id,
+    });
+
+    assert.equal(processedOrder.routing_conversation_id, conversation.id);
+    assert.equal(result.success, true);
+    assert.equal(result.orderCreated, true);
+    assert.equal(result.sentToVisitor, false);
+    assert.equal(result.deliveryStatus, 'failed');
+    assert.equal(result.deliveryError, 'SENDACK rejected');
+    assert.equal(result.messageId, 'pay-message-1');
+    assert.equal(result.visitorId, 'visitor-pay');
   } finally { db.close(); }
 });

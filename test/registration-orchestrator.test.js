@@ -11,6 +11,7 @@ const {
   detectCurrentAgentType,
   currentAgentTypeFromEnvironment,
   currentAgentTypeFromProcessRows,
+  sortProviderDisplay,
 } = require('../build/core/registration-orchestrator');
 const { runWithRegistrationCaller } = require('../build/core/registration-caller-context');
 
@@ -21,6 +22,8 @@ function createDb() {
     'agent_backend_types',
     JSON.stringify([
       { value: 'openclaw', label: 'OpenClaw' },
+      { value: 'codex', label: 'Codex' },
+      { value: 'workbuddy', label: 'WorkBuddy' },
       { value: 'hermes', label: 'Hermes' },
       { value: 'qwen-office', label: 'Qwen Office' },
       { value: 'others', label: 'Others' },
@@ -54,6 +57,27 @@ function createService(overrides = {}) {
 }
 
 describe('shared registration orchestrator', () => {
+  it('sorts detected providers by the shared display priority and stable unknown labels', () => {
+    const providers = [
+      { type: 'unknown-z', label: 'Beta' }, { type: 'codex', label: 'Codex' },
+      { type: 'hermes', label: 'Hermes' }, { type: 'unknown-a', label: 'Alpha' },
+      { type: 'openclaw', label: 'OpenClaw' }, { type: 'workbuddy', label: 'WorkBuddy' },
+      { type: 'claude-code', label: 'Claude Code' }, { type: 'github-copilot', label: 'Copilot' },
+      { type: 'qwen-office', label: '千问办公' }, { type: 'dumate', label: '百度搭子' },
+      { type: 'doubao', label: '豆包办公' }, { type: 'deepseek-harness', label: 'DeepSeek Harness' },
+    ];
+    assert.deepEqual(sortProviderDisplay(providers).map((item) => item.type), [
+      'workbuddy', 'qwen-office', 'dumate', 'doubao', 'openclaw', 'hermes', 'claude-code', 'codex',
+      'deepseek-harness', 'github-copilot', 'unknown-a', 'unknown-z',
+    ]);
+    assert.deepEqual(sortProviderDisplay([
+      { type: 'trae', label: 'Trae' }, { type: 'workbuddy', label: 'WorkBuddy' }, { type: 'cursor', label: 'Cursor' },
+    ]).map((item) => item.type), ['workbuddy', 'cursor', 'trae']);
+    assert.deepEqual(sortProviderDisplay([
+      { type: 'unknown-b', label: 'Same' }, { type: 'unknown-a', label: 'Same' },
+    ]).map((item) => item.type), ['unknown-a', 'unknown-b']);
+  });
+
   it('configures Goose CLI Push and ACP-to-CLI fallback in delivery order', () => {
     const service = new RegistrationOrchestrator({ commandAvailable: (command) => command === 'goose' });
     assert.deepEqual(service.deliveryCapabilities('goose').map((item) => item.mode), ['cli', 'pull']);
@@ -151,12 +175,12 @@ describe('shared registration orchestrator', () => {
       () => service.start({ email: 'owner@example.com' }),
     );
     return Promise.resolve(selected).then((started) => {
-      const basic = service.setBasicInfo(started.registrationId, { agentName: 'ZeroClaw test' });
       const chosen = service.selectProvider(started.registrationId, {
         providerType: 'zeroclaw',
         instanceId: 'voko_test',
       });
-      assert.strictEqual(basic.status, 'provider_selection_required');
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'ZeroClaw test' });
+      assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.strictEqual(chosen.provider.instanceId, 'voko_test');
       assert.strictEqual(chosen.provider.instanceName, 'VOKO Linux test');
     });
@@ -198,6 +222,7 @@ describe('shared registration orchestrator', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       qwenOfficeRuntimeAvailable: () => false,
+      qwenOfficeAgents: () => [],
       traeCliAvailable: () => false,
       installedApplications: () => ['千问办公 0.1.6', 'Trae (User) 3.5.81'],
       detectCurrentAgentType: () => null,
@@ -218,12 +243,43 @@ describe('shared registration orchestrator', () => {
   it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
     const service = new RegistrationOrchestrator({
       qwenOfficeRuntimeAvailable: () => true,
+      qwenOfficeAgents: () => [],
       traeCliAvailable: () => true,
     });
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
+  it('discovers QwenWork expert kits and requires an exact selection when more than one is present', async () => {
+    let agents = [
+      { id: 'mt80hmwaywym3lje/health-rumor-crusher', name: '养生谣言粉碎机', description: '健康信息核查', available: true },
+      { id: 'mt7zxd9zn555pwlu/tieban-shenshu', name: '铁板神数', description: '命理工具箱', available: true },
+    ];
+    const { db, service } = createService({
+      qwenOfficeRuntimeAvailable: () => true,
+      qwenOfficeAgents: () => agents,
+    });
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      const detected = started.environment.detected.find((item) => item.type === 'qwen-office');
+      assert.deepEqual(detected.instances.map((item) => item.id), agents.map((item) => item.id));
+      assert.equal(detected.supportsMultipleInstances, true);
+      assert.equal(service.selectProvider(started.registrationId, { providerType: 'qwen-office' }).success, false);
+      const selected = service.selectProvider(started.registrationId, {
+        providerType: 'qwen-office', instanceId: agents[1].id,
+      });
+      assert.equal(selected.provider.instanceId, agents[1].id);
+      assert.equal(selected.suggestedBasicInfo.agentName, '铁板神数');
+      service.setBasicInfo(started.registrationId, { agentName: '铁板神数' });
+      agents = [];
+      const stale = await service.complete(started.registrationId);
+      assert.equal(stale.success, false);
+      assert.match(stale.error, /已不存在.*清单无效.*不可用/);
+    } finally {
+      db.close();
+    }
   });
 
   it('detects standalone CodeBuddy separately from WorkBuddy and exposes ACP before Pull', () => {
@@ -285,19 +341,19 @@ describe('shared registration orchestrator', () => {
     const { db, service, getCreateCount } = createService();
     try {
       const started = await service.start({ email: 'owner@example.com' });
-      assert.strictEqual(started.status, 'basic_info_required');
-      assert.strictEqual(started.nextAction.type, 'submit_basic_info');
+      assert.strictEqual(started.status, 'provider_selection_required');
+      assert.strictEqual(started.nextAction.type, 'select_provider');
+
+      const provider = service.selectProvider(started.registrationId, { providerType: 'others' });
+      assert.strictEqual(provider.status, 'basic_info_required');
 
       const basic = service.setBasicInfo(started.registrationId, {
         agentName: 'Shared Agent',
         description: 'shared flow',
         category: 'general',
       });
-      assert.strictEqual(basic.status, 'provider_selection_required');
+      assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.ok(basic.environment);
-
-      const provider = service.selectProvider(started.registrationId, { providerType: 'others' });
-      assert.strictEqual(provider.status, 'delivery_selection_required');
       assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
 
       const delivery = service.selectDelivery(started.registrationId, { deliveryModes: [] });
@@ -345,7 +401,7 @@ describe('shared registration orchestrator', () => {
       const verified = await service.manage({
         action: 'verify_email', registrationId: started.registrationId, code: '123456',
       });
-      assert.strictEqual(verified.status, 'basic_info_required');
+      assert.strictEqual(verified.status, 'provider_selection_required');
       assert.strictEqual(verifyCount, 2);
     } finally {
       db.close();
@@ -393,11 +449,11 @@ describe('shared registration orchestrator', () => {
 
       assert.strictEqual(
         clients[0].service.view(started[started.length - 1].registrationId).status,
-        'basic_info_required',
+        'provider_selection_required',
       );
       assert.strictEqual(
         clients[clients.length - 1].service.view(started[0].registrationId).status,
-        'basic_info_required',
+        'provider_selection_required',
       );
     } finally {
       for (const { db } of clients) db.close();
@@ -419,44 +475,32 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(started.email, 'owner@example.com');
       assert.strictEqual(started.registrationMode, 'agent');
 
+      const selected = service.selectProvider(started.registrationId, { providerType: 'openclaw', instanceId: 'openclaw-test' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'Self Registering Agent' });
-      assert.deepStrictEqual(basic.providerLock, {
-        type: 'openclaw',
-        label: 'OpenClaw',
-        source: 'local_environment',
-        confidence: 'high',
-      });
       assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.strictEqual(basic.provider.type, 'openclaw');
-
-      const mismatch = service.selectProvider(started.registrationId, { providerType: 'others' });
-      assert.strictEqual(mismatch.success, false);
-      assert.strictEqual(mismatch.providerLock.type, 'openclaw');
-      const selected = service.selectProvider(started.registrationId, { providerType: 'openclaw' });
       assert.strictEqual(selected.success, true);
     } finally {
       db.close();
     }
   });
 
-  it('prefers the current Agent type without running full-machine discovery', async () => {
+  it('keeps the current Agent type available in the unified provider-first flow', async () => {
     const { db, service } = createService({
       detectCurrentAgentType: () => 'codex',
       detectCurrentAgentInstance: () => null,
     });
     try {
-      service.inspectEnvironment = () => { throw new Error('full discovery must not run'); };
-      service.inspectCurrentAgent = (type) => ({
-        detected: [{ type, label: 'Codex', instances: [], deliveryModes: [] }],
+      service.inspectEnvironment = () => ({
+        detected: [{ type: 'codex', label: 'Codex', instances: [], deliveryModes: [] }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
-        currentAgent: { type, label: 'Codex', source: 'process_ancestry', confidence: 'high' },
+        currentAgent: { type: 'codex', label: 'Codex', source: 'process_ancestry', confidence: 'high' },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 0 },
       });
       const started = await service.start({ registrationMode: 'agent' });
+      service.selectProvider(started.registrationId, { providerType: 'codex' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'Current Codex' });
-      assert.strictEqual(basic.providerLock.type, 'codex');
-      assert.strictEqual(basic.providerLock.source, 'current_agent');
       assert.strictEqual(basic.environment.currentAgent.type, 'codex');
       assert.strictEqual(basic.status, 'delivery_selection_required');
     } finally {
@@ -483,11 +527,11 @@ describe('shared registration orchestrator', () => {
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 0 },
       });
       const started = await service.start({ registrationMode: 'agent' });
+      service.selectProvider(started.registrationId, { providerType: 'openclaw', instanceId: 'main' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'Current OpenClaw' });
       assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.strictEqual(basic.provider.type, 'openclaw');
       assert.strictEqual(basic.provider.instanceId, 'main');
-      assert.strictEqual(basic.providerLock.type, 'openclaw');
     } finally {
       db.close();
     }
@@ -498,9 +542,11 @@ describe('shared registration orchestrator', () => {
       detectCurrentAgentType: () => 'workbuddy',
       detectCurrentAgentInstance: () => null,
       workBuddyRuntime: () => ({ command: null }),
+      workBuddyAgents: () => [],
     });
     try {
       const started = await service.start({ registrationMode: 'agent' });
+      service.selectProvider(started.registrationId, { providerType: 'workbuddy' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'WorkBuddy Agent' });
       assert.strictEqual(basic.status, 'delivery_selection_required');
       assert.strictEqual(basic.provider.type, 'workbuddy');
@@ -522,7 +568,7 @@ describe('shared registration orchestrator', () => {
         detectCurrentAgentType: () => null,
       });
       const status = restored.view(started.registrationId);
-      assert.strictEqual(status.status, 'basic_info_required');
+      assert.strictEqual(status.status, 'provider_selection_required');
       assert.strictEqual(status.registrationMode, 'agent');
     } finally {
       db.close();
@@ -533,7 +579,6 @@ describe('shared registration orchestrator', () => {
     const { db, service } = createService();
     try {
       const started = await service.start({ email: 'owner@example.com' });
-      service.setBasicInfo(started.registrationId, { agentName: 'A' });
       const custom = service.selectProvider(started.registrationId, { providerType: 'work-buddy' });
       assert.strictEqual(custom.success, false);
       assert.match(custom.error, /Others/);
@@ -542,6 +587,32 @@ describe('shared registration orchestrator', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('discovers WorkBuddy instances lazily and rejects stale instance bindings', async () => {
+    let instances = [
+      { id: 'english-vocab-coach', name: 'English Coach', description: 'Vocabulary', available: true },
+      { id: 'tcm-consultant', name: 'TCM', description: 'Consultation', available: true },
+    ];
+    const { db, service } = createService({ workBuddyAgents: () => instances });
+    try {
+      db.prepare("UPDATE config SET data=? WHERE type='agent_backend_types'").run(JSON.stringify([
+        { value: 'workbuddy', label: 'WorkBuddy' }, { value: 'others', label: 'Others' },
+      ]));
+      assert.deepEqual(service.discoverProviderInstances('workbuddy').instances, instances);
+      const started = await service.start({ email: 'owner@example.com' });
+      const invalid = service.selectProvider(started.registrationId, { providerType: 'workbuddy', instanceId: 'missing' });
+      assert.strictEqual(invalid.success, false);
+      const selected = service.selectProvider(started.registrationId, {
+        providerType: 'workbuddy', instanceId: 'tcm-consultant',
+      });
+      assert.strictEqual(selected.provider.instanceId, 'tcm-consultant');
+      service.setBasicInfo(started.registrationId, { agentName: 'Bound WorkBuddy' });
+      instances = [];
+      const stale = await service.complete(started.registrationId);
+      assert.strictEqual(stale.success, false);
+      assert.match(stale.error, /不存在或不可用/);
+    } finally { db.close(); }
   });
 
   it('requires explicit approval before changing provider configuration', async () => {
@@ -564,8 +635,8 @@ describe('shared registration orchestrator', () => {
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },
       });
       const started = await asWeb(() => service.start({ email: 'owner@example.com' }));
-      asWeb(() => service.setBasicInfo(started.registrationId, { agentName: 'OpenClaw Agent' }));
       asWeb(() => service.selectProvider(started.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' }));
+      asWeb(() => service.setBasicInfo(started.registrationId, { agentName: 'OpenClaw Agent' }));
 
       const plan = asWeb(() => service.configureDelivery(started.registrationId, { mode: 'websocket' }));
       assert.strictEqual(plan.status, 'approval_required');
@@ -607,8 +678,8 @@ describe('shared registration orchestrator', () => {
 
       const asInteractiveCli = (callback) => runWithRegistrationCaller({ source: 'cli_interactive' }, callback);
       const cliStarted = await asInteractiveCli(() => service.start({ email: 'owner@example.com' }));
-      asInteractiveCli(() => service.setBasicInfo(cliStarted.registrationId, { agentName: 'Headless Agent' }));
       asInteractiveCli(() => service.selectProvider(cliStarted.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' }));
+      asInteractiveCli(() => service.setBasicInfo(cliStarted.registrationId, { agentName: 'Headless Agent' }));
       const cliPlan = asInteractiveCli(() => service.configureDelivery(cliStarted.registrationId, { mode: 'websocket' }));
       const cliApproved = asInteractiveCli(() => service.configureDelivery(cliStarted.registrationId, {
         mode: 'websocket', approved: true, approvalToken: cliPlan.approvalToken,
@@ -618,8 +689,8 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(setupCount, 2);
 
       const agentStarted = await service.start({ email: 'owner@example.com', registrationMode: 'agent' });
-      service.setBasicInfo(agentStarted.registrationId, { agentName: 'Agent-managed' });
       service.selectProvider(agentStarted.registrationId, { providerType: 'openclaw', instanceId: 'instance-a' });
+      service.setBasicInfo(agentStarted.registrationId, { agentName: 'Agent-managed' });
       const agentPlan = service.configureDelivery(agentStarted.registrationId, { mode: 'websocket' });
       const agentApproved = service.configureDelivery(agentStarted.registrationId, {
         mode: 'websocket', approved: true, approvalToken: agentPlan.approvalToken,
@@ -653,12 +724,31 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('drops attacker-controlled keys while loading persisted registration sessions', () => {
+    const db = createDb();
+    try {
+      db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)').run(
+        'agent_registration_sessions',
+        '{"__proto__":{"status":"polluted"},"constructor":{"status":"polluted"}}',
+        Date.now(),
+      );
+      const service = new RegistrationOrchestrator({ db });
+      assert.throws(
+        () => service.view('__proto__'),
+        (error) => error.code === 'REGISTRATION_SESSION_NOT_FOUND',
+      );
+      assert.strictEqual(Object.prototype.status, undefined);
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps preflight side-effect free and reports Pull as the creation fallback', async () => {
     const { db, service } = createService();
     try {
       const started = await service.start({ email: 'owner@example.com' });
-      service.setBasicInfo(started.registrationId, { agentName: 'Pull Agent' });
       service.selectProvider(started.registrationId, { providerType: 'others' });
+      service.setBasicInfo(started.registrationId, { agentName: 'Pull Agent' });
       const preflight = service.preflightDelivery(started.registrationId, { mode: 'pull' });
       assert.strictEqual(preflight.success, true);
       assert.strictEqual(preflight.status, 'ready');
@@ -677,6 +767,7 @@ describe('shared registration orchestrator', () => {
     let calls = 0;
     let received = null;
     const { db, service } = createService({
+      qwenOfficeAgents: () => [],
       runLoopbackTest: async (request) => {
         calls++;
         received = request;
@@ -685,8 +776,8 @@ describe('shared registration orchestrator', () => {
     });
     try {
       const started = await service.start({ email: 'owner@example.com' });
-      service.setBasicInfo(started.registrationId, { agentName: 'Loopback Agent' });
       service.selectProvider(started.registrationId, { providerType: 'qwen-office' });
+      service.setBasicInfo(started.registrationId, { agentName: 'Loopback Agent' });
       const denied = await service.loopbackTest(started.registrationId, { mode: 'cli', providerId: 'qwen-office-cli' });
       assert.strictEqual(denied.code, 'LOOPBACK_CONFIRMATION_REQUIRED');
       assert.strictEqual(calls, 0);

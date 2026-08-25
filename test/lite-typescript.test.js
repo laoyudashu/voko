@@ -557,6 +557,54 @@ test('payments page scopes SQL queries to the current owner', async (t) => {
   assert.equal(paymentQuery.args[0], 'owner@example.com');
 });
 
+test('payment creation page reports whether the link reached the selected visitor', async (t) => {
+  const app = express();
+  app.use(express.urlencoded({ extended: true }));
+  app.use(createWebRouter({
+    create_payment: async ({ visitorId, description }) => ({
+      success: true,
+      orderCreated: true,
+      sentToVisitor: description === 'delivered',
+      deliveryStatus: description,
+      deliveryError: description === 'failed' ? 'SENDACK rejected' : undefined,
+      visitorId,
+      orderId: `order-${description}`,
+      orderNo: `ORDER-${description}`,
+      messageId: `message-${description}`,
+      status: 'created',
+    }),
+  }, { prepare: () => ({ get: () => null, all: () => [] }) }));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.once('error', reject);
+  });
+  t.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+
+  const base = `http://127.0.0.1:${server.address().port}`;
+  for (const expected of [
+    { status: 'delivered', sent: 'true', text: '支付链接已成功发送给访客 visitor-1' },
+    { status: 'pending', sent: 'false', text: '尚未确认送达访客 visitor-1' },
+    { status: 'failed', sent: 'false', text: '支付链接发送给访客 visitor-1 失败' },
+  ]) {
+    const response = await fetch(`${base}/payments`, {
+      method: 'POST',
+      body: new URLSearchParams({
+        agentId: 'agent-1', visitorId: 'visitor-1', amount: '1.00', description: expected.status,
+      }),
+    });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /data-testid="payment-create-result"/);
+    assert.match(html, new RegExp(`data-delivery-status="${expected.status}"`));
+    assert.match(html, new RegExp(`data-sent-to-visitor="${expected.sent}"`));
+    assert.match(html, new RegExp(expected.text));
+    assert.match(html, new RegExp(`ORDER-${expected.status}`));
+    if (expected.status === 'failed') assert.match(html, /SENDACK rejected/);
+  }
+});
+
 test('agent actions return to the same agent subpage and conversation controls use native POST forms', async (t) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
