@@ -73,6 +73,23 @@ test('schema 8 startup runs the legacy identity backfill when the marker is abse
   } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
 });
 
+test('current schema repairs owner intervention E2EE delivery columns', () => {
+  const fixture = database();
+  const dbPath = fixture.dbPath;
+  try {
+    for (const name of ['route_security_mode', 'e2ee_protocol_conversation_id',
+      'e2ee_session_scope_id', 'delivery_message_id']) {
+      fixture.db.exec(`ALTER TABLE owner_interventions DROP COLUMN ${name}`);
+    }
+    fixture.db.close();
+    const reopened = initDatabase(dbPath, { silent: true });
+    const columns = reopened.prepare('PRAGMA table_info(owner_interventions)').all().map(row => row.name);
+    for (const name of ['route_security_mode', 'e2ee_protocol_conversation_id',
+      'e2ee_session_scope_id', 'delivery_message_id']) assert.ok(columns.includes(name), name);
+    reopened.close();
+  } finally { fs.rmSync(path.dirname(dbPath), { recursive: true, force: true }); }
+});
+
 test('routing conversation is stable per session and peer, and isolated across either dimension', () => {
   const fixture = database();
   try {

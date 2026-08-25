@@ -299,6 +299,23 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 
 function runCurrentStartupMaintenance(db: DatabaseSync): void {
   migrateSchema8WebRoutingRevision(db);
+  const interventionTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_interventions'",
+  ).get();
+  if (interventionTable) {
+    const interventionColumns = db.prepare('PRAGMA table_info(owner_interventions)').all() as TableInfoRow[];
+    const additiveColumns = [
+      ['route_security_mode', 'TEXT'],
+      ['e2ee_protocol_conversation_id', 'TEXT'],
+      ['e2ee_session_scope_id', 'TEXT'],
+      ['delivery_message_id', 'TEXT'],
+    ];
+    for (const [name, type] of additiveColumns) {
+      if (!interventionColumns.some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE owner_interventions ADD COLUMN ${name} ${type}`);
+      }
+    }
+  }
   const pricingTable = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_pricing'",
   ).get();
