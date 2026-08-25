@@ -21,7 +21,7 @@ function createDb(options = {}) {
           }
           if (sql.includes("type='runtime'")) return { data: JSON.stringify(runtime) };
           if (sql.includes('SELECT did,publish_status,ability FROM agents')) return {
-            did: 'did:wba:example.test:agent-home', publish_status: options.publishStatus || 'published',
+            did: options.did || 'did:wba:example.test:agent-home', publish_status: options.publishStatus || 'published',
             ability: options.ability == null ? null : JSON.stringify(options.ability),
           };
           if (sql.includes('SELECT short_link_url, imUid FROM agents')) return { short_link_url: null, imUid: 'im-home-uid' };
@@ -218,7 +218,7 @@ test('home warns about pending review and disables every external access entry',
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /data-agent-id="agent-home" data-audit-status="0"/);
-  assert.match(html, /待审核 · 对外能力暂不可用/);
+  assert.match(html, /审核中 · 对外能力暂不可用/);
   assert.match(html, /class="home-agent-short is-agent-audit-blocked"/);
   assert.match(html, /class="home-agent-row is-audit-blocked"[^>]*data-agent-id="agent-home"/);
   assert.match(html, /href="\/agents\/agent-home\/edit" class="btn btn-sm btn-outline home-agent-edit"/);
@@ -227,6 +227,25 @@ test('home warns about pending review and disables every external access entry',
   assert.doesNotMatch(html, /href="\/external-integrations\?agentId=agent-home"/);
   assert.doesNotMatch(html, /data-voko-copy-value="im-home-uid"/);
   assert.doesNotMatch(html, /data-voko-copy-value="https:[^"]+\/a2a\/agents\/agent-home/);
+});
+
+test('home matches review status by local Agent id when the DID path uses another id form', async (t) => {
+  const agentId = '9499e4bc-d8e7-4d17-bc4b-e14411beb9b7';
+  const handlers = {
+    list_agents: async () => ({ agents: [{ agentId, agentName: 'Pending DSH', backendType: 'deepseek-harness', publishStatus: 'published' }] }),
+    get_status: async () => ({ success: true, agent: { imConnected: true, pullReady: true } }),
+  };
+  const server = await startApp(handlers, {
+    did: 'did:wba:vokovoko.com:9499e4bcd8e74d17bc4be14411beb9b7',
+    agentReviewStatuses: [{ agentId, status: 1, auditStatus: 0 }],
+  });
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, new RegExp(`data-agent-id="${agentId}" data-audit-status="0"`));
+  assert.match(html, /审核中 · 对外能力暂不可用/);
 });
 
 test('home preserves the agent list order when connection states differ', async (t) => {

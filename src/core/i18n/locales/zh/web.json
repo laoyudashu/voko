@@ -907,7 +907,7 @@
   "web.home.access.external_manage": "管理",
   "web.home.access.offline_tip": "Agent 当前离线，请先上线。",
   "web.home.access.unavailable": "暂不可用",
-  "web.home.audit.pending": "待审核 · 对外能力暂不可用",
+  "web.home.audit.pending": "审核中 · 对外能力暂不可用",
   "web.home.audit.pending_tip": "Agent 正在审核，审核通过后才能使用访客、A2A、IM UID 和 REST/Webhook 等对外能力。",
   "web.home.audit.rejected": "审核未通过 · 请编辑资料后重新提交",
   "web.home.audit.rejected_tip": "Agent 审核未通过。您可以编辑资料并重新提交审核；审核通过前，对外能力不可用。",

@@ -1184,7 +1184,7 @@ function createWebRouter(handlers, db, opts={}){
 
       for(const a of pageAgents){
         const publicAgent=a2aPublicByAgent.get(a.agentId);
-        const review=reviewByPublicAgent.get(String(publicAgent?.publicId||a.agentId));
+        const review=reviewByPublicAgent.get(String(a.agentId))||reviewByPublicAgent.get(String(publicAgent?.publicId||''));
         const auditStatus=review&&Number.isInteger(Number(review.auditStatus))?Number(review.auditStatus):null;
         const auditBlocked=auditStatus!==null&&auditStatus!==1;
         const auditText=auditStatus===0?L('web.home.audit.pending'):auditStatus===2?L('web.home.audit.rejected'):'';
