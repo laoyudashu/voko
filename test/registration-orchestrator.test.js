@@ -63,9 +63,12 @@ describe('shared registration orchestrator', () => {
       { type: 'hermes', label: 'Hermes' }, { type: 'unknown-a', label: 'Alpha' },
       { type: 'openclaw', label: 'OpenClaw' }, { type: 'workbuddy', label: 'WorkBuddy' },
       { type: 'claude-code', label: 'Claude Code' }, { type: 'github-copilot', label: 'Copilot' },
+      { type: 'qwen-office', label: '千问办公' }, { type: 'dumate', label: '百度搭子' },
+      { type: 'doubao', label: '豆包办公' }, { type: 'deepseek-harness', label: 'DeepSeek Harness' },
     ];
     assert.deepEqual(sortProviderDisplay(providers).map((item) => item.type), [
-      'workbuddy', 'claude-code', 'codex', 'openclaw', 'hermes', 'github-copilot', 'unknown-a', 'unknown-z',
+      'workbuddy', 'qwen-office', 'dumate', 'doubao', 'openclaw', 'hermes', 'claude-code', 'codex',
+      'deepseek-harness', 'github-copilot', 'unknown-a', 'unknown-z',
     ]);
     assert.deepEqual(sortProviderDisplay([
       { type: 'trae', label: 'Trae' }, { type: 'workbuddy', label: 'WorkBuddy' }, { type: 'cursor', label: 'Cursor' },

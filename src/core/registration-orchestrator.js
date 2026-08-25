@@ -33,10 +33,11 @@ const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInst
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const PROVIDER_DISPLAY_PRIORITY = [
-  'workbuddy', 'deepseek-harness', 'claude-code', 'codex', 'openclaw', 'hermes',
-  'github-copilot', 'cursor', 'gemini', 'codebuddy', 'qwen-office', 'dumate',
+  'workbuddy', 'qwen-office', 'dumate', 'doubao', 'openclaw', 'hermes',
+  'claude-code', 'codex', 'deepseek-harness',
+  'github-copilot', 'cursor', 'gemini', 'codebuddy',
   'qwen-code', 'trae', 'goose', 'opencode', 'cline', 'kiro', 'aider',
-  'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode', 'doubao',
+  'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode',
 ];
 const PROVIDER_DISPLAY_RANK = new Map(PROVIDER_DISPLAY_PRIORITY.map((type, index) => [type, index]));
 
@@ -139,7 +140,7 @@ function qwenOfficeReadiness(options = {}) {
 const DESKTOP_APPLICATIONS = [
   { type: 'zcode', label: 'ZCode', pattern: /\bzcode\b/i },
   { type: 'workbuddy', label: 'WorkBuddy', pattern: /\bworkbuddy\b/i },
-  { type: 'doubao', label: '豆包', pattern: /豆包|\bdoubao\b/i },
+  { type: 'doubao', label: '豆包办公', pattern: /豆包|\bdoubao\b/i },
   { type: 'qwen-office', label: '千问办公 (QwenWork)', pattern: /千问办公|qwenwork(?:cn)?/i },
   { type: 'dumate', label: '百度搭子 (DuMate)', pattern: /百度搭子|\bdumate\b/i },
   { type: 'trae', label: 'Trae', pattern: /\btrae(?:\s*\(user\))?\b|trae\s+(?:work|solo)/i },

@@ -57,7 +57,7 @@ const DEFAULT_BACKEND_TYPES: BackendType[] = [
   { value: 'workbuddy', label: 'WorkBuddy' },
   { value: 'deepseek-harness', label: 'DeepSeek Harness' },
   { value: 'codebuddy', label: 'CodeBuddy' },
-  { value: 'doubao', label: '豆包' },
+  { value: 'doubao', label: '豆包办公' },
   { value: 'trae', label: 'Trae' },
   { value: 'others', label: '其他' },
 ];
