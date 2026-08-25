@@ -106,38 +106,42 @@ test('real IM 1006 disconnect reconnects one Agent without disturbing a shared H
   expect(finalState.imStatus.connected).toBe(true);
 });
 
-test('real SENDACK loss fails exactly one outbound message and the next send recovers', async ({ request }) => {
+test('real SENDACK loss fails exactly one outbound message and the next send recovers', async ({ request }, testInfo) => {
   test.setTimeout(35_000);
-  const channelId = 'e2e-sendack-loss';
+  const suffix = `-${testInfo.retry}`;
+  const channelId = `e2e-sendack-loss${suffix}`;
+  const lostContent = `sendack lost e2e${suffix}`;
+  const recoveredContent = `sendack recovered e2e${suffix}`;
+  const beforeFault = await imState(request);
   const fault = await request.post(`${manifest().services.api}/__test__/fault`, {
-    data: { target: 'im', mode: 'sendack-lost', count: 1 },
+    data: { target: `im:e2e-im-uid:${channelId}`, mode: 'sendack-lost', count: 1 },
   });
   expect(fault.ok()).toBeTruthy();
 
   const lost = await callMcp(request, 'voko_send_message', {
-    agentId: 'e2e-agent', toUid: channelId, content: 'sendack lost e2e',
-  }, 1503);
+    agentId: 'e2e-agent', toUid: channelId, content: lostContent,
+  }, 1503 + testInfo.retry * 10);
   expect(lost.success).toBe(false);
-  await expect.poll(() => readMessages(channelId).filter(row => row.content === 'sendack lost e2e'), { timeout: 5_000 }).toHaveLength(1);
-  const failed = readMessages(channelId).find(row => row.content === 'sendack lost e2e');
+  await expect.poll(() => readMessages(channelId).filter(row => row.content === lostContent), { timeout: 5_000 }).toHaveLength(1);
+  const failed = readMessages(channelId).find(row => row.content === lostContent);
   expect(failed.status).toBe('failed');
 
   const afterLoss = await imState(request);
-  expect(afterLoss.stats.sendAckLost).toBe(1);
+  expect(afterLoss.stats.sendAckLost).toBe(beforeFault.stats.sendAckLost + 1);
   expect(afterLoss.stats.sends).toBeGreaterThanOrEqual(1);
 
   const recovered = await callMcp(request, 'voko_send_message', {
-    agentId: 'e2e-agent', toUid: channelId, content: 'sendack recovered e2e',
-  }, 1504);
+    agentId: 'e2e-agent', toUid: channelId, content: recoveredContent,
+  }, 1504 + testInfo.retry * 10);
   expect(recovered.success).toBe(true);
-  await expect.poll(() => readMessages(channelId).filter(row => row.content === 'sendack recovered e2e'), { timeout: 5_000 }).toHaveLength(1);
-  const sent = readMessages(channelId).find(row => row.content === 'sendack recovered e2e');
+  await expect.poll(() => readMessages(channelId).filter(row => row.content === recoveredContent), { timeout: 5_000 }).toHaveLength(1);
+  const sent = readMessages(channelId).find(row => row.content === recoveredContent);
   expect(sent.status).toBe('sent');
   expect(sent.client_msg_no).toBeTruthy();
   expect(sent.message_seq).toBeGreaterThan(0);
 
   const finalFake = await imState(request);
-  expect(finalFake.stats.sendAckLost).toBe(1);
+  expect(finalFake.stats.sendAckLost).toBe(beforeFault.stats.sendAckLost + 1);
   expect(finalFake.stats.sendAcks).toBeGreaterThanOrEqual(1);
   expect(readMessages(channelId).filter(row => row.content.includes('sendack '))).toHaveLength(2);
 });
