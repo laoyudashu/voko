@@ -578,7 +578,7 @@ await test('ask_human_for_help binds a private intervention to the active E2EE r
   const { db, handlers, interventions, cleanup } = setup();
   const release = registerActiveOwnerInterventionContext({
     agentId: 'agentA', channelId: 'actor-private', protocolConversationId: 'protocol-private',
-    sessionScopeId: 'scope-private', sourceMessageId: 'source-private',
+    sessionScopeId: 'scope-private', sourceMessageId: 'source-private', visitorId: 'verified-visitor',
   });
   try {
     const result = await handlers.ask_human_for_help({
@@ -586,7 +586,8 @@ await test('ask_human_for_help binds a private intervention to the active E2EE r
     });
     assert.strictEqual(result.success, true);
     const row = db.prepare('SELECT * FROM owner_interventions WHERE id=?').get(result.interventionId);
-    assert.strictEqual(row.visitor_id, 'logical-visitor');
+    assert.strictEqual(row.visitor_id, 'verified-visitor');
+    assert.strictEqual(row.source_sender_uid, 'verified-visitor');
     assert.strictEqual(row.target_channel_id, 'actor-private');
     assert.strictEqual(row.source_message_id, 'source-private');
     assert.strictEqual(row.route_security_mode, 'e2ee_v2');

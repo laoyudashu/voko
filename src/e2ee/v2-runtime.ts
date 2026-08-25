@@ -5,7 +5,7 @@ import { E2eeV2Crypto } from './v2-wasm';
 import type { E2eeV2ReceiptRow, E2eeV2Store } from './v2-store';
 import { decryptE2eeV2Attachment, parseE2eeV2Attachment } from './v2-attachment';
 import { decodeE2eePayload, E2EE_V2_PAYLOAD_VERSION } from './v2-payload';
-import { registerActiveOwnerInterventionContext } from '../core/owner-intervention-active-context';
+import { registerActiveOwnerInterventionContext, resolveActiveOwnerInterventionContext } from '../core/owner-intervention-active-context';
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
@@ -284,11 +284,14 @@ export class E2eeV2Runtime {
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
       const releaseInterventionContext=registerActiveOwnerInterventionContext({agentId:agent.localAgentId,
         channelId:envelope.channelId,protocolConversationId:envelope.conversationId,
-        sessionScopeId:scope,sourceMessageId:envelope.messageId});
+        sessionScopeId:scope,sourceMessageId:envelope.messageId,visitorId:sender.peerScopeId});
+      const activeInterventionContext=resolveActiveOwnerInterventionContext(agent.localAgentId,envelope.messageId);
       let result:any;
       try{
         result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
           taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
+          ownerInterventionCreated:activeInterventionContext.status==='resolved'
+            ?activeInterventionContext.context.interventionCreated:undefined,
           sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
           attachments:prepared.attachments,
           onProviderAccepted:()=>{if(providerAccepted)return;

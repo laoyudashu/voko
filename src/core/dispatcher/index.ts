@@ -124,6 +124,7 @@ interface IsolatedExecutionOptions {
   attachments?: PushPayload['attachments'];
   attachmentOutputDirectory?: string;
   peerUid?: string;
+  ownerInterventionCreated?: Promise<void>;
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -1529,7 +1530,11 @@ ${body}
         throw error;
       }
       options.onProviderAccepted?.(receipt);
-      return { reply: await replyPromise, receipt };
+      const reply = options.ownerInterventionCreated
+        ? await Promise.race([replyPromise,
+          options.ownerInterventionCreated.then(() => ({ content: 'NO_REPLY', done: true } as ProviderReply))])
+        : await replyPromise;
+      return { reply, receipt };
     } finally {
       deadline.clear();
       _retireIsolatedTurn(sinkKey);

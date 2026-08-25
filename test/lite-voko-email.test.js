@@ -170,9 +170,11 @@ test('VOKO Email Handler 从 Agent DID 构造邮件并保持 messageId 契约', 
       },
     },
     db: {
-      prepare() {
+      prepare(sql) {
         return {
-          get: () => ({ did: 'did:voko:agent-1', agent_name: 'Gym' }),
+          get: () => sql.includes('FROM agents')
+            ? ({ did: 'did:voko:agent-1', agent_name: 'Gym' })
+            : ({ nickname: '小明' }),
         };
       },
     },
@@ -191,6 +193,7 @@ test('VOKO Email Handler 从 Agent DID 构造邮件并保持 messageId 契约', 
   });
   assert.equal(calls[0][0], 'did:voko:agent-1');
   assert.equal(calls[0][1], '需要主人确认');
+  assert.equal(calls[0][2].subject, '[VOKO] Gym 请求主人介入：小明（visitor-1）');
   assert.equal(calls[0][2].context.visitor_id, 'visitor-1');
 });
 

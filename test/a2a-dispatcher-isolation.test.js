@@ -39,6 +39,20 @@ test('E2EE Agent peer uses Agent governance and strips control state from the vi
   assert.equal(provider.payload.protocolContextId,'67ad73dc-bc3d-4463-8e5b-7637765935f4');
   assert.equal(provider.payload.sessionScopeId,'isolated-session-scope');
 });
+test('E2EE owner intervention ends the original turn without waiting for a Provider reply', async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;return{nativeSessionId:'provider-native-thread'};};
+  let markIntervention;
+  const interventionCreated=new Promise(resolve=>{markIntervention=resolve;});
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'e2ee-owner-task',
+    contextId:'e2ee-owner-context',content:'need owner',sourceType:'visitor',
+    sessionScopeId:'e2ee-owner-scope',timeoutMs:1000,ownerInterventionCreated:interventionCreated});
+  await new Promise(resolve=>setImmediate(resolve));
+  markIntervention();
+  const result=await pending;
+  assert.equal(result.reply.content,'NO_REPLY');
+});
 test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
   const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
   await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'same',content:'x',executionScope:'a2a_mailbox'}),

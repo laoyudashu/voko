@@ -47,7 +47,7 @@
   "errors.payment.none": "None",
   "errors.email.no_api_or_agent": "AgentEmailApi not configured or agentId is empty",
   "errors.email.agent_did_missing": "Agent {agentId} does not have a DID configured",
-  "errors.email.subject_voko_intervention": "[VOKO] Owner intervention request — Agent {agent_name} / Visitor {visitor_id}",
+  "errors.email.subject_voko_intervention": "[VOKO] {agent_name} requests owner intervention: {visitor_id}",
   "errors.email.subject_voko_session": "[VOKO] Session notification — Agent {agent_name} / Visitor {visitor_id}",
   "errors.offline.merged": "[Visitor sent {count} messages while offline — understand them together and reply]",
   "errors.security.invalid_endpoint": "Invalid endpoint URL",

@@ -10,18 +10,26 @@ const {
 test('active E2EE intervention context resolves uniquely and rejects ambiguity', () => {
   const releaseA = registerActiveOwnerInterventionContext({
     agentId: 'gym', channelId: 'actor-a', protocolConversationId: 'protocol-a',
-    sessionScopeId: 'scope-a', sourceMessageId: 'source-a',
+    sessionScopeId: 'scope-a', sourceMessageId: 'source-a', visitorId: 'visitor-a',
   });
   assert.equal(resolveActiveOwnerInterventionContext('gym').context.channelId, 'actor-a');
   const releaseB = registerActiveOwnerInterventionContext({
     agentId: 'gym', channelId: 'actor-b', protocolConversationId: 'protocol-b',
-    sessionScopeId: 'scope-b', sourceMessageId: 'source-b',
+    sessionScopeId: 'scope-b', sourceMessageId: 'source-b', visitorId: 'visitor-b',
   });
   assert.equal(resolveActiveOwnerInterventionContext('gym').status, 'ambiguous');
   assert.equal(resolveActiveOwnerInterventionContext('gym', 'source-b').context.channelId, 'actor-b');
   releaseB();
   releaseA();
   assert.equal(resolveActiveOwnerInterventionContext('gym').status, 'unavailable');
+});
+
+test('a mismatched tool message ID falls back only when one E2EE context is active', () => {
+  const release = registerActiveOwnerInterventionContext({ agentId: 'gym', channelId: 'actor-a',
+    protocolConversationId: 'protocol-a', sessionScopeId: 'scope-a', sourceMessageId: 'source-a',
+    visitorId: 'verified-visitor' });
+  assert.equal(resolveActiveOwnerInterventionContext('gym', 'provider-message').context.visitorId, 'verified-visitor');
+  release();
 });
 
 test('E2EE owner intervention captures Agent reply and sends it through the original encrypted route', async () => {

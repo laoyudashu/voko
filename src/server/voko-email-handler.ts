@@ -99,7 +99,7 @@ class VokoEmailHandler {
   async sendMessageToOwnerWithTracking(
     content: string,
     visitorId: string,
-    sessionKey: string | null | undefined,
+    _sessionKey: string | null | undefined,
     agentId?: string,
   ): Promise<MessageTrackingResult> {
     const locale = getLocale();
@@ -114,8 +114,12 @@ class VokoEmailHandler {
     }
 
     const name = agentRow.agent_name || agentId;
-    const subjectKey = sessionKey ? 'errors.email.subject_voko_session' : 'errors.email.subject_voko_intervention';
-    const subject = t(subjectKey, { agent_name: name, visitor_id: visitorId }, locale);
+    const subjectKey = 'errors.email.subject_voko_intervention';
+    const visitorRow = this.db.prepare('SELECT nickname FROM user_cache WHERE uid = ?').get(visitorId) as { nickname?: string } | undefined;
+    const visitorLabel = String(visitorRow?.nickname || '').trim()
+      ? `${String(visitorRow?.nickname).trim()}（${visitorId}）`
+      : visitorId;
+    const subject = t(subjectKey, { agent_name: name, visitor_id: visitorLabel }, locale);
     const emailBody = content;
 
     const result = await this.agentEmailApi.send(agentRow.did, emailBody, {

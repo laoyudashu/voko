@@ -27,7 +27,7 @@ const { discoverWorkBuddyAgents } = require('../core/dispatcher/workbuddy-agents
 const { discoverProviderInstances } = require('../core/dispatcher/provider-instances');
 const { resolveOwnerInterventionConversation } = require('../core/owner-intervention-routing');
 const { ownerInterventionExpireTime } = require('../core/owner-intervention-expiry');
-const { resolveActiveOwnerInterventionContext } = require('../core/owner-intervention-active-context');
+const { resolveActiveOwnerInterventionContext, notifyOwnerInterventionCreated } = require('../core/owner-intervention-active-context');
 const { reservedVisitorPrefix } = require('../core/visitor-id-policy');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('../core/checkpoint-store');
 // A2A 协议块剥离（入站 agent_peer 消息被 dispatcher 注入控制块，pull 时需剥掉）。
@@ -2540,8 +2540,9 @@ function createToolHandlers(cx: McpContext) {
       if (activeE2ee.status === 'ambiguous') return { success: false, code: 'CONVERSATION_REQUIRED',
         error: 'Multiple active E2EE conversations are available; provide the source message ID' };
       const e2eeContext = activeE2ee.status === 'resolved' ? activeE2ee.context : null;
+      const visitorId = e2eeContext?.visitorId || p.visitorId;
       const targetChannelId = targetChannelType === 2 ? p.channelId : (e2eeContext?.channelId || p.visitorId);
-      const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : p.visitorId;
+      const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : visitorId;
       const sourceMessageId = e2eeContext?.sourceMessageId || requestedSourceMessageId;
       const resolution = resolveOwnerInterventionConversation(cx.db, { agentId: p.agentId,
         channelId: targetChannelId, channelType: targetChannelType, caller: getProviderCaller(),
@@ -2560,17 +2561,17 @@ function createToolHandlers(cx: McpContext) {
       cx.exec(`
         INSERT INTO owner_interventions (id, agent_id, visitor_id, session_key, problem, agent_suggestion, ask_time, expire_time, status, channel_type, created_at, updated_at, source_sender_uid, target_channel_id, target_channel_type, source_message_id, routing_conversation_id, route_security_mode, e2ee_protocol_conversation_id, e2ee_session_scope_id)
         VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)
-      `, [id, p.agentId, p.visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null,
-        now, ownerInterventionExpireTime(now), ownerChannelType, now, now, p.visitorId, targetChannelId,
+      `, [id, p.agentId, visitorId, `${prefix}:${p.agentId}:${sessionTarget}`, p.problem, p.suggestion || null,
+        now, ownerInterventionExpireTime(now), ownerChannelType, now, now, visitorId, targetChannelId,
         targetChannelType, sourceMessageId, routingConversationId, e2eeContext ? 'e2ee_v2' : 'standard',
         e2eeContext?.protocolConversationId || null, e2eeContext?.sessionScopeId || null]);
       // 事件驱动：立即通知主人，不等轮询
       if (cx.enqueueOwnerIntervention) {
         cx.enqueueOwnerIntervention({
-          id, visitorId: p.visitorId, agentId: p.agentId,
+          id, visitorId, agentId: p.agentId,
           sessionKey: `${prefix}:${p.agentId}:${sessionTarget}`,
           problem: p.problem, agentSuggestion: p.suggestion || '',
-          askTime: now, expireTime: ownerInterventionExpireTime(now), skipReply: 0, sourceSenderUid: p.visitorId,
+          askTime: now, expireTime: ownerInterventionExpireTime(now), skipReply: 0, sourceSenderUid: visitorId,
           routingConversationId,
           targetChannelId, targetChannelType, sourceMessageId,
           routeSecurityMode: e2eeContext ? 'e2ee_v2' : 'standard',
@@ -2578,6 +2579,7 @@ function createToolHandlers(cx: McpContext) {
           e2eeSessionScopeId: e2eeContext?.sessionScopeId || null,
         });
       }
+      if (e2eeContext) notifyOwnerInterventionCreated(e2eeContext);
       return { success: true, interventionId: id, conversationId: routingConversationId };
     },
 
