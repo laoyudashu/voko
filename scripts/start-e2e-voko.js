@@ -40,7 +40,7 @@ async function main() {
       imUid: 'e2e-im-uid',
       name: 'E2E Test Agent',
       description: 'Playwright isolated Agent',
-      did: 'did:voko:e2e-agent',
+      did: 'did:wba:e2e.test:11111111111141118111111111111111',
       privateKey: '11'.repeat(32),
     },
     {
@@ -48,7 +48,7 @@ async function main() {
       imUid: 'e2e-im-uid-2',
       name: 'E2E Shared Hub Agent',
       description: 'Second Agent sharing the E2E Hub',
-      did: 'did:voko:e2e-agent-2',
+      did: 'did:wba:e2e.test:22222222222242228222222222222222',
       privateKey: '22'.repeat(32),
     },
   ];

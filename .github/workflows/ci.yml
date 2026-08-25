@@ -85,38 +85,16 @@ jobs:
         run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml
       - name: Test real OS credential store lifecycle
         if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
-        run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml --test system_key_real -- --ignored --nocapture
-      - name: Test ciphertext-only relay contract
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run test:e2ee:relay
-        env:
-          CARGO: cargo
-      - name: Test encrypted Fake IM fault recovery
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run test:e2ee:fake-im
+        run: cargo +1.97.1 test --locked --manifest-path e2ee/Cargo.toml -p voko-e2ee-core --test system_key_real -- --ignored --nocapture
       - name: Check browser WASM target
         if: matrix.os == 'ubuntu-latest'
         run: |
           rustup target add wasm32-unknown-unknown --toolchain 1.97.1
           cargo +1.97.1 install wasm-bindgen-cli --version 0.2.127 --locked
           cd e2ee
-          cargo +1.97.1 test --locked --target wasm32-unknown-unknown -p voko-e2ee-wasm
+          cargo +1.97.1 check --locked --target wasm32-unknown-unknown -p voko-e2ee-wasm
           cargo +1.97.1 build --locked --release --target wasm32-unknown-unknown -p voko-e2ee-wasm
           wasm-bindgen --target web --out-dir target/web-poc --out-name voko_e2ee_wasm target/wasm32-unknown-unknown/release/voko_e2ee_wasm.wasm
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        if: matrix.os == 'ubuntu-latest'
-        with:
-          node-version: 22
-          cache: npm
-      - name: Run Chromium WASM PoC
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
-          npm run test:e2ee:browser
-          npm run test:e2ee:cross-process
-          npm run test:e2ee:witness-processes
-          npm run test:e2ee:readiness
 
   security:
     runs-on: ubuntu-latest

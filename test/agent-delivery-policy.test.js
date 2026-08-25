@@ -18,17 +18,41 @@ test('delivery policy normalizes modes and always keeps Pull', () => {
   assert.throws(() => normalizeDeliveryModes(['http;rm']), /invalid delivery mode/);
 });
 
-test('provider type, instance and delivery modes update atomically', () => {
+test('delivery modes update while provider type and bound instance stay locked', () => {
   const db = initDatabase(':memory:', { silent: true });
   createAgent(db);
   const store = new AgentDeliveryPolicyStore(db);
   const result = store.update('agent-policy', {
-    backendType: 'openclaw', backendInstanceId: 'instance-b', deliveryModes: ['cli', 'websocket'],
+    backendType: 'hermes', backendInstanceId: 'profile-a', deliveryModes: ['cli', 'websocket'],
   });
   assert.deepEqual(result.previous.deliveryModes, ['http', 'pull']);
-  assert.equal(result.next.backendType, 'openclaw');
-  assert.equal(result.next.backendInstanceId, 'instance-b');
+  assert.equal(result.next.backendType, 'hermes');
+  assert.equal(result.next.backendInstanceId, 'profile-a');
   assert.deepEqual(result.next.deliveryModes, ['cli', 'websocket', 'pull']);
+  db.close();
+});
+
+test('bound provider instance cannot change after registration', () => {
+  const db = initDatabase(':memory:', { silent: true });
+  createAgent(db);
+  const store = new AgentDeliveryPolicyStore(db);
+  assert.throws(() => store.update('agent-policy', {
+    backendType: 'hermes', backendInstanceId: 'instance-b', deliveryModes: ['http'],
+  }), /Agent 已绑定的实例不能更改/);
+  db.close();
+});
+
+test('provider type cannot change after registration', () => {
+  const db = initDatabase(':memory:', { silent: true });
+  createAgent(db);
+  const store = new AgentDeliveryPolicyStore(db);
+  assert.throws(() => store.update('agent-policy', {
+    backendType: 'openclaw', backendInstanceId: 'instance-b', deliveryModes: ['cli'],
+  }), /Agent 注册完成后不能更改类型/);
+  const current = store.get('agent-policy');
+  assert.equal(current.backendType, 'hermes');
+  assert.equal(current.backendInstanceId, 'profile-a');
+  assert.deepEqual(current.deliveryModes, ['http', 'pull']);
   db.close();
 });
 
@@ -37,7 +61,7 @@ test('invalid policy input leaves all route fields unchanged', () => {
   createAgent(db);
   const store = new AgentDeliveryPolicyStore(db);
   assert.throws(() => store.update('agent-policy', {
-    backendType: 'openclaw', backendInstanceId: 'instance-b', deliveryModes: ['bad mode'],
+    backendType: 'hermes', backendInstanceId: 'profile-a', deliveryModes: ['bad mode'],
   }), /invalid delivery mode/);
   const current = store.get('agent-policy');
   assert.equal(current.backendType, 'hermes');

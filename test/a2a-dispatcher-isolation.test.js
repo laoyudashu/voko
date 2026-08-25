@@ -11,6 +11,10 @@ class Provider extends EventEmitter {
 function db() { return { prepare(sql) { return { get: () => sql.includes('FROM agents')
   ? { backend_type: 'codex', backend_instance_id: null, delivery_modes: '["cli"]', imUid: 'im-agent' } : undefined,
   all: () => [], run: () => ({ changes: 1 }) }; } }; }
+function keepEventLoopAlive(promise) {
+  const timer = setInterval(() => {}, 1000);
+  return promise.finally(() => clearInterval(timer));
+}
 test('isolated execution captures reply without ordinary reply callback or binding commit', async () => {
   const provider = new Provider(); const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply: reply => ordinary.push(reply) });
@@ -139,9 +143,9 @@ test('isolated reply timeout is handled while Provider delivery is still pending
     return { nativeSessionId: 'slow-native-session' }; };
   const ordinary = [];
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply(reply) { ordinary.push(reply); } });
-  await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
+  await assert.rejects(keepEventLoopAlive(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
     contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
-    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 5_000 }), error => {
+    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 5_000 })), error => {
       assert.match(error.message, /Provider reply timed out/);
       assert.equal(error.deliveryOutcome, 'outcome_unknown');
       assert.equal(error.code, 'A2A_PROVIDER_REPLY_TIMEOUT');
@@ -165,12 +169,12 @@ test('E2EE and Owner Chat timeouts use stable outcome-unknown results', async ()
   const ownerExecutionContext = { sourceType:'owner_chat',authority:'verified_owner_conversation',executionScope:'owner_chat',
     ownerConversationId:'owner-timeout-context',commandMessageId:'owner-timeout-task',configDigest:transport.configDigest,
     providerId:transport.providerId };
-  const [e2ee, owner] = await Promise.allSettled([
+  const [e2ee, owner] = await keepEventLoopAlive(Promise.allSettled([
     e2eeDispatcher.executeE2ee({ agentId:'agent-1',taskId:'e2ee-timeout-task',contextId:'e2ee-timeout-context',
       content:'wait',sessionScopeId:'e2ee-timeout-scope',timeoutMs:5_000 }),
     ownerDispatcher.executeOwner({ agentId:'agent-1',taskId:'owner-timeout-task',contextId:'owner-timeout-context',
       content:'wait',sourceType:'owner_chat',executionScope:'owner_chat',ownerExecutionContext,timeoutMs:5_000 }),
-  ]);
+  ]));
   for (const [result, code] of [[e2ee, 'E2EE_V2_PROVIDER_REPLY_TIMEOUT'], [owner, 'OWNER_PROVIDER_REPLY_TIMEOUT']]) {
     assert.equal(result.status, 'rejected');
     assert.equal(result.reason.code, code);

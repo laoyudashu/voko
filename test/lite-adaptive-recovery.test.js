@@ -153,8 +153,9 @@ test('ACP restores only when its session is newly created', async () => {
     await adapter._pushViaAcp(basePayload);
     await adapter._pushViaAcp({ ...basePayload, content: 'second message' });
 
-    assert.match(prompts[0], /remembered fact/);
-    assert.equal(prompts[1], '【外部消息】\nsecond message');
+    const text = prompt => Array.isArray(prompt) ? prompt.map(part => part.text || '').join('') : prompt;
+    assert.match(text(prompts[0]), /remembered fact/);
+    assert.equal(text(prompts[1]), '【外部消息】\nsecond message');
   } finally {
     db.close();
   }
