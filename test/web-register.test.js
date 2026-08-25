@@ -261,6 +261,18 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(html, /providerCard\(\{type:'others'/);
     assert.match(html, /provider\.none_detected|未检测到可用的本机 Agent/);
     assert.match(html, /data-wizard-step="2" role="button" tabindex="0"/);
+    assert.match(html, /for="wf-category">[^<]+ \*<\/label><select id="wf-category" required>/);
+    assert.match(html, /function inferredCategory\(name,description,suggested\)/);
+    assert.match(html, /return available\.has\('general'\)\?'general'/);
+    assert.match(html, /category:document\.getElementById\('wf-category'\)\.value\|\|'general'/);
+    const categoryRulesSource = html.match(/var rules=(\[.*?\]);\s*var best='general'/s);
+    assert.ok(categoryRulesSource, '应输出自动分类规则');
+    const categoryRules = Function('return ' + categoryRulesSource[1])();
+    const categoryCodes = categoryRules.map(([code]) => code);
+    const categoryKeywords = categoryRules.flatMap(([, keywords]) => keywords);
+    assert.strictEqual(new Set(categoryCodes).size, categoryCodes.length, '分类规则不能重复');
+    assert.strictEqual(new Set(categoryKeywords).size, categoryKeywords.length, '关键词不能跨分类重复');
+    assert.match(html, /if\(score>bestScore\)\{best=rules\[i\]\[0\];bestScore=score\}/);
     assert.match(html, /function setDetectionPending\(\)/);
     assert.match(html, /function openProviderStep\(/);
     assert.match(html, /s\.addEventListener\('click',activate\)/);

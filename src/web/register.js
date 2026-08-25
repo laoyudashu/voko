@@ -303,7 +303,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '<section class="wizard-panel" data-step="2"><h3>' + esc(t('register.flow.basic.title')) + '</h3><p class="meta">' + esc(t('register.flow.basic.desc')) + '</p>'
     + '<div class="basic-profile-grid"><div class="basic-span-2 basic-section-title">' + esc(t('register.flow.basic.section_profile')) + '</div>'
     + '<div><label for="wf-name">' + esc(t('register.add.name')) + ' *</label><input id="wf-name" value="' + esc(defaultName) + '" required><div class="name-status" id="wf-name-status"></div></div>'
-    + '<div><label for="wf-category">' + esc(t('register.add.category')) + '</label><select id="wf-category">' + categoryOptions + '</select></div>'
+    + '<div><label for="wf-category">' + esc(t('register.add.category')) + ' *</label><select id="wf-category" required>' + categoryOptions + '</select></div>'
     + '<div class="basic-span-2"><label for="wf-desc">' + esc(t('register.add.desc')) + esc(t('register.flow.basic.optional')) + '</label><textarea id="wf-desc" rows="3" placeholder="' + esc(t('register.add.desc_ph')) + '"></textarea></div>'
     + '<div class="basic-span-2"><label for="wf-tags">' + esc(t('register.flow.basic.tags')) + esc(t('register.flow.basic.optional')) + '</label><input id="wf-tags" placeholder="' + esc(t('register.flow.basic.tags_placeholder')) + '"></div>'
     + '<div class="basic-span-2"><label>' + esc(t('register.flow.basic.icon')) + esc(t('register.flow.basic.optional')) + '</label><button type="button" class="basic-icon-button" id="wf-icon-button" aria-label="' + esc(t('web.agent.edit.icon_change')) + '"><img class="basic-icon-preview" id="wf-icon-preview" alt="' + esc(t('register.flow.basic.icon')) + '"><span class="basic-icon-placeholder" aria-hidden="true">+</span><span class="basic-icon-overlay">' + esc(t('web.agent.edit.icon_change')) + '</span></button><input type="file" id="wf-icon-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div>'
@@ -382,10 +382,51 @@ function wizardJs(t) {
   var suggestedIconPreview='',selectedIconFile=null,selectedIconObjectUrl='';
   function localizedSuggestion(value){if(typeof value==='string')return value.trim();if(!value||typeof value!=='object')return '';var lang=(document.documentElement.lang||'en').split('-')[0];return String(value[lang]||value.zh||value.en||'').trim()}
   function normalizedSuggestionTags(value){return(Array.isArray(value)?value:[]).map(localizedSuggestion).filter(Boolean)}
+  function inferredCategory(name,description,suggested){
+    var select=document.getElementById('wf-category'),available=new Set(Array.from(select.options).map(function(option){return option.value}));
+    if(suggested&&available.has(suggested))return suggested;
+    var content=(String(name||'')+' '+String(description||'')).toLowerCase();
+    var rules=[
+      ['medical',['医疗','医学','医生','诊断','药物','疾病','症状','治疗','医院','临床','处方','medical','medicine','clinical','doctor','diagnosis','drug','disease','symptom','treatment','hospital','prescription']],
+      ['health_fitness',['健康','养生','健身','营养','减脂','瑜伽','体能','康养','health','fitness','wellness','nutrition','workout','yoga','exercise']],
+      ['finance',['金融','财务','投资','股票','基金','证券','保险','银行','会计','税务','理财','finance','financial','investment','stock','fund','securities','insurance','banking','accounting','tax']],
+      ['education',['教育','学习','教学','课程','考试','题库','作业','培训','辅导','education','learning','teaching','course','exam','homework','training','tutoring']],
+      ['technology',['科技','技术','编程','代码','软件','开发','人工智能','算法','数据库','云计算','网络安全','technology','coding','software','developer','artificial intelligence','algorithm','database','cloud computing','cybersecurity']],
+      ['business',['商务','商业','企业','创业','销售','营销','客户关系','合同','供应链','人力资源','business','enterprise','startup','sales','marketing','crm','contract','supply chain','human resources']],
+      ['productivity',['效率','办公','工作流','任务管理','项目管理','日程','笔记','文档协作','productivity','workflow','task management','project management','calendar','note taking','document collaboration']],
+      ['travel',['旅行','旅游','行程','酒店','景点','机票','签证','度假','攻略','travel','trip','itinerary','hotel','attraction','flight','visa','vacation']],
+      ['navigation',['导航','地图','路线','定位','公交','地铁','路况','navigation','map','route planning','location','transit','traffic']],
+      ['food_drink',['美食','饮食','菜谱','烹饪','餐厅','咖啡','茶饮','酒水','烘焙','food','drink','recipe','cooking','restaurant','coffee','tea','wine','baking']],
+      ['food',['餐饮','食材','菜单','厨师','meal','ingredient','menu','chef']],
+      ['entertainment',['娱乐','电影','电视剧','综艺','游戏','动漫','短剧','演出','entertainment','movie','television','variety show','game','anime','show']],
+      ['books',['书籍','图书','小说','阅读','文学','出版','书评','有声书','book','novel','reading','literature','publishing','book review','audiobook']],
+      ['music',['音乐','歌曲','歌手','作曲','乐器','歌词','音频','播客','music','song','singer','composition','instrument','lyrics','audio','podcast']],
+      ['news',['新闻','资讯','时事','热点','媒体','快讯','舆情','news','current affairs','headline','media','breaking news','public opinion']],
+      ['magazines',['报刊','杂志','期刊','专栏','刊物','magazine','periodical','journal','column','publication']],
+      ['photo_video',['摄影','照片','视频','图像','相机','剪辑','修图','直播','photo','video','image','camera','editing','retouching','livestream']],
+      ['shopping',['购物','商品','比价','电商','优惠券','促销','订单','物流','shopping','merchandise','price comparison','ecommerce','coupon','promotion','order tracking','delivery']],
+      ['social',['社交','社区','交友','聊天','群组','人脉','论坛','social','community','friendship','chat','group','networking','forum']],
+      ['sports',['体育','赛事','球队','球员','比分','足球','篮球','跑步','户外运动','sports','tournament','team','player','score','football','basketball','running','outdoor']],
+      ['weather',['天气','气象','温度','降雨','台风','空气质量','灾害预警','weather','forecast','temperature','rainfall','typhoon','air quality','warning']],
+      ['lifestyle',['生活','命理','占卜','星座','运势','家居','育儿','宠物','时尚','美容','婚恋','lifestyle','fortune','astrology','home living','parenting','pet care','fashion','beauty','relationship']],
+      ['utilities',['实用程序','转换器','计算器','扫描仪','压缩解压','文件管理','密码管理','utilities','converter','calculator','scanner','compression tool','file manager','password manager']],
+      ['service',['客服','预约','售后','政务办理','维修服务','家政服务','法律咨询','customer support','reservation','after-sales','government affairs','repair service','housekeeping','legal consultation']],
+      ['reference',['百科全书','词典','语言翻译','资料检索','encyclopedia','dictionary','language translation','research lookup']]
+    ];
+    var best='general',bestScore=0;
+    for(var i=0;i<rules.length;i++){
+      if(!available.has(rules[i][0]))continue;
+      var score=0;
+      rules[i][1].forEach(function(keyword){var lengthBonus=Math.min(keyword.length,8);if(String(name||'').toLowerCase().indexOf(keyword)>=0)score+=20+lengthBonus;else if(String(description||'').toLowerCase().indexOf(keyword)>=0)score+=5+lengthBonus});
+      if(score>bestScore){best=rules[i][0];bestScore=score}
+    }
+    if(bestScore>0)return best;
+    return available.has('general')?'general':(select.options[0]&&select.options[0].value)||'general';
+  }
   function clearSelectedIcon(){if(selectedIconObjectUrl)URL.revokeObjectURL(selectedIconObjectUrl);selectedIconFile=null;selectedIconObjectUrl=''}
   function renderIconPreview(){var button=document.getElementById('wf-icon-button'),preview=document.getElementById('wf-icon-preview'),src=selectedIconObjectUrl||suggestedIconPreview;button.classList.toggle('has-image',!!src);if(src)preview.src=src;else preview.removeAttribute('src')}
-  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value,tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:'',useSuggestedIcon:!selectedIconFile,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
-  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=normalizedSuggestionTags(s.tags).join(', ');suggestedIconPreview=s.iconPreviewUrl||s.iconUrl||'';renderIconPreview();if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';if(s.category)document.getElementById('wf-category').value=s.category}
+  function basicInfoPayload(){return{agentName:nameInput.value,description:document.getElementById('wf-desc').value,category:document.getElementById('wf-category').value||'general',tags:document.getElementById('wf-tags').value.split(',').map(function(x){return x.trim()}).filter(Boolean),iconUrl:'',useSuggestedIcon:!selectedIconFile,contactPhone:document.getElementById('wf-phone').value,address:document.getElementById('wf-address').value}}
+  function applySuggestion(s){s=s||{};if(!nameInput.value.trim())nameInput.value=s.agentName||'';if(!document.getElementById('wf-desc').value.trim())document.getElementById('wf-desc').value=s.description||'';if(!document.getElementById('wf-tags').value.trim())document.getElementById('wf-tags').value=normalizedSuggestionTags(s.tags).join(', ');suggestedIconPreview=s.iconPreviewUrl||s.iconUrl||'';renderIconPreview();if(!document.getElementById('wf-phone').value.trim())document.getElementById('wf-phone').value=s.contactPhone||'';if(!document.getElementById('wf-address').value.trim())document.getElementById('wf-address').value=s.address||'';document.getElementById('wf-category').value=inferredCategory(nameInput.value,document.getElementById('wf-desc').value,s.category)}
   document.getElementById('wf-icon-button').addEventListener('click',function(){document.getElementById('wf-icon-file').click()});
   document.getElementById('wf-icon-file').addEventListener('change',function(){var file=this.files&&this.files[0],allowed=['image/png','image/jpeg','image/webp','image/gif'];if(!file)return;if(allowed.indexOf(file.type)===-1){this.value='';return fail(new Error(I.iconInvalid))}if(file.size>500*1024){this.value='';return fail(new Error(I.iconTooLarge))}clearSelectedIcon();selectedIconFile=file;selectedIconObjectUrl=URL.createObjectURL(file);renderIconPreview()});
   document.getElementById('wf-icon-preview').addEventListener('error',function(){if(selectedIconObjectUrl){clearSelectedIcon()}else suggestedIconPreview='';renderIconPreview()});
