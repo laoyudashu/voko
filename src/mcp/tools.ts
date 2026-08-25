@@ -2712,15 +2712,20 @@ function createToolHandlers(cx: McpContext) {
       } catch (error: any) {
         return { success: false, code: 'ROUTING_CONVERSATION_INVALID', error: error?.message || String(error) };
       }
-      cx.savePaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending', created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null });
+      const paymentOrder = { id: orderId, agent_id: p.agentId, visitor_id: p.visitorId,
+        from_uid: fromUid, amount, description: p.description || '', type: 'service', status: 'pending',
+        created_at: now, updated_at: now, routing_conversation_id: paymentConversation?.id || null };
+      cx.savePaymentOrder(paymentOrder);
       // 同步处理 pending 订单（DID 签名 → 调支付 API → 生成二维码 → 通知访客）
       // 注意：必须等待处理完成，否则 MCP 返回成功但访客收不到支付链接
+      let paymentResult: DynamicRow | null = null;
+      let processingError = '';
       if (cx.processPaymentOrder) {
         try {
-          await cx.processPaymentOrder({ id: orderId, agent_id: p.agentId, visitor_id: p.visitorId, from_uid: fromUid, amount, description: p.description || '' });
+          paymentResult = await cx.processPaymentOrder(paymentOrder) as DynamicRow;
         } catch (err: any) {
           console.error('[MCP] 处理支付订单失败:', err.message);
-          return { success: false, error: '支付订单处理失败: ' + err.message, orderId };
+          processingError = err?.message || String(err);
         }
       }
       // 确认订单是否真的处理成功（不再为 pending）
@@ -2728,19 +2733,19 @@ function createToolHandlers(cx: McpContext) {
       const finalStatus = processedOrder?.[0]?.status || 'unknown';
       if (!['created', 'paid'].includes(finalStatus)) {
         console.error('[MCP] 支付订单处理异常，状态未变更:', orderId);
-        return { success: false, error: processedOrder?.[0]?.result || '支付订单处理失败', orderId, status: finalStatus };
+        return { success: false, orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+          error: processedOrder?.[0]?.result || processingError || '支付订单处理失败', orderId, status: finalStatus };
       }
-      if (finalStatus === 'created' && processedOrder?.[0]?.result) {
-        return {
-          success: false,
-          error: t('mcp.payment.delivery_failed', { error: processedOrder[0].result }),
-          orderId,
-          orderNo: processedOrder[0].order_no,
-          payUrl: processedOrder[0].pay_url,
-          status: finalStatus
-        };
-      }
-      return { success: true, orderId, orderNo: processedOrder?.[0]?.order_no, payUrl: processedOrder?.[0]?.pay_url, status: finalStatus };
+      const reportedDeliveryStatus = String(paymentResult?.deliveryStatus || '');
+      const deliveryStatus = ['delivered', 'pending', 'failed'].includes(reportedDeliveryStatus)
+        ? reportedDeliveryStatus : processedOrder?.[0]?.result || processingError ? 'failed' : 'unknown';
+      const deliveryError = deliveryStatus === 'failed'
+        ? String(paymentResult?.error || processedOrder?.[0]?.result || processingError || '访客消息投递失败')
+        : undefined;
+      return { success: true, orderCreated: true, sentToVisitor: deliveryStatus === 'delivered',
+        deliveryStatus, deliveryError, visitorId: p.visitorId, orderId,
+        orderNo: processedOrder?.[0]?.order_no, payUrl: processedOrder?.[0]?.pay_url,
+        messageId: paymentResult?.messageId, status: finalStatus };
     },
 
     // ─── 18. 查询支付 ───

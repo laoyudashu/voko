@@ -87,6 +87,20 @@ interface QueryOrderResult {
   };
 }
 
+type PaymentDeliveryStatus = 'delivered' | 'pending' | 'failed' | 'not_attempted';
+
+interface PaymentProcessResult {
+  orderCreated: boolean;
+  sentToVisitor: boolean;
+  deliveryStatus: PaymentDeliveryStatus;
+  orderId: string;
+  visitorId: string;
+  orderNo?: string | null;
+  payUrl?: string | null;
+  messageId?: string;
+  error?: string;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -104,28 +118,32 @@ function errorMessage(error: unknown): string {
  * @param {Function} deps.notifyUI - (type, data) => {} 可选 UI 通知回调
  * @param {Function} deps.payLog - (data) => {} 可选支付日志回调
  */
-async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps): Promise<void> {
+async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps): Promise<PaymentProcessResult> {
   const { db, databaseAPI, agentWorkers, wukongimSender, deliver, sendMessage, endpoints, notifyUI, payLog } = deps;
   const _log = payLog || (() => {});
   const _notify = notifyUI || (() => {});
-  let serverOrderNo = null;
-  let serverPayUrl = null;
+  let serverOrderNo: string | null = null;
+  let serverPayUrl: string | null = null;
+  let remoteOrderCreated = false;
 
   try {
     // 原子领取：只有当前仍是 pending 才能成功
     const claimed = db.prepare(`UPDATE payment_orders SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'`).run(Date.now(), order.id) as { changes: number };
     if (claimed.changes === 0) {
       console.log('[Payment] 跳过，订单已被处理, id:', order.id);
-      return;
+      return { orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+        orderId: order.id, visitorId: order.visitor_id, error: 'Payment order was already claimed' };
     }
 
     // 获取 Agent DID 和私钥
     const agentDid = databaseAPI.getAgentDid(order.agent_id);
     const agentKeyRow = db.prepare(`SELECT private_key FROM agents WHERE agent_id = ? AND private_key IS NOT NULL`).get<{ private_key: string }>(order.agent_id);
     if (!agentDid || !agentKeyRow) {
-      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: 'Agent 未注册 DID 或未配置私钥' });
+      const error = 'Agent 未注册 DID 或未配置私钥';
+      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: error });
       console.error('[Payment] Agent ' + order.agent_id + ' 未注册 DID 或未配置私钥');
-      return;
+      return { orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+        orderId: order.id, visitorId: order.visitor_id, error };
     }
 
     const bizFields = {
@@ -145,19 +163,24 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
     });
 
     if (!initResult.success) {
-      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: initResult.message || '创建支付失败' });
-      return;
+      const error = initResult.message || '创建支付失败';
+      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: error });
+      return { orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+        orderId: order.id, visitorId: order.visitor_id, error };
     }
 
     const payUrl = initResult.data?.payUrl;
     const orderNo = initResult.data?.orderNo;
     const queryToken = initResult.data?.queryToken || '';
-    serverOrderNo = orderNo;
-    serverPayUrl = payUrl;
+    serverOrderNo = orderNo || null;
+    serverPayUrl = payUrl || null;
     if (!payUrl) {
-      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: '未获取到支付链接' });
-      return;
+      const error = '未获取到支付链接';
+      databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: error });
+      return { orderCreated: false, sentToVisitor: false, deliveryStatus: 'not_attempted',
+        orderId: order.id, visitorId: order.visitor_id, orderNo: orderNo || null, error };
     }
+    remoteOrderCreated = true;
 
     if (queryToken) {
       db.prepare(`UPDATE payment_orders SET query_token = ? WHERE id = ?`).run(queryToken, order.id);
@@ -200,18 +223,19 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
       }
     }
 
+    let sent: any;
+    let usedFallback = false;
     if (sendMessage) {
       // 统一发送：落库 + 会话 + 投递 + UI 通知（sendMessage 内已 emit）
       try {
-        const sent: any = await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text', 1, null, textMsgId, paymentRouteMetadata);
-        if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, sent?.success === false
-          ? 'failed' : sent?.deliveryState === undefined || sent?.deliveryState === 'delivered' ? 'active' : 'pending');
+        sent = await sendMessage(order.agent_id, order.visitor_id, textMsg, fromUid, 'text', 1, null, textMsgId, paymentRouteMetadata);
       } catch (error) {
         if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
         throw error;
       }
     } else {
       // 兜底（未注入 sendMessage）：保留原 落库 + 投递 逻辑
+      usedFallback = true;
       db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(textMsgId, fromUid, order.visitor_id, textMsg, order.visitor_id, 1, order.agent_id, timestamp, 1, 'pending', null, null, 0, 0, 0, 1);
       db.prepare(`INSERT OR IGNORE INTO conversations (user_uid, channel_id, channel_type, name, last_message, last_timestamp, unread_count, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -220,18 +244,26 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
         .run(textMsg, timestamp, fromUid, order.visitor_id);
       if (deliver) {
         try {
-          const sent: any = await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId, paymentRouteMetadata);
-          const accepted=sent?.success!==false;
-          const delivered=accepted&&(sent?.deliveryState===undefined||sent?.deliveryState==='delivered');
-          if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId,
-            accepted?(delivered?'active':'pending'):'failed');
-          db.prepare(`UPDATE messages SET status=? WHERE id=?`).run(delivered?'sent':accepted?'pending':'failed',textMsgId);
+          sent = await deliver(order.agent_id, order.visitor_id, textMsg, 'text', 1, null, textMsgId, paymentRouteMetadata);
         } catch (error) {
           if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId, 'failed');
           throw error;
         }
       }
       else throw new Error('IM Hub 投递器未初始化');
+    }
+
+    const accepted = sent?.success === true;
+    const explicitlyFailed = sent?.success === false || sent?.deliveryState === 'failed';
+    const delivered = accepted && !explicitlyFailed
+      && (sent?.deliveryState === undefined || sent?.deliveryState === 'delivered');
+    const deliveryStatus: Exclude<PaymentDeliveryStatus, 'not_attempted'> = explicitlyFailed
+      ? 'failed' : delivered ? 'delivered' : 'pending';
+    if (paymentRouteId) new MessageRouteStore(db).setStatus(paymentRouteId,
+      deliveryStatus === 'failed' ? 'failed' : deliveryStatus === 'delivered' ? 'active' : 'pending');
+    if (usedFallback) {
+      db.prepare(`UPDATE messages SET status=? WHERE id=?`).run(
+        deliveryStatus === 'failed' ? 'failed' : deliveryStatus === 'delivered' ? 'sent' : 'pending', textMsgId);
     }
 
     if (!sendMessage) {
@@ -245,20 +277,40 @@ async function processPendingPaymentOrder(order: PaymentOrder, deps: PaymentDeps
       }
     }
 
+    if (deliveryStatus === 'failed') {
+      const error = String(sent?.error || 'IM Hub rejected the payment message');
+      databaseAPI.updatePaymentOrder(order.id, {
+        status: 'created', order_no: orderNo, pay_url: payUrl, result: error
+      });
+      _log({ event: 'delivery_failed', orderId: order.id, orderNo, visitorId: order.visitor_id, error });
+      console.warn('[Payment] 订单已创建，但通知访客失败:', order.id, orderNo, error);
+      return { orderCreated: true, sentToVisitor: false, deliveryStatus, orderId: order.id,
+        visitorId: order.visitor_id, orderNo: orderNo || null, payUrl, messageId: sent?.messageId || textMsgId, error };
+    }
+
     _log({ event: 'order_created', orderId: order.id, orderNo });
-    console.log('[Payment] 订单已创建并通知访客:', order.id, orderNo);
+    console.log(deliveryStatus === 'delivered'
+      ? '[Payment] 订单已创建并通知访客:'
+      : '[Payment] 订单已创建，访客消息等待投递确认:', order.id, orderNo);
+    return { orderCreated: true, sentToVisitor: deliveryStatus === 'delivered', deliveryStatus,
+      orderId: order.id, visitorId: order.visitor_id, orderNo: orderNo || null, payUrl,
+      messageId: sent?.messageId || textMsgId };
   } catch (e: unknown) {
     const message = errorMessage(e);
     _log({ event: 'pending_fail', orderId: order.id, error: message });
     console.error('[Payment] 处理 pending 订单失败:', order.id, message);
-    if (serverOrderNo) {
+    if (remoteOrderCreated) {
       databaseAPI.updatePaymentOrder(order.id, {
-        status: 'created', order_no: serverOrderNo, pay_url: serverPayUrl || '', result: message
+        status: 'created', ...(serverOrderNo ? { order_no: serverOrderNo } : {}),
+        ...(serverPayUrl ? { pay_url: serverPayUrl } : {}), result: message
       });
       console.warn('[Payment] 服务端订单已创建，本地保留 created 供轮询:', order.id, serverOrderNo);
     } else {
       databaseAPI.updatePaymentOrder(order.id, { status: 'failed', result: message });
     }
+    return { orderCreated: remoteOrderCreated, sentToVisitor: false,
+      deliveryStatus: remoteOrderCreated ? 'failed' : 'not_attempted', orderId: order.id,
+      visitorId: order.visitor_id, orderNo: serverOrderNo, payUrl: serverPayUrl, error: message };
   }
 }
 

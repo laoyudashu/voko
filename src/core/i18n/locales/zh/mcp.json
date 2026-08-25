@@ -146,7 +146,7 @@
   "mcp.tool.close_human_request.desc": "处理完主人回复后，调用此工具标记介入请求为已解决。主人会收到\"已处理完毕\"通知",
   "mcp.tool.close_human_request.p.id": "介入请求 ID（ask_human_for_help 返回的 interventionId）",
 
-  "mcp.tool.create_payment.desc": "向访客发起收款请求。VOKO 会检查支付配置，创建支付订单。若未配置支付认证将返回错误，需要先通知主人配置",
+  "mcp.tool.create_payment.desc": "向访客发起收款请求。VOKO 会检查支付配置、创建订单并发送支付链接；结果中的 orderCreated、sentToVisitor 和 deliveryStatus 分别表示订单是否创建、是否已确认发送给访客及投递状态。若未配置支付认证将返回错误，需要先通知主人配置",
   "mcp.tool.create_payment.p.agentId": "哪个 Agent 收款",
   "mcp.tool.create_payment.p.visitorId": "向谁收款",
   "mcp.tool.create_payment.p.amount": "金额（元）",

@@ -110,6 +110,27 @@ function renderPaymentRegionNotice(tFn){
     +'<span>'+esc(t('web.payments.region_notice.body'))+'</span></div></div>';
 }
 
+function renderPaymentCreationResult(tFn,result,visitorId){
+  const t=tFn||(k=>k),rawStatus=String(result?.deliveryStatus||'unknown');
+  const deliveryStatus=['delivered','pending','failed'].includes(rawStatus)?rawStatus:'unknown';
+  const sentToVisitor=deliveryStatus==='delivered'&&result?.sentToVisitor===true;
+  const tone=deliveryStatus==='delivered'
+    ?{border:'#9ad0ad',background:'#edf8f1',color:'#176b3a'}
+    :deliveryStatus==='failed'
+      ?{border:'#efb1ac',background:'#fff1f0',color:'#a12622'}
+      :{border:'#f0c36d',background:'#fff8e1',color:'#7a4f01'};
+  const deliveryText=t('web.payments.create.delivery.'+deliveryStatus,{visitorId});
+  const error=result?.deliveryError
+    ?'<p class="meta" style="margin:8px 0 0;color:'+tone.color+'">'+esc(t('web.payments.create.delivery_error',{error:result.deliveryError}))+'</p>'
+    :'';
+  return '<div class="card" data-testid="payment-create-result" data-delivery-status="'+deliveryStatus+'" data-sent-to-visitor="'+String(sentToVisitor)+'">'
+    +'<h3>'+esc(t('web.payments.create.result_title'))+'</h3>'
+    +'<div style="padding:12px;border:1px solid '+tone.border+';border-radius:8px;background:'+tone.background+';color:'+tone.color+';font-weight:600">'+esc(deliveryText)+error+'</div>'
+    +'<p style="margin:14px 0 4px"><strong>'+esc(t('web.payments.create.result_order'))+'：</strong> '+esc(result?.orderNo||result?.orderId||'-')+'</p>'
+    +'<p style="margin:4px 0 14px"><strong>'+esc(t('web.payments.create.result_visitor'))+'：</strong> '+esc(visitorId||result?.visitorId||'-')+'</p>'
+    +'<a href="/payments" class="btn">'+esc(t('web.payments.create.view_orders'))+'</a></div>';
+}
+
 function fmtTime(ts){
   if(!ts)return '';
   const d=typeof ts==='number'&&ts<1e12?new Date(ts*1000):new Date(ts);
@@ -2686,7 +2707,12 @@ footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws"
     }catch(e){next(e)}
   });
   R.post('/payments',async(req,res,next)=>{
-    try{const r=await handlers.create_payment({agentId:req.body.agentId,visitorId:req.body.visitorId,amount:parseFloat(req.body.amount),description:req.body.description||'',conversationId:req.body.conversationId||undefined});r.success?res.redirect('/payments'):res.send(renderPage(req,req.t('web.payments.failed'),'<p class="error">'+esc(r.error)+'</p><a href="/payments">'+esc(req.t('common.btn.back'))+'</a>'))}catch(e){next(e)}
+    try{
+      const r=await handlers.create_payment({agentId:req.body.agentId,visitorId:req.body.visitorId,amount:parseFloat(req.body.amount),description:req.body.description||'',conversationId:req.body.conversationId||undefined});
+      if(!r.success)return res.send(renderPage(req,req.t('web.payments.failed'),'<p class="error">'+esc(r.error)+'</p><a href="/payments">'+esc(req.t('common.btn.back'))+'</a>'));
+      const body=renderPaymentCreationResult(req.t,r,req.body.visitorId);
+      res.send(renderPage(req,req.t('web.payments.create.result_title'),body,{nav:'<a href="/">'+esc(req.t('common.nav.home'))+'</a> › <a href="/payments">'+esc(req.t('web.payments.breadcrumb'))+'</a> › '+esc(req.t('web.payments.create.result_title'))}));
+    }catch(e){next(e)}
   });
 
   // ── 银行卡管理（已迁至 payment-auth.js）──
