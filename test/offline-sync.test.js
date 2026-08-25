@@ -116,6 +116,15 @@ describe('Payload 解码', () => {
     assert.equal(contentType, 1);
   });
 
+  it('还原消息同步中扁平化的 type 13 E2EE envelope', () => {
+    const envelope={version:'voko.e2ee/2',suite:'X25519-HKDF-SHA256-CHACHA20POLY1305',
+      messageId:'message-1',conversationId:'conversation-1',channelId:'guest-1',agentDid:'did:wba:agent',
+      senderDeviceId:'sender-device',senderKeyId:'sender-key',recipientDeviceId:'recipient-device',
+      recipientKeyId:'recipient-key',createdAtMs:1,contentKind:'text',enc:'enc',ciphertext:'ciphertext',signature:'signature'};
+    const payload=Buffer.from(JSON.stringify({...envelope,type:13})).toString('base64');
+    assert.deepEqual(decodeOfflinePayload(payload),{content:JSON.stringify(envelope),type:13,_voko:null});
+  });
+
   it('空 payload 返回默认值', () => {
     const { content, contentType } = decodePayload('');
     assert.equal(content, '');

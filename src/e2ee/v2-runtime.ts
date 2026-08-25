@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { E2eeV2DirectoryClient } from './v2-directory-client';
+import { isTransientE2eeDirectoryError, type E2eeV2DirectoryClient } from './v2-directory-client';
 import type { E2eeV2Envelope, E2eeV2PublicBundle } from './v2-wasm';
 import { E2eeV2Crypto } from './v2-wasm';
 import type { E2eeV2ReceiptRow, E2eeV2Store } from './v2-store';
@@ -138,11 +138,11 @@ export class E2eeV2Runtime {
     return agent;
   }
 
-  private async senderBundle(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope):Promise<ResolvedSender>{
+  private async senderBundle(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope,force=false):Promise<ResolvedSender>{
     const cacheKey=`${agent.serverAgentId}\0${envelope.channelId}\0${envelope.conversationId}`
       +`\0${envelope.senderDeviceId}\0${envelope.senderKeyId}`;
     const cached=this.senderCache.get(cacheKey);
-    if(cached&&cached.expiresAt>Date.now())return cached.resolved;
+    if(!force&&cached&&cached.expiresAt>Date.now())return cached.resolved;
     const row=await this.options.directory.resolveSender({localAgentId:agent.serverAgentId,
       fromUid:envelope.channelId,senderDeviceId:envelope.senderDeviceId,senderKeyId:envelope.senderKeyId,
       conversationKey:envelope.conversationId});
@@ -225,7 +225,12 @@ export class E2eeV2Runtime {
     let release=()=>{};
     let providerAccepted=false;
     try{
-      const sender=await this.senderBundle(agent,envelope);
+      let sender=await this.senderBundle(agent,envelope);
+      const protocolConversation=this.options.store.conversationByProtocolId(agent.localAgentId,
+        envelope.channelId,envelope.conversationId);
+      if(protocolConversation?.mode==='locked'&&isTransientE2eeDirectoryError(protocolConversation.lock_reason)){
+        sender=await this.senderBundle(agent,envelope,true);
+      }
       const scope=sessionScope(agent,envelope,sender.peerScopeId);
       release=await this.acquire(scope);
       const opened=this.endpoint(agent.localAgentId).open(sender.bundle,envelope);
@@ -235,7 +240,20 @@ export class E2eeV2Runtime {
       const localMessageId=projectedInboundId(agent,envelope,sender.peerKind);
       const routeScope=sender.peerKind==='agent'
         ?envelope.conversationId
-        :String(prepared.routeContext?.conversationKey||prepared.routeContext?.canonicalConversationKey||'');
+        :String(prepared.routeContext?.conversationKey||prepared.routeContext?.canonicalConversationKey
+          ||envelope.conversationId);
+      const existing=this.options.store.conversation(agent.localAgentId,envelope.channelId,routeScope);
+      if(existing?.mode==='locked'){
+        const reason=existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED';
+        const identityMatches=existing.peer_scope_id===sender.peerScopeId&&existing.peer_kind===sender.peerKind
+          &&existing.protocol_conversation_id===envelope.conversationId;
+        if(!isTransientE2eeDirectoryError(reason)||!identityMatches
+            ||!this.options.store.reactivateConversation({localAgentId:agent.localAgentId,
+              channelId:envelope.channelId,routingConversationId:routeScope,expectedLockReason:reason,
+              protocolConversationId:envelope.conversationId,peerScopeId:sender.peerScopeId,
+              peerKind:sender.peerKind,recipientRevision:existing.recipient_revision}))throw new Error(identityMatches
+                ?'E2EE_V2_CONVERSATION_LOCKED':'E2EE_V2_PEER_IDENTITY_CHANGED');
+      }
       this.options.store.saveConversation({localAgentId:agent.localAgentId,channelId:envelope.channelId,
         routingConversationId:routeScope,wireConversationKey:routeScope,
         protocolConversationId:envelope.conversationId,peerScopeId:sender.peerScopeId,peerKind:sender.peerKind,
@@ -321,7 +339,13 @@ export class E2eeV2Runtime {
     }catch(error:any){
       const code=String(error?.code||error?.message||'E2EE_V2_FAILED');
       if(providerAccepted)this.options.store.transition(envelope.messageId,['provider_accepted','processing'],'outcome_unknown',code);
-      else this.options.store.transition(envelope.messageId,['processing'],'failed',code);
+      else{
+        const locked=this.options.store.conversationByProtocolId(agent.localAgentId,envelope.channelId,
+          envelope.conversationId);
+        const retryable=isTransientE2eeDirectoryError(error)||(code==='E2EE_V2_CONVERSATION_LOCKED'
+          &&locked?.mode==='locked'&&isTransientE2eeDirectoryError(locked.lock_reason));
+        this.options.store.transition(envelope.messageId,['processing'],retryable?'received':'failed',code);
+      }
       console.warn(`[E2EE] 消息处理失败 agent=${agent.localAgentId} code=${code}`);
       return{handled:true,accepted:false,code};
     }finally{release();}
@@ -393,6 +417,14 @@ export class E2eeV2Runtime {
   }
 
   async recover(limit=50):Promise<void>{
+    for(const row of this.options.store.failedReceipts(limit)){
+      const locked=this.options.store.conversationByProtocolId(row.local_agent_id,row.channel_id,row.conversation_id);
+      if(isTransientE2eeDirectoryError(row.error_code)||(row.error_code==='E2EE_V2_CONVERSATION_LOCKED'
+          &&(locked?.mode==='e2ee_active'||(locked?.mode==='locked'
+            &&isTransientE2eeDirectoryError(locked.lock_reason))))){
+        this.options.store.transition(row.message_id,['failed'],'received',row.error_code);
+      }
+    }
     for(const row of this.options.store.recoverable(limit)){
       if(row.reply_envelope_json){await this.deliverReply(row).catch(()=>false);continue;}
       if(row.state!=='received')continue;

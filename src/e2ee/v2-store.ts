@@ -325,6 +325,15 @@ export class E2eeV2Store {
       ORDER BY created_at LIMIT ?`).all(limit) as E2eeV2ReceiptRow[];
   }
 
+  failedReceipts(limit=50): E2eeV2ReceiptRow[] {
+    return this.db.prepare(`SELECT * FROM e2ee_v2_receipts WHERE state='failed' AND (
+      error_code IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
+        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_CONVERSATION_LOCKED')
+      OR error_code LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
+      ORDER BY updated_at LIMIT ?`).all(limit) as E2eeV2ReceiptRow[];
+  }
+
   hasChannel(localAgentId:string,channelId:string):boolean{
     return Boolean(this.db.prepare(`SELECT 1 FROM e2ee_v2_conversations
       WHERE local_agent_id=? AND channel_id=? AND mode IN ('e2ee_active','locked') LIMIT 1`)
@@ -344,9 +353,25 @@ export class E2eeV2Store {
       ORDER BY updated_at DESC`).all(localAgentId,channelId) as E2eeV2ConversationRow[];
   }
 
+  conversationByProtocolId(localAgentId:string,channelId:string,protocolConversationId:string):E2eeV2ConversationRow|null{
+    const row=(this.db.prepare(`SELECT * FROM e2ee_v2_conversations
+      WHERE local_agent_id=? AND channel_id=? AND protocol_conversation_id=?
+      ORDER BY CASE WHEN routing_conversation_id=? THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`)
+      .get(localAgentId,channelId,protocolConversationId,protocolConversationId)) as E2eeV2ConversationRow|undefined;
+    return row||null;
+  }
+
   activeConversations(limit=500):E2eeV2ConversationRow[]{
     return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='e2ee_active'
       ORDER BY last_verified_at ASC LIMIT ?`).all(limit) as E2eeV2ConversationRow[];
+  }
+
+  transientLockedConversations(limit=500):E2eeV2ConversationRow[]{
+    return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='locked' AND (
+      lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
+        'E2EE_V2_DIRECTORY_HTTP_429') OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
+      ORDER BY updated_at ASC LIMIT ?`).all(limit) as E2eeV2ConversationRow[];
   }
 
   saveConversation(input:{localAgentId:string;channelId:string;routingConversationId?:string;
@@ -376,6 +401,18 @@ export class E2eeV2Store {
     this.db.prepare(`UPDATE e2ee_v2_conversations SET mode='locked',lock_reason=?,updated_at=?
       WHERE local_agent_id=? AND channel_id=? AND routing_conversation_id=? AND mode IN ('e2ee_active','locked')`)
       .run(reason,Date.now(),localAgentId,channelId,routingConversationId||'');
+  }
+
+  reactivateConversation(input:{localAgentId:string;channelId:string;routingConversationId:string;
+    expectedLockReason:string;protocolConversationId:string;peerScopeId:string;peerKind:'guest'|'agent';
+    recipientRevision?:string}):boolean{
+    const result=this.db.prepare(`UPDATE e2ee_v2_conversations SET mode='e2ee_active',lock_reason=NULL,
+      recipient_revision=?,last_verified_at=?,updated_at=? WHERE local_agent_id=? AND channel_id=?
+      AND routing_conversation_id=? AND mode='locked' AND lock_reason=? AND protocol_conversation_id=?
+      AND peer_scope_id=? AND peer_kind=?`).run(input.recipientRevision||'',Date.now(),Date.now(),
+        input.localAgentId,input.channelId,input.routingConversationId||'',input.expectedLockReason,
+        input.protocolConversationId,input.peerScopeId,input.peerKind);
+    return result.changes===1;
   }
 
   saveRecipientSnapshot(input:{localAgentId:string;channelId:string;peerScopeId:string;peerKind:'guest'|'agent';

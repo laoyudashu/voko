@@ -15,7 +15,7 @@ const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
 
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply}={}){
+  deliverSecureReply,providerReply,directoryErrorOnce=false}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -26,11 +26,15 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   const guest=addGuestDevice('guest-device');
   const guestPublic=guest.publicBundle();
   const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server'};
-  let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null;
+  let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
   const sessionScopes=[],dispatcherInputs=[];
   const directoryClient={
     async registerAgentKey(input){registered=input;return{duplicate:false};},
     async resolveSender(input){
+      senderDirectoryCalls+=1;
+      if(directoryErrorOnce&&senderDirectoryCalls===1){
+        throw Object.assign(new Error('bad gateway'),{code:'E2EE_V2_DIRECTORY_HTTP_502'});
+      }
       assert.equal(input.localAgentId,agent.serverAgentId);
       const sender=guestDevices.get(input.senderDeviceId);
       assert.ok(sender);
@@ -73,7 +77,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   function close(){runtime.close();for(const sender of guestDevices.values())sender.endpoint.free();
     db.close();fs.rmSync(directory,{recursive:true,force:true});}
   return{runtime,store,guest,guestPublic,agent,persisted,createEnvelope,close,
-    counts:()=>({providerCalls,deliveryCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
+    counts:()=>({providerCalls,deliveryCalls,senderDirectoryCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
 }
 
 test('v2 runtime decrypts, persists, executes once and returns a decryptable reply',async()=>{
@@ -113,7 +117,89 @@ test('v2 reply recovery resends the same ciphertext without re-executing Provide
     await f.runtime.recover();
     assert.equal(f.store.receipt('message-2').state,'completed');
     assert.equal(f.store.receipt('message-2').reply_envelope_json,immutableReply);
-    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2});
+    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2,senderDirectoryCalls:1});
+  }finally{f.close();}
+});
+
+test('transient inbound Directory failure remains recoverable after transport ACK',async()=>{
+  const f=fixture({directoryErrorOnce:true});
+  try{
+    const envelope=await f.createEnvelope('message-transient','retry me');
+    const message={content:JSON.stringify(envelope),fromUid:'guest-im-1',channelType:1,contentType:13,
+      ack(){this.acked=true;}};
+    const first=await f.runtime.handle('gym',message);
+    assert.equal(first.accepted,false);
+    assert.equal(first.code,'E2EE_V2_DIRECTORY_HTTP_502');
+    assert.equal(message.acked,true);
+    assert.equal(f.store.receipt('message-transient').state,'received');
+    assert.equal(f.counts().providerCalls,0);
+    await f.runtime.recover();
+    assert.equal(f.store.receipt('message-transient').state,'completed');
+    assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
+test('guest route with only routeId uses the authenticated protocol conversation and reactivates its transient lock',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'conversation-1',
+      wireConversationKey:'conversation-1',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.lockConversation('gym','guest-im-1','conversation-1','E2EE_V2_DIRECTORY_HTTP_502');
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'route fallback',
+      routeContext:{protocolVersion:1,routeId:'voko_abcdefghijklmnopqrstuvwxyz0123456789'}});
+    const envelope=await f.createEnvelope('message-route-fallback',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(f.store.conversation('gym','guest-im-1','conversation-1').mode,'e2ee_active');
+    assert.equal(f.store.conversation('gym','guest-im-1',''),null);
+    assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
+test('historical pre-Provider locked receipt is recovered exactly once after transient lock revalidation',async()=>{
+  const f=fixture();
+  try{
+    const envelope=await f.createEnvelope('message-old-locked','old locked message');
+    const envelopeJson=JSON.stringify(envelope);
+    const digest=crypto.createHash('sha256').update(envelopeJson).digest('base64url');
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'conversation-1',
+      wireConversationKey:'conversation-1',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.lockConversation('gym','guest-im-1','conversation-1','E2EE_V2_DIRECTORY_HTTP_502');
+    f.store.reserve({messageId:envelope.messageId,digest,envelopeJson,localAgentId:'gym',
+      channelId:'guest-im-1',conversationId:'conversation-1'});
+    assert.equal(f.store.claim(envelope.messageId,'old-worker'),true);
+    assert.equal(f.store.transition(envelope.messageId,['processing'],'failed','E2EE_V2_CONVERSATION_LOCKED'),true);
+    await f.runtime.recover();
+    await f.runtime.recover();
+    assert.equal(f.store.receipt(envelope.messageId).state,'completed');
+    assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
+test('historical locked receipt ignores a stale blank route when the authenticated protocol row is active',async()=>{
+  const f=fixture();
+  try{
+    const envelope=await f.createEnvelope('message-old-blank-lock','old blank route message');
+    const envelopeJson=JSON.stringify(envelope);
+    const digest=crypto.createHash('sha256').update(envelopeJson).digest('base64url');
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'conversation-1',
+      wireConversationKey:'conversation-1',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'',
+      wireConversationKey:'',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.lockConversation('gym','guest-im-1','','E2EE_V2_DIRECTORY_HTTP_502');
+    f.store.reserve({messageId:envelope.messageId,digest,envelopeJson,localAgentId:'gym',
+      channelId:'guest-im-1',conversationId:'conversation-1'});
+    assert.equal(f.store.claim(envelope.messageId,'old-worker'),true);
+    assert.equal(f.store.transition(envelope.messageId,['processing'],'failed','E2EE_V2_CONVERSATION_LOCKED'),true);
+    await f.runtime.recover();
+    assert.equal(f.store.receipt(envelope.messageId).state,'completed');
+    assert.equal(f.store.conversation('gym','guest-im-1','').mode,'locked');
+    assert.equal(f.counts().providerCalls,1);
   }finally{f.close();}
 });
 

@@ -55,8 +55,13 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
   try {
     const decoded = JSON.parse(Buffer.from(payload, 'base64').toString()) as DecodedOfflinePayload;
     const metadata = decoded?._voko;
+    let content=typeof decoded?.content === 'string' ? decoded.content : undefined;
+    if(!content&&decoded?.type===13&&(decoded as any)?.version==='voko.e2ee/2'){
+      const {type: _type,_voko: _metadata,...envelope}=decoded as any;
+      content=JSON.stringify(envelope);
+    }
     return {
-      content: typeof decoded?.content === 'string' ? decoded.content : undefined,
+      content,
       type: typeof decoded?.type === 'number' ? decoded.type : undefined,
       _voko: metadata?.protocolVersion === 1
         ? {

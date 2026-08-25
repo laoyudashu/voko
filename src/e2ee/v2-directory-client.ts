@@ -1,5 +1,14 @@
 import type { E2eeV2PublicBundle } from './v2-wasm';
 
+export function isTransientE2eeDirectoryError(value: unknown): boolean {
+  const row=value as any;
+  const code=String(row?.code||row?.message||value||'');
+  if (['ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+    'E2EE_V2_DIRECTORY_UNAVAILABLE'].includes(code)) return true;
+  if (/^E2EE_V2_DIRECTORY_HTTP_(?:408|425|429|5\d\d)$/.test(code)) return true;
+  return row?.name === 'TimeoutError' || row?.name === 'AbortError';
+}
+
 function bounded(value: unknown, name: string, max = 2048): string {
   const result = String(value || '').trim();
   if (!result || result.length > max || /[\u0000-\u001f\u007f]/.test(result)) {
@@ -109,4 +118,4 @@ export class E2eeV2DirectoryClient {
   }
 }
 
-module.exports = { E2eeV2DirectoryClient };
+module.exports = { E2eeV2DirectoryClient, isTransientE2eeDirectoryError };

@@ -100,7 +100,7 @@ test('transient Directory failures are single-flight cached for ten seconds',asy
   }finally{f.close();}
 });
 
-test('an active encrypted conversation locks instead of silently downgrading when directory fails',async()=>{
+test('an active encrypted conversation stays revalidatable without downgrading when Directory is transiently unavailable',async()=>{
   const first=fixture();
   try{
     await first.router.deliver('gym','guest-im','activate','text',1,null,'business-5');
@@ -113,8 +113,55 @@ test('an active encrypted conversation locks instead of silently downgrading whe
     const result=await second.deliver('gym','guest-im','blocked','text',1,null,'business-6');
     assert.equal(result.success,false);
     assert.equal(result.securityMode,'e2ee');
-    assert.equal(first.store.conversation('gym','guest-im','routing-1').mode,'locked');
+    assert.equal(first.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
   }finally{first.close();}
+});
+
+test('a conversation locked by a transient Directory failure reactivates only after identity revalidation',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_502');
+    const result=await f.router.deliver('gym','guest-im','after recovery','text',1,null,'business-revalidated');
+    assert.equal(result.success,true);
+    assert.equal(result.securityMode,'e2ee');
+    const conversation=f.store.conversation('gym','guest-im','routing-1');
+    assert.equal(conversation.mode,'e2ee_active');
+    assert.equal(conversation.lock_reason,null);
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
+test('background refresh reactivates historical transient locks after Directory recovery',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_502');
+    f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
+    await f.router.refreshActive();
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('a transient lock becomes permanent when Directory reports a different peer identity',async()=>{
+  const f=fixture({peerScopeId:'replacement-peer-scope'});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'original-peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_502');
+    const result=await f.router.deliver('gym','guest-im','must remain blocked','text',1,null,'business-changed-lock');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    const conversation=f.store.conversation('gym','guest-im','routing-1');
+    assert.equal(conversation.mode,'locked');
+    assert.equal(conversation.lock_reason,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
 });
 
 test('disabling new E2EE upgrades does not downgrade an already-active conversation',async()=>{
