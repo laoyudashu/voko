@@ -37,6 +37,7 @@ interface DispatcherProvider {
   start?(): unknown;
   stop?(): unknown;
   healthCheck?(): unknown;
+  getTurnTimeoutMs?(): number;
   setAvailabilityProviderId?(providerId: string): void;
   on?(event: string, handler: (payload: any) => void): unknown;
   off?(event: string, handler: (payload: any) => void): unknown;
@@ -166,6 +167,34 @@ function deliveryOutcome(error: unknown): DeliveryOutcome {
   return 'outcome_unknown';
 }
 
+const DEFAULT_PROVIDER_TURN_TIMEOUT_MS = 120_000;
+const PROVIDER_SETTLEMENT_GRACE_MS = 15_000;
+const MIN_TURN_DEADLINE_MS = 5_000;
+const MAX_TURN_DEADLINE_MS = 600_000;
+
+function clampTurnDeadlineMs(value: number): number {
+  return Math.min(MAX_TURN_DEADLINE_MS, Math.max(MIN_TURN_DEADLINE_MS, value));
+}
+
+function providerTurnTimeoutMs(provider: DispatcherProvider): number {
+  try {
+    const value = Number(provider.getTurnTimeoutMs?.());
+    if (Number.isFinite(value) && value > 0) return value;
+  } catch (_) {}
+  return DEFAULT_PROVIDER_TURN_TIMEOUT_MS;
+}
+
+function resolveTurnDeadlineMs(provider: DispatcherProvider, explicitTimeoutMs?: number): { configuredMs: number; waitMs: number } {
+  const configuredMs = providerTurnTimeoutMs(provider);
+  const explicit = Number(explicitTimeoutMs);
+  return {
+    configuredMs,
+    waitMs: clampTurnDeadlineMs(Number.isFinite(explicit) && explicit > 0
+      ? explicit
+      : configuredMs + PROVIDER_SETTLEMENT_GRACE_MS),
+  };
+}
+
 // ── A2A（agent-to-agent）对话收敛配置 ──
 function _boundedEnv(name: string, fallback: number, min: number, max: number): number {
   const value = Number(process.env[name]);
@@ -252,24 +281,69 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
   const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
-  const _retiredIsolatedTurns = new Map<string, number>();
+  interface RetiredIsolatedTurn {
+    retiredAt: number;
+    timedOut: boolean;
+    providerId?: string;
+    taskId?: string;
+    waitMs?: number;
+  }
+  const _retiredIsolatedTurns = new Map<string, RetiredIsolatedTurn>();
   const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
-  function _retireIsolatedTurn(key: string): void {
+  function _retireIsolatedTurn(key: string, details?: Omit<RetiredIsolatedTurn, 'retiredAt'>): void {
     _isolatedReplySinks.delete(key);
     const now = Date.now();
-    _retiredIsolatedTurns.set(key, now);
+    const previous = _retiredIsolatedTurns.get(key);
+    _retiredIsolatedTurns.set(key, details
+      ? { retiredAt: now, ...details }
+      : previous || { retiredAt: now, timedOut: false });
     if (_retiredIsolatedTurns.size > 1000) {
-      for (const [oldKey, retiredAt] of _retiredIsolatedTurns) {
-        if (now - retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
+      for (const [oldKey, retired] of _retiredIsolatedTurns) {
+        if (now - retired.retiredAt >= ISOLATED_TURN_TTL_MS) _retiredIsolatedTurns.delete(oldKey);
       }
     }
   }
-  function _isRetiredIsolatedTurn(key: string): boolean {
-    const retiredAt = _retiredIsolatedTurns.get(key);
-    if (!retiredAt) return false;
-    if (Date.now() - retiredAt < ISOLATED_TURN_TTL_MS) return true;
+  function _retiredIsolatedTurn(key: string): RetiredIsolatedTurn | null {
+    const retired = _retiredIsolatedTurns.get(key);
+    if (!retired) return null;
+    if (Date.now() - retired.retiredAt < ISOLATED_TURN_TTL_MS) return retired;
     _retiredIsolatedTurns.delete(key);
-    return false;
+    return null;
+  }
+
+  function _createTurnDeadline(input: {
+    scope: 'E2EE_V2' | 'A2A' | 'OWNER'; turnId: string; sinkKey: string; taskId: string;
+    explicitTimeoutMs?: number; reject: (error: Error) => void;
+  }) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active: { providerId: string; configuredMs: number; waitMs: number; startedAt: number } | null = null;
+    let expired = false;
+    const timeoutError = () => {
+      const error: any = new Error(`${input.scope} Provider reply timed out`);
+      error.deliveryOutcome = 'outcome_unknown';
+      error.code = `${input.scope}_PROVIDER_REPLY_TIMEOUT`;
+      return error;
+    };
+    return {
+      select(providerId: string, provider: DispatcherProvider) {
+        if (expired) throw timeoutError();
+        if (timer) clearTimeout(timer);
+        const timeout = resolveTurnDeadlineMs(provider, input.explicitTimeoutMs);
+        active = { providerId, ...timeout, startedAt: Date.now() };
+        console.log(`[Dispatcher] Provider deadline selected scope=${input.scope} providerId=${providerId} configuredTimeoutMs=${timeout.configuredMs} waitMs=${timeout.waitMs} turnId=${input.turnId}`);
+        timer = setTimeout(() => {
+          expired = true;
+          const selected = active!;
+          _retireIsolatedTurn(input.sinkKey, { timedOut: true, providerId: selected.providerId,
+            taskId: input.taskId, waitMs: selected.waitMs });
+          const actualWaitMs = Date.now() - selected.startedAt;
+          console.error(`[Dispatcher] Provider result unknown scope=${input.scope} providerId=${selected.providerId} configuredTimeoutMs=${selected.configuredMs} waitMs=${selected.waitMs} actualWaitMs=${actualWaitMs} turnId=${input.turnId}`);
+          input.reject(timeoutError());
+        }, timeout.waitMs);
+        timer.unref?.();
+      },
+      clear() { if (timer) clearTimeout(timer); timer = null; },
+    };
   }
   function _acceptProviderEvent(event: ProviderCoreEvent): boolean {
     if (!_providerEventGate.accept(event)) return false;
@@ -372,8 +446,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
           const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
-          if (replyTurnKey && _isRetiredIsolatedTurn(replyTurnKey)) {
-            console.warn(`[Dispatcher] 丢弃已结束 isolated turn 的迟到回复 agent=${reply.agentId || '-'} turn=${reply.turnId}`);
+          const retired = replyTurnKey ? _retiredIsolatedTurn(replyTurnKey) : null;
+          if (replyTurnKey && retired) {
+            const delayMs = Math.max(0, Date.now() - retired.retiredAt);
+            console.warn(`[Dispatcher] isolated_late_reply_dropped agent=${reply.agentId || '-'} turnId=${reply.turnId} providerId=${retired.providerId || _providerIds.get(p) || 'unknown'} taskId=${retired.taskId || '-'} messageId=${reply.replyId || '-'} timedOut=${retired.timedOut} delayMs=${delayMs}`);
             return;
           }
           if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee|e2ee-canary):/.test(String(reply.visitorId || ''))) {
@@ -1120,6 +1196,7 @@ ${body}
     agentId: string,
     payload: PushPayload,
     a2aContext: ReplyContext | null = null,
+    onProviderAttempt?: (providerId: string, provider: DispatcherProvider) => void,
   ): Promise<any> {
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
@@ -1180,6 +1257,7 @@ ${body}
             target: nextRoute.provider,
           };
         },
+        onAttempt: (candidate: any) => onProviderAttempt?.(candidate.providerId, candidate.target),
         invoke: async (candidate: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
           if (executionScope === 'a2a_mailbox') {
@@ -1303,12 +1381,13 @@ ${body}
         error.deliveryOutcome='rejected';rejectReply(error);return; }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => { _retireIsolatedTurn(sinkKey); rejectReply(new Error('owner-chat Provider reply timed out')); }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    const deadline = _createTurnDeadline({ scope: 'OWNER', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const route = _ownerRouteEntry(options.agentId);
       if (!route) { const error = new Error('Owner Provider transport is not supported or safely verified');
         (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_RUNTIME_UNSUPPORTED'; throw error; }
+      deadline.select(route.providerId, route.provider);
       const selectedBinding = _bindingForRoute(options.agentId, options.binding || null, route);
       if (options.binding?.strictSessionRoute && !selectedBinding) { const error = new Error('Owner Provider cannot restore the precise session');
         (error as any).deliveryOutcome = 'not_delivered'; (error as any).code = 'OWNER_SESSION_UNAVAILABLE'; throw error; }
@@ -1328,7 +1407,7 @@ ${body}
       catch (error) { _forgetRoute(options.agentId, 'owner_push', route.provider); throw error; }
       return { reply: await replyPromise, receipt: { deliveryReceipt: receipt,
         provider: { providerId: route.providerId, providerType: _providerFamily(route.providerId), deliveryMode: _providerMode(route.providerId) } } };
-    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
+    } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeIsolated(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1353,14 +1432,8 @@ ${body}
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     void replyPromise.catch(() => undefined);
     _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
-    const timeout = setTimeout(() => {
-      _retireIsolatedTurn(sinkKey);
-      const error: any = new Error(`${prefix} Provider reply timed out`);
-      error.deliveryOutcome = 'outcome_unknown';
-      error.code = `${prefix.toUpperCase()}_PROVIDER_REPLY_TIMEOUT`;
-      rejectReply(error);
-    }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    const deadline = _createTurnDeadline({ scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const delivery = await _doRoute(options.agentId, {
         agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
@@ -1371,7 +1444,7 @@ ${body}
         protocolContextId: options.protocolContextId, bindingGeneration: options.bindingGeneration,
         attachments: options.attachments, attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      });
+      }, null, (providerId, provider) => deadline.select(providerId, provider));
       if (delivery?.outcome !== 'delivered') {
         const error = new Error(`${prefix} Provider delivery ${delivery?.outcome || 'failed'}`);
         (error as any).deliveryOutcome = delivery?.outcome || 'outcome_unknown';
@@ -1380,7 +1453,7 @@ ${body}
       }
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
-    } finally { clearTimeout(timeout); _retireIsolatedTurn(sinkKey); }
+    } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
   async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
@@ -1437,11 +1510,8 @@ ${body}
       }
       resolveReply(reply);
     });
-    const timeout = setTimeout(() => {
-      _retireIsolatedTurn(sinkKey);
-      rejectReply(new Error('E2EE v2 Provider reply timed out'));
-    }, options.timeoutMs || 120_000);
-    timeout.unref?.();
+    const deadline = _createTurnDeadline({ scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const delivery = await _doRoute(options.agentId, {
         ...workingPayload,
@@ -1451,7 +1521,7 @@ ${body}
         attachments: options.attachments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      }, prepared.context);
+      }, prepared.context, (providerId, provider) => deadline.select(providerId, provider));
       if (delivery?.outcome !== 'delivered') {
         const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
@@ -1461,7 +1531,7 @@ ${body}
       options.onProviderAccepted?.(receipt);
       return { reply: await replyPromise, receipt };
     } finally {
-      clearTimeout(timeout);
+      deadline.clear();
       _retireIsolatedTurn(sinkKey);
     }
   }
@@ -1696,4 +1766,4 @@ ${body}
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }
 
-module.exports = { createDispatcher };
+module.exports = { createDispatcher, resolveTurnDeadlineMs };

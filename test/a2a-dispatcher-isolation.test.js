@@ -127,7 +127,7 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': provider }, onAgentReply(reply) { ordinary.push(reply); } });
   await assert.rejects(dispatcher.executeIsolated({ agentId: 'agent-1', taskId: 'slow-message',
     contextId: 'slow-conversation', content: 'slow delivery', sourceType: 'agent_peer',
-    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 10 }), error => {
+    executionScope: 'a2a_mailbox', principalScope:'principal-scope-1',sessionScopeId:'session-scope-1',protocolContextId:'slow-conversation',bindingGeneration:1,timeoutMs: 5_000 }), error => {
       assert.match(error.message, /Provider reply timed out/);
       assert.equal(error.deliveryOutcome, 'outcome_unknown');
       assert.equal(error.code, 'A2A_PROVIDER_REPLY_TIMEOUT');
@@ -138,6 +138,30 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   provider.emit('agent.reply', { agentId: 'agent-1', visitorId: provider.payload.fromUid,
     replyId: 'missing-turn', content: 'unattributed isolated result', done: true });
   assert.equal(ordinary.length, 0, 'late or unattributed isolated replies must never enter the ordinary message path');
+});
+
+test('E2EE and Owner Chat timeouts use stable outcome-unknown results', async () => {
+  const e2eeProvider = new Provider();
+  e2eeProvider.push = payload => { e2eeProvider.payload = payload; return { nativeSessionId: 'e2ee-timeout-session' }; };
+  const ownerProvider = new Provider();
+  ownerProvider.pushOwner = payload => { ownerProvider.payload = payload; return { nativeSessionId: 'owner-timeout-session' }; };
+  const e2eeDispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': e2eeProvider }, onAgentReply() {} });
+  const ownerDispatcher = createDispatcher({ db: db(), providers: { 'codex-app-server': ownerProvider }, onAgentReply() {} });
+  const transport = ownerDispatcher.getOwnerTransportStatus('agent-1');
+  const ownerExecutionContext = { sourceType:'owner_chat',authority:'verified_owner_conversation',executionScope:'owner_chat',
+    ownerConversationId:'owner-timeout-context',commandMessageId:'owner-timeout-task',configDigest:transport.configDigest,
+    providerId:transport.providerId };
+  const [e2ee, owner] = await Promise.allSettled([
+    e2eeDispatcher.executeE2ee({ agentId:'agent-1',taskId:'e2ee-timeout-task',contextId:'e2ee-timeout-context',
+      content:'wait',sessionScopeId:'e2ee-timeout-scope',timeoutMs:5_000 }),
+    ownerDispatcher.executeOwner({ agentId:'agent-1',taskId:'owner-timeout-task',contextId:'owner-timeout-context',
+      content:'wait',sourceType:'owner_chat',executionScope:'owner_chat',ownerExecutionContext,timeoutMs:5_000 }),
+  ]);
+  for (const [result, code] of [[e2ee, 'E2EE_V2_PROVIDER_REPLY_TIMEOUT'], [owner, 'OWNER_PROVIDER_REPLY_TIMEOUT']]) {
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason.code, code);
+    assert.equal(result.reason.deliveryOutcome, 'outcome_unknown');
+  }
 });
 
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {

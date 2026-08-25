@@ -60,6 +60,7 @@ class HermesCliProvider extends PushProvider {
   }
 
   get priority() { return 1; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === 'hermes';

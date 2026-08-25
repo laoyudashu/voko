@@ -52,6 +52,7 @@ class OpenClawCliProvider extends PushProvider {
 
   /** CLI 兜底通道：长连接不通时才用，优先级低。 */
   get priority() { return 1; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   match(_agentId: string, meta?: AgentMeta | null): boolean {
     return meta?.backend_type === 'openclaw';

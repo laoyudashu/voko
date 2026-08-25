@@ -59,6 +59,7 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
   }
 
   get priority(): number { return 10; }
+  getTurnTimeoutMs(): number { return this._turnTimeoutMs; }
   get sessionMode(): 'agent-issued-id' { return 'agent-issued-id'; }
   get capabilities(): string[] { return ['http', 'async_reply', 'session_resume', 'cancel']; }
 

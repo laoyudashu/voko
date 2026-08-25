@@ -2,6 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PROVIDER_CATALOG, getProviderFamily, getProviderTransport, validateProviderCatalog } = require('../build/core/dispatcher/provider-catalog');
 const { DeliveryExecutor } = require('../build/core/dispatcher/delivery-executor');
+const { resolveTurnDeadlineMs } = require('../build/core/dispatcher');
+
+test('Provider turn deadline follows the selected transport with settlement grace and bounds', () => {
+  assert.deepEqual(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 180_000 }), { configuredMs: 180_000, waitMs: 195_000 });
+  assert.deepEqual(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 300_000 }), { configuredMs: 300_000, waitMs: 315_000 });
+  assert.deepEqual(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 60_000 }), { configuredMs: 60_000, waitMs: 75_000 });
+  assert.equal(resolveTurnDeadlineMs({}, undefined).waitMs, 135_000);
+  assert.equal(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 900_000 }).waitMs, 600_000);
+  assert.equal(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 180_000 }, 2_000).waitMs, 5_000);
+  assert.equal(resolveTurnDeadlineMs({ getTurnTimeoutMs: () => 180_000 }, 700_000).waitMs, 600_000);
+});
 
 test('Provider Catalog has valid explicit transports and instance requirements', () => {
   assert.deepEqual(validateProviderCatalog(), []);
@@ -69,6 +80,7 @@ test('A2A exact-session capability is explicit for special transports', () => {
 
 test('DeliveryExecutor retries at most one backup only for confirmed not_delivered', async () => {
   const calls = [];
+  const attempts = [];
   const targets = [{ id: 'primary' }, { id: 'backup' }, { id: 'third' }];
   const executor = new DeliveryExecutor();
   const result = await executor.execute({
@@ -77,10 +89,12 @@ test('DeliveryExecutor retries at most one backup only for confirmed not_deliver
       return target ? { providerId: target.id, providerType: 'test', deliveryMode: 'cli', target } : null;
     },
     async invoke(candidate) { calls.push(candidate.providerId); throw Object.assign(new Error('down'), { deliveryOutcome: 'not_delivered' }); },
+    onAttempt(candidate) { attempts.push(candidate.providerId); },
     classify: error => error.deliveryOutcome,
   });
   assert.equal(result.outcome, 'not_delivered');
   assert.deepEqual(calls, ['primary', 'backup']);
+  assert.deepEqual(attempts, ['primary', 'backup']);
 });
 
 test('DeliveryExecutor never retries outcome_unknown or rejected', async () => {

@@ -168,6 +168,7 @@ class CliAdapter extends PushProvider {
   }
 
   get priority() { return this._priority; }
+  getTurnTimeoutMs(): number { return this._timeout; }
   get capabilities() { return ['streaming']; }
 
   useDispatcherSessionPersistence(): void {

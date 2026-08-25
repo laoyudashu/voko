@@ -1538,6 +1538,7 @@ class OpenClawWsProvider {
 
   /** 长连接通道：路由优先级高于 CLI 兜底（数大优先）。 */
   get priority() { return 10; }
+  getTurnTimeoutMs(): number { return 60_000; }
 
   /** 归属判断：backend_type 为 openclaw 的 agent 归本 provider。 */
   match(_agentId: string, meta?: AgentMeta | null): boolean {

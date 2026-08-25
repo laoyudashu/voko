@@ -89,6 +89,7 @@ export class CodexAppServerProvider extends EventEmitter {
     return (this.available = this.runtimeResolver.resolve(RUNTIME_REQUEST).available);
   }
   get capabilities(): string[] { return ['owner-io', 'streaming', 'session_resume', 'cancel', 'approval']; }
+  getTurnTimeoutMs(): number { return 120_000; }
 
   start(): void { this.healthCheck(); }
   async stop(): Promise<void> {

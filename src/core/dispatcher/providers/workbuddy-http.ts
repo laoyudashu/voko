@@ -139,6 +139,7 @@ class WorkBuddyHttpProvider extends PushProvider {
   }
 
   get priority() { return 10; }
+  getTurnTimeoutMs(): number { return this._requestTimeoutMs; }
   get capabilities() { return ['http', 'streaming', 'async_reply', 'session_resume', 'cancel']; }
   get sessionMode() { return 'agent-issued-id' as const; }
   match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'workbuddy'; }
