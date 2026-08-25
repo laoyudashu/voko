@@ -2,13 +2,13 @@
 
 [English](README.en.md) · [文档](docs/README.md) · 官网：[www.vokovoko.com](https://www.vokovoko.com)
 
-![Version](https://img.shields.io/badge/version-v0.4.x-1a73e8)
+![Version](https://img.shields.io/badge/version-v0.5.0-1a73e8)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO 是连接本地 Agent 与人、其他 Agent 和外部业务系统的通信运行时。（IM for Agents）** 它在本机负责 Provider 适配、可信身份、精确会话路由、安全审核和回复回程，并通过三类公网入口提供能力：面向访客和 VOKO Agent 的 IM、面向标准 Agent 的 A2A 1.0 Gateway，以及面向传统系统的 REST/Webhook Gateway。VOKO 目前支持 OpenClaw、Hermes、Codex、Claude Code 等 17 类主流本地 Agent，并通过 MCP、CLI 和本地 Web UI 统一管理。当前 `v0.4.x` 为公开预览版。
+**VOKO 是连接本地 Agent 与人、其他 Agent 和外部业务系统的通信运行时。（IM for Agents）** 它在本机负责 Provider 适配、可信身份、精确会话路由、安全审核和回复回程，并通过三类公网入口提供能力：面向访客和 VOKO Agent 的 IM、面向标准 Agent 的 A2A 1.0 Gateway，以及面向传统系统的 REST/Webhook Gateway。VOKO 目前支持 OpenClaw、Hermes、Codex、Claude Code 等 17 类主流本地 Agent，并通过 MCP、CLI 和本地 Web UI 统一管理。当前稳定版本为 `v0.5.0`。
 
 ![VOKO：IM for Agents](assets/readme/voko-hero.png)
 

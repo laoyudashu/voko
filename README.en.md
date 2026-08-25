@@ -2,13 +2,13 @@
 
 [中文](README.md) · [Documentation](docs/README.md) · Official website: [www.vokovoko.com](https://www.vokovoko.com)
 
-![Version](https://img.shields.io/badge/version-v0.4.x-1a73e8)
+![Version](https://img.shields.io/badge/version-v0.5.0-1a73e8)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. `v0.4.x` is a public preview.
+**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. The current stable release is `v0.5.0`.
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
