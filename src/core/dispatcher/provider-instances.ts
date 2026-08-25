@@ -7,6 +7,7 @@ const { getHermesProfilesDir } = require('../hermes-paths');
 const { resolveZeroClawCommand } = require('./zeroclaw-command');
 const { discoverWorkBuddyAgents } = require('./workbuddy-agents');
 const { discoverQwenOfficeAgents } = require('./qwen-office-agents');
+const { discoverDuMateAgents } = require('./dumate-agents');
 
 export interface ProviderInstance {
   id: string;
@@ -16,12 +17,13 @@ export interface ProviderInstance {
 }
 
 const INSTANCE_PROVIDERS = new Set([
-  'openclaw', 'hermes', 'zeroclaw', 'workbuddy', 'qwen-office', 'deepseek-harness',
+  'openclaw', 'hermes', 'zeroclaw', 'workbuddy', 'qwen-office', 'dumate', 'deepseek-harness',
   'opencode', 'github-copilot', 'claude-code', 'codex', 'kiro',
 ]);
 const INSTANCE_TERMS: Record<string, string> = {
   openclaw: 'Agent', hermes: 'Profile', zeroclaw: 'Agent', workbuddy: 'Expert',
   'qwen-office': 'Expert Kit',
+  dumate: 'Agent',
   opencode: 'Agent', 'github-copilot': 'Agent', 'claude-code': 'Agent',
   codex: 'Profile', kiro: 'Agent', goose: 'Recipe',
   'deepseek-harness': 'Agent Preset',
@@ -153,6 +155,7 @@ export function discoverProviderInstances(providerType: unknown): ProviderInstan
   else if (type === 'zeroclaw') instances = zeroClawInstances();
   else if (type === 'workbuddy') instances = discoverWorkBuddyAgents();
   else if (type === 'qwen-office') instances = discoverQwenOfficeAgents();
+  else if (type === 'dumate') instances = discoverDuMateAgents();
   else if (type === 'deepseek-harness') instances = deepSeekHarnessInstances();
   else if (type === 'opencode') instances = fileStemInstances([
     path.join(os.homedir(), '.config', 'opencode', 'agents'),

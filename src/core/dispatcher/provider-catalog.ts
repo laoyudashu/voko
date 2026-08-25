@@ -82,6 +82,7 @@ const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
   'pi-cli': 'pi', 'qwen-cli': 'qwen', 'kiro-cli': 'kiro-cli',
   'aider-cli': 'aider', 'grok-cli': 'grok', 'reasonix-cli': 'reasonix',
   'qwen-office-cli': 'qoderclicn', 'traecli-acp': 'traecli',
+  'dumate-http': 'dumate-opencode',
   'workbuddy-http': 'codebuddy', 'codebuddy-acp': 'codebuddy',
   'deepseek-harness-cli': 'dsh',
 };
@@ -187,6 +188,16 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
     { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true },
+  ] },
+  { type: 'dumate', aliases: ['baidu-dumate'], label: '百度搭子 (DuMate)', requiresInstance: true, defaultDeliveryModes: ['http', 'pull'], transports: [
+    transport({ id: 'dumate-http', mode: 'http', priority: 10, operations: ['push', 'steer'],
+      modulePath: './providers/dumate-http', exportName: 'DuMateHttpProvider',
+      safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
+      supportsLoopback: false,
+      capabilities: { streaming: true, sessionResume: true },
+      exactSession: { nativeSessionNamespace: 'dumate-http', restoreCompatibilityGroup: 'dumate-http' },
+      options: context => context.getProviderConfig?.('dumate-http') || {},
+    }),
   ] },
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider', 'aider-dry-run')] },

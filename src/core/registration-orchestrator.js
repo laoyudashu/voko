@@ -27,12 +27,14 @@ const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/
 const { resolveDeepSeekHarnessRuntime } = require('./dispatcher/deepseek-harness-command');
 const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
 const { discoverQwenOfficeAgents } = require('./dispatcher/qwen-office-agents');
+const { discoverDuMateAgents } = require('./dispatcher/dumate-agents');
+const { isDuMateRuntimeAvailable } = require('./dispatcher/dumate-command');
 const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
 
 const PROVIDER_DISPLAY_PRIORITY = [
   'workbuddy', 'deepseek-harness', 'claude-code', 'codex', 'openclaw', 'hermes',
-  'github-copilot', 'cursor', 'gemini', 'codebuddy', 'qwen-office',
+  'github-copilot', 'cursor', 'gemini', 'codebuddy', 'qwen-office', 'dumate',
   'qwen-code', 'trae', 'goose', 'opencode', 'cline', 'kiro', 'aider',
   'amazon-q', 'openhands', 'pi', 'grok', 'reasonix', 'zeroclaw', 'zcode', 'doubao',
 ];
@@ -139,6 +141,7 @@ const DESKTOP_APPLICATIONS = [
   { type: 'workbuddy', label: 'WorkBuddy', pattern: /\bworkbuddy\b/i },
   { type: 'doubao', label: '豆包', pattern: /豆包|\bdoubao\b/i },
   { type: 'qwen-office', label: '千问办公 (QwenWork)', pattern: /千问办公|qwenwork(?:cn)?/i },
+  { type: 'dumate', label: '百度搭子 (DuMate)', pattern: /百度搭子|\bdumate\b/i },
   { type: 'trae', label: 'Trae', pattern: /\btrae(?:\s*\(user\))?\b|trae\s+(?:work|solo)/i },
 ];
 const SESSION_EXTENSIONS = new Set(['.json', '.jsonl', '.db', '.sqlite', '.sqlite3']);
@@ -161,6 +164,7 @@ function currentAgentTypeFromText(value) {
     ['gemini', /(?:^|[\\/\s])gemini(?:\.exe)?(?:\s|$)/],
     ['qwen-code', /(?:^|[\\/\s])qwen(?:\.exe)?(?:\s|$)|qwen-code/],
     ['qwen-office', /(?:^|[\\/\s])qwenworkcn(?:\.exe)?(?:\s|$)|qwenwork(?:\.exe)?(?:\s|$)|qoderclicn(?:\.exe)?(?:\s|$)|千问办公/],
+    ['dumate', /(?:^|[\\/\s])dumate(?:-opencode)?(?:\.exe)?(?:\s|$)|百度搭子/],
     ['kiro', /(?:^|[\\/\s])kiro-cli(?:\.exe)?(?:\s|$)|(?:^|[\\/\s])kiro(?:\.exe)?(?:\s|$)/],
     ['github-copilot', /(?:^|[\\/\s])copilot(?:\.exe)?(?:\s|$)|github-copilot/],
     ['openhands', /(?:^|[\\/\s])openhands(?:\.exe)?(?:\s|$)/],
@@ -655,6 +659,16 @@ class RegistrationOrchestrator {
         deliveryModes: this.deliveryCapabilities('qwen-office'),
       });
     }
+    let dumateAgents = [];
+    try { dumateAgents = (this.options.dumateAgents || discoverDuMateAgents)(); } catch (_) {}
+    const dumateAvailable = isDuMateRuntimeAvailable();
+    if (dumateAgents.length || dumateAvailable) {
+      detected.push({
+        type: 'dumate', label: '百度搭子 (DuMate)', instanceTerm: getProviderInstanceTerm('dumate'),
+        instances: dumateAgents, supportsMultipleInstances: true, activityState: 'installed',
+        deliveryModes: this.deliveryCapabilities('dumate'),
+      });
+    }
 
     const known = this.db ? getBackendTypes(this.db) : [];
     const knownLabels = new Map(known.map((item) => [item.value, item.label]));
@@ -692,9 +706,9 @@ class RegistrationOrchestrator {
       detected.push({
         type: application.type,
         label: knownLabels.get(application.type) || application.label,
-        ...(application.type === 'qwen-office' ? { instanceTerm: getProviderInstanceTerm('qwen-office') } : {}),
-        instances: application.type === 'qwen-office' ? qwenOfficeAgents : [],
-        supportsMultipleInstances: application.type === 'qwen-office',
+        ...(['qwen-office', 'dumate'].includes(application.type) ? { instanceTerm: getProviderInstanceTerm(application.type) } : {}),
+        instances: application.type === 'qwen-office' ? qwenOfficeAgents : application.type === 'dumate' ? dumateAgents : [],
+        supportsMultipleInstances: ['qwen-office', 'dumate'].includes(application.type),
         activityState: 'installed',
         deliveryModes: this.deliveryCapabilities(application.type),
       });
@@ -752,6 +766,8 @@ class RegistrationOrchestrator {
         ? this.options.workBuddyAgents()
         : type === 'qwen-office' && this.options.qwenOfficeAgents
           ? this.options.qwenOfficeAgents()
+          : type === 'dumate' && this.options.dumateAgents
+            ? this.options.dumateAgents()
           : discoverProviderInstances(type);
       return { success: true, providerType: type, instances };
     } catch (error) {
@@ -765,7 +781,9 @@ class RegistrationOrchestrator {
     const label = known.find((item) => item.value === type)?.label || type;
     const allInstances = supportsProviderInstances(type)
       ? (type === 'qwen-office' && this.options.qwenOfficeAgents
-        ? this.options.qwenOfficeAgents() : discoverProviderInstances(type))
+        ? this.options.qwenOfficeAgents()
+        : type === 'dumate' && this.options.dumateAgents ? this.options.dumateAgents()
+        : discoverProviderInstances(type))
       : [];
     const matchedInstance = instanceId ? allInstances.find((instance) => instance.id === instanceId) : null;
     const instances = matchedInstance ? [matchedInstance] : allInstances;
@@ -893,6 +911,17 @@ class RegistrationOrchestrator {
         },
         pull,
       ];
+    }
+    if (type === 'dumate') {
+      const available = isDuMateRuntimeAvailable();
+      return [{
+        mode: 'http', label: 'DuMate HTTP 精准对话', role: 'primary',
+        status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+        action: available ? 'test' : null,
+        description: available
+          ? 'VOKO 管理独立回环 dumate-opencode 服务，通过 Plugin Part 精准激活所选 Agent，并续接原生会话。'
+          : '未检测到 DuMate 内置 dumate-opencode。',
+      }, pull];
     }
     if (type === 'deepseek-harness') {
       const runtime = resolveDeepSeekHarnessRuntime();
@@ -1251,6 +1280,8 @@ class RegistrationOrchestrator {
       ? (this.options.workBuddyAgents || discoverWorkBuddyAgents)()
       : providerType === 'qwen-office'
         ? (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)()
+        : providerType === 'dumate'
+          ? (this.options.dumateAgents || discoverDuMateAgents)()
         : detected?.instances || [];
     let instanceId = cleanText(input.instanceId, 160);
     if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
@@ -1264,6 +1295,9 @@ class RegistrationOrchestrator {
     }
     if (providerType === 'qwen-office' && instanceId && !instances.some((item) => item.id === instanceId)) {
       return { success: false, error: '所选千问办公专家套件不存在、清单无效或不可用' };
+    }
+    if (providerType === 'dumate' && instanceId && !instances.some((item) => item.id === instanceId)) {
+      return { success: false, error: '所选 DuMate Agent 不存在、清单无效或不可用' };
     }
     if (providerType === 'deepseek-harness' && instanceId && !instances.some((item) => item.id === instanceId)) {
       return { success: false, error: '所选 DeepSeek Harness Agent Preset 不存在或不可用' };
@@ -1479,6 +1513,12 @@ class RegistrationOrchestrator {
       detail = ready
         ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
         : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
+    } else if (provider === 'dumate' && mode === 'http') {
+      const instances = (this.options.dumateAgents || discoverDuMateAgents)();
+      ready = isDuMateRuntimeAvailable() && instances.some((item) => item.id === session.provider?.instanceId);
+      detail = ready
+        ? '已检测到 dumate-opencode 和所选 Agent；Provider 启动时将复核 Plugin Part 精准路由。'
+        : 'dumate-opencode 或所选 DuMate Agent 不可用。';
     } else if (provider === 'deepseek-harness' && mode === 'http') {
       const runtime = resolveDeepSeekHarnessRuntime();
       const instances = discoverProviderInstances('deepseek-harness');
@@ -1597,6 +1637,12 @@ class RegistrationOrchestrator {
       const instances = (this.options.qwenOfficeAgents || discoverQwenOfficeAgents)();
       if (!instances.some((item) => item.id === session.provider.instanceId)) {
         return { success: false, error: '所选千问办公专家套件已不存在、清单无效或不可用，请返回上一步重新选择' };
+      }
+    }
+    if (session.provider.type === 'dumate' && session.provider.instanceId) {
+      const instances = (this.options.dumateAgents || discoverDuMateAgents)();
+      if (!instances.some((item) => item.id === session.provider.instanceId)) {
+        return { success: false, error: '所选 DuMate Agent 已不存在或不可用，请返回上一步重新选择' };
       }
     }
     session.accessMode = input.accessMode === 'public' ? 'public' : 'private';

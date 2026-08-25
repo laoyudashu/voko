@@ -40,6 +40,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [Grok CLI](grok.md)：OAuth/API 配置、无工具 Plan CLI、原生 session 和代理检查。
 - [Qwen Code](qwen-code.md)：无头 safe/plan CLI、DeepSeek 配置、原生 session 续接和 Pull 兜底。
 - [千问办公](qwen-office.md)：专家套件发现与精确实例绑定、`qoderclicn` stream-json CLI、session 续接和 Pull 兜底。
+- [百度搭子](dumate.md)：用户 Plugin Pack 发现、Plugin Part 精准路由、原生 session Resume 和 fail-closed 校验。
 - [Trae](trae.md)：Trae MCP 客户端配置、独立 `traecli` ACP、桌面入口边界和 Pull 兜底。
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
