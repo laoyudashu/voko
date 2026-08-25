@@ -168,6 +168,13 @@ function deliveryOutcome(error: unknown): DeliveryOutcome {
   return 'outcome_unknown';
 }
 
+function isInternalProviderProtocol(content: unknown): boolean {
+  if (typeof content !== 'string') return false;
+  const compact = content.trim().slice(0, 4096).replace(/\s+/g, '');
+  return /^<\|{1,2}DSML\|{1,2}(?:tool_calls|invoke|parameter)>/i.test(compact)
+    || /^<\/?(?:tool_calls?|function_calls?|invoke)(?:\s|>)/i.test(content.trim());
+}
+
 const DEFAULT_PROVIDER_TURN_TIMEOUT_MS = 120_000;
 const PROVIDER_SETTLEMENT_GRACE_MS = 15_000;
 const MIN_TURN_DEADLINE_MS = 5_000;
@@ -458,6 +465,15 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
             return;
           }
           const providerId = _providerIds.get(p) || 'unregistered';
+          if (reply.done !== false && isInternalProviderProtocol(reply.content)) {
+            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'}`);
+            const isolatedSink = reply.turnId
+              ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+              : undefined;
+            if (isolatedSink) isolatedSink({ ...reply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
+              errorCode: 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT', deliveryOutcome: 'outcome_unknown' });
+            return;
+          }
           _acceptProviderEvent({
             eventId: reply.replyId
               ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
@@ -1379,7 +1395,7 @@ ${body}
     _isolatedReplySinks.set(sinkKey, reply => {
       if (reply.done === false) return;
       if (reply.error) { const error: any=new Error(String(reply.error));error.code=String((reply as any).errorCode||'OWNER_PROVIDER_TURN_FAILED');
-        error.deliveryOutcome='rejected';rejectReply(error);return; }
+        error.deliveryOutcome=String((reply as any).deliveryOutcome||'rejected');rejectReply(error);return; }
       resolveReply(reply);
     });
     const deadline = _createTurnDeadline({ scope: 'OWNER', turnId, sinkKey, taskId: options.taskId,
@@ -1432,7 +1448,16 @@ ${body}
     let rejectReply!: (error: Error) => void;
     const replyPromise = new Promise<ProviderReply>((resolve, reject) => { resolveReply = resolve; rejectReply = reject; });
     void replyPromise.catch(() => undefined);
-    _isolatedReplySinks.set(sinkKey, (reply) => { if (reply.done !== false) resolveReply(reply); });
+    _isolatedReplySinks.set(sinkKey, (reply) => {
+      if (reply.done === false) return;
+      if (reply.error) {
+        const error: any = new Error(String(reply.error));
+        error.code = String((reply as any).errorCode || 'ISOLATED_PROVIDER_TURN_FAILED');
+        error.deliveryOutcome = String((reply as any).deliveryOutcome || 'rejected');
+        rejectReply(error); return;
+      }
+      resolveReply(reply);
+    });
     const deadline = _createTurnDeadline({ scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
@@ -1497,7 +1522,7 @@ ${body}
       if (reply.error) {
         const error: any = new Error(String(reply.error));
         error.code = String((reply as any).errorCode || 'E2EE_V2_PROVIDER_TURN_FAILED');
-        error.deliveryOutcome = 'rejected'; rejectReply(error); return;
+        error.deliveryOutcome = String((reply as any).deliveryOutcome || 'rejected'); rejectReply(error); return;
       }
       if (sourceType === 'agent_peer') {
         const parsed = parseA2AState(String(reply.content || '')).state;

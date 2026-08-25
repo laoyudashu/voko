@@ -71,8 +71,13 @@ test('WorkBuddy only resolves its bundled runtime and starts a text-only local s
     '--session-id', 'voko-session', '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config',
   ]);
   assert.deepEqual(workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session', {
-    agentId: 'expert-a', pluginRoot: 'C:\\safe\\expert-a',
+    agentId: 'expert-a', pluginRoot: 'C:\\safe\\expert-a', dataFile: 'C:\\Users\\test\\.workbuddy\\expert-a\\data.json',
   }).slice(0, 5), ['bundled-cli', '--plugin-dir', 'C:\\safe\\expert-a', '--agent', 'expert-a']);
+  assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: 'C:\\Users\\test\\.workbuddy\\expert-a\\data.json',
+  }).slice(-7), ['dontAsk', '--tools', 'Read,Write', '--allowedTools',
+    'Read(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)',
+    'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
 });
 
 test('WorkBuddy request uses Gateway Protocol, opaque scopes and returns the native session', async () => {

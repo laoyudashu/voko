@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -62,15 +63,19 @@ function mergeMarkdown(current: string, incoming: string): string {
 }
 
 function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string,
-  target: { agentId?: string; pluginRoot?: string } = {}): string[] {
+  target: { agentId?: string; pluginRoot?: string; dataFile?: string } = {}): string[] {
+  const dataTools = target.dataFile
+    ? ['--tools', 'Read,Write', '--allowedTools', `Read(${target.dataFile})`, `Write(${target.dataFile})`]
+    : ['--tools', ''];
   return [...argsPrefix, ...(target.pluginRoot ? ['--plugin-dir', target.pluginRoot] : []),
     ...(target.agentId ? ['--agent', target.agentId] : []), '--serve', '--host', '127.0.0.1', '--port', String(port),
-    '--session-id', sessionId, '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config'];
+    '--session-id', sessionId, '--permission-mode', 'dontAsk', ...dataTools, '--strict-mcp-config'];
 }
 
 interface ServerState {
   instanceId: string | null;
   pluginRoot: string | null;
+  dataFile: string | null;
   server: ChildProcess | null;
   serverPromise: Promise<void> | null;
   port: number;
@@ -104,7 +109,7 @@ class WorkBuddyHttpProvider extends PushProvider {
     this._fetch = options.fetchImpl || fetch;
     this._spawn = options.spawnImpl || spawn;
     this._resolveAgentTarget = options.resolveAgentTarget || resolveWorkBuddyAgentTarget;
-    this._states.set('', { instanceId: null, pluginRoot: null, server: null, serverPromise: null, port: 0 });
+    this._states.set('', { instanceId: null, pluginRoot: null, dataFile: null, server: null, serverPromise: null, port: 0 });
   }
 
   _currentState(): ServerState { return (this._stateContext.getStore() as ServerState | undefined) || this._states.get('')!; }
@@ -132,7 +137,14 @@ class WorkBuddyHttpProvider extends PushProvider {
     if (!target) throw deliveryError('Bound WorkBuddy agent is unavailable', 'not_delivered');
     let state = this._states.get(instanceId);
     if (!state) {
-      state = { instanceId, pluginRoot: target.pluginRoot, server: null, serverPromise: null, port: 0 };
+      const dataKey = String(target.agentId || instanceId);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(dataKey)) throw deliveryError('WorkBuddy data path is invalid', 'rejected');
+      const workBuddyRoot = path.resolve(os.homedir(), '.workbuddy');
+      const dataRoot = path.resolve(workBuddyRoot, dataKey);
+      if (!dataRoot.startsWith(`${workBuddyRoot}${path.sep}`)) throw deliveryError('WorkBuddy data path is invalid', 'rejected');
+      fs.mkdirSync(dataRoot, { recursive: true });
+      state = { instanceId, pluginRoot: target.pluginRoot, dataFile: path.join(dataRoot, 'data.json'),
+        server: null, serverPromise: null, port: 0 };
       this._states.set(instanceId, state);
     }
     return state;
@@ -192,7 +204,8 @@ class WorkBuddyHttpProvider extends PushProvider {
       this._port = await findFreePort();
       const state = this._currentState();
       const args = workBuddyServeArgs(launch.argsPrefix, this._port, `voko-${crypto.randomUUID()}`,
-        { agentId: state.instanceId || undefined, pluginRoot: state.pluginRoot || undefined });
+        { agentId: state.instanceId || undefined, pluginRoot: state.pluginRoot || undefined,
+          dataFile: state.dataFile || undefined });
       const child = this._spawn(launch.command, args, {
         cwd: this._cwd, env: { ...process.env, NO_COLOR: '1' }, windowsHide: true,
         detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
