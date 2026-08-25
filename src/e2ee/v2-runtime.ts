@@ -26,7 +26,7 @@ type RuntimeOptions={
   directory:E2eeV2DirectoryClient;
   agents:()=>E2eeV2AgentDescriptor[];
   dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
-  persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean;
+  persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
     sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string})=>Promise<{success?:boolean;deliveryState?:string;
@@ -274,6 +274,12 @@ export class E2eeV2Runtime {
         e2eeStrictRoute:Boolean(inboundRouteContext),e2eeAgentPeer:sender.peerKind==='agent',
         e2eeProtocolConversationId:sender.peerKind==='agent'?envelope.conversationId:undefined},prepared.displayContent,
         localMessageId,prepared.contentType);
+      if(projected==='intercepted'){
+        if(!this.options.store.transition(envelope.messageId,['processing'],'completed')){
+          throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
+        }
+        return{handled:true,accepted:true,code:'inbound_intercepted'};
+      }
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
       const result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
         taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,

@@ -2018,8 +2018,9 @@ async function startMcpServer(args?: any, core?: any) {
       e2eeRuntime = new E2eeV2Runtime({store,directory,agents,dispatcher,
         persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType=1)=>{
           if(!messageHandler)return false;
-          return Boolean(messageHandler.handleAgentMessage(agentId,{...message,content:plaintext,contentType,messageId,
-            clientMsgNo:messageId},true));
+          const inbound = {...message,content:plaintext,contentType,messageId,clientMsgNo:messageId};
+          const projected = messageHandler.handleAgentMessage(agentId,inbound,true);
+          return projected ? true : inbound._vokoInboundIntercepted ? 'intercepted' : false;
         },
         persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>{
           if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');

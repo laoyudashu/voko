@@ -15,7 +15,7 @@ const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
 
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply,directoryErrorOnce=false}={}){
+  deliverSecureReply,providerReply,directoryErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -53,7 +53,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
       projectedMessageId:message.messageId,clientMsgNo:message.clientMsgNo,routeContext:message._voko,
-      toUid:message.toUid,e2eeStrictRoute:message.e2eeStrictRoute,e2eeAgentPeer:message.e2eeAgentPeer});return true;},
+      toUid:message.toUid,e2eeStrictRoute:message.e2eeStrictRoute,e2eeAgentPeer:message.e2eeAgentPeer});return inboundDisposition;},
     persistOutbound(agentId,channelId,plaintext,messageId,sourceMessageId){
       persisted.outbound.push({agentId,channelId,plaintext,messageId,sourceMessageId});
     },
@@ -103,6 +103,18 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
     const duplicate=await f.runtime.handle('gym',message);
     assert.equal(duplicate.code,'duplicate');
     assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
+test('business-policy interception completes the receipt without executing Provider',async()=>{
+  const f=fixture({inboundDisposition:'intercepted'});
+  try{
+    const envelope=await f.createEnvelope('message-intercepted','expired service');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.deepEqual(result,{handled:true,accepted:true,code:'inbound_intercepted'});
+    assert.equal(f.store.receipt('message-intercepted').state,'completed');
+    assert.equal(f.counts().providerCalls,0);
   }finally{f.close();}
 });
 

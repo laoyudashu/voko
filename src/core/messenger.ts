@@ -393,6 +393,7 @@ class MessageHandler extends EventEmitter {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward = false): ForwardPayload | undefined {
     const { fromUid, toUid, channelId, content, messageId, timestamp, channelType, contentType,
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
+    const markIntercepted = (reason: string) => { data._vokoInboundIntercepted = reason; };
 
     const reservedPrefix = reservedVisitorPrefix(fromUid);
     if (reservedPrefix) {
@@ -533,6 +534,7 @@ class MessageHandler extends EventEmitter {
     if (agentStatusRow && agentStatusRow.publish_status !== 'published' && agentStatusRow.publish_status !== 'private') {
       const ownerEmail = agentStatusRow.owner_email || '管理员';
       this._sendSystemMessage(agentId, fromUid, 'agent_unpublished', { ownerEmail }, timestamp, systemRoute);
+      markIntercepted('agent_unpublished');
       return;
     }
 
@@ -542,6 +544,7 @@ class MessageHandler extends EventEmitter {
     if (agentStatusRow && this.ac) {
       if (this.ac.isBlacklisted(this.db, agentId, fromUid)) {
         this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp, systemRoute);
+        markIntercepted('blacklisted');
         return;
       }
       if (agentStatusRow.access_mode === 'private') {
@@ -550,6 +553,7 @@ class MessageHandler extends EventEmitter {
           if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
             this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp, systemRoute);
             this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp, messageId, inboundConversationId);
+            markIntercepted('friend_request_received');
             return;
           }
         }
@@ -571,6 +575,7 @@ class MessageHandler extends EventEmitter {
             this._sendSystemMessage(agentId, fromUid, 'trial_welcome', { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           } else {
             this._sendSystemMessage(agentId, fromUid, 'paid_welcome_back', { price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
+            markIntercepted('paid_welcome_back');
             return;
           }
         } else {
@@ -580,6 +585,7 @@ class MessageHandler extends EventEmitter {
             const paidSysCode = pricingRow.trial_minutes > 0 ? 'trial_welcome' : 'paid_required';
             this._sendSystemMessage(agentId, fromUid, paidSysCode, { trialMinutes: pricingRow.trial_minutes, price: pricingRow.price, durationMinutes: pricingRow.duration_minutes }, timestamp, systemRoute);
           }
+          markIntercepted(isBuyCmd ? 'payment_created' : 'payment_required');
           return;
         }
       } else if (conv.session_status === 'active') {
@@ -590,6 +596,7 @@ class MessageHandler extends EventEmitter {
           } else {
             this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
           }
+          markIntercepted(isBuyCmd ? 'payment_created' : 'session_expired');
           return;
         }
       } else if (conv.session_status === 'expired') {
@@ -598,6 +605,7 @@ class MessageHandler extends EventEmitter {
         } else {
           this._sendSystemMessage(agentId, fromUid, 'session_expired', {}, timestamp, systemRoute);
         }
+        markIntercepted(isBuyCmd ? 'payment_created' : 'session_expired');
         return;
       }
     }
@@ -616,6 +624,7 @@ class MessageHandler extends EventEmitter {
         }
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: fromUid, messageId, data: { ruleId: auditResult.matchedKeyword, direction: 'inbound', action: auditResult.action } });
         this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
+        markIntercepted('audit_hard_deny');
         return;
       }
       if (auditResult.action === 'soft_deny') {
@@ -627,7 +636,10 @@ class MessageHandler extends EventEmitter {
     // 检查会话模式：MANUAL 时不转发
     if (channelId) {
       const convMode = this.db.prepare(`SELECT mode FROM conversations WHERE channel_id = ? AND agent_id = ?`).get<ConversationModeRow>(channelId, agentId);
-      if (convMode && convMode.mode === 'MANUAL') return;
+      if (convMode && convMode.mode === 'MANUAL') {
+        markIntercepted('manual_mode');
+        return;
+      }
     }
 
     // 消息是 agent 自己的回复回流，不再次转发

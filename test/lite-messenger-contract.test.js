@@ -57,6 +57,33 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('marks an expired timed session as handled after sending its system response', () => {
+    const systemMessages = [];
+    const fixture = createFixture({ sendSystemMessage: (...args) => systemMessages.push(args) });
+    try {
+      const now = Date.now();
+      fixture.db.prepare(`INSERT INTO agent_pricing
+        (id, agent_id, pricing_model, price, duration_minutes, trial_minutes, enabled, created_at, updated_at)
+        VALUES (?, ?, 'timed', ?, ?, ?, 1, ?, ?)`).run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
+      fixture.db.prepare(`INSERT INTO conversations
+        (user_uid, channel_id, channel_type, name, last_message, last_timestamp, unread_count, agent_id,
+          session_status, session_expire_at)
+        VALUES (?, ?, 1, ?, '', ?, 0, ?, 'expired', ?)`).run(
+          'agent-uid', 'visitor-1', 'visitor-1', Math.floor(now / 1000), 'agent-1', now - 1);
+      const message = inbound();
+
+      const projected = fixture.handler.handleAgentMessage('agent-1', message, true);
+
+      assert.equal(projected, undefined);
+      assert.equal(message._vokoInboundIntercepted, 'session_expired');
+      assert.equal(systemMessages.length, 1);
+      assert.equal(systemMessages[0][2], 'session_expired');
+      assert.equal(fixture.dispatched.length, 0);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('does not persist or deliver Provider internal errors as Agent replies', async () => {
     const fixture = createFixture();
     try {

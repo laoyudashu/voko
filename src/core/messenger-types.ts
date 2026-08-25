@@ -32,6 +32,8 @@ export interface InboundMessage {
   e2eeAgentPeer?: boolean;
   /** Authenticated E2EE protocol context. Never accept this from raw IM input. */
   e2eeProtocolConversationId?: string;
+  /** Local-only business-policy disposition. Never accept this from raw IM input. */
+  _vokoInboundIntercepted?: string;
 }
 
 export interface ForwardPayload {
