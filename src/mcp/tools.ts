@@ -3075,6 +3075,7 @@ function createToolHandlers(cx: McpContext) {
 
       const agent = cx.query<PaymentAgentRow>(`SELECT owner_email, did, private_key FROM agents WHERE agent_id = ?`, [agentId])[0];
       if (!agent) return { success: false, error: '未找到 Agent' };
+      if (String(agent.owner_email || '').trim().toLowerCase() !== currentOwner) return { success: false, error: 'Agent 不属于当前登录用户' };
       if (!agent.did) return { success: false, error: 'Agent 未注册 DID' };
       if (!agent.private_key) return { success: false, error: 'Agent 未配置私钥' };
 

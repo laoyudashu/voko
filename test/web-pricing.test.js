@@ -125,13 +125,21 @@ test('receiving-card selector includes the bank-card owner name', async (t) => {
   const html = await response.text();
   assert.equal(response.status, 200);
   assert.match(html, /张三 · 测试银行 •••• 5678/);
+  assert.match(html, /id="payment-auth-submit"[^>]*disabled/);
+  assert.match(html, /class="payment-card-row"><select[\s\S]*?<\/select><button id="payment-auth-submit"/);
+  assert.ok(html.indexOf('class="payment-card-row"') < html.indexOf('class="card fee-notice"'));
+  assert.match(html, /id="payment-auth-confirm" class="voko-message-dialog"/);
+  assert.match(html, /确认将 Agent「Paid Agent」的收款银行卡更换为“张\* · 测试银行 •••• 5678”吗？/);
+  assert.match(html, /dialog\.showModal\(\)/);
+  assert.doesNotMatch(html, /window\.confirm|onclick="return confirm/);
   assert.match(html, /服务费说明/);
   assert.match(html, /支付手续费：1\.2%/);
   assert.match(html, /收取 1\.2 元手续费，您实际到账 98\.8 元/);
   assert.match(html, /订阅手续费：15%/);
   assert.match(html, /收取 15 元手续费，您实际到账 85 元/);
   assert.match(html, /结算周期说明/);
-  assert.match(html, /第二个工作日统一到账。如遇周末和节假日，顺延至下一个工作日。/);
+  assert.match(html, /class="fee-detail"/);
+  assert.match(html, /第二个工作日统一到账绑定的银行卡。如遇周末和节假日，顺延至下一个工作日。/);
 });
 
 test('successful card binding returns to pricing with paid mode selected', async (t) => {
