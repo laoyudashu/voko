@@ -62,6 +62,11 @@ test('agent edit page renders the server icon and uploads a validated replacemen
   assert.match(html, /form\.getAttribute\("action"\)\|\|location\.href/);
   assert.match(html, /id="voko-auth-email"/);
   assert.doesNotMatch(html, /window\.open\("\/reauth"/);
+  assert.strictEqual((html.match(/class="voko-auth-otp-cell(?: active)?"/g) || []).length, 6);
+  assert.match(html, /id="voko-auth-code" class="voko-auth-otp-input"[^>]*maxlength="6"[^>]*inputmode="numeric"[^>]*autocomplete="one-time-code"/);
+  assert.match(html, /code\.value\.replace\(\/\\D\/g,""\)\.slice\(0,6\)/);
+  assert.match(html, /value\.length===6&&value!==lastSubmittedCode/);
+  assert.match(html, /verify\.click\(\)/);
   assert.match(html, /dlg\.showModal\(\);code\.focus\(\)/);
   assert.match(html, /file\.size>500\*1024/);
   assert.match(html, /id="bt-instance-field"/);
