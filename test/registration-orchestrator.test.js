@@ -724,6 +724,25 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('drops attacker-controlled keys while loading persisted registration sessions', () => {
+    const db = createDb();
+    try {
+      db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)').run(
+        'agent_registration_sessions',
+        '{"__proto__":{"status":"polluted"},"constructor":{"status":"polluted"}}',
+        Date.now(),
+      );
+      const service = new RegistrationOrchestrator({ db });
+      assert.throws(
+        () => service.view('__proto__'),
+        (error) => error.code === 'REGISTRATION_SESSION_NOT_FOUND',
+      );
+      assert.strictEqual(Object.prototype.status, undefined);
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps preflight side-effect free and reports Pull as the creation fallback', async () => {
     const { db, service } = createService();
     try {

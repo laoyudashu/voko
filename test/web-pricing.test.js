@@ -160,3 +160,24 @@ test('successful card binding returns to pricing with paid mode selected', async
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('location'), returnTo);
 });
+
+test('card binding canonicalizes pricing return paths and rejects external redirects', async (t) => {
+  const { base } = await startPricingApp(t);
+  const canonical = '/agents/paid-agent/pricing?mode=timed';
+  const extraQuery = canonical + '&next=https%3A%2F%2Fevil.example';
+  const canonicalized = await fetch(`${base}/agents/paid-agent/payment-auth`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: `paymentAuthId=card-1&returnTo=${encodeURIComponent(extraQuery)}`,
+    redirect: 'manual',
+  });
+  assert.equal(canonicalized.headers.get('location'), canonical);
+
+  const external = await fetch(`${base}/agents/paid-agent/payment-auth`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: `paymentAuthId=card-1&returnTo=${encodeURIComponent('https://evil.example/')}`,
+    redirect: 'manual',
+  });
+  assert.equal(external.headers.get('location'), '/');
+});

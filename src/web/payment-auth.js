@@ -103,7 +103,11 @@ function createPaymentAuthRouter(handlers, db) {
   function pricingReturnPath(value, agentId) {
     const path = String(value || '');
     const expected = '/agents/' + encodeURIComponent(agentId) + '/pricing';
-    return path === expected || path.startsWith(expected + '?') ? path : '';
+    const queryIndex = path.indexOf('?');
+    const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
+    if (pathname !== expected) return '';
+    const params = new URLSearchParams(queryIndex === -1 ? '' : path.slice(queryIndex + 1));
+    return params.get('mode') === 'timed' ? expected + '?mode=timed' : expected;
   }
 
   function currentOwnerEmail() {

@@ -451,7 +451,7 @@ class RegistrationOrchestrator {
     if (!this.db) return;
     try {
       const stored = this._readStoredSessions();
-      for (const [id, session] of Object.entries(stored)) {
+      for (const [id, session] of stored) {
         if (isRegistrationId(id) && session && typeof session === 'object' && session.id === id && session.updatedAt >= now() - SESSION_TTL_MS) {
           this.sessions.set(id, session);
         }
@@ -461,8 +461,15 @@ class RegistrationOrchestrator {
 
   _readStoredSessions() {
     const row = this.db.prepare('SELECT data FROM config WHERE type=?').get(SESSION_CONFIG_TYPE);
-    const stored = row?.data ? JSON.parse(row.data) : {};
-    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const parsed = row?.data ? JSON.parse(row.data) : {};
+    const stored = new Map();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return stored;
+    for (const [id, session] of Object.entries(parsed)) {
+      if (isRegistrationId(id) && session && typeof session === 'object' && !Array.isArray(session)) {
+        stored.set(id, session);
+      }
+    }
+    return stored;
   }
 
   _persistSession(session) {
@@ -473,12 +480,12 @@ class RegistrationOrchestrator {
       transactionStarted = true;
       const cutoff = now() - SESSION_TTL_MS;
       const stored = this._readStoredSessions();
-      for (const [id, existing] of Object.entries(stored)) {
-        if (!existing || typeof existing !== 'object' || existing.updatedAt < cutoff) delete stored[id];
+      for (const [id, existing] of stored) {
+        if (existing.updatedAt < cutoff) stored.delete(id);
       }
-      stored[session.id] = session;
+      stored.set(session.id, session);
       this.db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
-        .run(SESSION_CONFIG_TYPE, JSON.stringify(stored), now());
+        .run(SESSION_CONFIG_TYPE, JSON.stringify(Object.fromEntries(stored)), now());
       this.db.exec('COMMIT');
     } catch (_) {
       if (transactionStarted) {
@@ -514,7 +521,7 @@ class RegistrationOrchestrator {
     if (this.db) {
       try {
         const stored = this._readStoredSessions();
-        const persisted = stored[sessionId];
+        const persisted = stored.get(sessionId);
         if (persisted && typeof persisted === 'object' && persisted.updatedAt >= now() - SESSION_TTL_MS) {
           this.sessions.set(sessionId, persisted);
         }
