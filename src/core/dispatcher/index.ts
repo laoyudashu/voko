@@ -26,6 +26,7 @@ const { getProviderModularRollout, providerModularModeForFamily } = require('./p
 const { ProviderEventGate } = require('./provider-event-gate');
 const { parseA2AState, extractA2AVisibleReply } = require('./parse-state');
 const crypto = require('crypto');
+const { qwenOfficeLoginCommand } = require('./qwen-office-command');
 
 interface DispatcherProvider {
   priority?: number;
@@ -720,6 +721,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       }
       methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
         configured, available, status,
+        ...(key === 'qwen-office-cli' && !available ? { setupCommand: qwenOfficeLoginCommand() } : {}),
         capabilities: getProviderTransport(key)?.capabilities });
     }
 

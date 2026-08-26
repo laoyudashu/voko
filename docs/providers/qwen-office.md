@@ -87,6 +87,8 @@ QwenWork 的 `qoderclicn` 属于当前安装包提供的本地运行时，不是
 $env:VOKO_QWENWORK_CLI_BIN = 'D:\\path\\to\\qoderclicn.exe'
 ```
 
+VOKO 自动识别 Windows 逐版本安装目录，以及 macOS 的 `QwenWorkCN.app`/`千问办公.app` 应用包。官方当前没有 Linux 桌面客户端；Linux 不做同名 PATH 猜测，只有显式设置 `VOKO_QWENWORK_CLI_BIN` 并通过预检时才启用。
+
 ## 千问办公 → VOKO：自定义 MCP
 
 在千问办公的 **设置 → 连接器 / MCP → 自定义 MCP** 中添加 VOKO stdio Server：

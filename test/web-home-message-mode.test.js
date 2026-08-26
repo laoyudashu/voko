@@ -78,7 +78,35 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
   assert.match(html, /codebuddy \/login/);
   assert.match(html, /data-role=\"recheck-workbuddy\"/);
+  assert.match(html, /data-role=setup-qwen/);
+  assert.match(html, /id=\"dlg-qwen-setup\"/);
+  assert.match(html, /data-role=\"recheck-qwen\"/);
+  assert.match(html, /qwen_setup_title/);
+  assert.match(html, /method\.setupCommand/);
+  assert.match(html, /home-message-mode-setup-option/);
+  assert.match(html, /home-message-mode-setup-step/);
+  assert.match(html, /id=\"dlg-workbuddy-setup\"/);
+  assert.match(html, /dialog\.className=\"voko-message-dialog\"/);
+  assert.match(html, /dialog\.showModal\(\)/);
+  assert.match(html, /details\.open=false/);
+  assert.match(html, /max-height:calc\(100vh - 24px\)/);
+  assert.match(html, /data-role=\"close-workbuddy-setup\"/);
+  assert.match(html, /data-role=\"close-workbuddy-setup\"[^>]*aria-label/);
+  assert.match(html, />×<\/button>/);
+  assert.match(html, /data-voko-copy-value=\"npm install -g @tencent-ai\/codebuddy-code\"/);
+  assert.match(html, /data-voko-copy-value=\"codebuddy \/login\"/);
+  assert.match(html, /class=\"voko-copy-button\" data-role=\"copy-workbuddy-command\"/);
+  assert.match(html, /var workBuddyCopySvg=/);
+  assert.match(html, /\+workBuddyCopySvg\+/);
+  assert.doesNotMatch(html, /copy\.dataset\.command/);
+  assert.match(html, /message_mode_install_help/);
+  assert.match(html, /message_mode_login_help/);
+  assert.match(html, /position:fixed;z-index:1000/);
+  assert.match(html, /max-height:calc\(100vh - 16px\);overflow:auto/);
+  assert.match(html, /window\.addEventListener\("resize"/);
   assert.match(html, /delivery-channels\/verify/);
+  assert.match(html, /showVokoConfirm\(I\.message_mode_loopback_confirm/);
+  assert.doesNotMatch(html, /confirm\(I\.message_mode_loopback_confirm/);
   assert.match(html, /method\.configured\?I\.message_mode_available:I\.message_mode_enable/);
   assert.match(html, /if\(other!==details\)other\.open=false/);
   assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);
@@ -213,8 +241,8 @@ test('home disables access-entry actions when the agent is offline', async (t) =
   assert.match(html, /class="home-message-mode-picker is-agent-offline"[^>]*data-agent-online="false"/);
   assert.match(html, /access_offline_tip/);
   assert.match(html, /home-message-mode-picker\.is-dropup/);
-  assert.match(html, /wrap\.getBoundingClientRect\(\)\.bottom-8/);
-  assert.match(html, /menuRect\.bottom>bottomBoundary/);
+  assert.match(html, /position:fixed;z-index:1000/);
+  assert.match(html, /rect\.height>below&&above>below/);
 });
 
 test('home warns about pending review and disables every external access entry', async (t) => {

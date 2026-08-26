@@ -43,7 +43,15 @@ Windows 默认发现：
 C:\Program Files\DuMate\resources\extra-resource\opencode\bin\dumate-opencode.exe
 ```
 
+macOS 默认发现：
+
+```text
+/Applications/DuMate.app/Contents/Resources/extra-resource/opencode/bin/dumate-opencode
+```
+
 可通过 `VOKO_DUMATE_CLI_BIN` 覆盖。Provider 在 `~/.voko/provider-data/dumate/<instanceId>` 为每个 Agent 建立独立且持久的数据目录，仅复制所选 Plugin Pack；服务重启后仍能恢复原生 session。服务启动后调用 `/global/runtime/ready`。
+
+DuMate 官方当前只提供 macOS 和 Windows 桌面客户端。Linux 不扫描虚构的默认路径，也不把 PATH 中偶然同名的程序当作已安装；只有显式配置 `VOKO_DUMATE_CLI_BIN` 并通过运行时预检时才启用。
 
 - 服务只监听随机本机回环端口。当前 DuMate 内部 DB 回调不会携带 `OPENCODE_SERVER_PASSWORD`，启用该变量会导致自身请求返回 401，因此 Provider 不虚报认证能力，也不允许非回环监听。
 - 不连接 DuMate 桌面私有服务，不读取内部 `DUMATE_INAPP_KEY`。

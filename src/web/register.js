@@ -15,7 +15,7 @@ const { readWorkBuddyAgentAvatar } = require('../core/dispatcher/workbuddy-agent
 const { runWithRegistrationCaller } = require('../core/registration-caller-context');
 const { renderSystemFooter } = require('./footer');
 const { renderLanguageSwitcher } = require('./language-switcher');
-const { UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
+const { COPY_ICON, UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -114,6 +114,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .instance-panel{width:calc(100% - 10px);margin:-4px 0 4px 10px;padding:10px 12px;border:1px solid #dfe4ec;border-left:3px solid #a7c0f4;border-radius:10px;background:#fafcff;font-size:12px}
 .instance-panel label{font-size:12px;margin:7px 0}.instance-panel input{width:auto;margin-right:5px}
 .group-label{margin:19px 0 7px;font-weight:700;color:#46536a}.method-meta{display:flex;align-items:center;gap:7px;margin-top:8px}
+.workbuddy-command-inline{display:inline-flex;align-items:center;gap:2px;vertical-align:middle}.workbuddy-command-inline code{padding:2px 5px;border-radius:5px;background:#f6f8fb;color:#344054;font-size:12px;white-space:nowrap}.workbuddy-command-inline .voko-copy-button{width:24px;height:24px;min-width:24px;min-height:24px;vertical-align:middle}
 .method-action{margin:0;padding:4px 9px;font-size:12px;background:#fff;color:#1a73e8;border:1px solid #1a73e8;border-radius:7px}
 .method-action:hover{background:#eaf2ff}.config-panel{display:none;margin-top:17px;padding:15px;border:1px solid #b8caee;border-radius:10px;background:#f7f9ff}.config-panel.show{display:block}
 .priority-list{margin:8px 0 0;padding-left:22px}.result-card{padding:18px;border:1px solid #a8ddbf;border-radius:12px;background:#ecf8f1}
@@ -362,13 +363,17 @@ function wizardJs(t) {
     searchName: t('register.flow.done.search_name'), searchEmail: t('register.flow.done.search_email'),
     exactId: t('register.flow.done.exact_id'),
     copied: t('register.agent.copied'),
+    copyCommand: t('register.flow.copy_command'),
+    workbuddyCliMissing: t('register.flow.workbuddy_cli_missing'),
+    workbuddyCommandAnd: t('register.flow.workbuddy_command_and'),
+    qwenCliLoginRequired: t('register.flow.qwen_cli_login_required'),
     iconInvalid: t('web.agent.edit.icon_invalid'), iconTooLarge: t('web.agent.edit.icon_too_large'),
     iconUploading: t('web.agent.edit.icon_uploading'), iconUploadFailed: t('web.agent.edit.icon_upload_failed'),
     error: t('register.create_failed_default'),
   };
   return `<script>
 (function(){
-  var I=${JSON.stringify(I)},DEFAULT_AGENT_ICON=${JSON.stringify(DEFAULT_AGENT_ICON)},root=document.getElementById('registration-wizard');
+  var I=${JSON.stringify(I)},DEFAULT_AGENT_ICON=${JSON.stringify(DEFAULT_AGENT_ICON)},COPY_ICON=${JSON.stringify(COPY_ICON)},root=document.getElementById('registration-wizard');
   if(!root)return;
   var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null, workbuddyLoad='idle', workbuddyError='';
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
@@ -499,8 +504,14 @@ function wizardJs(t) {
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
     var disabled=m.required||!usable, checked=m.required||m.selected;
     var statusLabel=m.status==='configuration_required'?I.configure:m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+escHtml(m.description)+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
+    var description=selectedProvider==='workbuddy'&&m.mode==='http'&&!usable
+      ? escHtml(I.workbuddyCliMissing)+workBuddyCommand('npm install -g @tencent-ai/codebuddy-code')+escHtml(I.workbuddyCommandAnd)+workBuddyCommand('codebuddy /login')+'。'
+      : selectedProvider==='qwen-office'&&m.mode==='cli'&&!usable&&m.loginCommand
+        ? escHtml(I.qwenCliLoginRequired)+workBuddyCommand(m.loginCommand)+'。'
+      : escHtml(m.description);
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+description+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':'')+'</span></span></label>'
   }
+  function workBuddyCommand(command){return '<span class="workbuddy-command-inline"><code>'+escHtml(command)+'</code><button type="button" class="voko-copy-button" title="'+escHtml(I.copyCommand)+'" aria-label="'+escHtml(I.copyCommand)+'" data-voko-copy-value="'+escHtml(command)+'">'+COPY_ICON+'</button></span>'}
   function renderDeliveries(d){
     state=d;var modes=d.deliveryModes||[],html='';
     document.getElementById('wf-delivery-desc').textContent=I.deliveryDesc.replace('{provider}',d.provider.type);

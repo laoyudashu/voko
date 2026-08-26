@@ -313,6 +313,15 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(html, /deliveryReadiness/);
     assert.match(html, /\['ready','preflight_passed','loopback_verified'\]\.indexOf\(m\.status\)>=0/);
     assert.match(html, /usable\?I\.testOk:I\.testFailed/);
+    assert.match(html, /class="workbuddy-command-inline"/);
+    assert.match(html, /data-voko-copy-value="'\+escHtml\(command\)\+'"/);
+    assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
+    assert.match(html, /codebuddy \/login/);
+    assert.match(html, /selectedProvider==='qwen-office'/);
+    assert.match(html, /m\.loginCommand/);
+    assert.match(html, /qwenCliLoginRequired/);
+    assert.match(html, /COPY_ICON/);
+    assert.doesNotMatch(html, /workbuddy-command-list/);
     assert.doesNotMatch(html, /id="wf-loopback-dialog"/);
     assert.doesNotMatch(html, /data-action="test"/);
     assert.doesNotMatch(html, /window\.confirm\(I\.loopbackConfirm\)/);

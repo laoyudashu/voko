@@ -33,9 +33,10 @@ function localAppDataRoot(env: NodeJS.ProcessEnv): string {
 function findBundledQwenCli(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
   if (platform === 'darwin') {
     const home = String(env.HOME || '').trim();
+    const appNames = ['QwenWorkCN.app', '千问办公.app'];
     const candidates = [
-      ...(home ? [path.join(home, 'Applications', 'QwenWorkCN.app', 'Contents', 'Resources', 'bin', 'qoderclicn')] : []),
-      '/Applications/QwenWorkCN.app/Contents/Resources/bin/qoderclicn',
+      ...(home ? appNames.map((appName) => path.join(home, 'Applications', appName, 'Contents', 'Resources', 'bin', 'qoderclicn')) : []),
+      ...appNames.map((appName) => path.join('/Applications', appName, 'Contents', 'Resources', 'bin', 'qoderclicn')),
     ];
     return candidates.find(candidate => {
       try { return fs.statSync(candidate).isFile(); } catch (_) { return false; }
@@ -65,7 +66,18 @@ function resolveQwenOfficeCommand(
   const configured = String(env.VOKO_QWENWORK_CLI_BIN || '').trim();
   if (configured) return configured;
   return findBundledQwenCli(env, platform)
-    || (platform === 'win32' ? 'qoderclicn.exe' : 'qoderclicn');
+    || (platform === 'win32' ? 'qoderclicn.exe' : platform === 'darwin' ? 'qoderclicn' : '');
+}
+
+function qwenOfficeLoginCommand(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const command = resolveQwenOfficeCommand(env, platform);
+  if (!command) return '';
+  if (!/\s/.test(command)) return `${command} login`;
+  if (platform === 'win32') return `& '${command.replace(/'/g, "''")}' login`;
+  return `'${command.replace(/'/g, "'\\''")}' login`;
 }
 
 function qwenOfficeRuntimeRequest(
@@ -75,6 +87,7 @@ function qwenOfficeRuntimeRequest(
   overrideCommand?: string,
 ) {
   const command = overrideCommand || resolveQwenOfficeCommand(env, platform);
+  if (!command) return { providerId: 'qwen-office-cli', mode, candidates: [] };
   const isAbsolute = platform === 'win32' ? path.win32.isAbsolute(command) : path.posix.isAbsolute(command);
   return {
     providerId: 'qwen-office-cli',
@@ -157,6 +170,7 @@ function invalidateQwenOfficeReadiness(command?: string): void {
 module.exports = {
   findBundledQwenCli,
   resolveQwenOfficeCommand,
+  qwenOfficeLoginCommand,
   qwenOfficeRuntimeRequest,
   resolveQwenOfficeRuntime,
   isQwenOfficeRuntimeAvailable,

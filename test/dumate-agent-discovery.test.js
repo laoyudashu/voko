@@ -6,6 +6,7 @@ const path = require('node:path');
 const { discoverDuMateAgents, resolveDuMateAgentTarget } = require('../build/core/dispatcher/dumate-agents');
 const { DuMateHttpProvider } = require('../build/core/dispatcher/providers/dumate-http');
 const catalog = require('../build/core/dispatcher/provider-catalog');
+const dumateCommand = require('../build/core/dispatcher/dumate-command');
 
 function writePlugin(dataRoot, id, manifest = {}) {
   const root = path.join(dataRoot, 'plugins', 'user', id);
@@ -35,6 +36,17 @@ test('DuMate discovery fails closed for a mismatched or escaping Agent prompt', 
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   writePlugin(root, 'stock-assistant', { agents: [{ name: 'other', prompt: '../outside.md' }] });
   assert.deepEqual(discoverDuMateAgents({ dataRoots: [root] }), []);
+});
+
+test('DuMate resolver discovers the macOS app runtime and fails closed on unsupported Linux', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-dumate-mac-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cli = path.join(home, 'Applications', 'DuMate.app', 'Contents', 'Resources', 'extra-resource', 'opencode', 'bin', 'dumate-opencode');
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.writeFileSync(cli, 'test');
+  assert.equal(dumateCommand.resolveDuMateCommand({ HOME: home }, 'darwin'), cli);
+  assert.equal(dumateCommand.resolveDuMateCommand({}, 'linux'), '');
+  assert.deepEqual(dumateCommand.dumateRuntimeRequest({}, 'linux').candidates, []);
 });
 
 test('DuMate catalog and provider preserve instance-affine Resume bindings', () => {

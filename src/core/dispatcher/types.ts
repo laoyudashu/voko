@@ -120,6 +120,7 @@ export interface AgentDeliveryMethodStatus {
   available: boolean;
   status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
   reason?: string;
+  setupCommand?: string;
   capabilities?: Readonly<Partial<ProviderCapabilities>>;
 }
 

@@ -3,7 +3,8 @@ const { CliAdapter } = require('../../adapters/cli-adapter');
 const { runCli } = require('../../adapters/cli-spawner');
 const { createParser } = require('../../adapters/cli-parsers');
 const { withRuntimePath } = require('../../runtime/agent-runtime-resolver');
-const { resolveQwenOfficeCommand, qwenOfficeRuntimeRequest } = require('../qwen-office-command');
+const { resolveQwenOfficeCommand, qwenOfficeRuntimeRequest, getQwenOfficeReadiness,
+  invalidateQwenOfficeReadiness } = require('../qwen-office-command');
 const { resolveQwenOfficeAgentTarget } = require('../qwen-office-agents');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 import type { ProviderDeliveryReceipt, PushPayload } from '../types';
@@ -96,8 +97,13 @@ class QwenOfficeCliProvider extends CliAdapter {
 
   isAvailable(agentId: string): boolean {
     if (!super.isAvailable(agentId)) return false;
+    if (!getQwenOfficeReadiness(this._cmd).ready) return false;
     const instanceId = this._instanceForAgent(agentId);
     return !instanceId || !!this._resolveAgentTarget(instanceId);
+  }
+
+  refreshRuntime(): void {
+    invalidateQwenOfficeReadiness(this._cmd);
   }
 
   async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {

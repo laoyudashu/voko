@@ -945,6 +945,8 @@ class RegistrationOrchestrator {
     if (type === 'qwen-office') {
       const qwenReadiness = qwenOfficeReadiness(this.options);
       const available = qwenReadiness.ready;
+      const { qwenOfficeLoginCommand } = require('./dispatcher/qwen-office-command');
+      const loginCommand = qwenOfficeLoginCommand();
       return [
         {
           mode: 'cli', label: 'QwenWork CLI 自动交付', role: 'primary',
@@ -955,6 +957,8 @@ class RegistrationOrchestrator {
             : qwenReadiness.reason === 'cli_not_logged_in'
               ? '已检测到 qoderclicn，但 CLI 尚未登录；请执行 qoderclicn login 后再进行真实回路测试。'
               : '未检测到 qoderclicn，或 QwenWork 尚未安装。',
+          loginCommand,
+          readinessReason: qwenReadiness.reason,
         },
         pull,
       ];
@@ -971,7 +975,7 @@ class RegistrationOrchestrator {
           action: available ? 'test' : null,
           description: available
             ? '已检测到 CodeBuddy CLI；完成独立登录并通过真实回路测试后，VOKO 使用本机 HTTP/ACP 隔离会话自动投递。'
-            : '未检测到 CodeBuddy CLI。请先执行 npm install -g @tencent-ai/codebuddy-code 和 codebuddy /login；当前使用主动获取。',
+            : '未检测到 CodeBuddy CLI。请先执行 npm install -g @tencent-ai/codebuddy-code 和 codebuddy /login。',
         },
         pull,
       ];

@@ -7,6 +7,16 @@ let installedCommandCache: string | null | undefined;
 function bundledCommand(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
   const cacheable = env === process.env && platform === process.platform;
   if (cacheable && installedCommandCache !== undefined) return installedCommandCache;
+  if (platform === 'darwin') {
+    const home = String(env.HOME || '').trim();
+    const candidates = [
+      ...(home ? [path.join(home, 'Applications', 'DuMate.app', 'Contents', 'Resources', 'extra-resource', 'opencode', 'bin', 'dumate-opencode')] : []),
+      '/Applications/DuMate.app/Contents/Resources/extra-resource/opencode/bin/dumate-opencode',
+    ];
+    const found = candidates.find((candidate) => fs.existsSync(candidate)) || null;
+    if (cacheable) installedCommandCache = found;
+    return found;
+  }
   if (platform !== 'win32') return null;
   const candidates = [
     path.join(String(env.ProgramFiles || 'C:\\Program Files'), 'DuMate', 'resources', 'extra-resource', 'opencode', 'bin', 'dumate-opencode.exe'),
@@ -29,11 +39,12 @@ function bundledCommand(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.P
 
 export function resolveDuMateCommand(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
   return String(env.VOKO_DUMATE_CLI_BIN || '').trim() || bundledCommand(env, platform)
-    || (platform === 'win32' ? 'dumate-opencode.exe' : 'dumate-opencode');
+    || (platform === 'win32' ? 'dumate-opencode.exe' : platform === 'darwin' ? 'dumate-opencode' : '');
 }
 
 export function dumateRuntimeRequest(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, override?: string) {
   const command = override || resolveDuMateCommand(env, platform);
+  if (!command) return { providerId: 'dumate-http', mode: 'http', candidates: [] };
   const absolute = platform === 'win32' ? path.win32.isAbsolute(command) : path.posix.isAbsolute(command);
   return { providerId: 'dumate-http', mode: 'http', candidates: absolute
     ? [{ kind: 'explicit', path: command }] : [{ kind: 'native', command }] };
