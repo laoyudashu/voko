@@ -50,6 +50,7 @@ test('DID client samples server time and retries CLOCK_SKEW exactly once', async
   assert.notEqual(signed[0].nonce, signed[1].nonce);
   assert.ok(Math.abs(signed[1].timestamp - Math.floor(serverTimeMs / 1000)) <= 1);
   assert.ok(Math.abs(calibratedNowMs('https://api.example.com/test') - serverTimeMs) <= 1000);
+  assert.equal(Number.isInteger(calibratedNowMs('https://api.example.com/test')), true);
 });
 
 test('DID client never retries a non-clock 401', async () => {

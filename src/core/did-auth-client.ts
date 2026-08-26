@@ -75,7 +75,7 @@ function signedTimestamp(sample: ClockSample | null): number {
 
 function calibratedNowMs(url: string): number {
   const sample = samples.get(apiBase(url));
-  return Date.now() + (sampleIsFresh(sample) ? sample.offsetMs : 0);
+  return Math.round(Date.now() + (sampleIsFresh(sample) ? sample.offsetMs : 0));
 }
 
 async function isClockSkewResponse(response: Response): Promise<boolean> {
