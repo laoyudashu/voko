@@ -288,9 +288,9 @@ test('Lite set-agent-status rejects invalid flags before database or network acc
 
 test('Lite set-agent-status accepts all six valid status and visibility combinations', async (t) => {
   const originalFetch = global.fetch;
-  let fetchCalls = 0;
-  global.fetch = async () => {
-    fetchCalls++;
+  let signedFetchCalls = 0;
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/api/did-auth/set-agent-status')) signedFetchCalls++;
     return { json: async () => ({ success: true }) };
   };
   t.after(() => { global.fetch = originalFetch; });
@@ -314,7 +314,7 @@ test('Lite set-agent-status accepts all six valid status and visibility combinat
       assert.equal(db.data.visibility_type, visibility);
     }
   }
-  assert.equal(fetchCalls, 6);
+  assert.equal(signedFetchCalls, 6);
 });
 
 test('Lite set-agent-status classifies invalid external API responses without local writes', async (t) => {

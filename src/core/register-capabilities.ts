@@ -5,8 +5,9 @@
  * 使用 DID + Ed25519 签名调用 /api/did-auth/register-capabilities。
  */
 
-const { signAsync } = require('@noble/ed25519');
 const { VOKO_API_URL } = require('./api-signature');
+const { signDidRequest } = require('./did-auth');
+const { fetchWithDidClockRetry } = require('./did-auth-client');
 const { defaultRegistry, getAgentSkills } = require('./skills');
 const { t } = require('./i18n');
 import type { DatabaseLike } from '../types/database';
@@ -58,33 +59,6 @@ async function readApiResult(response: Response): Promise<ApiResult | string> {
     return value.message || t('errors.external_api.http_error', { status: response.status });
   }
   return value;
-}
-
-/**
- * 将 PEM 格式 Ed25519 私钥解析为 raw 32 字节
- * @param {string} pem
- * @returns {Uint8Array}
- */
-function extractEd25519PrivateKey(pem: string): Uint8Array {
-  const cleaned = String(pem || '')
-    .replace(/-----BEGIN [\w\s]+ KEY-----/g, '')
-    .replace(/-----END [\w\s]+ KEY-----/g, '')
-    .replace(/\s/g, '');
-  const bytes = Buffer.from(cleaned, 'base64');
-
-  if (bytes.length === 32) return new Uint8Array(bytes);
-
-  if (bytes.length > 32) {
-    const slice = bytes.slice(-32);
-    if (slice.length === 32) return new Uint8Array(slice);
-  }
-
-  if (cleaned.length === 64 && /^[0-9a-f]+$/i.test(cleaned)) {
-    return new Uint8Array(Buffer.from(cleaned, 'hex'));
-  }
-
-  console.warn('[extractEd25519PrivateKey] unexpected key length:', bytes.length, 'trying first 32 bytes');
-  return new Uint8Array(bytes.slice(0, 32));
 }
 
 /**
@@ -144,25 +118,19 @@ async function registerCapabilitiesForAgent({ db, agentId }: RegisterOptions) {
       }
     } catch (_) {}
 
-    const bodyPayload = JSON.stringify({ capabilities, normalCapabilities });
-    const nonce = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const toSign = row.did + '\n' + nonce + '\n' + timestamp + '\n' + bodyPayload;
-    const rawKey = extractEd25519PrivateKey(row.private_key);
-    const sigBytes = await signAsync(new TextEncoder().encode(toSign), rawKey);
-    const signature = Buffer.from(sigBytes).toString('base64');
-
-    const requestBody = {
-      did: row.did, nonce, timestamp, signature,
-      capabilities, normalCapabilities
-    };
-
     console.log(`[registerCapabilities] Agent ${agentId}: sending capabilities...`);
-    const response = await fetch(`${VOKO_API_URL}/api/did-auth/register-capabilities`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    const businessFields = { capabilities, normalCapabilities };
+    const response = await fetchWithDidClockRetry(
+      `${VOKO_API_URL}/api/did-auth/register-capabilities`,
+      async (timestamp: number) => {
+        const signed = await signDidRequest(row.did, row.private_key, businessFields, { timestamp });
+        return {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...signed, ...businessFields })
+        };
+      },
+    );
 
     const result = await readApiResult(response);
     if (typeof result === 'string') {

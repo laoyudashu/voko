@@ -7,6 +7,7 @@
 
 const { VOKO_API_URL } = require('./api-signature');
 const { signDidRequest } = require('./did-auth');
+const { fetchWithDidClockRetry } = require('./did-auth-client');
 const { t } = require('./i18n');
 export {};
 
@@ -110,16 +111,19 @@ async function setAgentStatus(opts?: SetAgentStatusOptions): Promise<SetAgentSta
     }
 
     const businessFields = { status, visibility };
-    const signed = await signDidRequest(row.did, row.private_key, businessFields);
-
-    const requestBody = { ...signed, ...businessFields };
     console.log(`[setAgentStatus] Agent ${agentId}: status=${status}, visibility=${visibility}`);
 
-    const response = await fetch(`${VOKO_API_URL}/api/did-auth/set-agent-status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    const response = await fetchWithDidClockRetry(
+      `${VOKO_API_URL}/api/did-auth/set-agent-status`,
+      async (timestamp: number) => {
+        const signed = await signDidRequest(row.did, row.private_key, businessFields, { timestamp });
+        return {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...signed, ...businessFields })
+        };
+      },
+    );
     const result = await readStatusApiResult(response);
     if (typeof result === 'string') return { success: false, error: result };
     if (result.success) {
