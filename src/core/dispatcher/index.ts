@@ -576,7 +576,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     if (!provider) return false;
     const meta = _metaOf(agentId);
     const mode = _providerMode(providerId);
-    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(mode)) return false;
+    const temporaryPreference = _temporaryPreferredChannels.get(agentId);
+    const explicitlyPreferred = temporaryPreference?.providerId === providerId && temporaryPreference.mode === mode;
+    if (!explicitlyPreferred && Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(mode)) return false;
     try { return typeof provider.match === 'function' && provider.match(agentId, meta); }
     catch (_) { return false; }
   }
@@ -823,9 +825,6 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const selectedMode = String(mode || '').trim();
     if (!selectedMode) throw new Error('delivery mode is required');
     const meta = _metaOf(agentId);
-    if (Array.isArray(meta.delivery_modes) && !meta.delivery_modes.includes(selectedMode)) {
-      throw new Error('delivery mode is not configured for this Agent');
-    }
     if (selectedMode === 'pull') {
       _temporaryPreferredChannels.set(agentId, { mode: 'pull', providerId: null });
     } else {

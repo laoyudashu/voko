@@ -9,7 +9,25 @@ const {
   getProviderInstanceTerm,
   supportsProviderInstances,
   deepSeekHarnessInstances,
+  openClawInstances,
 } = require('../build/core/dispatcher/provider-instances');
+
+test('OpenClaw discovery exposes the implicit main default Agent', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-openclaw-default-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const root = path.join(home, '.openclaw');
+  fs.mkdirSync(path.join(root, 'workspace'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'openclaw.json'), JSON.stringify({ agents: { defaults: {} } }));
+  assert.deepEqual(openClawInstances(home, '[]'), [{
+    id: 'main', name: 'main', isDefault: true, source: 'openclaw_default',
+  }]);
+});
+
+test('OpenClaw CLI Agent list is authoritative when available', () => {
+  assert.deepEqual(openClawInstances('/does/not/matter', JSON.stringify([{
+    id: 'main', workspace: '/tmp/workspace', isDefault: true,
+  }])), [{ id: 'main', name: 'main', isDefault: true, source: 'openclaw_cli' }]);
+});
 
 test('instance discovery is enabled only for providers with a routable selector', () => {
   for (const type of ['openclaw', 'hermes', 'zeroclaw', 'workbuddy', 'qwen-office', 'deepseek-harness', 'opencode', 'github-copilot', 'claude-code', 'codex', 'kiro']) {

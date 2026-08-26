@@ -21,6 +21,7 @@ const { isHermesRuntimeAvailable } = require('./dispatcher/hermes-command');
 const {
   resolveQwenOfficeCommand,
   getQwenOfficeReadiness,
+  invalidateQwenOfficeReadiness,
 } = require('./dispatcher/qwen-office-command');
 const { resolveTraeCliCommand, isTraeCliReady } = require('./dispatcher/trae-command');
 const { resolveCodeBuddyCommand, isCodeBuddyAvailable } = require('./dispatcher/codebuddy-command');
@@ -350,17 +351,7 @@ function sessionActivity(providerType) {
   };
 }
 function openclawInstances() {
-  try {
-    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    return (config.agents?.list || []).map((agent) => ({
-      id: String(agent.id || ''),
-      name: String(agent.name || agent.id || ''),
-      isDefault: !!agent.default,
-    })).filter((agent) => agent.id);
-  } catch (_) {
-    return [];
-  }
+  return discoverProviderInstances('openclaw');
 }
 function detectCurrentAgentInstance(providerType) {
   const type = normalizeBackendType(providerType);
@@ -383,6 +374,10 @@ function detectCurrentAgentInstance(providerType) {
           return String(agent.id || '') || null;
         }
       }
+      const defaultWorkspace = path.join(os.homedir(), '.openclaw', 'workspace');
+      const normalizedDefault = process.platform === 'win32' ? defaultWorkspace.toLowerCase() : defaultWorkspace;
+      if ((normalizedCwd === normalizedDefault || normalizedCwd.startsWith(normalizedDefault + path.sep))
+        && openclawInstances().some((agent) => agent.id === 'main')) return 'main';
     } catch (_) {}
   }
   if (type === 'hermes' && (process.env.HERMES_INTERACTIVE === '1' || process.env.HERMES_SESSION_ID)) {
@@ -633,6 +628,8 @@ class RegistrationOrchestrator {
       const compactProvider = (provider) => ({
         type: provider.type,
         label: provider.label,
+        instanceTerm: provider.instanceTerm || getProviderInstanceTerm(provider.type),
+        requiresInstance: getProviderFamily(provider.type)?.requiresInstance === true,
         supportsMultipleInstances: provider.supportsMultipleInstances === true,
         instances: Array.isArray(provider.instances)
           ? provider.instances.map((instance) => ({ id: instance.id, name: instance.name || instance.id }))
@@ -1373,11 +1370,14 @@ class RegistrationOrchestrator {
           ? (this.options.dumateAgents || discoverDuMateAgents)()
         : detected?.instances || [];
     let instanceId = cleanText(input.instanceId, 160);
-    if (instances.length > 1 && !instanceId) return { success: false, error: '该类型检测到多个实例，请选择 instanceId' };
-    if (instances.length === 1 && !instanceId) instanceId = instances[0].id;
     const family = getProviderFamily(providerType);
+    const instanceTerm = detected?.instanceTerm || getProviderInstanceTerm(providerType) || '实例';
+    if (family?.requiresInstance && instances.length > 1 && !instanceId) {
+      return { success: false, error: `${detected?.label || family.label || providerType} 检测到多个${instanceTerm}，请选择一个后再继续` };
+    }
+    if (family?.requiresInstance && instances.length === 1 && !instanceId) instanceId = instances[0].id;
     if (family?.requiresInstance && !instanceId) {
-      return { success: false, error: '该 Agent 类型必须绑定一个本机已检测到的实例' };
+      return { success: false, error: `未检测到可用的 ${detected?.label || family.label || providerType} ${instanceTerm}；该类型必须先创建并选择一个${instanceTerm}，才能发送消息` };
     }
     if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
       return { success: false, error: '所选 WorkBuddy Agent 不存在或不可用' };
@@ -1552,6 +1552,7 @@ class RegistrationOrchestrator {
     const hasCommand = this.options.commandAvailable || commandAvailable;
     let ready = false;
     let detail = '';
+    if (provider === 'qwen-office' && mode === 'cli') invalidateQwenOfficeReadiness();
     if (mode === 'pull') {
       ready = true;
       detail = '主动获取始终可用';

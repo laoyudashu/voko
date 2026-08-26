@@ -97,6 +97,19 @@ async function setupServer(t, handlers, db) {
 }
 
 describe('Web POST /agent/add 注册流程', () => {
+  it('renders distinct optional-session and required-instance registration guidance', async (t) => {
+    const db = createDb('web@test.com');
+    const server = await setupServer(t, {}, db);
+    const response = await fetch(server.baseUrl + '/agent/add');
+    const html = await response.text();
+    assert.strictEqual(response.status, 200);
+    assert.match(html, /不绑定现有实例（收到消息时自动创建新会话）/);
+    assert.match(html, /该类型必须先创建实例才能发送消息/);
+    assert.match(html, /requiresInstance/);
+    assert.doesNotMatch(html, /instances\.length\+' '\+term/);
+    assert.match(html, /p\.requiresInstance&&!selectedInstance&&instances\.length\)selectedInstance=instances\[0\]\.id/);
+  });
+
   it('login renders six code cells, accepts paste through one input, and auto-submits at six digits', async (t) => {
     const db = createDb(null);
     const server = await setupServer(t, {}, db);
@@ -323,7 +336,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /COPY_ICON/);
     assert.doesNotMatch(html, /workbuddy-command-list/);
     assert.doesNotMatch(html, /id="wf-loopback-dialog"/);
-    assert.doesNotMatch(html, /data-action="test"/);
+    assert.match(html, /data-action="detect"/);
+    assert.match(html, /api\('status'\)\.then\(function\(d\)\{state=d;renderDeliveries\(d\)/);
     assert.doesNotMatch(html, /window\.confirm\(I\.loopbackConfirm\)/);
     assert.match(html, /addEventListener\('blur'/);
     assert.match(html, /voko\.agentRegistrationDraft/);

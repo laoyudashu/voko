@@ -252,7 +252,7 @@ describe('shared registration orchestrator', () => {
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
   });
 
-  it('discovers QwenWork expert kits and requires an exact selection when more than one is present', async () => {
+  it('discovers QwenWork expert kits while allowing the generic runtime without a binding', async () => {
     let agents = [
       { id: 'mt80hmwaywym3lje/health-rumor-crusher', name: '养生谣言粉碎机', description: '健康信息核查', available: true },
       { id: 'mt7zxd9zn555pwlu/tieban-shenshu', name: '铁板神数', description: '命理工具箱', available: true },
@@ -266,15 +266,18 @@ describe('shared registration orchestrator', () => {
       const detected = started.environment.detected.find((item) => item.type === 'qwen-office');
       assert.deepEqual(detected.instances.map((item) => item.id), agents.map((item) => item.id));
       assert.equal(detected.supportsMultipleInstances, true);
-      assert.equal(service.selectProvider(started.registrationId, { providerType: 'qwen-office' }).success, false);
-      const selected = service.selectProvider(started.registrationId, {
+      const generic = service.selectProvider(started.registrationId, { providerType: 'qwen-office' });
+      assert.equal(generic.success, true);
+      assert.equal(generic.provider.instanceId, null);
+      const boundStarted = await service.start({ email: 'owner@example.com' });
+      const selected = service.selectProvider(boundStarted.registrationId, {
         providerType: 'qwen-office', instanceId: agents[1].id,
       });
       assert.equal(selected.provider.instanceId, agents[1].id);
       assert.equal(selected.suggestedBasicInfo.agentName, '铁板神数');
-      service.setBasicInfo(started.registrationId, { agentName: '铁板神数' });
+      service.setBasicInfo(boundStarted.registrationId, { agentName: '铁板神数' });
       agents = [];
-      const stale = await service.complete(started.registrationId);
+      const stale = await service.complete(boundStarted.registrationId);
       assert.equal(stale.success, false);
       assert.match(stale.error, /已不存在.*清单无效.*不可用/);
     } finally {
@@ -555,6 +558,57 @@ describe('shared registration orchestrator', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('allows an optional provider with discovered profiles to continue without binding one', async () => {
+    const profiles = [
+      { id: 'teacher', name: 'Teacher' },
+      { id: 'writer', name: 'Writer' },
+    ];
+    const { db, service } = createService({ workBuddyAgents: () => profiles });
+    try {
+      service.inspectEnvironment = () => ({
+        detected: [{
+          type: 'workbuddy', label: 'WorkBuddy', instanceTerm: 'Agent',
+          instances: profiles, supportsMultipleInstances: true, deliveryModes: [],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 2, deliveryModeCount: 0 },
+      });
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(started.environment.detected[0].requiresInstance, false);
+      assert.strictEqual(started.environment.detected[0].instanceTerm, 'Agent');
+      const selected = service.selectProvider(started.registrationId, { providerType: 'workbuddy' });
+      assert.strictEqual(selected.success, true);
+      assert.strictEqual(selected.provider.instanceId, null);
+    } finally { db.close(); }
+  });
+
+  it('requires a choice for multiple mandatory instances and explains when none exist', async () => {
+    const { db, service } = createService();
+    let openclawInstances = [{ id: 'main', name: 'main' }, { id: 'research', name: 'research' }];
+    try {
+      service.inspectEnvironment = () => ({
+        detected: [{
+          type: 'openclaw', label: 'OpenClaw', instanceTerm: 'Agent',
+          instances: openclawInstances,
+          supportsMultipleInstances: true, deliveryModes: [],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 2, deliveryModeCount: 0 },
+      });
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(started.environment.detected[0].requiresInstance, true);
+      const ambiguous = service.selectProvider(started.registrationId, { providerType: 'openclaw' });
+      assert.strictEqual(ambiguous.success, false);
+      assert.match(ambiguous.error, /OpenClaw.*多个Agent.*请选择/);
+
+      openclawInstances = [];
+      const empty = await service.start({ email: 'owner@example.com' });
+      const missing = service.selectProvider(empty.registrationId, { providerType: 'openclaw' });
+      assert.strictEqual(missing.success, false);
+      assert.match(missing.error, /未检测到可用的 OpenClaw Agent.*才能发送消息/);
+    } finally { db.close(); }
   });
 
   it('restores an unfinished registration session from the database', async () => {

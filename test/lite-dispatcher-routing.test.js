@@ -175,6 +175,10 @@ test('pull-only WorkBuddy still exposes its HTTP setup path and refreshes a newl
   assert.equal(refreshed.activeAutomaticMode, null);
   const verified = await dispatcher.verifyAgentDeliveryChannel('agent-1', 'workbuddy-http');
   assert.equal(verified.result.challengeMatched, true);
+  const selected = dispatcher.selectTemporaryDeliveryChannel('agent-1', 'http', 'workbuddy-http');
+  assert.equal(selected.temporaryPreferredMode, 'http');
+  assert.equal(selected.temporaryPreferredProvider, 'workbuddy-http');
+  assert.equal(selected.activeAutomaticMode, 'http');
 });
 
 test('explicit transport resolution never substitutes another mode', () => {
