@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { discoverWorkBuddyAgents, resolveWorkBuddyAgentTarget, readWorkBuddyAgentAvatar } = require('../build/core/dispatcher/workbuddy-agents');
+const { resolveWorkBuddyRuntime } = require('../build/core/dispatcher/workbuddy-command');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-agents-'));
@@ -37,6 +38,16 @@ test('discovers stable WorkBuddy agent IDs and localized metadata from valid mar
   assert.equal(found[0].source, 'my-experts/english-vocab-coach');
   assert.equal(resolveWorkBuddyAgentTarget('tcm-consultant', { root: f.root, requireRegisteredMarketplace: false }).pluginRoot,
     path.join(f.root, 'plugins', 'tcm-consultant'));
+});
+
+test('WorkBuddy runtime discovers the macOS application bundle CLI', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-mac-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cli = path.join(home, 'Applications', 'WorkBuddy.app', 'Contents', 'Resources', 'app.asar.unpacked', 'cli', 'bin', 'codebuddy');
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.writeFileSync(cli, 'test');
+  const runtime = resolveWorkBuddyRuntime({ platform: 'darwin', homeDir: home, env: {} });
+  assert.equal(runtime.command, cli);
 });
 
 test('filters malformed, mismatched and traversal marketplace entries', (t) => {

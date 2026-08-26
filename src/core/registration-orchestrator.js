@@ -263,11 +263,48 @@ function commandAvailable(command) {
     return false;
   }
 }
-function installedApplications() {
-  if (process.platform !== 'win32') return [];
-  if (installedApplicationCache && now() - installedApplicationCache.at < 60_000) {
+function installedApplications(platform = process.platform, env = process.env) {
+  if (installedApplicationCache?.platform === platform && now() - installedApplicationCache.at < 60_000) {
     return installedApplicationCache.names;
   }
+  if (platform === 'darwin') {
+    const roots = ['/Applications', path.join(os.homedir(), 'Applications')];
+    const names = [];
+    for (const root of roots) {
+      try {
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (entry.isDirectory() && /\.app$/i.test(entry.name)) names.push(entry.name.replace(/\.app$/i, ''));
+        }
+      } catch (_) {}
+    }
+    installedApplicationCache = { platform, names: [...new Set(names)], at: now() };
+    return installedApplicationCache.names;
+  }
+  if (platform === 'linux') {
+    const roots = [
+      '/usr/share/applications', '/usr/local/share/applications',
+      path.join(os.homedir(), '.local', 'share', 'applications'),
+    ];
+    const names = [];
+    for (const root of roots) {
+      try {
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (!entry.isFile() || !/\.desktop$/i.test(entry.name)) continue;
+          const source = fs.readFileSync(path.join(root, entry.name), 'utf8');
+          const name = source.match(/^Name=(.+)$/m)?.[1]?.trim();
+          const exec = source.match(/^Exec=(.+)$/m)?.[1]?.trim();
+          if (name) names.push(name);
+          if (exec) names.push(exec);
+        }
+      } catch (_) {}
+    }
+    for (const root of ['/opt', '/usr/local/lib']) {
+      try { names.push(...fs.readdirSync(root)); } catch (_) {}
+    }
+    installedApplicationCache = { platform, names: [...new Set(names)], at: now() };
+    return installedApplicationCache.names;
+  }
+  if (platform !== 'win32') return [];
   try {
     const script = [
       '[Console]::OutputEncoding=[Text.Encoding]::UTF8',
@@ -279,10 +316,10 @@ function installedApplications() {
     });
     const parsed = probe.status === 0 && probe.stdout.trim() ? JSON.parse(probe.stdout) : [];
     const names = (Array.isArray(parsed) ? parsed : [parsed]).map(String);
-    installedApplicationCache = { names, at: now() };
+    installedApplicationCache = { platform, names, at: now() };
     return names;
   } catch (_) {
-    installedApplicationCache = { names: [], at: now() };
+    installedApplicationCache = { platform, names: [], at: now() };
     return [];
   }
 }
@@ -1816,4 +1853,5 @@ module.exports = {
   currentAgentTypeFromEnvironment,
   currentAgentTypeFromProcessRows,
   sortProviderDisplay,
+  installedApplications,
 };

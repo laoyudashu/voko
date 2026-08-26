@@ -68,20 +68,36 @@ function resolveFromWindowsRegistry(): WorkBuddyRuntime | null {
   return null;
 }
 
-export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; env?: NodeJS.ProcessEnv } = {}): WorkBuddyRuntime {
+export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; homeDir?: string } = {}): WorkBuddyRuntime {
   const env = options.env || process.env;
-  const canCache = !options.configuredCommand && !options.env;
+  const platform = options.platform || process.platform;
+  const canCache = !options.configuredCommand && !options.env && !options.platform && !options.homeDir;
   if (canCache && cachedDefaultRuntime) return { ...cachedDefaultRuntime, argvPrefix: [...cachedDefaultRuntime.argvPrefix] };
   const configured = existingFile(options.configuredCommand || env.VOKO_WORKBUDDY_CLI);
   if (configured) return runtimeFor(configured, 'configured');
 
-  const registry = resolveFromWindowsRegistry();
+  const registry = platform === 'win32' ? resolveFromWindowsRegistry() : null;
   if (registry) {
     if (canCache) cachedDefaultRuntime = registry;
     return registry;
   }
 
-  const roots = process.platform === 'win32'
+  if (platform === 'darwin') {
+    const appRoots = [
+      path.join(options.homeDir || require('node:os').homedir(), 'Applications', 'WorkBuddy.app', 'Contents'),
+      '/Applications/WorkBuddy.app/Contents',
+    ];
+    for (const root of appRoots) {
+      const command = existingFile(path.join(root, 'Resources', 'app.asar.unpacked', 'cli', 'bin', 'codebuddy'));
+      if (command) {
+        const found = runtimeFor(command, 'common_location');
+        if (canCache) cachedDefaultRuntime = found;
+        return found;
+      }
+    }
+  }
+
+  const roots = platform === 'win32'
     ? [env.ProgramW6432, env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')]
     : ['/opt/WorkBuddy', '/opt/workbuddy', '/usr/local/lib/workbuddy'];
   for (const root of roots.filter(Boolean)) {

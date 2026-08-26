@@ -85,5 +85,13 @@
   "cli.index.stopped": "VOKO 已关闭",
   "cli.index.stop_incomplete": "VOKO を完全に停止できませんでした。残存 PID：{pids}",
   "cli.index.unknown_cmd": "未知命令: {cmd}，输入 voko --help 查看帮助",
-  "cli.index.start_failed": "[VOKO Lite] 启动失败: {msg}"
+  "cli.index.start_failed": "[VOKO Lite] 启动失败: {msg}",
+  "cli.usage.restart": "VOKO Lite を再起動",
+  "cli.index.restarting": "VOKO Lite を再起動しています...",
+  "cli.index.restarted": "VOKO Lite の再起動を開始しました",
+  "cli.interactive.configure_mode": "{mode} を設定しますか?",
+  "cli.interactive.apply_change": "この変更を適用しますか?",
+  "cli.interactive.enable_mode": "{mode} を有効にしますか?",
+  "cli.interactive.allow_public": "公開訪問者を許可しますか?",
+  "cli.interactive.terminal_restore_warning": "登録は完了しましたが、端末状態を復元できませんでした：{msg}"
 }

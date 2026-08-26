@@ -6,6 +6,22 @@ const { isRoutingFeatureEnabled } = require('./core/provider-routing');
 
 const OWNER_SWITCH_RESTART_EXIT_CODE = 75;
 const SUPERVISED_RUNTIME_ENV = 'VOKO_LITE_SUPERVISED_RUNTIME';
+const MINIMUM_NODE_VERSION = [22, 5, 0];
+
+function nodeVersionSupported(version = process.versions.node): boolean {
+  const parts = String(version).split('.').map(value => Number.parseInt(value, 10) || 0);
+  for (let index = 0; index < MINIMUM_NODE_VERSION.length; index++) {
+    if ((parts[index] || 0) > MINIMUM_NODE_VERSION[index]) return true;
+    if ((parts[index] || 0) < MINIMUM_NODE_VERSION[index]) return false;
+  }
+  return true;
+}
+
+if (!nodeVersionSupported()) {
+  console.error(`[VOKO Lite] Node.js ${process.versions.node} is unsupported. Node.js >=22.5.0 is required. Current executable: ${process.execPath}`);
+  process.exitCode = 1;
+  if (require.main === module) process.exit(1);
+}
 
 
 // 兼容旧的开发启动命令：源码目录中可能包含已迁移为 .ts 的模块，
@@ -160,6 +176,22 @@ function handleFatalError(kind: 'uncaughtException' | 'unhandledRejection', erro
 process.on('unhandledRejection', (reason: unknown) => handleFatalError('unhandledRejection', reason));
 process.on('uncaughtException', (error: Error) => handleFatalError('uncaughtException', error));
 
+if (process.env[SUPERVISED_RUNTIME_ENV] === '1') {
+  const supervisorPid = process.ppid;
+  const supervisorWatchdog = setInterval(() => {
+    let alive = process.ppid === supervisorPid;
+    if (alive) {
+      try { process.kill(supervisorPid, 0); } catch (_) { alive = false; }
+    }
+    if (alive || __shuttingDown) return;
+    clearInterval(supervisorWatchdog);
+    const context = __shutdownContext || {};
+    void shutdownAll(context.agentManager, context.wukongimSender, context.db,
+      'supervisor-exited', 0, context.taskManager).catch(() => process.exit(0));
+  }, 500);
+  supervisorWatchdog.unref();
+}
+
 interface RuntimeSnapshot {
   instanceId?: string;
   pid?: number;
@@ -167,6 +199,8 @@ interface RuntimeSnapshot {
   port?: number;
   userEmail?: string;
   agents?: unknown[];
+  state?: 'starting' | 'ready' | 'degraded';
+  startup?: { phase?: string; loadedAgents?: number; totalAgents?: number };
 }
 
 // ── 渠道模块 ──
@@ -552,6 +586,7 @@ function printReadyBanner(db: any, port: number, ownerEmail: string | null, agen
   const RESET = '\x1b[0m';
   const summary = agentManager?.getHubSummary?.() || { hubCount: 0, agentCount: 0 };
   const connected = agentManager?.connectedAgents?.size || 0;
+  const runtimeStatus = connected >= (summary.agentCount || 0) ? 'READY' : 'DEGRADED';
   const details = [
     formatVersionLine(db),
     '  PID:        ' + process.pid,
@@ -564,8 +599,8 @@ function printReadyBanner(db: any, port: number, ownerEmail: string | null, agen
     '  DB:         ' + (db._dbPath || ''),
     '  Web:        http://localhost:' + port,
     '  MCP:        http://localhost:' + port + '/mcp',
-    '  Status:     READY',
   );
+  details.push(runtimeStatus === 'READY' ? '  Status:     READY' : '  Status:     DEGRADED');
   console.error([
     '',
     ORANGE + '██╗   ██╗ ██████╗ ██╗  ██╗ ██████╗ ' + RESET,
@@ -1612,6 +1647,8 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           data.pid = process.pid;
           data.port = actualPort;
           data.userEmail = activeOwner;
+          data.state = 'starting';
+          data.startup = { ...(data.startup || {}), phase: 'starting_services' };
           db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
             .run(JSON.stringify(data), Date.now());
         } catch (_: any) {}
@@ -1782,6 +1819,17 @@ async function startMcpServer(args?: any, core?: any) {
     ? db.prepare("SELECT * FROM agents WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?").all(userEmail)
     : [];
   const publishedAgentCount = published.length;
+  try {
+    db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
+      .run(JSON.stringify({
+        instanceId: __instanceLock?.metadata?.instanceId, pid: process.pid, ts: Date.now(), port: null,
+        userEmail, state: 'starting',
+        startup: { phase: 'connecting_im', loadedAgents: 0, totalAgents: publishedAgentCount },
+        agents: published.map((agent: any) => ({ agentId: agent.agent_id,
+          agentName: agent.agent_name || agent.agent_id, imConnected: false,
+          automaticDeliveryReady: false, state: 'starting' })),
+      }), Date.now());
+  } catch (_) {}
   const startupResults = await agentManager.startMany(published.map((agent: any) => ({
     agentId: agent.agent_id,
     config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
@@ -2831,7 +2879,17 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
         ts: Date.now(),
         port: __runtimePort || port || null,
         userEmail: email || '',
-        agents: [],
+        state: 'starting',
+        startup: { phase: 'starting_services', loadedAgents: 0, totalAgents: agentCount || 0 },
+        agents: (() => {
+          try {
+            const owner = String(email || '').trim().toLowerCase();
+            const rows = owner ? db.prepare("SELECT agent_id,agent_name FROM agents WHERE publish_status='published' AND LOWER(TRIM(owner_email))=?").all(owner) : [];
+            return rows.map((agent: any) => ({ agentId: agent.agent_id,
+              agentName: agent.agent_name || agent.agent_id, imConnected: false,
+              automaticDeliveryReady: false, state: 'starting' }));
+          } catch (_) { return []; }
+        })(),
       }), Date.now());
   } catch (_: any) {}
 
@@ -2965,8 +3023,10 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             pullOnly: !!deliveryStatus.pullOnly,
             lastDeliveredMode: deliveryStatus.lastDeliveredMode || null,
             deliveryStatus,
+            state: agentManager?.getStatus(a.agent_id)?.connected ? 'ready' : 'disconnected',
           };
         });
+        const allConnected = agentList.length === 0 || agentList.every((agent: any) => agent.imConnected);
         db.prepare("INSERT OR REPLACE INTO config (type, data, updated_at) VALUES ('runtime', ?, ?)")
           .run(JSON.stringify({
             instanceId: __instanceLock?.metadata?.instanceId,
@@ -2974,6 +3034,8 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
             ts: Date.now(),
             port: __runtimePort || port || prevData.port || null,
             userEmail: prevData.userEmail || '',
+            state: allConnected ? 'ready' : 'degraded',
+            startup: { phase: allConnected ? 'ready' : 'degraded', loadedAgents: agentList.length, totalAgents: rows.length },
             agents: agentList,
           }), Date.now());
         const currentInstanceId = __instanceLock?.metadata?.instanceId;
@@ -3023,6 +3085,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   const timer = setInterval(heartbeatFn, 60000);
   let firstBeatTimer: NodeJS.Timeout | null = null;
   let firstBeatStatusHandler: ((msg: any) => void) | null = null;
+  let statusRefreshTimer: NodeJS.Timeout | null = null;
 
   // Agent 全部连接就绪后立即执行首次心跳；未全部连接时5秒后仍强制刷新真实状态。
   let _firstBeatDone = false;
@@ -3036,6 +3099,10 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   if (agentCount > 0) {
     firstBeatStatusHandler = (msg?: any) => {
       if (msg.status === 'connected' || msg.statusCode === 2) _tryFirstBeat();
+      if (_firstBeatDone) {
+        if (statusRefreshTimer) clearTimeout(statusRefreshTimer);
+        statusRefreshTimer = setTimeout(() => void heartbeatFn(), 1000);
+      }
     };
     agentManager.on('status', firstBeatStatusHandler);
   }
@@ -3044,6 +3111,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
   return () => {
     clearInterval(timer);
     if (firstBeatTimer) clearTimeout(firstBeatTimer);
+    if (statusRefreshTimer) clearTimeout(statusRefreshTimer);
     if (firstBeatStatusHandler) agentManager.off?.('status', firstBeatStatusHandler);
   };
 }
@@ -3169,6 +3237,7 @@ function printUsage() {
     '  voko <tool-name> --help    ' + t('cli.usage.tool_help') + '\n' +
     '  voko --tools               ' + t('cli.usage.tools_list') + '\n' +
     '  voko stop                  ' + t('cli.usage.stop') + '\n' +
+    '  voko restart               ' + t('cli.usage.restart') + '\n' +
     '  voko uninstall [--purge]   ' + t('cli.usage.uninstall') + '\n' +
     '  voko mcp                   ' + t('cli.usage.mcp') + '\n' +
     '  voko status                ' + t('cli.usage.status') + '\n' +
@@ -3257,7 +3326,7 @@ async function main() {
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
-  const _systemCmds = new Set(['start', 'setup', 'doctor', 'probe', 'mcp', 'stop', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
+  const _systemCmds = new Set(['start', 'setup', 'doctor', 'probe', 'mcp', 'stop', 'restart', 'uninstall', 'status', 'update', 'login', '--help', '-h', '--version', '-v']);
   const isToolCmd = !!subcommand && !_systemCmds.has(subcommand);
   const verbose = !!(args.verbose || args.debug || process.env.VOKO_DEBUG);
   const silent = isToolCmd && !verbose;
@@ -3349,6 +3418,8 @@ async function main() {
         success: true,
         running,
         state: running ? 'running' : 'stopped',
+        runtimeState: running ? (currentRuntime.state || 'starting') : 'stopped',
+        startup: running ? (currentRuntime.startup || null) : null,
         instanceId: running && instance ? instance.instanceId : null,
         port: running && instance ? (instance.port || currentRuntime.port || null) : null,
         pid: running && instance ? instance.pid : null,
@@ -3418,6 +3489,45 @@ async function main() {
       process.exit(1);
     }
     console.error(t('cli.index.stopped'));
+    return;
+  }
+
+  if (subcommand === 'restart') {
+    const dbPath = resolveDbPath(args, { silent: true });
+    const previous = readInstanceMetadata(dbPath);
+    if (previous && isInstanceAlive(previous)) {
+      if (!args.json) console.error(t('cli.index.restarting'));
+      const stopped = await stopVoko(dbPath, () => {});
+      if (!stopped.stopped) {
+        const result = { success: false, code: 'STOP_INCOMPLETE', remainingPids: stopped.remainingPids };
+        if (args.json) console.log(JSON.stringify(result));
+        else console.error(t('cli.index.stop_incomplete', { pids: stopped.remainingPids.join(', ') }));
+        process.exitCode = 1;
+        return;
+      }
+    }
+    const { spawn } = require('node:child_process');
+    const startArgs = [process.argv[1], 'start', `--db=${dbPath}`, '--no-open', '--no-interactive'];
+    if (previous?.port) startArgs.push(`--port=${previous.port}`);
+    const child = spawn(process.execPath, startArgs, {
+      cwd: process.cwd(), env: process.env, detached: true, stdio: 'ignore', windowsHide: true,
+    });
+    child.unref();
+    let replacement = null;
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      const candidate = readInstanceMetadata(dbPath);
+      if (candidate && isInstanceAlive(candidate) && candidate.instanceId !== previous?.instanceId) {
+        replacement = candidate;
+        break;
+      }
+    }
+    const result = { success: !!replacement, restarting: true, pid: replacement?.pid || child.pid || null,
+      instanceId: replacement?.instanceId || null, state: replacement ? 'starting' : 'spawned' };
+    if (args.json) console.log(JSON.stringify(result, null, 2));
+    else console.error(replacement ? t('cli.index.restarted') : `${t('cli.index.restarted')} (PID ${child.pid || 'unknown'})`);
+    if (!replacement && !child.pid) process.exitCode = 1;
     return;
   }
 
@@ -3539,4 +3649,4 @@ if (require.main === module) {
 //  程序化导出 — 供 Desktop 和外部调用
 // ═══════════════════════════════════════════════
 
-module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, shouldSuperviseRuntime, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };
+module.exports = { initCore, createContext, createLiteApp, createHandlers, createMessageHandler, createResumeOwnerIntervention, startHeartbeat, getCurrentUserEmail, hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, runHeadlessOnboarding, checkLiteRunning, formatVersionLine, withRuntimeTimestamp, shouldSuperviseRuntime, nodeVersionSupported, syncOfflineMessages: require('./core/offline-sync').syncOfflineMessages, processPendingPaymentOrder: require('./core/payment').processPendingPaymentOrder, startPaymentPolling: require('./core/payment').startPaymentPolling, AgentWorkerManager };

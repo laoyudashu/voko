@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const qwenCommand = require('../build/core/dispatcher/qwen-office-command');
 const traeCommand = require('../build/core/dispatcher/trae-command');
 const { QwenOfficeCliProvider } = require('../build/core/dispatcher/providers/qwen-office-cli');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const { TraeAcpProvider } = require('../build/core/dispatcher/providers/trae-acp');
 const { withTraeRuntimeLock } = require('../build/core/dispatcher/providers/trae-runtime-coordinator');
@@ -14,6 +17,15 @@ test('QwenWork resolver prefers an explicit binary and keeps the runtime request
   const request = qwenCommand.qwenOfficeRuntimeRequest('cli', { VOKO_QWENWORK_CLI_BIN: explicit }, 'win32');
   assert.equal(request.providerId, 'qwen-office-cli');
   assert.deepEqual(request.candidates, [{ kind: 'explicit', path: explicit }]);
+});
+
+test('QwenWork resolver discovers the macOS application bundle CLI', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-mac-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cli = path.join(home, 'Applications', 'QwenWorkCN.app', 'Contents', 'Resources', 'bin', 'qoderclicn');
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.writeFileSync(cli, 'test');
+  assert.equal(qwenCommand.findBundledQwenCli({ HOME: home }, 'darwin'), cli);
 });
 
 test('QwenWork readiness separates executable discovery from CLI authentication', () => {

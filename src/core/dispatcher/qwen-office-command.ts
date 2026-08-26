@@ -31,6 +31,16 @@ function localAppDataRoot(env: NodeJS.ProcessEnv): string {
 }
 
 function findBundledQwenCli(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
+  if (platform === 'darwin') {
+    const home = String(env.HOME || '').trim();
+    const candidates = [
+      ...(home ? [path.join(home, 'Applications', 'QwenWorkCN.app', 'Contents', 'Resources', 'bin', 'qoderclicn')] : []),
+      '/Applications/QwenWorkCN.app/Contents/Resources/bin/qoderclicn',
+    ];
+    return candidates.find(candidate => {
+      try { return fs.statSync(candidate).isFile(); } catch (_) { return false; }
+    }) || null;
+  }
   if (platform !== 'win32') return null;
   const root = localAppDataRoot(env);
   if (!root) return null;
