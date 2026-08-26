@@ -2435,10 +2435,40 @@ async function startMcpServer(args?: any, core?: any) {
     if (!activeDispatcher?.refreshAgentDeliveryChannels) return { success: false, error: 'Dispatcher unavailable' };
     return { success: true, agentId, deliveryStatus: await activeDispatcher.refreshAgentDeliveryChannels(String(agentId || '')) };
   };
+  handlers.verify_delivery_channel = async ({ agentId, providerId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.verifyAgentDeliveryChannel) return { success: false, error: 'Delivery channel verification is unavailable' };
+    const verified = await activeDispatcher.verifyAgentDeliveryChannel(String(agentId || ''), String(providerId || ''));
+    return { success: true, agentId, verification: verified.result, deliveryStatus: verified.status };
+  };
   handlers.select_delivery_channel = async ({ agentId, mode, providerId }: any = {}) => {
     const activeDispatcher = (global as any).__dispatcher;
     if (!activeDispatcher?.selectTemporaryDeliveryChannel) return { success: false, error: 'Dispatcher unavailable' };
-    return { success: true, agentId, deliveryStatus: activeDispatcher.selectTemporaryDeliveryChannel(String(agentId || ''), String(mode || ''), providerId) };
+    const normalizedAgentId = String(agentId || '');
+    const normalizedMode = String(mode || '');
+    const row = db.prepare('SELECT backend_type, delivery_modes FROM agents WHERE agent_id=? LIMIT 1').get(normalizedAgentId);
+    let previousModes: string | null | undefined;
+    if (row?.backend_type === 'workbuddy' && normalizedMode === 'http' && providerId === 'workbuddy-http') {
+      let modes: string[] = [];
+      try { modes = Array.isArray(JSON.parse(row.delivery_modes || '[]')) ? JSON.parse(row.delivery_modes || '[]').map(String) : []; } catch {}
+      if (!modes.includes('http')) {
+        previousModes = row.delivery_modes;
+        modes = ['http', ...modes.filter((item) => item !== 'http' && item !== 'pull'), 'pull'];
+        db.prepare('UPDATE agents SET delivery_modes=?, updated_at=? WHERE agent_id=?')
+          .run(JSON.stringify(modes), Date.now(), normalizedAgentId);
+        activeDispatcher.invalidateMeta?.(normalizedAgentId);
+      }
+    }
+    try {
+      return { success: true, agentId, deliveryStatus: activeDispatcher.selectTemporaryDeliveryChannel(normalizedAgentId, normalizedMode, providerId) };
+    } catch (error) {
+      if (previousModes !== undefined) {
+        db.prepare('UPDATE agents SET delivery_modes=?, updated_at=? WHERE agent_id=?')
+          .run(previousModes, Date.now(), normalizedAgentId);
+        activeDispatcher.invalidateMeta?.(normalizedAgentId);
+      }
+      throw error;
+    }
   };
   handlers.restart_agent_runtime = async () => {
     if (__ownerSwitchInProgress || __serviceHealth === 'draining') {

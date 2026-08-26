@@ -19,6 +19,11 @@ const ADAPTER_TYPE = 'workbuddy-http';
 const MAX_REPLY_CHARS = 2 * 1024 * 1024;
 const REQUIRED_PATHS = ['/api/v1/runs', '/api/v1/runs/{runId}', '/api/v1/runs/{runId}/stream',
   '/api/v1/runs/{runId}/cancel', '/api/v1/acp/connect', '/api/v1/acp'];
+const VOKO_TEXT_AGENT = JSON.stringify({ voko: {
+  description: 'VOKO message responder',
+  prompt: 'Reply directly to the user message. Do not call tools, ask follow-up questions, or create artifacts.',
+  tools: [],
+} });
 
 interface Options {
   db?: any;
@@ -66,7 +71,7 @@ function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: strin
   target: { agentId?: string; pluginRoot?: string; dataFile?: string } = {}): string[] {
   const dataTools = target.dataFile
     ? ['--tools', 'Read,Write', '--allowedTools', `Read(${target.dataFile})`, `Write(${target.dataFile})`]
-    : ['--tools', ''];
+    : ['--agents', VOKO_TEXT_AGENT, '--agent', 'voko', '--tools', ''];
   return [...argsPrefix, ...(target.pluginRoot ? ['--plugin-dir', target.pluginRoot] : []),
     ...(target.agentId ? ['--agent', target.agentId] : []), '--serve', '--host', '127.0.0.1', '--port', String(port),
     '--session-id', sessionId, '--permission-mode', 'dontAsk', ...dataTools, '--strict-mcp-config'];
@@ -93,6 +98,7 @@ class WorkBuddyHttpProvider extends PushProvider {
   _fetch: typeof fetch;
   _spawn: typeof spawn;
   _resolveAgentTarget: typeof resolveWorkBuddyAgentTarget;
+  _configuredCommand?: string;
   _inflight = new Map<string, Promise<unknown>>();
   _activeRuns = new Map<string, { runId: string; state: ServerState }>();
   _activeAcp = new Map<string, { connectionId: string; sessionId: string; state: ServerState }>();
@@ -109,6 +115,7 @@ class WorkBuddyHttpProvider extends PushProvider {
     this._fetch = options.fetchImpl || fetch;
     this._spawn = options.spawnImpl || spawn;
     this._resolveAgentTarget = options.resolveAgentTarget || resolveWorkBuddyAgentTarget;
+    this._configuredCommand = options.binPath;
     this._states.set('', { instanceId: null, pluginRoot: null, dataFile: null, server: null, serverPromise: null, port: 0 });
   }
 
@@ -156,6 +163,11 @@ class WorkBuddyHttpProvider extends PushProvider {
   get sessionMode() { return 'agent-issued-id' as const; }
   match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'workbuddy'; }
   isAvailable() { return Boolean(this._runtime.command); }
+
+  refreshRuntime() {
+    this._runtime = resolveWorkBuddyRuntime({ configuredCommand: this._configuredCommand, env: { ...process.env } });
+    return this._resolveRuntime();
+  }
 
   _resolveRuntime(): { available: boolean; executable: string | null; argvPrefix: string[] } {
     const launch = workBuddySpawnCommand(this._runtime);
@@ -207,7 +219,7 @@ class WorkBuddyHttpProvider extends PushProvider {
         { agentId: state.instanceId || undefined, pluginRoot: state.pluginRoot || undefined,
           dataFile: state.dataFile || undefined });
       const child = this._spawn(launch.command, args, {
-        cwd: this._cwd, env: { ...process.env, NO_COLOR: '1' }, windowsHide: true,
+        cwd: this._cwd, env: { ...process.env, NO_COLOR: '1', CODEBUDDY_GATEWAY_AUTH: 'none' }, windowsHide: true,
         detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],
       }) as ChildProcess;
       this._server = child;
@@ -514,47 +526,7 @@ class WorkBuddyHttpProvider extends PushProvider {
     const currentInstance = this._currentState().instanceId || '';
     const boundSession = this.acceptsBinding(payload.providerBinding) && bindingInstance === currentInstance
       ? String(payload.providerBinding?.nativeSessionId || '') : '';
-    if (payload.attachments?.length) {
-      return this._pushAcpSession(payload, turnId, boundSession);
-    }
-    if (boundSession) return this._pushAcpSession(payload, turnId, boundSession);
-    const scope = this._scope(payload);
-    const hasSession = Boolean(payload.providerBinding?.nativeSessionId);
-    const prompt = buildConversationDeliveryPrompt(this._db, payload, hasSession, this._contextWindow);
-    let accepted: any;
-    try {
-      accepted = await this._fetchJson('/api/v1/runs', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: turnId,
-          type: 'message',
-          source: {
-            platform: 'voko',
-            sender: { id: scope.senderId, name: 'VOKO' },
-            conversation: { id: scope.conversationId, type: scope.channelType === 2 ? 'group' : 'direct' },
-          },
-          payload: { text: prompt },
-        }),
-      }, 10_000);
-    } catch (error: any) {
-      const outcome = error?.httpStatus && error.httpStatus >= 400 && error.httpStatus < 500 ? 'rejected' : 'not_delivered';
-      throw deliveryError(error?.httpStatus ? `WorkBuddy rejected the request with HTTP ${error.httpStatus}` : 'WorkBuddy did not accept the request', outcome);
-    }
-    const runId = String(accepted?.data?.runId || '');
-    if (!runId) throw deliveryError('WorkBuddy accepted the request without a run id', 'outcome_unknown');
-    this._activeRuns.set(turnId, { runId, state: this._currentState() });
-    this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
-      turnId, nativeSessionId: payload.providerBinding?.nativeSessionId || null, terminal: false });
-    const result = await this._streamAcceptedRun(runId, turnId);
-    const nativeSessionId = result.sessionId || payload.providerBinding?.nativeSessionId || '';
-    if (!nativeSessionId) throw deliveryError('WorkBuddy completed without a session id', 'outcome_unknown');
-    this.emit('agent.reply', {
-      agentId: payload.agentId, visitorId: payload.fromUid, content: result.reply, done: true,
-      sessionKey: `workbuddy:${scope.conversationId}`, turnId, replyId: turnId,
-    });
-    this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
-      turnId, nativeSessionId, terminal: true });
-    return { nativeSessionId, providerInstanceId: this._currentState().instanceId, deliveryMode: 'http', adapterType: ADAPTER_TYPE };
+    return this._pushAcpSession(payload, turnId, boundSession);
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {

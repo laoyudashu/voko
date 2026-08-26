@@ -709,7 +709,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       } catch (_) {
         continue;
       }
-      if (explicitModes && !explicitModes.includes(mode)) continue;
+      const configured = !explicitModes || explicitModes.includes(mode);
       let available = false;
       let status: AgentDeliveryStatus['methods'][number]['status'] = 'unavailable';
       try {
@@ -719,7 +719,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         status = 'unknown';
       }
       methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
-        configured: true, available, status,
+        configured, available, status,
         capabilities: getProviderTransport(key)?.capabilities });
     }
 
@@ -753,7 +753,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       return (providers[b.provider || '']?.priority || 0) - (providers[a.provider || '']?.priority || 0);
     });
     const automaticReadyModes = [...new Set(methods
-      .filter(method => method.mode !== 'pull' && method.available)
+      .filter(method => method.mode !== 'pull' && method.configured && method.available)
       .map(method => method.mode))];
     const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
     const pullOnly = !!(family && family.transports.length === 0)
@@ -764,7 +764,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       : null;
     const activeAutomaticMode = temporaryPreference?.mode === 'pull'
       ? null
-      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.available)?.mode || null);
+      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.configured && method.available)?.mode || null);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
@@ -782,15 +782,39 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
 
   async function refreshAgentDeliveryChannels(agentId: string): Promise<AgentDeliveryStatus> {
     const meta = _metaOf(agentId);
-    const configuredModes = Array.isArray(meta.delivery_modes) ? meta.delivery_modes : null;
     const providerIds = Object.keys(providers).filter(providerId => {
       const definition = getProviderTransport(providerId);
-      if (!definition || (configuredModes && !configuredModes.includes(definition.mode))) return false;
+      if (!definition) return false;
       try { return !!providers[providerId]?.match?.(agentId, meta); } catch (_) { return false; }
     });
-    for (const providerId of providerIds) await runtimeRegistry.healthCheck(providerId);
+    for (const providerId of providerIds) {
+      (providers[providerId] as any)?.refreshRuntime?.();
+      await runtimeRegistry.healthCheck(providerId);
+    }
     invalidateRoutes({ agentId, reason: 'manual-delivery-refresh' });
     return getAgentDeliveryStatus(agentId);
+  }
+
+  async function verifyAgentDeliveryChannel(agentId: string, providerId: string): Promise<{ result: any; status: AgentDeliveryStatus }> {
+    const meta = _metaOf(agentId);
+    const provider: any = providers[String(providerId || '')];
+    if (!provider || !provider.match?.(agentId, meta) || typeof provider.runLoopbackTest !== 'function') {
+      throw new Error('delivery channel does not support loopback verification');
+    }
+    provider.refreshRuntime?.();
+    if (!provider.isAvailable?.(agentId)) throw new Error('CodeBuddy CLI is not installed');
+    const result = await provider.runLoopbackTest(agentId, {
+      acknowledgeCost: true,
+      challenge: `voko-${crypto.randomBytes(12).toString('hex')}`,
+    });
+    try {
+      if (result?.loopbackSessionId && typeof provider.cleanupLoopbackSession === 'function') {
+        await provider.cleanupLoopbackSession(agentId, result.loopbackSessionId);
+      }
+    } catch (_) {}
+    if (!result?.ok || result?.challengeMatched !== true) throw new Error(result?.detail || 'WorkBuddy loopback verification failed');
+    invalidateRoutes({ agentId, reason: 'manual-delivery-loopback' });
+    return { result, status: getAgentDeliveryStatus(agentId) };
   }
 
   function selectTemporaryDeliveryChannel(agentId: string, mode: string, providerId?: string | null): AgentDeliveryStatus {
@@ -1840,7 +1864,7 @@ ${body}
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
-    refreshAgentDeliveryChannels, selectTemporaryDeliveryChannel,
+    refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }

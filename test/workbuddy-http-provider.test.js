@@ -64,12 +64,16 @@ test('WorkBuddy bundled CLI may be configured without PATH and launches through 
   assert.deepEqual(workBuddySpawnCommand(runtime), { command: process.execPath, argsPrefix: [path.resolve(command)] });
 });
 
-test('WorkBuddy only resolves its bundled runtime and starts a text-only local service', () => {
-  assert.notEqual(resolveWorkBuddyRuntime({ env: { ...process.env } }).source, 'path');
-  assert.deepEqual(workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session'), [
-    'bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
-    '--session-id', 'voko-session', '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config',
-  ]);
+test('WorkBuddy prefers an installed CLI and starts a text-only local service', () => {
+  const runtime = resolveWorkBuddyRuntime({ env: { ...process.env } });
+  assert.equal(runtime.source, 'path');
+  assert.match(runtime.command, /codebuddy/);
+  const args = workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session');
+  assert.deepEqual(args.slice(0, 10), ['bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
+    '--session-id', 'voko-session', '--permission-mode', 'dontAsk']);
+  assert.equal(args[10], '--agents');
+  assert.deepEqual(JSON.parse(args[11]).voko.tools, []);
+  assert.deepEqual(args.slice(12), ['--agent', 'voko', '--tools', '', '--strict-mcp-config']);
   assert.deepEqual(workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session', {
     agentId: 'expert-a', pluginRoot: 'C:\\safe\\expert-a', dataFile: 'C:\\Users\\test\\.workbuddy\\expert-a\\data.json',
   }).slice(0, 5), ['bundled-cli', '--plugin-dir', 'C:\\safe\\expert-a', '--agent', 'expert-a']);
@@ -80,18 +84,22 @@ test('WorkBuddy only resolves its bundled runtime and starts a text-only local s
     'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
 });
 
-test('WorkBuddy request uses Gateway Protocol, opaque scopes and returns the native session', async () => {
+test('WorkBuddy first text turn uses ACP and returns the native session', async () => {
   const calls = [];
   const provider = readyProvider(async (url, init = {}) => {
     calls.push({ url: String(url), init });
     if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
     if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
-    if (String(url).endsWith('/api/v1/runs')) return response({ data: { runId: 'run-1', status: 'accepted' } }, 202);
-    if (String(url).endsWith('/api/v1/runs/run-1/stream')) return streamResponse([
-      { replyTo: 'old-message', status: 'completed', content: { markdown: '旧回复' }, agent: { sessionId: 'session-1' } },
-      { replyTo: 'message-1', status: 'running', content: { markdown: '你' }, agent: { sessionId: 'session-1' } },
-      { replyTo: 'message-1', status: 'completed', content: { markdown: '你好' }, agent: { sessionId: 'session-1' } },
-    ]);
+    if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: 'connection-1' });
+    if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+    if (String(url).endsWith('/api/v1/acp')) {
+      const request = JSON.parse(init.body);
+      if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-1' });
+      if (request.method === 'session/prompt') return acpResponse(request, [
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '你好' } },
+      ], { stopReason: 'end_turn' });
+      return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1 } : {});
+    }
     throw new Error(`unexpected ${url}`);
   });
   let reply = null;
@@ -99,47 +107,40 @@ test('WorkBuddy request uses Gateway Protocol, opaque scopes and returns the nat
   const receipt = await provider.push({ agentId: 'agent-1', fromUid: 'visitor-secret', senderUid: 'visitor-secret',
     channelId: 'visitor-secret', channelType: 1, content: 'hello', rawContent: 'hello',
     messageId: 'message-1', turnId: 'message-1' });
-  const create = calls.find(call => call.url.endsWith('/api/v1/runs'));
-  const body = JSON.parse(create.init.body);
-  assert.equal(body.id, 'message-1');
-  assert.equal(body.type, 'message');
-  assert.equal(body.source.platform, 'voko');
-  assert.equal(body.source.conversation.type, 'direct');
-  assert.equal(body.source.sender.id.includes('visitor-secret'), false);
-  assert.equal(body.source.conversation.id.includes('visitor-secret'), false);
-  assert.deepEqual(body.payload, { text: 'hello' });
+  const prompt = calls.map(call => call.init.body && JSON.parse(call.init.body)).filter(Boolean)
+    .find(request => request.method === 'session/prompt');
+  assert.deepEqual(prompt.params.prompt, [{ type: 'text', text: 'hello' }]);
+  assert.equal(calls.some(call => call.url.endsWith('/api/v1/runs')), false);
   assert.equal(receipt.nativeSessionId, 'session-1');
   assert.equal(receipt.adapterType, 'workbuddy-http');
   assert.equal(reply.content, '你好');
 });
 
-test('accepted WorkBuddy Run never creates a second Run when streaming is uncertain', async () => {
-  let creates = 0;
-  let streams = 0;
-  const provider = readyProvider(async (url) => {
+test('WorkBuddy ACP denies an interactive question without hanging the turn', async () => {
+  const methods = [];
+  const provider = readyProvider(async (url, init = {}) => {
     if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
     if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
-    if (String(url).endsWith('/api/v1/runs')) { creates += 1; return response({ data: { runId: 'run-uncertain' } }, 202); }
-    if (String(url).endsWith('/stream')) { streams += 1; throw new Error('connection reset'); }
-    if (String(url).endsWith('/api/v1/runs/run-uncertain')) return response({ data: { runId: 'run-uncertain', active: true } });
+    if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: 'connection-interruption' });
+    if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+    if (String(url).endsWith('/api/v1/acp')) {
+      const request = JSON.parse(init.body); methods.push(request.method);
+      if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-interruption' });
+      if (request.method === 'session/prompt') return acpResponse(request, [
+        { sessionUpdate: 'interruption_request', toolCallId: 'ask-1' },
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '已跳过提问' } },
+      ], { stopReason: 'end_turn' });
+      return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1 } : {});
+    }
     throw new Error(`unexpected ${url}`);
   });
-  await assert.rejects(provider.push({ agentId: 'a', fromUid: 'v', content: 'hello', channelId: 'v', channelType: 1,
-    messageId: 'm-uncertain', turnId: 'm-uncertain' }), error => error.deliveryOutcome === 'outcome_unknown');
-  assert.equal(creates, 1);
-  assert.equal(streams, 2);
-});
-
-test('requests not accepted are not_delivered while validation failures are rejected', async () => {
-  for (const [status, outcome] of [[503, 'not_delivered'], [400, 'rejected']]) {
-    const provider = readyProvider(async (url) => {
-      if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
-      if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
-      return response({ error: 'failed' }, status);
-    });
-    await assert.rejects(provider.push({ agentId: 'a', fromUid: 'v', content: 'hello', channelId: 'v', channelType: 1,
-      messageId: `m-${status}`, turnId: `m-${status}` }), error => error.deliveryOutcome === outcome);
-  }
+  let reply = '';
+  provider.on('agent.reply', event => { reply = event.content; });
+  await provider.push({ agentId: 'a', fromUid: 'v', content: 'hello', channelId: 'v', channelType: 1,
+    messageId: 'm-interruption', turnId: 'm-interruption' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reply, '已跳过提问');
+  assert.equal(methods.includes('_codebuddy.ai/resolveInterruption'), true);
 });
 
 test('WorkBuddy scopes isolate Agent, source, channel type and channel id', () => {

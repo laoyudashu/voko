@@ -147,6 +147,36 @@ test('explicit channel refresh detects a recovered CLI and makes it selectable',
   assert.equal(refreshed.methods.find(method => method.provider === 'codex-cli').available, true);
 });
 
+test('pull-only WorkBuddy still exposes its HTTP setup path and refreshes a newly installed runtime', async () => {
+  let available = false;
+  let runtimeRefreshes = 0;
+  const http = eventProvider('http', 10, [], false);
+  http.isAvailable = () => available;
+  http.refreshRuntime = () => { runtimeRefreshes++; available = true; http.available = true; };
+  http.healthCheck = () => ({ ok: true });
+  http.runLoopbackTest = async () => ({ ok: true, challengeMatched: true, loopbackSessionId: 'workbuddy-test-session' });
+  http.cleanupLoopbackSession = async () => ({ ok: true, cleaned: true });
+  const dispatcher = createDispatcher({
+    db: dbFor(['pull'], 'workbuddy'),
+    providers: { 'workbuddy-http': http },
+  });
+
+  const initial = dispatcher.getAgentDeliveryStatus('agent-1');
+  const method = initial.methods.find(item => item.provider === 'workbuddy-http');
+  assert.equal(method.configured, false);
+  assert.equal(method.available, false);
+  assert.equal(initial.activeAutomaticMode, null);
+
+  const refreshed = await dispatcher.refreshAgentDeliveryChannels('agent-1');
+  const recovered = refreshed.methods.find(item => item.provider === 'workbuddy-http');
+  assert.equal(runtimeRefreshes, 1);
+  assert.equal(recovered.configured, false);
+  assert.equal(recovered.available, true);
+  assert.equal(refreshed.activeAutomaticMode, null);
+  const verified = await dispatcher.verifyAgentDeliveryChannel('agent-1', 'workbuddy-http');
+  assert.equal(verified.result.challengeMatched, true);
+});
+
 test('explicit transport resolution never substitutes another mode', () => {
   const http = provider('http', 100, []);
   const cli = provider('cli', 10, []);

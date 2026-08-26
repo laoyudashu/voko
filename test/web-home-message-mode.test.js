@@ -74,6 +74,12 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /data-role="message-mode-picker"/);
   assert.match(html, /delivery-channels\/refresh/);
   assert.match(html, /delivery-channels\/select/);
+  assert.match(html, /data-role=\"setup-workbuddy\"/);
+  assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
+  assert.match(html, /codebuddy \/login/);
+  assert.match(html, /data-role=\"recheck-workbuddy\"/);
+  assert.match(html, /delivery-channels\/verify/);
+  assert.match(html, /method\.configured\?I\.message_mode_available:I\.message_mode_enable/);
   assert.match(html, /if\(other!==details\)other\.open=false/);
   assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);
   assert.match(html, /updateAgentRow/);
@@ -161,6 +167,10 @@ test('delivery channel endpoints refresh and select a process-local preference',
   const handlers = {
     list_agents: async () => ({ agents: [] }),
     refresh_delivery_channels: async ({ agentId }) => { calls.push(['refresh', agentId]); return { success: true, deliveryStatus: status }; },
+    verify_delivery_channel: async ({ agentId, providerId }) => {
+      calls.push(['verify', agentId, providerId]);
+      return { success: true, verification: { ok: true, challengeMatched: true }, deliveryStatus: status };
+    },
     select_delivery_channel: async ({ agentId, mode, providerId }) => {
       calls.push(['select', agentId, mode, providerId]);
       return { success: true, deliveryStatus: { ...status, activeAutomaticMode: mode === 'pull' ? null : mode,
@@ -174,12 +184,17 @@ test('delivery channel endpoints refresh and select a process-local preference',
   const refresh = await fetch(`${base}/api/agents/agent-home/delivery-channels/refresh`, { method: 'POST' });
   assert.equal(refresh.status, 200);
   assert.equal((await refresh.json()).deliveryStatus.activeAutomaticMode, 'cli');
+  const verify = await fetch(`${base}/api/agents/agent-home/delivery-channels/verify`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ providerId: 'workbuddy-http' }),
+  });
+  assert.equal(verify.status, 200);
+  assert.equal((await verify.json()).verification.challengeMatched, true);
   const select = await fetch(`${base}/api/agents/agent-home/delivery-channels/select`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'pull', providerId: null }),
   });
   assert.equal(select.status, 200);
   assert.equal((await select.json()).deliveryStatus.temporaryPreferredMode, 'pull');
-  assert.deepEqual(calls, [['refresh', 'agent-home'], ['select', 'agent-home', 'pull', null]]);
+  assert.deepEqual(calls, [['refresh', 'agent-home'], ['verify', 'agent-home', 'workbuddy-http'], ['select', 'agent-home', 'pull', null]]);
 });
 
 test('home disables access-entry actions when the agent is offline', async (t) => {

@@ -45,7 +45,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
 - [Reasonix](reasonix.md)：stdin、stream-json、dontAsk 权限、原生 session 和尾部参数注意事项。
-- [WorkBuddy](workbuddy.md)：Expert 资料与头像预填、桌面版内置 CodeBuddy HTTP、SSE、精确会话、取消和 Pull 兜底。
+- [WorkBuddy](workbuddy.md)：独立 CodeBuddy CLI 安装与登录、Expert 资料与头像预填、HTTP/ACP、精确会话、取消和 Pull 兜底。
 
 ## 暂不提供专属指南的 Provider
 

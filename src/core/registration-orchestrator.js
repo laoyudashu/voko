@@ -970,8 +970,8 @@ class RegistrationOrchestrator {
           status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
           action: available ? 'test' : null,
           description: available
-            ? 'VOKO 使用 WorkBuddy 内置 CodeBuddy HTTP API 和隔离会话自动投递；服务仅监听本机回环地址。'
-            : '未检测到 WorkBuddy 内置 CodeBuddy CLI，当前使用主动获取。',
+            ? '已检测到 CodeBuddy CLI；完成独立登录并通过真实回路测试后，VOKO 使用本机 HTTP/ACP 隔离会话自动投递。'
+            : '未检测到 CodeBuddy CLI。请先执行 npm install -g @tencent-ai/codebuddy-code 和 codebuddy /login；当前使用主动获取。',
         },
         pull,
       ];
@@ -1599,8 +1599,8 @@ class RegistrationOrchestrator {
         ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
       ready = !!runtime.command;
       detail = ready
-        ? '已检测到 WorkBuddy 内置 CodeBuddy CLI；HTTP 契约将在 VOKO 管理的回环服务启动后复核。'
-        : '未检测到 WorkBuddy 内置 CodeBuddy CLI。';
+        ? '已检测到 CodeBuddy CLI；还需独立登录并通过真实模型回路测试。'
+        : '未检测到 CodeBuddy CLI；请先执行 npm install -g @tencent-ai/codebuddy-code，再执行 codebuddy /login。';
     } else if (provider === 'dumate' && mode === 'http') {
       const instances = (this.options.dumateAgents || discoverDuMateAgents)();
       ready = isDuMateRuntimeAvailable() && instances.some((item) => item.id === session.provider?.instanceId);
