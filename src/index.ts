@@ -3247,6 +3247,13 @@ async function main() {
     return;
   }
 
+  // Tool documentation is static metadata and must remain available while the
+  // runtime and database are absent (notably during first-run troubleshooting).
+  if ((args.help || args.h) && cli.isKnownTool(subcommand)) {
+    await cli.printToolHelp(subcommand);
+    return;
+  }
+
   // CLI tool 身份：--agent <id> 或环境变量 VOKO_AGENT_ID（注入到需要 agentId 的工具）
   const cliAgent = args.agent || process.env.VOKO_AGENT_ID || null;
   // CLI tool 调用默认静默例行 DB 初始化日志；--verbose / --debug / VOKO_DEBUG 恢复
@@ -3458,14 +3465,6 @@ async function main() {
   // voko --tools：输出所有工具的 JSON Schema（机器可读，供 MCP 客户端/agent 发现能力）
   if (args.tools) {
     await cli.printAllToolSchemas(core);
-    try { if (core.db?.open) core.db.close(); } catch (_: any) {}
-    return;
-  }
-
-  // voko <tool> --help：打印该工具的参数说明，不执行
-  if ((args.help || args.h) && cli.isKnownTool(subcommand)) {
-    await cli.printToolHelp(subcommand, core);
-    try { await core.wukongimSender?.disconnectAll?.(); } catch (_: any) {}
     try { if (core.db?.open) core.db.close(); } catch (_: any) {}
     return;
   }

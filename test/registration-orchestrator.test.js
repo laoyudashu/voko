@@ -353,7 +353,9 @@ describe('shared registration orchestrator', () => {
         category: 'general',
       });
       assert.strictEqual(basic.status, 'delivery_selection_required');
-      assert.ok(basic.environment);
+      assert.equal(basic.environment, undefined);
+      const inspected = await service.manage({ action: 'inspect_environment', registrationId: started.registrationId });
+      assert.ok(inspected.environment);
       assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
 
       const delivery = service.selectDelivery(started.registrationId, { deliveryModes: [] });
@@ -501,29 +503,26 @@ describe('shared registration orchestrator', () => {
       const started = await service.start({ registrationMode: 'agent' });
       service.selectProvider(started.registrationId, { providerType: 'codex' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'Current Codex' });
-      assert.strictEqual(basic.environment.currentAgent.type, 'codex');
+      assert.strictEqual(started.environment.currentAgent.type, 'codex');
       assert.strictEqual(basic.status, 'delivery_selection_required');
     } finally {
       db.close();
     }
   });
 
-  it('uses the detected current Provider instance without asking the Agent to choose again', async () => {
-    const { db, service } = createService({
-      detectCurrentAgentType: () => 'openclaw',
-      detectCurrentAgentInstance: () => 'main',
-    });
+  it('accepts the detected current Provider instance when the Agent selects it', async () => {
+    const { db, service } = createService();
     try {
-      service.inspectCurrentAgent = (type, instanceId) => ({
+      service.inspectEnvironment = () => ({
         detected: [{
-          type,
+          type: 'openclaw',
           label: 'OpenClaw',
-          instances: [{ id: instanceId, name: instanceId }],
+          instances: [{ id: 'main', name: 'main' }],
           deliveryModes: [],
         }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
-        currentAgent: { type, instanceId },
+        currentAgent: { type: 'openclaw', instanceId: 'main' },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 0 },
       });
       const started = await service.start({ registrationMode: 'agent' });
@@ -702,7 +701,8 @@ describe('shared registration orchestrator', () => {
         { source: 'mcp', providerType: 'openclaw' },
         () => service.start({ email: 'owner@example.com', registrationMode: 'human' }),
       );
-      assert.strictEqual(spoofed.registrationMode, 'agent');
+      assert.strictEqual(spoofed.success, false);
+      assert.strictEqual(spoofed.code, 'REGISTRATION_MODE_NOT_ALLOWED');
     } finally {
       db.close();
     }

@@ -543,6 +543,16 @@ function _hasAgentIdParam(toolName?: any) {
  * voko <tool> --help：打印该工具的参数说明（人类可读，工具名无 voko_ 前缀）
  */
 async function printToolHelp(toolName?: any, core?: any) {
+  if (!core) {
+    const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
+    console.log(toolName);
+    console.log('');
+    console.log(t('cli.tool.params_header'));
+    for (const [name, type] of Object.entries(schema)) {
+      console.log(`  --${name}  [${type}, ${name === 'action' ? t('cli.tool.required') : t('cli.tool.optional')}]`);
+    }
+    return;
+  }
   let mcpServer;
   try {
     mcpServer = _buildMcpForSchema(core);

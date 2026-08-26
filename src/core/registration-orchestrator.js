@@ -503,11 +503,11 @@ class RegistrationOrchestrator {
     }
   }
 
-  _save(session) {
+  _save(session, options = {}) {
     session.updatedAt = now();
     this.sessions.set(session.id, session);
     this._persistSession(session);
-    return this.view(session);
+    return this.view(session, options);
   }
 
   _get(id) {
@@ -570,9 +570,9 @@ class RegistrationOrchestrator {
     return map[session.status] || null;
   }
 
-  view(sessionOrId) {
+  view(sessionOrId, options = {}) {
     const session = typeof sessionOrId === 'string' ? this._get(sessionOrId) : sessionOrId;
-    return {
+    const result = {
       success: true,
       registrationId: session.id,
       status: session.status,
@@ -582,7 +582,6 @@ class RegistrationOrchestrator {
       provider: session.provider || null,
       deliveryModes: session.deliveryModes || [],
       accessMode: session.accessMode || 'private',
-      environment: session.environment || null,
       registrationMode: session.registrationMode || 'human',
       providerLock: session.providerLock || null,
       result: session.result || null,
@@ -590,6 +589,25 @@ class RegistrationOrchestrator {
       nextAction: this._nextAction(session),
       updatedAt: session.updatedAt,
     };
+    if (options.includeEnvironment === true) {
+      result.environment = session.environment || null;
+    } else if (options.includeEnvironment === 'registration') {
+      const environment = session.environment || {};
+      const compactProvider = (provider) => ({
+        type: provider.type,
+        label: provider.label,
+        supportsMultipleInstances: provider.supportsMultipleInstances === true,
+        instances: Array.isArray(provider.instances)
+          ? provider.instances.map((instance) => ({ id: instance.id, name: instance.name || instance.id }))
+          : [],
+      });
+      result.environment = {
+        detected: Array.isArray(environment.detected) ? environment.detected.map(compactProvider) : [],
+        currentAgent: environment.currentAgent || null,
+        summary: environment.summary || null,
+      };
+    }
+    return result;
   }
 
   inspectEnvironment() {
@@ -1188,6 +1206,13 @@ class RegistrationOrchestrator {
     // Only local Web registration or an explicit interactive TTY enters the trusted human context.
     const caller = getRegistrationCaller();
     const humanSource = caller?.source === 'web' || caller?.source === 'cli_interactive';
+    if (input.registrationMode === 'human' && !humanSource) {
+      return {
+        success: false,
+        code: 'REGISTRATION_MODE_NOT_ALLOWED',
+        error: 'human registration mode requires the local Web UI or interactive CLI',
+      };
+    }
     const registrationSource = humanSource ? caller.source : 'agent';
     let email = cleanText(input.email, 320).toLowerCase();
     if (!email) {
@@ -1232,9 +1257,16 @@ class RegistrationOrchestrator {
       const sendCode = this.options.sendCode;
       if (typeof sendCode !== 'function') return { success: false, error: '验证码服务未就绪' };
       const sent = await sendCode({ email });
-      if (!sent?.success) return { success: false, error: sent?.error || '发送验证码失败' };
+      if (!sent?.success) return {
+        success: false,
+        code: sent?.code,
+        retryable: sent?.retryable,
+        stage: sent?.stage,
+        cause: sent?.cause,
+        error: sent?.error || '发送验证码失败',
+      };
     }
-    return this._save(session);
+    return this._save(session, { includeEnvironment: 'registration' });
   }
 
   async verifyEmail(id, code) {
@@ -1243,11 +1275,18 @@ class RegistrationOrchestrator {
     const loginByCode = this.options.loginByCode;
     if (typeof loginByCode !== 'function') return { success: false, error: '验证码验证服务未就绪' };
     const verified = await loginByCode({ email: session.email, code: cleanText(code, 12) });
-    if (!verified?.success) return { success: false, error: verified?.error || '验证码错误或已过期' };
+    if (!verified?.success) return {
+      success: false,
+      code: verified?.code,
+      retryable: verified?.retryable,
+      stage: verified?.stage,
+      cause: verified?.cause,
+      error: verified?.error || '验证码错误或已过期',
+    };
     session.environment = session.environment || this.inspectEnvironment();
     session.status = 'provider_selection_required';
     session.ownerBound = true;
-    return this._save(session);
+    return this._save(session, { includeEnvironment: 'registration' });
   }
 
   setBasicInfo(id, input = {}) {
@@ -1720,6 +1759,9 @@ class RegistrationOrchestrator {
     const action = cleanText(input.action, 40) || 'status';
     try {
       if (action === 'start') return await this.start(input);
+      if (action !== 'inspect_environment' && !cleanText(input.registrationId, 200)) {
+        return { success: false, code: 'REGISTRATION_ID_REQUIRED', error: 'registrationId 为必填字段' };
+      }
       // Explicit state-machine dispatch; verifyEmail still validates the server-issued registration ID and code.
       if (action === 'verify_email') return await this.verifyEmail(input.registrationId, input.code);
       if (action === 'set_basic_info') return this.setBasicInfo(input.registrationId, input);
@@ -1727,7 +1769,7 @@ class RegistrationOrchestrator {
         if (input.registrationId) {
           const session = this._get(input.registrationId);
           session.environment = this.inspectEnvironment();
-          return this._save(session);
+          return this._save(session, { includeEnvironment: true });
         }
         return { success: true, environment: this.inspectEnvironment() };
       }
