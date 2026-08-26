@@ -51,22 +51,17 @@ function frontmatterName(markdown: string): string {
   return match?.[1]?.match(/^name:\s*["']?([^\r\n"']+)["']?\s*$/m)?.[1]?.trim() || '';
 }
 
-function registeredMarketplaceRoot(root: string, workBuddyHome: string): boolean {
-  try {
-    const known = JSON.parse(fs.readFileSync(path.join(workBuddyHome, 'plugins', 'known_marketplaces.json'), 'utf8'));
-    const registered = known?.['my-experts']?.installLocation || known?.['my-experts']?.source?.path;
-    return registered && path.resolve(registered) === path.resolve(root);
-  } catch (_) { return false; }
+function defaultWorkBuddyHome(): string {
+  const configured = String(process.env.WORKBUDDY_CONFIG_DIR || '').trim();
+  return path.resolve(configured || path.join(os.homedir(), '.workbuddy'));
 }
 
 export function discoverWorkBuddyAgents(options: {
   root?: string;
   workBuddyHome?: string;
-  requireRegisteredMarketplace?: boolean;
 } = {}): WorkBuddyAgentInstance[] {
-  const workBuddyHome = path.resolve(options.workBuddyHome || path.join(os.homedir(), '.workbuddy'));
+  const workBuddyHome = path.resolve(options.workBuddyHome || defaultWorkBuddyHome());
   const root = path.resolve(options.root || path.join(workBuddyHome, 'plugins', 'marketplaces', 'my-experts'));
-  if ((options.requireRegisteredMarketplace ?? !options.root) && !registeredMarketplaceRoot(root, workBuddyHome)) return [];
   const marketplaceFile = path.join(root, '.codebuddy-plugin', 'marketplace.json');
   if (!fs.existsSync(marketplaceFile)) return [];
   let marketplace: any;
@@ -133,7 +128,7 @@ export function resolveWorkBuddyAgentTarget(id: unknown, options: Parameters<typ
   { instance: WorkBuddyAgentInstance; pluginRoot: string } | null {
   const instance = resolveWorkBuddyAgent(id, options);
   if (!instance) return null;
-  const workBuddyHome = path.resolve(options.workBuddyHome || path.join(os.homedir(), '.workbuddy'));
+  const workBuddyHome = path.resolve(options.workBuddyHome || defaultWorkBuddyHome());
   const root = path.resolve(options.root || path.join(workBuddyHome, 'plugins', 'marketplaces', 'my-experts'));
   const pluginRoot = path.resolve(root, 'plugins', instance.id);
   return inside(root, pluginRoot) ? { instance, pluginRoot } : null;

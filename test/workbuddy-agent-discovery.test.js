@@ -31,13 +31,49 @@ function fixture(t) {
 
 test('discovers stable WorkBuddy agent IDs and localized metadata from valid marketplace plugins', (t) => {
   const f = fixture(t); f.add('english-vocab-coach'); f.add('tcm-consultant'); f.save();
-  const found = discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false });
+  const found = discoverWorkBuddyAgents({ root: f.root });
   assert.deepEqual(found.map(item => item.id), ['english-vocab-coach', 'tcm-consultant']);
   assert.equal(found[0].available, true);
   assert.match(found[0].description, /介绍/);
   assert.equal(found[0].source, 'my-experts/english-vocab-coach');
-  assert.equal(resolveWorkBuddyAgentTarget('tcm-consultant', { root: f.root, requireRegisteredMarketplace: false }).pluginRoot,
+  assert.equal(resolveWorkBuddyAgentTarget('tcm-consultant', { root: f.root }).pluginRoot,
     path.join(f.root, 'plugins', 'tcm-consultant'));
+});
+
+test('uses marketplace manifests as the authority when known_marketplaces omits my-experts', (t) => {
+  const workBuddyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-home-'));
+  t.after(() => fs.rmSync(workBuddyHome, { recursive: true, force: true }));
+  const marketplaceRoot = path.join(workBuddyHome, 'plugins', 'marketplaces', 'my-experts');
+  const f = fixture(t);
+  f.add('primary-math-exam-expert');
+  f.save();
+  fs.mkdirSync(path.join(workBuddyHome, 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(workBuddyHome, 'plugins', 'known_marketplaces.json'), JSON.stringify({
+    'workbuddy-builtin': { installLocation: path.join(workBuddyHome, 'plugins', 'marketplaces', 'workbuddy-builtin') },
+  }));
+  fs.mkdirSync(path.dirname(marketplaceRoot), { recursive: true });
+  fs.cpSync(f.root, marketplaceRoot, { recursive: true });
+
+  assert.deepEqual(discoverWorkBuddyAgents({ workBuddyHome }).map(item => item.id), ['primary-math-exam-expert']);
+});
+
+test('respects WORKBUDDY_CONFIG_DIR for the default expert marketplace', (t) => {
+  const previous = process.env.WORKBUDDY_CONFIG_DIR;
+  const workBuddyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-config-'));
+  t.after(() => {
+    if (previous === undefined) delete process.env.WORKBUDDY_CONFIG_DIR;
+    else process.env.WORKBUDDY_CONFIG_DIR = previous;
+    fs.rmSync(workBuddyHome, { recursive: true, force: true });
+  });
+  const f = fixture(t);
+  f.add('configured-expert');
+  f.save();
+  const marketplaceRoot = path.join(workBuddyHome, 'plugins', 'marketplaces', 'my-experts');
+  fs.mkdirSync(path.dirname(marketplaceRoot), { recursive: true });
+  fs.cpSync(f.root, marketplaceRoot, { recursive: true });
+  process.env.WORKBUDDY_CONFIG_DIR = workBuddyHome;
+
+  assert.deepEqual(discoverWorkBuddyAgents().map(item => item.id), ['configured-expert']);
 });
 
 test('WorkBuddy runtime discovers the macOS application bundle CLI', (t) => {
@@ -53,14 +89,14 @@ test('WorkBuddy runtime discovers the macOS application bundle CLI', (t) => {
 test('filters malformed, mismatched and traversal marketplace entries', (t) => {
   const f = fixture(t); f.add('valid-agent'); f.add('wrong-frontmatter', { frontmatterName: 'other' });
   f.plugins.push({ name: 'escape-agent', source: '../outside', description: 'bad' }); f.save();
-  assert.deepEqual(discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false }).map(item => item.id), ['valid-agent']);
-  assert.equal(resolveWorkBuddyAgentTarget('../../escape', { root: f.root, requireRegisteredMarketplace: false }), null);
+  assert.deepEqual(discoverWorkBuddyAgents({ root: f.root }).map(item => item.id), ['valid-agent']);
+  assert.equal(resolveWorkBuddyAgentTarget('../../escape', { root: f.root }), null);
 });
 
 test('reports a corrupt marketplace as discovery failure instead of an empty list', (t) => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.root, '.codebuddy-plugin', 'marketplace.json'), '{broken');
-  assert.throws(() => discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false }), /manifest is invalid/);
+  assert.throws(() => discoverWorkBuddyAgents({ root: f.root }), /manifest is invalid/);
 });
 
 test('localizes object-shaped tags and only reads verified plugin image bytes', (t) => {
@@ -74,12 +110,12 @@ test('localizes object-shaped tags and only reads verified plugin image bytes', 
   f.add('traversal-image', { avatar: '../outside.png' });
   f.save();
 
-  const found = discoverWorkBuddyAgents({ root: f.root, requireRegisteredMarketplace: false });
+  const found = discoverWorkBuddyAgents({ root: f.root });
   assert.deepEqual(found.find(item => item.id === 'safe-agent').tags, ['英语词汇', '学习']);
-  const avatar = readWorkBuddyAgentAvatar('safe-agent', { root: f.root, requireRegisteredMarketplace: false });
+  const avatar = readWorkBuddyAgentAvatar('safe-agent', { root: f.root });
   assert.equal(avatar.mimeType, 'image/png');
   assert.deepEqual(avatar.data, png);
-  assert.equal(readWorkBuddyAgentAvatar('fake-image', { root: f.root, requireRegisteredMarketplace: false }), null);
-  assert.equal(readWorkBuddyAgentAvatar('traversal-image', { root: f.root, requireRegisteredMarketplace: false }), null);
-  assert.equal(readWorkBuddyAgentAvatar('../../escape', { root: f.root, requireRegisteredMarketplace: false }), null);
+  assert.equal(readWorkBuddyAgentAvatar('fake-image', { root: f.root }), null);
+  assert.equal(readWorkBuddyAgentAvatar('traversal-image', { root: f.root }), null);
+  assert.equal(readWorkBuddyAgentAvatar('../../escape', { root: f.root }), null);
 });
