@@ -73,6 +73,11 @@ function signedTimestamp(sample: ClockSample | null): number {
   return Math.floor((Date.now() + (sample?.offsetMs || 0)) / 1000);
 }
 
+function calibratedNowMs(url: string): number {
+  const sample = samples.get(apiBase(url));
+  return Date.now() + (sampleIsFresh(sample) ? sample.offsetMs : 0);
+}
+
 async function isClockSkewResponse(response: Response): Promise<boolean> {
   if (response.status !== 401) return false;
   try {
@@ -111,4 +116,5 @@ module.exports = {
   resetDidClockCacheForTests,
   sampleIsFresh,
   signedTimestamp,
+  calibratedNowMs,
 };

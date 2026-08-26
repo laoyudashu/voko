@@ -7,7 +7,7 @@
 
 const { VOKO_API_URL } = require('./api-signature');
 const { signDidRequest } = require('./did-auth');
-const { fetchWithDidClockRetry } = require('./did-auth-client');
+const { fetchWithDidClockRetry, calibratedNowMs } = require('./did-auth-client');
 import type { DatabaseLike } from '../types/database';
 
 interface ProfileOptions {
@@ -92,8 +92,9 @@ async function updateAgentProfile(opts?: ProfileOptions): Promise<ProfileResult>
     if (backendType !== undefined) payload.backendType = backendType;
     console.log(`[updateProfile] Agent ${agentId}: sending...`, JSON.stringify({ did: row.did, fields: Object.keys(payload) }));
 
+    const requestUrl = `${VOKO_API_URL}/api/did-auth/update-agent-profile`;
     const response = await fetchWithDidClockRetry(
-      `${VOKO_API_URL}/api/did-auth/update-agent-profile`,
+      requestUrl,
       async (timestamp: number) => {
         const signed = await signDidRequest(row.did, row.private_key, payload, { timestamp });
         return {
@@ -109,7 +110,7 @@ async function updateAgentProfile(opts?: ProfileOptions): Promise<ProfileResult>
     if (result.success) {
       // 本地同步更新
       const sets = ['updated_at = ?'];
-      const vals: unknown[] = [Date.now()];
+      const vals: unknown[] = [calibratedNowMs(requestUrl)];
       if (name !== undefined) { sets.push('agent_name = ?'); vals.push(name); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (address !== undefined) { sets.push('address = ?'); vals.push(address); }

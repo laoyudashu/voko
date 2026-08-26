@@ -7,7 +7,7 @@
 
 const { VOKO_API_URL } = require('./api-signature');
 const { signDidRequest } = require('./did-auth');
-const { fetchWithDidClockRetry } = require('./did-auth-client');
+const { fetchWithDidClockRetry, calibratedNowMs } = require('./did-auth-client');
 const { defaultRegistry, getAgentSkills } = require('./skills');
 const { t } = require('./i18n');
 import type { DatabaseLike } from '../types/database';
@@ -120,8 +120,9 @@ async function registerCapabilitiesForAgent({ db, agentId }: RegisterOptions) {
 
     console.log(`[registerCapabilities] Agent ${agentId}: sending capabilities...`);
     const businessFields = { capabilities, normalCapabilities };
+    const requestUrl = `${VOKO_API_URL}/api/did-auth/register-capabilities`;
     const response = await fetchWithDidClockRetry(
-      `${VOKO_API_URL}/api/did-auth/register-capabilities`,
+      requestUrl,
       async (timestamp: number) => {
         const signed = await signDidRequest(row.did, row.private_key, businessFields, { timestamp });
         return {
@@ -134,21 +135,21 @@ async function registerCapabilitiesForAgent({ db, agentId }: RegisterOptions) {
 
     const result = await readApiResult(response);
     if (typeof result === 'string') {
-      db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(result, Date.now(), agentId);
+      db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(result, calibratedNowMs(requestUrl), agentId);
       return { success: false, error: result };
     }
     console.log('[registerCapabilities] Agent response:', agentId, result);
     if (result.success) {
-      db.prepare(`UPDATE agents SET cap_error = NULL, updated_at = ? WHERE agent_id = ?`).run(Date.now(), agentId);
+      db.prepare(`UPDATE agents SET cap_error = NULL, updated_at = ? WHERE agent_id = ?`).run(calibratedNowMs(requestUrl), agentId);
       return { success: true, message: '能力已注册到服务器' };
     }
     const errMsg = result.message || '注册失败';
-    db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(errMsg, Date.now(), agentId);
+    db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(errMsg, calibratedNowMs(requestUrl), agentId);
     return { success: false, error: errMsg, detail: result };
   } catch (e: unknown) {
     console.error('[registerCapabilities] Agent error:', agentId, e);
     const message = errorMessage(e);
-    db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(message, Date.now(), agentId);
+    db.prepare(`UPDATE agents SET cap_error = ?, updated_at = ? WHERE agent_id = ?`).run(message, calibratedNowMs(`${VOKO_API_URL}/api/did-auth/register-capabilities`), agentId);
     return { success: false, error: message };
   }
 }

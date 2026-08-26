@@ -7,7 +7,7 @@
 
 const { VOKO_API_URL } = require('./api-signature');
 const { signDidRequest } = require('./did-auth');
-const { fetchWithDidClockRetry } = require('./did-auth-client');
+const { fetchWithDidClockRetry, calibratedNowMs } = require('./did-auth-client');
 const { t } = require('./i18n');
 export {};
 
@@ -113,8 +113,9 @@ async function setAgentStatus(opts?: SetAgentStatusOptions): Promise<SetAgentSta
     const businessFields = { status, visibility };
     console.log(`[setAgentStatus] Agent ${agentId}: status=${status}, visibility=${visibility}`);
 
+    const requestUrl = `${VOKO_API_URL}/api/did-auth/set-agent-status`;
     const response = await fetchWithDidClockRetry(
-      `${VOKO_API_URL}/api/did-auth/set-agent-status`,
+      requestUrl,
       async (timestamp: number) => {
         const signed = await signDidRequest(row.did, row.private_key, businessFields, { timestamp });
         return {
@@ -131,7 +132,7 @@ async function setAgentStatus(opts?: SetAgentStatusOptions): Promise<SetAgentSta
       const publishStatus = status === 1 ? 'published' : 'unpublished';
       const accessMode = row.access_mode === 'public' ? 'public' : 'private';
       db.prepare(`UPDATE agents SET publish_status=?, visibility_type=?, updated_at=? WHERE agent_id=?`)
-        .run(publishStatus, visibility, Date.now(), agentId);
+        .run(publishStatus, visibility, calibratedNowMs(requestUrl), agentId);
       console.log(`[setAgentStatus] Agent ${agentId} 成功 -> publish_status=${publishStatus}, visibility_type=${visibility}`);
       return { success: true, publishStatus, accessMode };
     }

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   fetchWithDidClockRetry,
+  calibratedNowMs,
   resetDidClockCacheForTests,
 } = require('../build/core/did-auth-client');
 
@@ -48,6 +49,7 @@ test('DID client samples server time and retries CLOCK_SKEW exactly once', async
   assert.equal(calls.filter((call) => call.url.endsWith('/v1/time')).length, 2);
   assert.notEqual(signed[0].nonce, signed[1].nonce);
   assert.ok(Math.abs(signed[1].timestamp - Math.floor(serverTimeMs / 1000)) <= 1);
+  assert.ok(Math.abs(calibratedNowMs('https://api.example.com/test') - serverTimeMs) <= 1000);
 });
 
 test('DID client never retries a non-clock 401', async () => {
