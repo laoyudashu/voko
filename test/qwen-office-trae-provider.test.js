@@ -40,6 +40,18 @@ test('QwenWork resolver supports the localized macOS bundle name and fails close
   assert.equal(qwenCommand.qwenOfficeLoginCommand({ HOME: home }, 'darwin'), `${cli} login`);
 });
 
+test('QwenWork resolver discovers the newest machine-wide Windows installation', (t) => {
+  const programFiles = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-program-files-'));
+  t.after(() => fs.rmSync(programFiles, { recursive: true, force: true }));
+  const olderCli = path.join(programFiles, 'QwenWorkCN', '1.0.0-26010101', 'resources', 'bin', 'qoderclicn.exe');
+  const newestCli = path.join(programFiles, 'QwenWorkCN', '1.0.0-26082211', 'resources', 'bin', 'qoderclicn.exe');
+  for (const cli of [olderCli, newestCli]) {
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.writeFileSync(cli, 'test');
+  }
+  assert.equal(qwenCommand.findBundledQwenCli({ ProgramW6432: programFiles }, 'win32'), newestCli);
+});
+
 test('QwenWork readiness separates executable discovery from CLI authentication', () => {
   const readiness = qwenCommand.getQwenOfficeReadiness('C:\\does-not-exist\\qoderclicn.exe');
   assert.deepEqual(readiness, {

@@ -61,12 +61,23 @@ export function isDuMateRuntimeAvailable(env: NodeJS.ProcessEnv = process.env, p
   return resolveDuMateRuntime().available === true;
 }
 
-export function resolveDuMateBackendPort(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+export function resolveDuMateBackendPort(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  options: { spawnSync?: typeof spawnSync } = {},
+): string {
   const configured = String(env.DUMATE_BACK_END_PORT || '').trim();
   if (/^\d{1,5}$/.test(configured)) return configured;
+  const run = options.spawnSync || spawnSync;
+  if (platform === 'darwin') {
+    try {
+      const result = run('ps', ['-axo', 'command'], { encoding: 'utf8', timeout: 5000 });
+      return String(result.stdout || '').match(/(?:^|[\/\s])dumate-main-server(?:\s|$)[^\n]*?--port(?:=|\s+)(\d{1,5})/mi)?.[1] || '';
+    } catch (_) { return ''; }
+  }
   if (platform !== 'win32') return '';
   try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       "(Get-CimInstance Win32_Process -Filter \"Name='dumate-main-server.exe'\" | Select-Object -First 1 -ExpandProperty CommandLine)"],
     { encoding: 'utf8', timeout: 5000, windowsHide: true });
     return String(result.stdout || '').match(/--port=(\d{1,5})/)?.[1] || '';

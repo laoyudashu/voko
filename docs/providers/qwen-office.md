@@ -57,6 +57,8 @@ qoderclicn.exe status --output json
 
 `status` 必须返回 `"logged_in": true`。登录会通过浏览器完成 QoderCN 账号授权；不要把二维码、Cookie 或 Token 复制到 VOKO 配置。登录后重启 VOKO，或执行 `voko doctor --deep` 让预检刷新状态。CLI 未登录时，VOKO 不会把 `cli` 标记为 ready，只保留 Pull。
 
+VOKO 会分别显示 CLI 缺失、CLI 未登录和状态检查失败；`logged_in: true` 只表示登录预检通过，仍需真实消息回路测试确认模型调用和回复解析后才启用自动投递。
+
 CLI 使用以下安全参数：
 
 ```text

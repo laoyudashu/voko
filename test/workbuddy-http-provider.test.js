@@ -84,6 +84,27 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
     'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
 });
 
+test('WorkBuddy preflight does not confuse CLI discovery with authenticated delivery', async () => {
+  const idle = new WorkBuddyHttpProvider({ binPath: process.execPath });
+  const idleResult = await idle.preflightDelivery('agent-1');
+  assert.equal(idleResult.ok, false);
+  assert.equal(idleResult.status, 'configuration_required');
+  assert.equal(idleResult.code, 'WORKBUDDY_AUTH_TEST_REQUIRED');
+  assert.equal(idleResult.authenticationStatus, 'unverified');
+
+  const running = readyProvider(async (url) => {
+    if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+    if (String(url).endsWith('/api/openapi.json')) {
+      return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+  const runningResult = await running.preflightDelivery('agent-1');
+  assert.equal(runningResult.ok, false);
+  assert.equal(runningResult.status, 'configuration_required');
+  assert.equal(runningResult.code, 'WORKBUDDY_AUTH_TEST_REQUIRED');
+});
+
 test('WorkBuddy first text turn uses ACP and returns the native session', async () => {
   const calls = [];
   const provider = readyProvider(async (url, init = {}) => {

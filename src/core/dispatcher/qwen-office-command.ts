@@ -43,19 +43,26 @@ function findBundledQwenCli(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): 
     }) || null;
   }
   if (platform !== 'win32') return null;
-  const root = localAppDataRoot(env);
-  if (!root) return null;
-  const versionsRoot = path.join(root, 'Programs', 'QwenWorkCN');
-  try {
-    const versions = fs.readdirSync(versionsRoot, { withFileTypes: true })
-      .filter((entry: any) => entry.isDirectory())
-      .map((entry: any) => entry.name)
-      .sort((a: string, b: string) => b.localeCompare(a, undefined, { numeric: true }));
-    for (const version of versions) {
-      const candidate = path.join(versionsRoot, version, 'resources', 'bin', 'qoderclicn.exe');
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-    }
-  } catch (_) { /* installation may be absent or partially removed */ }
+  const localRoot = localAppDataRoot(env);
+  const versionsRoots = [
+    ...(localRoot ? [path.join(localRoot, 'Programs', 'QwenWorkCN')] : []),
+    ...[env.ProgramW6432, env.ProgramFiles, env['ProgramFiles(x86)']]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .map(root => path.join(root, 'QwenWorkCN')),
+  ].filter((root, index, roots) => roots.indexOf(root) === index);
+  for (const versionsRoot of versionsRoots) {
+    try {
+      const versions = fs.readdirSync(versionsRoot, { withFileTypes: true })
+        .filter((entry: any) => entry.isDirectory())
+        .map((entry: any) => entry.name)
+        .sort((a: string, b: string) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const version of versions) {
+        const candidate = path.join(versionsRoot, version, 'resources', 'bin', 'qoderclicn.exe');
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      }
+    } catch (_) { /* this installation root may be absent or partially removed */ }
+  }
   return null;
 }
 

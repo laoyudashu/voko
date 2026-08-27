@@ -21,6 +21,7 @@ interface Options {
   cwd?: string;
   binPath?: string;
   resolveAgentTarget?: typeof resolveDuMateAgentTarget;
+  resolveBackendPort?: typeof resolveDuMateBackendPort;
 }
 
 interface RuntimeState {
@@ -58,6 +59,7 @@ class DuMateHttpProvider extends PushProvider {
   private readonly _cwd: string;
   private readonly _cmd: string;
   private readonly _resolveAgentTarget: typeof resolveDuMateAgentTarget;
+  private readonly _resolveBackendPort: typeof resolveDuMateBackendPort;
   private readonly _states = new Map<string, RuntimeState>();
 
   constructor(options: Options = {}) {
@@ -67,6 +69,7 @@ class DuMateHttpProvider extends PushProvider {
     this._cwd = options.cwd || os.tmpdir();
     this._cmd = options.binPath || resolveDuMateCommand();
     this._resolveAgentTarget = options.resolveAgentTarget || resolveDuMateAgentTarget;
+    this._resolveBackendPort = options.resolveBackendPort || resolveDuMateBackendPort;
   }
 
   get priority() { return 10; }
@@ -98,7 +101,12 @@ class DuMateHttpProvider extends PushProvider {
     if (!instanceId || !this._resolveAgentTarget(instanceId)) {
       return { ok: false, status: 'unavailable', sideEffects: false, code: 'DUMATE_AGENT_UNAVAILABLE' };
     }
-    return { ok: true, status: 'preflight_passed', sideEffects: false, providerInstanceId: instanceId, routing: 'plugin_part' };
+    if (!this._resolveBackendPort()) {
+      return { ok: false, status: 'configuration_required', sideEffects: false,
+        code: 'DUMATE_BACKEND_UNAVAILABLE', providerInstanceId: instanceId };
+    }
+    return { ok: false, status: 'configuration_required', sideEffects: false,
+      code: 'DUMATE_AUTH_TEST_REQUIRED', providerInstanceId: instanceId, routing: 'plugin_part' };
   }
 
   private _headers(state: RuntimeState): Record<string, string> {
@@ -137,7 +145,7 @@ class DuMateHttpProvider extends PushProvider {
       const dataRoot = path.join(state!.tempRoot, 'data');
       fs.mkdirSync(path.join(dataRoot, 'plugins', 'user'), { recursive: true });
       fs.cpSync(target.pluginRoot, path.join(dataRoot, 'plugins', 'user', instanceId), { recursive: true });
-      const backendPort = resolveDuMateBackendPort();
+      const backendPort = this._resolveBackendPort();
       if (!backendPort) throw deliveryError('DuMate backend is not running; start DuMate before automatic delivery');
       const child = spawn(this._cmd, ['serve', '--hostname', '127.0.0.1', '--port', String(state!.port)], {
         cwd: this._cwd,

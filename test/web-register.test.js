@@ -105,6 +105,7 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.strictEqual(response.status, 200);
     assert.match(html, /不绑定现有实例（收到消息时自动创建新会话）/);
     assert.match(html, /该类型必须先创建实例才能发送消息/);
+    assert.match(html, /DUMATE_BACKEND_UNAVAILABLE/);
     assert.match(html, /requiresInstance/);
     assert.doesNotMatch(html, /instances\.length\+' '\+term/);
     assert.match(html, /p\.requiresInstance&&!selectedInstance&&instances\.length\)selectedInstance=instances\[0\]\.id/);

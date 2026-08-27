@@ -213,9 +213,72 @@ describe('shared registration orchestrator', () => {
     });
     const modes = service.deliveryCapabilities('workbuddy');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['http', 'pull']);
-    assert.strictEqual(modes[0].status, 'preflight_passed');
-    assert.strictEqual(modes[0].selected, true);
+    assert.strictEqual(modes[0].status, 'configuration_required');
+    assert.strictEqual(modes[0].selected, false);
+    assert.strictEqual(modes[0].reason, 'WORKBUDDY_AUTH_TEST_REQUIRED');
+    assert.strictEqual(modes[0].authenticationStatus, 'unverified');
     assert.strictEqual(modes[1].required, true);
+  });
+
+  it('does not report DuMate ready from installation alone', () => {
+    const noAgent = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '4567',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(noAgent.status, 'configuration_required');
+    assert.strictEqual(noAgent.selected, false);
+    assert.strictEqual(noAgent.action, null);
+    assert.strictEqual(noAgent.reason, 'DUMATE_AGENT_REQUIRED');
+    assert.strictEqual(noAgent.instanceCount, 0);
+
+    const noBackend = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [{ id: 'stock-assistant' }],
+      dumateBackendPort: () => '',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(noBackend.reason, 'DUMATE_BACKEND_UNAVAILABLE');
+    assert.strictEqual(noBackend.action, null);
+
+    const neitherBackendNorAgent = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(neitherBackendNorAgent.reason, 'DUMATE_BACKEND_UNAVAILABLE');
+    assert.match(neitherBackendNorAgent.description, /可能尚未登录/);
+
+    const authUnverified = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [{ id: 'stock-assistant' }],
+      dumateBackendPort: () => '4567',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(authUnverified.reason, 'DUMATE_AUTH_TEST_REQUIRED');
+    assert.strictEqual(authUnverified.authenticationStatus, 'unverified');
+    assert.strictEqual(authUnverified.action, 'test');
+    assert.strictEqual(authUnverified.selected, false);
+  });
+
+  it('explains DuMate desktop readiness before requiring an Agent instance', async () => {
+    const { db, service } = createService({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '',
+    });
+    try {
+      db.prepare('UPDATE config SET data=? WHERE type=?').run(JSON.stringify([
+        { value: 'dumate', label: '百度搭子 (DuMate)' },
+      ]), 'agent_backend_types');
+      const started = await service.start({ email: 'owner@example.com' });
+      const compact = started.environment.detected.find((item) => item.type === 'dumate');
+      assert.strictEqual(compact.blockingReason, 'DUMATE_BACKEND_UNAVAILABLE');
+      assert.match(compact.blockingDescription, /桌面后台尚未就绪/);
+      const selected = service.selectProvider(started.registrationId, { providerType: 'dumate' });
+      assert.strictEqual(selected.success, false);
+      assert.strictEqual(selected.code, 'DUMATE_BACKEND_UNAVAILABLE');
+      assert.match(selected.error, /桌面后台尚未就绪/);
+      assert.doesNotMatch(selected.error, /必须先创建/);
+    } finally { db.close(); }
   });
 
   it('detects Qwen Office and Trae desktop installs while keeping headless readiness separate', () => {
@@ -240,7 +303,7 @@ describe('shared registration orchestrator', () => {
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
   });
 
-  it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
+  it('separates Qwen Office login readiness from real loopback verification', () => {
     const service = new RegistrationOrchestrator({
       qwenOfficeRuntimeAvailable: () => true,
       qwenOfficeAgents: () => [],
@@ -248,8 +311,22 @@ describe('shared registration orchestrator', () => {
     });
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
-    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'preflight_passed');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].selected, false);
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].authenticationStatus, 'logged_in');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
+  });
+
+  it('reports distinct Qwen Office missing, logged-out, and status-failed states', () => {
+    const capability = (reason, executable = true) => new RegistrationOrchestrator({
+      qwenOfficeReadiness: () => ({ executable, loggedIn: false, ready: false, reason }),
+    }).deliveryCapabilities('qwen-office')[0];
+    assert.strictEqual(capability('not_found', false).reason, 'QWEN_OFFICE_CLI_UNAVAILABLE');
+    assert.strictEqual(capability('not_found', false).status, 'unavailable');
+    assert.strictEqual(capability('cli_not_logged_in').authenticationStatus, 'logged_out');
+    assert.match(capability('cli_not_logged_in').description, /CLI 尚未登录/);
+    assert.strictEqual(capability('status_failed').status, 'configuration_required');
+    assert.match(capability('status_failed').description, /登录状态检查失败/);
   });
 
   it('discovers QwenWork expert kits while allowing the generic runtime without a binding', async () => {
@@ -623,6 +700,19 @@ describe('shared registration orchestrator', () => {
       const status = restored.view(started.registrationId);
       assert.strictEqual(status.status, 'provider_selection_required');
       assert.strictEqual(status.registrationMode, 'agent');
+      restored.inspectEnvironment = () => ({
+        detected: [{
+          type: 'dumate', label: '百度搭子 (DuMate)', instances: [], deliveryModes: [{
+            status: 'configuration_required', reason: 'DUMATE_BACKEND_UNAVAILABLE',
+            description: '百度搭子桌面后台尚未就绪',
+          }],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },
+      });
+      const refreshed = await restored.manage({ action: 'status', registrationId: started.registrationId });
+      assert.strictEqual(refreshed.environment.detected[0].blockingReason, 'DUMATE_BACKEND_UNAVAILABLE');
+      assert.match(refreshed.environment.detected[0].blockingDescription, /后台尚未就绪/);
     } finally {
       db.close();
     }

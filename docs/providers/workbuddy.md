@@ -53,6 +53,9 @@ VOKO 不应在后台静默执行全局 npm 安装或替用户完成腾讯账号�
 4. 只有真实模型 loopback 成功时启用并默认选择 HTTP 自动投递；仅检测到可执行文件时状态应为“待验证”。
 5. CLI 升级和卸载仍由 npm/系统包管理器负责，VOKO 不锁定或覆盖用户已有版本。
 
+由于 CodeBuddy CLI 当前没有稳定、无副作用的结构化登录状态命令，VOKO 不会仅凭可执行文件存在就断言已登录。
+CLI 存在时显示“登录状态待真实回路验证”；真实测试返回认证错误后，才提示执行 `codebuddy /login`。
+
 ## 兼容性基线
 
 macOS 真机已验证全局 CodeBuddy CLI 2.139.0 完成登录后，VOKO HTTP/ACP loopback、精确回复匹配和会话清理成功。WorkBuddy Desktop 内置 CLI 2.115.0 能启动并创建会话，但本次回归中未能在超时前返回模型完成事件。Windows 真机确认标准环境没有 WorkBuddy Desktop/内置 CLI；全局 CLI 2.139.0 未登录时明确返回 `Authentication required`，完成独立登录后的 VOKO 成功回路仍需继续验收。HTTP API 仍为 Beta，VOKO 每次启动都会检查实际 OpenAPI 是否包含必需路由；不满足时自动保留 Pull。

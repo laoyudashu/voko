@@ -11,6 +11,11 @@ VOKO 可以发现本机 DuMate 用户 Agent（Plugin Pack），注册时绑定�
 - Resume：持久化 DuMate `sessionId`，后续消息复用该会话。
 - 隔离：VOKO 启动独立 `dumate-opencode serve`，只监听 `127.0.0.1`，不暴露到局域网。
 
+安装了桌面应用或存在 `dumate-opencode` 文件不等于已经登录。VOKO 会先检查桌面后端是否就绪，
+再检查合法 Plugin Pack；桌面后端未就绪时优先提示用户打开应用并完成登录，而不是误报缺少 Agent。
+只有桌面后端端口可用、发现合法 Plugin Pack，并由主人明确执行一次真实回路测试确认认证可用后，才启用 HTTP 自动投递。
+在此之前状态保持 `configuration_required`，Pull 仍可使用。
+
 ## 发现与注册契约
 
 实例目录名必须与 `.claude-plugin/plugin.json` 的 `name` 一致；清单中必须存在同名 Agent；Agent 的 `prompt` 必须指向 Plugin Pack 内真实存在的 Markdown 文件。无效、越界或重复的清单不会显示在注册页面。
@@ -50,6 +55,9 @@ macOS 默认发现：
 ```
 
 可通过 `VOKO_DUMATE_CLI_BIN` 覆盖。Provider 在 `~/.voko/provider-data/dumate/<instanceId>` 为每个 Agent 建立独立且持久的数据目录，仅复制所选 Plugin Pack；服务重启后仍能恢复原生 session。服务启动后调用 `/global/runtime/ready`。
+
+已有合法 Plugin Pack、但隔离的 `dumate-opencode serve` 尚未运行时，VOKO 会在首次真实投递时自动启动它。
+如果不存在 Plugin Pack，VOKO 不会伪造一个百度搭子 Agent；应先通过百度搭子支持的创建流程生成实例。
 
 DuMate 官方当前只提供 macOS 和 Windows 桌面客户端。Linux 不扫描虚构的默认路径，也不把 PATH 中偶然同名的程序当作已安装；只有显式配置 `VOKO_DUMATE_CLI_BIN` 并通过运行时预检时才启用。
 

@@ -49,6 +49,33 @@ test('DuMate resolver discovers the macOS app runtime and fails closed on unsupp
   assert.deepEqual(dumateCommand.dumateRuntimeRequest({}, 'linux').candidates, []);
 });
 
+test('DuMate resolver discovers the active macOS desktop backend port', () => {
+  const spawnSync = () => ({ stdout: [
+    '/Applications/DuMate.app/Contents/MacOS/DuMate',
+    '/Applications/DuMate.app/Contents/Resources/dumate-main-server --port=4567',
+  ].join('\n') });
+  assert.equal(dumateCommand.resolveDuMateBackendPort({}, 'darwin', { spawnSync }), '4567');
+  assert.equal(dumateCommand.resolveDuMateBackendPort({}, 'darwin', { spawnSync: () => ({ stdout: 'DuMate.app' }) }), '');
+});
+
+test('DuMate preflight fails closed until backend and authentication are verified', async () => {
+  const db = { prepare: () => ({ get: () => ({ backend_type: 'dumate', backend_instance_id: 'stock-assistant' }) }) };
+  const target = () => ({ instance: { id: 'stock-assistant' }, pluginRoot: os.tmpdir(), dataRoot: os.tmpdir() });
+  const withoutBackend = new DuMateHttpProvider({ db, binPath: process.execPath,
+    resolveAgentTarget: target, resolveBackendPort: () => '' });
+  assert.deepEqual(await withoutBackend.preflightDelivery('agent-1'), {
+    ok: false, status: 'configuration_required', sideEffects: false,
+    code: 'DUMATE_BACKEND_UNAVAILABLE', providerInstanceId: 'stock-assistant',
+  });
+
+  const unverifiedAuth = new DuMateHttpProvider({ db, binPath: process.execPath,
+    resolveAgentTarget: target, resolveBackendPort: () => '4567' });
+  assert.deepEqual(await unverifiedAuth.preflightDelivery('agent-1'), {
+    ok: false, status: 'configuration_required', sideEffects: false,
+    code: 'DUMATE_AUTH_TEST_REQUIRED', providerInstanceId: 'stock-assistant', routing: 'plugin_part',
+  });
+});
+
 test('DuMate catalog and provider preserve instance-affine Resume bindings', () => {
   assert.equal(catalog.getProviderFamily('dumate').requiresInstance, true);
   assert.equal(catalog.getProviderTransport('dumate-http').capabilities.sessionResume, true);

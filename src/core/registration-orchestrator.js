@@ -29,7 +29,7 @@ const { resolveDeepSeekHarnessRuntime } = require('./dispatcher/deepseek-harness
 const { discoverWorkBuddyAgents } = require('./dispatcher/workbuddy-agents');
 const { discoverQwenOfficeAgents } = require('./dispatcher/qwen-office-agents');
 const { discoverDuMateAgents } = require('./dispatcher/dumate-agents');
-const { isDuMateRuntimeAvailable } = require('./dispatcher/dumate-command');
+const { isDuMateRuntimeAvailable, resolveDuMateBackendPort } = require('./dispatcher/dumate-command');
 const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
 const { readProviderInstanceMetadata } = require('./dispatcher/provider-instance-metadata');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
@@ -133,9 +133,10 @@ const CLI_DELIVERY_METADATA = {
 };
 
 function qwenOfficeReadiness(options = {}) {
+  if (typeof options.qwenOfficeReadiness === 'function') return options.qwenOfficeReadiness();
   if (typeof options.qwenOfficeRuntimeAvailable === 'function') {
     const ready = !!options.qwenOfficeRuntimeAvailable();
-    return { executable: ready, loggedIn: ready, ready, reason: ready ? 'ready' : 'status_failed' };
+    return { executable: ready, loggedIn: ready, ready, reason: ready ? 'ready' : 'not_found' };
   }
   return getQwenOfficeReadiness();
 }
@@ -625,16 +626,24 @@ class RegistrationOrchestrator {
       result.environment = session.environment || null;
     } else if (options.includeEnvironment === 'registration') {
       const environment = session.environment || {};
-      const compactProvider = (provider) => ({
-        type: provider.type,
-        label: provider.label,
-        instanceTerm: provider.instanceTerm || getProviderInstanceTerm(provider.type),
-        requiresInstance: getProviderFamily(provider.type)?.requiresInstance === true,
-        supportsMultipleInstances: provider.supportsMultipleInstances === true,
-        instances: Array.isArray(provider.instances)
-          ? provider.instances.map((instance) => ({ id: instance.id, name: instance.name || instance.id }))
-          : [],
-      });
+      const compactProvider = (provider) => {
+        const blockingMode = Array.isArray(provider.deliveryModes)
+          ? provider.deliveryModes.find((mode) => mode.reason && mode.status !== 'ready') : null;
+        return {
+          type: provider.type,
+          label: provider.label,
+          instanceTerm: provider.instanceTerm || getProviderInstanceTerm(provider.type),
+          requiresInstance: getProviderFamily(provider.type)?.requiresInstance === true,
+          supportsMultipleInstances: provider.supportsMultipleInstances === true,
+          instances: Array.isArray(provider.instances)
+            ? provider.instances.map((instance) => ({ id: instance.id, name: instance.name || instance.id }))
+            : [],
+          ...(blockingMode ? {
+            blockingReason: blockingMode.reason,
+            blockingDescription: blockingMode.description,
+          } : {}),
+        };
+      };
       result.environment = {
         detected: Array.isArray(environment.detected) ? environment.detected.map(compactProvider) : [],
         currentAgent: environment.currentAgent || null,
@@ -941,19 +950,28 @@ class RegistrationOrchestrator {
     }
     if (type === 'qwen-office') {
       const qwenReadiness = qwenOfficeReadiness(this.options);
-      const available = qwenReadiness.ready;
       const { qwenOfficeLoginCommand } = require('./dispatcher/qwen-office-command');
       const loginCommand = qwenOfficeLoginCommand();
+      const status = qwenReadiness.ready ? 'preflight_passed'
+        : qwenReadiness.reason === 'not_found' ? 'unavailable' : 'configuration_required';
+      const reason = qwenReadiness.ready ? 'QWEN_OFFICE_AUTH_TEST_REQUIRED'
+        : qwenReadiness.reason === 'cli_not_logged_in' ? 'QWEN_OFFICE_CLI_NOT_LOGGED_IN'
+          : qwenReadiness.reason === 'status_failed' ? 'QWEN_OFFICE_STATUS_FAILED'
+            : 'QWEN_OFFICE_CLI_UNAVAILABLE';
       return [
         {
           mode: 'cli', label: 'QwenWork CLI 自动交付', role: 'primary',
-          status: available ? 'ready' : 'unavailable', selected: available,
-          action: available ? 'test' : null,
-          description: available
-            ? 'VOKO 使用 QwenWork 随附的 qoderclicn 非交互 stream-json 入口；工具和权限请求默认关闭。'
+          status, selected: false, reason,
+          authenticationStatus: qwenReadiness.loggedIn ? 'logged_in'
+            : qwenReadiness.reason === 'cli_not_logged_in' ? 'logged_out' : 'unverified',
+          action: qwenReadiness.ready ? 'test' : null,
+          description: qwenReadiness.ready
+            ? '千问办公 CLI 已登录；请执行一次真实消息回路测试，确认模型调用和回复解析正常后再启用自动投递。'
             : qwenReadiness.reason === 'cli_not_logged_in'
               ? '已检测到 qoderclicn，但 CLI 尚未登录；请执行 qoderclicn login 后再进行真实回路测试。'
-              : '未检测到 qoderclicn，或 QwenWork 尚未安装。',
+              : qwenReadiness.reason === 'status_failed'
+                ? '已检测到 qoderclicn，但登录状态检查失败；请手动执行 status 命令查看错误，然后重新检测。'
+                : '未检测到 qoderclicn；请确认千问办公已完整安装，或配置正确的 CLI 路径。',
           loginCommand,
           readinessReason: qwenReadiness.reason,
         },
@@ -968,24 +986,41 @@ class RegistrationOrchestrator {
       return [
         {
           mode: 'http', label: 'WorkBuddy HTTP 自动交付', role: 'primary',
-          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+          status: available ? 'configuration_required' : 'unavailable', selected: false, recommended: true,
+          reason: available ? 'WORKBUDDY_AUTH_TEST_REQUIRED' : 'WORKBUDDY_CLI_UNAVAILABLE',
+          authenticationStatus: available ? 'unverified' : 'unavailable',
           action: available ? 'test' : null,
           description: available
-            ? '已检测到 CodeBuddy CLI；完成独立登录并通过真实回路测试后，VOKO 使用本机 HTTP/ACP 隔离会话自动投递。'
-            : '未检测到 CodeBuddy CLI。请先执行 npm install -g @tencent-ai/codebuddy-code 和 codebuddy /login。',
+            ? '已检测到 CodeBuddy CLI，但无法通过无副作用命令可靠判断登录状态；请执行一次真实消息回路测试，未登录时按提示运行 codebuddy /login。'
+            : '未检测到 CodeBuddy CLI；请先安装 @tencent-ai/codebuddy-code，完成后重新检测。',
         },
         pull,
       ];
     }
     if (type === 'dumate') {
-      const available = isDuMateRuntimeAvailable();
+      const cliAvailable = typeof this.options.dumateRuntimeAvailable === 'function'
+        ? !!this.options.dumateRuntimeAvailable() : isDuMateRuntimeAvailable();
+      let agents = [];
+      try { agents = (this.options.dumateAgents || discoverDuMateAgents)(); } catch (_) {}
+      const backendPort = typeof this.options.dumateBackendPort === 'function'
+        ? String(this.options.dumateBackendPort() || '') : resolveDuMateBackendPort();
+      const reason = !cliAvailable ? 'DUMATE_CLI_UNAVAILABLE'
+        : !backendPort ? 'DUMATE_BACKEND_UNAVAILABLE'
+          : agents.length === 0 ? 'DUMATE_AGENT_REQUIRED'
+            : 'DUMATE_AUTH_TEST_REQUIRED';
+      const canTest = cliAvailable && agents.length > 0 && !!backendPort;
       return [{
         mode: 'http', label: 'DuMate HTTP 精准对话', role: 'primary',
-        status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
-        action: available ? 'test' : null,
-        description: available
-          ? 'VOKO 管理独立回环 dumate-opencode 服务，通过 Plugin Part 精准激活所选 Agent，并续接原生会话。'
-          : '未检测到 DuMate 内置 dumate-opencode。',
+        status: cliAvailable ? 'configuration_required' : 'unavailable', selected: false, recommended: true,
+        action: canTest ? 'test' : null, reason, authenticationStatus: canTest ? 'unverified' : 'unavailable',
+        instanceCount: agents.length,
+        description: !cliAvailable
+          ? '未检测到 DuMate 内置 dumate-opencode。'
+          : !backendPort
+            ? '已检测到百度搭子，但桌面后台尚未就绪，当前可能尚未登录。请打开百度搭子并完成登录，然后重新检测。'
+            : agents.length === 0
+              ? '百度搭子桌面后台已就绪，但尚未发现可绑定的用户 Agent（Plugin Pack）；请先在百度搭子中创建 Agent。'
+              : '已发现百度搭子 Agent 和桌面后端；登录状态必须通过一次真实回路测试确认，确认前不会启用自动投递。',
       }, pull];
     }
     if (type === 'deepseek-harness') {
@@ -1377,6 +1412,12 @@ class RegistrationOrchestrator {
     }
     if (family?.requiresInstance && instances.length === 1 && !instanceId) instanceId = instances[0].id;
     if (family?.requiresInstance && !instanceId) {
+      if (providerType === 'dumate') {
+        const readiness = this.deliveryCapabilities('dumate')[0];
+        if (readiness.reason === 'DUMATE_BACKEND_UNAVAILABLE') {
+          return { success: false, code: readiness.reason, error: readiness.description };
+        }
+      }
       return { success: false, error: `未检测到可用的 ${detected?.label || family.label || providerType} ${instanceTerm}；该类型必须先创建并选择一个${instanceTerm}，才能发送消息` };
     }
     if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
@@ -1602,9 +1643,9 @@ class RegistrationOrchestrator {
       const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
       const runtime = typeof this.options.workBuddyRuntime === 'function'
         ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
-      ready = !!runtime.command;
-      detail = ready
-        ? '已检测到 CodeBuddy CLI；还需独立登录并通过真实模型回路测试。'
+      ready = false;
+      detail = runtime.command
+        ? '已检测到 CodeBuddy CLI，但登录和模型通道尚未验证；请执行真实消息回路测试。'
         : '未检测到 CodeBuddy CLI；请先执行 npm install -g @tencent-ai/codebuddy-code，再执行 codebuddy /login。';
     } else if (provider === 'dumate' && mode === 'http') {
       const instances = (this.options.dumateAgents || discoverDuMateAgents)();
@@ -1828,7 +1869,14 @@ class RegistrationOrchestrator {
       if (action === 'loopback_test') return await this.loopbackTest(input.registrationId, input);
       if (action === 'cleanup_loopback') return await this.cleanupLoopback(input.registrationId, input);
       if (action === 'complete') return await this.complete(input.registrationId, input);
-      if (action === 'status') return this.view(input.registrationId);
+      if (action === 'status') {
+        const session = this._get(input.registrationId);
+        if (session.status === 'provider_selection_required') {
+          session.environment = this.inspectEnvironment();
+          return this._save(session, { includeEnvironment: 'registration' });
+        }
+        return this.view(session);
+      }
       return { success: false, error: '不支持的注册 action' };
     } catch (error) {
       return { success: false, error: error.message, code: error.code || 'REGISTRATION_ERROR' };

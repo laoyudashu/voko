@@ -265,12 +265,14 @@ class WorkBuddyHttpProvider extends PushProvider {
   async preflightDelivery(_agentId: string): Promise<Record<string, unknown>> {
     if (!this.isAvailable()) return { ok: false, status: 'unavailable', sideEffects: false, code: 'WORKBUDDY_CLI_UNAVAILABLE' };
     if (!this._server || this._server.exitCode !== null || !this._port) {
-      return { ok: true, status: 'preflight_passed', sideEffects: false, runtime: 'detected',
+      return { ok: false, status: 'configuration_required', sideEffects: false,
+        code: 'WORKBUDDY_AUTH_TEST_REQUIRED', authenticationStatus: 'unverified', runtime: 'detected',
         desktopVersion: this._runtime.desktopVersion, cliVersion: probeWorkBuddyCliVersion(this._runtime) };
     }
     try {
       await this._validateRuntime();
-      return { ok: true, status: 'preflight_passed', sideEffects: false, runtime: 'loopback_http',
+      return { ok: false, status: 'configuration_required', sideEffects: false,
+        code: 'WORKBUDDY_AUTH_TEST_REQUIRED', authenticationStatus: 'unverified', runtime: 'loopback_http',
         desktopVersion: this._runtime.desktopVersion, cliVersion: probeWorkBuddyCliVersion(this._runtime) };
     } catch {
       return { ok: false, status: 'unavailable', sideEffects: false, code: 'WORKBUDDY_HTTP_UNHEALTHY' };
