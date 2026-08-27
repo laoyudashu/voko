@@ -991,7 +991,7 @@ class RegistrationOrchestrator {
           authenticationStatus: available ? 'unverified' : 'unavailable',
           action: available ? 'test' : null,
           description: available
-            ? '已检测到 CodeBuddy CLI，但无法通过无副作用命令可靠判断登录状态；请执行一次真实消息回路测试，未登录时按提示运行 codebuddy /login。'
+            ? '已检测到 CodeBuddy CLI，但无法通过无副作用命令可靠判断登录状态；验证前不能启用 WorkBuddy 自动转发，只能创建使用主动获取（Pull）的 Agent。请执行真实消息回路测试，未登录时运行 codebuddy /login。'
             : '未检测到 CodeBuddy CLI；请先安装 @tencent-ai/codebuddy-code，完成后重新检测。',
         },
         pull,

@@ -2430,6 +2430,10 @@ async function startMcpServer(args?: any, core?: any) {
     },
   });
   const handlers = createToolHandlers(cx);
+  handlers.setup_provider = async ({ action }: any = {}) => {
+    const { runProviderSetup } = require('./core/provider-setup');
+    return { success: true, action, ...(await runProviderSetup(action)) };
+  };
   handlers.refresh_delivery_channels = async ({ agentId }: any = {}) => {
     const activeDispatcher = (global as any).__dispatcher;
     if (!activeDispatcher?.refreshAgentDeliveryChannels) return { success: false, error: 'Dispatcher unavailable' };

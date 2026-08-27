@@ -74,31 +74,25 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /data-role="message-mode-picker"/);
   assert.match(html, /delivery-channels\/refresh/);
   assert.match(html, /delivery-channels\/select/);
-  assert.match(html, /data-role=\"setup-workbuddy\"/);
-  assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
-  assert.match(html, /codebuddy \/login/);
-  assert.match(html, /data-role=\"recheck-workbuddy\"/);
-  assert.match(html, /data-role=setup-qwen/);
-  assert.match(html, /id=\"dlg-qwen-setup\"/);
-  assert.match(html, /data-role=\"recheck-qwen\"/);
+  assert.match(html, /role:'setup-workbuddy'/);
+  assert.match(html, /role:'setup-dumate'/);
+  assert.match(html, /action:'install_workbuddy'/);
+  assert.match(html, /action:'login_workbuddy'/);
+  assert.match(html, /action:'open_dumate'/);
+  assert.match(html, /role:'setup-qwen'/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-qwen-setup'/);
+  assert.match(html, /action:'login_qwen_office'/);
+  assert.match(html, /data-role=\"recheck-provider\"/);
   assert.match(html, /qwen_setup_title/);
-  assert.match(html, /method\.setupCommand/);
-  assert.match(html, /home-message-mode-setup-option/);
-  assert.match(html, /home-message-mode-setup-step/);
-  assert.match(html, /id=\"dlg-workbuddy-setup\"/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-workbuddy-setup'/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-dumate-setup'/);
   assert.match(html, /dialog\.className=\"voko-message-dialog\"/);
   assert.match(html, /dialog\.showModal\(\)/);
   assert.match(html, /details\.open=false/);
   assert.match(html, /max-height:calc\(100vh - 24px\)/);
-  assert.match(html, /data-role=\"close-workbuddy-setup\"/);
-  assert.match(html, /data-role=\"close-workbuddy-setup\"[^>]*aria-label/);
+  assert.match(html, /data-role=\"close-provider-setup\"/);
   assert.match(html, />×<\/button>/);
-  assert.match(html, /data-voko-copy-value=\"npm install -g @tencent-ai\/codebuddy-code\"/);
-  assert.match(html, /data-voko-copy-value=\"codebuddy \/login\"/);
-  assert.match(html, /class=\"voko-copy-button\" data-role=\"copy-workbuddy-command\"/);
-  assert.match(html, /var workBuddyCopySvg=/);
-  assert.match(html, /\+workBuddyCopySvg\+/);
-  assert.doesNotMatch(html, /copy\.dataset\.command/);
+  assert.match(html, /fetch\('\/api\/provider-setup'/);
   assert.match(html, /message_mode_install_help/);
   assert.match(html, /message_mode_login_help/);
   assert.match(html, /position:fixed;z-index:1000/);
@@ -204,6 +198,7 @@ test('delivery channel endpoints refresh and select a process-local preference',
       return { success: true, deliveryStatus: { ...status, activeAutomaticMode: mode === 'pull' ? null : mode,
         temporaryPreferredMode: mode, temporaryPreferredProvider: providerId || null } };
     },
+    setup_provider: async ({ action }) => { calls.push(['setup', action]); return { success: true, action, launched: true }; },
   };
   const server = await startApp(handlers);
   t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
@@ -222,7 +217,12 @@ test('delivery channel endpoints refresh and select a process-local preference',
   });
   assert.equal(select.status, 200);
   assert.equal((await select.json()).deliveryStatus.temporaryPreferredMode, 'pull');
-  assert.deepEqual(calls, [['refresh', 'agent-home'], ['verify', 'agent-home', 'workbuddy-http'], ['select', 'agent-home', 'pull', null]]);
+  const setup = await fetch(`${base}/api/provider-setup`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'open_dumate' }),
+  });
+  assert.equal(setup.status, 200);
+  assert.equal((await setup.json()).launched, true);
+  assert.deepEqual(calls, [['refresh', 'agent-home'], ['verify', 'agent-home', 'workbuddy-http'], ['select', 'agent-home', 'pull', null], ['setup', 'open_dumate']]);
 });
 
 test('home disables access-entry actions when the agent is offline', async (t) => {

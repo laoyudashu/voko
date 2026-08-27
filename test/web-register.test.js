@@ -277,6 +277,13 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /data-wizard-step="2" role="button" tabindex="0"/);
     assert.match(html, /for="wf-category">[^<]+ \*<\/label><select id="wf-category" required>/);
     assert.match(html, /function inferredCategory\(name,description,suggested\)/);
+    assert.match(html, /function providerGuidance\(p\)/);
+    assert.match(html, /data-provider-setup/);
+    assert.match(html, /install_workbuddy/);
+    assert.match(html, /login_qwen_office/);
+    assert.match(html, /open_dumate/);
+    assert.doesNotMatch(html, /blocked\?I\.configure/);
+    assert.doesNotMatch(html, /selectedProvider==='workbuddy'&&m\.mode==='http'&&!usable/);
     assert.match(html, /return available\.has\('general'\)\?'general'/);
     assert.match(html, /category:document\.getElementById\('wf-category'\)\.value\|\|'general'/);
     const categoryRulesSource = html.match(/var rules=(\[.*?\]);\s*var best='general'/s);
@@ -329,8 +336,6 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /usable\?I\.testOk:I\.testFailed/);
     assert.match(html, /class="workbuddy-command-inline"/);
     assert.match(html, /data-voko-copy-value="'\+escHtml\(command\)\+'"/);
-    assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
-    assert.match(html, /codebuddy \/login/);
     assert.match(html, /selectedProvider==='qwen-office'/);
     assert.match(html, /m\.loginCommand/);
     assert.match(html, /qwenCliLoginRequired/);

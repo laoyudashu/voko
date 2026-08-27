@@ -217,6 +217,8 @@ describe('shared registration orchestrator', () => {
     assert.strictEqual(modes[0].selected, false);
     assert.strictEqual(modes[0].reason, 'WORKBUDDY_AUTH_TEST_REQUIRED');
     assert.strictEqual(modes[0].authenticationStatus, 'unverified');
+    assert.match(modes[0].description, /不能启用 WorkBuddy 自动转发/);
+    assert.match(modes[0].description, /只能创建使用主动获取（Pull）的 Agent/);
     assert.strictEqual(modes[1].required, true);
   });
 

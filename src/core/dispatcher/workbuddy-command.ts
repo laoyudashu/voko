@@ -29,6 +29,10 @@ function resolveFromPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Wor
 
 let cachedDefaultRuntime: WorkBuddyRuntime | null = null;
 
+export function invalidateWorkBuddyRuntime(): void {
+  cachedDefaultRuntime = null;
+}
+
 function existingFile(value: unknown): string | null {
   const candidate = String(value || '').trim().replace(/^"|"$/g, '');
   if (!candidate || candidate.includes('\0')) return null;
@@ -160,4 +164,4 @@ export function probeWorkBuddyCliVersion(runtime: WorkBuddyRuntime): string | nu
   } catch { return null; }
 }
 
-module.exports = { resolveWorkBuddyRuntime, workBuddySpawnCommand, probeWorkBuddyCliVersion };
+module.exports = { resolveWorkBuddyRuntime, workBuddySpawnCommand, probeWorkBuddyCliVersion, invalidateWorkBuddyRuntime };

@@ -267,7 +267,7 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       console.log('[离线同步] 主人已切换，停止旧主人同步');
       return 0;
     }
-    console.debug(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息${pendingMessages.length ? '，开始处理...' : ''}`);
+    if (pendingMessages.length) console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息，开始处理...`);
 
     // E2EE messages are claimed before the ordinary persistence/forwarding
     // path. A disabled or rejected Canary is still handled fail-closed and is
@@ -360,7 +360,9 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       forwarded++;
     }
 
-    console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，合并转发 ${forwarded} 次`);
+    if (pendingMessages.length || collected.length || forwarded) {
+      console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，合并转发 ${forwarded} 次`);
+    }
     return pendingMessages.length;
   } catch (e: unknown) {
     console.error('[离线同步] 失败:', errorMessage(e));
@@ -369,8 +371,10 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
 }
 
 interface CoordinatorOptions {
-  /** coalesce 窗口（ms），默认 500 */
+  /** 重连尾部防抖窗口（ms），默认 2000 */
   windowMs?: number;
+  /** 一轮同步完成后的最短冷却时间（ms），默认 30000 */
+  cooldownMs?: number;
   /** 兜底定时器（ms），默认 30000 */
   fallbackMs?: number;
   /** 注入的同步函数，默认 syncOfflineMessages */
@@ -392,8 +396,9 @@ interface Coordinator {
  * 创建离线同步协调器：把突发的 per-agent 同步触发合并为一次全量同步。
  *
  * 行为：
- * - onAgentConnected：把 agentId 加入待同步集合，启动 windowMs 合并窗口；
- *   窗口内多个 connected 事件合并，到期执行一次全量同步。
+ * - 首次就绪前只收集 connected 事件，由 onAllReady/fallback 执行一次全量同步；
+ * - 首次同步后，重连事件使用尾部防抖，并只同步发生重连的 Agent；
+ * - 同步全局单飞，完成后进入冷却期，冷却期间的新事件留到下一批。
  * - onAllReady：首次全部就绪时触发一次全量同步（有守卫，只触发一次）。
  * - start：注册 fallbackMs 兜底定时器（到期再试一次全量）。
  * - stop：清理所有定时器。
@@ -402,7 +407,8 @@ interface Coordinator {
  *       全量调用不会重复处理已拉过的消息。
  */
 function createOfflineSyncCoordinator(db: any, messageHandler: any, options: CoordinatorOptions = {}): Coordinator {
-  const windowMs = Math.max(0, options.windowMs ?? 500);
+  const windowMs = Math.max(0, options.windowMs ?? 2000);
+  const cooldownMs = Math.max(0, options.cooldownMs ?? 30000);
   const fallbackMs = Math.max(0, options.fallbackMs ?? 30000);
   const syncFn = options.syncFn || ((d: any, h: any, f?: string) => syncOfflineMessages(d, h, f));
   const _setTimeout = options.setTimeout || setTimeout;
@@ -411,32 +417,59 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
   let _firstFullSyncDone = false;
   const _pendingAgents = new Set<string>();
   let _coalesceTimer: any = null;
+  let _cooldownTimer: any = null;
   let _fallbackTimer: any = null;
+  let _running = false;
+  let _stopped = false;
 
-  const _runFullSync = (tag: string) => {
-    syncFn(db, messageHandler).catch((e: unknown) => console.error(`[离线同步] ${tag} 失败:`, errorMessage(e)));
+  const _schedulePending = () => {
+    if (_stopped || !_firstFullSyncDone || _running || _cooldownTimer || _pendingAgents.size === 0) return;
+    if (_coalesceTimer) _clearTimeout(_coalesceTimer);
+    _coalesceTimer = _setTimeout(_flush, windowMs);
+    if (typeof (_coalesceTimer as any)?.unref === 'function') (_coalesceTimer as any).unref();
+  };
+  const _enterCooldown = () => {
+    if (_stopped) return;
+    if (!cooldownMs) { _schedulePending(); return; }
+    _cooldownTimer = _setTimeout(() => {
+      _cooldownTimer = null;
+      _schedulePending();
+    }, cooldownMs);
+    if (typeof (_cooldownTimer as any)?.unref === 'function') (_cooldownTimer as any).unref();
+  };
+  const _run = (tag: string, task: () => Promise<unknown>) => {
+    if (_stopped || _running) return;
+    _running = true;
+    let result: Promise<unknown>;
+    try { result = Promise.resolve(task()); }
+    catch (error) { result = Promise.reject(error); }
+    result
+      .catch((e: unknown) => console.error(`[离线同步] ${tag} 失败:`, errorMessage(e)))
+      .finally(() => { _running = false; _enterCooldown(); });
   };
   const _flush = () => {
     _coalesceTimer = null;
-    if (_pendingAgents.size === 0) return;
+    if (_running || _cooldownTimer || _pendingAgents.size === 0) return;
+    const agents = [..._pendingAgents];
     _pendingAgents.clear();
-    _runFullSync('合并');
+    _run('重连', async () => {
+      for (const agentId of agents) await syncFn(db, messageHandler, agentId);
+    });
   };
 
   return {
     onAgentConnected(agentId: string) {
       if (!agentId || !messageHandler) return;
       _pendingAgents.add(agentId);
-      if (_coalesceTimer) return;
-      _coalesceTimer = _setTimeout(_flush, windowMs);
-      // unref 仅在 Node 原生 setTimeout 上存在
-      if (typeof (_coalesceTimer as any)?.unref === 'function') (_coalesceTimer as any).unref();
+      _schedulePending();
     },
     onAllReady() {
       if (_firstFullSyncDone) return;
       _firstFullSyncDone = true;
+      _pendingAgents.clear();
+      if (_coalesceTimer) { _clearTimeout(_coalesceTimer); _coalesceTimer = null; }
       console.log('[Lite] 开始离线同步');
-      _runFullSync('首次');
+      _run('首次', () => syncFn(db, messageHandler));
     },
     start() {
       if (_fallbackTimer) return;
@@ -444,8 +477,11 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
       if (typeof (_fallbackTimer as any)?.unref === 'function') (_fallbackTimer as any).unref();
     },
     stop() {
+      _stopped = true;
       if (_coalesceTimer) { _clearTimeout(_coalesceTimer); _coalesceTimer = null; }
+      if (_cooldownTimer) { _clearTimeout(_cooldownTimer); _cooldownTimer = null; }
       if (_fallbackTimer) { _clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+      _pendingAgents.clear();
     },
   };
 }
