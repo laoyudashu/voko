@@ -9,10 +9,14 @@ type SetupAction = 'install_workbuddy' | 'login_workbuddy' | 'login_qwen_office'
 function launchDetached(command: string, args: string[] = []): void {
   if (!command) throw new Error('PROVIDER_COMMAND_NOT_FOUND');
   if (process.platform === 'win32') {
+    // npm providers commonly resolve to .cmd shims, which Node cannot spawn
+    // directly without a shell. Run the fixed command in a visible PowerShell
+    // terminal and keep it open so login prompts and failures remain readable.
     const env = { ...process.env, VOKO_PROVIDER_SETUP_EXE: command, VOKO_PROVIDER_SETUP_ARGS: JSON.stringify(args) };
-    const script = '$a=ConvertFrom-Json $env:VOKO_PROVIDER_SETUP_ARGS; Start-Process -FilePath $env:VOKO_PROVIDER_SETUP_EXE -ArgumentList $a';
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      detached: true, stdio: 'ignore', windowsHide: true, env,
+    const script = '$a=ConvertFrom-Json $env:VOKO_PROVIDER_SETUP_ARGS; & $env:VOKO_PROVIDER_SETUP_EXE @a';
+    const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+    const child = spawn('powershell.exe', ['-NoProfile', '-NoExit', '-EncodedCommand', encodedScript], {
+      detached: true, stdio: 'ignore', windowsHide: false, env,
     });
     child.unref();
     return;
