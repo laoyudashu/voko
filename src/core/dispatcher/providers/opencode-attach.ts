@@ -70,7 +70,7 @@ class OpenCodeAttachProvider extends PushProvider {
       : null;
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
-    this._cmd = resolveOpenCodeCommand();
+    this._cmd = resolveOpenCodeCommand() || '__voko_opencode_unavailable__';
     if (options.sessionPersistence === 'dispatcher') this.useDispatcherSessionPersistence();
   }
 

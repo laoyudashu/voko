@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { discoverHermes } = require('../server/hermes-discovery');
+const { discoverHermes, getLastHermesDiscoveryStatus } = require('../server/hermes-discovery');
 const { getRegistrationCaller } = require('./registration-caller-context');
 const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types');
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
@@ -691,6 +691,7 @@ class RegistrationOrchestrator {
         instanceTerm: getProviderInstanceTerm('hermes'),
         instances: hermes,
         supportsMultipleInstances: true,
+        discoveryStatus: getLastHermesDiscoveryStatus(),
       });
     }
     const deepseekHarness = discoverProviderInstances('deepseek-harness');
@@ -963,11 +964,11 @@ class RegistrationOrchestrator {
       return [
         {
           mode: 'http', label: 'WorkBuddy HTTP 自动交付', role: 'primary',
-          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
-          reason: available ? 'WORKBUDDY_COMPONENT_READY' : 'WORKBUDDY_CLI_UNAVAILABLE',
+          status: available ? 'verification_required' : 'unavailable', selected: false, recommended: true,
+          reason: available ? 'WORKBUDDY_COMPONENT_INSTALLED' : 'WORKBUDDY_CLI_UNAVAILABLE',
           action: 'test',
           description: available
-            ? '已检测到 WorkBuddy 消息组件，可启用 HTTP 自动接收和回复消息。'
+            ? '已检测到 WorkBuddy 消息组件；请执行通道检测，确认本地 HTTP 服务和真实请求均可用。'
             : '未检测到 CodeBuddy CLI；请先安装 @tencent-ai/codebuddy-code，完成后重新检测。',
         },
         pull,
@@ -1028,10 +1029,12 @@ class RegistrationOrchestrator {
       return [
         {
           mode: 'acp', label: 'CodeBuddy ACP 实时会话', role: 'primary',
-          status: available ? 'ready' : 'unavailable', selected: available, recommended: true,
+          status: available ? 'verification_required' : 'unavailable', selected: false, recommended: true,
+          reason: available ? 'CODEBUDDY_RUNTIME_FOUND' : 'CODEBUDDY_RUNTIME_UNAVAILABLE',
+          authenticationStatus: available ? 'unverified' : 'unavailable',
           action: available ? 'test' : null,
           description: available
-            ? 'VOKO 使用 CodeBuddy 官方 ACP stdio，并禁用工具和外部 MCP 配置，仅接收文字回复。'
+            ? '已检测到 CodeBuddy ACP 运行入口；通过真实消息回路验证认证和回复解析后再启用自动投递。'
             : '未检测到独立 CodeBuddy CLI，当前使用主动获取。',
         },
         pull,
@@ -1126,7 +1129,9 @@ class RegistrationOrchestrator {
       ];
     }
     if (type === 'opencode') {
-      const available = hasCommand('opencode');
+      const { resolveOpenCodeCommand } = require('./dispatcher/providers/opencode-runtime');
+      const command = resolveOpenCodeCommand();
+      const available = !!command && (path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command));
       const status = available ? 'ready' : 'unavailable';
       const action = available ? 'test' : null;
       return [
@@ -1149,18 +1154,22 @@ class RegistrationOrchestrator {
       ];
     }
     if (type === 'github-copilot') {
-      const available = hasCommand('copilot');
-      const status = available ? 'ready' : 'unavailable';
+      const { resolveGitHubCopilotRuntime } = require('./dispatcher/providers/github-copilot-runtime');
+      const runtime = resolveGitHubCopilotRuntime();
+      const available = !!runtime && (path.isAbsolute(runtime.command) ? fs.existsSync(runtime.command) : hasCommand(runtime.command));
+      const status = available ? 'verification_required' : 'unavailable';
       const action = available ? 'test' : null;
       return [
         {
           mode: 'acp', label: 'ACP 实时会话', role: 'primary',
-          status, selected: available, recommended: true, action,
-          description: 'VOKO 通过标准 ACP 协议保持隔离会话，并拒绝外部访客触发工具授权。',
+          status, selected: false, recommended: true, action,
+          reason: available ? 'GITHUB_COPILOT_RUNTIME_FOUND' : 'GITHUB_COPILOT_RUNTIME_UNAVAILABLE',
+          authenticationStatus: available ? 'unverified' : 'unavailable',
+          description: available ? '已检测到 GitHub Copilot 运行入口；通过真实消息回路验证认证后再启用自动投递。' : '未检测到 GitHub Copilot 运行入口。',
         },
         {
           mode: 'cli', label: 'CLI 单次唤起', role: 'fallback',
-          status, selected: available, action,
+          status, selected: false, action,
           description: 'ACP 不可用时，以无工具、无 MCP、无远程操作模式调用 GitHub Copilot CLI。',
         },
         pull,
@@ -1561,6 +1570,7 @@ class RegistrationOrchestrator {
     const provider = session.provider?.type || 'others';
     const hasCommand = this.options.commandAvailable || commandAvailable;
     let ready = false;
+    let detectedOnly = false;
     let detail = '';
     if (provider === 'qwen-office' && mode === 'cli') invalidateQwenOfficeReadiness();
     if (mode === 'pull') {
@@ -1585,6 +1595,10 @@ class RegistrationOrchestrator {
                 ? resolveTraeCliCommand()
                 : provider === 'codebuddy'
                   ? resolveCodeBuddyCommand()
+                : provider === 'opencode'
+                  ? require('./dispatcher/providers/opencode-runtime').resolveOpenCodeCommand()
+                : provider === 'github-copilot'
+                  ? require('./dispatcher/providers/github-copilot-runtime').resolveGitHubCopilotRuntime()?.command
                 : provider === 'qwen-office'
                   ? resolveQwenOfficeCommand()
               : (CLI_COMMANDS[provider] || provider);
@@ -1605,8 +1619,12 @@ class RegistrationOrchestrator {
               ? (typeof this.options.codeBuddyCliAvailable === 'function'
                 ? !!this.options.codeBuddyCliAvailable()
                 : isCodeBuddyAvailable())
-            : path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command);
+            : !!command && (path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command));
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
+        if (ready && ['codebuddy', 'github-copilot'].includes(provider)) {
+          detectedOnly = true;
+          detail = `${command} 运行入口已检测到；认证状态和真实消息回路尚未验证`;
+        }
       }
     } else if (provider === 'workbuddy' && mode === 'http') {
       const { resolveWorkBuddyRuntime, invalidateWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
@@ -1614,6 +1632,7 @@ class RegistrationOrchestrator {
       const runtime = typeof this.options.workBuddyRuntime === 'function'
         ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
       ready = !!runtime.command;
+      detectedOnly = ready;
       detail = runtime.command
         ? 'WorkBuddy 消息组件已安装且命令可执行。'
         : '未检测到 WorkBuddy 消息组件；请先执行安装命令，完成后重新检测。';
@@ -1649,6 +1668,8 @@ class RegistrationOrchestrator {
     }
     const readinessStatus = mode === 'pull'
       ? 'ready'
+      : detectedOnly
+        ? 'verification_required'
       : ready
         ? 'preflight_passed'
         : (session.deliveryModes.find((item) => item.mode === mode)?.status === 'configuration_required'
@@ -1658,11 +1679,12 @@ class RegistrationOrchestrator {
       item.mode === mode ? {
         ...item,
         status: readinessStatus,
-        ...(provider === 'workbuddy' && mode === 'http' ? { selected: ready } : {}),
-        lastPreflight: { ok: ready, detail, at: now() },
+        ...(detectedOnly ? { selected: false } : {}),
+        lastPreflight: { ok: ready && !detectedOnly, detected: ready, detail, at: now() },
       } : item);
     this._save(session);
-    return { success: true, registrationId: session.id, mode, ready, status: readinessStatus, detail, sideEffects: false };
+    return { success: true, registrationId: session.id, mode, ready: ready && !detectedOnly,
+      detected: ready, status: readinessStatus, detail, sideEffects: false };
   }
 
   async loopbackTest(id, input = {}) {

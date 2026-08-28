@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { getHermesProfilesDir } = require('../core/hermes-paths');
 const { resolveHermesCommand } = require('../core/dispatcher/hermes-command');
+let lastDiscoveryStatus:{ok:boolean;reason:string;detail:string;source:string|null;at:number}=
+  {ok:false,reason:'not_run',detail:'',source:null,at:0};
 
 /**
  * 发现 Hermes 下的所有 profiles（agents）
@@ -13,15 +15,21 @@ const { resolveHermesCommand } = require('../core/dispatcher/hermes-command');
  */
 function discoverHermes() {
   const profiles = [];
+  let cliFailure: { reason:string; detail:string } | null = null;
 
   // 方案1：解析 hermes profile list 输出（用 spawnSync 避免 Windows cmd.exe 乱码）
   try {
-    const result = spawnSync(resolveHermesCommand(), ['profile', 'list'], {
+    let result = spawnSync(resolveHermesCommand(), ['profile', 'list'], {
       encoding: 'utf-8',
       timeout: 2000,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    if (result.error?.code === 'ETIMEDOUT') {
+      result = spawnSync(resolveHermesCommand(), ['profile', 'list'], {
+        encoding: 'utf-8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
     if (result.error || result.status !== 0) throw result.error || new Error('non-zero exit');
     const output = result.stdout;
     const lines = output.split('\n').filter((l?: any) => l.trim());
@@ -60,9 +68,11 @@ function discoverHermes() {
       }
     }
   } catch (err: any) {
-    // hermes CLI 未安装或不在 PATH 中（Windows 系统错误信息为 GBK 编码，
-    // 输出 err.message 会显示乱码），使用固定提示替代
-    console.warn('[HermesDiscover] hermes CLI 未安装或不可用，跳过 discovery');
+    const code=String(err?.code||'');
+    const reason=code==='ENOENT'?'not_found':code==='ETIMEDOUT'?'timeout':
+      err?.message==='non-zero exit'?'nonzero':'status_failed';
+    cliFailure={reason,detail:code||String(err?.message||'unknown')};
+    console.warn(`[HermesDiscover] CLI discovery failed reason=${reason} detail=${cliFailure.detail}`);
   }
 
   // 方案2：回退读取 profiles 目录
@@ -87,7 +97,19 @@ function discoverHermes() {
     }
   }
 
+  if (profiles.length === 0 && cliFailure) {
+    console.warn(`[HermesDiscover] no profiles discovered reason=${cliFailure.reason}`);
+  }
+  lastDiscoveryStatus={
+    ok:profiles.length>0,
+    reason:profiles.length>0?'ready':(cliFailure?.reason||'no_profiles'),
+    detail:cliFailure?.detail||'',
+    source:profiles.length>0?(cliFailure?'profiles_directory':'cli'):null,
+    at:Date.now(),
+  };
   return profiles;
 }
 
-module.exports = { discoverHermes };
+function getLastHermesDiscoveryStatus(){return {...lastDiscoveryStatus};}
+
+module.exports = { discoverHermes, getLastHermesDiscoveryStatus };

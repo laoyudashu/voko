@@ -29,6 +29,24 @@ test('directory client converts the opaque DOM timeout code 23 into a diagnosabl
   });
 });
 
+test('directory client does not mutate a native DOMException timeout',async()=>{
+  const source=new DOMException('The operation was aborted due to timeout','TimeoutError');
+  const originalCode=source.code;
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',timeoutMs:432,
+    async fetchImpl(){throw source;}});
+  await assert.rejects(client.status(),error=>{
+    assert.notEqual(error,source);
+    assert.equal(error.cause,source);
+    assert.equal(error.code,'E2EE_V2_DIRECTORY_TIMEOUT');
+    assert.equal(error.causeCode,originalCode);
+    assert.equal(error.name,'TimeoutError');
+    assert.equal(error.operation,'/v1/e2ee/status');
+    assert.equal(error.timeoutMs,432);
+    assert.equal(source.code,originalCode);
+    return true;
+  });
+});
+
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
   deliverSecureReply,providerReply,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));

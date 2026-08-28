@@ -231,21 +231,21 @@ describe('shared registration orchestrator', () => {
     }
   });
 
-  it('enables WorkBuddy HTTP from component readiness without desktop login detection', () => {
+  it('reports WorkBuddy component presence without claiming HTTP delivery is verified', () => {
     const service = new RegistrationOrchestrator({
       workBuddyRuntime: () => ({ command: 'codebuddy', source: 'registry' }),
     });
     const modes = service.deliveryCapabilities('workbuddy');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['http', 'pull']);
-    assert.strictEqual(modes[0].status, 'preflight_passed');
-    assert.strictEqual(modes[0].selected, true);
-    assert.strictEqual(modes[0].reason, 'WORKBUDDY_COMPONENT_READY');
+    assert.strictEqual(modes[0].status, 'verification_required');
+    assert.strictEqual(modes[0].selected, false);
+    assert.strictEqual(modes[0].reason, 'WORKBUDDY_COMPONENT_INSTALLED');
     assert.strictEqual(modes[0].authenticationStatus, undefined);
     assert.match(modes[0].description, /消息组件/);
     assert.strictEqual(modes[1].required, true);
   });
 
-  it('rechecks the WorkBuddy component and refreshes the default HTTP selection', async () => {
+  it('rechecks the WorkBuddy component without promoting installation to verified delivery', async () => {
     let installed = false;
     const { db, service } = createService({
       detectCurrentAgentType: () => 'workbuddy',
@@ -258,10 +258,11 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(basic.deliveryModes[0].selected, false);
       installed = true;
       const checked = service.preflightDelivery(started.registrationId, { mode: 'http' });
-      assert.strictEqual(checked.ready, true);
+      assert.strictEqual(checked.ready, false);
+      assert.strictEqual(checked.detected, true);
       const refreshed = service.view(started.registrationId);
-      assert.strictEqual(refreshed.deliveryModes[0].status, 'preflight_passed');
-      assert.strictEqual(refreshed.deliveryModes[0].selected, true);
+      assert.strictEqual(refreshed.deliveryModes[0].status, 'verification_required');
+      assert.strictEqual(refreshed.deliveryModes[0].selected, false);
       assert.strictEqual(refreshed.deliveryModes.at(-1).mode, 'pull');
       assert.strictEqual(refreshed.deliveryModes.at(-1).selected, true);
     } finally { db.close(); }
@@ -420,7 +421,8 @@ describe('shared registration orchestrator', () => {
     assert.ok(environment.detected.some((item) => item.type === 'codebuddy'));
     assert.deepEqual(service.deliveryCapabilities('workbuddy').map((item) => item.mode), ['http', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('codebuddy').map((item) => item.mode), ['acp', 'pull']);
-    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'verification_required');
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].selected, false);
   });
 
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {
@@ -458,7 +460,7 @@ describe('shared registration orchestrator', () => {
     const modes = service.deliveryCapabilities('github-copilot');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['acp', 'cli', 'pull']);
     assert.deepStrictEqual(modes.map((mode) => mode.role), ['primary', 'fallback', 'final_fallback']);
-    assert.ok(modes.slice(0, 2).every((mode) => mode.status === 'ready' && mode.selected));
+    assert.ok(modes.slice(0, 2).every((mode) => mode.status === 'verification_required' && !mode.selected));
     assert.strictEqual(modes[2].required, true);
   });
 

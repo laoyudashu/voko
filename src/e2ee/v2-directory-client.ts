@@ -48,14 +48,19 @@ export class E2eeV2DirectoryClient {
         signal: AbortSignal.timeout(effectiveTimeoutMs),
       });
     }catch(value){
-      const error:any=value instanceof Error?value:new Error(String(value));
-      error.operation=path;
-      error.timeoutMs=effectiveTimeoutMs;
-      if(error.name==='TimeoutError'){
-        error.causeCode=error.code;
+      const source:any=value instanceof Error?value:new Error(String(value));
+      if(source.name==='TimeoutError' || source.name==='AbortError'){
+        const error:any=new Error(source.message,{cause:source});
+        error.name=source.name;
         error.code='E2EE_V2_DIRECTORY_TIMEOUT';
+        error.causeCode=source.code;
+        error.operation=path;
+        error.timeoutMs=effectiveTimeoutMs;
+        throw error;
       }
-      throw error;
+      source.operation=path;
+      source.timeoutMs=effectiveTimeoutMs;
+      throw source;
     }
     let body: any = null;
     try { body = await response.json(); } catch {}
