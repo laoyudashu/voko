@@ -166,7 +166,15 @@ export class SecureOutboundRouter {
   private async privateDecision(agentId:string,channelId:string,metadata:unknown,
     trustedRoute?:{routingConversationId:string;wireConversationKey:string}):Promise<PrivateDecision>{
     let route:RouteContext;
-    try{route=trustedRoute?{...trustedRoute}:this.routeContext(agentId,channelId,metadata);}catch(error){
+    let trustedMetadata:Record<string,unknown>|undefined;
+    let trustedMetadataError:unknown;
+    try{
+      if(trustedRoute){
+        const raw=(metadata&&typeof metadata==='object'&&!Array.isArray(metadata))?(metadata as any)._voko:undefined;
+        try{trustedMetadata=normalizeE2eeRouteContext(raw);}catch(error){trustedMetadataError=error;}
+        route={...trustedRoute};
+      }else route=this.routeContext(agentId,channelId,metadata);
+    }catch(error){
       return{mode:'blocked',error:errorCode(error),securityMode:'plaintext',reason:'invalid_route_context'};
     }
     let existing=this.existingConversation(agentId,channelId,route.routingConversationId);
@@ -203,6 +211,11 @@ export class SecureOutboundRouter {
         securityMode:'e2ee',reason:'active_conversation_locked'};
       return{mode:'plaintext',reason:resolved.capability==='unsupported'
         ?'recipient_unsupported':'capability_unknown_fallback'};
+    }
+    if(resolved.peerKind==='guest'){
+      if(trustedMetadataError)return{mode:'blocked',error:errorCode(trustedMetadataError),securityMode:'plaintext',
+        reason:'invalid_route_context'};
+      if(trustedMetadata)route={...route,metadata:trustedMetadata};
     }
     if(resolved.peerKind==='agent'){
       const stableContext=String(resolved.protocolConversationId||'');

@@ -64,6 +64,22 @@ test('secure outbound seals one business message for every active guest device',
   }finally{f.close();}
 });
 
+test('trusted E2EE reply route preserves validated correlation metadata in the sealed payload',async()=>{
+  const f=fixture();
+  try{
+    const replyToRouteId='voko_abcdefghijklmnopqrstuvwxyz0123456789';
+    const result=await f.router.deliver('gym','guest-im','reply','text',1,null,'business-correlated',
+      {_voko:{protocolVersion:1,replyToRouteId}},
+      {protocolConversationId:'guest-conversation'});
+    assert.equal(result.success,true);
+    assert.equal(f.encrypted.length,2);
+    for(const delivery of f.encrypted){
+      const payload=JSON.parse(delivery.envelope.plaintext);
+      assert.equal(payload.routeContext.replyToRouteId,replyToRouteId);
+    }
+  }finally{f.close();}
+});
+
 test('a reply with multiple directory candidates returns only to its verified inbound device',async()=>{
   const f=fixture();
   try{
