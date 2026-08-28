@@ -225,6 +225,21 @@ test('guest route with only routeId uses the authenticated protocol conversation
   }finally{f.close();}
 });
 
+test('guest secure reply carries the authenticated inbound route id for browser correlation',async()=>{
+  let replyInput=null;
+  const f=fixture({async deliverSecureReply(input){replyInput=input;return{success:true,deliveryState:'delivered'};}});
+  try{
+    const routeId='voko_abcdefghijklmnopqrstuvwxyz0123456789';
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'correlate reply',
+      routeContext:{protocolVersion:1,routeId}});
+    const envelope=await f.createEnvelope('message-reply-correlation',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(replyInput.replyToRouteId,routeId);
+  }finally{f.close();}
+});
+
 test('historical pre-Provider locked receipt is recovered exactly once after transient lock revalidation',async()=>{
   const f=fixture();
   try{

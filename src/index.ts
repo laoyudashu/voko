@@ -2078,8 +2078,11 @@ async function startMcpServer(args?: any, core?: any) {
           if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
           const persisted=messageHandler.persistE2eeAgentReply(input.agentId,input.channelId,input.content,
             input.messageId,input.sourceMessageId);
+          const routeMetadata=input.replyToRouteId
+            ?{_voko:{protocolVersion:1,...(persisted.routeMetadata?._voko||{}),replyToRouteId:input.replyToRouteId}}
+            :persisted.routeMetadata;
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
-            input.messageId,persisted.routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
+            input.messageId,routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
               protocolConversationId:input.protocolConversationId});
         },
         markOutboundDelivered:(agentId:string,messageId:string)=>

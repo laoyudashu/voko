@@ -171,9 +171,9 @@ function deliveryOutcome(error: unknown): DeliveryOutcome {
 
 function isInternalProviderProtocol(content: unknown): boolean {
   if (typeof content !== 'string') return false;
-  const compact = content.trim().slice(0, 4096).replace(/\s+/g, '');
-  return /^<\|{1,2}DSML\|{1,2}(?:tool_calls|invoke|parameter)>/i.test(compact)
-    || /^<\/?(?:tool_calls?|function_calls?|invoke)(?:\s|>)/i.test(content.trim());
+  const compact = content.slice(0, 64 * 1024).replace(/\s+/g, '');
+  return /<\|{1,2}DSML\|{1,2}(?:tool_calls|invoke|parameter)>/i.test(compact)
+    || /<\/?(?:tool_calls?|function_calls?|invoke)(?:\s|>)/i.test(content);
 }
 
 const DEFAULT_PROVIDER_TURN_TIMEOUT_MS = 120_000;

@@ -30,7 +30,8 @@ type RuntimeOptions={
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
-    sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string})=>Promise<{success?:boolean;deliveryState?:string;
+    sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string;
+    replyToRouteId?:string})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
@@ -351,7 +352,9 @@ export class E2eeV2Runtime {
         const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
           channelId:envelope.channelId,content:reply,messageId:replyMessageId,
           sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
-          protocolConversationId:envelope.conversationId});
+          protocolConversationId:envelope.conversationId,
+          ...(typeof prepared.routeContext?.routeId==='string'
+            ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
         if(delivered?.success===false){
           const failure=Object.assign(new Error(String(delivered.error||'E2EE_V2_REPLY_NOT_DELIVERED')),
             {outcomeUnknown:Boolean(delivered.outcomeUnknown)});

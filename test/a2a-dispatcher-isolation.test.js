@@ -201,6 +201,24 @@ test('internal Provider tool protocol is never delivered as a final reply', asyn
   assert.equal(ordinary.length, 0);
 });
 
+test('internal Provider tool protocol is rejected even after ordinary-looking text', async () => {
+  const provider = new Provider();
+  provider.push = function(payload) {
+    setImmediate(() => this.emit('agent.reply', { agentId:payload.agentId,visitorId:payload.fromUid,
+      turnId:payload.turnId,replyId:'prefixed-internal-protocol',done:true,
+      content:'I will inspect the file now.\n<tool_calls>\n<Read><file_path>/private/file</file_path></Read>\n</tool_calls>' }));
+    return { nativeSessionId:'prefixed-internal-protocol-session' };
+  };
+  const ordinary = [];
+  const dispatcher = createDispatcher({ db:db(),providers:{'qwen-office-cli':provider},onAgentReply:reply=>ordinary.push(reply) });
+  await assert.rejects(dispatcher.executeE2ee({ agentId:'agent-1',taskId:'prefixed-internal-task',
+    contextId:'prefixed-internal-context',content:'hello',sessionScopeId:'prefixed-internal-scope',timeoutMs:5_000 }), error => {
+    assert.equal(error.code, 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT');
+    return true;
+  });
+  assert.equal(ordinary.length, 0);
+});
+
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {
   const safe = new Provider(); safe.pushOwner = () => {};
   const unsafe = new Provider();
