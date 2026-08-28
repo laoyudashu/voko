@@ -36,10 +36,23 @@ type RuntimeOptions={
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
   deliverRaw:(agentId:string,channelId:string,envelope:string,messageId:string)=>Promise<any>;
   downloadAttachment?:(agent:E2eeV2AgentDescriptor,uploadId:string,channelId:string)=>Promise<Uint8Array>;
+  keySyncRetryDelayMs?:number;
 };
 
 type ResolvedSender={bundle:E2eeV2PublicBundle;peerScopeId:string;peerKind:'guest'|'agent';
   protocolConversationId:string|null};
+
+function directoryErrorDetails(error:any):string{
+  const fields={
+    code:String(error?.code||'E2EE_V2_DIRECTORY_ERROR'),
+    name:String(error?.name||'Error'),
+    message:String(error?.message||'unknown'),
+    operation:String(error?.operation||'registerAgentKey'),
+    status:error?.status===undefined?'-':String(error.status),
+    timeoutMs:error?.timeoutMs===undefined?'-':String(error.timeoutMs),
+  };
+  return Object.entries(fields).map(([name,value])=>`${name}=${JSON.stringify(value)}`).join(' ');
+}
 
 function safe(value:unknown,max=1024):value is string {
   return typeof value==='string'&&value.length>0&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value);
@@ -112,13 +125,23 @@ export class E2eeV2Runtime {
         if(!key)throw new Error('E2EE_V2_AGENT_KEY_UNAVAILABLE');
         const endpoint=this.endpoint(agent.localAgentId);
         const publicBundle=endpoint.publicBundle();
-        await this.options.directory.registerAgentKey({agentId:agent.serverAgentId,deviceId:key.device_id,
-          generation:Number(key.generation),publicBundle});
+        const registration={agentId:agent.serverAgentId,deviceId:key.device_id,
+          generation:Number(key.generation),publicBundle};
+        for(let attempt=1;attempt<=2;attempt+=1){
+          try{
+            await this.options.directory.registerAgentKey(registration);
+            break;
+          }catch(error:any){
+            if(attempt===2||!isTransientE2eeDirectoryError(error))throw error;
+            console.warn(`[E2EE] Agent公钥同步暂时失败 agent=${agent.localAgentId} ${directoryErrorDetails(error)} attempt=${attempt}/2 retrying=true`);
+            await new Promise(resolve=>setTimeout(resolve,this.options.keySyncRetryDelayMs??250));
+          }
+        }
         this.options.store.markRegistered(agent.localAgentId,publicBundle.keyId);
         registered+=1;
       }catch(error:any){
         failed+=1;
-        console.warn(`[E2EE] Agent公钥同步失败 agent=${agent.localAgentId}: ${String(error?.code||error?.message||'unknown')}`);
+        console.warn(`[E2EE] Agent公钥同步失败 agent=${agent.localAgentId} ${directoryErrorDetails(error)} retrying=false`);
       }
     }
     return{registered,failed};

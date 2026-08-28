@@ -648,6 +648,10 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     return getProviderTransport(providerId)?.family || providerId;
   }
 
+  function _isOwnerOnlyProvider(providerId: string): boolean {
+    return getProviderTransport(providerId)?.owner?.enabled === true;
+  }
+
   function resolveProviders(agentId: string, operation: RouteOperation = 'push'): DispatcherProvider[] {
     const meta = _metaOf(agentId);
     const resolverOperation = operation === 'owner_push' ? 'push' : operation;
@@ -680,7 +684,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   function resolveProviderTransport(agentId: string, providerId: string, mode: string): DispatcherProvider | null {
     const definition = getProviderTransport(providerId);
     const provider = providers[providerId];
-    if (!definition || !provider || definition.mode !== mode) return null;
+    if (!definition || definition.owner?.enabled || !provider || definition.mode !== mode) return null;
     const meta = _metaOf(agentId);
     const family = getProviderFamily(meta.backend_type);
     if (!family || family.type !== definition.family) return null;
@@ -706,6 +710,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const methods: AgentDeliveryStatus['methods'] = [];
 
     for (const [key, provider] of Object.entries(providers)) {
+      if (_isOwnerOnlyProvider(key)) continue;
       const mode = _providerMode(key);
       try {
         if (typeof provider.match !== 'function' || !provider.match(agentId, meta)) continue;
@@ -804,7 +809,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const meta = _metaOf(agentId);
     const providerIds = Object.keys(providers).filter(providerId => {
       const definition = getProviderTransport(providerId);
-      if (!definition) return false;
+      if (!definition || definition.owner?.enabled) return false;
       try { return !!providers[providerId]?.match?.(agentId, meta); } catch (_) { return false; }
     });
     for (const providerId of providerIds) {
@@ -818,7 +823,8 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
   async function verifyAgentDeliveryChannel(agentId: string, providerId: string): Promise<{ result: any; status: AgentDeliveryStatus }> {
     const meta = _metaOf(agentId);
     const provider: any = providers[String(providerId || '')];
-    if (!provider || !provider.match?.(agentId, meta) || typeof provider.runLoopbackTest !== 'function') {
+    if (_isOwnerOnlyProvider(String(providerId || '')) || !provider
+      || !provider.match?.(agentId, meta) || typeof provider.runLoopbackTest !== 'function') {
       throw new Error('delivery channel does not support loopback verification');
     }
     provider.refreshRuntime?.();
@@ -855,7 +861,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       const selectedProviderId = String(providerId || '').trim();
       const definition = getProviderTransport(selectedProviderId);
       const provider = providers[selectedProviderId];
-      if (!definition || definition.mode !== selectedMode || !provider) throw new Error('delivery channel not found');
+      if (!definition || definition.owner?.enabled || definition.mode !== selectedMode || !provider) {
+        throw new Error('delivery channel not found');
+      }
       try {
         const readiness = (provider as any).getDeliveryReadiness?.(agentId);
         if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)

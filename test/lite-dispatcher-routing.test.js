@@ -74,6 +74,24 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('Codex owner_io stays out of ordinary delivery discovery and routing', () => {
+  const calls = [];
+  const owner = provider('owner_io', 100, calls);
+  owner.pushOwner = async () => {};
+  const cli = provider('cli', 10, calls);
+  const dispatcher = createDispatcher({
+    db: dbFor(null, 'codex'),
+    providers: { 'codex-app-server': owner, 'codex-cli': cli },
+  });
+
+  assert.deepEqual(dispatcher.resolveProviders('agent-1').map(item => item === cli ? 'cli' : 'owner'), ['cli']);
+  assert.deepEqual(dispatcher.getAgentDeliveryStatus('agent-1').methods.map(item => item.mode), ['cli', 'pull']);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'codex-app-server', 'owner_io'), null);
+  assert.throws(() => dispatcher.selectTemporaryDeliveryChannel('agent-1', 'owner_io', 'codex-app-server'),
+    /delivery channel not found/);
+  assert.equal(dispatcher.getOwnerTransportStatus('agent-1').deliveryMode, 'owner_io');
+});
+
 test('dispatcher preserves attachment metadata without exposing its local path in every prompt', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-dispatch-attachment-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

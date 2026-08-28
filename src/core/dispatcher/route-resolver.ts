@@ -30,6 +30,9 @@ export class RouteResolver {
     for (const [providerId, provider] of Object.entries(input.providers)) {
       const definition = getProviderTransport(providerId);
       if (!definition || !definition.operations.includes(input.operation)) continue;
+      // Owner transports are a separate authenticated control plane. They must
+      // never participate in visitor/Agent delivery, even when no modes were persisted.
+      if (definition.owner?.enabled) continue;
       if (configuredModes && !configuredModes.includes(definition.mode)) continue;
       try {
         if (!provider.match?.(input.agentId, input.meta) || !provider.isAvailable?.(input.agentId)) continue;

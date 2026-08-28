@@ -4,7 +4,7 @@ export function isTransientE2eeDirectoryError(value: unknown): boolean {
   const row=value as any;
   const code=String(row?.code||row?.message||value||'');
   if (['ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
-    'E2EE_V2_DIRECTORY_UNAVAILABLE'].includes(code)) return true;
+    'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_TIMEOUT'].includes(code)) return true;
   if (/^E2EE_V2_DIRECTORY_HTTP_(?:408|425|429|5\d\d)$/.test(code)) return true;
   return row?.name === 'TimeoutError' || row?.name === 'AbortError';
 }
@@ -34,16 +34,29 @@ export class E2eeV2DirectoryClient {
   }
 
   private async request(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<any> {
-    const response = await (this.options.fetchImpl || fetch)(`${this.baseUrl}/api/external${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${this.options.token}`,
-        accept: 'application/json',
-        ...(init.body ? { 'content-type':'application/json' } : {}),
-        ...(init.headers || {}),
-      },
-      signal: AbortSignal.timeout(timeoutMs || this.options.timeoutMs || 10_000),
-    });
+    const effectiveTimeoutMs=timeoutMs || this.options.timeoutMs || 10_000;
+    let response:Response;
+    try{
+      response = await (this.options.fetchImpl || fetch)(`${this.baseUrl}/api/external${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${this.options.token}`,
+          accept: 'application/json',
+          ...(init.body ? { 'content-type':'application/json' } : {}),
+          ...(init.headers || {}),
+        },
+        signal: AbortSignal.timeout(effectiveTimeoutMs),
+      });
+    }catch(value){
+      const error:any=value instanceof Error?value:new Error(String(value));
+      error.operation=path;
+      error.timeoutMs=effectiveTimeoutMs;
+      if(error.name==='TimeoutError'){
+        error.causeCode=error.code;
+        error.code='E2EE_V2_DIRECTORY_TIMEOUT';
+      }
+      throw error;
+    }
     let body: any = null;
     try { body = await response.json(); } catch {}
     if (!response.ok || !body?.success) {

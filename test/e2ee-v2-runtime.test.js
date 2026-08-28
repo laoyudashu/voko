@@ -10,12 +10,27 @@ const {DatabaseSync}=require('node:sqlite');
 const {E2eeV2Crypto}=require('../build/e2ee/v2-wasm');
 const {E2eeV2Store}=require('../build/e2ee/v2-store');
 const {E2eeV2Runtime}=require('../build/e2ee/v2-runtime');
+const {E2eeV2DirectoryClient}=require('../build/e2ee/v2-directory-client');
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
 
+test('directory client converts the opaque DOM timeout code 23 into a diagnosable error',async()=>{
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',timeoutMs:321,
+    async fetchImpl(){const error=new Error('The operation was aborted due to timeout');
+      error.name='TimeoutError';error.code=23;throw error;}});
+  await assert.rejects(client.status(),error=>{
+    assert.equal(error.code,'E2EE_V2_DIRECTORY_TIMEOUT');
+    assert.equal(error.causeCode,23);
+    assert.equal(error.name,'TimeoutError');
+    assert.equal(error.operation,'/v1/e2ee/status');
+    assert.equal(error.timeoutMs,321);
+    return true;
+  });
+});
+
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply,directoryErrorOnce=false,inboundDisposition=true}={}){
+  deliverSecureReply,providerReply,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -27,10 +42,15 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   const guestPublic=guest.publicBundle();
   const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server',
     imUid:'agent-im-1'};
-  let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
+  let registered=null,registrationCalls=0,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
   const sessionScopes=[],dispatcherInputs=[];
   const directoryClient={
-    async registerAgentKey(input){registered=input;return{duplicate:false};},
+    async registerAgentKey(input){registrationCalls+=1;
+      if(keyRegistrationErrorOnce&&registrationCalls===1){
+        throw Object.assign(new Error('The operation was aborted due to timeout'),{
+          name:'TimeoutError',code:'E2EE_V2_DIRECTORY_TIMEOUT',operation:'/v1/e2ee/agent-keys',timeoutMs:10_000});
+      }
+      registered=input;return{duplicate:false};},
     async resolveSender(input){
       senderDirectoryCalls+=1;
       if(directoryErrorOnce&&senderDirectoryCalls===1){
@@ -47,7 +67,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     },
   };
   const persisted={inbound:[],outbound:[],delivered:[]};
-  const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],
+  const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],keySyncRetryDelayMs:0,
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);dispatcherInputs.push(input);
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
@@ -78,8 +98,24 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   function close(){runtime.close();for(const sender of guestDevices.values())sender.endpoint.free();
     db.close();fs.rmSync(directory,{recursive:true,force:true});}
   return{runtime,store,guest,guestPublic,agent,persisted,createEnvelope,close,
-    counts:()=>({providerCalls,deliveryCalls,senderDirectoryCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
+    counts:()=>({providerCalls,deliveryCalls,senderDirectoryCalls,registrationCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
 }
+
+test('agent key synchronization retries one transient timeout before reporting success',async()=>{
+  const f=fixture({keyRegistrationErrorOnce:true});
+  const warnings=[];
+  const originalWarn=console.warn;
+  console.warn=(message)=>warnings.push(String(message));
+  try{
+    assert.deepEqual(await f.runtime.synchronizeAgentKeys(),{registered:1,failed:0});
+    assert.equal(f.counts().registrationCalls,2);
+    assert.match(warnings[0],/code="E2EE_V2_DIRECTORY_TIMEOUT"/);
+    assert.match(warnings[0],/name="TimeoutError"/);
+    assert.match(warnings[0],/operation="\/v1\/e2ee\/agent-keys"/);
+    assert.match(warnings[0],/timeoutMs="10000"/);
+    assert.match(warnings[0],/retrying=true/);
+  }finally{console.warn=originalWarn;f.close();}
+});
 
 test('v2 runtime decrypts, persists, executes once and returns a decryptable reply',async()=>{
   const f=fixture();
@@ -130,7 +166,7 @@ test('v2 reply recovery resends the same ciphertext without re-executing Provide
     await f.runtime.recover();
     assert.equal(f.store.receipt('message-2').state,'completed');
     assert.equal(f.store.receipt('message-2').reply_envelope_json,immutableReply);
-    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2,senderDirectoryCalls:1});
+    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2,senderDirectoryCalls:1,registrationCalls:1});
   }finally{f.close();}
 });
 
