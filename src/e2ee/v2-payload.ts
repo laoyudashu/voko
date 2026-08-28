@@ -39,7 +39,7 @@ export function encodeE2eeAttachmentPayload(attachment:unknown,routeContext?:unk
 
 export function decodeE2eePayload(plaintext:string):{
   structured:boolean;kind:'text'|'attachment_manifest'|null;text?:string;attachment?:unknown;
-  routeContext?:Record<string,unknown>;
+  caption?:string;routeContext?:Record<string,unknown>;
 }{
   let payload:any=null;
   try{payload=JSON.parse(plaintext);}catch{}
@@ -54,5 +54,9 @@ export function decodeE2eePayload(plaintext:string):{
   if(!payload.attachment||typeof payload.attachment!=='object'||Array.isArray(payload.attachment)){
     throw new Error('E2EE_V2_PAYLOAD_INVALID');
   }
-  return{structured:true,kind:'attachment_manifest',attachment:payload.attachment,routeContext};
+  if(payload.caption!==undefined&&(typeof payload.caption!=='string'||Buffer.byteLength(payload.caption)>128*1024)){
+    throw new Error('E2EE_V2_PAYLOAD_INVALID');
+  }
+  return{structured:true,kind:'attachment_manifest',attachment:payload.attachment,
+    caption:payload.caption||'',routeContext};
 }
