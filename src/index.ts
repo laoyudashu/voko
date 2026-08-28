@@ -2094,7 +2094,8 @@ async function startMcpServer(args?: any, core?: any) {
             :persisted.routeMetadata;
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
             input.messageId,routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
-              protocolConversationId:input.protocolConversationId});
+              protocolConversationId:input.protocolConversationId,
+              completeSourceReceipt:input.completeSourceReceipt});
         },
         markOutboundDelivered:(agentId:string,messageId:string)=>
           messageHandler?.markE2eeAgentReplyDelivered(agentId,messageId),

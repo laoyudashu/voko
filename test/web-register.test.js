@@ -290,7 +290,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /workbuddyManualCommand/);
     assert.match(html, /usable\?escHtml\(m\.description\)/);
     assert.match(html, /data-voko-copy-value/);
-    assert.match(html, /selectedProvider==='workbuddy'\?I\.recheck:I\.test/);
+    assert.match(html, /var actionLabel=presentation&&presentation\.action==='retry'\?I\.retry:/);
+    assert.match(html, /presentation&&presentation\.action==='verify'\?I\.test:I\.configure/);
     const registerSource = fs.readFileSync(path.join(__dirname, '../src/web/register.js'), 'utf8');
     assert.match(registerSource, /http: t\('web\.home\.message_mode\.http'\)/);
     assert.match(registerSource, /cli: t\('web\.home\.message_mode\.cli'\)/);
@@ -343,7 +344,7 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(html, /data-provider-id/);
     assert.doesNotMatch(html, /deliveryReadiness/);
     assert.match(html, /\['ready','preflight_passed','loopback_verified'\]\.indexOf\(m\.status\)>=0/);
-    assert.match(html, /usable\?I\.testOk:I\.testFailed/);
+    assert.match(html, /presentation&&I\.providerStates\[presentation\.state\]\|\|I\.testFailed/);
     assert.match(html, /class="voko-command-inline/);
     assert.match(html, /workBuddyCommand\(command,punctuation,longCommand\)/);
     assert.match(html, /data-voko-copy-value="'\+escHtml\(command\)\+'"/);

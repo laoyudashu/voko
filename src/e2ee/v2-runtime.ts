@@ -17,6 +17,14 @@ const textDecoder=new TextDecoder('utf-8',{fatal:true});
 const textEncoder=new TextEncoder();
 const INTERNAL_NO_REPLY=new Set(['NO_REPLY','HEARTBEAT_OK','ANNOUNCE_SKIP']);
 
+function isRecoverableConversationLock(value:unknown):boolean{
+  const code=String((value as any)?.code||(value as any)?.message||value||'');
+  // Older builds could lock a valid conversation when a non-final Turn status
+  // accidentally attempted to complete the Provider receipt. Identity is
+  // revalidated before this lock is cleared.
+  return code==='E2EE_V2_PROVIDER_STATE_CONFLICT'||isTransientE2eeDirectoryError(value);
+}
+
 export interface E2eeV2AgentDescriptor {
   localAgentId:string;
   serverAgentId:string;
@@ -33,6 +41,7 @@ type RuntimeOptions={
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
     sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string;
+    completeSourceReceipt?:boolean;
     replyToRouteId?:string;turnId?:string;turnStatus?:string;turnStatusCode?:string})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
@@ -301,7 +310,7 @@ export class E2eeV2Runtime {
       let sender=await this.senderBundle(agent,envelope);
       const protocolConversation=this.options.store.conversationByProtocolId(agent.localAgentId,
         envelope.channelId,envelope.conversationId);
-      if(protocolConversation?.mode==='locked'&&isTransientE2eeDirectoryError(protocolConversation.lock_reason)){
+      if(protocolConversation?.mode==='locked'&&isRecoverableConversationLock(protocolConversation.lock_reason)){
         sender=await this.senderBundle(agent,envelope,true);
       }
       const scope=sessionScope(agent,envelope,sender.peerScopeId);
@@ -320,7 +329,7 @@ export class E2eeV2Runtime {
         const reason=existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED';
         const identityMatches=existing.peer_scope_id===sender.peerScopeId&&existing.peer_kind===sender.peerKind
           &&existing.protocol_conversation_id===envelope.conversationId;
-        if(!isTransientE2eeDirectoryError(reason)||!identityMatches
+        if(!isRecoverableConversationLock(reason)||!identityMatches
             ||!this.options.store.reactivateConversation({localAgentId:agent.localAgentId,
               channelId:envelope.channelId,routingConversationId:routeScope,expectedLockReason:reason,
               protocolConversationId:envelope.conversationId,peerScopeId:sender.peerScopeId,
@@ -380,6 +389,7 @@ export class E2eeV2Runtime {
             const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
               channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),
               sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
+              completeSourceReceipt:false,
               protocolConversationId:envelope.conversationId,turnId,turnStatus:status,turnStatusCode:code,
               ...(typeof prepared.routeContext?.routeId==='string'?{replyToRouteId:prepared.routeContext.routeId}:{}),});
             if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
@@ -460,7 +470,7 @@ export class E2eeV2Runtime {
         const locked=this.options.store.conversationByProtocolId(agent.localAgentId,envelope.channelId,
           envelope.conversationId);
         const retryable=isTransientE2eeDirectoryError(error)||(code==='E2EE_V2_CONVERSATION_LOCKED'
-          &&locked?.mode==='locked'&&isTransientE2eeDirectoryError(locked.lock_reason));
+          &&locked?.mode==='locked'&&isRecoverableConversationLock(locked.lock_reason));
         this.options.store.transition(envelope.messageId,['processing'],retryable?'received':'failed',code);
       }
       console.warn(`[E2EE] 消息处理失败 agent=${agent.localAgentId} code=${code}`);
@@ -541,7 +551,7 @@ export class E2eeV2Runtime {
       if(row.error_code==='ERR_INVALID_ARG_TYPE'||isTransientE2eeDirectoryError(row.error_code)
           ||(row.error_code==='E2EE_V2_CONVERSATION_LOCKED'
           &&(locked?.mode==='e2ee_active'||(locked?.mode==='locked'
-            &&isTransientE2eeDirectoryError(locked.lock_reason))))){
+            &&isRecoverableConversationLock(locked.lock_reason))))){
         this.options.store.transition(row.message_id,['failed'],'received',row.error_code);
       }
     }

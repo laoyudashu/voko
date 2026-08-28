@@ -340,7 +340,8 @@ export class SecureOutboundRouter {
 
   async deliver(agentId:string,channelId:string,content:string,messageType='text',channelType=1,
     mentions:unknown=null,localMsgId:string|null=null,metadata:unknown=null,
-    internal?:{sourceReceiptMessageId?:string;protocolConversationId?:string}):Promise<SecureOutboundResult>{
+    internal?:{sourceReceiptMessageId?:string;protocolConversationId?:string;
+      completeSourceReceipt?:boolean}):Promise<SecureOutboundResult>{
     const args=[agentId,channelId,content,messageType,channelType,mentions,localMsgId,metadata];
     if(channelType!==1||String(channelId).startsWith('owner_')){
       return this.deliverPlaintext(args,'scope_not_e2ee');
@@ -386,7 +387,8 @@ export class SecureOutboundRouter {
         routingConversationId:decision.route.routingConversationId,protocolConversationId,contentKind:'text',
         recipientRevision:decision.resolved.revision,plaintextDigest:plaintextDigest(content),envelopes,initialLeaseOwner,
         conversation:{wireConversationKey:decision.route.wireConversationKey,peerScopeId:decision.resolved.peerScopeId,
-          peerKind:decision.resolved.peerKind},sourceReceiptMessageId:internal?.sourceReceiptMessageId});
+          peerKind:decision.resolved.peerKind},sourceReceiptMessageId:internal?.completeSourceReceipt===false
+            ?undefined:internal?.sourceReceiptMessageId});
       return this.deliverBusiness(businessMessageId,initialLeaseOwner);
     }catch(error){return this.encryptionFailure(agentId,channelId,businessMessageId,metadata,error,'encryption_failed');}
   }

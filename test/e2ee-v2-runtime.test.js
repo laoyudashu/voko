@@ -262,6 +262,27 @@ test('historical pre-Provider locked receipt is recovered exactly once after tra
   }finally{f.close();}
 });
 
+test('historical Turn-status Provider conflict lock is revalidated and recovered after upgrade',async()=>{
+  const f=fixture();
+  try{
+    const envelope=await f.createEnvelope('message-old-status-conflict','recover status conflict');
+    const envelopeJson=JSON.stringify(envelope);
+    const digest=crypto.createHash('sha256').update(envelopeJson).digest('base64url');
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'conversation-1',
+      wireConversationKey:'conversation-1',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.lockConversation('gym','guest-im-1','conversation-1','E2EE_V2_PROVIDER_STATE_CONFLICT');
+    f.store.reserve({messageId:envelope.messageId,digest,envelopeJson,localAgentId:'gym',
+      channelId:'guest-im-1',conversationId:'conversation-1'});
+    assert.equal(f.store.claim(envelope.messageId,'old-worker'),true);
+    assert.equal(f.store.transition(envelope.messageId,['processing'],'failed','E2EE_V2_CONVERSATION_LOCKED'),true);
+    await f.runtime.recover();
+    assert.equal(f.store.receipt(envelope.messageId).state,'completed');
+    assert.equal(f.store.conversation('gym','guest-im-1','conversation-1').mode,'e2ee_active');
+    assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
 test('historical locked receipt ignores a stale blank route when the authenticated protocol row is active',async()=>{
   const f=fixture();
   try{

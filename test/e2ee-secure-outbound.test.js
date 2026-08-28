@@ -287,6 +287,24 @@ test('Provider reply receipt and fixed origin-device outbox commit atomically be
   }finally{f.close();}
 });
 
+test('turn status targets the inbound device without completing its Provider receipt',async()=>{
+  const f=fixture();
+  try{
+    f.store.reserve({messageId:'source-processing-1',digest:'digest-processing-1',envelopeJson:JSON.stringify({
+      senderDeviceId:'device-2',senderKeyId:'key-2'}),localAgentId:'gym',
+      channelId:'guest-im',conversationId:'guest-conversation'});
+    assert.equal(f.store.claim('source-processing-1','provider-worker'),true);
+    const result=await f.router.deliver('gym','guest-im','Agent 正在处理…','text',1,null,
+      'turn-status-processing-1',null,{sourceReceiptMessageId:'source-processing-1',
+        protocolConversationId:'guest-conversation',completeSourceReceipt:false});
+    assert.equal(result.deliveryState,'delivered');
+    assert.equal(f.store.receipt('source-processing-1').state,'processing');
+    assert.equal(f.store.receipt('source-processing-1').reply_message_id,null);
+    assert.deepEqual(f.store.outboundEnvelopes('turn-status-processing-1')
+      .map(row=>row.recipient_device_id),['device-2']);
+  }finally{f.close();}
+});
+
 test('a crash between transport delivery and main message projection is recovered without resending ciphertext',async()=>{
   const f=fixture({projectionErrorOnce:true});
   try{
