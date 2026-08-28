@@ -22,12 +22,27 @@ function deliveryError(message: string): Error {
   return error;
 }
 
+function classifyQwenOfficeDeliveryFailure(detail: unknown): { code: string; verificationStatus: string } {
+  const text = String(detail || '').toLowerCase();
+  if (/credit usage limit|quota|insufficient credits|额度|配额|资源包.*不足/.test(text)) {
+    return { code: 'QWEN_OFFICE_QUOTA_EXHAUSTED', verificationStatus: 'quota_exhausted' };
+  }
+  if (/timed?\s*out|timeout|etimedout|超时/.test(text)) {
+    return { code: 'QWEN_OFFICE_TIMEOUT', verificationStatus: 'timeout' };
+  }
+  if (/not logged in|unauthorized|authentication|login required|未登录|登录.*失效/.test(text)) {
+    return { code: 'QWEN_OFFICE_LOGIN_FAILED', verificationStatus: 'login_failed' };
+  }
+  return { code: 'QWEN_OFFICE_DELIVERY_FAILED', verificationStatus: 'failed' };
+}
+
 /**
  * QwenWork's bundled qoderclicn stream-json transport.  Tool access and
  * permission prompts stay disabled for unattended VOKO messages.
  */
 class QwenOfficeCliProvider extends CliAdapter {
   private readonly _resolveAgentTarget: ResolveAgentTarget;
+  private readonly _verification = new Map<string, { status: string; code: string; detail: string; verifiedAt?: number }>();
 
   constructor(options: QwenOfficeCliProviderOptions = {}) {
     const configuredCommand = String(options.binPath || '').trim();
@@ -102,7 +117,28 @@ class QwenOfficeCliProvider extends CliAdapter {
     return !instanceId || !!this._resolveAgentTarget(instanceId);
   }
 
+  getDeliveryReadiness(agentId = ''): Record<string, unknown> {
+    const readiness = getQwenOfficeReadiness(this._cmd);
+    const verification = this._verification.get(String(agentId || ''));
+    const automaticReady = readiness.ready && verification?.status === 'loopback_verified';
+    return {
+      ready: readiness.ready,
+      automaticReady,
+      installed: readiness.executable,
+      authenticationStatus: readiness.loggedIn ? 'verified' : 'unverified',
+      reason: readiness.reason,
+      verificationStatus: verification?.status || 'unverified',
+      ...(verification?.code ? { verificationCode: verification.code } : {}),
+      ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}),
+      ...(verification?.detail ? { verificationDetail: verification.detail } : {}),
+      ...(readiness.exitCode !== undefined ? { exitCode: readiness.exitCode } : {}),
+      ...(readiness.detail ? { detail: readiness.detail } : {}),
+      ...(readiness.attempts !== undefined ? { attempts: readiness.attempts } : {}),
+    };
+  }
+
   refreshRuntime(): void {
+    super.refreshRuntime();
     invalidateQwenOfficeReadiness(this._cmd);
   }
 
@@ -132,7 +168,18 @@ class QwenOfficeCliProvider extends CliAdapter {
     if (instanceId && !this._resolveAgentTarget(instanceId)) {
       throw deliveryError('Bound QwenWork expert kit is unavailable');
     }
-    return super.push(payload);
+    try {
+      const receipt = await super.push(payload);
+      this._verification.set(payload.agentId, {
+        status: 'loopback_verified', code: 'QWEN_OFFICE_DELIVERY_VERIFIED', detail: 'QwenWork CLI delivery verified', verifiedAt: Date.now(),
+      });
+      return receipt;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error || '');
+      const classified = classifyQwenOfficeDeliveryFailure(detail);
+      this._verification.set(payload.agentId, { status: classified.verificationStatus, code: classified.code, detail });
+      throw error;
+    }
   }
 
   async runLoopbackTest(_agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -180,15 +227,30 @@ class QwenOfficeCliProvider extends CliAdapter {
     });
     parser.finish();
     const matched = result.code === 0 && reply.trim() === challenge;
+    const rawDetail = result.stderr.trim() || reply.trim() || 'QwenWork CLI did not return the expected challenge';
+    const failure = classifyQwenOfficeDeliveryFailure(rawDetail);
+    const classified = matched
+      ? { code: 'QWEN_OFFICE_LOOPBACK_VERIFIED', verificationStatus: 'loopback_verified' }
+      : (failure.code !== 'QWEN_OFFICE_DELIVERY_FAILED' ? failure
+        : result.code === 0 && reply.trim() ? { code: 'QWEN_OFFICE_REPLY_PARSE_FAILED', verificationStatus: 'parse_failed' }
+          : failure);
+    this._verification.set(String(_agentId || ''), {
+      status: classified.verificationStatus,
+      code: classified.code,
+      detail: matched ? 'QwenWork CLI loopback verified' : rawDetail,
+      ...(matched ? { verifiedAt: Date.now() } : {}),
+    });
+    if (!matched) console.warn(`[QwenOfficeDelivery] code=${classified.code} detail=${rawDetail.slice(0, 300)}`);
     return {
       ok: matched,
       status: matched ? 'loopback_verified' : 'failed',
       challengeMatched: matched,
+      code: classified.code,
       detail: matched
         ? 'QwenWork CLI loopback verified'
-        : (result.stderr.trim() || 'QwenWork CLI did not return the expected challenge'),
+        : rawDetail,
     };
   }
 }
 
-module.exports = { QwenOfficeCliProvider };
+module.exports = { QwenOfficeCliProvider, classifyQwenOfficeDeliveryFailure };

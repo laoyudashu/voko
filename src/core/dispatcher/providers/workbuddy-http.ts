@@ -99,6 +99,7 @@ class WorkBuddyHttpProvider extends PushProvider {
   _spawn: typeof spawn;
   _resolveAgentTarget: typeof resolveWorkBuddyAgentTarget;
   _configuredCommand?: string;
+  _authenticationVerified = false;
   _inflight = new Map<string, Promise<unknown>>();
   _activeRuns = new Map<string, { runId: string; state: ServerState }>();
   _activeAcp = new Map<string, { connectionId: string; sessionId: string; state: ServerState }>();
@@ -163,6 +164,12 @@ class WorkBuddyHttpProvider extends PushProvider {
   get sessionMode() { return 'agent-issued-id' as const; }
   match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'workbuddy'; }
   isAvailable() { return Boolean(this._runtime.command); }
+
+  getDeliveryReadiness() {
+    const installed = Boolean(this._runtime.command);
+    const ready = installed && [...this._states.values()].some(state => state.server?.exitCode === null && state.port > 0);
+    return { installed, ready };
+  }
 
   refreshRuntime() {
     this._runtime = resolveWorkBuddyRuntime({ configuredCommand: this._configuredCommand, env: { ...process.env } });
@@ -262,17 +269,16 @@ class WorkBuddyHttpProvider extends PushProvider {
     await this._ensureServer();
   }
 
-  async preflightDelivery(_agentId: string): Promise<Record<string, unknown>> {
+  async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
     if (!this.isAvailable()) return { ok: false, status: 'unavailable', sideEffects: false, code: 'WORKBUDDY_CLI_UNAVAILABLE' };
-    if (!this._server || this._server.exitCode !== null || !this._port) {
-      return { ok: false, status: 'configuration_required', sideEffects: false,
-        code: 'WORKBUDDY_AUTH_TEST_REQUIRED', authenticationStatus: 'unverified', runtime: 'detected',
-        desktopVersion: this._runtime.desktopVersion, cliVersion: probeWorkBuddyCliVersion(this._runtime) };
-    }
+    const state = this._stateFor({ agentId } as PushPayload);
     try {
-      await this._validateRuntime();
-      return { ok: false, status: 'configuration_required', sideEffects: false,
-        code: 'WORKBUDDY_AUTH_TEST_REQUIRED', authenticationStatus: 'unverified', runtime: 'loopback_http',
+      await this._stateContext.run(state, async () => {
+        await this._ensureServer();
+        await this._validateRuntime();
+      });
+      return { ok: true, status: 'ready', sideEffects: false,
+        code: 'WORKBUDDY_COMPONENT_READY', runtime: 'loopback_http',
         desktopVersion: this._runtime.desktopVersion, cliVersion: probeWorkBuddyCliVersion(this._runtime) };
     } catch {
       return { ok: false, status: 'unavailable', sideEffects: false, code: 'WORKBUDDY_HTTP_UNHEALTHY' };
@@ -528,7 +534,9 @@ class WorkBuddyHttpProvider extends PushProvider {
     const currentInstance = this._currentState().instanceId || '';
     const boundSession = this.acceptsBinding(payload.providerBinding) && bindingInstance === currentInstance
       ? String(payload.providerBinding?.nativeSessionId || '') : '';
-    return this._pushAcpSession(payload, turnId, boundSession);
+    const receipt = await this._pushAcpSession(payload, turnId, boundSession);
+    this._authenticationVerified = true;
+    return receipt;
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {
@@ -568,6 +576,7 @@ class WorkBuddyHttpProvider extends PushProvider {
         rawContent: challenge, channelId: `loopback-${challenge}`, channelType: 1,
         messageId: challenge, turnId: challenge, timestamp: Date.now() });
       const matched = reply.trim() === challenge;
+      if (matched) this._authenticationVerified = true;
       return { ok: matched, status: matched ? 'loopback_verified' : 'failed', challengeMatched: matched,
         loopbackSessionId: (receipt as any)?.nativeSessionId || null,
         detail: matched ? 'WorkBuddy HTTP loopback verified' : 'WorkBuddy returned an unexpected loopback reply' };

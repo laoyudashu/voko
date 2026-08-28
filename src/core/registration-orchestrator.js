@@ -654,8 +654,6 @@ class RegistrationOrchestrator {
   }
 
   inspectEnvironment() {
-    const gatewaySetup = this.options.gatewaySetup || require('./gateway-setup');
-    const dbApi = this.db ? dbConfigAdapter(this.db) : null;
     const hasCommand = this.options.commandAvailable || commandAvailable;
     const openclaw = openclawInstances();
     const zeroclawCommand = resolveZeroClawCommand();
@@ -665,8 +663,6 @@ class RegistrationOrchestrator {
     const zeroclaw = zeroclawInstalled ? discoverZeroClawInstances() : [];
     const hermesInstalled = isHermesRuntimeAvailable();
     const hermes = hermesInstalled ? hermesInstances() : [];
-    const openclawGateway = gatewaySetup.checkGateway('openclaw', dbApi);
-    const hermesGateway = gatewaySetup.checkGateway('hermes', dbApi);
     const detected = [];
 
     if (openclaw.length || hasCommand('openclaw')) {
@@ -676,11 +672,9 @@ class RegistrationOrchestrator {
         instanceTerm: getProviderInstanceTerm('openclaw'),
         instances: openclaw,
         supportsMultipleInstances: true,
-        deliveryModes: this.deliveryCapabilities('openclaw', openclawGateway),
       });
     }
     if (zeroclaw.length || zeroclawInstalled) {
-      const instanceId = zeroclaw.length === 1 ? zeroclaw[0].id : null;
       detected.push({
         type: 'zeroclaw',
         label: 'ZeroClaw',
@@ -688,7 +682,6 @@ class RegistrationOrchestrator {
         instances: zeroclaw,
         supportsMultipleInstances: true,
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('zeroclaw', { ready: false, instanceId }),
       });
     }
     if (hermes.length || hermesInstalled) {
@@ -698,7 +691,6 @@ class RegistrationOrchestrator {
         instanceTerm: getProviderInstanceTerm('hermes'),
         instances: hermes,
         supportsMultipleInstances: true,
-        deliveryModes: this.deliveryCapabilities('hermes', hermesGateway),
       });
     }
     const deepseekHarness = discoverProviderInstances('deepseek-harness');
@@ -711,7 +703,6 @@ class RegistrationOrchestrator {
         instances: deepseekHarness,
         supportsMultipleInstances: true,
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('deepseek-harness'),
       });
     }
     let qwenOfficeAgents = [];
@@ -726,7 +717,6 @@ class RegistrationOrchestrator {
         instances: qwenOfficeAgents,
         supportsMultipleInstances: true,
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('qwen-office'),
       });
     }
     let dumateAgents = [];
@@ -736,7 +726,6 @@ class RegistrationOrchestrator {
       detected.push({
         type: 'dumate', label: '百度搭子 (DuMate)', instanceTerm: getProviderInstanceTerm('dumate'),
         instances: dumateAgents, supportsMultipleInstances: true, activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities('dumate'),
       });
     }
 
@@ -766,7 +755,6 @@ class RegistrationOrchestrator {
         instances: [],
         supportsMultipleInstances: false,
         ...sessionActivity(type),
-        deliveryModes: this.deliveryCapabilities(type),
       });
     }
     const applicationNames = (this.options.installedApplications || installedApplications)();
@@ -780,7 +768,6 @@ class RegistrationOrchestrator {
         instances: application.type === 'qwen-office' ? qwenOfficeAgents : application.type === 'dumate' ? dumateAgents : [],
         supportsMultipleInstances: ['qwen-office', 'dumate'].includes(application.type),
         activityState: 'installed',
-        deliveryModes: this.deliveryCapabilities(application.type),
       });
     }
 
@@ -811,19 +798,16 @@ class RegistrationOrchestrator {
     } catch (_) { /* 检测失败不影响整体环境扫描 */ }
 
     const sortedDetected = sortProviderDisplay(detected);
-    const deliveryCount = new Set(sortedDetected.flatMap((item) => item.deliveryModes.map((mode) => mode.mode))).size;
     return {
       detected: sortedDetected,
       more,
       fallback: {
         type: 'others',
         label: 'Others',
-        deliveryModes: this.deliveryCapabilities('others'),
       },
       summary: {
         providerCount: sortedDetected.length,
         instanceCount: sortedDetected.reduce((sum, item) => sum + Math.max(item.instances.length, 1), 0),
-        deliveryModeCount: deliveryCount,
       },
     };
   }
@@ -863,18 +847,12 @@ class RegistrationOrchestrator {
       instanceTerm: getProviderInstanceTerm(type),
       instances,
       supportsMultipleInstances: supportsProviderInstances(type),
-      deliveryModes: this.deliveryCapabilities(
-        type,
-        type === 'zeroclaw'
-          ? { ...zeroclawReadiness(matchedInstance?.id), instanceId: matchedInstance?.id }
-          : undefined,
-      ),
       detectedAsCurrent: true,
     };
     return {
       detected: [provider],
       more: [],
-      fallback: { type: 'others', label: 'Others', deliveryModes: this.deliveryCapabilities('others') },
+      fallback: { type: 'others', label: 'Others' },
       currentAgent: {
         type,
         label,
@@ -885,7 +863,6 @@ class RegistrationOrchestrator {
       summary: {
         providerCount: 1,
         instanceCount: Math.max(instances.length, 1),
-        deliveryModeCount: new Set(provider.deliveryModes.map((mode) => mode.mode)).size,
       },
     };
   }
@@ -952,7 +929,7 @@ class RegistrationOrchestrator {
       const qwenReadiness = qwenOfficeReadiness(this.options);
       const { qwenOfficeLoginCommand } = require('./dispatcher/qwen-office-command');
       const loginCommand = qwenOfficeLoginCommand();
-      const status = qwenReadiness.ready ? 'preflight_passed'
+      const status = qwenReadiness.ready ? 'verification_required'
         : qwenReadiness.reason === 'not_found' ? 'unavailable' : 'configuration_required';
       const reason = qwenReadiness.ready ? 'QWEN_OFFICE_AUTH_TEST_REQUIRED'
         : qwenReadiness.reason === 'cli_not_logged_in' ? 'QWEN_OFFICE_CLI_NOT_LOGGED_IN'
@@ -964,7 +941,7 @@ class RegistrationOrchestrator {
           status, selected: false, reason,
           authenticationStatus: qwenReadiness.loggedIn ? 'logged_in'
             : qwenReadiness.reason === 'cli_not_logged_in' ? 'logged_out' : 'unverified',
-          action: qwenReadiness.ready ? 'test' : null,
+          action: qwenReadiness.ready ? 'loopback' : null,
           description: qwenReadiness.ready
             ? '千问办公 CLI 已登录；请执行一次真实消息回路测试，确认模型调用和回复解析正常后再启用自动投递。'
             : qwenReadiness.reason === 'cli_not_logged_in'
@@ -986,12 +963,11 @@ class RegistrationOrchestrator {
       return [
         {
           mode: 'http', label: 'WorkBuddy HTTP 自动交付', role: 'primary',
-          status: available ? 'configuration_required' : 'unavailable', selected: false, recommended: true,
-          reason: available ? 'WORKBUDDY_AUTH_TEST_REQUIRED' : 'WORKBUDDY_CLI_UNAVAILABLE',
-          authenticationStatus: available ? 'unverified' : 'unavailable',
-          action: available ? 'test' : null,
+          status: available ? 'preflight_passed' : 'unavailable', selected: available, recommended: true,
+          reason: available ? 'WORKBUDDY_COMPONENT_READY' : 'WORKBUDDY_CLI_UNAVAILABLE',
+          action: 'test',
           description: available
-            ? '已检测到 CodeBuddy CLI，但无法通过无副作用命令可靠判断登录状态；验证前不能启用 WorkBuddy 自动转发，只能创建使用主动获取（Pull）的 Agent。请执行真实消息回路测试，未登录时运行 codebuddy /login。'
+            ? '已检测到 WorkBuddy 消息组件，可启用 HTTP 自动接收和回复消息。'
             : '未检测到 CodeBuddy CLI；请先安装 @tencent-ai/codebuddy-code，完成后重新检测。',
         },
         pull,
@@ -1377,6 +1353,12 @@ class RegistrationOrchestrator {
       contactPhone: cleanText(input.contactPhone || input.contact_phone, 64),
       address: cleanText(input.address, 500),
     };
+    session.deliveryModes = this.deliveryCapabilities(
+      session.provider.type,
+      session.provider.type === 'zeroclaw'
+        ? { ...zeroclawReadiness(session.provider.instanceId), instanceId: session.provider.instanceId }
+        : undefined,
+    );
     session.status = 'delivery_selection_required';
     return this._save(session);
   }
@@ -1412,12 +1394,6 @@ class RegistrationOrchestrator {
     }
     if (family?.requiresInstance && instances.length === 1 && !instanceId) instanceId = instances[0].id;
     if (family?.requiresInstance && !instanceId) {
-      if (providerType === 'dumate') {
-        const readiness = this.deliveryCapabilities('dumate')[0];
-        if (readiness.reason === 'DUMATE_BACKEND_UNAVAILABLE') {
-          return { success: false, code: readiness.reason, error: readiness.description };
-        }
-      }
       return { success: false, error: `未检测到可用的 ${detected?.label || family.label || providerType} ${instanceTerm}；该类型必须先创建并选择一个${instanceTerm}，才能发送消息` };
     }
     if (providerType === 'workbuddy' && instanceId && !instances.some((item) => item.id === instanceId)) {
@@ -1463,12 +1439,7 @@ class RegistrationOrchestrator {
       address: selectedProfile?.address || '',
     };
     delete session.pendingApproval;
-    session.deliveryModes = this.deliveryCapabilities(
-      providerType,
-      providerType === 'zeroclaw'
-        ? { ...zeroclawReadiness(instanceId), instanceId }
-        : undefined,
-    );
+    session.deliveryModes = [];
     session.status = 'basic_info_required';
     return this._save(session);
   }
@@ -1640,13 +1611,14 @@ class RegistrationOrchestrator {
         detail = ready ? `${command} CLI 可用` : `${command} CLI 不可用`;
       }
     } else if (provider === 'workbuddy' && mode === 'http') {
-      const { resolveWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      const { resolveWorkBuddyRuntime, invalidateWorkBuddyRuntime } = require('./dispatcher/workbuddy-command');
+      invalidateWorkBuddyRuntime();
       const runtime = typeof this.options.workBuddyRuntime === 'function'
         ? this.options.workBuddyRuntime() : resolveWorkBuddyRuntime();
-      ready = false;
+      ready = !!runtime.command;
       detail = runtime.command
-        ? '已检测到 CodeBuddy CLI，但登录和模型通道尚未验证；请执行真实消息回路测试。'
-        : '未检测到 CodeBuddy CLI；请先执行 npm install -g @tencent-ai/codebuddy-code，再执行 codebuddy /login。';
+        ? 'WorkBuddy 消息组件已安装且命令可执行。'
+        : '未检测到 WorkBuddy 消息组件；请先执行安装命令，完成后重新检测。';
     } else if (provider === 'dumate' && mode === 'http') {
       const instances = (this.options.dumateAgents || discoverDuMateAgents)();
       ready = isDuMateRuntimeAvailable() && instances.some((item) => item.id === session.provider?.instanceId);
@@ -1682,7 +1654,12 @@ class RegistrationOrchestrator {
           ? 'configuration_required'
           : 'unavailable');
     session.deliveryModes = session.deliveryModes.map((item) =>
-      item.mode === mode ? { ...item, status: readinessStatus, lastPreflight: { ok: ready, detail, at: now() } } : item);
+      item.mode === mode ? {
+        ...item,
+        status: readinessStatus,
+        ...(provider === 'workbuddy' && mode === 'http' ? { selected: ready } : {}),
+        lastPreflight: { ok: ready, detail, at: now() },
+      } : item);
     this._save(session);
     return { success: true, registrationId: session.id, mode, ready, status: readinessStatus, detail, sideEffects: false };
   }
@@ -1717,9 +1694,19 @@ class RegistrationOrchestrator {
     });
     const verified = tested?.success === true && tested?.challengeMatched === true;
     session.deliveryModes = session.deliveryModes.map((item) => item.mode === mode
-      ? { ...item, status: verified ? 'loopback_verified' : 'failed', lastLoopback: {
-          ok: verified, at: now(), providerId, loopbackSessionId: tested?.loopbackSessionId || null,
-        } }
+      ? {
+          ...item,
+          status: verified ? 'loopback_verified' : 'failed',
+          selected: verified,
+          action: verified ? null : item.action,
+          reason: verified ? 'LOOPBACK_VERIFIED' : cleanText(tested?.code || 'LOOPBACK_FAILED', 100),
+          description: verified
+            ? `${item.label || providerId} 已通过真实消息回路验证，可作为优先自动接收通道。`
+            : item.description,
+          lastLoopback: {
+            ok: verified, at: now(), providerId, loopbackSessionId: tested?.loopbackSessionId || null,
+          },
+        }
       : item);
     this._save(session);
     return {
@@ -1728,6 +1715,7 @@ class RegistrationOrchestrator {
       mode,
       providerId,
       status: verified ? 'loopback_verified' : 'failed',
+      code: cleanText(tested?.code || (verified ? 'LOOPBACK_VERIFIED' : 'LOOPBACK_FAILED'), 100),
       detail: cleanText(tested?.detail || (verified ? `${providerId} 真实闭环测试通过` : `${providerId} 真实闭环测试失败`), 500),
       loopbackSessionId: tested?.loopbackSessionId || null,
       mayCreateModelCost: true,

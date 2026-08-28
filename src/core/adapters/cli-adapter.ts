@@ -203,6 +203,14 @@ class CliAdapter extends PushProvider {
     return this._available;
   }
 
+  /** Force the next health check to resolve the executable again instead of
+   * reusing a stale provider/runtime cache. The dispatcher calls this before a
+   * manual delivery-channel refresh and then invalidates the selected route. */
+  refreshRuntime(): void {
+    if (this._runtimeRequest) this._runtimeResolver.invalidate(this._runtimeRequest);
+    this._available = null;
+  }
+
   /** Model-backed isolated probe. Catalog capability gating decides which subclasses may expose it. */
   async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if (options.acknowledgeCost !== true) return { ok: false, code: 'LOOPBACK_CONFIRMATION_REQUIRED' };

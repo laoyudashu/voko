@@ -278,13 +278,22 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /data-wizard-step="2" role="button" tabindex="0"/);
     assert.match(html, /for="wf-category">[^<]+ \*<\/label><select id="wf-category" required>/);
     assert.match(html, /function inferredCategory\(name,description,suggested\)/);
-    assert.match(html, /function providerGuidance\(p\)/);
-    assert.match(html, /data-provider-setup/);
-    assert.match(html, /install_workbuddy/);
-    assert.match(html, /login_qwen_office/);
-    assert.match(html, /open_dumate/);
+    assert.doesNotMatch(html, /function providerGuidance\(p\)/);
+    assert.doesNotMatch(html, /data-provider-setup/);
+    assert.doesNotMatch(html, /data-provider-setup="login_workbuddy"/);
+    assert.doesNotMatch(html, /data-provider-setup="login_qwen_office"/);
+    assert.doesNotMatch(html, /data-provider-setup="open_dumate"/);
     assert.doesNotMatch(html, /blocked\?I\.configure/);
     assert.doesNotMatch(html, /selectedProvider==='workbuddy'&&m\.mode==='http'&&!usable/);
+    assert.match(html, /I\.messageModes\[m\.mode\]\|\|m\.mode/);
+    assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
+    assert.match(html, /workbuddyManualCommand/);
+    assert.match(html, /usable\?escHtml\(m\.description\)/);
+    assert.match(html, /data-voko-copy-value/);
+    assert.match(html, /selectedProvider==='workbuddy'\?I\.recheck:I\.test/);
+    const registerSource = fs.readFileSync(path.join(__dirname, '../src/web/register.js'), 'utf8');
+    assert.match(registerSource, /http: t\('web\.home\.message_mode\.http'\)/);
+    assert.match(registerSource, /cli: t\('web\.home\.message_mode\.cli'\)/);
     assert.match(html, /return available\.has\('general'\)\?'general'/);
     assert.match(html, /category:document\.getElementById\('wf-category'\)\.value\|\|'general'/);
     const categoryRulesSource = html.match(/var rules=(\[.*?\]);\s*var best='general'/s);
@@ -317,7 +326,7 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(html, /window\.confirm\(/);
     assert.match(html, /id="wf-phone" placeholder="例如：\+86 138 0000 0000"/);
     assert.match(html, /id="wf-address" placeholder="例如：中国·上海"/);
-    assert.match(html, /已检测到 \{providers\} 种智能体类型、\{modes\} 种消息接收方式/);
+    assert.match(html, /已检测到 \{providers\} 种可用的智能体类型/);
     assert.match(html, /nameCheckUnavailable/);
     assert.match(html, /nameBlocked=true;nameStatus\.className='name-status taken';nameStatus\.textContent=I\.nameCheckUnavailable/);
     assert.match(html, /normalizedSuggestionTags/);
@@ -335,17 +344,18 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.doesNotMatch(html, /deliveryReadiness/);
     assert.match(html, /\['ready','preflight_passed','loopback_verified'\]\.indexOf\(m\.status\)>=0/);
     assert.match(html, /usable\?I\.testOk:I\.testFailed/);
-    assert.match(html, /class="workbuddy-command-inline"/);
+    assert.match(html, /class="voko-command-inline/);
+    assert.match(html, /workBuddyCommand\(command,punctuation,longCommand\)/);
     assert.match(html, /data-voko-copy-value="'\+escHtml\(command\)\+'"/);
     assert.match(html, /selectedProvider==='qwen-office'/);
     assert.match(html, /m\.loginCommand/);
     assert.match(html, /qwenCliLoginRequired/);
     assert.match(html, /COPY_ICON/);
     assert.doesNotMatch(html, /workbuddy-command-list/);
-    assert.doesNotMatch(html, /id="wf-loopback-dialog"/);
+    assert.match(html, /id="wf-loopback-dialog"/);
     assert.match(html, /data-action="detect"/);
     assert.match(html, /api\('status'\)\.then\(function\(d\)\{state=d;renderDeliveries\(d\)/);
-    assert.doesNotMatch(html, /window\.confirm\(I\.loopbackConfirm\)/);
+    assert.match(html, /confirmLoopback\(function\(\)/);
     assert.match(html, /addEventListener\('blur'/);
     assert.match(html, /voko\.agentRegistrationDraft/);
     assert.match(html, /voko\.agentRegistrationMode/);
@@ -519,7 +529,8 @@ describe('Web POST /agent/add 注册流程', () => {
       agentName: '共享 Web Agent', description: '四步流程', category: 'general',
     });
     assert.strictEqual(basic.status, 'delivery_selection_required');
-    assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
+    assert.deepStrictEqual(provider.deliveryModes, []);
+    assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
     await action({
       action: 'select_delivery', registrationId: started.registrationId, deliveryModes: [],
     });

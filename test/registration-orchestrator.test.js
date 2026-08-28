@@ -186,7 +186,7 @@ describe('shared registration orchestrator', () => {
     });
   });
 
-  it('detects desktop Agents and exposes unavailable WorkBuddy HTTP before Pull', () => {
+  it('detects desktop Agent instances without probing message channels in step one', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       installedApplications: () => ['ZCode 3.5.3', 'WorkBuddy 5.2.6', '豆包 2.19.9'],
@@ -200,26 +200,71 @@ describe('shared registration orchestrator', () => {
       assert.ok(provider, type + ' should be detected');
       assert.strictEqual(provider.supportsMultipleInstances, false);
       assert.deepStrictEqual(provider.instances, []);
-      const expected = type === 'workbuddy' ? ['http', 'pull'] : ['pull'];
-      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), expected);
-      assert.strictEqual(provider.deliveryModes.at(-1).required, true);
-      if (type === 'workbuddy') assert.strictEqual(provider.deliveryModes[0].status, 'unavailable');
+      assert.strictEqual(provider.deliveryModes, undefined);
+    }
+    assert.strictEqual(environment.summary.deliveryModeCount, undefined);
+  });
+
+  it('defers message-channel detection until basic info advances to step three', async () => {
+    const { db, service } = createService({
+      commandAvailable: () => false,
+      installedApplications: () => [],
+      detectCurrentAgentType: () => null,
+    });
+    let channelProbeCount = 0;
+    const original = service.deliveryCapabilities.bind(service);
+    service.deliveryCapabilities = (...args) => {
+      channelProbeCount++;
+      return original(...args);
+    };
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(channelProbeCount, 0);
+      const selected = service.selectProvider(started.registrationId, { providerType: 'others' });
+      assert.strictEqual(channelProbeCount, 0);
+      assert.deepStrictEqual(selected.deliveryModes, []);
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'Deferred channels' });
+      assert.strictEqual(channelProbeCount, 1);
+      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
+    } finally {
+      db.close();
     }
   });
 
-  it('exposes WorkBuddy HTTP before Pull when the bundled CLI is available', () => {
+  it('enables WorkBuddy HTTP from component readiness without desktop login detection', () => {
     const service = new RegistrationOrchestrator({
       workBuddyRuntime: () => ({ command: 'codebuddy', source: 'registry' }),
     });
     const modes = service.deliveryCapabilities('workbuddy');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['http', 'pull']);
-    assert.strictEqual(modes[0].status, 'configuration_required');
-    assert.strictEqual(modes[0].selected, false);
-    assert.strictEqual(modes[0].reason, 'WORKBUDDY_AUTH_TEST_REQUIRED');
-    assert.strictEqual(modes[0].authenticationStatus, 'unverified');
-    assert.match(modes[0].description, /不能启用 WorkBuddy 自动转发/);
-    assert.match(modes[0].description, /只能创建使用主动获取（Pull）的 Agent/);
+    assert.strictEqual(modes[0].status, 'preflight_passed');
+    assert.strictEqual(modes[0].selected, true);
+    assert.strictEqual(modes[0].reason, 'WORKBUDDY_COMPONENT_READY');
+    assert.strictEqual(modes[0].authenticationStatus, undefined);
+    assert.match(modes[0].description, /消息组件/);
     assert.strictEqual(modes[1].required, true);
+  });
+
+  it('rechecks the WorkBuddy component and refreshes the default HTTP selection', async () => {
+    let installed = false;
+    const { db, service } = createService({
+      detectCurrentAgentType: () => 'workbuddy',
+      workBuddyRuntime: () => ({ command: installed ? 'codebuddy' : null, source: installed ? 'path' : 'unavailable' }),
+    });
+    try {
+      const started = await service.start({ registrationMode: 'agent' });
+      service.selectProvider(started.registrationId, { providerType: 'workbuddy' });
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'Component recheck' });
+      assert.strictEqual(basic.deliveryModes[0].selected, false);
+      installed = true;
+      const checked = service.preflightDelivery(started.registrationId, { mode: 'http' });
+      assert.strictEqual(checked.ready, true);
+      const refreshed = service.view(started.registrationId);
+      assert.strictEqual(refreshed.deliveryModes[0].status, 'preflight_passed');
+      assert.strictEqual(refreshed.deliveryModes[0].selected, true);
+      assert.strictEqual(refreshed.deliveryModes.at(-1).mode, 'pull');
+      assert.strictEqual(refreshed.deliveryModes.at(-1).selected, true);
+    } finally { db.close(); }
   });
 
   it('does not report DuMate ready from installation alone', () => {
@@ -261,7 +306,7 @@ describe('shared registration orchestrator', () => {
     assert.strictEqual(authUnverified.selected, false);
   });
 
-  it('explains DuMate desktop readiness before requiring an Agent instance', async () => {
+  it('keeps DuMate channel readiness out of instance selection', async () => {
     const { db, service } = createService({
       dumateRuntimeAvailable: () => true,
       dumateAgents: () => [],
@@ -273,13 +318,11 @@ describe('shared registration orchestrator', () => {
       ]), 'agent_backend_types');
       const started = await service.start({ email: 'owner@example.com' });
       const compact = started.environment.detected.find((item) => item.type === 'dumate');
-      assert.strictEqual(compact.blockingReason, 'DUMATE_BACKEND_UNAVAILABLE');
-      assert.match(compact.blockingDescription, /桌面后台尚未就绪/);
+      assert.strictEqual(compact.blockingReason, undefined);
+      assert.strictEqual(compact.deliveryModes, undefined);
       const selected = service.selectProvider(started.registrationId, { providerType: 'dumate' });
       assert.strictEqual(selected.success, false);
-      assert.strictEqual(selected.code, 'DUMATE_BACKEND_UNAVAILABLE');
-      assert.match(selected.error, /桌面后台尚未就绪/);
-      assert.doesNotMatch(selected.error, /必须先创建/);
+      assert.match(selected.error, /未检测到可用的.*Agent/);
     } finally { db.close(); }
   });
 
@@ -297,9 +340,7 @@ describe('shared registration orchestrator', () => {
       const provider = environment.detected.find((item) => item.type === type);
       assert.ok(provider, `${type} should be detected from the installed-app inventory`);
       assert.deepEqual(provider.instances, []);
-      assert.deepEqual(provider.deliveryModes.map((mode) => mode.mode), type === 'trae' ? ['acp', 'pull'] : ['cli', 'pull']);
-      assert.equal(provider.deliveryModes.at(-1).selected, true);
-      assert.equal(provider.deliveryModes[0].status, 'unavailable');
+      assert.strictEqual(provider.deliveryModes, undefined);
     }
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
@@ -313,7 +354,8 @@ describe('shared registration orchestrator', () => {
     });
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
-    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'preflight_passed');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'verification_required');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].action, 'loopback');
     assert.equal(service.deliveryCapabilities('qwen-office')[0].selected, false);
     assert.equal(service.deliveryCapabilities('qwen-office')[0].authenticationStatus, 'logged_in');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
@@ -438,7 +480,8 @@ describe('shared registration orchestrator', () => {
       assert.equal(basic.environment, undefined);
       const inspected = await service.manage({ action: 'inspect_environment', registrationId: started.registrationId });
       assert.ok(inspected.environment);
-      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
+      assert.deepStrictEqual(provider.deliveryModes, []);
+      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
 
       const delivery = service.selectDelivery(started.registrationId, { deliveryModes: [] });
       assert.strictEqual(delivery.status, 'ready_to_create');
@@ -932,6 +975,15 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(calls, 1);
       assert.strictEqual(received.providerId, 'qwen-office-cli');
       assert.strictEqual(received.mode, 'cli');
+      const refreshed = await service.manage({ action: 'status', registrationId: started.registrationId });
+      const cli = refreshed.deliveryModes.find((item) => item.mode === 'cli');
+      const pull = refreshed.deliveryModes.find((item) => item.mode === 'pull');
+      assert.strictEqual(cli.selected, true);
+      assert.strictEqual(cli.action, null);
+      assert.match(cli.description, /已通过真实消息回路验证/);
+      assert.strictEqual(pull.selected, true);
+      const selected = service.selectDelivery(started.registrationId, { deliveryModes: ['cli', 'pull'] });
+      assert.deepStrictEqual(selected.deliveryModes.filter((item) => item.selected).map((item) => item.mode), ['cli', 'pull']);
     } finally {
       db.close();
     }

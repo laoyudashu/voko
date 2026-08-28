@@ -84,13 +84,12 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
     'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
 });
 
-test('WorkBuddy preflight does not confuse CLI discovery with authenticated delivery', async () => {
+test('WorkBuddy preflight validates the local component without desktop login state', async () => {
   const idle = new WorkBuddyHttpProvider({ binPath: process.execPath });
   const idleResult = await idle.preflightDelivery('agent-1');
   assert.equal(idleResult.ok, false);
-  assert.equal(idleResult.status, 'configuration_required');
-  assert.equal(idleResult.code, 'WORKBUDDY_AUTH_TEST_REQUIRED');
-  assert.equal(idleResult.authenticationStatus, 'unverified');
+  assert.equal(idleResult.status, 'unavailable');
+  assert.equal(idleResult.code, 'WORKBUDDY_HTTP_UNHEALTHY');
 
   const running = readyProvider(async (url) => {
     if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
@@ -100,9 +99,9 @@ test('WorkBuddy preflight does not confuse CLI discovery with authenticated deli
     throw new Error(`unexpected ${url}`);
   });
   const runningResult = await running.preflightDelivery('agent-1');
-  assert.equal(runningResult.ok, false);
-  assert.equal(runningResult.status, 'configuration_required');
-  assert.equal(runningResult.code, 'WORKBUDDY_AUTH_TEST_REQUIRED');
+  assert.equal(runningResult.ok, true);
+  assert.equal(runningResult.status, 'ready');
+  assert.equal(runningResult.code, 'WORKBUDDY_COMPONENT_READY');
 });
 
 test('WorkBuddy first text turn uses ACP and returns the native session', async () => {

@@ -129,6 +129,10 @@ function promoteStage() {
       fs.rmSync(existingFile, { force: true });
     }
   }
+  // npm links the package bin directly to build/index.js on POSIX. TypeScript
+  // emits regular files without the executable bit, so preserve a runnable CLI
+  // after every atomic build promotion and global installation.
+  if (process.platform !== 'win32') fs.chmodSync(path.join(BUILD_DIR, 'index.js'), 0o755);
 }
 
 function main() {

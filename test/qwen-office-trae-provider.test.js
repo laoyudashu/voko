@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const qwenCommand = require('../build/core/dispatcher/qwen-office-command');
 const traeCommand = require('../build/core/dispatcher/trae-command');
-const { QwenOfficeCliProvider } = require('../build/core/dispatcher/providers/qwen-office-cli');
+const { QwenOfficeCliProvider, classifyQwenOfficeDeliveryFailure } = require('../build/core/dispatcher/providers/qwen-office-cli');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -62,6 +62,23 @@ test('QwenWork readiness separates executable discovery from CLI authentication'
   });
 });
 
+test('QwenWork status diagnostics distinguish timeout, invalid output, login and command failure', () => {
+  const classify = qwenCommand.classifyQwenOfficeStatusResult;
+  assert.equal(classify({ status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' } }).reason, 'status_timeout');
+  assert.equal(classify({ status: 0, stdout: 'not-json', stderr: '' }).reason, 'status_invalid_output');
+  assert.equal(classify({ status: 1, stdout: '', stderr: 'failed' }).reason, 'status_failed');
+  assert.equal(classify({ status: 0, stdout: '{"logged_in":false}', stderr: '' }).reason, 'cli_not_logged_in');
+  assert.equal(classify({ status: 0, stdout: '{"logged_in":true,"version":"1.2.3"}', stderr: '' }).reason, 'ready');
+});
+
+test('QwenWork shallow readiness allows a cold start and one retry', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/core/dispatcher/qwen-office-command.ts'), 'utf8');
+  assert.match(source, /STATUS_TIMEOUT_MS = 10_000/);
+  assert.match(source, /STATUS_MAX_ATTEMPTS = 2/);
+  assert.match(source, /value\.reason === 'status_timeout' \|\| value\.reason === 'status_invalid_output'/);
+  assert.match(source, /retrying=true/);
+});
+
 test('Trae resolver prefers an explicit traecli binary and exposes ACP mode', () => {
   const explicit = 'C:\\tools\\traecli.exe';
   assert.equal(traeCommand.resolveTraeCliCommand({ VOKO_TRAECLI_BIN: explicit }, 'win32'), explicit);
@@ -102,6 +119,28 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
+});
+
+test('QwenWork delivery failures distinguish quota, timeout, login, and generic failures', () => {
+  assert.equal(classifyQwenOfficeDeliveryFailure("You've reached your credit usage limit").code, 'QWEN_OFFICE_QUOTA_EXHAUSTED');
+  assert.equal(classifyQwenOfficeDeliveryFailure('request timed out').code, 'QWEN_OFFICE_TIMEOUT');
+  assert.equal(classifyQwenOfficeDeliveryFailure('login required').code, 'QWEN_OFFICE_LOGIN_FAILED');
+  assert.equal(classifyQwenOfficeDeliveryFailure('model rejected request').code, 'QWEN_OFFICE_DELIVERY_FAILED');
+});
+
+test('manual refresh clears both the generic CLI runtime state and QwenWork login cache', () => {
+  const provider = new QwenOfficeCliProvider({ binPath: 'C:\\tools\\qoderclicn.exe' });
+  let invalidated = null;
+  provider._available = false;
+  provider._runtimeResolver = {
+    invalidate(request) { invalidated = request; },
+    resolve() { return { available: true, executable: 'C:\\tools\\qoderclicn.exe', argvPrefix: [] }; },
+  };
+  provider.refreshRuntime();
+  assert.equal(provider._available, null);
+  assert.equal(invalidated, provider._runtimeRequest);
+  provider.healthCheck();
+  assert.equal(provider._available, true);
 });
 
 test('QwenWork CLI provider maps the selected expert kit to cwd/plugin-dir and rejects stale instance bindings', async () => {

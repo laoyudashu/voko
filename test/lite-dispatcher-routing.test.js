@@ -240,6 +240,19 @@ test('delivery diagnostics reports HTTP failure and CLI fallback without invokin
   assert.equal(status.methods.find(method => method.mode === 'pull').status, 'on-demand');
 });
 
+test('delivery diagnostics keeps a shallow-ready Qwen runtime out of automatic routing until loopback verification', () => {
+  const qwen = provider('cli', 1, []);
+  qwen.getDeliveryReadiness = () => ({ ready: true, automaticReady: false, installed: true, verificationStatus: 'unverified' });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+  const method = status.methods.find(item => item.provider === 'qwen-office-cli');
+  assert.equal(method.available, true);
+  assert.equal(method.automaticReady, false);
+  assert.equal(method.status, 'verification_required');
+  assert.deepEqual(status.automaticReadyModes, []);
+  assert.equal(status.activeAutomaticMode, null);
+});
+
 test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {
   const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');

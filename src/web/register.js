@@ -16,6 +16,7 @@ const { runWithRegistrationCaller } = require('../core/registration-caller-conte
 const { renderSystemFooter } = require('./footer');
 const { renderLanguageSwitcher } = require('./language-switcher');
 const { COPY_ICON, UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
+const { getProviderManualCommand } = require('../core/provider-setup');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -114,10 +115,10 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .instance-panel{width:calc(100% - 10px);margin:-4px 0 4px 10px;padding:10px 12px;border:1px solid #dfe4ec;border-left:3px solid #a7c0f4;border-radius:10px;background:#fafcff;font-size:12px}
 .instance-panel label{font-size:12px;margin:7px 0}.instance-panel input{width:auto;margin-right:5px}
 .group-label{margin:19px 0 7px;font-weight:700;color:#46536a}.method-meta{display:flex;align-items:center;gap:7px;margin-top:8px}
-.workbuddy-command-inline{display:inline-flex;align-items:center;gap:2px;vertical-align:middle}.workbuddy-command-inline code{padding:2px 5px;border-radius:5px;background:#f6f8fb;color:#344054;font-size:12px;white-space:nowrap}.workbuddy-command-inline .voko-copy-button{width:24px;height:24px;min-width:24px;min-height:24px;vertical-align:middle}
 .method-action{margin:0;padding:4px 9px;font-size:12px;background:#fff;color:#1a73e8;border:1px solid #1a73e8;border-radius:7px}
 .method-action:hover{background:#eaf2ff}.config-panel{display:none;margin-top:17px;padding:15px;border:1px solid #b8caee;border-radius:10px;background:#f7f9ff}.config-panel.show{display:block}
 .provider-guidance{margin:10px 0 0 25px;padding:10px 12px;border:1px solid #f0cf78;border-radius:8px;background:#fff8df;color:#704b00;font-size:13px;line-height:1.5}.provider-guidance strong{display:block;margin-bottom:2px}.provider-guidance-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.provider-guidance-actions button{margin:0;padding:5px 10px;font-size:12px}.provider-guidance-status{display:none;margin-top:7px}.provider-guidance-status.active{display:block}
+.workbuddy-command-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:7px}.workbuddy-command-row+.card-desc{margin-top:5px}
 .priority-list{margin:8px 0 0;padding-left:22px}.result-card{padding:18px;border:1px solid #a8ddbf;border-radius:12px;background:#ecf8f1}
 .result-grid{display:grid;grid-template-columns:105px 1fr;gap:7px 12px;margin-top:15px;padding:13px;background:#fff;border-radius:9px}.result-grid dt{color:#667085}.result-grid dd{margin:0;font-weight:600}
 .security-notice{margin-top:16px;padding:12px 13px;border:1px solid #edcf92;border-radius:9px;background:#fff6e3;color:#704600}
@@ -326,6 +327,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '</div>'
     + '<footer class="wizard-footer"><button type="button" class="btn-outline" id="wf-prev" style="visibility:hidden">' + esc(t('register.flow.previous')) + '</button><span class="spacer"></span><button type="button" id="wf-next">' + esc(t('register.flow.next')) + '</button></footer></div>'
     + '<dialog id="wf-reselect-dialog" class="voko-confirm-dialog"><div class="voko-confirm-body"><div class="voko-confirm-icon" aria-hidden="true">!</div><p>' + esc(t('register.flow.basic.reselect_warning')) + '</p></div><div class="voko-confirm-actions"><button type="button" class="btn-outline" id="wf-reselect-cancel">' + esc(t('common.btn.cancel')) + '</button><button type="button" id="wf-reselect-confirm">' + esc(t('common.btn.confirm')) + '</button></div></dialog>'
+    + '<dialog id="wf-loopback-dialog" class="voko-confirm-dialog"><div class="voko-confirm-body"><div class="voko-confirm-icon" aria-hidden="true">!</div><p>' + esc(t('register.flow.loopback_confirm')) + '</p></div><div class="voko-confirm-actions"><button type="button" class="btn-outline" id="wf-loopback-cancel">' + esc(t('common.btn.cancel')) + '</button><button type="button" id="wf-loopback-confirm">' + esc(t('common.btn.confirm')) + '</button></div></dialog>'
     + '<section class="registration-pane agent-register-pane" id="registration-agent-pane" hidden>'
     + '<h2>' + esc(t('register.agent.title')) + '</h2><p class="meta">' + esc(t('register.agent.desc')) + '</p>'
     + '<textarea class="agent-prompt" id="agent-registration-prompt" readonly>' + esc(agentPrompt) + '</textarea>'
@@ -333,7 +335,7 @@ function addAgentWizardBody(email, categories, db, tFn) {
     + '</main>';
 }
 
-function wizardJs(t) {
+function wizardJs(t, manualCommands = {}) {
   const I = {
     next: t('register.flow.next'), enter: t('register.done.start'),
     detecting: t('register.flow.detecting'), detected: t('register.flow.detected'),
@@ -342,12 +344,27 @@ function wizardJs(t) {
     others: t('db.backend_type.others'), othersDesc: t('register.flow.provider.others_desc'),
     detectedTag: t('register.flow.detected_tag'), manualTag: t('register.flow.manual_tag'),
     instance: t('register.flow.instance.title'), deliveryDesc: t('register.flow.delivery.for_provider'),
+    messageModes: {
+      pull: t('web.home.message_mode.pull'), websocket: t('web.home.message_mode.websocket'),
+      http: t('web.home.message_mode.http'), acp_ws: t('web.home.message_mode.acp_ws'),
+      acp: t('web.home.message_mode.acp'), attach: t('web.home.message_mode.attach'),
+      cli: t('web.home.message_mode.cli'), mcp: t('web.home.message_mode.mcp'),
+    },
     primary: t('register.flow.delivery.primary'), fallback: t('register.flow.delivery.fallback'),
     configure: t('register.flow.configure'), test: t('register.flow.test'),
+    loopback: t('register.flow.loopback'), loopbackConfirm: t('register.flow.loopback_confirm'),
     loginRequired: t('register.flow.login_required'), verificationRequired: t('register.flow.verification_required'),
     workbuddyInstallRequired: t('register.flow.workbuddy_install_required'), workbuddyLoginUnverified: t('register.flow.workbuddy_login_unverified'),
     qwenLoggedOut: t('register.flow.qwen_logged_out'), dumateNotReady: t('register.flow.dumate_not_ready'),
-    installWorkbuddy: t('register.flow.install_workbuddy'), openWorkbuddyLogin: t('register.flow.open_workbuddy_login'),
+    installWorkbuddy: t('register.flow.install_workbuddy'), workbuddyLoginCommandHelp: t('register.flow.workbuddy_login_command_help'),
+    workbuddyComponentReady: t('register.flow.workbuddy_component_ready'),
+    workbuddyComponentMissing: t('register.flow.workbuddy_component_missing'),
+    workbuddyInstallCommandLabel: t('register.flow.workbuddy_install_command_label'),
+    workbuddyLoginCommandLabel: t('register.flow.workbuddy_login_command_label'),
+    workbuddyLoginAfterCommand: t('register.flow.workbuddy_login_after_command'),
+    workbuddyInstallCommand: manualCommands.workbuddyInstall || '', workbuddyManualCommand: manualCommands.workbuddy || 'codebuddy',
+    qwenLoginCommandHelp: t('register.flow.qwen_login_command_help'), dumateLoginCommandHelp: t('register.flow.dumate_login_command_help'),
+    qwenManualCommand: manualCommands.qwen || '', dumateManualCommand: manualCommands.dumate || '',
     openQwenLogin: t('register.flow.open_qwen_login'), openDumate: t('register.flow.open_dumate'),
     recheck: t('register.flow.recheck'), launching: t('register.flow.launching'),
     configuring: t('register.flow.configuring'), configured: t('register.flow.configured'),
@@ -388,6 +405,10 @@ function wizardJs(t) {
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
   var panels=Array.from(document.querySelectorAll('.wizard-panel')), steps=Array.from(document.querySelectorAll('.wizard-step'));
   var next=document.getElementById('wf-next'), prev=document.getElementById('wf-prev');
+  var loopbackDialog=document.getElementById('wf-loopback-dialog'),pendingLoopback=null;
+  function confirmLoopback(run){pendingLoopback=run;loopbackDialog.showModal()}
+  document.getElementById('wf-loopback-cancel').onclick=function(){pendingLoopback=null;loopbackDialog.close()};
+  document.getElementById('wf-loopback-confirm').onclick=function(){var run=pendingLoopback;pendingLoopback=null;loopbackDialog.close();if(run)run()};
   next.disabled=true;
   var nameInput=document.getElementById('wf-name'),nameStatus=document.getElementById('wf-name-status'),nameCheckedValue='',nameBlocked=false;
   var tabs=Array.from(document.querySelectorAll('[data-registration-tab]')),humanPane=document.getElementById('registration-human-pane'),agentPane=document.getElementById('registration-agent-pane'),tabModeKey='voko.agentRegistrationMode';
@@ -495,8 +516,8 @@ function wizardJs(t) {
   }
   nameInput.addEventListener('blur',function(){if(step===2)next.disabled=true;checkName().then(function(ok){if(step===2)next.disabled=!ok})});
   nameInput.addEventListener('input',function(){nameCheckedValue='';nameBlocked=false;nameStatus.className='name-status';nameStatus.textContent='';nameInput.className='';if(step===2)next.disabled=false});
-  function providerGuidance(p){if(selectedProvider!==p.type||['workbuddy','qwen-office','dumate'].indexOf(p.type)<0)return '';var mode=(p.deliveryModes||[]).find(function(item){return item.mode!=='pull'}),reason=mode&&mode.reason||'',title='',action='',label='';if(p.type==='workbuddy'){title=reason==='WORKBUDDY_CLI_UNAVAILABLE'?I.workbuddyInstallRequired:I.workbuddyLoginUnverified;action=reason==='WORKBUDDY_CLI_UNAVAILABLE'?'install_workbuddy':'login_workbuddy';label=reason==='WORKBUDDY_CLI_UNAVAILABLE'?I.installWorkbuddy:I.openWorkbuddyLogin}else if(p.type==='qwen-office'){title=I.qwenLoggedOut;action='login_qwen_office';label=I.openQwenLogin}else{title=I.dumateNotReady;action='open_dumate';label=I.openDumate}return '<div class="provider-guidance"><strong>'+escHtml(title)+'</strong><span>'+escHtml(mode&&mode.description||'')+'</span><div class="provider-guidance-actions"><button type="button" class="btn-sm" data-provider-setup="'+action+'">'+escHtml(label)+'</button><button type="button" class="btn-sm btn-outline" data-provider-recheck="1">'+escHtml(I.recheck)+'</button></div><span class="provider-guidance-status" role="status"></span></div>'}
-  function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'+providerGuidance(p)}
+  function commandHelp(text,command){var parts=String(text||'').split('{command}'),before=parts.shift(),after=parts.join('{command}'),punctuation=(after.match(/^[，,。；;：:！？!?]/)||[''])[0];if(punctuation)after=after.slice(punctuation.length);return escHtml(before)+(command?workBuddyCommand(command,punctuation,String(command).length>36):'')+escHtml(after)}
+  function providerCard(p,detected){var detail=detected?'':'<span class="card-desc">'+escHtml(I.othersDesc)+'</span>';return '<label class="provider-card'+(selectedProvider===p.type?' selected':'')+'"><input type="radio" name="wf-provider" value="'+escHtml(p.type)+'"'+(selectedProvider===p.type?' checked':'')+'><span><span class="card-title">'+escHtml(p.label)+'</span> <span class="tag">'+escHtml(detected?I.detectedTag:I.manualTag)+'</span>'+detail+'</span></label>'}
   function instancePanel(p){if(selectedProvider!==p.type)return '';if(p.type==='workbuddy'&&workbuddyLoad==='loading')return '<div class="instance-panel">'+escHtml(I.instanceLoading)+'</div>';if(p.type==='workbuddy'&&workbuddyLoad==='error')return '<div class="instance-panel error">'+escHtml(workbuddyError||I.error)+'</div>';var instances=p.instances||[],term=p.instanceTerm||I.instance;if(!instances.length&&p.requiresInstance){if(p.type==='dumate')return '';var message=I.instanceRequiredNone.replace('{provider}',p.label).replace('{instance}',term);return '<div class="instance-panel error">'+escHtml(message)+'</div>'}if(p.requiresInstance&&!selectedInstance&&instances.length)selectedInstance=instances[0].id;var html='<div class="instance-panel">';if(!p.requiresInstance)html+='<label><input type="radio" name="wf-instance" value=""'+(!selectedInstance?' checked':'')+'> <span>'+escHtml(I.instanceOptional)+'</span></label>';instances.forEach(function(ins){var checked=selectedInstance===ins.id;html+='<label><input type="radio" name="wf-instance" value="'+escHtml(ins.id)+'"'+(checked?' checked':'')+'> <span>'+escHtml(ins.name)+'</span>'+(ins.description?'<small class="card-desc">'+escHtml(ins.description)+'</small>':'')+'</label>'});return html+'</div>'}
   function renderProviders(env){
     var detected=env.detected||[];if(!detected.some(function(p){return p.type===selectedProvider})){selectedProvider=detected[0]?detected[0].type:'';selectedInstance=''}
@@ -504,24 +525,25 @@ function wizardJs(t) {
     detected.forEach(function(p){html+=providerCard(p,true)+instancePanel(p)});
     html+=detected.length?'</div>':'<div class="provider-empty" role="status">'+escHtml(I.noDetected)+'</div></div>';
     document.getElementById('wf-providers').innerHTML=html;
-    document.getElementById('wf-detect').textContent=I.detected.replace('{providers}',env.summary.providerCount).replace('{modes}',env.summary.deliveryModeCount);
+    document.getElementById('wf-detect').textContent=I.detected.replace('{providers}',env.summary.providerCount);
     if(step===1)next.disabled=!detected.length;
     if(selectedProvider==='workbuddy'&&workbuddyLoad==='idle')setTimeout(loadWorkBuddy,0);
   }
   function loadWorkBuddy(){workbuddyLoad='loading';workbuddyError='';renderProviders(state.environment);api('discover_provider_instances',{providerType:'workbuddy'}).then(function(d){var p=(state.environment.detected||[]).find(function(x){return x.type==='workbuddy'});if(p)p.instances=d.instances||[];workbuddyLoad='done';renderProviders(state.environment)}).catch(function(e){workbuddyLoad='error';workbuddyError=e.message||I.error;renderProviders(state.environment)})}
   document.getElementById('wf-providers').addEventListener('change',function(e){if(e.target.name==='wf-provider'){selectedProvider=e.target.value;selectedInstance='';renderProviders(state.environment);if(selectedProvider==='workbuddy')loadWorkBuddy()}else if(e.target.name==='wf-instance'){selectedInstance=e.target.value}saveDraft()});
-  document.getElementById('wf-providers').addEventListener('click',function(e){var setup=e.target.closest('[data-provider-setup]'),recheck=e.target.closest('[data-provider-recheck]');if(!setup&&!recheck)return;e.preventDefault();var button=setup||recheck,status=button.closest('.provider-guidance').querySelector('.provider-guidance-status');button.disabled=true;status.className='provider-guidance-status active';status.textContent=setup?I.launching:I.detecting;var task=setup?fetch('/api/provider-setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:setup.dataset.providerSetup})}):Promise.resolve({ok:true,json:function(){return Promise.resolve({success:true})}});task.then(function(r){return r.json().then(function(d){if(!r.ok||!d.success)throw new Error(d.error||I.error);return api('inspect_environment')})}).then(function(d){state=d;renderProviders(d.environment)}).catch(function(err){button.disabled=false;status.textContent=err.message||I.error})});
   function modeCard(m){
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
     var disabled=m.required||!usable, checked=m.required||m.selected;
-    var statusLabel=m.status==='configuration_required'?(m.action==='configure'?I.configure:(m.authenticationStatus==='logged_out'?I.loginRequired:I.verificationRequired)):m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
-    var description=selectedProvider==='qwen-office'&&m.mode==='cli'&&!usable&&m.loginCommand
+    var statusLabel=m.status==='verification_required'?I.verificationRequired:m.status==='configuration_required'?(m.action==='configure'?I.configure:(m.authenticationStatus==='logged_out'?I.loginRequired:I.verificationRequired)):m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
+    var description=selectedProvider==='workbuddy'&&m.mode==='http'
+      ? (usable?escHtml(m.description):'<span>'+escHtml(I.workbuddyComponentMissing)+'</span><span class="workbuddy-command-row"><span>'+escHtml(I.workbuddyInstallCommandLabel)+'</span>'+workBuddyCommand(I.workbuddyInstallCommand,'',true)+'</span><span class="workbuddy-command-row"><span>'+escHtml(I.workbuddyLoginCommandLabel)+'</span>'+workBuddyCommand(I.workbuddyManualCommand)+'</span><span>'+escHtml(I.workbuddyLoginAfterCommand)+'</span>')
+      : selectedProvider==='qwen-office'&&m.mode==='cli'&&!usable&&m.loginCommand
         ? escHtml(I.qwenCliLoginRequired)+workBuddyCommand(m.loginCommand)+'。'
       : escHtml(m.description);
-    var action=m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':m.action==='test'?'<button type="button" class="method-action" data-action="detect" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.test)+'</button>':'';
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(m.label)+'</span><span class="card-desc">'+description+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+action+'</span></span></label>'
+    var action=m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':m.action==='loopback'?'<button type="button" class="method-action" data-action="loopback" data-provider="qwen-office-cli" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.loopback)+'</button>':m.action==='test'?'<button type="button" class="method-action" data-action="detect" data-mode="'+escHtml(m.mode)+'">'+escHtml(selectedProvider==='workbuddy'?I.recheck:I.test)+'</button>':'';
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(I.messageModes[m.mode]||m.mode)+'</span><span class="card-desc">'+description+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+action+'</span></span></label>'
   }
-  function workBuddyCommand(command){return '<span class="workbuddy-command-inline"><code>'+escHtml(command)+'</code><button type="button" class="voko-copy-button" title="'+escHtml(I.copyCommand)+'" aria-label="'+escHtml(I.copyCommand)+'" data-voko-copy-value="'+escHtml(command)+'">'+COPY_ICON+'</button></span>'}
+  function workBuddyCommand(command,punctuation,longCommand){return '<span class="voko-command-inline'+(longCommand?' is-long':'')+'"><code title="'+escHtml(command)+'">'+escHtml(command)+'</code><button type="button" class="voko-copy-button" title="'+escHtml(I.copyCommand)+'" aria-label="'+escHtml(I.copyCommand)+'" data-voko-copy-value="'+escHtml(command)+'">'+COPY_ICON+'</button>'+escHtml(punctuation||'')+'</span>'}
   function renderDeliveries(d){
     state=d;var modes=d.deliveryModes||[],html='';
     document.getElementById('wf-delivery-desc').textContent=I.deliveryDesc.replace('{provider}',d.provider.type);
@@ -536,7 +558,7 @@ function wizardJs(t) {
   function renderAccess(){document.getElementById('wf-step4-title').textContent=I.accessTitle;document.getElementById('wf-access-desc').textContent=I.accessDesc;document.getElementById('wf-result').innerHTML='<div class="provider-list"><label class="provider-card'+(selectedAccessMode==='private'?' selected':'')+'"><input type="radio" name="wf-access" value="private"'+(selectedAccessMode==='private'?' checked':'')+'><span><span class="card-title">'+escHtml(I.privateMode)+'</span><span class="card-desc">'+escHtml(I.privateDesc)+'</span></span></label><label class="provider-card'+(selectedAccessMode==='public'?' selected':'')+'"><input type="radio" name="wf-access" value="public"'+(selectedAccessMode==='public'?' checked':'')+'><span><span class="card-title">'+escHtml(I.publicMode)+'</span><span class="card-desc">'+escHtml(I.publicDesc)+'</span></span></label></div>'}
   document.getElementById('wf-result').addEventListener('change',function(e){if(e.target.name==='wf-access'){selectedAccessMode=e.target.value;renderAccess();saveDraft()}});
   var configApprovalToken='';
-  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;b.disabled=true;api('configure_delivery',{mode:configMode}).then(function(r){configApprovalToken=r.approvalToken||'';document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=(r.changePlan&&r.changePlan.message)||I.configureDesc;document.getElementById('wf-config').classList.add('show');b.disabled=false}).catch(function(e2){b.disabled=false;fail(e2)})}else{var mode=b.dataset.mode;b.disabled=true;b.textContent=I.testing;api('preflight_delivery',{mode:mode}).then(function(r){return api('status').then(function(d){state=d;renderDeliveries(d);var refreshed=Array.from(document.querySelectorAll('.method-action')).find(function(item){return item.dataset.mode===mode});if(refreshed)refreshed.textContent=r.ready?I.testOk:I.testFailed})}).catch(fail)}});
+  document.getElementById('wf-deliveries').addEventListener('click',function(e){var b=e.target.closest('.method-action');if(!b)return;e.preventDefault();if(b.dataset.action==='configure'){configMode=b.dataset.mode;b.disabled=true;api('configure_delivery',{mode:configMode}).then(function(r){configApprovalToken=r.approvalToken||'';document.getElementById('wf-config-title').textContent=I.configure+' '+b.closest('.delivery-card').querySelector('.card-title').textContent;document.getElementById('wf-config-desc').textContent=(r.changePlan&&r.changePlan.message)||I.configureDesc;document.getElementById('wf-config').classList.add('show');b.disabled=false}).catch(function(e2){b.disabled=false;fail(e2)})}else if(b.dataset.action==='loopback'){confirmLoopback(function(){var loopMode=b.dataset.mode;b.disabled=true;b.textContent=I.testing;api('loopback_test',{mode:loopMode,providerId:b.dataset.provider,acknowledgeCost:true}).then(function(){return api('status')}).then(function(d){state=d;renderDeliveries(d)}).catch(fail)})}else{var mode=b.dataset.mode;b.disabled=true;b.textContent=I.testing;api('preflight_delivery',{mode:mode}).then(function(r){return api('status').then(function(d){state=d;renderDeliveries(d);var refreshed=Array.from(document.querySelectorAll('.method-action')).find(function(item){return item.dataset.mode===mode});if(refreshed)refreshed.textContent=r.ready?I.testOk:I.testFailed})}).catch(fail)}});
   document.getElementById('wf-config-back').onclick=function(){document.getElementById('wf-config').classList.remove('show')};
   document.getElementById('wf-config-confirm').onclick=function(){var b=this;b.disabled=true;b.textContent=I.configuring;api('configure_delivery',{mode:configMode,approved:true,approvalToken:configApprovalToken}).then(function(r){configApprovalToken='';poll(r.taskId,b)}).catch(function(e){b.disabled=false;b.textContent=I.configureConfirm;fail(e)})};
   function poll(taskId,b){var log=document.getElementById('wf-config-log');log.style.display='block';var timer=setInterval(function(){api('configuration_status',{taskId:taskId}).then(function(r){log.textContent=(r.logs||[]).join('\\n');if(r.done){clearInterval(timer);b.disabled=false;b.textContent=I.configureConfirm;if(r.ok){api('status').then(renderDeliveries);document.getElementById('wf-config').classList.remove('show')}}}).catch(function(e){clearInterval(timer);fail(e)})},1000)}
@@ -907,6 +929,13 @@ function createRegisterRouter(handlers, db, options = {}) {
   const registrationOrchestrator = createRegistrationOrchestrator({
     ...(options.registrationOrchestrator || {}),
     db,
+    runLoopbackTest: options.registrationOrchestrator?.runLoopbackTest || (async (request) => {
+      const dispatcher = global.__dispatcher;
+      if (!dispatcher?.verifyProviderDeliveryRuntime) {
+        return { success: false, code: 'LOOPBACK_UNAVAILABLE', detail: '消息运行时尚未启动' };
+      }
+      return dispatcher.verifyProviderDeliveryRuntime(request.providerId, request.challenge);
+    }),
     sendCode: (params) => handlers.request_login_code(params),
     loginByCode: (params) => handlers.login_by_code(params),
     completeAgent: async (params) => {
@@ -1201,7 +1230,11 @@ function createRegisterRouter(handlers, db, options = {}) {
     if (!email) return res.redirect('/login');
     const categories = await _loadCategories();
     const body = addAgentWizardBody(email, categories, db, req.t);
-    res.send(page(req.t('register.add.page_title'), body, req.t, req.locale, db) + wizardJs(req.t));
+    res.send(page(req.t('register.add.page_title'), body, req.t, req.locale, db) + wizardJs(req.t, {
+      workbuddy: getProviderManualCommand('workbuddy'),
+      workbuddyInstall: 'npm install -g @tencent-ai/codebuddy-code',
+      qwen: getProviderManualCommand('qwen-office'), dumate: getProviderManualCommand('dumate'),
+    }));
   });
 
   R.post('/agent/add', async (req, res, next) => {

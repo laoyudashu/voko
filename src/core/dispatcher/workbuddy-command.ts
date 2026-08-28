@@ -147,6 +147,10 @@ export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; e
 
 export function workBuddySpawnCommand(runtime: WorkBuddyRuntime): { command: string; argsPrefix: string[] } | null {
   if (!runtime.command) return null;
+  if (process.platform === 'win32' && /\.cmd$/i.test(runtime.command)) {
+    const cliEntry = path.join(path.dirname(runtime.command), 'node_modules', '@tencent-ai', 'codebuddy-code', 'bin', 'codebuddy');
+    if (existingFile(cliEntry)) return { command: process.execPath, argsPrefix: [cliEntry] };
+  }
   return runtime.argvPrefix.length > 0
     ? { command: process.execPath, argsPrefix: runtime.argvPrefix }
     : { command: runtime.command, argsPrefix: [] };

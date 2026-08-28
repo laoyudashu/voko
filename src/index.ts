@@ -2443,7 +2443,8 @@ async function startMcpServer(args?: any, core?: any) {
     const activeDispatcher = (global as any).__dispatcher;
     if (!activeDispatcher?.verifyAgentDeliveryChannel) return { success: false, error: 'Delivery channel verification is unavailable' };
     const verified = await activeDispatcher.verifyAgentDeliveryChannel(String(agentId || ''), String(providerId || ''));
-    return { success: true, agentId, verification: verified.result, deliveryStatus: verified.status };
+    return { success: verified.result?.ok === true, agentId, verification: verified.result,
+      deliveryStatus: verified.status, error: verified.result?.ok === true ? undefined : verified.result?.detail };
   };
   handlers.select_delivery_channel = async ({ agentId, mode, providerId }: any = {}) => {
     const activeDispatcher = (global as any).__dispatcher;

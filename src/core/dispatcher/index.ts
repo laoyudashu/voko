@@ -715,14 +715,30 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       const configured = !explicitModes || explicitModes.includes(mode);
       let available = false;
       let status: AgentDeliveryStatus['methods'][number]['status'] = 'unavailable';
+      let readiness: any = null;
+      let automaticReady = false;
       try {
         available = typeof provider.isAvailable === 'function' && !!provider.isAvailable(agentId);
         status = available ? 'available' : 'unavailable';
+        readiness = typeof (provider as any).getDeliveryReadiness === 'function'
+          ? (provider as any).getDeliveryReadiness(agentId) : null;
+        if (readiness && typeof readiness.then === 'function') readiness = null;
+        if (readiness) {
+          available = readiness.ready === true;
+          automaticReady = readiness.automaticReady === undefined ? available : readiness.automaticReady === true;
+          status = automaticReady ? 'available' : (available ? 'verification_required' : (readiness.installed ? 'configuration_required' : 'unavailable'));
+        } else {
+          automaticReady = available;
+        }
       } catch (_) {
         status = 'unknown';
       }
       methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
-        configured, available, status,
+        configured, available, automaticReady, status,
+        ...(readiness ? { installed: readiness.installed, authenticationStatus: readiness.authenticationStatus,
+          reason: readiness.reason, detail: readiness.detail, exitCode: readiness.exitCode,
+          attempts: readiness.attempts, verificationStatus: readiness.verificationStatus,
+          verifiedAt: readiness.verifiedAt } : {}),
         ...(key === 'qwen-office-cli' && !available ? { setupCommand: qwenOfficeLoginCommand() } : {}),
         capabilities: getProviderTransport(key)?.capabilities });
     }
@@ -757,18 +773,18 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       return (providers[b.provider || '']?.priority || 0) - (providers[a.provider || '']?.priority || 0);
     });
     const automaticReadyModes = [...new Set(methods
-      .filter(method => method.mode !== 'pull' && method.configured && method.available)
+      .filter(method => method.mode !== 'pull' && method.configured && method.automaticReady === true)
       .map(method => method.mode))];
     const configuredPushModes = configuredModes.filter(mode => mode !== 'pull');
     const pullOnly = !!(family && family.transports.length === 0)
       || (!!explicitModes && configuredPushModes.length === 0);
     const temporaryPreference = _temporaryPreferredChannels.get(agentId) || null;
     const preferredMethod = temporaryPreference?.providerId
-      ? methods.find(method => method.provider === temporaryPreference.providerId && method.available)
+      ? methods.find(method => method.provider === temporaryPreference.providerId && method.automaticReady === true)
       : null;
     const activeAutomaticMode = temporaryPreference?.mode === 'pull'
       ? null
-      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.configured && method.available)?.mode || null);
+      : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.configured && method.automaticReady === true)?.mode || null);
     return {
       backendType: meta.backend_type || null,
       configuredModes,
@@ -816,9 +832,17 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
         await provider.cleanupLoopbackSession(agentId, result.loopbackSessionId);
       }
     } catch (_) {}
-    if (!result?.ok || result?.challengeMatched !== true) throw new Error(result?.detail || 'WorkBuddy loopback verification failed');
     invalidateRoutes({ agentId, reason: 'manual-delivery-loopback' });
     return { result, status: getAgentDeliveryStatus(agentId) };
+  }
+
+  async function verifyProviderDeliveryRuntime(providerId: string, challenge: string): Promise<any> {
+    const provider: any = providers[String(providerId || '')];
+    if (!provider || typeof provider.runLoopbackTest !== 'function') {
+      return { success: false, code: 'LOOPBACK_UNAVAILABLE', detail: 'Delivery channel does not support loopback verification' };
+    }
+    const result = await provider.runLoopbackTest('', { acknowledgeCost: true, challenge });
+    return { ...result, success: result?.ok === true };
   }
 
   function selectTemporaryDeliveryChannel(agentId: string, mode: string, providerId?: string | null): AgentDeliveryStatus {
@@ -833,7 +857,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
       const provider = providers[selectedProviderId];
       if (!definition || definition.mode !== selectedMode || !provider) throw new Error('delivery channel not found');
       try {
-        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)) {
+        const readiness = (provider as any).getDeliveryReadiness?.(agentId);
+        if (!provider.match?.(agentId, meta) || !provider.isAvailable?.(agentId)
+          || (readiness && readiness.automaticReady === false)) {
           throw new Error('delivery channel is unavailable');
         }
       } catch (error) {
@@ -1865,7 +1891,7 @@ ${body}
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
-    refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, selectTemporaryDeliveryChannel,
+    refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
 }

@@ -118,8 +118,16 @@ export interface AgentDeliveryMethodStatus {
   family?: string | null;
   configured: boolean;
   available: boolean;
-  status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
+  automaticReady?: boolean;
+  status: 'available' | 'verification_required' | 'unavailable' | 'configuration_required' | 'on-demand' | 'fallback' | 'unknown';
+  installed?: boolean;
+  authenticationStatus?: 'verified' | 'unverified';
   reason?: string;
+  detail?: string;
+  exitCode?: number | null;
+  attempts?: number;
+  verificationStatus?: 'unverified' | 'loopback_verified' | 'quota_exhausted' | 'timeout' | 'login_failed' | 'parse_failed' | 'failed';
+  verifiedAt?: number;
   setupCommand?: string;
   capabilities?: Readonly<Partial<ProviderCapabilities>>;
 }
