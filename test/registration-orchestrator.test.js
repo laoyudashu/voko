@@ -267,7 +267,7 @@ describe('shared registration orchestrator', () => {
     } finally { db.close(); }
   });
 
-  it('does not report DuMate ready from installation alone', () => {
+  it('offers a temporary DuMate route when the desktop backend is ready without an existing Agent', () => {
     const noAgent = new RegistrationOrchestrator({
       dumateRuntimeAvailable: () => true,
       dumateAgents: () => [],
@@ -275,9 +275,10 @@ describe('shared registration orchestrator', () => {
     }).deliveryCapabilities('dumate')[0];
     assert.strictEqual(noAgent.status, 'configuration_required');
     assert.strictEqual(noAgent.selected, false);
-    assert.strictEqual(noAgent.action, null);
-    assert.strictEqual(noAgent.reason, 'DUMATE_AGENT_REQUIRED');
+    assert.strictEqual(noAgent.action, 'test');
+    assert.strictEqual(noAgent.reason, 'DUMATE_AUTH_TEST_REQUIRED');
     assert.strictEqual(noAgent.instanceCount, 0);
+    assert.match(noAgent.description, /自动创建 VOKO 私有临时路由和新会话/);
 
     const noBackend = new RegistrationOrchestrator({
       dumateRuntimeAvailable: () => true,
@@ -321,8 +322,8 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(compact.blockingReason, undefined);
       assert.strictEqual(compact.deliveryModes, undefined);
       const selected = service.selectProvider(started.registrationId, { providerType: 'dumate' });
-      assert.strictEqual(selected.success, false);
-      assert.match(selected.error, /未检测到可用的.*Agent/);
+      assert.notStrictEqual(selected.success, false);
+      assert.strictEqual(selected.provider.instanceId, null);
     } finally { db.close(); }
   });
 

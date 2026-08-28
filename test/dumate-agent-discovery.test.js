@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { discoverDuMateAgents, resolveDuMateAgentTarget } = require('../build/core/dispatcher/dumate-agents');
-const { DuMateHttpProvider } = require('../build/core/dispatcher/providers/dumate-http');
+const { DuMateHttpProvider, ephemeralRouteId, writeEphemeralDuMatePlugin } = require('../build/core/dispatcher/providers/dumate-http');
 const catalog = require('../build/core/dispatcher/provider-catalog');
 const dumateCommand = require('../build/core/dispatcher/dumate-command');
 
@@ -76,8 +76,36 @@ test('DuMate preflight fails closed until backend and authentication are verifie
   });
 });
 
+test('DuMate creates a private ephemeral route when no existing Agent is bound', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-dumate-ephemeral-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const routeId = ephemeralRouteId('agent_without_binding');
+  const pluginRoot = writeEphemeralDuMatePlugin(root, routeId, {
+    agentName: '临时客服助手', description: '回答访客的产品问题',
+  });
+  const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
+  assert.match(routeId, /^voko-[a-f0-9]{24}$/);
+  assert.equal(manifest.name, routeId);
+  assert.equal(manifest.displayName, '临时客服助手');
+  assert.equal(manifest.agents[0].prompt, `./agents/${routeId}.md`);
+  assert.equal(fs.existsSync(path.join(pluginRoot, 'agents', `${routeId}.md`)), true);
+
+  const db = { prepare: (sql) => ({ get: () => sql.includes('backend_type')
+    ? { backend_type: 'dumate', backend_instance_id: '' }
+    : { agent_name: '临时客服助手', description: '回答访客的产品问题' } }) };
+  const provider = new DuMateHttpProvider({ db, binPath: process.execPath,
+    resolveAgentTarget: () => null, resolveBackendPort: () => '4567' });
+  assert.equal(provider.isAvailable('agent_without_binding'), true);
+  assert.deepEqual(await provider.preflightDelivery('agent_without_binding'), {
+    ok: false, status: 'configuration_required', sideEffects: false,
+    code: 'DUMATE_AUTH_TEST_REQUIRED', providerInstanceId: routeId, routing: 'ephemeral_plugin_part',
+  });
+  assert.equal(provider.acceptsBinding({ providerType: 'dumate', adapterType: 'dumate-http', deliveryMode: 'http',
+    nativeSessionId: 'ses_1', providerInstanceId: routeId }, 'agent_without_binding'), true);
+});
+
 test('DuMate catalog and provider preserve instance-affine Resume bindings', () => {
-  assert.equal(catalog.getProviderFamily('dumate').requiresInstance, true);
+  assert.equal(catalog.getProviderFamily('dumate').requiresInstance, false);
   assert.equal(catalog.getProviderTransport('dumate-http').capabilities.sessionResume, true);
   const db = { prepare: () => ({ get: () => ({ backend_type: 'dumate', backend_instance_id: 'stock-assistant' }) }) };
   const provider = new DuMateHttpProvider({ db, binPath: process.execPath,

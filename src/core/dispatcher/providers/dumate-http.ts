@@ -53,6 +53,32 @@ function freePort(): Promise<number> {
   });
 }
 
+function ephemeralRouteId(agentId: string): string {
+  return `voko-${crypto.createHash('sha256').update(String(agentId || '')).digest('hex').slice(0, 24)}`;
+}
+
+function writeEphemeralDuMatePlugin(dataRoot: string, routeId: string, metadata: Record<string, unknown> = {}): string {
+  const pluginRoot = path.join(dataRoot, 'plugins', 'user', routeId);
+  const manifestRoot = path.join(pluginRoot, '.claude-plugin');
+  const agentsRoot = path.join(pluginRoot, 'agents');
+  fs.mkdirSync(manifestRoot, { recursive: true });
+  fs.mkdirSync(agentsRoot, { recursive: true });
+  const fullName = String(metadata.agentName || 'VOKO Agent').trim() || 'VOKO Agent';
+  const displayName = [...fullName].slice(0, 10).join('');
+  const description = String(metadata.description || `接收并处理发给 ${fullName} 的 VOKO 消息`).trim();
+  const manifest = {
+    name: routeId, displayName, version: '1.0.0', description,
+    author: { name: 'VOKO 临时路由' }, license: 'UNLICENSED', keywords: ['voko', 'temporary-route'],
+    defaultEnabled: true, entry: routeId,
+    agents: [{ name: routeId, displayName, description, mode: 'primary', prompt: `./agents/${routeId}.md`, skills: [] }],
+    skills: './skills/', exampleQuestions: [],
+  };
+  fs.writeFileSync(path.join(manifestRoot, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(path.join(agentsRoot, `${routeId}.md`),
+    `# ${displayName}\n\n你是 VOKO Agent「${fullName}」。${description}\n\n请只处理当前 VOKO 会话中的用户请求，清晰、准确地回复。\n`, 'utf8');
+  return pluginRoot;
+}
+
 class DuMateHttpProvider extends PushProvider {
   private readonly _db: any;
   private readonly _contextWindow: number;
@@ -83,22 +109,34 @@ class DuMateHttpProvider extends PushProvider {
     } catch (_) { return ''; }
   }
 
+  private _routeForAgent(agentId: string): string {
+    return this._instanceForAgent(agentId) || ephemeralRouteId(agentId);
+  }
+
+  private _agentMetadata(agentId: string): Record<string, unknown> {
+    try {
+      const row = this._db?.prepare('SELECT agent_name, description FROM agents WHERE agent_id=?').get(agentId);
+      return { agentName: row?.agent_name, description: row?.description };
+    } catch (_) { return {}; }
+  }
+
   isAvailable(agentId: string): boolean {
     const instanceId = this._instanceForAgent(agentId);
-    return checkCliAvailable(this._cmd) && !!instanceId && !!this._resolveAgentTarget(instanceId);
+    return checkCliAvailable(this._cmd) && (!instanceId || !!this._resolveAgentTarget(instanceId));
   }
 
   acceptsBinding(binding: any, agentId = ''): boolean {
-    const instanceId = this._instanceForAgent(agentId);
+    const instanceId = this._routeForAgent(agentId);
     return binding?.providerType === 'dumate' && binding.adapterType === ADAPTER_TYPE
       && binding.deliveryMode === 'http' && binding.nativeSessionId
       && binding.providerInstanceId === instanceId;
   }
 
   async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
-    const instanceId = this._instanceForAgent(agentId);
+    const boundInstanceId = this._instanceForAgent(agentId);
+    const instanceId = this._routeForAgent(agentId);
     if (!checkCliAvailable(this._cmd)) return { ok: false, status: 'unavailable', sideEffects: false, code: 'DUMATE_CLI_UNAVAILABLE' };
-    if (!instanceId || !this._resolveAgentTarget(instanceId)) {
+    if (boundInstanceId && !this._resolveAgentTarget(boundInstanceId)) {
       return { ok: false, status: 'unavailable', sideEffects: false, code: 'DUMATE_AGENT_UNAVAILABLE' };
     }
     if (!this._resolveBackendPort()) {
@@ -106,7 +144,8 @@ class DuMateHttpProvider extends PushProvider {
         code: 'DUMATE_BACKEND_UNAVAILABLE', providerInstanceId: instanceId };
     }
     return { ok: false, status: 'configuration_required', sideEffects: false,
-      code: 'DUMATE_AUTH_TEST_REQUIRED', providerInstanceId: instanceId, routing: 'plugin_part' };
+      code: 'DUMATE_AUTH_TEST_REQUIRED', providerInstanceId: instanceId,
+      routing: boundInstanceId ? 'plugin_part' : 'ephemeral_plugin_part' };
   }
 
   private _headers(state: RuntimeState): Record<string, string> {
@@ -126,7 +165,7 @@ class DuMateHttpProvider extends PushProvider {
     return body.trim() ? JSON.parse(body) : {};
   }
 
-  private async _ensureState(instanceId: string): Promise<RuntimeState> {
+  private async _ensureState(instanceId: string, agentId = ''): Promise<RuntimeState> {
     let state = this._states.get(instanceId);
     if (!state) {
       state = { instanceId, child: null, starting: null, port: 0, password: '', tempRoot: '', stderr: '' };
@@ -137,14 +176,15 @@ class DuMateHttpProvider extends PushProvider {
     }
     if (state.starting) { await state.starting; return state; }
     const target = this._resolveAgentTarget(instanceId);
-    if (!target) throw deliveryError('Bound DuMate Agent is unavailable');
+    if (!target && instanceId !== ephemeralRouteId(agentId)) throw deliveryError('Bound DuMate Agent is unavailable');
     state.starting = (async () => {
       state!.port = await freePort();
       state!.password = '';
       state!.tempRoot = path.join(os.homedir(), '.voko', 'provider-data', 'dumate', instanceId);
       const dataRoot = path.join(state!.tempRoot, 'data');
       fs.mkdirSync(path.join(dataRoot, 'plugins', 'user'), { recursive: true });
-      fs.cpSync(target.pluginRoot, path.join(dataRoot, 'plugins', 'user', instanceId), { recursive: true });
+      if (target) fs.cpSync(target.pluginRoot, path.join(dataRoot, 'plugins', 'user', instanceId), { recursive: true });
+      else writeEphemeralDuMatePlugin(dataRoot, instanceId, this._agentMetadata(agentId));
       const backendPort = this._resolveBackendPort();
       if (!backendPort) throw deliveryError('DuMate backend is not running; start DuMate before automatic delivery');
       const child = spawn(this._cmd, ['serve', '--hostname', '127.0.0.1', '--port', String(state!.port)], {
@@ -204,18 +244,19 @@ class DuMateHttpProvider extends PushProvider {
   async canRestoreExactSession(binding: PushPayload['providerBinding'], agentId: string): Promise<boolean> {
     if (!binding || !this.acceptsBinding(binding, agentId)) return false;
     try {
-      const state = await this._ensureState(binding.providerInstanceId!);
+      const state = await this._ensureState(binding.providerInstanceId!, agentId);
       const session = await this._session(state, binding.nativeSessionId);
       return Array.isArray(session?.activePlugins) && session.activePlugins.includes(binding.providerInstanceId);
     } catch (_) { return false; }
   }
 
   async push(payload: PushPayload): Promise<unknown> {
-    const instanceId = this._instanceForAgent(payload.agentId);
-    if (!instanceId || !this._resolveAgentTarget(instanceId)) throw deliveryError('Bound DuMate Agent is unavailable');
+    const boundInstanceId = this._instanceForAgent(payload.agentId);
+    const instanceId = this._routeForAgent(payload.agentId);
+    if (boundInstanceId && !this._resolveAgentTarget(boundInstanceId)) throw deliveryError('Bound DuMate Agent is unavailable');
     const binding = payload.providerBinding;
     if (binding?.providerInstanceId && binding.providerInstanceId !== instanceId) throw deliveryError('DuMate Agent binding is stale');
-    const state = await this._ensureState(instanceId);
+    const state = await this._ensureState(instanceId, payload.agentId);
     let sessionId = this.acceptsBinding(binding, payload.agentId) ? binding!.nativeSessionId : '';
     if (sessionId) {
       const session = await this._session(state, sessionId).catch(() => null);
@@ -270,4 +311,4 @@ class DuMateHttpProvider extends PushProvider {
   }
 }
 
-module.exports = { DuMateHttpProvider };
+module.exports = { DuMateHttpProvider, ephemeralRouteId, writeEphemeralDuMatePlugin };

@@ -981,10 +981,8 @@ class RegistrationOrchestrator {
       const backendPort = typeof this.options.dumateBackendPort === 'function'
         ? String(this.options.dumateBackendPort() || '') : resolveDuMateBackendPort();
       const reason = !cliAvailable ? 'DUMATE_CLI_UNAVAILABLE'
-        : !backendPort ? 'DUMATE_BACKEND_UNAVAILABLE'
-          : agents.length === 0 ? 'DUMATE_AGENT_REQUIRED'
-            : 'DUMATE_AUTH_TEST_REQUIRED';
-      const canTest = cliAvailable && agents.length > 0 && !!backendPort;
+        : !backendPort ? 'DUMATE_BACKEND_UNAVAILABLE' : 'DUMATE_AUTH_TEST_REQUIRED';
+      const canTest = cliAvailable && !!backendPort;
       return [{
         mode: 'http', label: 'DuMate HTTP 精准对话', role: 'primary',
         status: cliAvailable ? 'configuration_required' : 'unavailable', selected: false, recommended: true,
@@ -995,8 +993,8 @@ class RegistrationOrchestrator {
           : !backendPort
             ? '已检测到百度搭子，但桌面后台尚未就绪，当前可能尚未登录。请打开百度搭子并完成登录，然后重新检测。'
             : agents.length === 0
-              ? '百度搭子桌面后台已就绪，但尚未发现可绑定的用户 Agent（Plugin Pack）；请先在百度搭子中创建 Agent。'
-              : '已发现百度搭子 Agent 和桌面后端；登录状态必须通过一次真实回路测试确认，确认前不会启用自动投递。',
+              ? '百度搭子桌面后台已就绪；不绑定现有实例时，收到消息会自动创建 VOKO 私有临时路由和新会话。'
+              : '可绑定现有百度搭子 Agent；不绑定时，收到消息会自动创建 VOKO 私有临时路由和新会话。',
       }, pull];
     }
     if (type === 'deepseek-harness') {
@@ -1621,10 +1619,13 @@ class RegistrationOrchestrator {
         : '未检测到 WorkBuddy 消息组件；请先执行安装命令，完成后重新检测。';
     } else if (provider === 'dumate' && mode === 'http') {
       const instances = (this.options.dumateAgents || discoverDuMateAgents)();
-      ready = isDuMateRuntimeAvailable() && instances.some((item) => item.id === session.provider?.instanceId);
+      ready = isDuMateRuntimeAvailable() && !!resolveDuMateBackendPort()
+        && (!session.provider?.instanceId || instances.some((item) => item.id === session.provider.instanceId));
       detail = ready
-        ? '已检测到 dumate-opencode 和所选 Agent；Provider 启动时将复核 Plugin Part 精准路由。'
-        : 'dumate-opencode 或所选 DuMate Agent 不可用。';
+        ? (session.provider?.instanceId
+          ? '已检测到 dumate-opencode 和所选 Agent；Provider 启动时将复核 Plugin Part 精准路由。'
+          : '已检测到 dumate-opencode；收到消息时将自动创建 VOKO 私有临时精准路由。')
+        : 'dumate-opencode、桌面后台或所选 DuMate Agent 不可用。';
     } else if (provider === 'deepseek-harness' && mode === 'http') {
       const runtime = resolveDeepSeekHarnessRuntime();
       const instances = discoverProviderInstances('deepseek-harness');
