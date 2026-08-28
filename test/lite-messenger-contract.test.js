@@ -195,10 +195,11 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('persists and forwards one direct inbound message with stable identifiers', () => {
+  it('persists and forwards one direct inbound message with stable identifiers', async () => {
     const fixture = createFixture();
     try {
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
 
       const row = fixture.db.prepare(
         'SELECT id, agent_id, channel_id, channel_type, from_uid, content, message_seq, client_msg_no, is_me FROM messages',
@@ -223,7 +224,25 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('announces timed pricing and starts the trial on the first inbound message', () => {
+  it('coalesces three consecutive direct messages into one Provider turn', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m1', clientMsgNo: 'turn-c1', content: 'first' }));
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m2', clientMsgNo: 'turn-c2', content: 'second' }));
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m3', clientMsgNo: 'turn-c3', content: 'third' }));
+      await fixture.handler.flushInboundTurns();
+
+      assert.equal(fixture.dispatched.length, 1);
+      assert.deepEqual(fixture.dispatched[0].payload.sourceMessageIds, ['turn-m1', 'turn-m2', 'turn-m3']);
+      assert.equal(fixture.dispatched[0].payload.messageSegments.length, 3);
+      assert.match(fixture.dispatched[0].payload.content, /\[Message 1\]\nfirst/);
+      assert.match(fixture.dispatched[0].payload.content, /\[Message 3\]\nthird/);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('announces timed pricing and starts the trial on the first inbound message', async () => {
     const fixture = createFixture();
     try {
       const now = Date.now();
@@ -233,6 +252,7 @@ describe('Lite Messenger contract smoke', () => {
         .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
 
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
 
       assert.equal(fixture.systemMessages.length, 1);
       assert.equal(fixture.systemMessages[0][2], 'trial_welcome');
@@ -252,7 +272,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('stays silent before timed service expiry and notifies only after expiry', () => {
+  it('stays silent before timed service expiry and notifies only after expiry', async () => {
     const fixture = createFixture();
     try {
       const now = Date.now();
@@ -262,6 +282,7 @@ describe('Lite Messenger contract smoke', () => {
         .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
 
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
       fixture.db.prepare(`UPDATE conversations SET session_expire_at=?
         WHERE user_uid=? AND channel_id=?`).run(Date.now() + 30000, 'agent-uid', 'visitor-1');
       fixture.systemMessages.length = 0;
@@ -270,6 +291,7 @@ describe('Lite Messenger contract smoke', () => {
       fixture.handler.handleAgentMessage('agent-1', inbound({
         messageId: 'incoming-2', messageSeq: 2, clientMsgNo: 'client-2',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.systemMessages.length, 0);
       assert.equal(fixture.dispatched.length, 1);
 
@@ -281,6 +303,7 @@ describe('Lite Messenger contract smoke', () => {
       fixture.handler.handleAgentMessage('agent-1', inbound({
         messageId: 'incoming-3', messageSeq: 3, clientMsgNo: 'client-3',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.systemMessages.length, 1);
       assert.equal(fixture.systemMessages[0][2], 'session_expired');
       assert.equal(fixture.dispatched.length, 0);
@@ -302,6 +325,7 @@ describe('Lite Messenger contract smoke', () => {
         _voko: { protocolVersion: 1, routeId: 'canonical-route-12345678901234567890',
           canonicalConversationKey: pending.wireConversationKey },
       }));
+      await fixture.handler.flushInboundTurns();
 
       const inboundRoute = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
         WHERE message_id='canonical-inbound-1' AND direction='inbound'`).get();
@@ -353,7 +377,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('keeps group scope, sender and mention metadata when forwarding an @ message', () => {
+  it('keeps group scope, sender and mention metadata when forwarding an @ message', async () => {
     const fixture = createFixture();
     try {
       fixture.handler.handleAgentMessage('agent-1', inbound({
@@ -363,6 +387,7 @@ describe('Lite Messenger contract smoke', () => {
         clientMsgNo: 'group-client-1',
         mention: { all: false, uids: ['agent-uid'] },
       }));
+      await fixture.handler.flushInboundTurns();
 
       const row = fixture.db.prepare(
         'SELECT channel_id, channel_type, mention, is_me FROM messages WHERE id=?',
@@ -422,7 +447,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('hard-denies inbound content while soft-deny still forwards, with auditable records', () => {
+  it('hard-denies inbound content while soft-deny still forwards, with auditable records', async () => {
     const interventions = [];
     const systemMessages = [];
     let action = 'hard_deny';
@@ -467,6 +492,7 @@ describe('Lite Messenger contract smoke', () => {
         messageId: 'audit-soft-1',
         clientMsgNo: 'audit-soft-client-1',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.dispatched.length, 1);
       assert.equal(fixture.dispatched[0].payload.messageId, 'audit-soft-1');
       assert.equal(interventions.length, 4);

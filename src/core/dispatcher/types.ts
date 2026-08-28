@@ -1,5 +1,6 @@
 export type SessionMode = 'deterministic-key' | 'agent-issued-id';
 import type { ProviderCapabilities } from './provider-catalog';
+import type { ProviderDeliveryPresentation } from '../provider-delivery-presentation';
 export type ProviderDeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 export interface ProviderDeliveryReceipt {
@@ -25,6 +26,7 @@ export interface ProviderCoreEvent {
   agentId: string;
   messageId?: string;
   turnId?: string;
+  sourceMessageIds?: readonly string[];
   nativeSessionId?: string | null;
   occurredAt: number;
   terminal?: boolean;
@@ -45,13 +47,17 @@ export interface PushPayload {
   sessionTarget?: string;
   content: string;
   rawContent?: string;
-  attachments?: ReadonlyArray<Readonly<{ path: string; name: string; mediaType: string; size: number; sha256: string }>>;
+  attachments?: ReadonlyArray<Readonly<{ path: string; name: string; mediaType: string; size: number; sha256: string;
+    sourceMessageId?: string }>>;
+  messageSegments?: ReadonlyArray<Readonly<{ messageId: string; content: string; timestamp: number;
+    attachmentIndexes: readonly number[] }>>;
   attachmentOutputDirectory?: string;
   channelId?: string;
   channelType?: number;
   contentType?: number;
   messageId?: string;
   turnId?: string;
+  sourceMessageIds?: readonly string[];
   timestamp?: number;
   securityContext?: Readonly<{
     version: number;
@@ -130,6 +136,7 @@ export interface AgentDeliveryMethodStatus {
   verifiedAt?: number;
   setupCommand?: string;
   capabilities?: Readonly<Partial<ProviderCapabilities>>;
+  presentation?: ProviderDeliveryPresentation;
 }
 
 export interface AgentDeliveryStatus {

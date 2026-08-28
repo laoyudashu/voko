@@ -100,6 +100,7 @@ class WorkBuddyHttpProvider extends PushProvider {
   _resolveAgentTarget: typeof resolveWorkBuddyAgentTarget;
   _configuredCommand?: string;
   _authenticationVerified = false;
+  _verification = new Map<string, { status: 'unverified' | 'loopback_verified' | 'timeout' | 'failed'; detail?: string; verifiedAt?: number }>();
   _inflight = new Map<string, Promise<unknown>>();
   _activeRuns = new Map<string, { runId: string; state: ServerState }>();
   _activeAcp = new Map<string, { connectionId: string; sessionId: string; state: ServerState }>();
@@ -165,10 +166,15 @@ class WorkBuddyHttpProvider extends PushProvider {
   match(_agentId: string, meta?: AgentMeta | null) { return meta?.backend_type === 'workbuddy'; }
   isAvailable() { return Boolean(this._runtime.command); }
 
-  getDeliveryReadiness() {
+  getDeliveryReadiness(agentId = '') {
     const installed = Boolean(this._runtime.command);
     const ready = installed && [...this._states.values()].some(state => state.server?.exitCode === null && state.port > 0);
-    return { installed, ready };
+    const verification = this._verification.get(String(agentId || ''));
+    return { installed, ready: installed, automaticReady: installed && verification?.status === 'loopback_verified',
+      authenticationStatus: 'unverified', verificationStatus: verification?.status || 'unverified',
+      ...(verification?.detail ? { detail: verification.detail } : {}),
+      ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}),
+      runtimeStatus: ready ? 'running' : installed ? 'idle' : 'unavailable' };
   }
 
   refreshRuntime() {
@@ -520,7 +526,18 @@ class WorkBuddyHttpProvider extends PushProvider {
     const inflightKey = `${state.instanceId || ''}\0${turnId}`;
     const existing = this._inflight.get(inflightKey);
     if (existing) return existing;
-    const task = this._stateContext.run(state, () => this._pushOnce(payload, turnId)).finally(() => {
+    const task = this._stateContext.run(state, () => this._pushOnce(payload, turnId)).then((result: unknown) => {
+      this._verification.set(payload.agentId, { status: 'loopback_verified', verifiedAt: Date.now() });
+      return result;
+    }).catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      const timedOut = /timed?\s*out|timeout|etimedout|超时/i.test(detail);
+      this._verification.set(payload.agentId, { status: timedOut ? 'timeout' : 'failed', detail });
+      if (error && typeof error === 'object' && !(error as { code?: string }).code) {
+        (error as { code?: string }).code = timedOut ? 'WORKBUDDY_TIMEOUT' : 'WORKBUDDY_DELIVERY_FAILED';
+      }
+      throw error;
+    }).finally(() => {
       if (this._inflight.get(inflightKey) === task) this._inflight.delete(inflightKey);
       this._activeRuns.delete(turnId);
     });
@@ -576,7 +593,10 @@ class WorkBuddyHttpProvider extends PushProvider {
         rawContent: challenge, channelId: `loopback-${challenge}`, channelType: 1,
         messageId: challenge, turnId: challenge, timestamp: Date.now() });
       const matched = reply.trim() === challenge;
-      if (matched) this._authenticationVerified = true;
+      if (matched) {
+        this._authenticationVerified = true;
+        this._verification.set(_agentId, { status: 'loopback_verified', verifiedAt: Date.now() });
+      } else this._verification.set(_agentId, { status: 'failed', detail: 'WorkBuddy returned an unexpected loopback reply' });
       return { ok: matched, status: matched ? 'loopback_verified' : 'failed', challengeMatched: matched,
         loopbackSessionId: (receipt as any)?.nativeSessionId || null,
         detail: matched ? 'WorkBuddy HTTP loopback verified' : 'WorkBuddy returned an unexpected loopback reply' };

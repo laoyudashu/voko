@@ -111,7 +111,7 @@ button:hover{background:#1557b0;transform:translateY(-1px)}
 .provider-card,.delivery-card{display:grid;grid-template-columns:22px minmax(0,1fr);gap:11px;border:1px solid #dfe4ec;border-radius:11px;padding:14px;cursor:pointer}
 .provider-card.selected,.delivery-card.selected{border-color:#1a73e8;background:#f1f6ff;box-shadow:inset 0 0 0 1px #1a73e8}
 .provider-card input,.delivery-card input{width:auto;margin:3px 0 0;box-shadow:none}.card-title{font-weight:700}.card-desc{display:block;color:#667085;font-size:13px;margin-top:2px}
-.tag{display:inline-block;border-radius:999px;padding:2px 7px;background:#e8f6ed;color:#137a46;font-size:12px}.tag.warn{background:#fff3d9;color:#9a5c00}
+.tag{display:inline-block;border-radius:999px;padding:2px 7px;background:#e8f6ed;color:#137a46;font-size:12px;white-space:nowrap}.tag.warn,.tag.warning{background:#fff3d9;color:#9a5c00}.tag.danger-warning{background:#ffead5;color:#c4320a}.tag.danger{background:#fee4e2;color:#b42318}.tag.muted{background:#f2f4f7;color:#667085}
 .instance-panel{width:calc(100% - 10px);margin:-4px 0 4px 10px;padding:10px 12px;border:1px solid #dfe4ec;border-left:3px solid #a7c0f4;border-radius:10px;background:#fafcff;font-size:12px}
 .instance-panel label{font-size:12px;margin:7px 0}.instance-panel input{width:auto;margin-right:5px}
 .group-label{margin:19px 0 7px;font-weight:700;color:#46536a}.method-meta{display:flex;align-items:center;gap:7px;margin-top:8px}
@@ -353,6 +353,13 @@ function wizardJs(t, manualCommands = {}) {
     primary: t('register.flow.delivery.primary'), fallback: t('register.flow.delivery.fallback'),
     configure: t('register.flow.configure'), test: t('register.flow.test'),
     loopback: t('register.flow.loopback'), loopbackConfirm: t('register.flow.loopback_confirm'),
+    providerStates: {
+      verified: t('web.home.message_mode.state_verified'), pending_verification: t('web.home.message_mode.state_pending'),
+      login_expired: t('web.home.message_mode.state_login_expired'), quota_exhausted: t('web.home.message_mode.state_quota'),
+      timeout: t('web.home.message_mode.state_timeout'), failed: t('web.home.message_mode.state_failed'),
+      not_installed: t('web.home.message_mode.state_not_installed'),
+    },
+    retry: t('web.home.message_mode.retry'), resolve: t('web.home.message_mode.resolve'),
     loginRequired: t('register.flow.login_required'), verificationRequired: t('register.flow.verification_required'),
     workbuddyInstallRequired: t('register.flow.workbuddy_install_required'), workbuddyLoginUnverified: t('register.flow.workbuddy_login_unverified'),
     qwenLoggedOut: t('register.flow.qwen_logged_out'), dumateNotReady: t('register.flow.dumate_not_ready'),
@@ -534,14 +541,15 @@ function wizardJs(t, manualCommands = {}) {
   function modeCard(m){
     var usable=['ready','preflight_passed','loopback_verified'].indexOf(m.status)>=0;
     var disabled=m.required||!usable, checked=m.required||m.selected;
-    var statusLabel=m.status==='verification_required'?I.verificationRequired:m.status==='configuration_required'?(m.action==='configure'?I.configure:(m.authenticationStatus==='logged_out'?I.loginRequired:I.verificationRequired)):m.status==='ready'?I.configured:usable?I.testOk:I.testFailed;
+    var presentation=m.presentation||null,statusLabel=m.mode==='pull'?(usable?I.configured:I.testFailed):(presentation&&I.providerStates[presentation.state]||I.testFailed);
     var description=selectedProvider==='workbuddy'&&m.mode==='http'
       ? (usable?escHtml(m.description):'<span>'+escHtml(I.workbuddyComponentMissing)+'</span><span class="workbuddy-command-row"><span>'+escHtml(I.workbuddyInstallCommandLabel)+'</span>'+workBuddyCommand(I.workbuddyInstallCommand,'',true)+'</span><span class="workbuddy-command-row"><span>'+escHtml(I.workbuddyLoginCommandLabel)+'</span>'+workBuddyCommand(I.workbuddyManualCommand)+'</span><span>'+escHtml(I.workbuddyLoginAfterCommand)+'</span>')
       : selectedProvider==='qwen-office'&&m.mode==='cli'&&!usable&&m.loginCommand
         ? escHtml(I.qwenCliLoginRequired)+workBuddyCommand(m.loginCommand)+'。'
       : escHtml(m.description);
-    var action=m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.configure)+'</button>':m.action==='loopback'?'<button type="button" class="method-action" data-action="loopback" data-provider="qwen-office-cli" data-mode="'+escHtml(m.mode)+'">'+escHtml(I.loopback)+'</button>':m.action==='test'?'<button type="button" class="method-action" data-action="detect" data-mode="'+escHtml(m.mode)+'">'+escHtml(selectedProvider==='workbuddy'?I.recheck:I.test)+'</button>':'';
-    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(I.messageModes[m.mode]||m.mode)+'</span><span class="card-desc">'+description+'</span><span class="method-meta"><span class="tag '+(m.status==='configuration_required'?'warn':'')+'">'+escHtml(statusLabel)+'</span>'+action+'</span></span></label>'
+    var actionLabel=presentation&&presentation.action==='retry'?I.retry:presentation&&presentation.action==='resolve'?I.resolve:presentation&&presentation.action==='verify'?I.test:I.configure;
+    var action=presentation&&presentation.action?(m.action==='configure'?'<button type="button" class="method-action" data-action="configure" data-mode="'+escHtml(m.mode)+'">'+escHtml(actionLabel)+'</button>':m.supportsLoopback?'<button type="button" class="method-action" data-action="loopback" data-provider="'+escHtml(m.providerId||'')+'" data-mode="'+escHtml(m.mode)+'">'+escHtml(actionLabel)+'</button>':'<button type="button" class="method-action" data-action="detect" data-mode="'+escHtml(m.mode)+'">'+escHtml(actionLabel)+'</button>'):'';
+    return '<label class="delivery-card'+(checked?' selected':'')+'"><input type="checkbox" data-mode="'+escHtml(m.mode)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'><span><span class="card-title">'+escHtml(I.messageModes[m.mode]||m.mode)+'</span><span class="card-desc">'+description+'</span><span class="method-meta"><span class="tag '+escHtml(presentation&&presentation.tone||'')+'">'+escHtml(statusLabel)+'</span>'+action+'</span></span></label>'
   }
   function workBuddyCommand(command,punctuation,longCommand){return '<span class="voko-command-inline'+(longCommand?' is-long':'')+'"><code title="'+escHtml(command)+'">'+escHtml(command)+'</code><button type="button" class="voko-copy-button" title="'+escHtml(I.copyCommand)+'" aria-label="'+escHtml(I.copyCommand)+'" data-voko-copy-value="'+escHtml(command)+'">'+COPY_ICON+'</button>'+escHtml(punctuation||'')+'</span>'}
   function renderDeliveries(d){

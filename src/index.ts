@@ -1857,6 +1857,11 @@ async function startMcpServer(args?: any, core?: any) {
           console.error('[Agent回复] 处理失败:', error.message);
         });
       },
+      onTurnStatus: (data?: any) => {
+        return messageHandler?.handleProviderTurnStatus(data)?.catch((error: any) => {
+          console.error('[Provider状态] 投递失败:', error.message);
+        });
+      },
     });
     openclawHandler = hcResult.openclawHandler;
     hermesHandler = hcResult.hermesHandler;
@@ -2032,6 +2037,9 @@ async function startMcpServer(args?: any, core?: any) {
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
     });
     messageHandler?.setDispatcher(dispatcher);
+    await taskManager.start('inbound-turn-coalescer', () => async () => {
+      await messageHandler?.flushInboundTurns?.();
+    });
   } catch (e: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
   }
@@ -2078,8 +2086,11 @@ async function startMcpServer(args?: any, core?: any) {
           if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
           const persisted=messageHandler.persistE2eeAgentReply(input.agentId,input.channelId,input.content,
             input.messageId,input.sourceMessageId);
-          const routeMetadata=input.replyToRouteId
-            ?{_voko:{protocolVersion:1,...(persisted.routeMetadata?._voko||{}),replyToRouteId:input.replyToRouteId}}
+          const statusMetadata=input.turnStatus?{turnId:input.turnId,turnStatus:input.turnStatus,
+            ...(input.turnStatusCode?{turnStatusCode:input.turnStatusCode}:{})}:{};
+          const routeMetadata=input.replyToRouteId||input.turnStatus
+            ?{_voko:{protocolVersion:1,...(persisted.routeMetadata?._voko||{}),
+              ...(input.replyToRouteId?{replyToRouteId:input.replyToRouteId}:{}),...statusMetadata}}
             :persisted.routeMetadata;
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
             input.messageId,routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
@@ -2172,7 +2183,7 @@ async function startMcpServer(args?: any, core?: any) {
           .catch((error:any)=>console.warn('[E2EE] Outbox恢复失败:',error?.message||'unknown'));
         const timer=setInterval(()=>void run().catch((error:any)=>console.warn('[E2EE] 后台同步失败:',error?.message||'unknown')),60_000);
         timer.unref?.();
-        return async()=>{clearInterval(timer);deliver.setSecureRouter?.(null);e2eeRuntime?.close();try{e2eeDatabase?.close();}catch{}};
+        return async()=>{clearInterval(timer);deliver.setSecureRouter?.(null);await e2eeRuntime?.close();try{e2eeDatabase?.close();}catch{}};
       });
     } catch (error:any) {
       console.error('[E2EE] v2初始化失败，密文消息将等待重新投递:',error.message);
@@ -2735,7 +2746,7 @@ function createResumeOwnerIntervention(dispatcher?: any, db?: any, secureOutboun
   };
 }
 
-function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, backendTypes, startProviders = true }: any = {}) {
+function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTurnStatus, backendTypes, startProviders = true }: any = {}) {
   let openclawHandler = null;
   let hermesHandler = null;
   const providers: Record<string, any> = {};
@@ -2807,7 +2818,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, back
   let dispatcher: any = null;
   try {
     const { createDispatcher } = require('./core/dispatcher');
-    dispatcher = createDispatcher({ db, providers, onAgentReply });
+    dispatcher = createDispatcher({ db, providers, onAgentReply, onTurnStatus });
     const backendLoads = new Map<string, Promise<void>>();
     dispatcher.ensureBackend = (backendType: string) => {
       const type = String(backendType || '').trim();

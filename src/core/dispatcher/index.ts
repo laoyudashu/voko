@@ -14,6 +14,7 @@
  * lite 其他模块只通过 dispatcher 调度，不再直接 spawn / 配置 agent。
  */
 import type { DatabaseLike } from '../../types/database';
+import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -108,10 +109,12 @@ interface DispatcherOptions {
   db: Pick<DatabaseLike, 'prepare'>;
   providers: Record<string, DispatcherProvider>;
   onAgentReply?: (reply: ProviderReply) => void;
+  onTurnStatus?: (status: Record<string, unknown>) => unknown | Promise<unknown>;
 }
 
 interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
+  turnId?: string; sourceMessageIds?: readonly string[];
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
   sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
   executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee';
@@ -123,6 +126,7 @@ interface IsolatedExecutionOptions {
   protocolContextId?: string;
   bindingGeneration?: number;
   attachments?: PushPayload['attachments'];
+  messageSegments?: PushPayload['messageSegments'];
   attachmentOutputDirectory?: string;
   peerUid?: string;
   ownerInterventionCreated?: Promise<void>;
@@ -258,7 +262,7 @@ function _isAgentByApi(fromUid?: string | null): boolean {
   _fetchAndCacheUserType(fromUid).catch(() => {});
   return false;
 }
-function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
+function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: DispatcherOptions) {
   // providers: { 'openclaw-ws': provider, 'hermes-http': provider, ... }
   const runtimeRegistry = new ProviderRuntimeRegistry(providers);
   const routeResolver = new RouteResolver();
@@ -495,6 +499,7 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
           if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
           const contextualized = _contextualizeReply(reply);
           if (!(reply.turnId || reply.replyId) && !_acceptFinalReply(contextualized)) return;
+          onTurnStatus?.({ ...contextualized, status: 'completed' });
           onAgentReply(contextualized);
     });
   }
@@ -790,6 +795,9 @@ function createDispatcher({ db, providers, onAgentReply }: DispatcherOptions) {
     const activeAutomaticMode = temporaryPreference?.mode === 'pull'
       ? null
       : (preferredMethod?.mode || methods.find(method => method.mode !== 'pull' && method.configured && method.automaticReady === true)?.mode || null);
+    for (const method of methods) {
+      if (method.mode !== 'pull') method.presentation = classifyProviderDeliveryPresentation(method as unknown as Record<string, unknown>);
+    }
     return {
       backendType: meta.backend_type || null,
       configuredModes,
@@ -1199,12 +1207,35 @@ ${body}
     const channelType = payload.channelType === 2 ? 2 : 1;
     const key = `${agentId}::${channelType}::${channelId}`;
     const previous = _conversationRoutes.get(key);
-    const next = previous
-      ? previous.catch(() => {}).then(() => _doRoute(agentId, payload, context))
-      : _doRoute(agentId, payload, context);
+    const startedAt = Date.now();
+    const statusContext = { agentId, visitorId: payload.fromUid, channelId, channelType,
+      turnId: payload.turnId || payload.messageId, sourceMessageId: payload.messageId,
+      sourceMessageIds: payload.sourceMessageIds, senderUid: payload.senderUid || payload.fromUid,
+      ...((payload as any).replyRouteContext ? { replyRouteContext: (payload as any).replyRouteContext } : {}),
+      ...((payload as any).remoteRouteId ? { remoteRouteId: (payload as any).remoteRouteId } : {}),
+      ...((payload as any).remoteConversationKey ? { remoteConversationKey: (payload as any).remoteConversationKey } : {}) };
+    const begin = () => {
+      if (!context?.a2aManaged && channelType === 1 && onTurnStatus) {
+        return Promise.resolve(onTurnStatus({ ...statusContext, status: 'processing' }))
+          .catch(() => undefined).then(() => _doRoute(agentId, payload, context));
+      }
+      return _doRoute(agentId, payload, context);
+    };
+    const next = previous ? previous.catch(() => {}).then(begin) : begin();
     _conversationRoutes.set(key, next);
     void next.finally(() => {
       if (_conversationRoutes.get(key) === next) _conversationRoutes.delete(key);
+    });
+    if (!context?.a2aManaged && channelType === 1) void next.then((result: any) => {
+      console.log(`[ProviderTurn] turn=${statusContext.turnId || '-'} agent=${agentId} messages=${payload.sourceMessageIds?.length || 1} `+
+        `attachments=${payload.attachments?.length || 0} provider=${result?.providerId || 'none'} durationMs=${Date.now()-startedAt} outcome=${result?.outcome || 'unknown'}`);
+      if (result?.outcome === 'delivered') return;
+      const evidence = `${result?.errorCode || ''} ${result?.error || ''}`.toLowerCase();
+      const status = /quota|credit|额度|配额/.test(evidence) ? 'quota_exhausted'
+        : /login|auth|unauthorized|未登录|登录/.test(evidence) ? 'login_expired'
+          : /timeout|timed out|etimedout|超时/.test(evidence) ? 'timeout'
+            : result?.outcome === 'outcome_unknown' ? 'outcome_unknown' : 'failed';
+      onTurnStatus?.({ ...statusContext, status, code: result?.errorCode || 'PROVIDER_DELIVERY_FAILED' });
     });
   }
 
@@ -1430,8 +1461,11 @@ ${body}
         if (isolated) console.log(`[Dispatcher] agent=${agentId} scope=${executionScope} 所有符合精确会话要求的通道均未送达；任务保留在来源队列等待恢复`);
         else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
       }
+      return result;
     } catch (err) {
       console.error(`[Dispatcher] push 异常 agent=${agentId}:`, errorMessage(err));
+      return { outcome: (err as any)?.deliveryOutcome || 'outcome_unknown',
+        errorCode: (err as any)?.code || 'PROVIDER_DELIVERY_FAILED', error: errorMessage(err) };
     }
   }
 
@@ -1556,6 +1590,7 @@ ${body}
       agentId: options.agentId, fromUid: sourceType === 'agent_peer' ? peerUid : `e2ee:${options.contextId}`,
       senderUid: sourceType === 'agent_peer' ? peerUid : 'e2ee', channelId: options.contextId, channelType: 1,
       messageId: options.taskId, content: options.content, rawContent: options.content,
+      sourceMessageIds: Array.isArray(options.sourceMessageIds) ? options.sourceMessageIds : undefined,
       executionScope: 'e2ee', sourceType, protocolContextId: options.contextId,
     };
     const prepared = sourceType === 'agent_peer'
@@ -1569,7 +1604,7 @@ ${body}
         return { reply: { content: 'NO_REPLY', done: true } };
       }
     }
-    const turnId = `e2ee-${crypto.randomUUID()}`;
+    const turnId = String(options.turnId || `e2ee-${crypto.randomUUID()}`);
     const sinkKey = `${options.agentId}::${turnId}`;
     let receipt: unknown;
     let resolveReply!: (reply: ProviderReply) => void;
@@ -1604,6 +1639,7 @@ ${body}
         providerBinding: options.binding || null,
         sessionScopeId: options.sessionScopeId,
         attachments: options.attachments,
+        messageSegments: options.messageSegments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
       }, prepared.context, (providerId, provider) => deadline.select(providerId, provider));

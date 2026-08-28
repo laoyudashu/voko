@@ -6,6 +6,8 @@ import type { E2eeV2ReceiptRow, E2eeV2Store } from './v2-store';
 import { decryptE2eeV2Attachment, parseE2eeV2Attachment } from './v2-attachment';
 import { decodeE2eePayload, E2EE_V2_PAYLOAD_VERSION } from './v2-payload';
 import { registerActiveOwnerInterventionContext, resolveActiveOwnerInterventionContext } from '../core/owner-intervention-active-context';
+import { InboundTurnCoalescer, buildMergedTurn, type InboundTurnBatch, type InboundTurnItem }
+  from '../core/inbound-turn-coalescer';
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
@@ -31,7 +33,7 @@ type RuntimeOptions={
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
     sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string;
-    replyToRouteId?:string})=>Promise<{success?:boolean;deliveryState?:string;
+    replyToRouteId?:string;turnId?:string;turnStatus?:string;turnStatusCode?:string})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
@@ -42,6 +44,13 @@ type RuntimeOptions={
 
 type ResolvedSender={bundle:E2eeV2PublicBundle;peerScopeId:string;peerKind:'guest'|'agent';
   protocolConversationId:string|null};
+
+interface E2eeProviderTurnItem extends InboundTurnItem {
+  scopeKey:string;
+  executeInput:any;
+  markProviderAccepted:()=>void;
+  emitTurnStatus?:(status:string,turnId:string,code?:string)=>Promise<void>;
+}
 
 function directoryErrorDetails(error:any):string{
   const fields={
@@ -93,6 +102,11 @@ function deterministicReplyId(envelope:E2eeV2Envelope):string {
     .update(envelope.agentDid).update('\0').update(envelope.messageId).digest('base64url')}`;
 }
 
+function turnStatusMessageId(envelope:E2eeV2Envelope,turnId:string,status:string):string{
+  return `e2ee-status-${crypto.createHash('sha256').update('VOKO-E2EE-V2-TURN-STATUS\0')
+    .update(envelope.messageId).update('\0').update(turnId).update('\0').update(status).digest('base64url')}`;
+}
+
 function projectedInboundId(agent:E2eeV2AgentDescriptor,envelope:E2eeV2Envelope,peerKind:'guest'|'agent'):string {
   if(peerKind==='guest')return envelope.messageId;
   return `e2ee-peer-${crypto.createHash('sha256').update('VOKO-E2EE-V2-INBOUND\0')
@@ -103,9 +117,42 @@ export class E2eeV2Runtime {
   private readonly cryptoByAgent=new Map<string,E2eeV2Crypto>();
   private readonly senderCache=new Map<string,{expiresAt:number;resolved:ResolvedSender}>();
   private readonly executionTails=new Map<string,Promise<void>>();
+  private readonly providerTurns:InboundTurnCoalescer<E2eeProviderTurnItem,any>;
 
   constructor(private readonly options:RuntimeOptions){
     this.options.store.closeAmbiguousExecutions();
+    this.providerTurns=new InboundTurnCoalescer<E2eeProviderTurnItem,any>({
+      turnIdPrefix:'e2ee',
+      scopeKey:item=>item.scopeKey,
+      flush:batch=>this.executeProviderTurn(batch),
+    });
+  }
+
+  private async executeProviderTurn(batch:InboundTurnBatch<E2eeProviderTurnItem>):Promise<any>{
+    const last=batch.items[batch.items.length-1];
+    const merged=buildMergedTurn(batch);
+    const interventionSignals=batch.items.map(item=>item.executeInput.ownerInterventionCreated)
+      .filter((value):value is Promise<void>=>!!value&&typeof value.then==='function');
+    const startedAt=Date.now();
+    console.log(`[E2EE][TurnCoalescer] dispatch turn=${batch.turnId} agent=${last.executeInput.agentId} `+
+      `messages=${batch.items.length} attachments=${merged.attachments.length} waitMs=${startedAt-batch.firstReceivedAt}`);
+    await last.emitTurnStatus?.('processing',batch.turnId).catch(()=>undefined);
+    try{
+      return await this.options.dispatcher.executeE2ee({...last.executeInput,
+        taskId:last.messageId,turnId:batch.turnId,sourceMessageIds:batch.sourceMessageIds,
+        content:merged.content,attachments:merged.attachments,
+        messageSegments:merged.messageSegments,
+        ownerInterventionCreated:interventionSignals.length?Promise.race(interventionSignals):undefined,
+        onProviderAccepted:()=>{for(const item of batch.items)item.markProviderAccepted();},});
+    }catch(error:any){
+      const evidence=String(error?.code||error?.message||'').toLowerCase();
+      const status=/quota|credit|额度|配额/.test(evidence)?'quota_exhausted'
+        :/login|auth|unauthorized|未登录|登录/.test(evidence)?'login_expired'
+          :/timeout|timed out|etimedout|超时/.test(evidence)?'timeout'
+            :String(error?.deliveryOutcome||'')==='outcome_unknown'?'outcome_unknown':'failed';
+      await last.emitTurnStatus?.(status,batch.turnId,String(error?.code||'E2EE_V2_PROVIDER_FAILED')).catch(()=>undefined);
+      throw error;
+    }
   }
 
   async synchronizeAgentKeys():Promise<{registered:number;failed:number}>{
@@ -311,14 +358,33 @@ export class E2eeV2Runtime {
         sessionScopeId:scope,sourceMessageId:envelope.messageId,visitorId:sender.peerScopeId});
       const activeInterventionContext=resolveActiveOwnerInterventionContext(agent.localAgentId,envelope.messageId);
       let result:any;
+      let isReplyOwner=false;
       try{
-        result=await this.options.dispatcher.executeE2ee({agentId:agent.localAgentId,content:prepared.providerContent,
+        const executeInput={agentId:agent.localAgentId,content:prepared.providerContent,
           taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
           ownerInterventionCreated:activeInterventionContext.status==='resolved'
             ?activeInterventionContext.context.interventionCreated:undefined,
-          sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
-          attachments:prepared.attachments,
-          onProviderAccepted:()=>{if(providerAccepted)return;
+          sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId};
+        // Ratchet opening, validation, audit and persistence remain serialized. Provider waiting does not:
+        // releasing here lets subsequent messages in the same secure session join this short-lived Turn.
+        release();release=()=>{};
+        const queued=await this.providerTurns.enqueue({messageId:envelope.messageId,
+          content:prepared.providerContent,timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),
+          attachments:prepared.attachments,scopeKey:`${scope}\0${routeScope}`,executeInput,
+          emitTurnStatus:async(status,turnId,code)=>{
+            if(!this.options.deliverSecureReply)return;
+            const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
+              quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
+              failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认'};
+            if(!text[status])return;
+            const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
+              channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),
+              sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
+              protocolConversationId:envelope.conversationId,turnId,turnStatus:status,turnStatusCode:code,
+              ...(typeof prepared.routeContext?.routeId==='string'?{replyToRouteId:prepared.routeContext.routeId}:{}),});
+            if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
+          },
+          markProviderAccepted:()=>{if(providerAccepted)return;
             if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
               if(this.options.store.receipt(envelope.messageId)?.state==='provider_accepted'){
                 providerAccepted=true;
@@ -326,7 +392,9 @@ export class E2eeV2Runtime {
               }
               throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
             }
-            providerAccepted=true;} });
+            providerAccepted=true;},});
+        result=queued.result;
+        isReplyOwner=queued.isReplyOwner;
       }finally{releaseInterventionContext();}
       let reply=String(result?.reply?.content||'');
       if(!reply.trim())throw new Error('E2EE_V2_PROVIDER_EMPTY_REPLY');
@@ -335,6 +403,12 @@ export class E2eeV2Runtime {
         if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
           throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
         }
+      }
+      if(!isReplyOwner){
+        if(!this.options.store.transition(envelope.messageId,['provider_accepted'],'completed')){
+          throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
+        }
+        return{handled:true,accepted:true,code:'merged_into_turn'};
       }
       if(this.options.reviewOutbound){
         reply=await this.options.reviewOutbound({agentId:agent.localAgentId,channelId:envelope.channelId,
@@ -495,7 +569,11 @@ export class E2eeV2Runtime {
     return{enabled:true,protocolVersion:PROTOCOL,suite:SUITE,loadedAgentKeys:this.cryptoByAgent.size};
   }
 
-  close():void{for(const endpoint of this.cryptoByAgent.values())endpoint.free();this.cryptoByAgent.clear();}
+  async close():Promise<void>{
+    await this.providerTurns.flushAll();
+    for(const endpoint of this.cryptoByAgent.values())endpoint.free();
+    this.cryptoByAgent.clear();
+  }
 }
 
 module.exports={E2eeV2Runtime,parseE2eeV2Envelope};

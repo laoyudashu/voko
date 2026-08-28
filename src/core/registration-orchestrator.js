@@ -33,6 +33,7 @@ const { isDuMateRuntimeAvailable, resolveDuMateBackendPort } = require('./dispat
 const { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances } = require('./dispatcher/provider-instances');
 const { readProviderInstanceMetadata } = require('./dispatcher/provider-instance-metadata');
 const { getProviderFamily, listProviderTransports } = require('./dispatcher/provider-catalog');
+const { classifyProviderDeliveryPresentation } = require('./provider-delivery-presentation');
 
 const PROVIDER_DISPLAY_PRIORITY = [
   'workbuddy', 'qwen-office', 'dumate', 'doubao', 'openclaw', 'hermes',
@@ -613,7 +614,9 @@ class RegistrationOrchestrator {
       basicInfo: session.basicInfo || null,
       suggestedBasicInfo: session.suggestedBasicInfo || null,
       provider: session.provider || null,
-      deliveryModes: session.deliveryModes || [],
+      deliveryModes: (session.deliveryModes || []).map((mode) => ({ ...mode,
+        ...(mode.mode === 'pull' ? {} : { presentation: classifyProviderDeliveryPresentation(mode) }),
+      })),
       accessMode: session.accessMode || 'private',
       registrationMode: session.registrationMode || 'human',
       providerLock: session.providerLock || null,

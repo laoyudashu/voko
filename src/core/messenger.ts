@@ -16,6 +16,8 @@ const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./gro
 const { reservedVisitorPrefix } = require('./visitor-id-policy');
 import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
+import type { PushPayload } from './dispatcher/types';
+import { InboundTurnCoalescer, buildMergedTurn, type InboundTurnBatch } from './inbound-turn-coalescer';
 import type {
   AgentReplyMessage,
   AuditAction,
@@ -146,6 +148,7 @@ function serializeCapabilityResponse(content: unknown, requestId: string): strin
 
 class MessageHandler extends EventEmitter {
   private readonly db: DatabaseLike;
+  private readonly inboundTurns: InboundTurnCoalescer<PushPayload & { messageId: string; timestamp: number }, void>;
 
   /**
    * @param {object} db - better-sqlite3 实例
@@ -188,10 +191,52 @@ class MessageHandler extends EventEmitter {
       ? new GroupMembershipSnapshotCache(options.getGroupInfo)
       : null;
     this._groupRouteResolver = new GroupReplyRouteResolver(db, this._messageRoutes, membershipCache);
+    this.inboundTurns = new InboundTurnCoalescer({
+      scopeKey: (payload) => this._turnScopeKey(payload),
+      flush: (batch) => this._dispatchInboundTurn(batch),
+    });
 
     // 预填充大小写映射（OpenClaw WS）
     this._caseMap = new Map<string, string>();
   }
+
+  private _turnScopeKey(payload: PushPayload): string {
+    const route = payload.replyRouteContext as { conversationId?: unknown } | null | undefined;
+    const routingSession = String(route?.conversationId || payload.remoteConversationKey || '');
+    return [payload.agentId, payload.fromUid, payload.channelType || 1, payload.channelId || '', routingSession]
+      .map(value => String(value).replaceAll('\0', '')).join('\0');
+  }
+
+  private _queueInboundTurn(payload: PushPayload & { messageId: string; timestamp: number }): void {
+    void this.inboundTurns.enqueue(payload).catch((error: unknown) => {
+      console.error(`[TurnCoalescer] dispatch failed agent=${payload.agentId} message=${payload.messageId} error=${errorMessage(error)}`);
+    });
+  }
+
+  private _dispatchInboundTurn(batch: InboundTurnBatch<PushPayload & { messageId: string; timestamp: number }>): void {
+    if (!this.dispatcher || !batch.items.length) return;
+    const startedAt = Date.now();
+    const last = batch.items[batch.items.length - 1];
+    const merged = buildMergedTurn(batch);
+    const payload: PushPayload = {
+      ...last,
+      content: merged.content,
+      rawContent: merged.content,
+      attachments: merged.attachments,
+      messageSegments: merged.messageSegments,
+      messageId: last.messageId,
+      turnId: batch.turnId,
+      sourceMessageIds: batch.sourceMessageIds,
+    };
+    console.log(`[TurnCoalescer] dispatch turn=${batch.turnId} agent=${last.agentId} messages=${batch.items.length} attachments=${merged.attachments.length} waitMs=${startedAt - batch.firstReceivedAt}`);
+    this._notifyUI('agent-provider:turn-status', {
+      agentId: last.agentId, channelId: last.channelId, channelType: last.channelType || 1,
+      turnId: batch.turnId, sourceMessageIds: batch.sourceMessageIds, status: 'processing',
+    });
+    this.dispatcher.dispatch(last.agentId, payload);
+  }
+
+  async flushInboundTurns(): Promise<void> { await this.inboundTurns.flushAll(); }
 
   _resolveInboundConversation(agentId: string, visitorId: string, channelId: string,
     channelType: number, messageId: string, metadata: InboundMessage['_voko']): string | null {
@@ -393,7 +438,12 @@ class MessageHandler extends EventEmitter {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward = false): ForwardPayload | undefined {
     const { fromUid, toUid, channelId, content, messageId, timestamp, channelType, contentType,
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
-    const markIntercepted = (reason: string) => { data._vokoInboundIntercepted = reason; };
+    const markIntercepted = (reason: string) => {
+      data._vokoInboundIntercepted = reason;
+      const prefix = [agentId, fromUid, channelType || 1, channelId || '']
+        .map(value => String(value).replaceAll('\0', '')).join('\0') + '\0';
+      void this.inboundTurns.flushWhere(scopeKey => scopeKey.startsWith(prefix));
+    };
 
     const reservedPrefix = reservedVisitorPrefix(fromUid);
     if (reservedPrefix) {
@@ -1053,7 +1103,7 @@ class MessageHandler extends EventEmitter {
         }
       } catch (_) { /* invalid route remains on legacy/Pull path */ }
     }
-    this.dispatcher.dispatch(agentId, {
+    this._queueInboundTurn({
       agentId, fromUid, senderUid: fromUid, content: agentContent, rawContent: content, channelId,
       sessionTarget: isGroup ? 'group:' + channelId : fromUid,
       channelType: channelType || 1, contentType: contentType || 1,
@@ -1092,7 +1142,7 @@ class MessageHandler extends EventEmitter {
       return;
     }
     if (resolved.state === 'absent') {
-      this.dispatcher?.dispatch(input.agentId, {
+      this._queueInboundTurn({
         agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
         content: input.agentContent, rawContent: input.content, channelId: input.channelId,
         sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
@@ -1106,7 +1156,7 @@ class MessageHandler extends EventEmitter {
         conversationId: resolved.conversation.id, agentId: input.agentId, peerUid: input.fromUid,
         channelId: input.channelId, channelType: 2 }); } catch (_) {}
     }
-    this.dispatcher?.dispatch(input.agentId, {
+    this._queueInboundTurn({
       agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
       content: input.agentContent, rawContent: input.content, channelId: input.channelId,
       sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
@@ -1368,6 +1418,8 @@ class MessageHandler extends EventEmitter {
     } catch (_) {}
     const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
       ...(replyToRouteId ? { replyToRouteId } : {}),
+      ...(data.providerTurnStatus ? { turnId: data.turnId, turnStatus: data.providerTurnStatus,
+        ...(data.providerTurnStatusCode ? { turnStatusCode: data.providerTurnStatusCode } : {}) } : {}),
       ...(routingConversation?.wireConversationKey ? { canonicalConversationKey: routingConversation.wireConversationKey } : {}),
       ...(conversationDisposition ? { conversationDisposition } : {}) } } : null;
     const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
@@ -1405,6 +1457,24 @@ class MessageHandler extends EventEmitter {
     console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
       `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
+  }
+
+  async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
+    const status = String(data.status || '');
+    if (status === 'completed' || !data.agentId || !data.visitorId) return;
+    const messages: Record<string, string> = {
+      processing: 'Agent 正在处理…',
+      login_expired: 'Agent 登录已失效，暂时无法回复',
+      quota_exhausted: 'Agent 额度不足，暂时无法回复',
+      timeout: 'Agent 调用超时，请稍后重试',
+      failed: 'Agent 当前无法处理该消息',
+      outcome_unknown: '消息结果暂时无法确认',
+    };
+    const content = messages[status];
+    if (!content) return;
+    await this.handleAgentReply({ ...data, content, done: true,
+      providerTurnStatus: status as AgentReplyMessage['providerTurnStatus'],
+      providerTurnStatusCode: String(data.code || '') || undefined });
   }
 }
 

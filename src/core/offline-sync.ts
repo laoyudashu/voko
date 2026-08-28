@@ -13,7 +13,6 @@ const {
   getUserAccessToken,
   waitForDbQueue,
 } = require('./database');
-const { t, getLocale } = require('./i18n');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('./checkpoint-store');
 const ENDPOINTS = require('../endpoints.json');
 import type { DatabaseLike } from '../types/database';
@@ -338,30 +337,17 @@ async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHan
       waitForDbQueue().then(() => setImmediate(resolve));
     });
 
-    // 按 (agentId, channelId) 分组，同一会话的连续离线消息合并为一条 prompt 转发，
-    // 避免 forwardToAgent 的 fire-and-forget 逐条投递导致 agent thinking 中被打断。
-    // 单条消息不包装，直接转发原文。
-    const groups = new Map<string, ForwardPayload[]>();
-    for (const p of collected) {
-      const key = `${p.agentId}|${p.channelId}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(p);
+    // 在线与离线消息统一进入 MessageHandler 的会话级 Turn 合并器。这里逐条保留
+    // fromUid/channelType/路由元数据，避免旧逻辑仅按 agentId+channelId 错合会话。
+    for (const message of collected) {
+      messageHandler.forwardToAgent(message.agentId, message.fromUid, message.content, message.channelId,
+        message.channelType, message.contentType, message.messageId, message.timestamp,
+        message.mention || null, message._voko);
     }
-
-    let forwarded = 0;
-    for (const [, msgs] of groups) {
-      const last = msgs[msgs.length - 1];
-      const merged = msgs.length === 1
-        ? last.content
-        : t('errors.offline.merged', { count: msgs.length }, getLocale()) + '\n'
-          + msgs.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
-      messageHandler.forwardToAgent(last.agentId, last.fromUid, merged, last.channelId,
-        last.channelType, last.contentType, last.messageId, last.timestamp, last.mention || null, last._voko);
-      forwarded++;
-    }
+    const forwarded = collected.length;
 
     if (pendingMessages.length || collected.length || forwarded) {
-      console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，合并转发 ${forwarded} 次`);
+      console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，加入 Turn 合并器 ${forwarded} 条`);
     }
     return pendingMessages.length;
   } catch (e: unknown) {

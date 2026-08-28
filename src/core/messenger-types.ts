@@ -69,6 +69,8 @@ export interface AgentReplyMessage {
   conversationStart?: boolean;
   sourceMessageId?: string;
   sourceRouteClaimSafe?: boolean;
+  providerTurnStatus?: 'processing' | 'login_expired' | 'quota_exhausted' | 'timeout' | 'failed' | 'outcome_unknown';
+  providerTurnStatusCode?: string;
   replyRouteContext?: {
     conversationId: string;
     providerFamily: string;

@@ -87,6 +87,7 @@ class DuMateHttpProvider extends PushProvider {
   private readonly _resolveAgentTarget: typeof resolveDuMateAgentTarget;
   private readonly _resolveBackendPort: typeof resolveDuMateBackendPort;
   private readonly _states = new Map<string, RuntimeState>();
+  private readonly _verification = new Map<string, { status: 'unverified' | 'loopback_verified' | 'login_failed' | 'timeout' | 'failed'; detail?: string; verifiedAt?: number }>();
 
   constructor(options: Options = {}) {
     super();
@@ -123,6 +124,18 @@ class DuMateHttpProvider extends PushProvider {
   isAvailable(agentId: string): boolean {
     const instanceId = this._instanceForAgent(agentId);
     return checkCliAvailable(this._cmd) && (!instanceId || !!this._resolveAgentTarget(instanceId));
+  }
+
+  getDeliveryReadiness(agentId = ''): Record<string, unknown> {
+    const installed = checkCliAvailable(this._cmd);
+    const backendReady = installed && Boolean(this._resolveBackendPort());
+    const verification = this._verification.get(String(agentId || ''));
+    return { installed, ready: backendReady, automaticReady: backendReady && verification?.status === 'loopback_verified',
+      authenticationStatus: backendReady ? 'unverified' : 'unverified',
+      reason: !installed ? 'not_found' : !backendReady ? 'login_required' : 'auth_test_required',
+      verificationStatus: verification?.status || 'unverified',
+      ...(verification?.detail ? { detail: verification.detail } : {}),
+      ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}) };
   }
 
   acceptsBinding(binding: any, agentId = ''): boolean {
@@ -250,7 +263,7 @@ class DuMateHttpProvider extends PushProvider {
     } catch (_) { return false; }
   }
 
-  async push(payload: PushPayload): Promise<unknown> {
+  private async _pushOnce(payload: PushPayload): Promise<unknown> {
     const boundInstanceId = this._instanceForAgent(payload.agentId);
     const instanceId = this._routeForAgent(payload.agentId);
     if (boundInstanceId && !this._resolveAgentTarget(boundInstanceId)) throw deliveryError('Bound DuMate Agent is unavailable');
@@ -290,6 +303,24 @@ class DuMateHttpProvider extends PushProvider {
     this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
       turnId, nativeSessionId: sessionId, providerInstanceId: instanceId, terminal: true });
     return { nativeSessionId: sessionId, providerInstanceId: instanceId, deliveryMode: 'http', adapterType: ADAPTER_TYPE };
+  }
+
+  async push(payload: PushPayload): Promise<unknown> {
+    try {
+      const result = await this._pushOnce(payload);
+      this._verification.set(payload.agentId, { status: 'loopback_verified', verifiedAt: Date.now() });
+      return result;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const status = /not logged|unauthorized|login|required|backend.*unavailable|未登录|登录/i.test(detail)
+        ? 'login_failed' : /timed?\s*out|timeout|etimedout|超时/i.test(detail) ? 'timeout' : 'failed';
+      this._verification.set(payload.agentId, { status, detail });
+      if (error && typeof error === 'object' && !(error as { code?: string }).code) {
+        (error as { code?: string }).code = status === 'login_failed' ? 'DUMATE_LOGIN_FAILED'
+          : status === 'timeout' ? 'DUMATE_TIMEOUT' : 'DUMATE_DELIVERY_FAILED';
+      }
+      throw error;
+    }
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {

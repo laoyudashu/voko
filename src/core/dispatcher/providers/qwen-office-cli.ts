@@ -178,6 +178,7 @@ class QwenOfficeCliProvider extends CliAdapter {
       const detail = error instanceof Error ? error.message : String(error || '');
       const classified = classifyQwenOfficeDeliveryFailure(detail);
       this._verification.set(payload.agentId, { status: classified.verificationStatus, code: classified.code, detail });
+      if (error && typeof error === 'object') (error as { code?: string }).code = classified.code;
       throw error;
     }
   }
