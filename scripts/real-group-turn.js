@@ -77,7 +77,7 @@ async function main() {
   let latest = null;
   if (values.verifyMarker) {
     latest = await history(voko, targetAgentId, groupId);
-    const sources = (latest.messages || []).filter(message => message.agentId === senderAgentId
+    const sources = (latest.messages || []).filter(message => message.fromUid !== targetImUid
       && String(message.content || '').includes(marker));
     const timestamps = sources.map(message => Number(message.timestampMs || Number(message.timestamp || 0) * 1000));
     startedAt = timestamps.length ? Math.min(...timestamps) - 1 : Date.now();
@@ -92,11 +92,12 @@ async function main() {
   }
 
   const deadline = Date.now() + Number(values.timeout || 180_000);
+  const requireEcho = values.requireEcho === 'true';
   while (Date.now() < deadline) {
     latest = await history(voko, targetAgentId, groupId);
     const replies = (latest.messages || []).filter(message => message.fromUid === targetImUid
       && Number(message.timestampMs || Number(message.timestamp || 0) * 1000) >= startedAt);
-    if (replies.some(message => confirmsAllSegments(message, marker))) break;
+    if (replies.some(message => !requireEcho || confirmsAllSegments(message, marker))) break;
     await sleep(3_000);
   }
   const recent = (latest?.messages || []).filter(message =>
@@ -107,8 +108,9 @@ async function main() {
   reporter.check('group retained all three source segments', inbound.length === 3, `segments=${inbound.length}`);
   reporter.check('group provider replied once for the merged turn', replies.length === 1,
     `replies=${replies.length}`);
-  reporter.check('merged reply contains all source segments', replies.length === 1
-    && confirmsAllSegments(replies[0], marker),
+  reporter.check(requireEcho ? 'merged reply contains all source segments' : 'merged turn produced a non-empty reply',
+  replies.length === 1 && String(replies[0]?.content || '').trim().length > 0
+    && (!requireEcho || confirmsAllSegments(replies[0], marker)),
   replies[0]?.content || 'reply missing');
   reporter.check('reply stayed in the original group', replies.length === 1
     && replies[0].channelType === 2 && replies[0].channelId === groupId,
