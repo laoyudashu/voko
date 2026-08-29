@@ -1885,10 +1885,6 @@ class RegistrationOrchestrator {
       if (action === 'complete') return await this.complete(input.registrationId, input);
       if (action === 'status') {
         const session = this._get(input.registrationId);
-        if (session.status === 'provider_selection_required') {
-          session.environment = this.inspectEnvironment();
-          return this._save(session, { includeEnvironment: 'registration' });
-        }
         return this.view(session);
       }
       return { success: false, error: '不支持的注册 action' };

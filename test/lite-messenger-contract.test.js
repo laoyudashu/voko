@@ -730,4 +730,24 @@ describe('Lite Messenger contract smoke', () => {
       fixture.db.close();
     }
   });
+
+  it('never sends Provider processing or failure status back to an Agent peer', async () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    const projected = [];
+    fixture.handler.handleAgentReply = async data => { projected.push(data); };
+    try {
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'agent-peer', senderUid: 'agent-peer',
+        status: 'processing', turnId: 'agent-turn',
+      });
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'visitor-1', senderUid: 'visitor-1',
+        status: 'timeout', turnId: 'visitor-turn',
+      });
+      assert.equal(projected.length, 1);
+      assert.equal(projected[0].content, 'Agent 调用超时，请稍后重试');
+    } finally {
+      fixture.db.close();
+    }
+  });
 });

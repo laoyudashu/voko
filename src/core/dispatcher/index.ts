@@ -231,30 +231,28 @@ const IM_API_BASE = (ENDPOINTS.im && ENDPOINTS.im.baseUrl) || '';
 const _userTypeCache = new Map<string, { isAgent: boolean; ts: number }>();
 const USER_TYPE_CACHE_TTL = 30000;
 
-/** 后台异步查询 & 缓存用户类型（不阻塞 dispatch）。 */
+/** 后台异步查询 & 缓存已确认的用户类型（不阻塞 dispatch）。 */
 async function _fetchAndCacheUserType(fromUid: string): Promise<void> {
-  let isAgent = false;
   try {
     const resp = await fetch(`${IM_API_BASE}/api/users/${encodeURIComponent(fromUid)}`, {
       signal: AbortSignal.timeout(3000)
     });
     if (resp.ok) {
       const data = await resp.json() as { is_human?: number };
-      isAgent = data.is_human === 0;
+      if (data.is_human === 0 || data.is_human === 1) {
+        _userTypeCache.set(fromUid, { isAgent: data.is_human === 0, ts: Date.now() });
+        return;
+      }
     }
+    console.warn(`[Dispatcher] A2A 检测未返回可信用户类型，保持安全兜底: ${fromUid}`);
   } catch (_) {
-    console.warn(`[Dispatcher] A2A 检测 API 不可用，保守判非 agent: ${fromUid}`);
+    console.warn(`[Dispatcher] A2A 检测 API 不可用，保持安全兜底: ${fromUid}`);
   }
-  _userTypeCache.set(fromUid, { isAgent, ts: Date.now() });
 }
 
 /**
  * 判断 imUid 是否为 agent。缓存命中直接返回；miss 时后台异步查 API，
- * 本次保守返回 false（宁漏一轮 A2A 收敛，不阻塞消息分发）。
- */
-/**
- * 判断 imUid 是否为 agent。缓存命中直接返回；miss 时后台异步查 API，
- * 本次保守返回 false（宁漏一轮 A2A 收敛，不阻塞消息分发）。
+ * 未确认时仅对协议保留的 agent_ UID 采用安全兜底，避免把处理状态回流给 Agent。
  */
 function _isAgentByApi(fromUid?: string | null): boolean {
   if (!fromUid) return false;
@@ -262,7 +260,7 @@ function _isAgentByApi(fromUid?: string | null): boolean {
   const cached = _userTypeCache.get(fromUid);
   if (cached && now - cached.ts < USER_TYPE_CACHE_TTL) return cached.isAgent;
   _fetchAndCacheUserType(fromUid).catch(() => {});
-  return false;
+  return fromUid.startsWith('agent_');
 }
 function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: DispatcherOptions) {
   // providers: { 'openclaw-ws': provider, 'hermes-http': provider, ... }
@@ -481,6 +479,9 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
               errorCode: 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT', deliveryOutcome: 'outcome_unknown' });
             return;
           }
+          if (reply.done !== false) {
+            _recordDeliveryEvidence(String(reply.agentId || ''), providerId, reply, true);
+          }
           _acceptProviderEvent({
             eventId: reply.replyId
               ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
@@ -516,6 +517,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _metaCache = new Map<string, AgentMetaRow & { ts: number }>();
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
+  const _deliveryEvidence = new Map<string, { verificationStatus: string; detail: string; verifiedAt?: number }>();
   const _temporaryPreferredChannels = new Map<string, { mode: string; providerId: string | null }>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
@@ -527,6 +529,22 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _a2aRateMap = new Map<string, number[]>();     // scopeKey -> 最近消息时间戳(ms)[]
   const _a2aDelayUntil = new Map<string, number>();  // scopeKey -> 串行降速队列的末尾时间
   const _a2aCircuitOpenUntil = new Map<string, number>(); // scopeKey -> 熔断截止时间
+  const _deliveryEvidenceKey = (agentId: string, providerId: string) => `${agentId}::${providerId}`;
+  function _recordDeliveryEvidence(agentId: string, providerId: string, result: unknown, success: boolean): void {
+    if (success) {
+      _deliveryEvidence.set(_deliveryEvidenceKey(agentId, providerId), {
+        verificationStatus: 'loopback_verified', detail: 'Real message delivery verified', verifiedAt: Date.now(),
+      });
+      return;
+    }
+    const classified = classifyProviderTurnFailure(result);
+    const verificationStatus = classified === 'login_expired' ? 'login_failed'
+      : classified === 'quota_exhausted' ? 'quota_exhausted'
+        : classified === 'timeout' || classified === 'outcome_unknown' ? 'timeout' : 'failed';
+    _deliveryEvidence.set(_deliveryEvidenceKey(agentId, providerId), {
+      verificationStatus, detail: errorMessage((result as { error?: unknown })?.error ?? result),
+    });
+  }
   /** 查 agent 的 backend_type + imUid，构造 meta 供 provider.match 归属判断 + A2A 自身 echo 排除。 */
   function _metaOf(agentId: string): AgentMetaRow {
     const now = Date.now();
@@ -746,12 +764,19 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       } catch (_) {
         status = 'unknown';
       }
+      const observed = _deliveryEvidence.get(_deliveryEvidenceKey(agentId, key));
+      if (observed) {
+        automaticReady = observed.verificationStatus === 'loopback_verified';
+        status = automaticReady ? 'available' : (available ? 'verification_required' : status);
+      }
       methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
         configured, available, automaticReady, status,
         ...(readiness ? { installed: readiness.installed, authenticationStatus: readiness.authenticationStatus,
           reason: readiness.reason, detail: readiness.detail, exitCode: readiness.exitCode,
           attempts: readiness.attempts, verificationStatus: readiness.verificationStatus,
           verifiedAt: readiness.verifiedAt } : {}),
+        ...(observed ? { detail: observed.detail, verificationStatus: observed.verificationStatus,
+          verifiedAt: observed.verifiedAt } : {}),
         ...(key === 'qwen-office-cli' && !available ? { setupCommand: qwenOfficeLoginCommand() } : {}),
         capabilities: getProviderTransport(key)?.capabilities });
     }
@@ -824,6 +849,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       try { return !!providers[providerId]?.match?.(agentId, meta); } catch (_) { return false; }
     });
     for (const providerId of providerIds) {
+      _deliveryEvidence.delete(_deliveryEvidenceKey(agentId, providerId));
       (providers[providerId] as any)?.refreshRuntime?.();
       await runtimeRegistry.healthCheck(providerId);
     }
@@ -1451,6 +1477,7 @@ Convergence obligations:
           }
         },
         onFailure: (candidate: any, outcome: DeliveryOutcome, error: unknown) => {
+          _recordDeliveryEvidence(agentId, candidate.providerId, { outcome, error }, false);
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
           try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}

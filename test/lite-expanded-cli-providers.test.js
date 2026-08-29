@@ -643,10 +643,11 @@ test('OpenHands registration keeps Pull as the safe default', async () => {
     commandAvailable: (command) => command === 'openhands',
   });
   const started = await service.start({ email: 'owner@example.com' });
-  service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
   const selected = service.selectProvider(started.registrationId, { providerType: 'openhands' });
   assert.equal(selected.success, true);
-  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['pull']);
+  const configured = service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
+  assert.deepEqual(configured.deliveryModes.map((mode) => mode.mode), ['pull']);
+  assert.deepEqual(configured.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode), ['pull']);
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'pull' }).ready, true);
 });
 

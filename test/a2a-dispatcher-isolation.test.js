@@ -226,3 +226,10 @@ test('trusted Owner bootstrap selects only the explicit native I/O bridge', asyn
   assert.deepEqual(dispatcher.resolveTrustedOwnerTransport('agent-1'), {
     providerId: 'codex-app-server', providerType: 'codex', providerInstanceId: null, deliveryMode: 'owner_io' });
 });
+
+test('unknown remote Agent uid stays classified as Agent while the cloud lookup is unavailable', () => {
+  const emptyDb = { prepare() { return { get: () => undefined, all: () => [], run: () => ({ changes: 0 }) }; } };
+  const dispatcher = createDispatcher({ db: emptyDb, providers: {}, onAgentReply() {} });
+  assert.equal(dispatcher.isAgentImUid('agent_remote_not_cached'), true);
+  assert.equal(dispatcher.isAgentImUid('visitor_remote_not_cached'), false);
+});

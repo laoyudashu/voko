@@ -81,9 +81,9 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /\.home-message-mode-setup>button\{justify-self:end;margin:0;width:auto;min-width:168px/);
   assert.match(html, /\.home-message-mode-setup \.voko-copy-button\{width:28px/);
   assert.doesNotMatch(html, /\.home-message-mode-setup button\{margin:0;width:100%/);
-  assert.match(html, /method\.mode==='http'&&!enabled\?'setup-workbuddy'/);
-  assert.match(html, /method\.mode==='http'&&!enabled\?'setup-dumate'/);
-  assert.match(html, /method\.mode==='cli'&&!enabled\?'setup-qwen'/);
+  assert.match(html, /action&&status\.backendType==='workbuddy'&&method\.mode==='http'\?'setup-workbuddy'/);
+  assert.match(html, /action&&status\.backendType==='dumate'&&method\.mode==='http'\?'setup-dumate'/);
+  assert.match(html, /action&&status\.backendType==='qwen-office'&&method\.mode==='cli'\?'setup-qwen'/);
   assert.match(html, /width:min\(560px,calc\(100vw - 24px\)\)/);
   assert.match(html, /overflow-y:auto;overflow-x:hidden/);
   assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
@@ -95,7 +95,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /longCommand=String\(command\|\|''\)\.length>36/);
   assert.match(html, /data-voko-copy-value=/);
   assert.doesNotMatch(html, /action:'login_workbuddy'/);
-  assert.match(html, /method\.status==='configuration_required'/);
+  assert.match(html, /presentation&&presentation\.action\|\|null/);
   assert.match(html, /recheck\.dataset\.role='recheck-workbuddy-component'/);
   assert.match(html, /command:I\.dumate_manual_command/);
   assert.match(html, /\?'setup-qwen'/);
@@ -120,7 +120,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /max-height:calc\(100vh - 16px\);overflow:auto/);
   assert.match(html, /window\.addEventListener\("resize"/);
   assert.match(html, /recheck-workbuddy-component/);
-  assert.match(html, /method\.configured\?I\.message_mode_available:I\.message_mode_enable/);
+  assert.match(html, /actionLabel=action==='verify'\?I\.message_mode_verify/);
   assert.match(html, /if\(other!==details\)other\.open=false/);
   assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);
   assert.match(html, /updateAgentRow/);

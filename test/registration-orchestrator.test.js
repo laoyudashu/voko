@@ -759,8 +759,10 @@ describe('shared registration orchestrator', () => {
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },
       });
       const refreshed = await restored.manage({ action: 'status', registrationId: started.registrationId });
-      assert.strictEqual(refreshed.environment.detected[0].blockingReason, 'DUMATE_BACKEND_UNAVAILABLE');
-      assert.match(refreshed.environment.detected[0].blockingDescription, /后台尚未就绪/);
+      assert.strictEqual(refreshed.environment, undefined);
+      const inspected = await restored.manage({ action: 'inspect_environment', registrationId: started.registrationId });
+      assert.strictEqual(inspected.environment.detected[0].deliveryModes[0].reason, 'DUMATE_BACKEND_UNAVAILABLE');
+      assert.match(inspected.environment.detected[0].deliveryModes[0].description, /后台尚未就绪/);
     } finally {
       db.close();
     }

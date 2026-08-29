@@ -194,6 +194,7 @@ class MessageHandler extends EventEmitter {
     this.inboundTurns = new InboundTurnCoalescer({
       scopeKey: (payload) => this._turnScopeKey(payload),
       flush: (batch) => this._dispatchInboundTurn(batch),
+      quietWindowMs: options.inboundTurnQuietWindowMs,
     });
 
     // 预填充大小写映射（OpenClaw WS）
@@ -1465,6 +1466,8 @@ class MessageHandler extends EventEmitter {
   async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
     const status = String(data.status || '');
     if (status === 'completed' || !data.agentId || !data.visitorId) return;
+    const recipientUid = data.senderUid || data.visitorId;
+    if (data.a2aManaged || this.dispatcher?.isAgentImUid?.(recipientUid) === true) return;
     const messages: Record<string, string> = {
       processing: 'Agent 正在处理…',
       login_expired: 'Agent 登录已失效，暂时无法回复',

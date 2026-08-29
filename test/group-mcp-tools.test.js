@@ -337,10 +337,10 @@ await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () 
     const peerMessage = r.messages.find(m => m.id === 'm-fetch-room1');
     assert.strictEqual(peerMessage.sourceType, 'agent_peer');
     assert.strictEqual(peerMessage.trustLevel, 'untrusted_peer');
-    // pull 路径应剥离 dispatcher 注入的 [VOKO A2A CONTROL] 协议包装，只暴露对端可见正文
+    // A2A 控制信息通过结构化字段传递，不应污染 Pull 返回的原始正文。
     assert.strictEqual(peerMessage.content, '同群另一 Agent 消息', 'agent_peer 消息应剥离 A2A 控制块，只留正文');
-    assert.strictEqual(peerMessage.hasControlBlock, true, '应标记曾含控制块');
-    assert.strictEqual(peerMessage.contentStripped, true, '应标记已剥离');
+    assert.strictEqual(peerMessage.hasControlBlock, false);
+    assert.strictEqual(peerMessage.contentStripped, false);
 
     const blocked = await handlers.fetch_new_messages({ ...params, blockTimeout: 1 });
     assert.strictEqual(blocked.messages.length, 2, '阻塞轮询也应按指定群过滤');
@@ -712,7 +712,7 @@ await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 
   const { db, handlers, cleanup } = setup();
   try {
     global.__dispatcher = createDispatcher({ db, providers: {} });
-    // m2 是 visitor 群聊消息；再插一条 agent_peer 群聊消息（会被 prepareForPull 注入 CONTROL 块）
+    // m2 是 visitor 群聊消息；再插一条 agent_peer 群聊消息。
     db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
     db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run('m-peer', 'imuidB', 'room1', '对端 Agent 正文', 'room1', 2, 'agentB', Date.now() + 2, 0, 'received', 1, 2, JSON.stringify({ uids: ['imuidA'] }));
@@ -720,9 +720,9 @@ await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 
     const peer = r.messages.find(m => m.id === 'm-peer');
     assert.ok(peer, '应有 agent_peer 消息');
     assert.strictEqual(peer.sourceType, 'agent_peer');
-    assert.strictEqual(peer.content, '对端 Agent 正文', '应剥离 [VOKO A2A CONTROL] 包装，只留正文');
-    assert.strictEqual(peer.hasControlBlock, true);
-    assert.strictEqual(peer.contentStripped, true);
+    assert.strictEqual(peer.content, '对端 Agent 正文');
+    assert.strictEqual(peer.hasControlBlock, false);
+    assert.strictEqual(peer.contentStripped, false);
     // visitor 消息原样，不带控制块标记
     const visitor = r.messages.find(m => m.id === 'm2');
     assert.strictEqual(visitor.content, '群聊@消息');

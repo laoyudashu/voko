@@ -178,6 +178,8 @@ export interface DatabaseApiLike {
 }
 
 export interface MessageHandlerOptions {
+  /** Override the short inbound Turn collection window (primarily for deterministic tests). */
+  inboundTurnQuietWindowMs?: number;
   databaseAPI?: DatabaseApiLike;
   agentWorkers?: Map<string, WorkerEntryLike>;
   hermesHandler?: BackendHandlerLike;
