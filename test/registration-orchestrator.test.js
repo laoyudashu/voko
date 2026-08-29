@@ -505,6 +505,26 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('returns the compact environment when reselecting a provider', async () => {
+    const { db, service } = createService();
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      const provider = service.selectProvider(started.registrationId, { providerType: 'others' });
+      assert.strictEqual(provider.status, 'basic_info_required');
+
+      const reselected = service.reselectProvider(started.registrationId);
+
+      assert.strictEqual(reselected.status, 'provider_selection_required');
+      assert.strictEqual(reselected.provider, null);
+      assert.strictEqual(reselected.basicInfo, null);
+      assert.strictEqual(reselected.suggestedBasicInfo, null);
+      assert.ok(Array.isArray(reselected.environment.detected));
+      assert.strictEqual(reselected.environment.summary.providerCount, reselected.environment.detected.length);
+    } finally {
+      db.close();
+    }
+  });
+
   it('Agent flow returns nextAction and verifies email before basic info', async () => {
     let sendCount = 0;
     let verifyCount = 0;

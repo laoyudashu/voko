@@ -1463,7 +1463,7 @@ class RegistrationOrchestrator {
     session.deliveryModes = [];
     session.status = 'provider_selection_required';
     session.warnings = [{ code: 'BASIC_INFO_DRAFT_REPLACED', message: '重新选择类型或实例后，基本资料草稿将由新的建议替换。' }];
-    return this._save(session);
+    return this._save(session, { includeEnvironment: 'registration' });
   }
 
   selectDelivery(id, input = {}) {
