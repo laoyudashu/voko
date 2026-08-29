@@ -70,7 +70,7 @@ export function buildMergedTurn<T extends InboundTurnItem>(batch: InboundTurnBat
     return { messageId: item.messageId, content: item.content, timestamp: item.timestamp, attachmentIndexes };
   });
   if (batch.items.length === 1) return { content: batch.items[0].content, attachments, messageSegments };
-  const content = `The visitor sent ${batch.items.length} consecutive messages. Understand them as one turn:\n\n`
+  const content = `${batch.items.length} consecutive messages were received. Understand them as one turn:\n\n`
     + batch.items.map((item, index) => `[Message ${index + 1}]\n${item.content}`).join('\n\n');
   return { content, attachments, messageSegments };
 }
@@ -86,7 +86,7 @@ export class InboundTurnCoalescer<T extends InboundTurnItem, R = void> {
   private readonly prefix: string;
 
   constructor(private readonly options: InboundTurnCoalescerOptions<T, R>) {
-    this.quietWindowMs = options.quietWindowMs ?? 700;
+    this.quietWindowMs = options.quietWindowMs ?? 1200;
     this.hardWindowMs = options.hardWindowMs ?? 2000;
     this.maxMessages = options.maxMessages ?? 10;
     this.maxCharacters = options.maxCharacters ?? 20_000;

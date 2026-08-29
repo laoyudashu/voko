@@ -104,6 +104,37 @@ test('WorkBuddy preflight validates the local component without desktop login st
   assert.equal(runningResult.code, 'WORKBUDDY_COMPONENT_READY');
 });
 
+test('concurrent WorkBuddy cold starts share one startup without killing the warming service', async () => {
+  let ready = false;
+  let spawnCalls = 0;
+  const child = { exitCode: null, stderr: { resume() {} }, once() {} };
+  const provider = new WorkBuddyHttpProvider({
+    binPath: process.execPath,
+    startupTimeoutMs: 1000,
+    spawnImpl() { spawnCalls += 1; return child; },
+    async fetchImpl(url) {
+      if (!ready) throw new Error('warming');
+      if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+      if (String(url).endsWith('/api/openapi.json')) {
+        return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+      }
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+  let disposals = 0;
+  const originalDispose = provider._disposeServer.bind(provider);
+  provider._disposeServer = reason => { disposals += 1; originalDispose(reason); };
+  const first = provider.preflightDelivery('agent-1');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const second = provider.preflightDelivery('agent-1');
+  ready = true;
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(results.map(result => result.ok), [true, true]);
+  assert.equal(spawnCalls, 1);
+  assert.equal(disposals, 0);
+  await provider.stop();
+});
+
 test('WorkBuddy first text turn uses ACP and returns the native session', async () => {
   const calls = [];
   const provider = readyProvider(async (url, init = {}) => {

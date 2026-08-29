@@ -736,7 +736,10 @@ class MessageHandler extends EventEmitter {
       try {
         const parsed = JSON.parse(content);
         // 兼容 WK 嵌套格式：{contentObj:{type:1001,...}, content:{type:1001,...}}
-        const inner = parsed.contentObj || parsed.content || parsed;
+        const inner = parsed?.contentObj && typeof parsed.contentObj === 'object'
+          ? parsed.contentObj
+          : parsed?.content && typeof parsed.content === 'object'
+            ? parsed.content : parsed;
         if (inner && inner.type === 'group_invitation') {
           isInvitation = true;
           tipText = inner.content || '';

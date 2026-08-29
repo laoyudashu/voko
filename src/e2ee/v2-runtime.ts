@@ -8,6 +8,7 @@ import { decodeE2eePayload, E2EE_V2_PAYLOAD_VERSION } from './v2-payload';
 import { registerActiveOwnerInterventionContext, resolveActiveOwnerInterventionContext } from '../core/owner-intervention-active-context';
 import { InboundTurnCoalescer, buildMergedTurn, type InboundTurnBatch, type InboundTurnItem }
   from '../core/inbound-turn-coalescer';
+import { classifyProviderTurnFailure } from '../core/provider-turn-status';
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
@@ -154,11 +155,7 @@ export class E2eeV2Runtime {
         ownerInterventionCreated:interventionSignals.length?Promise.race(interventionSignals):undefined,
         onProviderAccepted:()=>{for(const item of batch.items)item.markProviderAccepted();},});
     }catch(error:any){
-      const evidence=String(error?.code||error?.message||'').toLowerCase();
-      const status=/quota|credit|额度|配额/.test(evidence)?'quota_exhausted'
-        :/login|auth|unauthorized|未登录|登录/.test(evidence)?'login_expired'
-          :/timeout|timed out|etimedout|超时/.test(evidence)?'timeout'
-            :String(error?.deliveryOutcome||'')==='outcome_unknown'?'outcome_unknown':'failed';
+      const status=classifyProviderTurnFailure(error);
       await last.emitTurnStatus?.(status,batch.turnId,String(error?.code||'E2EE_V2_PROVIDER_FAILED')).catch(()=>undefined);
       throw error;
     }
@@ -381,10 +378,13 @@ export class E2eeV2Runtime {
           content:prepared.providerContent,timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),
           attachments:prepared.attachments,scopeKey:`${scope}\0${routeScope}`,executeInput,
           emitTurnStatus:async(status,turnId,code)=>{
-            if(!this.options.deliverSecureReply)return;
+            // Chatroom status text is for humans. Returning it to an Agent peer
+            // would create a new conversational input and can cause a reply loop.
+            if(sender.peerKind!=='guest'||!this.options.deliverSecureReply)return;
             const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
               quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
-              failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认'};
+              failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认',
+              automatic_delivery_disabled:'Agent 尚未启用自动回复'};
             if(!text[status])return;
             const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
               channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),

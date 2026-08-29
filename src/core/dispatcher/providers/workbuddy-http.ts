@@ -37,9 +37,10 @@ interface Options {
   resolveAgentTarget?: typeof resolveWorkBuddyAgentTarget;
 }
 
-function deliveryError(message: string, outcome: 'not_delivered' | 'outcome_unknown' | 'rejected'): Error {
+function deliveryError(message: string, outcome: 'not_delivered' | 'outcome_unknown' | 'rejected', code?: string): Error {
   const error = new Error(message);
   (error as any).deliveryOutcome = outcome;
+  if (code) (error as any).code = code;
   return error;
 }
 
@@ -218,11 +219,14 @@ class WorkBuddyHttpProvider extends PushProvider {
   }
 
   async _ensureServer(): Promise<void> {
+    // A concurrent turn arriving during cold start must join the existing
+    // startup. Probing the half-started child first can misclassify the normal
+    // warm-up period as unhealthy and terminate the shared process.
+    if (this._serverPromise) return this._serverPromise;
     if (this._server && this._server.exitCode === null && this._port) {
       try { await this._validateRuntime(); return; } catch { this._disposeServer('unhealthy'); }
     }
     if (!this._runtime.command) throw deliveryError('WorkBuddy bundled CodeBuddy CLI is unavailable', 'not_delivered');
-    if (this._serverPromise) return this._serverPromise;
     this._serverPromise = (async () => {
       const launch = workBuddySpawnCommand(this._runtime);
       if (!launch) throw deliveryError('WorkBuddy launch command is unavailable', 'not_delivered');
@@ -492,9 +496,9 @@ class WorkBuddyHttpProvider extends PushProvider {
         }
       });
       stopReason = String(result?.stopReason || stopReason);
-      if (stopReason === 'refusal') throw deliveryError('WorkBuddy refused the resumed task', 'rejected');
-      if (stopReason === 'cancelled') throw deliveryError('WorkBuddy canceled the resumed task', 'rejected');
-      if (!reply) throw deliveryError('WorkBuddy resumed the session but returned no reply', 'outcome_unknown');
+      if (stopReason === 'refusal') throw deliveryError('WorkBuddy refused the resumed task', 'rejected', 'WORKBUDDY_TASK_REFUSED');
+      if (stopReason === 'cancelled') throw deliveryError('WorkBuddy canceled the resumed task', 'rejected', 'WORKBUDDY_TASK_CANCELLED');
+      if (!reply) throw deliveryError('WorkBuddy resumed the session but returned no reply', 'outcome_unknown', 'WORKBUDDY_EMPTY_REPLY');
       this.emit('agent.reply', { agentId: payload.agentId, visitorId: payload.fromUid, content: reply, done: true,
         sessionKey: `workbuddy:${scope.conversationId}`, turnId, replyId: turnId });
       const attachmentMode = !payload.attachments?.length ? 'none'

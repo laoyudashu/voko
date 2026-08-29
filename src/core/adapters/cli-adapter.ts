@@ -422,6 +422,11 @@ class CliAdapter extends PushProvider {
         const cliFailureDetail = `${result.stdout || ''}\n${result.stderr || ''}`;
         error = new Error(`${this._name} 退出 code=${exitCode}`);
         (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
+        (error as any).code = /quota|credit|额度|配额/i.test(cliFailureDetail)
+          ? 'PROVIDER_QUOTA_EXHAUSTED'
+          : /login|auth|unauthorized|未登录|登录/i.test(cliFailureDetail)
+            ? 'PROVIDER_AUTH_REQUIRED' : 'PROVIDER_CLI_EXIT';
+        (error as any).exitCode = exitCode;
         if ((error as any).deliveryOutcome === 'not_delivered' && isCliConfigurationUnavailable(cliFailureDetail)) {
           this._available = false;
           this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId,

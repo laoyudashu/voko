@@ -15,6 +15,7 @@
  */
 import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
+import { classifyProviderTurnFailure } from '../provider-turn-status';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -1230,11 +1231,7 @@ ${body}
       console.log(`[ProviderTurn] turn=${statusContext.turnId || '-'} agent=${agentId} messages=${payload.sourceMessageIds?.length || 1} `+
         `attachments=${payload.attachments?.length || 0} provider=${result?.providerId || 'none'} durationMs=${Date.now()-startedAt} outcome=${result?.outcome || 'unknown'}`);
       if (result?.outcome === 'delivered') return;
-      const evidence = `${result?.errorCode || ''} ${result?.error || ''}`.toLowerCase();
-      const status = /quota|credit|额度|配额/.test(evidence) ? 'quota_exhausted'
-        : /login|auth|unauthorized|未登录|登录/.test(evidence) ? 'login_expired'
-          : /timeout|timed out|etimedout|超时/.test(evidence) ? 'timeout'
-            : result?.outcome === 'outcome_unknown' ? 'outcome_unknown' : 'failed';
+      const status = classifyProviderTurnFailure(result);
       onTurnStatus?.({ ...statusContext, status, code: result?.errorCode || 'PROVIDER_DELIVERY_FAILED' });
     });
   }
@@ -1308,7 +1305,7 @@ ${body}
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
-      return;
+      return { outcome: 'not_delivered', errorCode: 'AUTOMATIC_DELIVERY_DISABLED' };
     }
     try {
       const routedPayload = payload.channelType === 2

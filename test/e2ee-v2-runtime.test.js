@@ -48,7 +48,7 @@ test('directory client does not mutate a native DOMException timeout',async()=>{
 });
 
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
+  deliverSecureReply,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -87,6 +87,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   const persisted={inbound:[],outbound:[],delivered:[]};
   const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],keySyncRetryDelayMs:0,
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);dispatcherInputs.push(input);
+      if(providerError)throw providerError;
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
@@ -169,6 +170,22 @@ test('business-policy interception completes the receipt without executing Provi
     assert.deepEqual(result,{handled:true,accepted:true,code:'inbound_intercepted'});
     assert.equal(f.store.receipt('message-intercepted').state,'completed');
     assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('pull-only delivery emits an explicit automatic-delivery-disabled terminal state',async()=>{
+  const statuses=[];
+  const providerError=Object.assign(new Error('automatic delivery disabled'),{
+    code:'AUTOMATIC_DELIVERY_DISABLED',deliveryOutcome:'not_delivered'});
+  const f=fixture({providerError,async deliverSecureReply(input){statuses.push(input);return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('message-pull-only','please reply');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,false);
+    assert.equal(result.code,'AUTOMATIC_DELIVERY_DISABLED');
+    assert.deepEqual(statuses.map(item=>item.turnStatus),['processing','automatic_delivery_disabled']);
+    assert.equal(statuses.at(-1).content,'Agent 尚未启用自动回复');
   }finally{f.close();}
 });
 
@@ -401,17 +418,36 @@ test('duplicate Provider accepted callbacks remain idempotent',async()=>{
 });
 
 test('Agent peer secure reply keeps projection and receipt identifiers separate',async()=>{
-  let replyInput=null;
-  const f=fixture({peerKind:'agent',async deliverSecureReply(input){replyInput=input;
+  const replyInputs=[];
+  const f=fixture({peerKind:'agent',async deliverSecureReply(input){replyInputs.push(input);
     return{success:true,deliveryState:'delivered'};}});
   try{
     const envelope=await f.createEnvelope('agent-business-id','reply routing');
     const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
       channelType:1,contentType:13,ack(){}});
     assert.equal(result.accepted,true);
+    assert.equal(replyInputs.length,1);
+    const replyInput=replyInputs[0];
+    assert.equal(replyInput.turnStatus,undefined);
     assert.match(replyInput.sourceMessageId,/^e2ee-peer-/);
     assert.equal(replyInput.sourceReceiptMessageId,'agent-business-id');
     assert.equal(replyInput.protocolConversationId,'conversation-1');
+  }finally{f.close();}
+});
+
+test('Agent peer Provider failures do not become human status messages',async()=>{
+  const replyInputs=[];
+  const providerError=Object.assign(new Error('login required'),{
+    code:'PROVIDER_AUTH_REQUIRED',deliveryOutcome:'not_delivered'});
+  const f=fixture({peerKind:'agent',providerError,async deliverSecureReply(input){replyInputs.push(input);
+    return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('agent-provider-failure','do work');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,false);
+    assert.equal(result.code,'PROVIDER_AUTH_REQUIRED');
+    assert.deepEqual(replyInputs,[]);
   }finally{f.close();}
 });
 

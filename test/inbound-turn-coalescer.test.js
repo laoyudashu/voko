@@ -7,6 +7,21 @@ function item(messageId, content, scope = 'scope-1', attachments = []) {
   return { messageId, content, scope, timestamp: Date.now(), attachments };
 }
 
+test('default quiet window keeps network-serialized visitor messages in one turn', async () => {
+  const flushed = [];
+  const coalescer = new InboundTurnCoalescer({
+    scopeKey: value => value.scope,
+    hardWindowMs: 2000,
+    flush: batch => { flushed.push(batch); },
+  });
+  const first = coalescer.enqueue(item('m1', 'first'));
+  await new Promise(resolve => setTimeout(resolve, 900));
+  const second = coalescer.enqueue(item('m2', 'second'));
+  await Promise.all([first, second]);
+  assert.equal(flushed.length, 1);
+  assert.deepEqual(flushed[0].sourceMessageIds, ['m1', 'm2']);
+});
+
 test('coalesces consecutive messages in one scope into one provider turn', async () => {
   const flushed = [];
   const coalescer = new InboundTurnCoalescer({
@@ -22,6 +37,8 @@ test('coalesces consecutive messages in one scope into one provider turn', async
   ]);
   assert.equal(flushed.length, 1);
   assert.deepEqual(flushed[0].sourceMessageIds, ['m1', 'm2', 'm3']);
+  assert.match(results[0].result.content, /^3 consecutive messages were received\./);
+  assert.doesNotMatch(results[0].result.content, /visitor/i);
   assert.match(results[0].result.content, /\[Message 1\]\nfirst/);
   assert.match(results[0].result.content, /\[Message 3\]\nthird/);
   assert.deepEqual(results.map(result => result.isReplyOwner), [false, false, true]);
