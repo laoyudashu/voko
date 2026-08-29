@@ -48,7 +48,7 @@ test('directory client does not mutate a native DOMException timeout',async()=>{
 });
 
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
+  deliverSecureReply,handleTurnReceipt,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -99,6 +99,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     markOutboundDelivered(agentId,messageId){persisted.delivered.push({agentId,messageId});},
     reviewOutbound,
     deliverSecureReply,
+    handleTurnReceipt,
     async deliverRaw(_agentId,_channelId,envelope){deliveryCalls+=1;replyEnvelope=JSON.parse(envelope);
       if(failFirstDelivery&&deliveryCalls===1)return{success:false,error:'network unknown'};
       return{success:true};},
@@ -461,6 +462,27 @@ test('trusted Agent turn status is acknowledged without persistence or Provider 
       channelType:1,contentType:13,ack(){}});
     assert.deepEqual(result,{handled:true,accepted:true,code:'agent_turn_status'});
     assert.equal(f.store.receipt('agent-turn-status').state,'completed');
+    assert.equal(f.persisted.inbound.length,0);
+    assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('trusted Agent hidden turn receipt is consumed without persistence or Provider execution',async()=>{
+  const receipts=[];
+  const f=fixture({peerKind:'agent',handleTurnReceipt(agentId,peerUid,receipt){receipts.push({agentId,peerUid,receipt});return true;}});
+  try{
+    const turnReceipt={version:1,sourceMessageIds:['source-message-1'],turnId:'turn-1',sequence:1,
+      state:'WORKING',phase:'provider',occurredAt:Date.now()};
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'VOKO_TURN_RECEIPT',
+      routeContext:{protocolVersion:1,turnReceipt}});
+    const envelope=await f.createEnvelope('agent-turn-receipt',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.deepEqual(result,{handled:true,accepted:true,code:'agent_turn_receipt'});
+    assert.equal(receipts.length,1);
+    assert.equal(receipts[0].agentId,'gym');
+    assert.equal(receipts[0].peerUid,'guest-im-1');
+    assert.deepEqual(receipts[0].receipt,turnReceipt);
     assert.equal(f.persisted.inbound.length,0);
     assert.equal(f.counts().providerCalls,0);
   }finally{f.close();}

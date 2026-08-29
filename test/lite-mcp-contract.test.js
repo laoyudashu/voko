@@ -25,6 +25,9 @@ describe('Lite MCP and channel contracts', () => {
     const bindOnce = tools.find((tool) => tool.name === 'voko_bind_agent_instance_once');
     assert.deepEqual(bindOnce.inputSchema.required, ['agentId', 'backendInstanceId']);
     assert.equal(tools.some((tool) => tool.name === 'voko_prepare_identity_handshake' || tool.name === 'voko_complete_identity_handshake'), false);
+    const messageResult = tools.find((tool) => tool.name === 'voko_get_message_result');
+    assert.ok(messageResult);
+    assert.deepEqual(messageResult.inputSchema.required, ['agentId', 'messageId']);
   });
 
   it('channel registry exposes every configured channel definition', () => {

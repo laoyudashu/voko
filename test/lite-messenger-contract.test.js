@@ -750,4 +750,44 @@ describe('Lite Messenger contract smoke', () => {
       fixture.db.close();
     }
   });
+
+  it('returns hidden receipts using the sender client message id and never persists them as chat', async () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        fromUid: 'agent-peer', channelId: 'agent-peer', messageId: 'receiver-local-id',
+        clientMsgNo: 'sender-message-id', _voko: { protocolVersion: 1, turnReceiptRequest: { version: 1 } },
+      }), true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered[0][2], '');
+      assert.deepEqual(fixture.delivered[0][7]._voko.turnReceipt.sourceMessageIds, ['sender-message-id']);
+      assert.equal(fixture.delivered[0][7]._voko.turnReceipt.state, 'SUBMITTED');
+      assert.equal(fixture.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE content='' AND is_me=1").get().count, 0);
+
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'agent-peer', senderUid: 'agent-peer',
+        status: 'timeout', turnId: 'turn-1', sourceMessageIds: ['receiver-local-id'],
+      });
+      assert.equal(fixture.delivered.length, 2);
+      assert.deepEqual(fixture.delivered[1][7]._voko.turnReceipt.sourceMessageIds, ['sender-message-id']);
+      assert.equal(fixture.delivered[1][7]._voko.turnReceipt.reasonCode, 'PROVIDER_TIMEOUT');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('intercepts malformed and out-of-scope hidden receipts before persistence', () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        fromUid: 'agent-peer', channelId: 'agent-peer', messageId: 'malformed-receipt',
+        _voko: { protocolVersion: 1, turnReceipt: { version: 1, sourceMessageIds: [] } },
+      }));
+      assert.equal(fixture.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE id='malformed-receipt'").get().count, 0);
+      assert.equal(fixture.dispatched.length, 0);
+    } finally {
+      fixture.db.close();
+    }
+  });
 });

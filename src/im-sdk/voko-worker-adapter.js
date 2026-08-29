@@ -93,6 +93,10 @@ class VokoWorkerAdapter extends EventEmitter {
           ? payload._voko.conversationDisposition : undefined,
         canonicalConversationKey: typeof payload._voko.canonicalConversationKey === 'string'
           ? payload._voko.canonicalConversationKey : undefined,
+        ...(payload._voko.turnReceiptRequest?.version === 1
+          ? { turnReceiptRequest: { version: 1 } } : {}),
+        ...(payload._voko.turnReceipt?.version === 1
+          ? { turnReceipt: payload._voko.turnReceipt } : {}),
       } : null,
     };
     if (typeof message.ack === 'function') normalized.ack = message.ack;

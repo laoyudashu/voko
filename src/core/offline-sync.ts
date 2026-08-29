@@ -17,6 +17,7 @@ const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('./checkpoin
 const ENDPOINTS = require('../endpoints.json');
 import type { DatabaseLike } from '../types/database';
 import type { ForwardPayload, InboundMessage } from './messenger-types';
+import { normalizeTurnReceipt } from './outbound-message-result-store';
 
 interface AgentRow {
   agent_id: string;
@@ -63,7 +64,9 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
       content,
       type: typeof decoded?.type === 'number' ? decoded.type : undefined,
       _voko: metadata?.protocolVersion === 1
-        ? {
+        ? (() => {
+          const turnReceipt = normalizeTurnReceipt(metadata.turnReceipt);
+          return {
             protocolVersion: 1,
             ...(typeof metadata.routeId === 'string' ? { routeId: metadata.routeId } : {}),
             ...(typeof metadata.replyToRouteId === 'string' ? { replyToRouteId: metadata.replyToRouteId } : {}),
@@ -73,7 +76,10 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
               ? { conversationDisposition: metadata.conversationDisposition as 'created' | 'reused' } : {}),
             ...(typeof metadata.canonicalConversationKey === 'string'
               ? { canonicalConversationKey: metadata.canonicalConversationKey } : {}),
-          }
+            ...(metadata.turnReceiptRequest?.version === 1 ? { turnReceiptRequest: { version: 1 as const } } : {}),
+            ...(turnReceipt ? { turnReceipt } : {}),
+          };
+        })()
         : null,
     };
   } catch (_) {

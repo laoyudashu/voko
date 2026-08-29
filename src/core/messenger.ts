@@ -18,6 +18,8 @@ import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
 import type { PushPayload } from './dispatcher/types';
 import { InboundTurnCoalescer, buildMergedTurn, type InboundTurnBatch } from './inbound-turn-coalescer';
+import { OutboundMessageResultStore, normalizeTurnReceipt, type MessageExecutionPhase,
+  type MessageExecutionState } from './outbound-message-result-store';
 import type {
   AgentReplyMessage,
   AuditAction,
@@ -149,6 +151,10 @@ function serializeCapabilityResponse(content: unknown, requestId: string): strin
 class MessageHandler extends EventEmitter {
   private readonly db: DatabaseLike;
   private readonly inboundTurns: InboundTurnCoalescer<PushPayload & { messageId: string; timestamp: number }, void>;
+  private readonly outboundMessageResults: OutboundMessageResultStore;
+  private readonly receiptRequests = new Map<string, { peerUid: string }>();
+  private readonly receiptSourceAliases = new Map<string, string>();
+  private receiptSequence = 0;
 
   /**
    * @param {object} db - better-sqlite3 实例
@@ -170,6 +176,7 @@ class MessageHandler extends EventEmitter {
   constructor(db: DatabaseLike, options: MessageHandlerOptions = {}) {
     super();
     this.db = db;
+    this.outboundMessageResults = options.outboundMessageResults || new OutboundMessageResultStore();
     this.databaseAPI = options.databaseAPI;
     this.agentWorkers = options.agentWorkers;
     this.hermesHandler = options.hermesHandler || null;
@@ -238,6 +245,74 @@ class MessageHandler extends EventEmitter {
   }
 
   async flushInboundTurns(): Promise<void> { await this.inboundTurns.flushAll(); }
+
+  getOutboundMessageResults(): OutboundMessageResultStore { return this.outboundMessageResults; }
+
+  private _receiptKey(agentId: string, sourceMessageId: string): string {
+    return `${agentId}\0${sourceMessageId}`;
+  }
+
+  private _acceptTurnReceipt(agentId: string, data: InboundMessage, authenticatedAgent = false): boolean {
+    const receipt = normalizeTurnReceipt(data._voko?.turnReceipt);
+    if (!receipt) return false;
+    if ((data.channelType || 1) !== 1 || data.channelId !== data.fromUid
+        || (!authenticatedAgent && this.dispatcher?.isAgentImUid?.(data.fromUid) !== true)) return true;
+    const validIds = receipt.sourceMessageIds.filter((sourceMessageId) => {
+      try {
+        const row = this.db.prepare(`SELECT 1 AS found FROM messages
+          WHERE id=? AND agent_id=? AND to_uid=? AND channel_id=? AND channel_type=1 AND is_me=1 LIMIT 1`)
+          .get<AgentExistsRow>(sourceMessageId, agentId, data.fromUid, data.fromUid);
+        return Boolean(row?.found);
+      } catch (_) { return false; }
+    });
+    if (validIds.length !== receipt.sourceMessageIds.length) {
+      console.warn(`[TurnReceipt] rejected agent=${agentId} from=${data.fromUid} code=SOURCE_SCOPE_INVALID`);
+      return true;
+    }
+    const changed = this.outboundMessageResults.apply(agentId, data.fromUid, receipt);
+    console.log(`[TurnReceipt] accepted agent=${agentId} from=${data.fromUid} turn=${receipt.turnId} state=${receipt.state} phase=${receipt.phase} messages=${changed}`);
+    return true;
+  }
+
+  acceptAuthenticatedTurnReceipt(agentId: string, peerUid: string, receipt: unknown): boolean {
+    const normalized = normalizeTurnReceipt(receipt);
+    if (!normalized) return false;
+    return this._acceptTurnReceipt(agentId, { fromUid: peerUid, toUid: '', channelId: peerUid,
+      channelType: 1, content: '', contentType: 1, messageId: `receipt-${Date.now()}`,
+      timestamp: Math.floor(Date.now() / 1000), _voko: { protocolVersion: 1, turnReceipt: normalized } }, true);
+  }
+
+  private async _sendTurnReceipt(agentId: string, peerUid: string, sourceMessageIds: string[], turnId: string,
+    state: MessageExecutionState, phase: MessageExecutionPhase, reasonCode?: string | null,
+    replyMessageId?: string | null): Promise<void> {
+    if (!this._deliver || !sourceMessageIds.length) return;
+    const requested = [...new Set(sourceMessageIds.map((id) =>
+      this.receiptSourceAliases.get(this._receiptKey(agentId, id)) || id))]
+      .filter((id) => this.receiptRequests.get(this._receiptKey(agentId, id))?.peerUid === peerUid);
+    if (!requested.length) return;
+    const normalizedReasonCode = reasonCode
+      ? String(reasonCode).toUpperCase().replace(/[^A-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || null
+      : null;
+    const sequence = ++this.receiptSequence;
+    const receipt = { version: 1 as const, sourceMessageIds: requested.slice(0, 10), turnId,
+      sequence, state, phase, reasonCode: normalizedReasonCode, occurredAt: Date.now(),
+      replyMessageId: replyMessageId || null };
+    const result = await this._deliver(agentId, peerUid, '', 'text', 1, null,
+      `receipt-${agentId}-${sequence}-${Date.now()}`,
+      { _voko: { protocolVersion: 1, turnReceipt: receipt,
+        turnId, turnStatus: state === 'WORKING' ? 'processing'
+          : state === 'AUTH_REQUIRED' ? 'login_expired'
+            : state === 'DELIVERY_UNKNOWN' ? 'outcome_unknown'
+              : state === 'COMPLETED' ? 'completed' : 'failed',
+        ...(normalizedReasonCode ? { turnStatusCode: normalizedReasonCode } : {}) } });
+    if (result?.success === false) console.warn(`[TurnReceipt] delivery failed agent=${agentId} peer=${peerUid} turn=${turnId}`);
+    const terminal = state === 'FAILED' || state === 'AUTH_REQUIRED' || state === 'DELIVERY_UNKNOWN'
+      || (state === 'COMPLETED' && phase === 'reply');
+    if (terminal) {
+      for (const id of requested) this.receiptRequests.delete(this._receiptKey(agentId, id));
+      for (const sourceId of sourceMessageIds) this.receiptSourceAliases.delete(this._receiptKey(agentId, sourceId));
+    }
+  }
 
   _resolveInboundConversation(agentId: string, visitorId: string, channelId: string,
     channelType: number, messageId: string, metadata: InboundMessage['_voko']): string | null {
@@ -444,7 +519,20 @@ class MessageHandler extends EventEmitter {
       const prefix = [agentId, fromUid, channelType || 1, channelId || '']
         .map(value => String(value).replaceAll('\0', '')).join('\0') + '\0';
       void this.inboundTurns.flushWhere(scopeKey => scopeKey.startsWith(prefix));
+      if (data._voko?.turnReceiptRequest?.version === 1) {
+        void this._sendTurnReceipt(agentId, fromUid, [messageId], messageId,
+          'FAILED', 'receiver', reason === 'manual_mode' || reason === 'agent_unpublished'
+            ? 'AUTOMATIC_DELIVERY_DISABLED' : 'MESSAGE_NOT_DISPATCHED');
+      }
     };
+
+    if (data._voko?.turnReceipt) {
+      if (!this._acceptTurnReceipt(agentId, data)) {
+        console.warn(`[TurnReceipt] rejected agent=${agentId} from=${fromUid} code=MALFORMED_RECEIPT`);
+      }
+      data._vokoInboundIntercepted = 'agent_turn_receipt';
+      return;
+    }
 
     const reservedPrefix = reservedVisitorPrefix(fromUid);
     if (reservedPrefix) {
@@ -532,6 +620,16 @@ class MessageHandler extends EventEmitter {
       }
       console.error(`[消息存储] 失败:`, errorMessage(error));
       throw error;
+    }
+
+    if (data._voko?.turnReceiptRequest?.version === 1 && (channelType || 1) === 1
+        && channelId === fromUid && this.dispatcher?.isAgentImUid?.(fromUid) === true) {
+      const receiptSourceMessageId = String(clientMsgNo || messageId);
+      this.receiptRequests.set(this._receiptKey(agentId, receiptSourceMessageId), { peerUid: fromUid });
+      if (receiptSourceMessageId !== messageId) {
+        this.receiptSourceAliases.set(this._receiptKey(agentId, messageId), receiptSourceMessageId);
+      }
+      void this._sendTurnReceipt(agentId, fromUid, [messageId], messageId, 'SUBMITTED', 'receiver');
     }
 
     // 更新会话（未读计数 +1）
@@ -1461,13 +1559,39 @@ class MessageHandler extends EventEmitter {
     console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
       `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
+    if (fullyDelivered) {
+      const sourceMessageIds = (data.sourceMessageIds?.length ? data.sourceMessageIds
+        : data.sourceMessageId ? [data.sourceMessageId] : []);
+      void this._sendTurnReceipt(agentId, replyChannelId, sourceMessageIds,
+        String(data.turnId || data.sourceMessageId || msgId), 'COMPLETED', 'reply', null, msgId);
+    }
+
   }
 
   async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
     const status = String(data.status || '');
-    if (status === 'completed' || !data.agentId || !data.visitorId) return;
+    if (!data.agentId || !data.visitorId) return;
     const recipientUid = data.senderUid || data.visitorId;
-    if (data.a2aManaged || this.dispatcher?.isAgentImUid?.(recipientUid) === true) return;
+    const sourceMessageIds = data.sourceMessageIds?.length ? data.sourceMessageIds
+      : data.sourceMessageId ? [data.sourceMessageId] : [];
+    if (data.a2aManaged || this.dispatcher?.isAgentImUid?.(recipientUid) === true) {
+      const mapped: Record<string, { state: MessageExecutionState; phase: MessageExecutionPhase; reason?: string }> = {
+        processing: { state: 'WORKING', phase: 'provider' },
+        completed: { state: 'COMPLETED', phase: 'provider' },
+        login_expired: { state: 'AUTH_REQUIRED', phase: 'provider', reason: 'PROVIDER_AUTH_EXPIRED' },
+        quota_exhausted: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_QUOTA_EXCEEDED' },
+        timeout: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_TIMEOUT' },
+        failed: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_CALL_FAILED' },
+        outcome_unknown: { state: 'DELIVERY_UNKNOWN', phase: 'provider', reason: 'PROVIDER_OUTCOME_UNKNOWN' },
+        automatic_delivery_disabled: { state: 'FAILED', phase: 'receiver', reason: 'AUTOMATIC_DELIVERY_DISABLED' },
+      };
+      const value = mapped[status];
+      if (value) await this._sendTurnReceipt(data.agentId, recipientUid, sourceMessageIds,
+        String(data.turnId || data.sourceMessageId || ''), value.state, value.phase,
+        String(data.code || value.reason || '') || null);
+      return;
+    }
+    if (status === 'completed') return;
     const messages: Record<string, string> = {
       processing: 'Agent 正在处理…',
       login_expired: 'Agent 登录已失效，暂时无法回复',

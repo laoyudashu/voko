@@ -101,6 +101,7 @@ interface ReplyContext {
   turnId?: string;
   interventionResume?: boolean;
   sourceMessageId?: string;
+  sourceMessageIds?: string[];
   sourceRouteClaimSafe?: boolean;
   rememberedAt?: number;
   [key: string]: unknown;
@@ -1252,7 +1253,7 @@ Convergence obligations:
       ...((payload as any).remoteRouteId ? { remoteRouteId: (payload as any).remoteRouteId } : {}),
       ...((payload as any).remoteConversationKey ? { remoteConversationKey: (payload as any).remoteConversationKey } : {}) };
     const begin = () => {
-      if (!context?.a2aManaged && channelType === 1 && onTurnStatus) {
+      if (channelType === 1 && onTurnStatus) {
         return Promise.resolve(onTurnStatus({ ...statusContext, status: 'processing' }))
           .catch(() => undefined).then(() => _doRoute(agentId, payload, context));
       }
@@ -1263,7 +1264,7 @@ Convergence obligations:
     void next.finally(() => {
       if (_conversationRoutes.get(key) === next) _conversationRoutes.delete(key);
     });
-    if (!context?.a2aManaged && channelType === 1) void next.then((result: any) => {
+    if (channelType === 1) void next.then((result: any) => {
       console.log(`[ProviderTurn] turn=${statusContext.turnId || '-'} agent=${agentId} messages=${payload.sourceMessageIds?.length || 1} `+
         `attachments=${payload.attachments?.length || 0} provider=${result?.providerId || 'none'} durationMs=${Date.now()-startedAt} outcome=${result?.outcome || 'unknown'}`);
       if (result?.outcome === 'delivered') return;
@@ -1367,6 +1368,8 @@ Convergence obligations:
         agentId,
         turnId: baseProviderPayload.turnId,
         sourceMessageId: payload.messageId,
+        sourceMessageIds: payload.sourceMessageIds ? [...payload.sourceMessageIds]
+          : payload.messageId ? [payload.messageId] : [],
         channelType: payload.channelType || 1,
         channelId: payload.channelId || baseProviderPayload.fromUid,
         senderUid: payload.senderUid || payload.fromUid,

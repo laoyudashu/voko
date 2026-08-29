@@ -40,10 +40,12 @@ type RuntimeOptions={
   dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
+  handleTurnReceipt?:(agentId:string,peerUid:string,receipt:unknown)=>boolean;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
     sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string;
     completeSourceReceipt?:boolean;
-    replyToRouteId?:string;turnId?:string;turnStatus?:string;turnStatusCode?:string})=>Promise<{success?:boolean;deliveryState?:string;
+    replyToRouteId?:string;turnId?:string;turnStatus?:string;turnStatusCode?:string;
+    turnReceipt?:unknown})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
   reviewOutbound?:(input:{agentId:string;channelId:string;content:string;messageId:string})=>Promise<string>;
@@ -59,7 +61,7 @@ interface E2eeProviderTurnItem extends InboundTurnItem {
   scopeKey:string;
   executeInput:any;
   markProviderAccepted:()=>void;
-  emitTurnStatus?:(status:string,turnId:string,code?:string)=>Promise<void>;
+  emitTurnStatus?:(status:string,turnId:string,code?:string,sourceMessageIds?:string[],replyMessageId?:string)=>Promise<void>;
 }
 
 function directoryErrorDetails(error:any):string{
@@ -128,6 +130,7 @@ export class E2eeV2Runtime {
   private readonly senderCache=new Map<string,{expiresAt:number;resolved:ResolvedSender}>();
   private readonly executionTails=new Map<string,Promise<void>>();
   private readonly providerTurns:InboundTurnCoalescer<E2eeProviderTurnItem,any>;
+  private turnReceiptSequence=0;
 
   constructor(private readonly options:RuntimeOptions){
     this.options.store.closeAmbiguousExecutions();
@@ -146,17 +149,19 @@ export class E2eeV2Runtime {
     const startedAt=Date.now();
     console.log(`[E2EE][TurnCoalescer] dispatch turn=${batch.turnId} agent=${last.executeInput.agentId} `+
       `messages=${batch.items.length} attachments=${merged.attachments.length} waitMs=${startedAt-batch.firstReceivedAt}`);
-    await last.emitTurnStatus?.('processing',batch.turnId).catch(()=>undefined);
+    await last.emitTurnStatus?.('processing',batch.turnId,undefined,batch.sourceMessageIds).catch(()=>undefined);
     try{
-      return await this.options.dispatcher.executeE2ee({...last.executeInput,
+      const result=await this.options.dispatcher.executeE2ee({...last.executeInput,
         taskId:last.messageId,turnId:batch.turnId,sourceMessageIds:batch.sourceMessageIds,
         content:merged.content,attachments:merged.attachments,
         messageSegments:merged.messageSegments,
         ownerInterventionCreated:interventionSignals.length?Promise.race(interventionSignals):undefined,
         onProviderAccepted:()=>{for(const item of batch.items)item.markProviderAccepted();},});
+      await last.emitTurnStatus?.('completed',batch.turnId,undefined,batch.sourceMessageIds).catch(()=>undefined);
+      return result;
     }catch(error:any){
       const status=classifyProviderTurnFailure(error);
-      await last.emitTurnStatus?.(status,batch.turnId,String(error?.code||'E2EE_V2_PROVIDER_FAILED')).catch(()=>undefined);
+      await last.emitTurnStatus?.(status,batch.turnId,String(error?.code||'E2EE_V2_PROVIDER_FAILED'),batch.sourceMessageIds).catch(()=>undefined);
       throw error;
     }
   }
@@ -344,15 +349,18 @@ export class E2eeV2Runtime {
         }
         return{handled:true,accepted:true,code:'agent_control'};
       }
+      const trustedTurnReceipt=sender.peerKind==='agent'&&envelope.contentKind==='text'
+        &&prepared.routeContext?.turnReceipt&&this.options.handleTurnReceipt?.(
+          agent.localAgentId,envelope.channelId,prepared.routeContext.turnReceipt);
       const trustedTurnStatus=sender.peerKind==='agent'&&envelope.contentKind==='text'
         &&typeof prepared.routeContext?.turnId==='string'
         &&['processing','login_expired','quota_exhausted','timeout','failed','outcome_unknown',
           'automatic_delivery_disabled','completed'].includes(String(prepared.routeContext?.turnStatus||''));
-      if(trustedTurnStatus){
+      if(trustedTurnReceipt||trustedTurnStatus){
         if(!this.options.store.transition(envelope.messageId,['processing'],'completed')){
           throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
         }
-        return{handled:true,accepted:true,code:'agent_turn_status'};
+        return{handled:true,accepted:true,code:trustedTurnReceipt?'agent_turn_receipt':'agent_turn_status'};
       }
       const inboundRouteContext=sender.peerKind==='guest'?prepared.routeContext:undefined;
       const projected=this.options.persistInbound(agent.localAgentId,{...message,fromUid:envelope.channelId,
@@ -375,6 +383,8 @@ export class E2eeV2Runtime {
       const activeInterventionContext=resolveActiveOwnerInterventionContext(agent.localAgentId,envelope.messageId);
       let result:any;
       let isReplyOwner=false;
+      let queued:any;
+      let turnItem:E2eeProviderTurnItem|null=null;
       try{
         const executeInput={agentId:agent.localAgentId,content:prepared.providerContent,
           taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
@@ -384,13 +394,39 @@ export class E2eeV2Runtime {
         // Ratchet opening, validation, audit and persistence remain serialized. Provider waiting does not:
         // releasing here lets subsequent messages in the same secure session join this short-lived Turn.
         release();release=()=>{};
-        const queued=await this.providerTurns.enqueue({messageId:envelope.messageId,
+        turnItem={messageId:envelope.messageId,
           content:prepared.providerContent,timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),
           attachments:prepared.attachments,scopeKey:`${scope}\0${routeScope}`,executeInput,
-          emitTurnStatus:async(status,turnId,code)=>{
+          emitTurnStatus:async(status,turnId,code,sourceMessageIds=[envelope.messageId],replyMessageId)=>{
             // Chatroom status text is for humans. Returning it to an Agent peer
             // would create a new conversational input and can cause a reply loop.
-            if(sender.peerKind!=='guest'||!this.options.deliverSecureReply)return;
+            if(!this.options.deliverSecureReply)return;
+            if(sender.peerKind==='agent'&&(prepared.routeContext?.turnReceiptRequest as any)?.version===1){
+              const mapped:Record<string,{state:string;phase:string;reasonCode?:string}>={
+                submitted:{state:'SUBMITTED',phase:'receiver'},
+                processing:{state:'WORKING',phase:'provider'},
+                login_expired:{state:'AUTH_REQUIRED',phase:'provider',reasonCode:'PROVIDER_AUTH_EXPIRED'},
+                quota_exhausted:{state:'FAILED',phase:'provider',reasonCode:'PROVIDER_QUOTA_EXCEEDED'},
+                timeout:{state:'FAILED',phase:'provider',reasonCode:'PROVIDER_TIMEOUT'},
+                failed:{state:'FAILED',phase:'provider',reasonCode:'PROVIDER_CALL_FAILED'},
+                outcome_unknown:{state:'DELIVERY_UNKNOWN',phase:'provider',reasonCode:'PROVIDER_OUTCOME_UNKNOWN'},
+                automatic_delivery_disabled:{state:'FAILED',phase:'receiver',reasonCode:'AUTOMATIC_DELIVERY_DISABLED'},
+                completed:{state:'COMPLETED',phase:'provider'},
+                reply_delivered:{state:'COMPLETED',phase:'reply'},
+              };
+              const value=mapped[status];if(!value)return;
+              const receipt={version:1,sourceMessageIds:sourceMessageIds.slice(0,10),turnId,
+                sequence:++this.turnReceiptSequence,state:value.state,phase:value.phase,
+                reasonCode:code||value.reasonCode||null,occurredAt:Date.now(),replyMessageId:replyMessageId||null};
+              const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
+                channelId:envelope.channelId,content:'VOKO_TURN_RECEIPT',messageId:turnStatusMessageId(envelope,turnId,status),
+                sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
+                completeSourceReceipt:false,protocolConversationId:envelope.conversationId,
+                turnId,turnStatus:status,turnStatusCode:code,turnReceipt:receipt});
+              if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
+              return;
+            }
+            if(sender.peerKind!=='guest')return;
             const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
               quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
               failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认',
@@ -412,7 +448,9 @@ export class E2eeV2Runtime {
               }
               throw new Error('E2EE_V2_PROVIDER_STATE_CONFLICT');
             }
-            providerAccepted=true;},});
+            providerAccepted=true;},};
+        await turnItem.emitTurnStatus?.('submitted',envelope.messageId,undefined,[envelope.messageId]).catch(()=>undefined);
+        queued=await this.providerTurns.enqueue(turnItem);
         result=queued.result;
         isReplyOwner=queued.isReplyOwner;
       }finally{releaseInterventionContext();}
@@ -457,6 +495,8 @@ export class E2eeV2Runtime {
         console.log(`[E2EE] Agent回复${delivered?.deliveryState==='delivered'?'已送达':'已进入可靠投递队列'} `+
           `agent=${agent.localAgentId} peer=${sender.peerKind} `+
           `message=${replyMessageId.slice(0,12)} conversation=${envelope.conversationId.slice(0,12)}`);
+        if(delivered?.deliveryState==='delivered')await turnItem?.emitTurnStatus?.('reply_delivered',
+          queued.batch.turnId,undefined,queued.batch.sourceMessageIds,replyMessageId).catch(()=>undefined);
         return{handled:true,accepted:true,code:delivered?.deliveryState==='delivered'?undefined:'delivery_pending'};
       }
       const key=this.options.store.key(agent.localAgentId)!;

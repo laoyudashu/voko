@@ -21,6 +21,7 @@ const { createDispatcher } = require('../build/core/dispatcher');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
+const { OutboundMessageResultStore } = require('../build/core/outbound-message-result-store');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -93,6 +94,7 @@ function setup(options = {}) {
     wukongim: {
       getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
     },
+    outboundMessageResults: new OutboundMessageResultStore(),
   };
   const handlers = createToolHandlers(cx);
 
@@ -131,6 +133,21 @@ await test('send_message 省略 channelType 时按群频道 ID 自动识别', as
     const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '省略类型的群消息' });
     assert.strictEqual(r.success, true);
     assert.strictEqual(sentMessages[0].channelType, 2);
+  } finally { cleanup(); }
+});
+await test('send_message requests an in-memory result receipt and exposes it through get_message_result', async () => {
+  const { db, handlers, sentMessages, cleanup } = setup();
+  try {
+    const result = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'track me', channelType: 1 });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.resultTracking.tool, 'get_message_result');
+    assert.deepStrictEqual(sentMessages[0].mentions, null);
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(result.resultTracking.messageId, 'imuidA', 'imuidB', 'track me', 'imuidB', 1, 'agentA', Date.now(), 1, 'sent', 1);
+    const status = await handlers.get_message_result({ agentId: 'agentA', messageId: result.resultTracking.messageId });
+    assert.strictEqual(status.transport.state, 'DELIVERED');
+    assert.strictEqual(status.execution.state, 'UNCONFIRMED');
+    assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
   } finally { cleanup(); }
 });
 await test('Web 新对话只在首条发送时创建，并保留来源 Conversation', async () => {

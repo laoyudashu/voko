@@ -67,6 +67,7 @@ function _hasControlBlock(content: string): boolean {
   return /\[STATE\]|\[\/STATE\]|\[FINAL\]|\[\/FINAL\]|\[VOKO A2A CONTROL\]/i.test(content);
 }
 import type { DatabaseLike } from '../types/database';
+import type { OutboundMessageResultStore } from '../core/outbound-message-result-store';
 
 // tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
 // 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
@@ -318,6 +319,7 @@ type McpContext = Omit<LiteContext,
     complete(agentId: string, messageId: string, claimId: string, content?: string): DynamicRow;
     fail(agentId: string, messageId: string, claimId: string, errorCode?: string): DynamicRow;
   };
+  outboundMessageResults?: OutboundMessageResultStore;
   wukongim?: {
     getCurrentUid?(agentId?: string): string;
   };
@@ -1984,9 +1986,12 @@ function createToolHandlers(cx: McpContext) {
       const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
         ...(replyToRouteId ? { replyToRouteId } : {}),
         ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
-        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) },
+        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}),
+        ...(channelType === 1 ? { turnReceiptRequest: { version: 1 } } : {}) },
         ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
-        (p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : undefined);
+        { _voko: { protocolVersion: 1, ...(channelType === 1 ? { turnReceiptRequest: { version: 1 } } : {}) },
+          ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) };
+      if (channelType === 1) cx.outboundMessageResults?.register(String(p.agentId), outboundMessageId, String(p.toUid));
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         routeMetadata,
@@ -2038,7 +2043,29 @@ function createToolHandlers(cx: McpContext) {
       result.recipientDelivery = result.messageAccepted
         ? { status: result?.connected === false ? 'queued' : 'accepted', message: result?.connected === false ? '发送成功，等待对方上线' : '消息已接受' }
         : { status: 'failed' };
+      result.resultTracking = { requested: channelType === 1, mode: 'memory_query',
+        tool: 'get_message_result', messageId: outboundMessageId };
       return result;
+    },
+
+    async get_message_result(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
+      if (!p.agentId || !p.messageId) return { success: false, code: 'MESSAGE_RESULT_INPUT_REQUIRED', error: 'agentId and messageId are required' };
+      const message = cx.query<{ id: string; to_uid: string; status: string; is_me: number }>(
+        'SELECT id,to_uid,status,is_me FROM messages WHERE id=? AND agent_id=? LIMIT 1', [p.messageId, p.agentId],
+      )[0];
+      if (!message || Number(message.is_me) !== 1) return { success: false, code: 'MESSAGE_RESULT_NOT_FOUND', error: 'Message not found' };
+      const tracked = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
+      const transportState = message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
+      return { success: true, messageId: message.id, transport: { state: transportState },
+        execution: tracked ? { confirmed: tracked.state !== 'UNCONFIRMED', state: tracked.state,
+          phase: tracked.phase, turnId: tracked.turnId, reasonCode: tracked.reasonCode }
+          : { confirmed: false, state: 'UNCONFIRMED', phase: null, turnId: null,
+            reasonCode: 'RUNTIME_STATE_NOT_AVAILABLE' },
+        reply: tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
+          : { state: 'PENDING', messageId: null },
+        updatedAt: tracked?.updatedAt || null };
     },
 
     // ─── 9. 聊天历史 ───

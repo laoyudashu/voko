@@ -2083,15 +2083,18 @@ async function startMcpServer(args?: any, core?: any) {
           if(!messageHandler)throw new Error('E2EE_V2_MESSAGE_HANDLER_UNAVAILABLE');
           return messageHandler.persistE2eeAgentReply(agentId,channelId,plaintext,messageId,sourceMessageId);
         },
+        handleTurnReceipt:(agentId:string,peerUid:string,receipt:unknown)=>
+          Boolean(messageHandler?.acceptAuthenticatedTurnReceipt(agentId,peerUid,receipt)),
         deliverSecureReply:async(input:any)=>{
           if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
-          const persisted=messageHandler.persistE2eeAgentReply(input.agentId,input.channelId,input.content,
-            input.messageId,input.sourceMessageId);
+          const persisted=input.turnReceipt?{routeMetadata:null}:messageHandler.persistE2eeAgentReply(
+            input.agentId,input.channelId,input.content,input.messageId,input.sourceMessageId);
           const statusMetadata=input.turnStatus?{turnId:input.turnId,turnStatus:input.turnStatus,
             ...(input.turnStatusCode?{turnStatusCode:input.turnStatusCode}:{})}:{};
-          const routeMetadata=input.replyToRouteId||input.turnStatus
+          const routeMetadata=input.replyToRouteId||input.turnStatus||input.turnReceipt
             ?{_voko:{protocolVersion:1,...(persisted.routeMetadata?._voko||{}),
-              ...(input.replyToRouteId?{replyToRouteId:input.replyToRouteId}:{}),...statusMetadata}}
+              ...(input.replyToRouteId?{replyToRouteId:input.replyToRouteId}:{}),...statusMetadata,
+              ...(input.turnReceipt?{turnReceipt:input.turnReceipt}:{})}}
             :persisted.routeMetadata;
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,
             input.messageId,routeMetadata,{sourceReceiptMessageId:input.sourceReceiptMessageId,
@@ -2426,6 +2429,7 @@ async function startMcpServer(args?: any, core?: any) {
   (cx as any).secureOutboundRouter = secureOutboundRouter;
   (cx as any).a2aMailboxClient = a2aMailboxClient;
   (cx as any).ownerPullService = ownerPullService;
+  (cx as any).outboundMessageResults = messageHandler?.getOutboundMessageResults?.();
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,
