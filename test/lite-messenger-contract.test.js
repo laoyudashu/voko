@@ -143,14 +143,9 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('keeps an E2EE Agent peer out of foreign local Route Context and ordinary Provider dispatch', () => {
+  it('projects a verified remote E2EE Agent peer without requiring a local Agent registration', () => {
     const fixture = createFixture();
     try {
-      const now = Date.now();
-      fixture.db.prepare(`INSERT INTO agents
-        (id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,backend_type,agent_name,created_at,updated_at)
-        VALUES (?,?,?,?,?,'published','public','goose',?,?,?)`)
-        .run('peer-row','peer-agent','peer-agent-uid','token','ws://fake','Peer Agent',now,now);
       const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
         agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
         nativeSessionId: 'ordinary-native-session', channelId: 'peer-agent-uid', channelType: 1,

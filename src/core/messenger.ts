@@ -343,9 +343,11 @@ class MessageHandler extends EventEmitter {
   _resolveE2eeAgentPeerConversation(agentId: string, peerUid: string, channelId: string,
     messageId: string, protocolConversationId: string): string | null {
     try {
-      const peer = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
-        .get<AgentExistsRow>(peerUid);
-      if (!peer || peerUid !== channelId) return null;
+      // e2eeAgentPeer is set only after Directory sender resolution and
+      // envelope verification. A remote Agent is not expected to exist in
+      // this runtime's local agents table; requiring that made every
+      // cross-owner/cross-runtime encrypted conversation fail projection.
+      if (peerUid !== channelId) return null;
       const conversation = this._routingConversations.resolveE2eeAgentPeerMirror(
         agentId, channelId, protocolConversationId,
       );
