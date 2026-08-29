@@ -206,6 +206,72 @@ test('background refresh reactivates historical transient locks after Directory 
   }finally{f.close();}
 });
 
+test('a historical Directory 404 lock reactivates only after identity revalidation',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','after 404 recovery','text',1,null,'business-404-revalidated');
+    assert.equal(result.success,true);
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
+test('background refresh retries a persisted Directory 404 lock',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
+    assert.deepEqual(f.store.transientLockedConversations().map(row=>row.lock_reason),
+      ['E2EE_V2_DIRECTORY_HTTP_404']);
+    await f.router.refreshActive();
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('a Directory 404 lock never downgrades while Directory still returns 404',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','must remain encrypted or blocked','text',1,null,
+      'business-404-still-missing');
+    assert.equal(result.success,false);
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(result.error,'E2EE_V2_DIRECTORY_HTTP_404');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'locked');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
+test('a Directory 404 lock becomes permanent when peer identity changes',async()=>{
+  const f=fixture({peerScopeId:'replacement-peer-scope'});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'original-peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','must remain blocked','text',1,null,
+      'business-404-identity-changed');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    const conversation=f.store.conversation('gym','guest-im','routing-1');
+    assert.equal(conversation.mode,'locked');
+    assert.equal(conversation.lock_reason,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
 test('a transient lock becomes permanent when Directory reports a different peer identity',async()=>{
   const f=fixture({peerScopeId:'replacement-peer-scope'});
   try{

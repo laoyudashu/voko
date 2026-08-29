@@ -288,12 +288,12 @@ export class SecureOutboundRouter {
       const reason=existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED';
       const identityMatches=existing.peer_scope_id===resolved.peerScopeId&&existing.peer_kind===resolved.peerKind
         &&existing.protocol_conversation_id===String(resolved.protocolConversationId);
-      if(!isTransientE2eeDirectoryError(reason)||!identityMatches
+      if(!isRecoverableDirectoryLockReason(reason)||!identityMatches
           ||!this.options.store.reactivateConversation({localAgentId:agentId,channelId,
             routingConversationId:existing.routing_conversation_id,expectedLockReason:reason,
             protocolConversationId:String(resolved.protocolConversationId),peerScopeId:resolved.peerScopeId,
             peerKind:resolved.peerKind,recipientRevision:resolved.revision})){
-        if(isTransientE2eeDirectoryError(reason)&&!identityMatches)this.options.store.lockConversation(agentId,channelId,
+        if(isRecoverableDirectoryLockReason(reason)&&!identityMatches)this.options.store.lockConversation(agentId,channelId,
           existing.routing_conversation_id,'E2EE_V2_PEER_IDENTITY_CHANGED');
         return{mode:'blocked',error:identityMatches?reason:'E2EE_V2_PEER_IDENTITY_CHANGED',
           securityMode:'e2ee',reason:'active_conversation_locked'};
@@ -566,3 +566,8 @@ export class SecureOutboundRouter {
 }
 
 module.exports={SecureOutboundRouter};
+function isRecoverableDirectoryLockReason(value: unknown): boolean {
+  const row=value as any;
+  const code=String(row?.code||row?.message||value||'');
+  return code==='E2EE_V2_DIRECTORY_HTTP_404'||isTransientE2eeDirectoryError(value);
+}

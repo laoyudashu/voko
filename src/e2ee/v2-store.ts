@@ -376,7 +376,8 @@ export class E2eeV2Store {
     return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='locked' AND (
       lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
         'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
-        'E2EE_V2_DIRECTORY_HTTP_429') OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
+        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404')
+        OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
       ORDER BY updated_at ASC LIMIT ?`).all(limit) as E2eeV2ConversationRow[];
   }
 
