@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { readBuildManifest } = require('./build-digest');
 
 export interface ProcessIdentity {
   pid: number;
@@ -27,7 +28,7 @@ export interface InstanceMetadata extends ProcessIdentity {
   mcpToken: string;
   dbPath: string;
   entryPath: string;
-  /** SHA-256 of the entry file captured when this runtime acquired the lock. */
+  /** SHA-256 build identity captured when this runtime acquired the lock. */
   buildDigest?: string | null;
   port: number | null;
   createdAt: number;
@@ -352,7 +353,11 @@ function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetad
 
 export function computeBuildDigest(entryPath: string): string | null {
   try {
-    return crypto.createHash('sha256').update(fs.readFileSync(normalizePath(entryPath))).digest('hex');
+    const normalizedEntry = normalizePath(entryPath);
+    const manifest = readBuildManifest(path.dirname(normalizedEntry));
+    if (manifest.state === 'valid') return manifest.digest;
+    if (manifest.state === 'invalid') return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(normalizedEntry)).digest('hex');
   } catch {
     return null;
   }
