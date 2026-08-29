@@ -52,6 +52,12 @@ test('runtime reads valid manifest, rejects invalid manifest, and falls back onl
   assert.match(legacy, /^[a-f0-9]{64}$/);
   const manifest = writeBuildManifest(directory, { packageName: '@voko/lite', packageVersion: '0.5.0' });
   assert.equal(lifecycle.computeBuildDigest(entryPath), manifest.digest);
+  if (process.platform !== 'win32') {
+    const linkedEntry = path.join(directory, '..', `${path.basename(directory)}-voko`);
+    fs.symlinkSync(entryPath, linkedEntry);
+    t.after(() => fs.rmSync(linkedEntry, { force: true }));
+    assert.equal(lifecycle.computeBuildDigest(linkedEntry), manifest.digest);
+  }
   fs.writeFileSync(path.join(directory, BUILD_MANIFEST), '{"formatVersion":999}\n');
   assert.equal(lifecycle.computeBuildDigest(entryPath), null);
 });

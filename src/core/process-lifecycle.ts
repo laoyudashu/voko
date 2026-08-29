@@ -354,10 +354,11 @@ function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetad
 export function computeBuildDigest(entryPath: string): string | null {
   try {
     const normalizedEntry = normalizePath(entryPath);
-    const manifest = readBuildManifest(path.dirname(normalizedEntry));
+    const resolvedEntry = fs.realpathSync.native(normalizedEntry);
+    const manifest = readBuildManifest(path.dirname(resolvedEntry));
     if (manifest.state === 'valid') return manifest.digest;
     if (manifest.state === 'invalid') return null;
-    return crypto.createHash('sha256').update(fs.readFileSync(normalizedEntry)).digest('hex');
+    return crypto.createHash('sha256').update(fs.readFileSync(resolvedEntry)).digest('hex');
   } catch {
     return null;
   }
