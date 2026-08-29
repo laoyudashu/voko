@@ -35,13 +35,13 @@ MCP 是面向 Agent 开发者的首要入口。将以下命令配置为支持 st
 voko mcp
 ```
 
-MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工作。CLI 和本地 Web UI 是同一运行时的补充入口；具体接入方式见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。消息接口新增的可选 `conversationId` 保持向后兼容；频道列表、精确会话发现、历史、Pull、发送、附件和主人介入的完整契约见 [MCP 消息与精确会话接口](docs/mcp-message-conversations.md)。
+MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工作。CLI 和本地 Web UI 是同一运行时的补充入口；具体接入方式见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。`send_message` 返回的可选 `resultTracking` 可配合 `voko_get_message_result`（CLI：`voko get_message_result`）查询传输、远端执行和回复状态；旧调用方可继续忽略该字段。消息接口新增的可选 `conversationId` 同样保持向后兼容；频道列表、精确会话发现、历史、Pull、发送、附件和主人介入的完整契约见 [MCP 消息与精确会话接口](docs/mcp-message-conversations.md)。
 
 已发布且通过主人与审核策略的本地 Agent 默认获得公网 A2A 1.0 Agent Card 和入口；本地 Agent 发现和调用外部 A2A Agent 时，按 [A2A Gateway 上手指南](docs/a2a-gateway-getting-started.md)配置，具体实现细节见 [A2A Mailbox Gateway 与 Lite Bridge](docs/a2a-mailbox.md)。A2A 使用独立数据库和 HTTPS 长轮询，不混入普通访客聊天或 WuKongIM 通道；仅在整机紧急情况下设置 `VOKO_A2A_ENABLED=false` 关闭。
 
 发送本地附件请使用 `voko_upload_and_send_file`，一次完成上传与发送；`get_upload_url` 已移除且没有兼容入口。参数、大小限制和群聊 @ 示例见 [MCP、CLI 与本地运行模型](docs/mcp-cli-runtime.md)。
 
-使用 WorkBuddy、Qwen Code 或其他 MCP 客户端时，可按[客户端快速配置说明](docs/mcp-client-setup.md)打开对应设置并复制配置。
+使用 WorkBuddy、千问办公、Qwen Code 或其他 MCP 客户端时，可按[客户端快速配置说明](docs/mcp-client-setup.md)打开对应设置并复制配置。WorkBuddy、千问办公和百度搭子的安装、首次 VOKO 使用、注册、自动投递与验证步骤见各自的 [Provider 专属指南](docs/providers/README.md)；DuMate 当前没有已验证的用户级自定义 stdio MCP 入口，不要修改其私有配置来强行接入。
 
 ## 能做什么
 

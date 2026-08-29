@@ -55,9 +55,12 @@ function agentControlMetadata(value:Record<string,unknown>|undefined):Record<str
     ?value.turnStatus:undefined;
   const turnStatusCode=typeof value.turnStatusCode==='string'&&/^[A-Z0-9_:-]{1,128}$/.test(value.turnStatusCode)
     ?value.turnStatusCode:undefined;
-  if(!request&&!receipt&&!turnStatus)return undefined;
+  const a2aDisposition=['new_topic','automatic_reply','explicit_reply'].includes(String(value.a2aDisposition))
+    ?String(value.a2aDisposition):undefined;
+  if(!request&&!receipt&&!turnStatus&&!a2aDisposition)return undefined;
   return{protocolVersion:1,...(request?{turnReceiptRequest:request}:{}),...(receipt?{turnReceipt:receipt}:{}),
-    ...(turnId?{turnId}:{}),...(turnStatus?{turnStatus}:{}),...(turnStatusCode?{turnStatusCode}:{})};
+    ...(turnId?{turnId}:{}),...(turnStatus?{turnStatus}:{}),...(turnStatusCode?{turnStatusCode}:{}),
+    ...(a2aDisposition?{a2aDisposition}:{})};
 }
 
 export class SecureOutboundRouter {

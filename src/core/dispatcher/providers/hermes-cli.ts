@@ -93,13 +93,18 @@ class HermesCliProvider extends PushProvider {
     return 'execution_failed';
   }
 
-  _enqueue(profileId: string, task: () => Promise<void>): void {
+  _enqueue(profileId: string, task: () => Promise<void>, context?: { agentId?: string; turnId?: string; sourceMessageIds?: readonly string[]; attachmentCount?: number }): void {
     const previous = this._queues.get(profileId) || Promise.resolve();
-    const current = previous.catch(() => {}).then(task).catch((error: unknown) => {
+    const current = previous.catch(() => {}).then(async () => {
+      console.error(`[HermesCli] queue_start agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId} messages=${context?.sourceMessageIds?.length || 1} attachments=${context?.attachmentCount || 0}`);
+      await task();
+      console.error(`[HermesCli] queue_finish agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId}`);
+    }).catch((error: unknown) => {
       const kind = this._failureKind(error);
       const labels = { approval_required: '等待工具授权', timeout: '执行超时', execution_failed: '执行失败' };
       console.error(`[HermesCli] ${labels[kind]} profile=${profileId}: ${errorMessage(error)}`);
-      this.emit('delivery.error', { provider: 'hermes-cli', profileId, kind, error: errorMessage(error) });
+      this.emit('delivery.error', { provider: 'hermes-cli', profileId, kind, error: errorMessage(error),
+        agentId: context?.agentId, turnId: context?.turnId, sourceMessageIds: context?.sourceMessageIds });
     }).finally(() => {
       if (this._queues.get(profileId) === current) this._queues.delete(profileId);
     });
@@ -131,7 +136,9 @@ class HermesCliProvider extends PushProvider {
       (error as any).code = 'PROVIDER_EXACT_SESSION_UNAVAILABLE';
       throw error;
     }
-    this._enqueue(profileId, () => this._runPush(payload));
+    const turnId = String(payload.turnId || payload.messageId || '');
+    this._enqueue(profileId, () => this._runPush(payload), { agentId: payload.agentId, turnId,
+      sourceMessageIds: payload.sourceMessageIds, attachmentCount: payload.attachments?.length || 0 });
     console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
     return {
       accepted: true,

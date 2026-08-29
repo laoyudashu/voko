@@ -1213,6 +1213,7 @@ class MessageHandler extends EventEmitter {
       remoteRouteId,
       remoteConversationKey,
       conversationStart: routeMetadata?.conversationStart === true,
+      a2aDisposition: routeMetadata?.a2aDisposition,
     });
   }
 
@@ -1518,12 +1519,16 @@ class MessageHandler extends EventEmitter {
         conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
         channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });
     } catch (_) {}
+    const automaticA2AReply = replyChannelType === 1
+      && (data.a2aManaged || this.dispatcher?.isAgentImUid?.(replyChannelId) === true);
     const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
       ...(replyToRouteId ? { replyToRouteId } : {}),
       ...(data.providerTurnStatus ? { turnId: data.turnId, turnStatus: data.providerTurnStatus,
         ...(data.providerTurnStatusCode ? { turnStatusCode: data.providerTurnStatusCode } : {}) } : {}),
       ...(routingConversation?.wireConversationKey ? { canonicalConversationKey: routingConversation.wireConversationKey } : {}),
-      ...(conversationDisposition ? { conversationDisposition } : {}) } } : null;
+      ...(conversationDisposition ? { conversationDisposition } : {}),
+      ...(automaticA2AReply ? { a2aDisposition: 'automatic_reply' as const } : {}) } }
+      : automaticA2AReply ? { _voko: { protocolVersion: 1, a2aDisposition: 'automatic_reply' as const } } : null;
     const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
     if ((delivery as { success?: boolean })?.success === false) {
       if (outboundRouteId && !(delivery as { outcomeUnknown?: boolean })?.outcomeUnknown) {

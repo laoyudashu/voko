@@ -4,6 +4,8 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+- Expanded the WorkBuddy, QwenWork, and DuMate guides with first-run VOKO setup, MCP direction and configuration, registration-state-machine steps, optional instance binding, readiness verification, and troubleshooting; corrected WorkBuddy's current MCP config path and DuMate's ephemeral-routing behavior.
+- Added `voko_get_message_result` and the matching `voko get_message_result` CLI command for querying transport, remote execution, and reply state after `send_message`, with explicit in-memory lifetime and backward-compatible optional response metadata.
 - Reworked Agent registration into a Provider-first flow with per-framework instance naming, type-scoped lazy discovery, editable profile suggestions, complete profile synchronization, required-category inference, and a default robot avatar in the Web UI.
 - Added selected-instance metadata suggestions for OpenClaw identities and Claude Code, GitHub Copilot, and OpenCode Agent frontmatter while keeping prompt bodies, local paths, and template placeholders private.
 - Added DuMate Plugin Pack discovery and exact loopback HTTP routing with Plugin Part and native-session validation, plus DeepSeek Harness Web Host/Profile CLI routing and Qwen Office Expert Kit discovery.

@@ -1990,9 +1990,11 @@ function createToolHandlers(cx: McpContext) {
         ...(replyToRouteId ? { replyToRouteId } : {}),
         ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
         ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}),
-        ...(channelType === 1 ? { turnReceiptRequest: { version: 1 } } : {}) },
+        ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
+          a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
         ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
-        { _voko: { protocolVersion: 1, ...(channelType === 1 ? { turnReceiptRequest: { version: 1 } } : {}) },
+        { _voko: { protocolVersion: 1, ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
+          a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
           ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) };
       if (channelType === 1) cx.outboundMessageResults?.register(String(p.agentId), outboundMessageId, String(p.toUid));
       const result = await cx.sendMessage(

@@ -469,6 +469,37 @@ test('outcome_unknown is not retried through another provider', async () => {
   assert.deepEqual(calls, ['websocket']);
 });
 
+test('A2A convergence blocks automatic replies but a new topic remains deliverable', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'openclaw-cli': provider('cli', 1, calls) } });
+  dispatcher.markConverged('agent-uid', 'peer-agent', 'direct');
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-agent', senderUid: 'peer-agent',
+    channelId: 'peer-agent', channelType: 1, content: 'automatic', messageId: 'auto-1', a2aDisposition: 'automatic_reply' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, []);
+  dispatcher.markConverged('agent-uid', 'peer-agent', 'direct');
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-agent', senderUid: 'peer-agent',
+    channelId: 'peer-agent', channelType: 1, content: 'new topic', messageId: 'topic-1', a2aDisposition: 'new_topic' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['cli']);
+});
+
+test('background delivery error closes the exact ordinary Turn with a terminal status', async () => {
+  const statuses = [];
+  const target = eventProvider('cli', 1, [], true);
+  target.push = async payload => {
+    setTimeout(() => target.emit('delivery.error', { agentId: payload.agentId, turnId: payload.turnId || payload.messageId,
+      error: 'execution failed', errorCode: 'PROVIDER_EXECUTION_FAILED' }), 5);
+  };
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'openclaw-cli': target },
+    onAgentReply() {}, onTurnStatus: status => statuses.push(status) });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
+    content: 'hello', messageId: 'message-error', turnId: 'turn-error' });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(statuses.map(status => status.status), ['processing', 'failed']);
+  assert.equal(statuses[1].turnId, 'turn-error');
+});
+
 test('rejected delivery is not retried even when the provider marks the channel unavailable', async () => {
   const calls = [];
   const rejected = new Error('provider rejected request');

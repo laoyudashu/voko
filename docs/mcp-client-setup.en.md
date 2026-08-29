@@ -67,10 +67,19 @@ Some WorkBuddy versions display the entry as **CodeBuddy Settings**.
 
 4. Select **Try to Run**, save the configuration, and start a new WorkBuddy session.
 
-If there is no MCP settings page, edit:
+You can also add the user-scoped server from the CLI:
 
-- Windows: `%USERPROFILE%\\.workbuddy\\mcp.json`
-- macOS / Linux: `~/.workbuddy/mcp.json`
+```bash
+codebuddy mcp add --scope user voko -- voko mcp
+codebuddy mcp list
+```
+
+If there is no MCP settings page, edit the current recommended user configuration:
+
+- Windows: `%USERPROFILE%\\.codebuddy\\.mcp.json`
+- macOS / Linux: `~/.codebuddy/.mcp.json`
+
+Older releases may still have `~/.codebuddy/mcp.json` or `~/.codebuddy.json`. Files at the same scope are not merged; migrate to `.codebuddy/.mcp.json` and avoid duplicate `voko` entries.
 
 When other servers already exist, copy only the `"voko": { ... }` entry rather than overwriting the file. This section makes WorkBuddy an MCP client of VOKO; it does not claim WorkBuddy as a verified VOKO Provider runtime.
 
@@ -181,6 +190,12 @@ If the installed version requires an `mcpServers` file, use:
 ```
 
 Restart QwenWork and confirm that VOKO tools appear in `tools/list`. This configures QwenWork → VOKO as an MCP client. VOKO → QwenWork uses the bundled `qoderclicn` CLI with Pull fallback; see the [QwenWork Provider guide](providers/qwen-office.md).
+
+## DuMate (百度搭子)
+
+The currently verified DuMate releases do not expose a confirmed, stable, user-facing custom stdio MCP Server entry. Do not write `voko mcp` into DuMate private configuration or databases, and do not treat its bundled `dumate-opencode` runtime as an MCP client.
+
+The supported integration direction is VOKO → DuMate: register the `dumate` Provider from the VOKO Web UI, interactive CLI, or another Agent that is already connected to VOKO MCP. See the [DuMate Provider guide](providers/dumate.md) for first-run setup, optional Agent binding, registration, and verification. A future official custom-MCP entry must be verified for `tools/list`, lifecycle, and credential boundaries before it is documented here.
 
 ## Trae
 

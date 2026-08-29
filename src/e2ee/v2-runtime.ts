@@ -45,6 +45,7 @@ type RuntimeOptions={
     sourceMessageId:string;sourceReceiptMessageId:string;protocolConversationId:string;
     completeSourceReceipt?:boolean;
     replyToRouteId?:string;turnId?:string;turnStatus?:string;turnStatusCode?:string;
+    a2aDisposition?:'new_topic'|'automatic_reply'|'explicit_reply';
     turnReceipt?:unknown})=>Promise<{success?:boolean;deliveryState?:string;
       error?:string;outcomeUnknown?:boolean}>;
   markOutboundDelivered?:(agentId:string,messageId:string)=>void;
@@ -390,7 +391,8 @@ export class E2eeV2Runtime {
           taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
           ownerInterventionCreated:activeInterventionContext.status==='resolved'
             ?activeInterventionContext.context.interventionCreated:undefined,
-          sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId};
+          sourceType:sender.peerKind==='agent'?'agent_peer':'visitor',peerUid:envelope.channelId,
+          ...(sender.peerKind==='agent'?{a2aDisposition:prepared.routeContext?.a2aDisposition}:{}),};
         // Ratchet opening, validation, audit and persistence remain serialized. Provider waiting does not:
         // releasing here lets subsequent messages in the same secure session join this short-lived Turn.
         release();release=()=>{};
@@ -485,6 +487,7 @@ export class E2eeV2Runtime {
           channelId:envelope.channelId,content:reply,messageId:replyMessageId,
           sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
           protocolConversationId:envelope.conversationId,
+          ...(sender.peerKind==='agent'?{a2aDisposition:'automatic_reply' as const}:{}),
           ...(typeof prepared.routeContext?.routeId==='string'
             ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
         if(delivered?.success===false){

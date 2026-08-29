@@ -76,6 +76,8 @@ function decodeOfflinePayload(payload?: string): DecodedOfflinePayload {
               ? { conversationDisposition: metadata.conversationDisposition as 'created' | 'reused' } : {}),
             ...(typeof metadata.canonicalConversationKey === 'string'
               ? { canonicalConversationKey: metadata.canonicalConversationKey } : {}),
+            ...(['new_topic', 'automatic_reply', 'explicit_reply'].includes(String(metadata.a2aDisposition))
+              ? { a2aDisposition: metadata.a2aDisposition as 'new_topic' | 'automatic_reply' | 'explicit_reply' } : {}),
             ...(metadata.turnReceiptRequest?.version === 1 ? { turnReceiptRequest: { version: 1 as const } } : {}),
             ...(turnReceipt ? { turnReceipt } : {}),
           };

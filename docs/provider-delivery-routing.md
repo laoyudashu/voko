@@ -86,10 +86,10 @@ Web、MCP 和交互式 CLI 共用同一个 Provider-first 状态机：
 | Aider | `cli → pull` | 使用 ask/dry-run/no-git 只读问答；模型 API 未就绪时先保留 Pull。 |
 | Reasonix | `cli → pull` | 使用 stdin、stream-json、dontAsk；不要在参数末尾添加 `-`。 |
 | Gemini CLI | `cli → pull` | 需要 Docker sandbox；headless 调用使用 `--skip-trust`，连续消息由 VOKO context window 续接。 |
-| 千问办公（QwenWork） | `cli → pull` | 使用安装包内 `qoderclicn` 的 stream-json CLI；未登录、运行时缺失或明确未送达时回退 Pull。 |
-| 百度搭子（DuMate） | `http → pull` | 选择真实 Plugin Pack Agent；VOKO 管理本机回环 HTTP 服务并校验 `activePlugins`，实例或会话不匹配时 fail closed。 |
+| 千问办公（QwenWork） | `cli → pull` | Expert Kit 可选绑定；使用安装包内 `qoderclicn` 的 stream-json CLI，未登录、运行时缺失或明确未送达时回退 Pull。首次配置见[专属指南](providers/qwen-office.md)。 |
+| 百度搭子（DuMate） | `http → pull` | 可绑定真实 Plugin Pack Agent，也可使用 VOKO 私有临时精准路由；本机 HTTP 校验 `activePlugins`，实例或会话不匹配时 fail closed。首次配置见[专属指南](providers/dumate.md)。 |
 | DeepSeek Harness | `http → cli → pull` | Web Host HTTP 使用 Agent Preset 和持久 Session；Profile CLI 是无恢复能力的单次任务备选。 |
-| WorkBuddy | `http → pull` | 选择桌面版已发现的 Expert；自动投递另需全局安装并登录 `@tencent-ai/codebuddy-code`，且真实 loopback 成功。ACP 结果未知时不重复提交任务。 |
+| WorkBuddy | `http → pull` | Expert 可选绑定；自动投递另需全局安装并登录 `@tencent-ai/codebuddy-code`，且真实 loopback 成功。ACP 结果未知时不重复提交任务。首次配置见[专属指南](providers/workbuddy.md)。 |
 | Trae | `acp → pull` | 使用独立 `traecli acp serve`；桌面 `trae.cmd` 仅作为 MCP 客户端，未安装 `traecli` 时 ACP 标记不可用。 |
 
 不同 Agent、不同访客、私聊和群聊会分别保存会话绑定。不要在注册描述、MCP 参数或日志中填写或传播原生 session ID、Token 或私密配置路径。

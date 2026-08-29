@@ -160,6 +160,21 @@ await test('send_message requests an in-memory result receipt and exposes it thr
     assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
   } finally { cleanup(); }
 });
+await test('get_message_result validates input and does not disclose another Agent message', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const missing = await handlers.get_message_result({ agentId: 'agentA' });
+    assert.strictEqual(missing.success, false);
+    assert.strictEqual(missing.code, 'MESSAGE_RESULT_INPUT_REQUIRED');
+
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('other-agent-message', 'other-agent', 'imuidB', 'private', 'imuidB', 1, 'agentB', Date.now(), 1, 'sent', 1);
+    const hidden = await handlers.get_message_result({ agentId: 'agentA', messageId: 'other-agent-message' });
+    assert.strictEqual(hidden.success, false);
+    assert.strictEqual(hidden.code, 'MESSAGE_RESULT_NOT_FOUND');
+    assert.deepStrictEqual(Object.keys(hidden).sort(), ['code', 'error', 'success']);
+  } finally { cleanup(); }
+});
 await test('Web 新对话只在首条发送时创建，并保留来源 Conversation', async () => {
   const { db, handlers, cleanup } = setup();
   try {

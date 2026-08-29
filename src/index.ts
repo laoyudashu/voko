@@ -2094,6 +2094,7 @@ async function startMcpServer(args?: any, core?: any) {
           const routeMetadata=input.replyToRouteId||input.turnStatus||input.turnReceipt
             ?{_voko:{protocolVersion:1,...(persisted.routeMetadata?._voko||{}),
               ...(input.replyToRouteId?{replyToRouteId:input.replyToRouteId}:{}),...statusMetadata,
+              ...(input.a2aDisposition?{a2aDisposition:input.a2aDisposition}:{}),
               ...(input.turnReceipt?{turnReceipt:input.turnReceipt}:{})}}
             :persisted.routeMetadata;
           return secureOutboundRouter.deliver(input.agentId,input.channelId,input.content,'text',1,null,

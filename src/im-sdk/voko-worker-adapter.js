@@ -93,6 +93,8 @@ class VokoWorkerAdapter extends EventEmitter {
           ? payload._voko.conversationDisposition : undefined,
         canonicalConversationKey: typeof payload._voko.canonicalConversationKey === 'string'
           ? payload._voko.canonicalConversationKey : undefined,
+        ...(['new_topic', 'automatic_reply', 'explicit_reply'].includes(payload._voko.a2aDisposition)
+          ? { a2aDisposition: payload._voko.a2aDisposition } : {}),
         ...(payload._voko.turnReceiptRequest?.version === 1
           ? { turnReceiptRequest: { version: 1 } } : {}),
         ...(payload._voko.turnReceipt?.version === 1

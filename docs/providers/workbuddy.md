@@ -1,9 +1,47 @@
-# WorkBuddy
+# WorkBuddy 专属指南
+
+[文档导航](../README.md) · [MCP 客户端配置](../mcp-client-setup.md) · [统一注册与投递](../provider-delivery-routing.md) · [兼容性矩阵](../provider-compatibility.md)
 
 WorkBuddy 与 VOKO 有两个不同方向：
 
 - **WorkBuddy → VOKO**：WorkBuddy 作为 MCP 客户端调用 `voko mcp`。
 - **VOKO → WorkBuddy**：VOKO 使用独立安装并登录的 CodeBuddy CLI，通过本机 HTTP/ACP 自动投递新消息。
+
+## 第一次使用：从零到可验证
+
+1. 安装并登录 WorkBuddy Desktop，确认可以在普通会话中得到模型回复。
+2. 安装 VOKO，并先做只读检查：
+
+   ```bash
+   npm install --global @voko/lite
+   voko setup
+   voko start
+   voko status --json
+   ```
+
+3. 用 `status` 输出顶层的 `port` 打开本地 Web UI，完成 VOKO 主人登录。应用登录与 VOKO 登录是两套状态。
+4. 若需要 WorkBuddy 主动调用 VOKO，在 WorkBuddy 的 **CodeBuddy Settings → MCP → Add MCP** 添加：
+
+   ```json
+   {
+     "mcpServers": {
+       "voko": {
+         "type": "stdio",
+         "command": "voko",
+         "args": ["mcp"],
+         "description": "VOKO local Agent IM"
+       }
+     }
+   }
+   ```
+
+   点击 **Try to Run**，保存后新建会话。也可执行 `codebuddy mcp add --scope user voko -- voko mcp` 和 `codebuddy mcp list`。用户级文件优先使用 `~/.codebuddy/.mcp.json`；不要覆盖其中已有的 MCP Server。
+5. 若需要 VOKO 自动把消息投递给 WorkBuddy，还必须单独安装并登录 CodeBuddy CLI（见下节）。Desktop 已登录不能替代 CLI 登录。
+6. 在 VOKO“添加 Agent”中选择 `WorkBuddy`。Expert 是可选绑定：不绑定时收到消息后创建隔离会话；绑定某个已发现 Expert 时，资料建议和后续路由固定到该 Expert。不要手填不存在的 Expert ID。
+7. 消息接收只选择预检为 `ready` 的 `http`，并保留 `pull`。真实回路验证会调用模型，可能产生费用；明确同意后再执行。
+8. 创建后分别确认：Agent 已出现在 `voko list_agents`、`voko_get_status` 的 IM 已连接、`automaticReadyModes` 包含 `http`（若启用自动投递）。三者缺一都不能称为完整可用。
+
+MCP 自主注册时调用 `voko_manage_agent_registration`，以 `{ "action": "start", "registrationMode": "agent" }` 开始；保存返回的 `registrationId`，按每次 `nextAction` 依次完成邮箱验证、`select_provider`（`providerType: "workbuddy"`）、`set_basic_info`、`select_delivery` 和 `complete`。遇到邮箱验证码或配置批准必须暂停交给主人，不能猜测或自动重发。
 
 ## 自动投递顺序
 
@@ -55,6 +93,21 @@ VOKO 不应在后台静默执行全局 npm 安装或替用户完成腾讯账号�
 
 由于 CodeBuddy CLI 当前没有稳定、无副作用的结构化登录状态命令，VOKO 不会仅凭可执行文件存在就断言已登录。
 CLI 存在时显示“登录状态待真实回路验证”；真实测试返回认证错误后，才提示执行 `codebuddy /login`。
+
+## 常用检查与故障定位
+
+```bash
+voko status --json
+voko doctor --deep
+voko list_agents
+codebuddy --version
+codebuddy mcp list
+```
+
+- WorkBuddy 看不到 VOKO 工具：确认 WorkBuddy 启动环境能找到 `voko`；必要时把 `command` 改为 `command -v voko` 返回的绝对路径，然后完全退出并重启 WorkBuddy。
+- MCP 可用但收不到自动消息：MCP 是 WorkBuddy → VOKO；自动投递是 VOKO → WorkBuddy，需另行完成全局 CLI 登录和 loopback。
+- `Authentication required`：执行 `codebuddy /login`，不是重复登录 Desktop。
+- 只有 `pull`：消息不会丢失。先修复 CLI/回路，再重新预检；不要手工伪造 `http` ready。
 
 ## 兼容性基线
 

@@ -131,6 +131,7 @@ interface IsolatedExecutionOptions {
   messageSegments?: PushPayload['messageSegments'];
   attachmentOutputDirectory?: string;
   peerUid?: string;
+  a2aDisposition?: PushPayload['a2aDisposition'];
   ownerInterventionCreated?: Promise<void>;
 }
 
@@ -451,6 +452,17 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     p.on('provider.event', (event: ProviderCoreEvent) => {
       _acceptProviderEvent(event);
     });
+    p.on('delivery.error', (event: Record<string, unknown>) => {
+      const agentId = String(event.agentId || '');
+      const turnId = String(event.turnId || '');
+      if (!agentId || !turnId) return;
+      const pending = _ordinaryTurnDeadlines.get(`${agentId}::${turnId}`);
+      if (!pending) return;
+      _finishOrdinaryTurn(agentId, turnId);
+      const status = classifyProviderTurnFailure(event);
+      void Promise.resolve(onTurnStatus?.({ ...pending.statusContext, status,
+        code: String(event.errorCode || event.code || 'PROVIDER_DELIVERY_FAILED') })).catch(() => undefined);
+    });
     p.on('owner.io-event', (event: Record<string, unknown>) => {
       for (const subscriber of _ownerIoSubscribers) { try { subscriber(event); } catch (_) {} }
     });
@@ -471,6 +483,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
             return;
           }
           const providerId = _providerIds.get(p) || 'unregistered';
+          if (reply.done !== false && reply.turnId) _finishOrdinaryTurn(String(reply.agentId || ''), reply.turnId);
           if (reply.done !== false && isInternalProviderProtocol(reply.content)) {
             console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'}`);
             const isolatedSink = reply.turnId
@@ -519,6 +532,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _routeCache = new Map<string, RouteCacheEntry>();
   const _lastDeliveredModes = new Map<string, string>();
   const _deliveryEvidence = new Map<string, { verificationStatus: string; detail: string; verifiedAt?: number }>();
+  const _ordinaryTurnDeadlines = new Map<string, { timer?: ReturnType<typeof setTimeout>; statusContext: Record<string, unknown> }>();
   const _temporaryPreferredChannels = new Map<string, { mode: string; providerId: string | null }>();
   const _providerGenerations = new Map<string, number>();
   const _scopedGenerations = new Map<string, number>();
@@ -538,6 +552,11 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       });
       return;
     }
+    const failureText = `${String((result as any)?.errorCode || (result as any)?.code || '')} ${errorMessage((result as any)?.error ?? result)}`;
+    if (/(?:TASK_REFUSED|UNSUPPORTED_ATTACHMENT|ATTACHMENT_(?:PARSE|DOWNLOAD|READ|INVALID)|CONTENT_(?:REJECTED|REFUSED))/i.test(failureText)) {
+      console.warn(`[Dispatcher] message_scoped_provider_failure agent=${agentId || '-'} providerId=${providerId} code=${String((result as any)?.errorCode || (result as any)?.code || 'unknown')}`);
+      return;
+    }
     const classified = classifyProviderTurnFailure(result);
     const verificationStatus = classified === 'login_expired' ? 'login_failed'
       : classified === 'quota_exhausted' ? 'quota_exhausted'
@@ -545,6 +564,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     _deliveryEvidence.set(_deliveryEvidenceKey(agentId, providerId), {
       verificationStatus, detail: errorMessage((result as { error?: unknown })?.error ?? result),
     });
+  }
+  function _finishOrdinaryTurn(agentId: string, turnId: unknown): void {
+    const key = `${agentId}::${String(turnId || '')}`;
+    const pending = _ordinaryTurnDeadlines.get(key);
+    if (pending?.timer) clearTimeout(pending.timer);
+    _ordinaryTurnDeadlines.delete(key);
   }
   /** 查 agent 的 backend_type + imUid，构造 meta 供 provider.match 归属判断 + A2A 自身 echo 排除。 */
   function _metaOf(agentId: string): AgentMetaRow {
@@ -1079,6 +1104,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     _a2aDelayUntil.delete(key);
     _a2aCircuitOpenUntil.delete(key);
   }
+  /** 新话题只结束上一轮收敛状态；限速与仍生效的安全熔断必须保留。 */
+  function _startNewA2ATopic(imUidA: string, imUidB: string, scope: string): void {
+    const key = _scopeKey(imUidA, imUidB, scope);
+    _convergedMap.delete(key);
+    _a2aTurnMap.delete(key);
+  }
   function resetA2AForAgent(agentId: string, peerUid: string, scope: string): boolean {
     const agentUid = _metaOf(agentId)?.imUid;
     if (!agentUid || !peerUid) return false;
@@ -1220,8 +1251,14 @@ Convergence obligations:
       _a2aTurnMap.delete(circuitKey);
     }
 
-    if (_consumeConverged(meta.imUid, peerUid, scope)) {
+    const disposition = payload.a2aDisposition;
+    if (disposition === 'new_topic') {
+      _startNewA2ATopic(meta.imUid, peerUid, scope);
+    } else if (disposition === 'automatic_reply' && _consumeConverged(meta.imUid, peerUid, scope)) {
       console.log(`[Dispatcher] A2A 已收敛，停推一次 agent=${agentId} from=${peerUid} scope=${scope}`);
+      return { blocked: true, context };
+    } else if (!disposition && _consumeConverged(meta.imUid, peerUid, scope)) {
+      console.log(`[Dispatcher] A2A 旧客户端收敛保护，停推一次 agent=${agentId} from=${peerUid} scope=${scope}`);
       return { blocked: true, context };
     }
 
@@ -1252,6 +1289,8 @@ Convergence obligations:
       ...((payload as any).replyRouteContext ? { replyRouteContext: (payload as any).replyRouteContext } : {}),
       ...((payload as any).remoteRouteId ? { remoteRouteId: (payload as any).remoteRouteId } : {}),
       ...((payload as any).remoteConversationKey ? { remoteConversationKey: (payload as any).remoteConversationKey } : {}) };
+    const turnKey = `${agentId}::${String(statusContext.turnId || '')}`;
+    if (channelType === 1) _ordinaryTurnDeadlines.set(turnKey, { statusContext });
     const begin = () => {
       if (channelType === 1 && onTurnStatus) {
         return Promise.resolve(onTurnStatus({ ...statusContext, status: 'processing' }))
@@ -1267,7 +1306,23 @@ Convergence obligations:
     if (channelType === 1) void next.then((result: any) => {
       console.log(`[ProviderTurn] turn=${statusContext.turnId || '-'} agent=${agentId} messages=${payload.sourceMessageIds?.length || 1} `+
         `attachments=${payload.attachments?.length || 0} provider=${result?.providerId || 'none'} durationMs=${Date.now()-startedAt} outcome=${result?.outcome || 'unknown'}`);
-      if (result?.outcome === 'delivered') return;
+      if (result?.outcome === 'delivered') {
+        const pending = _ordinaryTurnDeadlines.get(turnKey);
+        if (!pending || pending.timer) return;
+        const provider = providers[String(result?.providerId || '')];
+        if (!provider) return;
+        const { waitMs } = resolveTurnDeadlineMs(provider);
+        const timer = setTimeout(() => {
+          if (!_ordinaryTurnDeadlines.has(turnKey)) return;
+          _ordinaryTurnDeadlines.delete(turnKey);
+          void Promise.resolve(onTurnStatus?.({ ...statusContext, status: 'outcome_unknown',
+            code: 'PROVIDER_OUTCOME_UNKNOWN' })).catch(() => undefined);
+        }, waitMs);
+        timer.unref?.();
+        pending.timer = timer;
+        return;
+      }
+      _finishOrdinaryTurn(agentId, statusContext.turnId);
       const status = classifyProviderTurnFailure(result);
       onTurnStatus?.({ ...statusContext, status, code: result?.errorCode || 'PROVIDER_DELIVERY_FAILED' });
     });
@@ -1630,6 +1685,7 @@ Convergence obligations:
       messageId: options.taskId, content: options.content, rawContent: options.content,
       sourceMessageIds: Array.isArray(options.sourceMessageIds) ? options.sourceMessageIds : undefined,
       executionScope: 'e2ee', sourceType, protocolContextId: options.contextId,
+      a2aDisposition: options.a2aDisposition,
     };
     const prepared = sourceType === 'agent_peer'
       ? _prepareA2A(options.agentId, workingPayload) : { blocked: false, context: null };
@@ -1637,7 +1693,8 @@ Convergence obligations:
     if (prepared.delay) {
       await new Promise<void>((resolve) => setTimeout(resolve, prepared.delay));
       const localUid = _metaOf(options.agentId)?.imUid;
-      if (localUid && prepared.context
+      if ((!workingPayload.a2aDisposition || workingPayload.a2aDisposition === 'automatic_reply')
+          && localUid && prepared.context
           && _consumeConverged(localUid, peerUid, prepared.context.a2aScope)) {
         return { reply: { content: 'NO_REPLY', done: true } };
       }
@@ -1723,7 +1780,8 @@ Convergence obligations:
       const scope = context.a2aScope;
       console.log(`[Dispatcher] A2A 降速 agent=${agentId} from=${peerUid} 延迟 ${prepared.delay}ms`);
       setTimeout(() => {
-        if (_consumeConverged(localAgentUid, peerUid, scope)) return;
+        if ((!workingPayload.a2aDisposition || workingPayload.a2aDisposition === 'automatic_reply')
+            && _consumeConverged(localAgentUid, peerUid, scope)) return;
         _enqueueRoute(agentId, workingPayload, context);
       }, prepared.delay);
       return;
@@ -1944,6 +2002,8 @@ Convergence obligations:
     }
   }
   async function stop() {
+    for (const pending of _ordinaryTurnDeadlines.values()) if (pending.timer) clearTimeout(pending.timer);
+    _ordinaryTurnDeadlines.clear();
     try { await runtimeRegistry.stopAll(); } catch (e) { console.error('[Dispatcher] provider.stop 失败:', errorMessage(e)); }
   }
   /** 自检 + 重连（替代散落的 60s 心跳 spawn 逻辑）。 */

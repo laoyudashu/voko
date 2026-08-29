@@ -217,6 +217,8 @@ test('OpenClaw rejects a failed CLI process and Hermes reports a background deli
   await hermes.push(payload);
   await hermes.waitForIdle();
   assert.equal(errors[0].kind, 'execution_failed');
+  assert.equal(errors[0].agentId, 'voko-agent');
+  assert.equal(errors[0].turnId, 'message');
 });
 
 test('Hermes CLI fallback queues the same profile serially without blocking dispatch', async () => {
@@ -247,6 +249,28 @@ test('Hermes CLI fallback queues the same profile serially without blocking disp
   await provider.waitForIdle('shared-profile');
   assert.equal(maxActive, 1);
   assert.equal(starts.length, 2);
+});
+
+test('Hermes consecutive attachment turns preserve exact turn correlation while remaining serial', async () => {
+  let active = 0; let maxActive = 0;
+  const replies = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'shared-profile' }), all: () => [] }) },
+    runCli: async () => {
+      active += 1; maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: 'attachment reply', stderr: '', code: 0, signal: null };
+    },
+  });
+  provider.on('agent.reply', reply => replies.push(reply));
+  await Promise.all([
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'file', messageId: 'm-file', turnId: 'turn-file', attachments: [] }),
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'image', messageId: 'm-image', turnId: 'turn-image', attachments: [] }),
+  ]);
+  await provider.waitForIdle('shared-profile');
+  assert.equal(maxActive, 1);
+  assert.deepEqual(replies.map(reply => reply.turnId), ['turn-file', 'turn-image']);
 });
 
 test('Hermes CLI fallback classifies approval and timeout failures', async () => {

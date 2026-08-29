@@ -29,6 +29,7 @@ export interface InboundMessage {
   _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
     conversationKey?: string; conversationStart?: boolean;
     conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string;
+    a2aDisposition?: 'new_topic' | 'automatic_reply' | 'explicit_reply';
     turnReceiptRequest?: { version: 1 }; turnReceipt?: TurnReceipt } | null;
   e2eeStrictRoute?: boolean;
   e2eeAgentPeer?: boolean;

@@ -27,6 +27,7 @@ export interface ProviderCoreEvent {
   messageId?: string;
   turnId?: string;
   sourceMessageIds?: readonly string[];
+  a2aDisposition?: 'new_topic' | 'automatic_reply' | 'explicit_reply';
   nativeSessionId?: string | null;
   occurredAt: number;
   terminal?: boolean;
