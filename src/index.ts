@@ -2425,11 +2425,11 @@ async function startMcpServer(args?: any, core?: any) {
     wukongimSender,
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
+    outboundMessageResults: messageHandler?.getOutboundMessageResults?.(),
   });
   (cx as any).secureOutboundRouter = secureOutboundRouter;
   (cx as any).a2aMailboxClient = a2aMailboxClient;
   (cx as any).ownerPullService = ownerPullService;
-  (cx as any).outboundMessageResults = messageHandler?.getOutboundMessageResults?.();
   await taskManager.start('agent-access-sync', () => require('./core/agent-invitations').startAgentAccessSync({
     db,
     apiBaseUrl: require('./endpoints.json').api.baseUrl,
@@ -3599,7 +3599,7 @@ async function main() {
   // IM Hub clients belong to the long-running VOKO process. Short-lived CLI
   // calls must execute these tools through that process instead of opening a
   // duplicate IM connection or using the removed legacy direct sender.
-  if (['send_message', 'upload_and_send_file', 'start_worker', 'stop_worker'].includes(subcommand)) {
+  if (['send_message', 'get_message_result', 'upload_and_send_file', 'start_worker', 'stop_worker'].includes(subcommand)) {
     const result = await cli.runRuntimeToolCommand(
       subcommand,
       args,

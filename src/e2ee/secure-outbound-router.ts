@@ -5,6 +5,7 @@ import { encryptE2eeV2Attachment } from './v2-attachment';
 import { encodeE2eeAttachmentPayload, encodeE2eeTextPayload, normalizeE2eeRouteContext } from './v2-payload';
 import type { E2eeV2Runtime } from './v2-runtime';
 import type { E2eeV2ConversationRow, E2eeV2OutboundEnvelopeRow, E2eeV2Store } from './v2-store';
+import { normalizeTurnReceipt } from '../core/outbound-message-result-store';
 
 type RawDeliver=(agentId:string,channelId:string,content:string,messageType?:string,channelType?:number,
   mentions?:unknown,localMsgId?:string|null,metadata?:unknown)=>Promise<any>;
@@ -39,6 +40,24 @@ function transportId(businessMessageId:string,deviceId:string,keyId:string):stri
 
 function plaintextDigest(content:string):string{
   return crypto.createHash('sha256').update('VOKO-E2EE-V2-PLAINTEXT\0').update(content).digest('base64url');
+}
+
+function agentControlMetadata(value:Record<string,unknown>|undefined):Record<string,unknown>|undefined{
+  if(!value)return undefined;
+  const request=(value.turnReceiptRequest as {version?:unknown}|undefined)?.version===1
+    ?{version:1}:undefined;
+  const receipt=normalizeTurnReceipt(value.turnReceipt);
+  const turnId=typeof value.turnId==='string'&&value.turnId.length>0&&value.turnId.length<=256
+    ?value.turnId:undefined;
+  const turnStatus=typeof value.turnStatus==='string'
+    &&['processing','login_expired','quota_exhausted','timeout','failed','outcome_unknown',
+      'automatic_delivery_disabled','completed'].includes(value.turnStatus)
+    ?value.turnStatus:undefined;
+  const turnStatusCode=typeof value.turnStatusCode==='string'&&/^[A-Z0-9_:-]{1,128}$/.test(value.turnStatusCode)
+    ?value.turnStatusCode:undefined;
+  if(!request&&!receipt&&!turnStatus)return undefined;
+  return{protocolVersion:1,...(request?{turnReceiptRequest:request}:{}),...(receipt?{turnReceipt:receipt}:{}),
+    ...(turnId?{turnId}:{}),...(turnStatus?{turnStatus}:{}),...(turnStatusCode?{turnStatusCode}:{})};
 }
 
 export class SecureOutboundRouter {
@@ -167,10 +186,12 @@ export class SecureOutboundRouter {
     trustedRoute?:{routingConversationId:string;wireConversationKey:string}):Promise<PrivateDecision>{
     let route:RouteContext;
     let trustedMetadata:Record<string,unknown>|undefined;
+    let trustedAgentControl:Record<string,unknown>|undefined;
     let trustedMetadataError:unknown;
     try{
       if(trustedRoute){
         const raw=(metadata&&typeof metadata==='object'&&!Array.isArray(metadata))?(metadata as any)._voko:undefined;
+        trustedAgentControl=agentControlMetadata(raw);
         try{trustedMetadata=normalizeE2eeRouteContext(raw);}catch(error){trustedMetadataError=error;}
         route={...trustedRoute};
       }else route=this.routeContext(agentId,channelId,metadata);
@@ -221,7 +242,8 @@ export class SecureOutboundRouter {
       const stableContext=String(resolved.protocolConversationId||'');
       if(!stableContext)return{mode:'blocked',error:'E2EE_V2_AGENT_CONTEXT_REQUIRED',securityMode:'plaintext',
         reason:'agent_context_unavailable'};
-      route={...route,routingConversationId:stableContext,wireConversationKey:stableContext};
+      route={...route,routingConversationId:stableContext,wireConversationKey:stableContext,
+        ...(trustedAgentControl?{metadata:trustedAgentControl}:{})};
       // Historical sender-local routing ids are not authoritative Agent-peer
       // contexts. Only the server-resolved protocol context may control reuse
       // or locking, so stale duplicate rows cannot poison a valid context.

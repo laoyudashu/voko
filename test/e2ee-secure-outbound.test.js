@@ -419,6 +419,22 @@ test('trusted inbound Agent context routes the secure reply without resolving a 
   }finally{f.close();}
 });
 
+test('trusted Agent reply preserves only validated hidden result receipt metadata',async()=>{
+  const f=fixture({peerKind:'agent',routeContext:()=>{throw new Error('foreign route must not be resolved');}});
+  try{
+    const turnReceipt={version:1,sourceMessageIds:['source-message-1'],turnId:'turn-1',sequence:2,
+      state:'WORKING',phase:'provider',reasonCode:null,occurredAt:Date.now(),replyMessageId:null};
+    const result=await f.router.deliver('gym','peer-agent-im','VOKO_TURN_RECEIPT','text',1,null,'agent-receipt-1',
+      {_voko:{protocolVersion:1,turnReceipt,routeId:'foreign-route',conversationKey:'foreign-wire'}},
+      {protocolConversationId:'trusted-context-1',completeSourceReceipt:false});
+    assert.equal(result.success,true);
+    for(const delivery of f.encrypted){
+      const payload=JSON.parse(delivery.envelope.plaintext);
+      assert.deepEqual(payload.routeContext,{protocolVersion:1,turnReceipt});
+    }
+  }finally{f.close();}
+});
+
 test('a stale sender-local Agent row cannot lock the authoritative protocol context',async()=>{
   const f=fixture({peerKind:'agent'});
   try{

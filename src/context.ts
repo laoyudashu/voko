@@ -22,6 +22,7 @@ const { signDidRequest } = require('./core/did-auth');
 const { createBugReportClient } = require('./core/bug-report');
 const { resolveServerAgentIdForLocalAgent } = require('./core/agent-invitations');
 import type { DatabaseLike } from './types/database';
+import type { OutboundMessageResultStore } from './core/outbound-message-result-store';
 
 const pkg = require('../package.json');
 
@@ -102,6 +103,7 @@ interface ContextDependencies {
   deliver?: Deliver;
   sendMessage?: SendMessage;
   enqueueOwnerIntervention?: (record: UnknownRecord) => unknown;
+  outboundMessageResults?: OutboundMessageResultStore;
 }
 
 interface AgentOperationParams extends UnknownRecord {
@@ -136,6 +138,7 @@ function createContext({
   deliver: passedDeliver,
   sendMessage: passedSendMessage,
   enqueueOwnerIntervention,
+  outboundMessageResults,
 }: ContextDependencies) {
   // 统一 IM 投递：优先用 initCore 注入的，未传则自建（CLI 等独立调用兼容）
   const wukongimSender = passedSender || agentManager;
@@ -182,6 +185,7 @@ function createContext({
     databaseAPI,
     getEnabledChannel: () => databaseAPI.getEnabledChannel?.() || null,
     enqueueOwnerIntervention,
+    outboundMessageResults,
 
     // ── 消息 ──
     sendMessage: (...args: unknown[]) => {

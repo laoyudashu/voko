@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { createMcpServer, getToolList } = require('../build/mcp/server');
 const registry = require('../build/channels/registry');
+const fs = require('node:fs');
+const path = require('node:path');
 
 describe('Lite MCP and channel contracts', () => {
   it('MCP tool list keeps unique names and object schemas', async () => {
@@ -39,5 +41,10 @@ describe('Lite MCP and channel contracts', () => {
       assert.ok(Array.isArray(definition.configFields));
       assert.equal(typeof definition.handlerClass, 'string');
     }
+  });
+
+  it('routes message result queries through the long-lived runtime that owns in-memory state', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+    assert.match(source, /\['send_message', 'get_message_result', 'upload_and_send_file'/);
   });
 });
