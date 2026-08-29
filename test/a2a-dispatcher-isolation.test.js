@@ -158,6 +158,46 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   assert.equal(ordinary.length, 0, 'late or unattributed isolated replies must never enter the ordinary message path');
 });
 
+test('isolated delivery error closes only the exact selected Provider Turn', async()=>{
+  const selected=new Provider();
+  const unrelated=new Provider();
+  selected.push=function(payload){this.payload=payload;return{nativeSessionId:'selected-native'};};
+  const ordinary=[];
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':selected,'other-cli':unrelated},
+    onAgentReply:reply=>ordinary.push(reply)});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'delivery-error-task',
+    contextId:'delivery-error-context',content:'hello',sessionScopeId:'delivery-error-scope',timeoutMs:5_000});
+  await new Promise(resolve=>setImmediate(resolve));
+  unrelated.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'execution_failed',error:'wrong Provider'});
+  await new Promise(resolve=>setImmediate(resolve));
+  selected.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'execution_failed',error:'native process exited'});
+  await assert.rejects(pending,error=>{
+    assert.equal(error.code,'PROVIDER_EXECUTION_FAILED');
+    assert.equal(error.deliveryOutcome,'outcome_unknown');
+    assert.match(error.message,/native process exited/);
+    return true;
+  });
+  selected.emit('agent.reply',{agentId:'agent-1',visitorId:'e2ee:delivery-error-context',
+    turnId:selected.payload.turnId,replyId:'late-after-error',content:'late',done:true});
+  assert.equal(ordinary.length,0);
+});
+
+test('an isolated reply stays dropped after its retirement tombstone expires',async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;return{nativeSessionId:'expired-native'};};
+  const ordinary=[];const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},
+    onAgentReply:reply=>ordinary.push(reply)});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'expired-task',contextId:'expired-context',
+    content:'hello',sessionScopeId:'expired-scope',timeoutMs:10});
+  await assert.rejects(keepEventLoopAlive(pending),error=>error.code==='E2EE_V2_PROVIDER_REPLY_TIMEOUT');
+  const originalNow=Date.now;Date.now=()=>originalNow()+11*60*1000;
+  try{provider.emit('agent.reply',{agentId:'agent-1',visitorId:'e2ee:expired-context',turnId:provider.payload.turnId,
+    replyId:'very-late',content:'must not escape',done:true});}finally{Date.now=originalNow;}
+  assert.equal(ordinary.length,0);
+});
+
 test('E2EE and Owner Chat timeouts use stable outcome-unknown results', async () => {
   const e2eeProvider = new Provider();
   e2eeProvider.push = payload => { e2eeProvider.payload = payload; return { nativeSessionId: 'e2ee-timeout-session' }; };

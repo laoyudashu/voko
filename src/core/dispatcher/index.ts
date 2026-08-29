@@ -296,6 +296,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _providerEventGate = new ProviderEventGate();
   const _providerEventCounts = new Map<string, number>();
   const _isolatedReplySinks = new Map<string, (reply: ProviderReply) => void>();
+  const _isolatedTurnProviders = new Map<string, string>();
   interface RetiredIsolatedTurn {
     retiredAt: number;
     timedOut: boolean;
@@ -307,6 +308,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
   function _retireIsolatedTurn(key: string, details?: Omit<RetiredIsolatedTurn, 'retiredAt'>): void {
     _isolatedReplySinks.delete(key);
+    _isolatedTurnProviders.delete(key);
     const now = Date.now();
     const previous = _retiredIsolatedTurns.get(key);
     _retiredIsolatedTurns.set(key, details
@@ -345,6 +347,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
         if (timer) clearTimeout(timer);
         const timeout = resolveTurnDeadlineMs(provider, input.explicitTimeoutMs);
         active = { providerId, ...timeout, startedAt: Date.now() };
+        _isolatedTurnProviders.set(input.sinkKey, providerId);
         console.log(`[Dispatcher] Provider deadline selected scope=${input.scope} providerId=${providerId} configuredTimeoutMs=${timeout.configuredMs} waitMs=${timeout.waitMs} turnId=${input.turnId}`);
         timer = setTimeout(() => {
           expired = true;
@@ -456,6 +459,20 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       const agentId = String(event.agentId || '');
       const turnId = String(event.turnId || '');
       if (!agentId || !turnId) return;
+      const sinkKey = `${agentId}::${turnId}`;
+      const isolatedSink = _isolatedReplySinks.get(sinkKey);
+      const providerId = _providerIds.get(p) || 'unregistered';
+      if (isolatedSink && _isolatedTurnProviders.get(sinkKey) === providerId) {
+        const explicitCode = String(event.errorCode || event.code || '').trim();
+        const kind = String(event.kind || '').trim();
+        const inferredCode = kind === 'approval_required' ? 'PROVIDER_APPROVAL_REQUIRED'
+          : kind === 'timeout' ? 'PROVIDER_TIMEOUT'
+            : kind === 'execution_failed' ? 'PROVIDER_EXECUTION_FAILED' : 'PROVIDER_DELIVERY_FAILED';
+        isolatedSink({ agentId, turnId, done: true,
+          error: errorMessage(event.error || event), errorCode: explicitCode || inferredCode,
+          deliveryOutcome: 'outcome_unknown' });
+        return;
+      }
       const pending = _ordinaryTurnDeadlines.get(`${agentId}::${turnId}`);
       if (!pending) return;
       _finishOrdinaryTurn(agentId, turnId);
@@ -476,6 +493,11 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
           if (replyTurnKey && retired) {
             const delayMs = Math.max(0, Date.now() - retired.retiredAt);
             console.warn(`[Dispatcher] isolated_late_reply_dropped agent=${reply.agentId || '-'} turnId=${reply.turnId} providerId=${retired.providerId || _providerIds.get(p) || 'unknown'} taskId=${retired.taskId || '-'} messageId=${reply.replyId || '-'} timedOut=${retired.timedOut} delayMs=${delayMs}`);
+            return;
+          }
+          if (replyTurnKey && !_isolatedReplySinks.has(replyTurnKey)
+              && /^(?:a2a|owner|owner-chat|e2ee):/.test(String(reply.visitorId || ''))) {
+            console.warn(`[Dispatcher] isolated_reply_without_active_turn_dropped agent=${reply.agentId || '-'} turnId=${reply.turnId} providerId=${_providerIds.get(p) || 'unknown'} messageId=${reply.replyId || '-'}`);
             return;
           }
           if (!reply.turnId && /^(?:a2a|owner|owner-chat|e2ee|e2ee-canary):/.test(String(reply.visitorId || ''))) {
