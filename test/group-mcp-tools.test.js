@@ -290,6 +290,38 @@ await test('get_chat_history 群聊（channelType=2）按 channel_id 查全量�
   } finally { cleanup(); }
 });
 
+await test('get_chat_history 群聊 isMe 按查询 Agent 视角投影而非首个落库视角', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare('UPDATE agents SET owner_email=? WHERE agent_id=?').run('a@a.com','agentB');
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('m-perspective-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1);
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('m-perspective-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1);
+    const a = await handlers.get_chat_history({ channelId: 'room1', channelType: 2, agentId: 'agentA', limit: 20 });
+    const b = await handlers.get_chat_history({ channelId: 'room1', channelType: 2, agentId: 'agentB', limit: 20 });
+    assert.strictEqual(a.messages.find(m => m.id === 'm-perspective-self').isMe, true);
+    assert.strictEqual(a.messages.find(m => m.id === 'm-perspective-peer').isMe, false);
+    assert.strictEqual(b.messages.find(m => m.id === 'm-perspective-self').isMe, false);
+    assert.strictEqual(b.messages.find(m => m.id === 'm-perspective-peer').isMe, true);
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages 群聊 onlyReplies 按查询 Agent 的 fromUid 过滤', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1,2,JSON.stringify({uids:['imuidB']}));
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1,3,JSON.stringify({uids:['imuidA']}));
+    const a = handlers._queryMessages('agentA','room1',0,true,20,2);
+    const b = handlers._queryMessages('agentB','room1',0,true,20,2);
+    assert.deepStrictEqual(a.map(m=>m.id).sort(),['m-pull-peer','m2'].sort());
+    assert.deepStrictEqual(b.map(m=>m.id).sort(),['m-pull-self']);
+  } finally { cleanup(); }
+});
+
 await test('get_chat_history 单聊（channelType=1）排除群聊消息，按 agent_id 过滤', async () => {
   const { handlers, cleanup } = setup();
   try {

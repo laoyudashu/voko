@@ -1019,7 +1019,7 @@ function createToolHandlers(cx: McpContext) {
     });
     return { agents, total, limit, offset, hasMore: offset + agents.length < total };
   }
-  function fmtMsg(r: MessageDbRow) {
+  function fmtMsg(r: MessageDbRow, viewerImUid?: string) {
     let mention = null;
     if (r.mention) {
       try { mention = typeof r.mention === 'string' ? JSON.parse(r.mention) : r.mention; } catch (_: any) { mention = null; }
@@ -1034,7 +1034,7 @@ function createToolHandlers(cx: McpContext) {
       timestamp,
       timestampMs,
       messageSeq: r.message_seq,
-      isMe: r.is_me >= 1,
+      isMe: r.channel_type === 2 && viewerImUid ? r.from_uid === viewerImUid : r.is_me >= 1,
       contentType: r.content_type || 1,
       agentId: r.agent_id || null,
       channelType: r.channel_type || 1,
@@ -1060,8 +1060,8 @@ function createToolHandlers(cx: McpContext) {
     for (const row of rows) row.routing_conversation_id = byMessage.get(row.id) || null;
     return rows;
   }
-  function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean } = {}) {
-    const base = fmtMsg(r);
+  function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean; viewerImUid?: string } = {}) {
+    const base = fmtMsg(r, opts.viewerImUid);
     const sourceType = r.sourceType || (r.from_uid === 'system' ? 'system' : 'visitor');
     // agent_peer 入站消息会被 dispatcher 注入 [VOKO A2A CONTROL] 协议包装，
     // pull 路径需剥掉这层包装，只暴露对端可见正文；visitor/system 消息不含协议块，原样返回。
@@ -1087,6 +1087,9 @@ function createToolHandlers(cx: McpContext) {
   }
   function fmtPullResult(rows: MessageDbRow[], hasMore: boolean, extra: Record<string, unknown> = {}) {
     const formattingAgentId = typeof extra._agentId === 'string' ? extra._agentId : undefined;
+    const viewerImUid = formattingAgentId
+      ? cx.query<AgentUidRow>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [formattingAgentId])[0]?.imUid || ''
+      : '';
     const publicExtra = { ...extra };
     delete publicExtra._agentId;
     attachConversationIds(rows, formattingAgentId);
@@ -1094,7 +1097,7 @@ function createToolHandlers(cx: McpContext) {
       success: true,
       securityContext: createPullSecurityContext(),
       // 默认剥离 A2A 控制块；调用方可通过 extra.stripControl=false 关闭
-      messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false })),
+      messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false, viewerImUid })),
       hasMore,
       count: rows.length,
       ...publicExtra,
@@ -2122,7 +2125,8 @@ function createToolHandlers(cx: McpContext) {
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
         attachConversationIds(rows, p.agentId);
-        return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+        const viewerImUid = cx.query<AgentUidRow>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [p.agentId])[0]?.imUid || '';
+        return { success: true, messages: rows.map(row => fmtMsg(row, viewerImUid)), hasMore, count: rows.length, offset,
           conversationId: requestedConversation?.id || null };
       }
 
@@ -2143,7 +2147,7 @@ function createToolHandlers(cx: McpContext) {
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
       attachConversationIds(rows, p.agentId);
-      return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+      return { success: true, messages: rows.map(row => fmtMsg(row)), hasMore, count: rows.length, offset,
         conversationId: requestedConversation?.id || null };
     },
 
@@ -3441,7 +3445,12 @@ function createToolHandlers(cx: McpContext) {
         sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND channel_type!=2 AND message_seq > ?`;
         params = [agentId, channelId, seq];
       }
-      if (onlyReplies) sql += ` AND is_me!=1`;
+      if (onlyReplies) {
+        if (channelType === 2) {
+          sql += ` AND from_uid!=COALESCE((SELECT imUid FROM agents WHERE agent_id=? LIMIT 1),'')`;
+          params.push(agentId);
+        } else sql += ` AND is_me!=1`;
+      }
       sql += ` ORDER BY message_seq ASC LIMIT ?`;
       params.push(limit + 1);
       return _filterPullRowsForCaller(agentId, cx.query<MessageDbRow>(sql, params));
