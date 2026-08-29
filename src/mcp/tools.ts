@@ -1841,7 +1841,10 @@ function createToolHandlers(cx: McpContext) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const fromUid = cx.wukongim?.getCurrentUid?.(p.agentId);
-      if (!fromUid) return { success: false, error: 'Agent IM 身份缺失' };
+      if (!fromUid) {
+        console.warn(`[MCP] Agent IM identity missing agentId=${String(p.agentId || 'unknown')}`);
+        return { success: false, code: 'AGENT_IM_IDENTITY_MISSING', error: 'Agent IM 身份缺失' };
+      }
       const channelType = inferChannelType(p);
       if (channelType === 2) {
         try {

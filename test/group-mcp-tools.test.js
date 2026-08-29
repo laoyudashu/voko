@@ -92,7 +92,8 @@ function setup(options = {}) {
     ...(options.secureOutboundRouter ? { secureOutboundRouter: options.secureOutboundRouter } : {}),
     enqueueOwnerIntervention: record => interventions.push(record),
     wukongim: {
-      getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
+      getCurrentUid: options.getCurrentUid
+        || (agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || ''),
     },
     outboundMessageResults: new OutboundMessageResultStore(),
   };
@@ -133,6 +134,15 @@ await test('send_message 省略 channelType 时按群频道 ID 自动识别', as
     const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '省略类型的群消息' });
     assert.strictEqual(r.success, true);
     assert.strictEqual(sentMessages[0].channelType, 2);
+  } finally { cleanup(); }
+});
+await test('send_message returns a stable code when the runtime database has no Agent IM identity', async () => {
+  const { handlers, sentMessages, cleanup } = setup({ getCurrentUid: () => '' });
+  try {
+    const r = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'identity check', channelType: 1 });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'AGENT_IM_IDENTITY_MISSING');
+    assert.strictEqual(sentMessages.length, 0);
   } finally { cleanup(); }
 });
 await test('send_message requests an in-memory result receipt and exposes it through get_message_result', async () => {
