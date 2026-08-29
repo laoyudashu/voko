@@ -107,6 +107,7 @@ const {
   cleanupOrphanedWorkers,
   isInstanceAlive,
   readInstanceMetadata,
+  computeBuildDigest,
 } = require('./core/process-lifecycle');
 const { stopVoko } = require('./core/stop-voko');
 const {
@@ -3464,6 +3465,11 @@ async function main() {
         : {};
       const startedAt = running && instance ? instance.createdAt : null;
       const fs = require('fs');
+      const localBuildDigest = computeBuildDigest(require.main?.filename || process.argv[1]);
+      const runtimeBuildDigest = running && instance ? (instance.buildDigest || null) : null;
+      const buildState = !running ? 'stopped'
+        : !runtimeBuildDigest || !localBuildDigest ? 'unknown'
+          : runtimeBuildDigest === localBuildDigest ? 'current' : 'stale';
       console.log(JSON.stringify({
         success: true,
         running,
@@ -3477,6 +3483,11 @@ async function main() {
         startedAt,
         lastSeenAt: runtime.ts || null,
         version: pkg.version,
+        buildDigest: localBuildDigest,
+        runtimeBuildDigest,
+        buildState,
+        buildMismatch: buildState === 'stale',
+        restartRecommended: buildState === 'stale' || buildState === 'unknown',
         schemaVersion: SCHEMA_VERSION,
         userEmail: running ? (currentRuntime.userEmail || null) : null,
         uptime: startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null,

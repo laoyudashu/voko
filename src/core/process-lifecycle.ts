@@ -27,6 +27,8 @@ export interface InstanceMetadata extends ProcessIdentity {
   mcpToken: string;
   dbPath: string;
   entryPath: string;
+  /** SHA-256 of the entry file captured when this runtime acquired the lock. */
+  buildDigest?: string | null;
   port: number | null;
   createdAt: number;
   updatedAt: number;
@@ -341,10 +343,19 @@ function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetad
     mcpToken: crypto.randomBytes(32).toString('base64url'),
     dbPath: canonicalDbPath(dbPath),
     entryPath: normalizePath(entryPath),
+    buildDigest: computeBuildDigest(entryPath),
     port: null,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function computeBuildDigest(entryPath: string): string | null {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(normalizePath(entryPath))).digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 function createLockHandle(

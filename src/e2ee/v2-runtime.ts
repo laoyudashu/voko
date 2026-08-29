@@ -344,6 +344,16 @@ export class E2eeV2Runtime {
         }
         return{handled:true,accepted:true,code:'agent_control'};
       }
+      const trustedTurnStatus=sender.peerKind==='agent'&&envelope.contentKind==='text'
+        &&typeof prepared.routeContext?.turnId==='string'
+        &&['processing','login_expired','quota_exhausted','timeout','failed','outcome_unknown',
+          'automatic_delivery_disabled','completed'].includes(String(prepared.routeContext?.turnStatus||''));
+      if(trustedTurnStatus){
+        if(!this.options.store.transition(envelope.messageId,['processing'],'completed')){
+          throw new Error('E2EE_V2_RECEIPT_STATE_CONFLICT');
+        }
+        return{handled:true,accepted:true,code:'agent_turn_status'};
+      }
       const inboundRouteContext=sender.peerKind==='guest'?prepared.routeContext:undefined;
       const projected=this.options.persistInbound(agent.localAgentId,{...message,fromUid:envelope.channelId,
         channelId:envelope.channelId,channelType:1,content:prepared.displayContent,contentType:prepared.contentType,

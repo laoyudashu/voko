@@ -176,6 +176,7 @@ describe('Lite process lifecycle identity', () => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    assert.equal(lifecycle.computeBuildDigest(LITE_ENTRY)?.length, 64);
     assert.equal(
       lifecycle.matchesInstanceProcess(instance, identity),
       true,

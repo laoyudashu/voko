@@ -451,6 +451,33 @@ test('Agent peer Provider failures do not become human status messages',async()=
   }finally{f.close();}
 });
 
+test('trusted Agent turn status is acknowledged without persistence or Provider execution',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'Agent 正在处理…',
+      routeContext:{protocolVersion:1,turnId:'turn-old-runtime-1',turnStatus:'processing'}});
+    const envelope=await f.createEnvelope('agent-turn-status',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.deepEqual(result,{handled:true,accepted:true,code:'agent_turn_status'});
+    assert.equal(f.store.receipt('agent-turn-status').state,'completed');
+    assert.equal(f.persisted.inbound.length,0);
+    assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('matching status text without trusted metadata remains an ordinary Agent message',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const envelope=await f.createEnvelope('agent-status-text-only','Agent 正在处理…');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(f.persisted.inbound.length,1);
+    assert.equal(f.counts().providerCalls,1);
+  }finally{f.close();}
+});
+
 test('Provider NO_REPLY completes without emitting an encrypted control message',async()=>{
   const f=fixture({peerKind:'agent',providerReply:'NO_REPLY'});
   try{
