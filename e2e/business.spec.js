@@ -79,7 +79,8 @@ test('single chat sends and receives text through the real worker and Mock Provi
   expect(rows.every(row => row.channel_id === 'e2e-visitor' && row.channel_type === 1)).toBeTruthy();
   const state = await runtime(request);
   const direct = state.messageStats.find(item => item.channelId === 'e2e-visitor');
-  expect(Number(direct.replies)).toBe(2);
+  expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(2);
+  expect(Number(direct.replies)).toBe(3);
   expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
   expect(Number(direct.uniqueTurns)).toBe(Number(direct.total));
   expect(state.deliveryStatus.activeAutomaticMode).toBe('mock');
@@ -127,9 +128,12 @@ test('group chat renders text, supports @all, and enforces mention permission', 
   await expect(page.locator('#reply-send-err')).toContainText(/所有人|权限|owner|admin|管理员/i);
   const afterDenied = readMessages('e2e-group');
   expect(afterDenied.some(row => row.content === 'permission denied e2e')).toBeFalsy();
+  await expect.poll(async () => {
+    const current = await runtime(request);
+    return Number(current.messageStats.find(item => item.channelId === 'e2e-group')?.total || 0);
+  }).toBeGreaterThanOrEqual(4);
   const state = await runtime(request);
   const group = state.messageStats.find(item => item.channelId === 'e2e-group');
-  expect(Number(group.total)).toBeGreaterThanOrEqual(4);
   expect(Number(group.uniqueIds)).toBe(Number(group.total));
 
   await request.post(`${manifest().services.api}/__test__/group-role`, { data: { role: 'owner' } });
@@ -193,12 +197,13 @@ test('duplicate and reordered inbound frames remain idempotent in SQLite', async
   await expect(page.locator('#msg-box')).toContainText('duplicate inbound e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered first e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered second e2e');
+  await waitForMessages('e2e-dedupe', messages => messages.some(row => row.is_me === 1 && row.content.includes('[echo]')));
   const state = await runtime(request);
   const dedupe = state.messageStats.find(item => item.channelId === 'e2e-dedupe');
-  expect(Number(dedupe.total)).toBe(6);
-  expect(Number(dedupe.replies)).toBe(3);
-  expect(Number(dedupe.uniqueIds)).toBe(6);
-  expect(Number(dedupe.uniqueTurns)).toBe(6);
+  expect(Number(dedupe.total)).toBe(5);
+  expect(Number(dedupe.replies)).toBe(2);
+  expect(Number(dedupe.uniqueIds)).toBe(5);
+  expect(Number(dedupe.uniqueTurns)).toBe(5);
 });
 
 test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }, testInfo) => {
@@ -224,8 +229,8 @@ test('provider failure leaves the message available for Pull and recovery restor
   const pullRows = await waitForMessages(channelId, rows => rows.some(row => row.id === firstMessageId));
   expect(pullRows.some(row => row.is_me === 1 && row.content.includes('[echo] pull fallback e2e'))).toBeFalsy();
   await expect(page.locator('#msg-box')).toContainText('pull fallback e2e');
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.automaticDeliveryReady).toBe(false);
   const beforePull = await runtime(request);
-  expect(beforePull.deliveryStatus.automaticDeliveryReady).toBe(false);
   expect(beforePull.deliveryStatus.activeAutomaticMode).toBe(null);
   expect(beforePull.deliveryStatus.pullReady).toBe(true);
   expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === `1:${channelId}`)).toBeFalsy();
@@ -258,7 +263,8 @@ test('provider failure leaves the message available for Pull and recovery restor
   const recovered = await runtime(request);
   expect(recovered.deliveryStatus.activeAutomaticMode).toBe('mock');
   const pullStats = recovered.messageStats.find(item => item.channelId === channelId);
-  expect(Number(pullStats.replies)).toBe(1);
+  expect(readMessages(channelId).filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(1);
+  expect(Number(pullStats.replies)).toBe(2);
   expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
 });
 

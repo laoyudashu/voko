@@ -766,7 +766,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       }
       const observed = _deliveryEvidence.get(_deliveryEvidenceKey(agentId, key));
       if (observed) {
-        automaticReady = observed.verificationStatus === 'loopback_verified';
+        automaticReady = available && observed.verificationStatus === 'loopback_verified';
         status = automaticReady ? 'available' : (available ? 'verification_required' : status);
       }
       methods.push({ mode, provider: key, family: getProviderTransport(key)?.family || backendFamily,
