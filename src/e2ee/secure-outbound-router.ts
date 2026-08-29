@@ -33,6 +33,11 @@ function errorCode(error:unknown):string{
   return /^[A-Z0-9_:-]{1,96}$/.test(candidate)?candidate:'E2EE_V2_DIRECTORY_UNAVAILABLE';
 }
 
+function safeDiagnosticValue(value:unknown,fallback:string):string{
+  const text=String(value||fallback);
+  return /^[A-Za-z0-9_.:@-]{1,96}$/.test(text)?text:fallback;
+}
+
 function transportId(businessMessageId:string,deviceId:string,keyId:string):string{
   return `e2ee-t-${crypto.createHash('sha256').update('VOKO-E2EE-V2-TRANSPORT\0').update(businessMessageId)
     .update('\0').update(deviceId).update('\0').update(keyId).digest('base64url')}`;
@@ -67,6 +72,7 @@ export class SecureOutboundRouter {
   private readonly cache=new Map<string,CachedResolution>();
   private readonly failureCache=new Map<string,{expiresAt:number;code:string}>();
   private readonly inflight=new Map<string,Promise<Resolution>>();
+  private readonly recentDiagnostics=new Map<string,number>();
   private readonly pendingProjectionMarks=new Set<string>();
   private projectionTimer:ReturnType<typeof setTimeout>|null=null;
 
@@ -79,6 +85,22 @@ export class SecureOutboundRouter {
       Promise<{uploadId:string;url:string}>;
     onBusinessDelivered?:(agentId:string,businessMessageId:string)=>void;
     enabled?:()=>boolean;agentPeerEnabled?:()=>boolean;attachmentsEnabled?:()=>boolean}){}
+
+  private capabilityDiagnostic(input:{agentId:string;peerKind?:string;stage:string;code:string;decision:string}):void{
+    const values={agentId:safeDiagnosticValue(input.agentId,'unknown'),
+      peerKind:safeDiagnosticValue(input.peerKind,'unknown'),stage:safeDiagnosticValue(input.stage,'unknown'),
+      code:safeDiagnosticValue(input.code,'E2EE_V2_DIRECTORY_UNAVAILABLE'),
+      decision:safeDiagnosticValue(input.decision,'unknown')};
+    const key=`${values.agentId}\0${values.peerKind}\0${values.stage}\0${values.code}\0${values.decision}`;
+    const now=Date.now();
+    if((this.recentDiagnostics.get(key)||0)>now-60_000)return;
+    this.recentDiagnostics.set(key,now);
+    if(this.recentDiagnostics.size>512){
+      for(const [candidate,seenAt] of this.recentDiagnostics)if(seenAt<=now-60_000)this.recentDiagnostics.delete(candidate);
+    }
+    console.warn('[E2EE] 能力发现',`agent=${values.agentId}`,`target=${values.peerKind}`,
+      `stage=${values.stage}`,`code=${values.code}`,`decision=${values.decision}`);
+  }
 
   private routeContext(agentId:string,channelId:string,metadata:unknown):{
     routingConversationId:string;wireConversationKey:string;metadata?:Record<string,unknown>}{
@@ -127,12 +149,17 @@ export class SecureOutboundRouter {
       const value={...row,expiresAt:Math.min(Number(row.expiresAt)||Date.now()+ttl,Date.now()+ttl)} as Resolution;
       this.cache.set(key,{expiresAt:value.expiresAt,value});
       this.failureCache.delete(key);
+      if(value.capability!=='supported')this.capabilityDiagnostic({agentId,peerKind:value.peerKind,
+        stage:'resolve_recipients',code:value.capability==='unsupported'
+          ?'RECIPIENT_UNSUPPORTED':'DIRECTORY_TEMPORARILY_UNAVAILABLE',decision:value.capability});
       if(value.capability==='supported')this.options.store.saveRecipientSnapshot({localAgentId:agentId,
         channelId,peerScopeId:value.peerScopeId,peerKind:value.peerKind,revision:value.revision,
         expiresAt:value.expiresAt,recipients:value.recipients});
       return value;
     }catch(error){
-      this.failureCache.set(key,{expiresAt:Date.now()+10_000,code:errorCode(error)});
+      const code=errorCode(error);
+      this.failureCache.set(key,{expiresAt:Date.now()+10_000,code});
+      this.capabilityDiagnostic({agentId,stage:'resolve_recipients',code,decision:'resolution_failed'});
       throw error;
     }
     })().finally(()=>this.inflight.delete(key));
@@ -218,10 +245,13 @@ export class SecureOutboundRouter {
           existing.routing_conversation_id,code);
         return{mode:'blocked',error:code,securityMode:'e2ee',reason:'active_directory_unavailable'};
       }
-      if(existing?.mode==='locked')return{mode:'blocked',error:existing.lock_reason||code,
-        securityMode:'e2ee',reason:'active_conversation_locked'};
-      if(code==='E2EE_RECIPIENT_DEVICE_LIMIT')return{mode:'blocked',error:code,securityMode:'plaintext',
-        reason:'recipient_policy_error'};
+      if(existing?.mode==='locked'){
+        return{mode:'blocked',error:existing.lock_reason||code,
+          securityMode:'e2ee',reason:'active_conversation_locked'};
+      }
+      if(code==='E2EE_RECIPIENT_DEVICE_LIMIT'){
+        return{mode:'blocked',error:code,securityMode:'plaintext',reason:'recipient_policy_error'};
+      }
       return{mode:'plaintext',reason:'capability_unknown_fallback'};
     }
     if(resolved.capability!=='supported'){
@@ -231,8 +261,10 @@ export class SecureOutboundRouter {
           existing.routing_conversation_id,code);
         return{mode:'blocked',error:code,securityMode:'e2ee',reason:'active_recipient_unavailable'};
       }
-      if(existing?.mode==='locked')return{mode:'blocked',error:existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED',
-        securityMode:'e2ee',reason:'active_conversation_locked'};
+      if(existing?.mode==='locked'){
+        return{mode:'blocked',error:existing.lock_reason||'E2EE_V2_CONVERSATION_LOCKED',
+          securityMode:'e2ee',reason:'active_conversation_locked'};
+      }
       return{mode:'plaintext',reason:resolved.capability==='unsupported'
         ?'recipient_unsupported':'capability_unknown_fallback'};
     }

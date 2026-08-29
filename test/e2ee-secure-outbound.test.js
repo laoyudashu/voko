@@ -132,6 +132,20 @@ test('never-encrypted unsupported and transient peers use plaintext without bein
   }
 });
 
+test('capability discovery failures log a stable code without target ids or error details',async()=>{
+  const f=fixture({directoryError:Object.assign(new Error('token=/secret user=/Users/private'),{code:'ETIMEDOUT'})});
+  const warnings=[];const originalWarn=console.warn;
+  console.warn=(...args)=>warnings.push(args.join(' '));
+  try{
+    const result=await f.router.deliver('gym','guest-sensitive-im','plain','text',1,null,'diagnostic-1');
+    await f.router.deliver('gym','another-sensitive-im','plain','text',1,null,'diagnostic-2');
+    assert.equal(result.securityReason,'capability_unknown_fallback');
+    assert.equal(warnings.length,1);
+    assert.match(warnings[0],/\[E2EE\] 能力发现 agent=gym target=unknown stage=resolve_recipients code=ETIMEDOUT decision=resolution_failed/);
+    assert.doesNotMatch(warnings[0],/guest-sensitive-im|secret|Users/);
+  }finally{console.warn=originalWarn;f.close();}
+});
+
 test('transient Directory failures are single-flight cached for ten seconds',async()=>{
   const f=fixture({directoryError:Object.assign(new Error('timeout'),{code:'ETIMEDOUT'})});
   try{
