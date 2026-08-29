@@ -351,18 +351,18 @@ export class SecureOutboundRouter {
     const fileName=String(source?.fileName||'attachment');
     const mediaType=String(source?.mediaType||'application/octet-stream');
     const openFlags=fs.constants.O_RDONLY|(process.platform==='win32'?0:fs.constants.O_NOFOLLOW);
-    const handle=fs.openSync(filePath,openFlags);
+    const handle=await fs.promises.open(filePath,openFlags);
     let bytes:Buffer;
     try{
-      const stat=fs.fstatSync(handle);
+      const stat=await handle.stat();
       if(!stat.isFile()||stat.size<=0||stat.size>25*1024*1024)throw new Error('E2EE_V2_ATTACHMENT_SOURCE_INVALID');
-      bytes=fs.readFileSync(handle);
-      const after=fs.fstatSync(handle);
+      bytes=await handle.readFile();
+      const after=await handle.stat();
       if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||bytes.length!==stat.size){
         bytes.fill(0);throw new Error('E2EE_V2_ATTACHMENT_SOURCE_CHANGED');
       }
     }finally{
-      fs.closeSync(handle);
+      await handle.close();
     }
     const encrypted=encryptE2eeV2Attachment(bytes,{messageId:localMsgId,
       kind:messageType==='image'?'image':'file',fileName,mediaType});

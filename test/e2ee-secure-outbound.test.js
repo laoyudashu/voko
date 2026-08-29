@@ -425,6 +425,22 @@ test('private attachment uploads ciphertext once and seals one manifest per reci
   }finally{f.close();}
 });
 
+test('private attachment file open is asynchronous so a blocked source does not freeze the runtime',async()=>{
+  const f=fixture();const file=path.join(f.root,'delayed.txt');fs.writeFileSync(file,'delayed attachment');
+  const originalOpen=fs.promises.open;let releaseOpen;let openStarted=false;let completed=false;
+  const gate=new Promise(resolve=>{releaseOpen=resolve;});
+  fs.promises.open=async function(...args){openStarted=true;await gate;return originalOpen.apply(this,args);};
+  try{
+    const pending=f.router.deliver('gym','guest-im','local-only-url','file',1,null,'business-attachment-delayed',
+      {_e2eeAttachment:{filePath:file,fileName:'delayed.txt',mediaType:'text/plain'}}).then(result=>{completed=true;return result;});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(openStarted,true);
+    assert.equal(completed,false);
+    releaseOpen();
+    assert.equal((await pending).deliveryState,'delivered');
+  }finally{fs.promises.open=originalOpen;f.close();}
+});
+
 test('attachment metadata cannot fall through to a plaintext local URL when E2EE attachments are disabled',async()=>{
   const f=fixture({attachmentsEnabled:false});const file=path.join(f.root,'plain.txt');fs.writeFileSync(file,'secret');
   try{

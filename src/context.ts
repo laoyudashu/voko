@@ -362,15 +362,15 @@ function createContext({
       uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
       const { uploadToOSS } = require('./server/oss');
       const fs = require('fs');
-      const fd = fs.openSync(filePath, 'r');
+      const fd = await fs.promises.open(filePath, 'r');
       let buffer: Buffer;
       try {
-        const before = fs.fstatSync(fd);
+        const before = await fd.stat();
         if (!before.isFile() || before.size <= 0 || before.size > 25 * 1024 * 1024) throw new Error('附件必须是 25 MB 以内的普通文件');
-        buffer = fs.readFileSync(fd);
-        const after = fs.fstatSync(fd);
+        buffer = await fd.readFile();
+        const after = await fd.stat();
         if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || buffer.length !== before.size) throw new Error('读取附件时文件发生变化，请重试');
-      } finally { fs.closeSync(fd); }
+      } finally { await fd.close(); }
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const serverAgentId = agentId ? resolveServerAgentIdForLocalAgent(db, agentId) : undefined;
