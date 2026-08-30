@@ -27,6 +27,7 @@
   "register.done.page_title": "设置完成",
   "register.done.title": "设置完成",
   "register.done.msg": "Agent <strong>{name}</strong> 已创建成功",
+  "register.done.msg_generic": "Agent の作成が完了しました",
   "register.done.start": "开始使用 VOKO",
   "register.add.page_title": "添加 Agent",
   "register.add.title": "添加 Agent",

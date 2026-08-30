@@ -27,6 +27,7 @@
   "register.done.page_title": "Setup Complete",
   "register.done.title": "Setup Complete",
   "register.done.msg": "Agent <strong>{name}</strong> created successfully",
+  "register.done.msg_generic": "Agent created successfully",
   "register.done.start": "Start using VOKO",
   "register.add.page_title": "Add Agent",
   "register.add.title": "Add Agent",

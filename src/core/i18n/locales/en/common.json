@@ -77,5 +77,6 @@
   "common.home.confirm_delete_audit": "Confirm delete this security rule?",
   "common.home.submitting": "Submitting…",
   "common.home.success": "Success",
+  "common.home.warning": "Action requires attention",
   "common.home.submit": "Submit"
 }

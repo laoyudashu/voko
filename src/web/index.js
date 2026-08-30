@@ -1202,6 +1202,10 @@ function createWebRouter(handlers, db, opts={}){
     try{
       res.set('Cache-Control','no-store, no-cache, must-revalidate');
       const T=req.t,L=k=>esc(T(k));
+      // Query parameters select a notice kind only. Never reflect their caller-controlled value.
+      if(req.query.ok)req.query.ok=T('common.home.success');
+      if(req.query.warn)req.query.warn=T('common.home.warning');
+      if(req.query.err)req.query.err=T('common.action.failed');
       // 读取配置状态
       let hasToken=false,port='',userEmail='',tokenEmail='';
       try{if(db){

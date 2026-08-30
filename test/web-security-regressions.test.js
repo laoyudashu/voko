@@ -36,7 +36,9 @@ test('web routes encode reflected query state and use a private upload directory
   assert.match(source, /mkdtempSync\(path\.join\(require\('os'\)\.tmpdir\(\), 'voko-upload-'\)\)/);
   assert.match(source, /writeFileSync\(tmpPath, filedata, \{ flag: 'wx', mode: 0o600 \}\)/);
   assert.match(source, /jsonForInlineScript\(\{actionStatus:/);
-  assert.match(source, /text:esc\(req\.query\.(?:ok|warn|err)\)/);
+  assert.match(source, /if\(req\.query\.ok\)req\.query\.ok=T\('common\.home\.success'\)/);
+  assert.match(source, /if\(req\.query\.warn\)req\.query\.warn=T\('common\.home\.warning'\)/);
+  assert.match(source, /if\(req\.query\.err\)req\.query\.err=T\('common\.action\.failed'\)/);
   assert.match(source, /AGENT_ID='\+jsonForInlineScript\(agentId\)/);
   assert.match(source, /var aid='\+jsonForInlineScript\(agentId\)/);
   assert.match(source, /id="web-conversation-start" value="0"/);

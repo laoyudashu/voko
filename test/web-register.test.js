@@ -106,7 +106,7 @@ describe('Web POST /agent/add 注册流程', () => {
     const response = await fetch(`${server.baseUrl}/agent/add?done=${encodeURIComponent('<img src=x onerror=alert(1)>')}`);
     const html = await response.text();
     assert.strictEqual(response.status, 200);
-    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(html.includes('Agent 已创建成功'));
     assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
   });
 

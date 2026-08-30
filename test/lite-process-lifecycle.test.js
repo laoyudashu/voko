@@ -106,7 +106,8 @@ async function waitRuntimeSnapshot(dbPath, timeoutMs = 5000) {
     try {
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
-        if (db.prepare("SELECT data FROM config WHERE type = 'runtime'").get()) return;
+        const row = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
+        if (row?.data && JSON.parse(row.data)?.ts) return;
       } finally {
         db.close();
       }

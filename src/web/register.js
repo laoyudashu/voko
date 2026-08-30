@@ -260,13 +260,13 @@ function addAgentBody(email, categories, openclawAgents, hermesProfiles, db, tFn
     + '</div>';
 }
 
-function doneBody(agentName, tFn) {
+function doneBody(_agentName, tFn) {
   const t = tFn || (k => k);
   return '<div class="voko-logo">VOKO</div>'
     + '<div class="card" style="text-align:center">'
     + '<div style="font-size:48px;margin-bottom:10px">✅</div>'
     + '<h2>' + esc(t('register.done.title')) + '</h2>'
-    + '<p class="desc">' + esc(t('register.done.msg', { name: agentName })) + '</p>'
+    + '<p class="desc">' + esc(t('register.done.msg_generic')) + '</p>'
     + '<a href="/" class="btn btn-success" style="margin-top:8px;padding:12px 32px;font-size:16px">' + esc(t('register.done.start')) + '</a>'
     + '</div>';
 }
@@ -1232,7 +1232,7 @@ function createRegisterRouter(handlers, db, options = {}) {
   R.get('/agent/add', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (req.query.done) {
-      return res.send(page(req.t('register.done.page_title'), doneBody(req.query.done, req.t), req.t, req.locale, db));
+      return res.send(page(req.t('register.done.page_title'), doneBody('', req.t), req.t, req.locale, db));
     }
     const email = getLoggedEmail();
     if (!email) return res.redirect('/login');
