@@ -118,7 +118,15 @@ describe('voko mcp stdio 桥接', () => {
 
     // 2. 建立可验证的实例锁并写入同身份 runtime（指向临时 server 端口）
     const db = tmpDb();
-    const acquired = await lifecycle.acquireInstanceLock(db._tmpPath, path.resolve(process.argv[1]));
+    let currentIdentity = null;
+    for (let attempt = 0; attempt < 3 && !currentIdentity; attempt++) {
+      currentIdentity = lifecycle.inspectProcess(process.pid);
+      if (!currentIdentity) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.ok(currentIdentity, '应能读取测试进程身份');
+    const acquired = await lifecycle.acquireInstanceLock(db._tmpPath, path.resolve(process.argv[1]), {
+      inspectProcess: (pid) => pid === process.pid ? currentIdentity : lifecycle.inspectProcess(pid),
+    });
     assert.equal(acquired.acquired, true);
     acquired.lock.updatePort(litePort);
     healthIdentity = { ...healthIdentity, instanceId: acquired.lock.metadata.instanceId, port: litePort };

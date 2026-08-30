@@ -33,14 +33,10 @@ test('attachment page prefills recipient and sends multipart through upload_and_
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
   });
-  t.after(() => new Promise((resolve, reject) => {
-    server.closeIdleConnections?.();
-    server.closeAllConnections?.();
-    server.close((error) => error ? reject(error) : resolve());
-  }));
+  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const page = await fetch(`${base}/agents/gym/upload?toUid=visitor-1&channelType=1`);
+  const page = await fetch(`${base}/agents/gym/upload?toUid=visitor-1&channelType=1`, { headers: { Connection: 'close' } });
   const html = await page.text();
   assert.equal(page.status, 200);
   assert.match(html, /id="upload-to" value="Alice" data-to-uid="visitor-1"/);
@@ -53,7 +49,7 @@ test('attachment page prefills recipient and sends multipart through upload_and_
   assert.match(html, /id="upload-submit-btn"[^>]*>发送附件<\/button>/);
   assert.doesNotMatch(html, /get_upload_url|upload_url|\/upload-file|Get URL/);
 
-  const groupPage = await fetch(`${base}/agents/gym/upload?toUid=group-1&channelType=2`);
+  const groupPage = await fetch(`${base}/agents/gym/upload?toUid=group-1&channelType=2`, { headers: { Connection: 'close' } });
   const groupHtml = await groupPage.text();
   assert.match(groupHtml, /id="upload-to" value="Running Club" data-to-uid="group-1"/);
   assert.match(groupHtml, /type="hidden" id="upload-channel-type" value="2"/);
@@ -67,7 +63,7 @@ test('attachment page prefills recipient and sends multipart through upload_and_
   );
   const response = await fetch(`${base}/api/agents/gym/send-file?toUid=visitor-1&channelType=1&message=hello`, {
     method: 'POST',
-    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, Connection: 'close' },
     body: multipart,
   });
   assert.deepEqual(await response.json(), { success: true, messageId: 'file-message-1' });
