@@ -33,7 +33,11 @@ test('attachment page prefills recipient and sends multipart through upload_and_
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     instance.once('error', reject);
   });
-  t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  t.after(() => new Promise((resolve, reject) => {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    server.close((error) => error ? reject(error) : resolve());
+  }));
   const base = `http://127.0.0.1:${server.address().port}`;
 
   const page = await fetch(`${base}/agents/gym/upload?toUid=visitor-1&channelType=1`);

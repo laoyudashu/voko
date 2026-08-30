@@ -449,6 +449,16 @@ describe('Lite process lifecycle integration', () => {
     await waitHealth(port);
     await waitRuntimeSnapshot(dbPath);
 
+    const beforeCrashDb = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.ok(
+        beforeCrashDb.prepare("SELECT data FROM config WHERE type = 'runtime'").get(),
+        '强杀前应已写入 runtime 快照',
+      );
+    } finally {
+      beforeCrashDb.close();
+    }
+
     lite.kill('SIGKILL');
     await waitExit(lite, 10000);
 
@@ -462,15 +472,6 @@ describe('Lite process lifecycle integration', () => {
     assert.equal(status.uptime, null);
     assert.ok(status.lastSeenAt, '保留最后快照时间用于诊断');
     assert.deepEqual(status.agents, []);
-    const crashedDb = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      assert.ok(
-        crashedDb.prepare("SELECT data FROM config WHERE type = 'runtime'").get(),
-        '强杀后应保留 runtime 快照，以证明 status 没有依赖删除才正确',
-      );
-    } finally {
-      crashedDb.close();
-    }
   });
 
   it('端口被占时启动失败且不会递增端口', { timeout: 40000 }, async () => {
