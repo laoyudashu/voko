@@ -15,7 +15,7 @@ test('runtime logs use an explicit isolated directory without changing productio
     assert.equal(resolveVokoLogDirectory({}, 'darwin', '/Users/example'),
       '/Users/example/Library/Application Support/voko');
     assert.equal(resolveVokoLogDirectory({ APPDATA: 'C:\\Data' }, 'win32', 'C:\\Users\\example'),
-      path.join('C:\\Data', 'voko'));
+      path.win32.join('C:\\Data', 'voko'));
     assert.equal(resolveVokoLogDirectory({ XDG_CONFIG_HOME: '/cfg' }, 'linux', '/home/example'), '/cfg/voko');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

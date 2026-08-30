@@ -761,6 +761,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       } catch (e: any) {
         return res.status(400).json({ success: false, error: e?.message || 'invalid provider fault' });
       }
+      if (req.body?.available === true && !req.body?.fault) {
+        (global as any).__dispatcher?.clearDeliveryEvidence?.('mock-echo', scopedAgentId || undefined);
+      }
       (global as any).__dispatcher?.invalidateRoutes?.({
         providerId: 'mock-echo',
         agentId: scopedAgentId || undefined,

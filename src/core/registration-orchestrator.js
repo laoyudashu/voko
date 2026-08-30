@@ -1133,8 +1133,9 @@ class RegistrationOrchestrator {
     }
     if (type === 'opencode') {
       const { resolveOpenCodeCommand } = require('./dispatcher/providers/opencode-runtime');
-      const command = resolveOpenCodeCommand();
-      const available = !!command && (path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command));
+      const command = this.options.commandAvailable ? 'opencode' : resolveOpenCodeCommand();
+      const available = this.options.commandAvailable ? hasCommand('opencode')
+        : !!command && (path.isAbsolute(command) ? fs.existsSync(command) : hasCommand(command));
       const status = available ? 'ready' : 'unavailable';
       const action = available ? 'test' : null;
       return [
@@ -1158,8 +1159,9 @@ class RegistrationOrchestrator {
     }
     if (type === 'github-copilot') {
       const { resolveGitHubCopilotRuntime } = require('./dispatcher/providers/github-copilot-runtime');
-      const runtime = resolveGitHubCopilotRuntime();
-      const available = !!runtime && (path.isAbsolute(runtime.command) ? fs.existsSync(runtime.command) : hasCommand(runtime.command));
+      const runtime = this.options.commandAvailable ? { command: 'copilot' } : resolveGitHubCopilotRuntime();
+      const available = this.options.commandAvailable ? hasCommand('copilot')
+        : !!runtime && (path.isAbsolute(runtime.command) ? fs.existsSync(runtime.command) : hasCommand(runtime.command));
       const status = available ? 'verification_required' : 'unavailable';
       const action = available ? 'test' : null;
       return [

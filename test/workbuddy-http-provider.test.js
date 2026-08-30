@@ -64,10 +64,15 @@ test('WorkBuddy bundled CLI may be configured without PATH and launches through 
   assert.deepEqual(workBuddySpawnCommand(runtime), { command: process.execPath, argsPrefix: [path.resolve(command)] });
 });
 
-test('WorkBuddy prefers an installed CLI and starts a text-only local service', () => {
-  const runtime = resolveWorkBuddyRuntime({ env: { ...process.env } });
+test('WorkBuddy prefers an installed CLI and starts a text-only local service', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-path-'));
+  const command = path.join(dir, process.platform === 'win32' ? 'codebuddy.cmd' : 'codebuddy');
+  fs.writeFileSync(command, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+  if (process.platform !== 'win32') fs.chmodSync(command, 0o755);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runtime = resolveWorkBuddyRuntime({ env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ''}` } });
   assert.equal(runtime.source, 'path');
-  assert.match(runtime.command, /codebuddy/);
+  assert.equal(runtime.command, path.resolve(command));
   const args = workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session');
   assert.deepEqual(args.slice(0, 10), ['bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
     '--session-id', 'voko-session', '--permission-mode', 'dontAsk']);

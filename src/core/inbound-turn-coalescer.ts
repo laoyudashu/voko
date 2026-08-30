@@ -156,7 +156,6 @@ export class InboundTurnCoalescer<T extends InboundTurnItem, R = void> {
     if (turn.timer) clearTimeout(turn.timer);
     const delay = Math.max(0, Math.min(this.quietWindowMs, turn.hardDeadlineAt - this.now()));
     turn.timer = setTimeout(() => void this.flushTurn(turn), delay);
-    turn.timer.unref?.();
   }
 
   private async flushTurn(turn: PendingTurn<T, R>): Promise<R | undefined> {

@@ -313,6 +313,7 @@ describe('shared registration orchestrator', () => {
       dumateRuntimeAvailable: () => true,
       dumateAgents: () => [],
       dumateBackendPort: () => '',
+      installedApplications: () => ['百度搭子'],
     });
     try {
       db.prepare('UPDATE config SET data=? WHERE type=?').run(JSON.stringify([

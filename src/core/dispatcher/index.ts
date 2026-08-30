@@ -695,6 +695,17 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     }
   }
 
+  function clearDeliveryEvidence(providerId: string, agentId?: string): void {
+    if (agentId) {
+      _deliveryEvidence.delete(_deliveryEvidenceKey(agentId, providerId));
+      return;
+    }
+    const suffix = `::${providerId}`;
+    for (const key of _deliveryEvidence.keys()) {
+      if (key.endsWith(suffix)) _deliveryEvidence.delete(key);
+    }
+  }
+
   runtimeRegistry.on('availability', (event: AvailabilityEvent = {}) => {
     const providerId = String(event.providerId || '');
     if (!providerId) return;
@@ -2056,6 +2067,7 @@ Convergence obligations:
   return { dispatch, executeOwner, executeIsolated, executeE2ee, executeOwnerIntervention, prepareForPull, resolveProvider, resolveProviders, resolveProviderTransport,
     subscribeOwnerIoEvents, cancelOwnerTurn, respondOwnerApproval,
     resolveTrustedOwnerTransport, getOwnerTransportStatus, getAgentDeliveryStatus, getRoutingStats,
+    clearDeliveryEvidence,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
