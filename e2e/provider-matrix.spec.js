@@ -41,7 +41,7 @@ async function inject(request, input) {
 }
 
 test('delivery_modes order controls Pull versus Push and recovers without bypassing order', async ({ request }, testInfo) => {
-  const suffix = testInfo.repeatEachIndex || 0;
+  const suffix = (testInfo.repeatEachIndex || 0) * 10 + (testInfo.retry || 0);
   const pullChannel = `e2e-provider-order-pull-${suffix}`;
   const pushChannel = `e2e-provider-order-push-${suffix}`;
   await setProvider(request, { available: true });
@@ -72,7 +72,7 @@ test('delivery_modes order controls Pull versus Push and recovers without bypass
 });
 
 test('provider availability is isolated per Agent and restores the affected route only', async ({ request }, testInfo) => {
-  const suffix = testInfo.repeatEachIndex || 0;
+  const suffix = (testInfo.repeatEachIndex || 0) * 10 + (testInfo.retry || 0);
   const firstChannel = `e2e-provider-isolation-first-${suffix}`;
   const secondChannel = `e2e-provider-isolation-second-${suffix}`;
   await setModes(request, 'e2e-agent', null);
