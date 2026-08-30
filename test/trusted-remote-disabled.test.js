@@ -37,7 +37,10 @@ async function start(t) {
 
 test('parked trusted remote UI and local proxy routes are hard-disabled', async t => {
   const base = await start(t);
-  const page = await fetch(`${base}/`);
+  // Do not leave Undici keep-alive handles racing the temporary server cleanup.
+  // Node 24 on Windows can otherwise abort in libuv while the test process exits.
+  const headers = { Accept: 'application/json', Connection: 'close' };
+  const page = await fetch(`${base}/`, { headers: { Connection: 'close' } });
   const html = await page.text();
   assert.equal(page.status, 200);
   assert.doesNotMatch(html, /href="\/trusted-remote"/);
@@ -52,7 +55,7 @@ test('parked trusted remote UI and local proxy routes are hard-disabled', async 
     '/api/owner-codex-config/agent-1',
     '/agents/agent-1/owner-chats/conversation-1',
   ]) {
-    const response = await fetch(`${base}${path}`, { headers: { Accept: 'application/json' } });
+    const response = await fetch(`${base}${path}`, { headers });
     assert.equal(response.status, 404, path);
   }
 });
