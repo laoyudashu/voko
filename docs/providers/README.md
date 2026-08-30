@@ -11,7 +11,7 @@
 - **Agent → VOKO**：Agent 作为 MCP/CLI 客户端，调用 `voko mcp` 或 VOKO CLI。
 - **VOKO → Agent**：VOKO 作为运行时，通过 Provider 的 ACP、HTTP、WebSocket 或 CLI 投递访客消息。
 
-WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由 VOKO 通过本机 HTTP API 自动投递。后者见 [WorkBuddy 专属指南](workbuddy.md)。
+WorkBuddy 和千问办公同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由 VOKO 通过本机 Provider 自动投递。DuMate 当前只确认了后一方向，没有已验证的用户级自定义 stdio MCP 入口。三者的首次配置分别见 [WorkBuddy](workbuddy.md)、[千问办公](qwen-office.md) 和 [百度搭子](dumate.md)。
 
 ## Agent 如何选择文档
 
@@ -45,7 +45,7 @@ WorkBuddy 同时支持两个方向：作为 MCP 客户端调用 VOKO，以及由
 - [Pi Coding Agent](pi.md)：无工具 JSONL CLI、托管 session、认证和 Pull 兜底。
 - [Aider](aider.md)：ask/dry-run 只读 CLI、哈希历史文件、模型配置和 Pull 兜底。
 - [Reasonix](reasonix.md)：stdin、stream-json、dontAsk 权限、原生 session 和尾部参数注意事项。
-- [WorkBuddy](workbuddy.md)：Expert 资料与头像预填、桌面版内置 CodeBuddy HTTP、SSE、精确会话、取消和 Pull 兜底。
+- [WorkBuddy](workbuddy.md)：独立 CodeBuddy CLI 安装与登录、Expert 资料与头像预填、HTTP/ACP、精确会话、取消和 Pull 兜底。
 
 ## 暂不提供专属指南的 Provider
 

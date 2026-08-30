@@ -4,9 +4,16 @@ export function isTransientE2eeDirectoryError(value: unknown): boolean {
   const row=value as any;
   const code=String(row?.code||row?.message||value||'');
   if (['ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
-    'E2EE_V2_DIRECTORY_UNAVAILABLE'].includes(code)) return true;
+    'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_TIMEOUT'].includes(code)) return true;
   if (/^E2EE_V2_DIRECTORY_HTTP_(?:408|425|429|5\d\d)$/.test(code)) return true;
   return row?.name === 'TimeoutError' || row?.name === 'AbortError';
+}
+
+export function isRevalidatableE2eeDirectoryError(value: unknown): boolean {
+  const row=value as any;
+  const code=String(row?.code||row?.message||value||'');
+  return ['PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND','E2EE_V2_DIRECTORY_HTTP_404'].includes(code)
+    ||isTransientE2eeDirectoryError(value);
 }
 
 function bounded(value: unknown, name: string, max = 2048): string {
@@ -34,16 +41,34 @@ export class E2eeV2DirectoryClient {
   }
 
   private async request(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<any> {
-    const response = await (this.options.fetchImpl || fetch)(`${this.baseUrl}/api/external${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${this.options.token}`,
-        accept: 'application/json',
-        ...(init.body ? { 'content-type':'application/json' } : {}),
-        ...(init.headers || {}),
-      },
-      signal: AbortSignal.timeout(timeoutMs || this.options.timeoutMs || 10_000),
-    });
+    const effectiveTimeoutMs=timeoutMs || this.options.timeoutMs || 10_000;
+    let response:Response;
+    try{
+      response = await (this.options.fetchImpl || fetch)(`${this.baseUrl}/api/external${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${this.options.token}`,
+          accept: 'application/json',
+          ...(init.body ? { 'content-type':'application/json' } : {}),
+          ...(init.headers || {}),
+        },
+        signal: AbortSignal.timeout(effectiveTimeoutMs),
+      });
+    }catch(value){
+      const source:any=value instanceof Error?value:new Error(String(value));
+      if(source.name==='TimeoutError' || source.name==='AbortError'){
+        const error:any=new Error(source.message,{cause:source});
+        error.name=source.name;
+        error.code='E2EE_V2_DIRECTORY_TIMEOUT';
+        error.causeCode=source.code;
+        error.operation=path;
+        error.timeoutMs=effectiveTimeoutMs;
+        throw error;
+      }
+      source.operation=path;
+      source.timeoutMs=effectiveTimeoutMs;
+      throw source;
+    }
     let body: any = null;
     try { body = await response.json(); } catch {}
     if (!response.ok || !body?.success) {
@@ -118,4 +143,4 @@ export class E2eeV2DirectoryClient {
   }
 }
 
-module.exports = { E2eeV2DirectoryClient, isTransientE2eeDirectoryError };
+module.exports = { E2eeV2DirectoryClient, isRevalidatableE2eeDirectoryError, isTransientE2eeDirectoryError };

@@ -3,18 +3,22 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function resolveOpenCodeCommand(): string {
+function openCodeCandidates(): string[] {
+  const roots = [
+    process.env.APPDATA && path.join(process.env.APPDATA, 'npm'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'nodejs'),
+    path.dirname(process.execPath),
+  ].filter(Boolean) as string[];
+  return roots.flatMap((root) => [
+    path.join(root, 'node_modules', 'opencode-ai', 'bin', 'opencode.exe'),
+    path.join(root, 'node_modules', 'opencode-ai', 'bin', 'opencode'),
+  ]);
+}
+
+function resolveOpenCodeCommand(): string | null {
   if (process.env.VOKO_OPENCODE_BIN) return process.env.VOKO_OPENCODE_BIN;
   if (process.platform === 'win32') {
-    const executable = path.join(
-      process.env.APPDATA || '',
-      'npm',
-      'node_modules',
-      'opencode-ai',
-      'bin',
-      'opencode.exe',
-    );
-    if (fs.existsSync(executable)) return executable;
+    return openCodeCandidates().find((candidate) => fs.existsSync(candidate)) || null;
   }
   return 'opencode';
 }
@@ -56,6 +60,7 @@ module.exports = {
   isolatedOpenCodeEnv,
   newServerPassword,
   resolveOpenCodeCommand,
+  openCodeCandidates,
 };
 
 export {};

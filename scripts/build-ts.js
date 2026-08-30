@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { BUILD_MANIFEST, writeBuildManifest } = require('../src/core/build-digest');
+const packageJson = require('../package.json');
 
 const PACKAGE_DIR = path.join(__dirname, '..');
 const SOURCE_DIR = path.join(PACKAGE_DIR, 'src');
@@ -104,7 +106,9 @@ function validateStage() {
 function promoteStage() {
   fs.mkdirSync(BUILD_DIR, { recursive: true });
   const stagedRelativePaths = new Set();
-  for (const sourceFile of walkFiles(STAGE_DIR)) {
+  const stagedFiles = walkFiles(STAGE_DIR);
+  const manifestPath = path.join(STAGE_DIR, BUILD_MANIFEST);
+  for (const sourceFile of stagedFiles.filter(filePath => filePath !== manifestPath)) {
     const relative = path.relative(STAGE_DIR, sourceFile);
     stagedRelativePaths.add(relative.toLowerCase());
     const destination = path.join(BUILD_DIR, relative);
@@ -129,6 +133,19 @@ function promoteStage() {
       fs.rmSync(existingFile, { force: true });
     }
   }
+  const manifestDestination = path.join(BUILD_DIR, BUILD_MANIFEST);
+  const manifestTemporary = `${manifestDestination}.voko-next-${process.pid}`;
+  fs.copyFileSync(manifestPath, manifestTemporary);
+  try {
+    fs.renameSync(manifestTemporary, manifestDestination);
+  } catch {
+    fs.copyFileSync(manifestTemporary, manifestDestination);
+    fs.rmSync(manifestTemporary, { force: true });
+  }
+  // npm links the package bin directly to build/index.js on POSIX. TypeScript
+  // emits regular files without the executable bit, so preserve a runnable CLI
+  // after every atomic build promotion and global installation.
+  if (process.platform !== 'win32') fs.chmodSync(path.join(BUILD_DIR, 'index.js'), 0o755);
 }
 
 function main() {
@@ -143,6 +160,10 @@ function main() {
       path.basename(STAGE_DIR),
     ]);
     validateStage();
+    writeBuildManifest(STAGE_DIR, {
+      packageName: packageJson.name,
+      packageVersion: packageJson.version,
+    });
     promoteStage();
     console.log('[build-ts] 完整构建已更新到 build/');
   } finally {

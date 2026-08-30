@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { readBuildManifest } = require('./build-digest');
 
 export interface ProcessIdentity {
   pid: number;
@@ -27,6 +28,8 @@ export interface InstanceMetadata extends ProcessIdentity {
   mcpToken: string;
   dbPath: string;
   entryPath: string;
+  /** SHA-256 build identity captured when this runtime acquired the lock. */
+  buildDigest?: string | null;
   port: number | null;
   createdAt: number;
   updatedAt: number;
@@ -134,7 +137,7 @@ function secureWindowsPathForCurrentUser(filePath: string, isDirectory: boolean)
   const result = spawnSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
-  ], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  ], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
   if (result.error || result.status !== 0) {
     throw new Error(`Unable to protect VOKO runtime path for the current Windows user: ${String(result.error?.message || result.stderr || result.status)}`);
   }
@@ -341,10 +344,24 @@ function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetad
     mcpToken: crypto.randomBytes(32).toString('base64url'),
     dbPath: canonicalDbPath(dbPath),
     entryPath: normalizePath(entryPath),
+    buildDigest: computeBuildDigest(entryPath),
     port: null,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function computeBuildDigest(entryPath: string): string | null {
+  try {
+    const normalizedEntry = normalizePath(entryPath);
+    const resolvedEntry = fs.realpathSync.native(normalizedEntry);
+    const manifest = readBuildManifest(path.dirname(resolvedEntry));
+    if (manifest.state === 'valid') return manifest.digest;
+    if (manifest.state === 'invalid') return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(resolvedEntry)).digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 function createLockHandle(

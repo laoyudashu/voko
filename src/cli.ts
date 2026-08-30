@@ -113,6 +113,7 @@ const TOOL_PARAM_SCHEMAS = {
   search_capabilities:     { agentId: 'string', keyword: 'string', page: 'number', limit: 'number' },
   declare_capabilities:    { agentId: 'string', ability: 'json' },
   send_message:            { agentId: 'string', toUid: 'string', content: 'string', contentType: 'number', channelType: 'number', mentions: 'json', conversationId: 'string', replyToMessageId: 'string' },
+  get_message_result:      { agentId: 'string', messageId: 'string' },
   get_chat_history:        { agentId: 'string', channelId: 'string', channelType: 'number', conversationId: 'string', keyword: 'string', limit: 'number', offset: 'number' },
   get_visitor_profile:     { visitorId: 'string', agentId: 'string', limit: 'number', offset: 'number' },
   list_conversations:      { agentId: 'string', filter: 'string', channelType: 'string', limit: 'number', offset: 'number', keyword: 'string' },
@@ -543,6 +544,16 @@ function _hasAgentIdParam(toolName?: any) {
  * voko <tool> --help：打印该工具的参数说明（人类可读，工具名无 voko_ 前缀）
  */
 async function printToolHelp(toolName?: any, core?: any) {
+  if (!core) {
+    const schema: Record<string, any> = (TOOL_PARAM_SCHEMAS as Record<string, any>)[toolName] || {};
+    console.log(toolName);
+    console.log('');
+    console.log(t('cli.tool.params_header'));
+    for (const [name, type] of Object.entries(schema)) {
+      console.log(`  --${name}  [${type}, ${name === 'action' ? t('cli.tool.required') : t('cli.tool.optional')}]`);
+    }
+    return;
+  }
   let mcpServer;
   try {
     mcpServer = _buildMcpForSchema(core);

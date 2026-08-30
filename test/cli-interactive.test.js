@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { Writable } = require('node:stream');
 
 const { runInteractiveLogin, runInteractiveRegistration } = require('../build/cli-interactive');
-const { hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner } = require('../build/index');
+const { hasGraphicalSession, interactiveStartEnabled, hasAgentForOwner, nodeVersionSupported } = require('../build/index');
 
 function outputBuffer() {
   let text = '';
@@ -38,6 +38,12 @@ test('interactive commands reject non-TTY input instead of blocking automation',
   const input = { isTTY: false };
   const output = { isTTY: false };
   await assert.rejects(() => runInteractiveLogin({}, { input, output }), /requires a TTY/);
+});
+
+test('terminal restoration errors are warnings after a completed interactive action', () => {
+  const buffered = outputBuffer();
+  require('../build/cli-interactive')._test.closePrompt({ close() { throw new Error('setRawMode EPERM'); } }, buffered.output);
+  assert.match(buffered.text(), /setRawMode EPERM/);
 });
 
 test('interactive registration follows the shared state machine and keeps pull enabled', async () => {
@@ -105,6 +111,13 @@ test('automatic onboarding only runs in a headless interactive terminal', () => 
   assert.equal(interactiveStartEnabled({}, 'linux', { DISPLAY: ':0' }, ttyIn, ttyOut), false);
   assert.equal(interactiveStartEnabled({ 'no-interactive': true }, 'linux', {}, ttyIn, ttyOut), false);
   assert.equal(interactiveStartEnabled({}, 'linux', {}, { isTTY: false }, ttyOut), false);
+});
+
+test('Node.js minimum version comparison is lexicographic', () => {
+  assert.equal(nodeVersionSupported('22.4.99'), false);
+  assert.equal(nodeVersionSupported('22.5.0'), true);
+  assert.equal(nodeVersionSupported('22.5.1'), true);
+  assert.equal(nodeVersionSupported('23.0.0'), true);
 });
 
 test('headless onboarding only registers when the signed-in owner has no Agent', () => {

@@ -28,7 +28,7 @@ const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor
 const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw-cli');
 const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
-const { classifyCliFailure } = require('../build/core/adapters/cli-spawner');
+const { classifyCliFailure, runCli, sanitizeCliDiagnostic } = require('../build/core/adapters/cli-spawner');
 const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const {
   RegistrationOrchestrator,
@@ -38,6 +38,48 @@ const {
 test('CLI auth messages including signed-in wording are safe to fallback', () => {
   assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'not_delivered');
   assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'not_delivered');
+});
+
+test('CLI timeout carries a stable Provider code and retryability', async () => {
+  await assert.rejects(() => runCli({
+    cmd: process.execPath,
+    args: ['-e', 'setTimeout(() => {}, 10000)'],
+    timeout: 20,
+    tag: 'timeout-contract',
+  }), error => error.code === 'PROVIDER_TIMEOUT'
+    && error.deliveryOutcome === 'outcome_unknown'
+    && error.retryable === true);
+});
+
+test('CLI diagnostics redact credentials and user directories', () => {
+  const diagnostic = sanitizeCliDiagnostic(
+    'failed at C:\\Users\\laoyu\\agent token=secret-value Bearer abc.def.ghi /home/tjyu/config',
+  );
+  assert.equal(diagnostic,
+    'failed at [user-dir]\\agent token=[redacted] Bearer [redacted] [user-dir]/config');
+  assert.doesNotMatch(diagnostic, /laoyu|tjyu|secret-value|abc\.def/);
+});
+
+test('CLI diagnostics preserve the trailing root cause after noisy warnings', () => {
+  const diagnostic = sanitizeCliDiagnostic(`${'warning '.repeat(80)}ROOT_CAUSE model=unsupported`);
+  assert.ok(diagnostic.length <= 400);
+  assert.match(diagnostic, /^warning/);
+  assert.match(diagnostic, /ROOT_CAUSE model=unsupported$/);
+});
+
+test('generic CLI exit exposes only a sanitized stderr diagnostic', async () => {
+  const provider = new CliAdapter({
+    name: 'DIAGNOSTIC TEST CLI', cmd: process.execPath,
+    args: ['-e', "process.stderr.write('failed token=secret-value at /home/private/config'); process.exit(7)"],
+    matchType: 'reasonix', adapterType: 'reasonix-cli', timeout: 5000,
+  });
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-reasonix', fromUid: 'visitor', content: 'private prompt', messageId: 'diagnostic-test',
+  }), error => error.code === 'PROVIDER_CLI_EXIT'
+    && error.exitCode === 7
+    && error.retryable === false
+    && error.diagnostic === 'failed token=[redacted] at [user-dir]/config'
+    && !String(error.diagnostic).includes('private prompt'));
 });
 
 test('CLI auth failure invalidates the route until the next health check', async () => {
@@ -217,6 +259,8 @@ test('OpenClaw rejects a failed CLI process and Hermes reports a background deli
   await hermes.push(payload);
   await hermes.waitForIdle();
   assert.equal(errors[0].kind, 'execution_failed');
+  assert.equal(errors[0].agentId, 'voko-agent');
+  assert.equal(errors[0].turnId, 'message');
 });
 
 test('Hermes CLI fallback queues the same profile serially without blocking dispatch', async () => {
@@ -249,6 +293,28 @@ test('Hermes CLI fallback queues the same profile serially without blocking disp
   assert.equal(starts.length, 2);
 });
 
+test('Hermes consecutive attachment turns preserve exact turn correlation while remaining serial', async () => {
+  let active = 0; let maxActive = 0;
+  const replies = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'shared-profile' }), all: () => [] }) },
+    runCli: async () => {
+      active += 1; maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: 'attachment reply', stderr: '', code: 0, signal: null };
+    },
+  });
+  provider.on('agent.reply', reply => replies.push(reply));
+  await Promise.all([
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'file', messageId: 'm-file', turnId: 'turn-file', attachments: [] }),
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'image', messageId: 'm-image', turnId: 'turn-image', attachments: [] }),
+  ]);
+  await provider.waitForIdle('shared-profile');
+  assert.equal(maxActive, 1);
+  assert.deepEqual(replies.map(reply => reply.turnId), ['turn-file', 'turn-image']);
+});
+
 test('Hermes CLI fallback classifies approval and timeout failures', async () => {
   for (const [message, kind] of [['Hermes pending approval', 'approval_required'], ['cli 超时 (120000ms)', 'timeout']]) {
     const errors = [];
@@ -263,7 +329,7 @@ test('Hermes CLI fallback classifies approval and timeout failures', async () =>
   }
 });
 
-test('Hermes CLI does not publish an upstream authentication error as an Agent reply', async () => {
+test('Hermes CLI publishes an upstream authentication error as AUTH_REQUIRED, never as an Agent reply', async () => {
   const errors = [];
   const replies = [];
   const provider = new HermesCliProvider({
@@ -275,7 +341,8 @@ test('Hermes CLI does not publish an upstream authentication error as an Agent r
   await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'auth-error' });
   await provider.waitForIdle();
   assert.equal(replies.length, 0);
-  assert.equal(errors[0].kind, 'execution_failed');
+  assert.equal(errors[0].kind, 'auth_required');
+  assert.equal(errors[0].errorCode, 'PROVIDER_AUTH_REQUIRED');
 });
 
 test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {
@@ -351,7 +418,9 @@ test('Pi unattended delivery has native sessions with no tools, extensions or sk
   assert.match(args, /--no-skills/);
   assert.doesNotMatch(args, /--tools\s/);
   const sessionId = provider._createManagedSessionId();
-  assert.deepEqual(provider._argsForSession(sessionId, true).slice(-2), ['--session-id', sessionId]);
+  const sessionArgs = provider._argsForSession(sessionId, true).slice(-2);
+  assert.equal(sessionArgs[0], '--session');
+  assert.match(sessionArgs[1], new RegExp(`voko-pi-${sessionId}\\.jsonl$`));
 });
 
 test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallback', () => {
@@ -462,6 +531,10 @@ test('DeepSeek environment is mapped without embedding credentials in command ar
 
     const pi = new PiCliProvider();
     assert.match(pi._args.join(' '), /--provider deepseek --model deepseek-chat/);
+    delete process.env.DEEPSEEK_MODEL;
+    const piWithDefaultModel = new PiCliProvider();
+    assert.match(piWithDefaultModel._args.join(' '), /--provider deepseek --model deepseek-v4-flash/);
+    process.env.DEEPSEEK_MODEL = 'deepseek-chat';
 
     const aider = new AiderCliProvider();
     assert.equal(aider._env.AIDER_MODEL, 'deepseek/deepseek-chat');
@@ -643,10 +716,11 @@ test('OpenHands registration keeps Pull as the safe default', async () => {
     commandAvailable: (command) => command === 'openhands',
   });
   const started = await service.start({ email: 'owner@example.com' });
-  service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
   const selected = service.selectProvider(started.registrationId, { providerType: 'openhands' });
   assert.equal(selected.success, true);
-  assert.deepEqual(selected.deliveryModes.map((mode) => mode.mode), ['pull']);
+  const configured = service.setBasicInfo(started.registrationId, { agentName: 'OpenHands smoke' });
+  assert.deepEqual(configured.deliveryModes.map((mode) => mode.mode), ['pull']);
+  assert.deepEqual(configured.deliveryModes.filter((mode) => mode.selected).map((mode) => mode.mode), ['pull']);
   assert.equal(service.preflightDelivery(started.registrationId, { mode: 'pull' }).ready, true);
 });
 

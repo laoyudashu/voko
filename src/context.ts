@@ -22,6 +22,7 @@ const { signDidRequest } = require('./core/did-auth');
 const { createBugReportClient } = require('./core/bug-report');
 const { resolveServerAgentIdForLocalAgent } = require('./core/agent-invitations');
 import type { DatabaseLike } from './types/database';
+import type { OutboundMessageResultStore } from './core/outbound-message-result-store';
 
 const pkg = require('../package.json');
 
@@ -102,6 +103,7 @@ interface ContextDependencies {
   deliver?: Deliver;
   sendMessage?: SendMessage;
   enqueueOwnerIntervention?: (record: UnknownRecord) => unknown;
+  outboundMessageResults?: OutboundMessageResultStore;
 }
 
 interface AgentOperationParams extends UnknownRecord {
@@ -136,6 +138,7 @@ function createContext({
   deliver: passedDeliver,
   sendMessage: passedSendMessage,
   enqueueOwnerIntervention,
+  outboundMessageResults,
 }: ContextDependencies) {
   // 统一 IM 投递：优先用 initCore 注入的，未传则自建（CLI 等独立调用兼容）
   const wukongimSender = passedSender || agentManager;
@@ -182,6 +185,7 @@ function createContext({
     databaseAPI,
     getEnabledChannel: () => databaseAPI.getEnabledChannel?.() || null,
     enqueueOwnerIntervention,
+    outboundMessageResults,
 
     // ── 消息 ──
     sendMessage: (...args: unknown[]) => {
@@ -358,15 +362,15 @@ function createContext({
       uploadOptions: { targetScopeType?: string; targetScopeId?: string } = {}) => {
       const { uploadToOSS } = require('./server/oss');
       const fs = require('fs');
-      const fd = fs.openSync(filePath, 'r');
+      const fd = await fs.promises.open(filePath, 'r');
       let buffer: Buffer;
       try {
-        const before = fs.fstatSync(fd);
+        const before = await fd.stat();
         if (!before.isFile() || before.size <= 0 || before.size > 25 * 1024 * 1024) throw new Error('附件必须是 25 MB 以内的普通文件');
-        buffer = fs.readFileSync(fd);
-        const after = fs.fstatSync(fd);
+        buffer = await fd.readFile();
+        const after = await fd.stat();
         if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || buffer.length !== before.size) throw new Error('读取附件时文件发生变化，请重试');
-      } finally { fs.closeSync(fd); }
+      } finally { await fd.close(); }
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
       const serverAgentId = agentId ? resolveServerAgentIdForLocalAgent(db, agentId) : undefined;

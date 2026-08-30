@@ -81,11 +81,29 @@ function fileStemInstances(roots: string[], extensions: string[], source: string
   return cleanInstances(items, source);
 }
 
-function openClawInstances(): ProviderInstance[] {
+export function openClawInstances(
+  home: string = os.homedir(),
+  cliOutput: string = run('openclaw', ['agents', 'list', '--json'], 5000),
+): ProviderInstance[] {
+  const cliInstances = (() => {
+    try {
+      const parsed = JSON.parse(cliOutput);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) { return []; }
+  })();
+  if (cliInstances.length) return cleanInstances(cliInstances, 'openclaw_cli');
   try {
-    const config = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.openclaw', 'openclaw.json'), 'utf8'));
-    return cleanInstances(config.agents?.list || [], 'openclaw_config');
-  } catch (_) { return []; }
+    const root = path.join(home, '.openclaw');
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'openclaw.json'), 'utf8'));
+    const configured = Array.isArray(config.agents?.list) ? config.agents.list : [];
+    if (configured.length) return cleanInstances(configured, 'openclaw_config');
+    const hasImplicitMain = fs.existsSync(path.join(root, 'workspace')) || fs.existsSync(path.join(root, 'agents', 'main'));
+    return hasImplicitMain ? cleanInstances([{ id: 'main', name: 'main', isDefault: true }], 'openclaw_default') : [];
+  } catch (_) {
+    const root = path.join(home, '.openclaw');
+    const hasImplicitMain = fs.existsSync(path.join(root, 'workspace')) || fs.existsSync(path.join(root, 'agents', 'main'));
+    return hasImplicitMain ? cleanInstances([{ id: 'main', name: 'main', isDefault: true }], 'openclaw_default') : [];
+  }
 }
 
 function hermesInstances(): ProviderInstance[] {
@@ -174,4 +192,5 @@ export function discoverProviderInstances(providerType: unknown): ProviderInstan
   return instances.map((item) => ({ ...item }));
 }
 
-module.exports = { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances, deepSeekHarnessInstances };
+module.exports = { discoverProviderInstances, getProviderInstanceTerm, supportsProviderInstances,
+  deepSeekHarnessInstances, openClawInstances };

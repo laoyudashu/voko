@@ -70,7 +70,7 @@ class OpenCodeAttachProvider extends PushProvider {
       : null;
     this._contextWindow = options.contextWindow ?? 20;
     this._cwd = options.cwd || os.tmpdir();
-    this._cmd = resolveOpenCodeCommand();
+    this._cmd = resolveOpenCodeCommand() || '__voko_opencode_unavailable__';
     if (options.sessionPersistence === 'dispatcher') this.useDispatcherSessionPersistence();
   }
 
@@ -273,6 +273,8 @@ class OpenCodeAttachProvider extends PushProvider {
     if (result.code !== 0) {
       const error = new Error(`OpenCode attach exited with code ${result.code}`);
       (error as any).deliveryOutcome = 'not_delivered';
+      (error as any).code = 'OPENCODE_PROCESS_EXIT';
+      (error as any).exitCode = result.code;
       throw error;
     }
     if (observedSession && this._bindingStore) {
@@ -291,10 +293,16 @@ class OpenCodeAttachProvider extends PushProvider {
     if (eventError) {
       const error = new Error(eventError);
       (error as any).deliveryOutcome = 'not_delivered';
+      (error as any).code = 'OPENCODE_EVENT_ERROR';
       throw error;
     }
     if (!fullContent && observedSession) fullContent = await this._loadLatestReply(observedSession);
-    if (!fullContent) throw new Error('OpenCode attach returned no reply');
+    if (!fullContent) {
+      const error = new Error('OpenCode attach returned no reply');
+      (error as any).deliveryOutcome = 'outcome_unknown';
+      (error as any).code = 'OPENCODE_EMPTY_REPLY';
+      throw error;
+    }
     this.emit('agent.reply', {
       agentId, visitorId: fromUid, content: fullContent, done: true,
       sessionKey, turnId, replyId: turnId,

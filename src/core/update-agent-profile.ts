@@ -5,9 +5,9 @@
  * 供主进程 IPC 和 MCP 工具共享。
  */
 
-const { signAsync } = require('@noble/ed25519');
 const { VOKO_API_URL } = require('./api-signature');
-const { extractEd25519PrivateKey } = require('./did-auth');
+const { signDidRequest } = require('./did-auth');
+const { fetchWithDidClockRetry, calibratedNowMs } = require('./did-auth-client');
 import type { DatabaseLike } from '../types/database';
 
 interface ProfileOptions {
@@ -90,32 +90,27 @@ async function updateAgentProfile(opts?: ProfileOptions): Promise<ProfileResult>
     if (cover_url !== undefined) payload.cover_url = cover_url;
     if (tags !== undefined) payload.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
     if (backendType !== undefined) payload.backendType = backendType;
-    const bodyPayload = JSON.stringify(payload, Object.keys(payload).sort());
-
-    // 签名
-    const nonce = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const toSign = row.did + '\n' + nonce + '\n' + timestamp + '\n' + bodyPayload;
-    const rawKey = extractEd25519PrivateKey(row.private_key);
-    const sigBytes = await signAsync(new TextEncoder().encode(toSign), rawKey);
-    const signature = Buffer.from(sigBytes).toString('base64');
-
-    const requestBody = { did: row.did, nonce, timestamp, signature, ...payload };
-
     console.log(`[updateProfile] Agent ${agentId}: sending...`, JSON.stringify({ did: row.did, fields: Object.keys(payload) }));
 
-    const response = await fetch(`${VOKO_API_URL}/api/did-auth/update-agent-profile`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    });
+    const requestUrl = `${VOKO_API_URL}/api/did-auth/update-agent-profile`;
+    const response = await fetchWithDidClockRetry(
+      requestUrl,
+      async (timestamp: number) => {
+        const signed = await signDidRequest(row.did, row.private_key, payload, { timestamp });
+        return {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...signed, ...payload })
+        };
+      },
+    );
     const result = await response.json() as ApiResult;
     console.log(`[updateProfile] Agent ${agentId} response:`, result);
 
     if (result.success) {
       // 本地同步更新
       const sets = ['updated_at = ?'];
-      const vals: unknown[] = [Date.now()];
+      const vals: unknown[] = [calibratedNowMs(requestUrl)];
       if (name !== undefined) { sets.push('agent_name = ?'); vals.push(name); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (address !== undefined) { sets.push('address = ?'); vals.push(address); }

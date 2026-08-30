@@ -74,6 +74,24 @@ test('dispatcher respects persisted delivery selection and explicit primary/back
   assert.deepEqual(calls, ['cli']);
 });
 
+test('Codex owner_io stays out of ordinary delivery discovery and routing', () => {
+  const calls = [];
+  const owner = provider('owner_io', 100, calls);
+  owner.pushOwner = async () => {};
+  const cli = provider('cli', 10, calls);
+  const dispatcher = createDispatcher({
+    db: dbFor(null, 'codex'),
+    providers: { 'codex-app-server': owner, 'codex-cli': cli },
+  });
+
+  assert.deepEqual(dispatcher.resolveProviders('agent-1').map(item => item === cli ? 'cli' : 'owner'), ['cli']);
+  assert.deepEqual(dispatcher.getAgentDeliveryStatus('agent-1').methods.map(item => item.mode), ['cli', 'pull']);
+  assert.equal(dispatcher.resolveProviderTransport('agent-1', 'codex-app-server', 'owner_io'), null);
+  assert.throws(() => dispatcher.selectTemporaryDeliveryChannel('agent-1', 'owner_io', 'codex-app-server'),
+    /delivery channel not found/);
+  assert.equal(dispatcher.getOwnerTransportStatus('agent-1').deliveryMode, 'owner_io');
+});
+
 test('dispatcher preserves attachment metadata without exposing its local path in every prompt', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-dispatch-attachment-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -147,6 +165,40 @@ test('explicit channel refresh detects a recovered CLI and makes it selectable',
   assert.equal(refreshed.methods.find(method => method.provider === 'codex-cli').available, true);
 });
 
+test('pull-only WorkBuddy still exposes its HTTP setup path and refreshes a newly installed runtime', async () => {
+  let available = false;
+  let runtimeRefreshes = 0;
+  const http = eventProvider('http', 10, [], false);
+  http.isAvailable = () => available;
+  http.refreshRuntime = () => { runtimeRefreshes++; available = true; http.available = true; };
+  http.healthCheck = () => ({ ok: true });
+  http.runLoopbackTest = async () => ({ ok: true, challengeMatched: true, loopbackSessionId: 'workbuddy-test-session' });
+  http.cleanupLoopbackSession = async () => ({ ok: true, cleaned: true });
+  const dispatcher = createDispatcher({
+    db: dbFor(['pull'], 'workbuddy'),
+    providers: { 'workbuddy-http': http },
+  });
+
+  const initial = dispatcher.getAgentDeliveryStatus('agent-1');
+  const method = initial.methods.find(item => item.provider === 'workbuddy-http');
+  assert.equal(method.configured, false);
+  assert.equal(method.available, false);
+  assert.equal(initial.activeAutomaticMode, null);
+
+  const refreshed = await dispatcher.refreshAgentDeliveryChannels('agent-1');
+  const recovered = refreshed.methods.find(item => item.provider === 'workbuddy-http');
+  assert.equal(runtimeRefreshes, 1);
+  assert.equal(recovered.configured, false);
+  assert.equal(recovered.available, true);
+  assert.equal(refreshed.activeAutomaticMode, null);
+  const verified = await dispatcher.verifyAgentDeliveryChannel('agent-1', 'workbuddy-http');
+  assert.equal(verified.result.challengeMatched, true);
+  const selected = dispatcher.selectTemporaryDeliveryChannel('agent-1', 'http', 'workbuddy-http');
+  assert.equal(selected.temporaryPreferredMode, 'http');
+  assert.equal(selected.temporaryPreferredProvider, 'workbuddy-http');
+  assert.equal(selected.activeAutomaticMode, 'http');
+});
+
 test('explicit transport resolution never substitutes another mode', () => {
   const http = provider('http', 100, []);
   const cli = provider('cli', 10, []);
@@ -204,6 +256,19 @@ test('delivery diagnostics reports HTTP failure and CLI fallback without invokin
   assert.equal(status.pullReady, true);
   assert.equal(status.methods.find(method => method.mode === 'http').status, 'unavailable');
   assert.equal(status.methods.find(method => method.mode === 'pull').status, 'on-demand');
+});
+
+test('delivery diagnostics keeps a shallow-ready Qwen runtime out of automatic routing until loopback verification', () => {
+  const qwen = provider('cli', 1, []);
+  qwen.getDeliveryReadiness = () => ({ ready: true, automaticReady: false, installed: true, verificationStatus: 'unverified' });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  const status = dispatcher.getAgentDeliveryStatus('agent-1');
+  const method = status.methods.find(item => item.provider === 'qwen-office-cli');
+  assert.equal(method.available, true);
+  assert.equal(method.automaticReady, false);
+  assert.equal(method.status, 'verification_required');
+  assert.deepEqual(status.automaticReadyModes, []);
+  assert.equal(status.activeAutomaticMode, null);
 });
 
 test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {
@@ -402,6 +467,53 @@ test('outcome_unknown is not retried through another provider', async () => {
   dispatchOnce(dispatcher);
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.deepEqual(calls, ['websocket']);
+});
+
+test('A2A convergence blocks automatic replies but a new topic remains deliverable', async () => {
+  const calls = [];
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'openclaw-cli': provider('cli', 1, calls) } });
+  dispatcher.markConverged('agent-uid', 'peer-agent', 'direct');
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-agent', senderUid: 'peer-agent',
+    channelId: 'peer-agent', channelType: 1, content: 'automatic', messageId: 'auto-1', a2aDisposition: 'automatic_reply' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, []);
+  dispatcher.markConverged('agent-uid', 'peer-agent', 'direct');
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-agent', senderUid: 'peer-agent',
+    channelId: 'peer-agent', channelType: 1, content: 'new topic', messageId: 'topic-1', a2aDisposition: 'new_topic' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['cli']);
+});
+
+test('background delivery error closes the exact ordinary Turn with a terminal status', async () => {
+  const statuses = [];
+  const target = eventProvider('cli', 1, [], true);
+  target.push = async payload => {
+    setTimeout(() => target.emit('delivery.error', { agentId: payload.agentId, turnId: payload.turnId || payload.messageId,
+      error: 'execution failed', errorCode: 'PROVIDER_EXECUTION_FAILED' }), 5);
+  };
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'openclaw-cli': target },
+    onAgentReply() {}, onTurnStatus: status => statuses.push(status) });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
+    content: 'hello', messageId: 'message-error', turnId: 'turn-error' });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(statuses.map(status => status.status), ['processing', 'failed']);
+  assert.equal(statuses[1].turnId, 'turn-error');
+});
+
+test('background authentication errors close an ordinary Turn as login_expired', async () => {
+  const statuses = [];
+  const target = eventProvider('cli', 1, [], true);
+  target.push = async payload => {
+    setTimeout(() => target.emit('delivery.error', { agentId: payload.agentId, turnId: payload.turnId || payload.messageId,
+      kind: 'auth_required', error: 'Hermes authentication required', errorCode: 'PROVIDER_AUTH_REQUIRED' }), 5);
+  };
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'hermes-cli': target },
+    onAgentReply() {}, onTurnStatus: status => statuses.push(status) });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
+    content: 'hello', messageId: 'message-auth', turnId: 'turn-auth' });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(statuses.map(status => status.status), ['processing', 'login_expired']);
+  assert.equal(statuses[1].code, 'PROVIDER_AUTH_REQUIRED');
 });
 
 test('rejected delivery is not retried even when the provider marks the channel unavailable', async () => {

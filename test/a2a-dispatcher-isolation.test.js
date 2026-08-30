@@ -57,6 +57,15 @@ test('E2EE owner intervention ends the original turn without waiting for a Provi
   const result=await pending;
   assert.equal(result.reply.content,'NO_REPLY');
 });
+test('E2EE preserves a stable Provider timeout code from the selected CLI', async()=>{
+  const provider=new Provider();
+  provider.push=async()=>{const error=new Error('cli timed out');error.code='PROVIDER_TIMEOUT';
+    error.deliveryOutcome='outcome_unknown';error.retryable=true;throw error;};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  await assert.rejects(dispatcher.executeE2ee({agentId:'agent-1',taskId:'timeout-task',
+    contextId:'timeout-context',content:'hello',sourceType:'visitor',sessionScopeId:'timeout-scope',timeoutMs:1000}),
+  error=>error.code==='PROVIDER_TIMEOUT'&&error.deliveryOutcome==='outcome_unknown');
+});
 test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
   const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
   await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'same',content:'x',executionScope:'a2a_mailbox'}),
@@ -158,6 +167,62 @@ test('isolated reply timeout is handled while Provider delivery is still pending
   assert.equal(ordinary.length, 0, 'late or unattributed isolated replies must never enter the ordinary message path');
 });
 
+test('isolated delivery error closes only the exact selected Provider Turn', async()=>{
+  const selected=new Provider();
+  const unrelated=new Provider();
+  selected.push=function(payload){this.payload=payload;return{nativeSessionId:'selected-native'};};
+  const ordinary=[];
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':selected,'other-cli':unrelated},
+    onAgentReply:reply=>ordinary.push(reply)});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'delivery-error-task',
+    contextId:'delivery-error-context',content:'hello',sessionScopeId:'delivery-error-scope',timeoutMs:5_000});
+  await new Promise(resolve=>setImmediate(resolve));
+  unrelated.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'execution_failed',error:'wrong Provider'});
+  await new Promise(resolve=>setImmediate(resolve));
+  selected.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'execution_failed',error:'native process exited'});
+  await assert.rejects(pending,error=>{
+    assert.equal(error.code,'PROVIDER_EXECUTION_FAILED');
+    assert.equal(error.deliveryOutcome,'outcome_unknown');
+    assert.match(error.message,/native process exited/);
+    return true;
+  });
+  selected.emit('agent.reply',{agentId:'agent-1',visitorId:'e2ee:delivery-error-context',
+    turnId:selected.payload.turnId,replyId:'late-after-error',content:'late',done:true});
+  assert.equal(ordinary.length,0);
+});
+
+test('isolated auth_required delivery errors keep AUTH_REQUIRED while outcome remains unknown',async()=>{
+  const selected=new Provider();
+  selected.push=function(payload){this.payload=payload;return{nativeSessionId:'selected-native'};};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':selected},onAgentReply() {}});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'auth-task',contextId:'auth-context',
+    content:'hello',sessionScopeId:'auth-scope',timeoutMs:5_000});
+  await new Promise(resolve=>setImmediate(resolve));
+  selected.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'auth_required',error:'Hermes authentication required'});
+  await assert.rejects(pending,error=>{
+    assert.equal(error.code,'PROVIDER_AUTH_REQUIRED');
+    assert.equal(error.deliveryOutcome,'outcome_unknown');
+    return true;
+  });
+});
+
+test('an isolated reply stays dropped after its retirement tombstone expires',async()=>{
+  const provider=new Provider();
+  provider.push=function(payload){this.payload=payload;return{nativeSessionId:'expired-native'};};
+  const ordinary=[];const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},
+    onAgentReply:reply=>ordinary.push(reply)});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'expired-task',contextId:'expired-context',
+    content:'hello',sessionScopeId:'expired-scope',timeoutMs:10});
+  await assert.rejects(keepEventLoopAlive(pending),error=>error.code==='E2EE_V2_PROVIDER_REPLY_TIMEOUT');
+  const originalNow=Date.now;Date.now=()=>originalNow()+11*60*1000;
+  try{provider.emit('agent.reply',{agentId:'agent-1',visitorId:'e2ee:expired-context',turnId:provider.payload.turnId,
+    replyId:'very-late',content:'must not escape',done:true});}finally{Date.now=originalNow;}
+  assert.equal(ordinary.length,0);
+});
+
 test('E2EE and Owner Chat timeouts use stable outcome-unknown results', async () => {
   const e2eeProvider = new Provider();
   e2eeProvider.push = payload => { e2eeProvider.payload = payload; return { nativeSessionId: 'e2ee-timeout-session' }; };
@@ -201,10 +266,35 @@ test('internal Provider tool protocol is never delivered as a final reply', asyn
   assert.equal(ordinary.length, 0);
 });
 
+test('internal Provider tool protocol is rejected even after ordinary-looking text', async () => {
+  const provider = new Provider();
+  provider.push = function(payload) {
+    setImmediate(() => this.emit('agent.reply', { agentId:payload.agentId,visitorId:payload.fromUid,
+      turnId:payload.turnId,replyId:'prefixed-internal-protocol',done:true,
+      content:'I will inspect the file now.\n<tool_calls>\n<Read><file_path>/private/file</file_path></Read>\n</tool_calls>' }));
+    return { nativeSessionId:'prefixed-internal-protocol-session' };
+  };
+  const ordinary = [];
+  const dispatcher = createDispatcher({ db:db(),providers:{'qwen-office-cli':provider},onAgentReply:reply=>ordinary.push(reply) });
+  await assert.rejects(dispatcher.executeE2ee({ agentId:'agent-1',taskId:'prefixed-internal-task',
+    contextId:'prefixed-internal-context',content:'hello',sessionScopeId:'prefixed-internal-scope',timeoutMs:5_000 }), error => {
+    assert.equal(error.code, 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT');
+    return true;
+  });
+  assert.equal(ordinary.length, 0);
+});
+
 test('trusted Owner bootstrap selects only the explicit native I/O bridge', async () => {
   const safe = new Provider(); safe.pushOwner = () => {};
   const unsafe = new Provider();
   const dispatcher = createDispatcher({ db: db(), providers: { 'codex-cli': unsafe, 'codex-app-server': safe }, onAgentReply() {} });
   assert.deepEqual(dispatcher.resolveTrustedOwnerTransport('agent-1'), {
     providerId: 'codex-app-server', providerType: 'codex', providerInstanceId: null, deliveryMode: 'owner_io' });
+});
+
+test('unknown remote Agent uid stays classified as Agent while the cloud lookup is unavailable', () => {
+  const emptyDb = { prepare() { return { get: () => undefined, all: () => [], run: () => ({ changes: 0 }) }; } };
+  const dispatcher = createDispatcher({ db: emptyDb, providers: {}, onAgentReply() {} });
+  assert.equal(dispatcher.isAgentImUid('agent_remote_not_cached'), true);
+  assert.equal(dispatcher.isAgentImUid('visitor_remote_not_cached'), false);
 });

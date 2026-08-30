@@ -1,5 +1,6 @@
 export type SessionMode = 'deterministic-key' | 'agent-issued-id';
 import type { ProviderCapabilities } from './provider-catalog';
+import type { ProviderDeliveryPresentation } from '../provider-delivery-presentation';
 export type ProviderDeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 export interface ProviderDeliveryReceipt {
@@ -25,6 +26,8 @@ export interface ProviderCoreEvent {
   agentId: string;
   messageId?: string;
   turnId?: string;
+  sourceMessageIds?: readonly string[];
+  a2aDisposition?: 'new_topic' | 'automatic_reply' | 'explicit_reply';
   nativeSessionId?: string | null;
   occurredAt: number;
   terminal?: boolean;
@@ -45,13 +48,17 @@ export interface PushPayload {
   sessionTarget?: string;
   content: string;
   rawContent?: string;
-  attachments?: ReadonlyArray<Readonly<{ path: string; name: string; mediaType: string; size: number; sha256: string }>>;
+  attachments?: ReadonlyArray<Readonly<{ path: string; name: string; mediaType: string; size: number; sha256: string;
+    sourceMessageId?: string }>>;
+  messageSegments?: ReadonlyArray<Readonly<{ messageId: string; content: string; timestamp: number;
+    attachmentIndexes: readonly number[] }>>;
   attachmentOutputDirectory?: string;
   channelId?: string;
   channelType?: number;
   contentType?: number;
   messageId?: string;
   turnId?: string;
+  sourceMessageIds?: readonly string[];
   timestamp?: number;
   securityContext?: Readonly<{
     version: number;
@@ -118,9 +125,19 @@ export interface AgentDeliveryMethodStatus {
   family?: string | null;
   configured: boolean;
   available: boolean;
-  status: 'available' | 'unavailable' | 'on-demand' | 'fallback' | 'unknown';
+  automaticReady?: boolean;
+  status: 'available' | 'verification_required' | 'unavailable' | 'configuration_required' | 'on-demand' | 'fallback' | 'unknown';
+  installed?: boolean;
+  authenticationStatus?: 'verified' | 'unverified';
   reason?: string;
+  detail?: string;
+  exitCode?: number | null;
+  attempts?: number;
+  verificationStatus?: 'unverified' | 'loopback_verified' | 'quota_exhausted' | 'timeout' | 'login_failed' | 'parse_failed' | 'failed';
+  verifiedAt?: number;
+  setupCommand?: string;
   capabilities?: Readonly<Partial<ProviderCapabilities>>;
+  presentation?: ProviderDeliveryPresentation;
 }
 
 export interface AgentDeliveryStatus {

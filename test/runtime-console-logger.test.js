@@ -2,8 +2,25 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
 
 const { withRuntimeTimestamp } = require('../build/index');
+const { resolveVokoLogDirectory } = require('../build/core/log-path');
+
+test('runtime logs use an explicit isolated directory without changing production defaults', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-log-path-'));
+  try {
+    assert.equal(resolveVokoLogDirectory({ VOKO_LOG_DIR: root }, 'darwin', '/Users/example'), root);
+    assert.equal(resolveVokoLogDirectory({}, 'darwin', '/Users/example'),
+      '/Users/example/Library/Application Support/voko');
+    assert.equal(resolveVokoLogDirectory({ APPDATA: 'C:\\Data' }, 'win32', 'C:\\Users\\example'),
+      path.win32.join('C:\\Data', 'voko'));
+    assert.equal(resolveVokoLogDirectory({ XDG_CONFIG_HOME: '/cfg' }, 'linux', '/home/example'), '/cfg/voko');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('runtime log arguments receive one local timestamp', () => {
   const now = new Date(2026, 7, 18, 9, 8, 7, 6);

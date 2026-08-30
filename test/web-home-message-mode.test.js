@@ -65,6 +65,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
   const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
   const html = await response.text();
   assert.equal(response.status, 200);
+  assert.match(response.headers.get('cache-control') || '', /no-store/);
   assert.match(html, /消息模式/);
   assert.match(html, /data-role="message-mode"[^>]*>[\s\S]*data-role="message-mode-summary">CLI<\/summary>/);
   assert.ok(html.indexOf('>Agent 类型<') < html.indexOf('>连接状态<'));
@@ -74,6 +75,52 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /data-role="message-mode-picker"/);
   assert.match(html, /delivery-channels\/refresh/);
   assert.match(html, /delivery-channels\/select/);
+  assert.match(html, /class="home-message-mode-row"/);
+  assert.match(html, /class="home-message-mode-settings"/);
+  assert.match(html, /\.home-message-mode-setup \.voko-command-inline code\{display:inline-block/);
+  assert.match(html, /\.home-message-mode-setup>button\{justify-self:end;margin:0;width:auto;min-width:168px/);
+  assert.match(html, /\.home-message-mode-setup \.voko-copy-button\{width:28px/);
+  assert.doesNotMatch(html, /\.home-message-mode-setup button\{margin:0;width:100%/);
+  assert.match(html, /action&&status\.backendType==='workbuddy'&&method\.mode==='http'\?'setup-workbuddy'/);
+  assert.match(html, /action&&status\.backendType==='dumate'&&method\.mode==='http'\?'setup-dumate'/);
+  assert.match(html, /action&&status\.backendType==='qwen-office'&&method\.mode==='cli'\?'setup-qwen'/);
+  assert.match(html, /width:min\(560px,calc\(100vw - 24px\)\)/);
+  assert.match(html, /overflow-y:auto;overflow-x:hidden/);
+  assert.match(html, /npm install -g @tencent-ai\/codebuddy-code/);
+  assert.match(html, /command:'codebuddy'/);
+  assert.match(html, /inlineCopyCommand\(action\.help,action\.command/);
+  assert.doesNotMatch(html, /display:flex;align-items:center;flex-wrap:wrap;margin:0;color:#667085/);
+  assert.match(html, /after\.match\(\/\^\[，,。；;：:！？!\?\]\//);
+  assert.match(html, /function escapeInlineCommand\(value\)/);
+  assert.match(html, /longCommand=String\(command\|\|''\)\.length>36/);
+  assert.match(html, /data-voko-copy-value=/);
+  assert.doesNotMatch(html, /action:'login_workbuddy'/);
+  assert.match(html, /presentation&&presentation\.action\|\|null/);
+  assert.match(html, /recheck\.dataset\.role='recheck-workbuddy-component'/);
+  assert.match(html, /command:I\.dumate_manual_command/);
+  assert.match(html, /\?'setup-qwen'/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-qwen-setup'/);
+  assert.match(html, /command:I\.qwen_manual_command/);
+  assert.doesNotMatch(html, /action:'login_qwen_office'/);
+  assert.doesNotMatch(html, /action:'open_dumate'/);
+  assert.match(html, /data-role=\"recheck-provider\"/);
+  assert.match(html, /qwen_setup_title/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-workbuddy-setup'/);
+  assert.match(html, /providerSetupDialog\(details,'dlg-dumate-setup'/);
+  assert.match(html, /dialog\.className=\"voko-message-dialog\"/);
+  assert.match(html, /dialog\.showModal\(\)/);
+  assert.match(html, /details\.open=false/);
+  assert.match(html, /max-height:calc\(100vh - 24px\)/);
+  assert.match(html, /data-role=\"close-provider-setup\"/);
+  assert.match(html, />×<\/button>/);
+  assert.match(html, /fetch\('\/api\/provider-setup'/);
+  assert.match(html, /message_mode_install_help/);
+  assert.match(html, /message_mode_login_help/);
+  assert.match(html, /position:fixed;z-index:1000/);
+  assert.match(html, /max-height:calc\(100vh - 16px\);overflow:auto/);
+  assert.match(html, /window\.addEventListener\("resize"/);
+  assert.match(html, /recheck-workbuddy-component/);
+  assert.match(html, /actionLabel=action==='verify'\?I\.message_mode_verify/);
   assert.match(html, /if\(other!==details\)other\.open=false/);
   assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);
   assert.match(html, /updateAgentRow/);
@@ -161,11 +208,16 @@ test('delivery channel endpoints refresh and select a process-local preference',
   const handlers = {
     list_agents: async () => ({ agents: [] }),
     refresh_delivery_channels: async ({ agentId }) => { calls.push(['refresh', agentId]); return { success: true, deliveryStatus: status }; },
+    verify_delivery_channel: async ({ agentId, providerId }) => {
+      calls.push(['verify', agentId, providerId]);
+      return { success: true, verification: { ok: true, challengeMatched: true }, deliveryStatus: status };
+    },
     select_delivery_channel: async ({ agentId, mode, providerId }) => {
       calls.push(['select', agentId, mode, providerId]);
       return { success: true, deliveryStatus: { ...status, activeAutomaticMode: mode === 'pull' ? null : mode,
         temporaryPreferredMode: mode, temporaryPreferredProvider: providerId || null } };
     },
+    setup_provider: async ({ action }) => { calls.push(['setup', action]); return { success: true, action, launched: true }; },
   };
   const server = await startApp(handlers);
   t.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
@@ -174,12 +226,22 @@ test('delivery channel endpoints refresh and select a process-local preference',
   const refresh = await fetch(`${base}/api/agents/agent-home/delivery-channels/refresh`, { method: 'POST' });
   assert.equal(refresh.status, 200);
   assert.equal((await refresh.json()).deliveryStatus.activeAutomaticMode, 'cli');
+  const verify = await fetch(`${base}/api/agents/agent-home/delivery-channels/verify`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ providerId: 'workbuddy-http' }),
+  });
+  assert.equal(verify.status, 200);
+  assert.equal((await verify.json()).verification.challengeMatched, true);
   const select = await fetch(`${base}/api/agents/agent-home/delivery-channels/select`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'pull', providerId: null }),
   });
   assert.equal(select.status, 200);
   assert.equal((await select.json()).deliveryStatus.temporaryPreferredMode, 'pull');
-  assert.deepEqual(calls, [['refresh', 'agent-home'], ['select', 'agent-home', 'pull', null]]);
+  const setup = await fetch(`${base}/api/provider-setup`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'open_dumate' }),
+  });
+  assert.equal(setup.status, 200);
+  assert.equal((await setup.json()).launched, true);
+  assert.deepEqual(calls, [['refresh', 'agent-home'], ['verify', 'agent-home', 'workbuddy-http'], ['select', 'agent-home', 'pull', null], ['setup', 'open_dumate']]);
 });
 
 test('home disables access-entry actions when the agent is offline', async (t) => {
@@ -198,8 +260,8 @@ test('home disables access-entry actions when the agent is offline', async (t) =
   assert.match(html, /class="home-message-mode-picker is-agent-offline"[^>]*data-agent-online="false"/);
   assert.match(html, /access_offline_tip/);
   assert.match(html, /home-message-mode-picker\.is-dropup/);
-  assert.match(html, /wrap\.getBoundingClientRect\(\)\.bottom-8/);
-  assert.match(html, /menuRect\.bottom>bottomBoundary/);
+  assert.match(html, /position:fixed;z-index:1000/);
+  assert.match(html, /rect\.height>below&&above>below/);
 });
 
 test('home warns about pending review and disables every external access entry', async (t) => {

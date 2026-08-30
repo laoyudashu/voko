@@ -67,6 +67,7 @@ function _hasControlBlock(content: string): boolean {
   return /\[STATE\]|\[\/STATE\]|\[FINAL\]|\[\/FINAL\]|\[VOKO A2A CONTROL\]/i.test(content);
 }
 import type { DatabaseLike } from '../types/database';
+import type { OutboundMessageResultStore } from '../core/outbound-message-result-store';
 
 // tools.ts 包含按条件拼接的动态 SQL；结果列随工具变化，暂时集中保留在这一处，
 // 后续按消息、支付、群组三组 row 类型逐批替换，避免在每个 handler 扩散 any。
@@ -299,7 +300,7 @@ type McpContext = Omit<LiteContext,
   secureOutboundRouter?: { prepare(agentId:string,channelId:string,channelType?:number,metadata?:unknown,
     purpose?:'text'|'attachment'):Promise<{
     success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;
-    encryptedDeviceCount:number }> };
+    encryptedDeviceCount:number;preparationToken?:string }> };
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -318,6 +319,7 @@ type McpContext = Omit<LiteContext,
     complete(agentId: string, messageId: string, claimId: string, content?: string): DynamicRow;
     fail(agentId: string, messageId: string, claimId: string, errorCode?: string): DynamicRow;
   };
+  outboundMessageResults?: OutboundMessageResultStore;
   wukongim?: {
     getCurrentUid?(agentId?: string): string;
   };
@@ -516,6 +518,7 @@ function createdRegistrationData(value: unknown, fallbackAgentId: unknown): Crea
 
 interface McpToolParams {
   _e2eeAttachmentSource?: { filePath:string;fileName:string;mediaType:string };
+  _e2eeAttachmentPreparationToken?: string;
   _requestedMessageId?: string;
   ability?: unknown;
   action?: string;
@@ -1017,7 +1020,7 @@ function createToolHandlers(cx: McpContext) {
     });
     return { agents, total, limit, offset, hasMore: offset + agents.length < total };
   }
-  function fmtMsg(r: MessageDbRow) {
+  function fmtMsg(r: MessageDbRow, viewerImUid?: string) {
     let mention = null;
     if (r.mention) {
       try { mention = typeof r.mention === 'string' ? JSON.parse(r.mention) : r.mention; } catch (_: any) { mention = null; }
@@ -1032,7 +1035,7 @@ function createToolHandlers(cx: McpContext) {
       timestamp,
       timestampMs,
       messageSeq: r.message_seq,
-      isMe: r.is_me >= 1,
+      isMe: r.channel_type === 2 && viewerImUid ? r.from_uid === viewerImUid : r.is_me >= 1,
       contentType: r.content_type || 1,
       agentId: r.agent_id || null,
       channelType: r.channel_type || 1,
@@ -1058,8 +1061,8 @@ function createToolHandlers(cx: McpContext) {
     for (const row of rows) row.routing_conversation_id = byMessage.get(row.id) || null;
     return rows;
   }
-  function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean } = {}) {
-    const base = fmtMsg(r);
+  function fmtPullMsg(r: MessageDbRow, opts: { stripControl?: boolean; viewerImUid?: string } = {}) {
+    const base = fmtMsg(r, opts.viewerImUid);
     const sourceType = r.sourceType || (r.from_uid === 'system' ? 'system' : 'visitor');
     // agent_peer 入站消息会被 dispatcher 注入 [VOKO A2A CONTROL] 协议包装，
     // pull 路径需剥掉这层包装，只暴露对端可见正文；visitor/system 消息不含协议块，原样返回。
@@ -1085,6 +1088,9 @@ function createToolHandlers(cx: McpContext) {
   }
   function fmtPullResult(rows: MessageDbRow[], hasMore: boolean, extra: Record<string, unknown> = {}) {
     const formattingAgentId = typeof extra._agentId === 'string' ? extra._agentId : undefined;
+    const viewerImUid = formattingAgentId
+      ? cx.query<AgentUidRow>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [formattingAgentId])[0]?.imUid || ''
+      : '';
     const publicExtra = { ...extra };
     delete publicExtra._agentId;
     attachConversationIds(rows, formattingAgentId);
@@ -1092,7 +1098,7 @@ function createToolHandlers(cx: McpContext) {
       success: true,
       securityContext: createPullSecurityContext(),
       // 默认剥离 A2A 控制块；调用方可通过 extra.stripControl=false 关闭
-      messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false })),
+      messages: rows.map((r) => fmtPullMsg(r, { stripControl: extra.stripControl !== false, viewerImUid })),
       hasMore,
       count: rows.length,
       ...publicExtra,
@@ -1839,7 +1845,10 @@ function createToolHandlers(cx: McpContext) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const fromUid = cx.wukongim?.getCurrentUid?.(p.agentId);
-      if (!fromUid) return { success: false, error: 'Agent IM 身份缺失' };
+      if (!fromUid) {
+        console.warn(`[MCP] Agent IM identity missing agentId=${String(p.agentId || 'unknown')}`);
+        return { success: false, code: 'AGENT_IM_IDENTITY_MISSING', error: 'Agent IM 身份缺失' };
+      }
       const channelType = inferChannelType(p);
       if (channelType === 2) {
         try {
@@ -1984,9 +1993,18 @@ function createToolHandlers(cx: McpContext) {
       const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
         ...(replyToRouteId ? { replyToRouteId } : {}),
         ...(routingConversation?.wireConversationKey ? { conversationKey: routingConversation.wireConversationKey } : {}),
-        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}) },
-        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
-        (p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : undefined);
+        ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}),
+        ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
+          a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
+        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource,
+          ...(p._e2eeAttachmentPreparationToken
+            ? {_e2eeAttachmentPreparationToken:p._e2eeAttachmentPreparationToken}:{}) } : {}) } :
+        { _voko: { protocolVersion: 1, ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
+          a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
+          ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource,
+            ...(p._e2eeAttachmentPreparationToken
+              ? {_e2eeAttachmentPreparationToken:p._e2eeAttachmentPreparationToken}:{}) } : {}) };
+      if (channelType === 1) cx.outboundMessageResults?.register(String(p.agentId), outboundMessageId, String(p.toUid));
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         routeMetadata,
@@ -2038,7 +2056,34 @@ function createToolHandlers(cx: McpContext) {
       result.recipientDelivery = result.messageAccepted
         ? { status: result?.connected === false ? 'queued' : 'accepted', message: result?.connected === false ? '发送成功，等待对方上线' : '消息已接受' }
         : { status: 'failed' };
+      result.resultTracking = { requested: channelType === 1, mode: 'memory_query',
+        tool: 'get_message_result', messageId: outboundMessageId };
       return result;
+    },
+
+    async get_message_result(p: McpToolParams = {}) {
+      const ownershipError = _agentOwnershipError(p.agentId);
+      if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
+      if (!p.agentId || !p.messageId) return { success: false, code: 'MESSAGE_RESULT_INPUT_REQUIRED', error: 'agentId and messageId are required' };
+      const message = cx.query<{ id: string; to_uid: string; status: string; is_me: number }>(
+        'SELECT id,to_uid,status,is_me FROM messages WHERE id=? AND agent_id=? LIMIT 1', [p.messageId, p.agentId],
+      )[0];
+      if (!message || Number(message.is_me) !== 1) return { success: false, code: 'MESSAGE_RESULT_NOT_FOUND', error: 'Message not found' };
+      const tracked = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
+      const transportState = message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
+      const reply = tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
+        : tracked && ['FAILED','AUTH_REQUIRED'].includes(tracked.state)
+          ? { state: 'FAILED', messageId: null, reasonCode: tracked.reasonCode }
+          : tracked?.state === 'DELIVERY_UNKNOWN'
+            ? { state: 'UNKNOWN', messageId: null, reasonCode: tracked.reasonCode }
+            : { state: 'PENDING', messageId: null };
+      return { success: true, messageId: message.id, transport: { state: transportState },
+        execution: tracked ? { confirmed: tracked.state !== 'UNCONFIRMED', state: tracked.state,
+          phase: tracked.phase, turnId: tracked.turnId, reasonCode: tracked.reasonCode }
+          : { confirmed: false, state: 'UNCONFIRMED', phase: null, turnId: null,
+            reasonCode: 'RUNTIME_STATE_NOT_AVAILABLE' },
+        reply,
+        updatedAt: tracked?.updatedAt || null };
     },
 
     // ─── 9. 聊天历史 ───
@@ -2090,7 +2135,8 @@ function createToolHandlers(cx: McpContext) {
         const hasMore = rows.length > limit;
         if (hasMore) rows.pop();
         attachConversationIds(rows, p.agentId);
-        return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+        const viewerImUid = cx.query<AgentUidRow>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [p.agentId])[0]?.imUid || '';
+        return { success: true, messages: rows.map(row => fmtMsg(row, viewerImUid)), hasMore, count: rows.length, offset,
           conversationId: requestedConversation?.id || null };
       }
 
@@ -2111,7 +2157,7 @@ function createToolHandlers(cx: McpContext) {
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
       attachConversationIds(rows, p.agentId);
-      return { success: true, messages: rows.map(fmtMsg), hasMore, count: rows.length, offset,
+      return { success: true, messages: rows.map(row => fmtMsg(row)), hasMore, count: rows.length, offset,
         conversationId: requestedConversation?.id || null };
     },
 
@@ -2375,6 +2421,7 @@ function createToolHandlers(cx: McpContext) {
             content: inspected.contentType === 2 ? localUrl : attachment,
             conversationId: effectiveConversationId, replyToMessageId: p.replyToMessageId, webRequest: p.webRequest,
             _requestedMessageId: attachmentMessageId,
+            _e2eeAttachmentPreparationToken: security.preparationToken,
             _e2eeAttachmentSource: { filePath: inspected.filePath, fileName: inspected.fileName,
               mediaType: inspected.mimeType } });
           return { ...safeAttachmentInfo, url: localUrl, textMessageId, messageId: fileResult?.messageId,
@@ -3409,7 +3456,12 @@ function createToolHandlers(cx: McpContext) {
         sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND channel_type!=2 AND message_seq > ?`;
         params = [agentId, channelId, seq];
       }
-      if (onlyReplies) sql += ` AND is_me!=1`;
+      if (onlyReplies) {
+        if (channelType === 2) {
+          sql += ` AND from_uid!=COALESCE((SELECT imUid FROM agents WHERE agent_id=? LIMIT 1),'')`;
+          params.push(agentId);
+        } else sql += ` AND is_me!=1`;
+      }
       sql += ` ORDER BY message_seq ASC LIMIT ?`;
       params.push(limit + 1);
       return _filterPullRowsForCaller(agentId, cx.query<MessageDbRow>(sql, params));

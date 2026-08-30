@@ -42,6 +42,7 @@ function setup() {
   const notified = [];
   const delivered = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (agentId, payload) => forwarded.push({ agentId, payload }) },
     notifyUI: (event, data) => notified.push({ event, data }),
     checkAuditRules: () => ({ action: 'allow' }),
@@ -65,9 +66,11 @@ function groupMsg({ fromUid = 'visitor1', channelId = 'room1', content = 'hello'
 }
 
 let pass = 0, fail = 0;
-function test(name, fn) {
-  try { fn(); pass++; console.log(`  ✓ ${name}`); }
-  catch (e) { fail++; console.log(`  ✗ ${name}`); console.log(`    ${e.message}`); if (e.stack) console.log(`    ${e.stack.split('\n').slice(1, 3).join('\n    ')}`); }
+const cases = [];
+function test(name, fn) { cases.push({ name, fn }); }
+async function settleInbound(handler) {
+  await new Promise(resolve => setImmediate(resolve));
+  await handler.flushInboundTurns();
 }
 
 // ========================================
@@ -86,20 +89,22 @@ test('群聊消息未被 @ → 落库 channel_type=2，不触发 forward', () =>
   } finally { cleanup(); }
 });
 
-test('群聊被 @（mention.uids 含本 agent imUid）→ 触发 forward，payload.channelType=2', () => {
+test('群聊被 @（mention.uids 含本 agent imUid）→ 触发 forward，payload.channelType=2', async () => {
   const { handler, forwarded, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { uids: ['imuid_test'] } }));
+    await settleInbound(handler);
     assert.strictEqual(forwarded.length, 1, '被 @ 时应 forward 一次');
     assert.strictEqual(forwarded[0].payload.channelType, 2, 'forward payload channelType 应为 2');
     assert.strictEqual(forwarded[0].payload.channelId, 'room1');
   } finally { cleanup(); }
 });
 
-test('群聊 mention.all → 触发 forward', () => {
+test('群聊 mention.all → 触发 forward', async () => {
   const { handler, forwarded, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { all: true } }));
+    await settleInbound(handler);
     assert.strictEqual(forwarded.length, 1, 'mention.all 应 forward');
   } finally { cleanup(); }
 });
@@ -156,12 +161,13 @@ test('群聊无 mention 时 mention 列为 NULL', () => {
   } finally { cleanup(); }
 });
 
-test('多 agent 收到同一条 @全体消息 → 只落库一次，但两个 agent 都会处理', () => {
+test('多 agent 收到同一条 @全体消息 → 只落库一次，但两个 agent 都会处理', async () => {
   const { db, handler, forwarded, cleanup } = setup();
   try {
     const msg = groupMsg({ messageId: 'dup-msg-1', mention: { all: true } });
     handler.handleAgentMessage('agent_test', msg);
     handler.handleAgentMessage('agent_other', msg);
+    await settleInbound(handler);
     const cnt = db.prepare('SELECT COUNT(*) as c FROM messages WHERE id=?').get('dup-msg-1').c;
     assert.strictEqual(cnt, 1, '同 messageId 应只落库一次');
     assert.deepStrictEqual(forwarded.map(x => x.agentId), ['agent_test', 'agent_other'], '@全体应触发两个 agent forward');
@@ -181,7 +187,7 @@ test('群聊空内容 → 跳过，不落库不 forward', () => {
 });
 
 
-test('mentioned agent receives the previous 10 group messages in a group-scoped session', () => {
+test('mentioned agent receives the previous 10 group messages in a group-scoped session', async () => {
   const { handler, forwarded, cleanup } = setup();
   try {
     for (let i = 1; i <= 12; i++) {
@@ -196,6 +202,7 @@ test('mentioned agent receives the previous 10 group messages in a group-scoped 
       messageSeq: 13, clientMsgNo: 'ctx-client-13', timestamp: 1700000013,
       mention: { uids: ['imuid_test'] }
     }));
+    await settleInbound(handler);
     assert.strictEqual(forwarded.length, 1);
     const payload = forwarded[0].payload;
     assert.strictEqual(payload.fromUid, 'visitor1');
@@ -304,7 +311,13 @@ test('group agent reply is persisted and delivered to the original group', () =>
 });
 
 // ========================================
-console.log('\n========================================');
-console.log(`群聊消息处理测试: ${pass} 通过, ${fail} 失败`);
-console.log('========================================\n');
-process.exit(fail > 0 ? 1 : 0);
+(async () => {
+  for (const { name, fn } of cases) {
+    try { await fn(); pass++; console.log(`  ✓ ${name}`); }
+    catch (e) { fail++; console.log(`  ✗ ${name}`); console.log(`    ${e.message}`); if (e.stack) console.log(`    ${e.stack.split('\n').slice(1, 3).join('\n    ')}`); }
+  }
+  console.log('\n========================================');
+  console.log(`群聊消息处理测试: ${pass} 通过, ${fail} 失败`);
+  console.log('========================================\n');
+  process.exit(fail > 0 ? 1 : 0);
+})().catch(error => { console.error(error); process.exit(1); });

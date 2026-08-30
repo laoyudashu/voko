@@ -5,11 +5,33 @@ const { execFileSync } = require('node:child_process');
 export interface WorkBuddyRuntime {
   command: string | null;
   argvPrefix: string[];
-  source: 'configured' | 'registry' | 'common_location' | 'unavailable';
+  source: 'configured' | 'path' | 'registry' | 'common_location' | 'unavailable';
   desktopVersion: string | null;
 }
 
+function resolveFromPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): WorkBuddyRuntime | null {
+  const lookup = platform === 'win32' ? ['where.exe', ['codebuddy.cmd', 'codebuddy.exe']]
+    : ['/usr/bin/which', ['codebuddy']];
+  for (const name of lookup[1]) {
+    try {
+      const output = String(execFileSync(lookup[0] as string, [name], {
+        encoding: 'utf8', windowsHide: true, timeout: 2500, maxBuffer: 16 * 1024,
+        env, stdio: ['ignore', 'pipe', 'pipe'],
+      }));
+      for (const line of output.split(/\r?\n/)) {
+        const command = existingFile(line);
+        if (command) return runtimeFor(command, 'path');
+      }
+    } catch {}
+  }
+  return null;
+}
+
 let cachedDefaultRuntime: WorkBuddyRuntime | null = null;
+
+export function invalidateWorkBuddyRuntime(): void {
+  cachedDefaultRuntime = null;
+}
 
 function existingFile(value: unknown): string | null {
   const candidate = String(value || '').trim().replace(/^"|"$/g, '');
@@ -68,20 +90,42 @@ function resolveFromWindowsRegistry(): WorkBuddyRuntime | null {
   return null;
 }
 
-export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; env?: NodeJS.ProcessEnv } = {}): WorkBuddyRuntime {
+export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; homeDir?: string } = {}): WorkBuddyRuntime {
   const env = options.env || process.env;
-  const canCache = !options.configuredCommand && !options.env;
+  const platform = options.platform || process.platform;
+  const canCache = !options.configuredCommand && !options.env && !options.platform && !options.homeDir;
   if (canCache && cachedDefaultRuntime) return { ...cachedDefaultRuntime, argvPrefix: [...cachedDefaultRuntime.argvPrefix] };
   const configured = existingFile(options.configuredCommand || env.VOKO_WORKBUDDY_CLI);
   if (configured) return runtimeFor(configured, 'configured');
 
-  const registry = resolveFromWindowsRegistry();
+  const pathRuntime = resolveFromPath(env, platform);
+  if (pathRuntime) {
+    if (canCache) cachedDefaultRuntime = pathRuntime;
+    return pathRuntime;
+  }
+
+  const registry = platform === 'win32' ? resolveFromWindowsRegistry() : null;
   if (registry) {
     if (canCache) cachedDefaultRuntime = registry;
     return registry;
   }
 
-  const roots = process.platform === 'win32'
+  if (platform === 'darwin') {
+    const appRoots = [
+      path.join(options.homeDir || require('node:os').homedir(), 'Applications', 'WorkBuddy.app', 'Contents'),
+      '/Applications/WorkBuddy.app/Contents',
+    ];
+    for (const root of appRoots) {
+      const command = existingFile(path.join(root, 'Resources', 'app.asar.unpacked', 'cli', 'bin', 'codebuddy'));
+      if (command) {
+        const found = runtimeFor(command, 'common_location');
+        if (canCache) cachedDefaultRuntime = found;
+        return found;
+      }
+    }
+  }
+
+  const roots = platform === 'win32'
     ? [env.ProgramW6432, env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')]
     : ['/opt/WorkBuddy', '/opt/workbuddy', '/usr/local/lib/workbuddy'];
   for (const root of roots.filter(Boolean)) {
@@ -103,6 +147,10 @@ export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; e
 
 export function workBuddySpawnCommand(runtime: WorkBuddyRuntime): { command: string; argsPrefix: string[] } | null {
   if (!runtime.command) return null;
+  if (process.platform === 'win32' && /\.cmd$/i.test(runtime.command)) {
+    const cliEntry = path.join(path.dirname(runtime.command), 'node_modules', '@tencent-ai', 'codebuddy-code', 'bin', 'codebuddy');
+    if (existingFile(cliEntry)) return { command: process.execPath, argsPrefix: [cliEntry] };
+  }
   return runtime.argvPrefix.length > 0
     ? { command: process.execPath, argsPrefix: runtime.argvPrefix }
     : { command: runtime.command, argsPrefix: [] };
@@ -120,4 +168,4 @@ export function probeWorkBuddyCliVersion(runtime: WorkBuddyRuntime): string | nu
   } catch { return null; }
 }
 
-module.exports = { resolveWorkBuddyRuntime, workBuddySpawnCommand, probeWorkBuddyCliVersion };
+module.exports = { resolveWorkBuddyRuntime, workBuddySpawnCommand, probeWorkBuddyCliVersion, invalidateWorkBuddyRuntime };

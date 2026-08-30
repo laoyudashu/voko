@@ -189,7 +189,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
     { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true },
   ] },
-  { type: 'dumate', aliases: ['baidu-dumate'], label: '百度搭子 (DuMate)', requiresInstance: true, defaultDeliveryModes: ['http', 'pull'], transports: [
+  { type: 'dumate', aliases: ['baidu-dumate'], label: '百度搭子 (DuMate)', requiresInstance: false, defaultDeliveryModes: ['http', 'pull'], transports: [
     transport({ id: 'dumate-http', mode: 'http', priority: 10, operations: ['push', 'steer'],
       modulePath: './providers/dumate-http', exportName: 'DuMateHttpProvider',
       safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',

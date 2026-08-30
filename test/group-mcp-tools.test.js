@@ -21,6 +21,7 @@ const { createDispatcher } = require('../build/core/dispatcher');
 const { MessageRouteStore, RoutingConversationStore } = require('../build/core/provider-routing');
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
+const { OutboundMessageResultStore } = require('../build/core/outbound-message-result-store');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -79,25 +80,28 @@ function setup(options = {}) {
 
   const interventions = [];
   const sentMessages = [];
+  const outboundMessageResults = new OutboundMessageResultStore();
   const cx = {
     db,
     query: (sql, params = []) => { try { return db.prepare(sql).all(...params); } catch (_) { return []; } },
     exec: (sql, params = []) => { try { db.prepare(sql).run(...params); } catch (_) {} },
-    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions) => {
-      sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions });
+    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
+      sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata });
       return { success: true };
     },
     uploadFileToOSS: options.uploadFileToOSS || (async (_filePath, objectName) => `https://oss.example/${objectName}`),
     ...(options.secureOutboundRouter ? { secureOutboundRouter: options.secureOutboundRouter } : {}),
     enqueueOwnerIntervention: record => interventions.push(record),
     wukongim: {
-      getCurrentUid: agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || '',
+      getCurrentUid: options.getCurrentUid
+        || (agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || ''),
     },
+    outboundMessageResults,
   };
   const handlers = createToolHandlers(cx);
 
   return {
-    db, handlers, fetchCalls, sentMessages, interventions,
+    db, handlers, fetchCalls, sentMessages, interventions, outboundMessageResults,
     cleanup: () => { try { db.close(); } catch (_) {} try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} delete global.fetch; }
   };
 }
@@ -131,6 +135,59 @@ await test('send_message 省略 channelType 时按群频道 ID 自动识别', as
     const r = await handlers.send_message({ agentId: 'agentA', toUid: 'room1', content: '省略类型的群消息' });
     assert.strictEqual(r.success, true);
     assert.strictEqual(sentMessages[0].channelType, 2);
+  } finally { cleanup(); }
+});
+await test('send_message returns a stable code when the runtime database has no Agent IM identity', async () => {
+  const { handlers, sentMessages, cleanup } = setup({ getCurrentUid: () => '' });
+  try {
+    const r = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'identity check', channelType: 1 });
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.code, 'AGENT_IM_IDENTITY_MISSING');
+    assert.strictEqual(sentMessages.length, 0);
+  } finally { cleanup(); }
+});
+await test('send_message requests an in-memory result receipt and exposes it through get_message_result', async () => {
+  const { db, handlers, sentMessages, cleanup } = setup();
+  try {
+    const result = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'track me', channelType: 1 });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.resultTracking.tool, 'get_message_result');
+    assert.deepStrictEqual(sentMessages[0].mentions, null);
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(result.resultTracking.messageId, 'imuidA', 'imuidB', 'track me', 'imuidB', 1, 'agentA', Date.now(), 1, 'sent', 1);
+    const status = await handlers.get_message_result({ agentId: 'agentA', messageId: result.resultTracking.messageId });
+    assert.strictEqual(status.transport.state, 'DELIVERED');
+    assert.strictEqual(status.execution.state, 'UNCONFIRMED');
+    assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
+  } finally { cleanup(); }
+});
+await test('get_message_result closes reply state when Provider finishes without a reply', async () => {
+  const { db, handlers, outboundMessageResults, cleanup } = setup();
+  try {
+    const messageId = 'provider-empty-result';
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(messageId, 'imuidA', 'imuidB', 'track me', 'imuidB', 1, 'agentA', Date.now(), 1, 'sent', 1);
+    outboundMessageResults.register('agentA',messageId,'imuidB');
+    outboundMessageResults.apply('agentA','imuidB',{version:1,sourceMessageIds:[messageId],turnId:'turn-empty',
+      sequence:1,state:'FAILED',phase:'provider',reasonCode:'PROVIDER_EMPTY_REPLY',occurredAt:Date.now()});
+    const result=await handlers.get_message_result({agentId:'agentA',messageId});
+    assert.strictEqual(result.execution.state,'FAILED');
+    assert.deepStrictEqual(result.reply,{state:'FAILED',messageId:null,reasonCode:'PROVIDER_EMPTY_REPLY'});
+  }finally{cleanup();}
+});
+await test('get_message_result validates input and does not disclose another Agent message', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    const missing = await handlers.get_message_result({ agentId: 'agentA' });
+    assert.strictEqual(missing.success, false);
+    assert.strictEqual(missing.code, 'MESSAGE_RESULT_INPUT_REQUIRED');
+
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('other-agent-message', 'other-agent', 'imuidB', 'private', 'imuidB', 1, 'agentB', Date.now(), 1, 'sent', 1);
+    const hidden = await handlers.get_message_result({ agentId: 'agentA', messageId: 'other-agent-message' });
+    assert.strictEqual(hidden.success, false);
+    assert.strictEqual(hidden.code, 'MESSAGE_RESULT_NOT_FOUND');
+    assert.deepStrictEqual(Object.keys(hidden).sort(), ['code', 'error', 'success']);
   } finally { cleanup(); }
 });
 await test('Web 新对话只在首条发送时创建，并保留来源 Conversation', async () => {
@@ -218,7 +275,8 @@ await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由�
   let ordinaryUploads = 0;
   const secureOutboundRouter = { prepare: async (_agentId, _channelId, _channelType, _metadata, purpose) => {
     assert.strictEqual(purpose, 'attachment');
-    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2 };
+    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2,
+      preparationToken: 'prepared-once' };
   } };
   const { handlers, sentMessages, cleanup } = setup({ secureOutboundRouter,
     uploadFileToOSS: async () => { ordinaryUploads++; return 'https://must-not-upload.example/plain'; } });
@@ -231,6 +289,7 @@ await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由�
     assert.strictEqual(ordinaryUploads, 0, 'plaintext upload must not happen before secure router');
     assert.strictEqual(sentMessages.length, 1);
     assert.strictEqual(sentMessages[0].messageType, 'file');
+    assert.strictEqual(sentMessages[0].metadata._e2eeAttachmentPreparationToken, 'prepared-once');
     assert.match(sentMessages[0].content, /^\{"url":"\/api\/e2ee-v2\/attachments\//);
     assert.strictEqual(Object.hasOwn(r, 'filePath'), false);
     assert.strictEqual(Object.hasOwn(r, 'ext'), false);
@@ -245,6 +304,38 @@ await test('get_chat_history 群聊（channelType=2）按 channel_id 查全量�
     assert.strictEqual(r.messages.length, 1, '应查到群聊消息');
     assert.strictEqual(r.messages[0].channelType, 2, 'fmtMsg 应带 channelType=2');
     assert.deepStrictEqual(r.messages[0].mention, { uids: ['imuidA'] }, 'fmtMsg 应解析 mention');
+  } finally { cleanup(); }
+});
+
+await test('get_chat_history 群聊 isMe 按查询 Agent 视角投影而非首个落库视角', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare('UPDATE agents SET owner_email=? WHERE agent_id=?').run('a@a.com','agentB');
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('m-perspective-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1);
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('m-perspective-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1);
+    const a = await handlers.get_chat_history({ channelId: 'room1', channelType: 2, agentId: 'agentA', limit: 20 });
+    const b = await handlers.get_chat_history({ channelId: 'room1', channelType: 2, agentId: 'agentB', limit: 20 });
+    assert.strictEqual(a.messages.find(m => m.id === 'm-perspective-self').isMe, true);
+    assert.strictEqual(a.messages.find(m => m.id === 'm-perspective-peer').isMe, false);
+    assert.strictEqual(b.messages.find(m => m.id === 'm-perspective-self').isMe, false);
+    assert.strictEqual(b.messages.find(m => m.id === 'm-perspective-peer').isMe, true);
+  } finally { cleanup(); }
+});
+
+await test('fetch_new_messages 群聊 onlyReplies 按查询 Agent 的 fromUid 过滤', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1,2,JSON.stringify({uids:['imuidB']}));
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1,3,JSON.stringify({uids:['imuidA']}));
+    const a = handlers._queryMessages('agentA','room1',0,true,20,2);
+    const b = handlers._queryMessages('agentB','room1',0,true,20,2);
+    assert.deepStrictEqual(a.map(m=>m.id).sort(),['m-pull-peer','m2'].sort());
+    assert.deepStrictEqual(b.map(m=>m.id).sort(),['m-pull-self']);
   } finally { cleanup(); }
 });
 
@@ -337,10 +428,10 @@ await test('fetch_new_messages messageSeq=0 按指定群隔离消息', async () 
     const peerMessage = r.messages.find(m => m.id === 'm-fetch-room1');
     assert.strictEqual(peerMessage.sourceType, 'agent_peer');
     assert.strictEqual(peerMessage.trustLevel, 'untrusted_peer');
-    // pull 路径应剥离 dispatcher 注入的 [VOKO A2A CONTROL] 协议包装，只暴露对端可见正文
+    // A2A 控制信息通过结构化字段传递，不应污染 Pull 返回的原始正文。
     assert.strictEqual(peerMessage.content, '同群另一 Agent 消息', 'agent_peer 消息应剥离 A2A 控制块，只留正文');
-    assert.strictEqual(peerMessage.hasControlBlock, true, '应标记曾含控制块');
-    assert.strictEqual(peerMessage.contentStripped, true, '应标记已剥离');
+    assert.strictEqual(peerMessage.hasControlBlock, false);
+    assert.strictEqual(peerMessage.contentStripped, false);
 
     const blocked = await handlers.fetch_new_messages({ ...params, blockTimeout: 1 });
     assert.strictEqual(blocked.messages.length, 2, '阻塞轮询也应按指定群过滤');
@@ -712,7 +803,7 @@ await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 
   const { db, handlers, cleanup } = setup();
   try {
     global.__dispatcher = createDispatcher({ db, providers: {} });
-    // m2 是 visitor 群聊消息；再插一条 agent_peer 群聊消息（会被 prepareForPull 注入 CONTROL 块）
+    // m2 是 visitor 群聊消息；再插一条 agent_peer 群聊消息。
     db.prepare('UPDATE messages SET message_seq=? WHERE id=?').run(1, 'm2');
     db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, message_seq, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run('m-peer', 'imuidB', 'room1', '对端 Agent 正文', 'room1', 2, 'agentB', Date.now() + 2, 0, 'received', 1, 2, JSON.stringify({ uids: ['imuidA'] }));
@@ -720,9 +811,9 @@ await test('fetch_new_messages 剥离 agent_peer 入站 A2A 控制块，visitor 
     const peer = r.messages.find(m => m.id === 'm-peer');
     assert.ok(peer, '应有 agent_peer 消息');
     assert.strictEqual(peer.sourceType, 'agent_peer');
-    assert.strictEqual(peer.content, '对端 Agent 正文', '应剥离 [VOKO A2A CONTROL] 包装，只留正文');
-    assert.strictEqual(peer.hasControlBlock, true);
-    assert.strictEqual(peer.contentStripped, true);
+    assert.strictEqual(peer.content, '对端 Agent 正文');
+    assert.strictEqual(peer.hasControlBlock, false);
+    assert.strictEqual(peer.contentStripped, false);
     // visitor 消息原样，不带控制块标记
     const visitor = r.messages.find(m => m.id === 'm2');
     assert.strictEqual(visitor.content, '群聊@消息');

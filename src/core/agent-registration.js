@@ -55,6 +55,25 @@ function responseMessage(value, fallback) {
   return isRecord(value) && typeof value.message === 'string' ? value.message : fallback;
 }
 
+function normalizeRegistrationNetworkError(error, stage) {
+  const rawCode = String(error?.cause?.code || error?.code || '').toUpperCase();
+  const name = String(error?.name || '');
+  let cause = 'NETWORK_FAILURE';
+  if (name === 'AbortError' || rawCode === 'ABORT_ERR') cause = 'REQUEST_TIMEOUT';
+  else if (['ENOTFOUND', 'EAI_AGAIN', 'EAI_FAIL'].includes(rawCode)) cause = 'DNS_FAILURE';
+  else if (rawCode.includes('TIMEOUT') || rawCode === 'ETIMEDOUT') cause = 'CONNECT_TIMEOUT';
+  else if (rawCode.includes('CERT') || rawCode.includes('TLS') || rawCode.includes('SSL')) cause = 'TLS_FAILURE';
+  else if (['ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH'].includes(rawCode)) cause = rawCode;
+  return {
+    success: false,
+    code: 'REGISTRATION_NETWORK_ERROR',
+    retryable: stage === 'verify_email',
+    stage,
+    cause,
+    error: error?.message || 'network request failed',
+  };
+}
+
 function parseJsonObject(text) {
   let value;
   try {
@@ -207,7 +226,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       return { success: true, status: res.status, data: json };
     } catch (e) {
       console.error('[AgentRegistration] sendCode error:', e);
-      return { success: false, error: e.message };
+      return normalizeRegistrationNetworkError(e, 'send_code');
     }
   }
 
@@ -307,7 +326,7 @@ function createAgentRegistration({ db, writeConfig, writeAgentRegister, writeAge
       };
     } catch (e) {
       console.error('[AgentRegistration] loginByCode error:', e);
-      return { success: false, code: e.code, status: e.status, error: e.message };
+      return normalizeRegistrationNetworkError(e, 'verify_email');
     }
   }
 
@@ -657,4 +676,4 @@ function updateAgentBindingOnDb(db, { agentId, updates }) {
   }
 }
 
-module.exports = { createAgentRegistration, registerAgentInDbOnDb, updateAgentBindingOnDb };
+module.exports = { createAgentRegistration, registerAgentInDbOnDb, updateAgentBindingOnDb, normalizeRegistrationNetworkError };

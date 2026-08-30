@@ -58,7 +58,7 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
   const checkpointScope = `1:${channelId}`;
   const before = await runtime(request);
   const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
-  expect(before.deliveryStatus.activeAutomaticMode).toBe('mock');
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.activeAutomaticMode, { timeout: 5_000 }).toBe('mock');
 
   const configured = await setProvider(request, {
     available: true,
@@ -80,8 +80,9 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
   expect(pullStatus.deliveryStatus.pullReady).toBe(true);
 
   const failedRows = readMessages(channelId);
-  expect(failedRows).toHaveLength(1);
-  expect(failedRows[0].is_me).toBe(0);
+  expect(failedRows.filter(row => row.is_me === 0)).toHaveLength(1);
+  expect(failedRows.some(row => row.content === 'Agent 正在处理…')).toBe(true);
+  expect(failedRows.some(row => row.content === 'Agent 当前无法处理该消息')).toBe(true);
   expect(failedRows.some(row => row.content.includes('[echo]'))).toBe(false);
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
@@ -106,13 +107,16 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
     timeout: 5_000,
   }).toBe(true);
   const finalRows = readMessages(channelId);
-  expect(finalRows).toHaveLength(3);
-  expect(finalRows.filter(row => row.is_me === 1)).toHaveLength(1);
-  expect(new Set(finalRows.map(row => row.id)).size).toBe(3);
+  expect(finalRows.filter(row => row.is_me === 0)).toHaveLength(2);
+  expect(finalRows.filter(row => row.content.includes('[echo]'))).toHaveLength(1);
+  expect(new Set(finalRows.map(row => row.id)).size).toBe(finalRows.length);
 });
 
-test('outcome-unknown Provider failure is not retried and later messages recover normally', async ({ request }) => {
-  const channelId = 'e2e-provider-unknown';
+test('outcome-unknown Provider failure is not retried and later messages recover normally', async ({ request }, testInfo) => {
+  const retryIndex = testInfo.retry || 0;
+  const channelId = `e2e-provider-unknown-${retryIndex}`;
+  const failedMessageId = String(1801 + retryIndex * 10);
+  const recoveredMessageId = String(1803 + retryIndex * 10);
   const before = await runtime(request);
   const faultedBefore = Number(before.providerState?.stats?.faultedPushes || 0);
   const configured = await setProvider(request, {
@@ -123,34 +127,33 @@ test('outcome-unknown Provider failure is not retried and later messages recover
 
   await inject(request, {
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
-    messageId: '1801', messageSeq: 1801, content: 'provider unknown outcome e2e',
+    messageId: failedMessageId, messageSeq: Number(failedMessageId), content: 'provider unknown outcome e2e',
   });
   await expect.poll(async () => Number((await runtime(request)).providerState?.stats?.faultedPushes || 0), {
     timeout: 5_000,
   }).toBe(faultedBefore + 1);
-  await expect.poll(() => readMessages(channelId).some(row => row.id === '1801'), { timeout: 5_000 }).toBe(true);
-  await expect.poll(() => readMessages(channelId).filter(row => row.is_me === 1), { timeout: 1_500 }).toHaveLength(0);
+  await expect.poll(() => readMessages(channelId).some(row => row.id === failedMessageId), { timeout: 5_000 }).toBe(true);
+  await expect.poll(() => readMessages(channelId).some(row => row.content === '消息结果暂时无法确认'), { timeout: 5_000 }).toBe(true);
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
     agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,
   }, 1802);
   expect(pulled.success).toBe(true);
   expect(pulled.messages).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: '1801', content: 'provider unknown outcome e2e' }),
+    expect.objectContaining({ id: failedMessageId, content: 'provider unknown outcome e2e' }),
   ]));
 
   await inject(request, {
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId, channelType: 1,
-    messageId: '1803', messageSeq: 1803, content: 'provider unknown recovered e2e',
+    messageId: recoveredMessageId, messageSeq: Number(recoveredMessageId), content: 'provider unknown recovered e2e',
   });
   await expect.poll(() => readMessages(channelId).some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('provider unknown recovered e2e')), {
     timeout: 5_000,
   }).toBe(true);
   const finalRows = readMessages(channelId);
-  expect(finalRows).toHaveLength(3);
   expect(finalRows.filter(row => row.content.includes('provider unknown outcome e2e'))).toHaveLength(1);
-  expect(finalRows.filter(row => row.is_me === 1)).toHaveLength(1);
-  expect(new Set(finalRows.map(row => row.id)).size).toBe(3);
+  expect(finalRows.filter(row => row.content.includes('[echo]'))).toHaveLength(1);
+  expect(new Set(finalRows.map(row => row.id)).size).toBe(finalRows.length);
 });
 
 test.afterEach(async ({ request }) => {

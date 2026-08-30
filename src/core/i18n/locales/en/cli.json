@@ -87,5 +87,13 @@
   "cli.index.stopped": "VOKO stopped",
   "cli.index.stop_incomplete": "VOKO did not stop completely; remaining PIDs: {pids}",
   "cli.index.unknown_cmd": "Unknown command: {cmd}; run `voko --help` for help",
-  "cli.index.start_failed": "[VOKO Lite] Start failed: {msg}"
+  "cli.index.start_failed": "[VOKO Lite] Start failed: {msg}",
+  "cli.usage.restart": "Restart VOKO Lite and wait for the replacement process",
+  "cli.index.restarting": "Restarting VOKO Lite...",
+  "cli.index.restarted": "VOKO Lite restart has been submitted",
+  "cli.interactive.configure_mode": "Configure {mode}?",
+  "cli.interactive.apply_change": "Apply this change?",
+  "cli.interactive.enable_mode": "Enable {mode}?",
+  "cli.interactive.allow_public": "Allow public visitors?",
+  "cli.interactive.terminal_restore_warning": "Registration completed, but terminal state restoration failed: {msg}"
 }

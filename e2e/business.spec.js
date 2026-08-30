@@ -48,38 +48,45 @@ async function callMcp(request, name, args, id = Date.now()) {
   return JSON.parse(text);
 }
 
-test('single chat sends and receives text through the real worker and Mock Provider', async ({ page, request }) => {
-  await page.goto('/agents/e2e-agent/c/e2e-visitor');
+test('single chat sends and receives text through the real worker and Mock Provider', async ({ page, request }, testInfo) => {
+  const runOffset = (testInfo.repeatEachIndex || 0) * 100 + (testInfo.retry || 0) * 10;
+  const channelId = `e2e-visitor-${testInfo.repeatEachIndex || 0}-${testInfo.retry || 0}`;
+  const inboundId = String(1101 + runOffset);
+  const inboundContent = `single inbound e2e ${runOffset}`;
+  const outboundContent = `single outbound e2e ${runOffset}`;
+  await page.goto(`/agents/e2e-agent/c/${channelId}`);
   await expect(page.locator('#c')).toBeVisible();
 
   await expect(await inject(request, {
     toUid: 'e2e-im-uid',
-    fromUid: 'e2e-visitor',
-    channelId: 'e2e-visitor',
+    fromUid: channelId,
+    channelId,
     channelType: 1,
-    messageId: '1101',
-    messageSeq: 1,
-    content: 'single inbound e2e',
+    messageId: inboundId,
+    messageSeq: 1 + runOffset,
+    content: inboundContent,
   })).toMatchObject({ success: true, delivered: true, count: 1 });
-  await waitForMessages('e2e-visitor', rows => rows.some(row => row.id === '1101') && rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('single inbound e2e')));
+  await waitForMessages(channelId, rows => rows.some(row => row.id === inboundId) && rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes(inboundContent)));
 
   await page.reload();
-  await expect(page.locator('#msg-box')).toContainText('single inbound e2e');
+  await expect(page.locator('#msg-box')).toContainText(inboundContent);
   await expect(page.locator('#msg-box')).toContainText('[echo]');
 
-  await page.locator('#c').fill('single outbound e2e');
+  await page.locator('#c').fill(outboundContent);
   await page.locator('form[action="/messages/send"] button[type="submit"]').click();
-  const rows = await waitForMessages('e2e-visitor', messages => messages.some(row => row.is_me === 1 && row.content === 'single outbound e2e'));
-  await page.waitForURL(/\/agents\/e2e-agent\/c\/e2e-visitor(?:\?|$)/);
-  await expect(page.locator('#msg-box')).toContainText('single outbound e2e');
+  const rows = await waitForMessages(channelId, messages => messages.some(row => row.is_me === 1 && row.content === outboundContent));
+  await page.waitForURL(new RegExp(`/agents/e2e-agent/c/${channelId}(?:\\?|$)`));
+  await expect(page.locator('#msg-box')).toContainText(outboundContent);
 
   const uniqueIds = new Set(rows.map(row => row.id));
   expect(uniqueIds.size).toBe(rows.length);
-  expect(rows.filter(row => row.is_me === 1).every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
-  expect(rows.every(row => row.channel_id === 'e2e-visitor' && row.channel_type === 1)).toBeTruthy();
+  expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')
+    .every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
+  expect(rows.every(row => row.channel_id === channelId && row.channel_type === 1)).toBeTruthy();
   const state = await runtime(request);
-  const direct = state.messageStats.find(item => item.channelId === 'e2e-visitor');
-  expect(Number(direct.replies)).toBe(2);
+  const direct = state.messageStats.find(item => item.channelId === channelId);
+  expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(2);
+  expect(Number(direct.replies)).toBe(3);
   expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
   expect(Number(direct.uniqueTurns)).toBe(Number(direct.total));
   expect(state.deliveryStatus.activeAutomaticMode).toBe('mock');
@@ -127,9 +134,12 @@ test('group chat renders text, supports @all, and enforces mention permission', 
   await expect(page.locator('#reply-send-err')).toContainText(/所有人|权限|owner|admin|管理员/i);
   const afterDenied = readMessages('e2e-group');
   expect(afterDenied.some(row => row.content === 'permission denied e2e')).toBeFalsy();
+  await expect.poll(async () => {
+    const current = await runtime(request);
+    return Number(current.messageStats.find(item => item.channelId === 'e2e-group')?.total || 0);
+  }).toBeGreaterThanOrEqual(4);
   const state = await runtime(request);
   const group = state.messageStats.find(item => item.channelId === 'e2e-group');
-  expect(Number(group.total)).toBeGreaterThanOrEqual(4);
   expect(Number(group.uniqueIds)).toBe(Number(group.total));
 
   await request.post(`${manifest().services.api}/__test__/group-role`, { data: { role: 'owner' } });
@@ -193,12 +203,13 @@ test('duplicate and reordered inbound frames remain idempotent in SQLite', async
   await expect(page.locator('#msg-box')).toContainText('duplicate inbound e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered first e2e');
   await expect(page.locator('#msg-box')).toContainText('ordered second e2e');
+  await waitForMessages('e2e-dedupe', messages => messages.some(row => row.is_me === 1 && row.content.includes('[echo]')));
   const state = await runtime(request);
   const dedupe = state.messageStats.find(item => item.channelId === 'e2e-dedupe');
-  expect(Number(dedupe.total)).toBe(6);
-  expect(Number(dedupe.replies)).toBe(3);
-  expect(Number(dedupe.uniqueIds)).toBe(6);
-  expect(Number(dedupe.uniqueTurns)).toBe(6);
+  expect(Number(dedupe.total)).toBe(5);
+  expect(Number(dedupe.replies)).toBe(2);
+  expect(Number(dedupe.uniqueIds)).toBe(5);
+  expect(Number(dedupe.uniqueTurns)).toBe(5);
 });
 
 test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }, testInfo) => {
@@ -224,8 +235,8 @@ test('provider failure leaves the message available for Pull and recovery restor
   const pullRows = await waitForMessages(channelId, rows => rows.some(row => row.id === firstMessageId));
   expect(pullRows.some(row => row.is_me === 1 && row.content.includes('[echo] pull fallback e2e'))).toBeFalsy();
   await expect(page.locator('#msg-box')).toContainText('pull fallback e2e');
+  await expect.poll(async () => (await runtime(request)).deliveryStatus.automaticDeliveryReady).toBe(false);
   const beforePull = await runtime(request);
-  expect(beforePull.deliveryStatus.automaticDeliveryReady).toBe(false);
   expect(beforePull.deliveryStatus.activeAutomaticMode).toBe(null);
   expect(beforePull.deliveryStatus.pullReady).toBe(true);
   expect(beforePull.checkpoints.some(row => row.namespace === 'mcp.e2e-agent' && row.scope_key === `1:${channelId}`)).toBeFalsy();
@@ -258,7 +269,8 @@ test('provider failure leaves the message available for Pull and recovery restor
   const recovered = await runtime(request);
   expect(recovered.deliveryStatus.activeAutomaticMode).toBe('mock');
   const pullStats = recovered.messageStats.find(item => item.channelId === channelId);
-  expect(Number(pullStats.replies)).toBe(1);
+  expect(readMessages(channelId).filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(1);
+  expect(Number(pullStats.replies)).toBe(2);
   expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
 });
 

@@ -288,9 +288,9 @@ test('Lite set-agent-status rejects invalid flags before database or network acc
 
 test('Lite set-agent-status accepts all six valid status and visibility combinations', async (t) => {
   const originalFetch = global.fetch;
-  let fetchCalls = 0;
-  global.fetch = async () => {
-    fetchCalls++;
+  let signedFetchCalls = 0;
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/api/did-auth/set-agent-status')) signedFetchCalls++;
     return { json: async () => ({ success: true }) };
   };
   t.after(() => { global.fetch = originalFetch; });
@@ -314,7 +314,7 @@ test('Lite set-agent-status accepts all six valid status and visibility combinat
       assert.equal(db.data.visibility_type, visibility);
     }
   }
-  assert.equal(fetchCalls, 6);
+  assert.equal(signedFetchCalls, 6);
 });
 
 test('Lite set-agent-status classifies invalid external API responses without local writes', async (t) => {
@@ -366,18 +366,8 @@ test('Lite set-agent-status classifies invalid external API responses without lo
 
 test('Lite event log writes one structured JSONL record in the configured data directory', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-event-log-'));
-  const env = { ...process.env };
-  let dataDir;
-  if (process.platform === 'win32') {
-    env.APPDATA = tempDir;
-    dataDir = path.join(tempDir, 'voko');
-  } else if (process.platform === 'darwin') {
-    env.HOME = tempDir;
-    dataDir = path.join(tempDir, 'Library', 'Application Support', 'voko');
-  } else {
-    env.XDG_CONFIG_HOME = tempDir;
-    dataDir = path.join(tempDir, 'voko');
-  }
+  const dataDir = path.join(tempDir, 'logs');
+  const env = { ...process.env, VOKO_LOG_DIR: dataDir };
   const script = [
     "const { logEvent } = require('./build/core/event-log');",
     "logEvent('message.received', { level: 'debug', agentId: 'agent-1', data: { count: 2 } });",
@@ -1299,11 +1289,10 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   assert.equal(await syncOfflineMessages(db, handler, 'agent-1'), 0);
   assert.deepEqual(starts, [1, 2]);
   assert.equal(handled, 1);
-  // 降噪后 per-run 的“共收集”走 console.debug；汇总行（console.log）应可见，
-  // 且第二次同步（advance past empty）的汇总反映 0 条新消息。
+  // 有消息的轮次保留汇总；空轮次不再输出重复的“收集 0 条”日志。
   const summaryLogs = logs.filter(log => log.includes('[离线同步] 完成'));
   assert.ok(summaryLogs.length >= 1, '应有汇总日志');
-  assert.ok(summaryLogs.some(log => /收集 0 条/.test(log)), '第二次同步应汇总 0 条');
+  assert.equal(summaryLogs.some(log => /收集 0 条/.test(log)), false, '空轮次不应产生重复汇总噪音');
 });
 
 test('Lite offline sync only pulls published Agents owned by the current local user', async (t) => {

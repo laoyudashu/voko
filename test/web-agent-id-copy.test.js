@@ -191,4 +191,6 @@ test('conversation detail exposes an expand control for long text', async (t) =>
   assert.match(html, /data-voko-message-preview/);
   assert.match(html, /data-voko-message-full hidden/);
   assert.match(html, /展开全文/);
+  assert.match(html, /class="conversation-tab-card active"[^>]*aria-selected="true"[^>]*\?history=1">对话 1<\/a>/);
+  assert.match(html, /draftLabel="对话 2"/);
 });

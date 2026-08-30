@@ -55,6 +55,7 @@ async function main() {
   const env = {
     ...process.env,
     VOKO_DB_PATH: dbPath,
+    VOKO_LOG_DIR: path.join(tempDir, 'runtime-logs'),
     VOKO_SMOKE_TEST: '1',
     VOKO_E2E: '1',
     VOKO_E2E_SERVICES_FILE: manifestPath,

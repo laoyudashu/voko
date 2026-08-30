@@ -241,6 +241,22 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     { destructiveHint: false }
   );
 
+  server.registerTool(
+    'voko_get_message_result',
+    {
+      description: 'Query the latest in-memory transport, remote execution, and reply state for a message sent by this Agent.',
+      inputSchema: {
+        agentId: z.string().describe(T('mcp.param.agentId')),
+        messageId: z.string().describe('The messageId returned by voko_send_message'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (params: unknown) => {
+      const r = await toolHandlers.get_message_result(params);
+      return { content: [{ type: 'text', text: JSON.stringify(r) }] };
+    }
+  );
+
   // ─── 9. get_chat_history ───
   server.tool(
     'voko_get_chat_history',

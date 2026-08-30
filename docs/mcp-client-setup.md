@@ -70,10 +70,19 @@ WorkBuddy 的部分版本在界面中显示为 **CodeBuddy Settings**。优先�
 4. 点击 **Try to Run**；成功后保存配置，并新建或重启一个 WorkBuddy 会话。
 5. 在对话中要求 WorkBuddy 列出可用 MCP 工具，或让它帮助注册/管理 VOKO Agent，以确认连接可用。
 
-如果界面中没有 MCP 设置，可手动打开配置文件：
+也可以使用 WorkBuddy/CodeBuddy CLI 写入用户级配置：
 
-- Windows：`%USERPROFILE%\\.workbuddy\\mcp.json`
-- macOS / Linux：`~/.workbuddy/mcp.json`
+```bash
+codebuddy mcp add --scope user voko -- voko mcp
+codebuddy mcp list
+```
+
+如果界面中没有 MCP 设置，可手动打开当前版本推荐的用户级配置文件：
+
+- Windows：`%USERPROFILE%\\.codebuddy\\.mcp.json`
+- macOS / Linux：`~/.codebuddy/.mcp.json`
+
+旧版本还可能存在 `~/.codebuddy/mcp.json` 或 `~/.codebuddy.json`。同一作用域的多个文件不会合并；优先迁移到 `.codebuddy/.mcp.json`，不要同时维护多个同名 `voko` 条目。
 
 在文件中按上面的 JSON 增加 `voko`。配置文件中已有其他 MCP 服务时，只复制 `"voko": { ... }` 这一项，并确保前一项后有逗号；不要用完整示例覆盖已有内容。
 
@@ -194,6 +203,12 @@ qwen
 ```
 
 完成后重启千问办公并确认 `tools/list` 中出现 VOKO 工具。这是千问办公 → VOKO 的 MCP 客户端方向；VOKO → 千问办公另有 `qoderclicn` CLI → Pull 投递路径，详细边界见[千问办公专属指南](providers/qwen-office.md)。
+
+## 百度搭子（DuMate）
+
+截至当前已验证版本，VOKO 没有确认 DuMate 桌面端存在面向用户、稳定公开的“自定义 stdio MCP Server”入口。因此不要把 `voko mcp` 写入 DuMate 私有配置或内部数据库，也不要把 DuMate 内置 `dumate-opencode` 当作 MCP 客户端。
+
+DuMate 接入 VOKO 的受支持方向是 **VOKO → DuMate**：在 VOKO Web、交互式 CLI，或另一个已连接 VOKO MCP 的 Agent 中注册 `dumate` Provider。完整首次使用和注册步骤见[百度搭子专属指南](providers/dumate.md)。若未来 DuMate 官方公开自定义 MCP 入口，应先按官方文档验证 `tools/list`、进程生命周期和凭据边界，再在本页新增配置，不能从其 Skill、消息渠道或内部 OpenCode 运行时推断 MCP 已受支持。
 
 ## Trae
 

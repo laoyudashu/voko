@@ -10,12 +10,57 @@ const {DatabaseSync}=require('node:sqlite');
 const {E2eeV2Crypto}=require('../build/e2ee/v2-wasm');
 const {E2eeV2Store}=require('../build/e2ee/v2-store');
 const {E2eeV2Runtime}=require('../build/e2ee/v2-runtime');
+const {E2eeV2DirectoryClient}=require('../build/e2ee/v2-directory-client');
 
 const PROTOCOL='voko.e2ee/2';
 const SUITE='X25519-HKDF-SHA256-CHACHA20POLY1305';
 
+test('directory client converts the opaque DOM timeout code 23 into a diagnosable error',async()=>{
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',timeoutMs:321,
+    async fetchImpl(){const error=new Error('The operation was aborted due to timeout');
+      error.name='TimeoutError';error.code=23;throw error;}});
+  await assert.rejects(client.status(),error=>{
+    assert.equal(error.code,'E2EE_V2_DIRECTORY_TIMEOUT');
+    assert.equal(error.causeCode,23);
+    assert.equal(error.name,'TimeoutError');
+    assert.equal(error.operation,'/v1/e2ee/status');
+    assert.equal(error.timeoutMs,321);
+    return true;
+  });
+});
+
+test('directory client does not mutate a native DOMException timeout',async()=>{
+  const source=new DOMException('The operation was aborted due to timeout','TimeoutError');
+  const originalCode=source.code;
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',timeoutMs:432,
+    async fetchImpl(){throw source;}});
+  await assert.rejects(client.status(),error=>{
+    assert.notEqual(error,source);
+    assert.equal(error.cause,source);
+    assert.equal(error.code,'E2EE_V2_DIRECTORY_TIMEOUT');
+    assert.equal(error.causeCode,originalCode);
+    assert.equal(error.name,'TimeoutError');
+    assert.equal(error.operation,'/v1/e2ee/status');
+    assert.equal(error.timeoutMs,432);
+    assert.equal(source.code,originalCode);
+    return true;
+  });
+});
+
+test('directory client preserves a stable public business error code',async()=>{
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',
+    async fetchImpl(){return new Response(JSON.stringify({success:false,code:'PEER_NOT_FOUND',message:'Peer not found'}),{
+      status:404,headers:{'content-type':'application/json'}});}});
+  await assert.rejects(client.resolveRecipients({senderAgentId:'sender-agent',targetImUid:'target-im'}),error=>{
+    assert.equal(error.code,'PEER_NOT_FOUND');
+    assert.equal(error.status,404);
+    assert.equal(error.operation,'/v1/e2ee/recipients/resolve');
+    return true;
+  });
+});
+
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
-  deliverSecureReply,providerReply,directoryErrorOnce=false,inboundDisposition=true}={}){
+  deliverSecureReply,handleTurnReceipt,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
   const db=new DatabaseSync(databasePath);
@@ -27,10 +72,15 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   const guestPublic=guest.publicBundle();
   const agent={localAgentId:'gym',serverAgentId:'agent-server',agentDid:'did:wba:vokovoko.com:agent-server',
     imUid:'agent-im-1'};
-  let registered=null,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
+  let registered=null,registrationCalls=0,providerCalls=0,deliveryCalls=0,replyEnvelope=null,senderDirectoryCalls=0;
   const sessionScopes=[],dispatcherInputs=[];
   const directoryClient={
-    async registerAgentKey(input){registered=input;return{duplicate:false};},
+    async registerAgentKey(input){registrationCalls+=1;
+      if(keyRegistrationErrorOnce&&registrationCalls===1){
+        throw Object.assign(new Error('The operation was aborted due to timeout'),{
+          name:'TimeoutError',code:'E2EE_V2_DIRECTORY_TIMEOUT',operation:'/v1/e2ee/agent-keys',timeoutMs:10_000});
+      }
+      registered=input;return{duplicate:false};},
     async resolveSender(input){
       senderDirectoryCalls+=1;
       if(directoryErrorOnce&&senderDirectoryCalls===1){
@@ -47,8 +97,9 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     },
   };
   const persisted={inbound:[],outbound:[],delivered:[]};
-  const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],
+  const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],keySyncRetryDelayMs:0,
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);dispatcherInputs.push(input);
+      if(providerError)throw providerError;
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
       return{reply:{content:providerReply===undefined?`reply:${input.content}`:providerReply}};}},
     persistInbound(agentId,message,plaintext,messageId){persisted.inbound.push({agentId,plaintext,messageId,
@@ -60,6 +111,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     markOutboundDelivered(agentId,messageId){persisted.delivered.push({agentId,messageId});},
     reviewOutbound,
     deliverSecureReply,
+    handleTurnReceipt,
     async deliverRaw(_agentId,_channelId,envelope){deliveryCalls+=1;replyEnvelope=JSON.parse(envelope);
       if(failFirstDelivery&&deliveryCalls===1)return{success:false,error:'network unknown'};
       return{success:true};},
@@ -78,8 +130,24 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
   function close(){runtime.close();for(const sender of guestDevices.values())sender.endpoint.free();
     db.close();fs.rmSync(directory,{recursive:true,force:true});}
   return{runtime,store,guest,guestPublic,agent,persisted,createEnvelope,close,
-    counts:()=>({providerCalls,deliveryCalls,senderDirectoryCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
+    counts:()=>({providerCalls,deliveryCalls,senderDirectoryCalls,registrationCalls}),reply:()=>replyEnvelope,sessionScopes,dispatcherInputs,addGuestDevice};
 }
+
+test('agent key synchronization retries one transient timeout before reporting success',async()=>{
+  const f=fixture({keyRegistrationErrorOnce:true});
+  const warnings=[];
+  const originalWarn=console.warn;
+  console.warn=(message)=>warnings.push(String(message));
+  try{
+    assert.deepEqual(await f.runtime.synchronizeAgentKeys(),{registered:1,failed:0});
+    assert.equal(f.counts().registrationCalls,2);
+    assert.match(warnings[0],/code="E2EE_V2_DIRECTORY_TIMEOUT"/);
+    assert.match(warnings[0],/name="TimeoutError"/);
+    assert.match(warnings[0],/operation="\/v1\/e2ee\/agent-keys"/);
+    assert.match(warnings[0],/timeoutMs="10000"/);
+    assert.match(warnings[0],/retrying=true/);
+  }finally{console.warn=originalWarn;f.close();}
+});
 
 test('v2 runtime decrypts, persists, executes once and returns a decryptable reply',async()=>{
   const f=fixture();
@@ -118,6 +186,22 @@ test('business-policy interception completes the receipt without executing Provi
   }finally{f.close();}
 });
 
+test('pull-only delivery emits an explicit automatic-delivery-disabled terminal state',async()=>{
+  const statuses=[];
+  const providerError=Object.assign(new Error('automatic delivery disabled'),{
+    code:'AUTOMATIC_DELIVERY_DISABLED',deliveryOutcome:'not_delivered'});
+  const f=fixture({providerError,async deliverSecureReply(input){statuses.push(input);return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('message-pull-only','please reply');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,false);
+    assert.equal(result.code,'AUTOMATIC_DELIVERY_DISABLED');
+    assert.deepEqual(statuses.map(item=>item.turnStatus),['processing','automatic_delivery_disabled']);
+    assert.equal(statuses.at(-1).content,'Agent 尚未启用自动回复');
+  }finally{f.close();}
+});
+
 test('v2 reply recovery resends the same ciphertext without re-executing Provider',async()=>{
   const f=fixture({failFirstDelivery:true});
   try{
@@ -130,7 +214,7 @@ test('v2 reply recovery resends the same ciphertext without re-executing Provide
     await f.runtime.recover();
     assert.equal(f.store.receipt('message-2').state,'completed');
     assert.equal(f.store.receipt('message-2').reply_envelope_json,immutableReply);
-    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2,senderDirectoryCalls:1});
+    assert.deepEqual(f.counts(),{providerCalls:1,deliveryCalls:2,senderDirectoryCalls:1,registrationCalls:1});
   }finally{f.close();}
 });
 
@@ -171,6 +255,21 @@ test('guest route with only routeId uses the authenticated protocol conversation
   }finally{f.close();}
 });
 
+test('guest secure reply carries the authenticated inbound route id for browser correlation',async()=>{
+  let replyInput=null;
+  const f=fixture({async deliverSecureReply(input){replyInput=input;return{success:true,deliveryState:'delivered'};}});
+  try{
+    const routeId='voko_abcdefghijklmnopqrstuvwxyz0123456789';
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'correlate reply',
+      routeContext:{protocolVersion:1,routeId}});
+    const envelope=await f.createEnvelope('message-reply-correlation',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(replyInput.replyToRouteId,routeId);
+  }finally{f.close();}
+});
+
 test('historical pre-Provider locked receipt is recovered exactly once after transient lock revalidation',async()=>{
   const f=fixture();
   try{
@@ -190,6 +289,27 @@ test('historical pre-Provider locked receipt is recovered exactly once after tra
     assert.equal(f.store.receipt(envelope.messageId).state,'completed');
     assert.equal(f.counts().providerCalls,1);
     assert.equal(f.persisted.inbound[0].toUid,'agent-im-1');
+  }finally{f.close();}
+});
+
+test('historical Turn-status Provider conflict lock is revalidated and recovered after upgrade',async()=>{
+  const f=fixture();
+  try{
+    const envelope=await f.createEnvelope('message-old-status-conflict','recover status conflict');
+    const envelopeJson=JSON.stringify(envelope);
+    const digest=crypto.createHash('sha256').update(envelopeJson).digest('base64url');
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im-1',routingConversationId:'conversation-1',
+      wireConversationKey:'conversation-1',protocolConversationId:'conversation-1',peerScopeId:'scope:guest-im-1',
+      peerKind:'guest',mode:'e2ee_active'});
+    f.store.lockConversation('gym','guest-im-1','conversation-1','E2EE_V2_PROVIDER_STATE_CONFLICT');
+    f.store.reserve({messageId:envelope.messageId,digest,envelopeJson,localAgentId:'gym',
+      channelId:'guest-im-1',conversationId:'conversation-1'});
+    assert.equal(f.store.claim(envelope.messageId,'old-worker'),true);
+    assert.equal(f.store.transition(envelope.messageId,['processing'],'failed','E2EE_V2_CONVERSATION_LOCKED'),true);
+    await f.runtime.recover();
+    assert.equal(f.store.receipt(envelope.messageId).state,'completed');
+    assert.equal(f.store.conversation('gym','guest-im-1','conversation-1').mode,'e2ee_active');
+    assert.equal(f.counts().providerCalls,1);
   }finally{f.close();}
 });
 
@@ -311,17 +431,84 @@ test('duplicate Provider accepted callbacks remain idempotent',async()=>{
 });
 
 test('Agent peer secure reply keeps projection and receipt identifiers separate',async()=>{
-  let replyInput=null;
-  const f=fixture({peerKind:'agent',async deliverSecureReply(input){replyInput=input;
+  const replyInputs=[];
+  const f=fixture({peerKind:'agent',async deliverSecureReply(input){replyInputs.push(input);
     return{success:true,deliveryState:'delivered'};}});
   try{
     const envelope=await f.createEnvelope('agent-business-id','reply routing');
     const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
       channelType:1,contentType:13,ack(){}});
     assert.equal(result.accepted,true);
+    assert.equal(replyInputs.length,1);
+    const replyInput=replyInputs[0];
+    assert.equal(replyInput.turnStatus,undefined);
     assert.match(replyInput.sourceMessageId,/^e2ee-peer-/);
     assert.equal(replyInput.sourceReceiptMessageId,'agent-business-id');
     assert.equal(replyInput.protocolConversationId,'conversation-1');
+  }finally{f.close();}
+});
+
+test('Agent peer Provider failures do not become human status messages',async()=>{
+  const replyInputs=[];
+  const providerError=Object.assign(new Error('login required'),{
+    code:'PROVIDER_AUTH_REQUIRED',deliveryOutcome:'not_delivered'});
+  const f=fixture({peerKind:'agent',providerError,async deliverSecureReply(input){replyInputs.push(input);
+    return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('agent-provider-failure','do work');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,false);
+    assert.equal(result.code,'PROVIDER_AUTH_REQUIRED');
+    assert.deepEqual(replyInputs,[]);
+  }finally{f.close();}
+});
+
+test('trusted Agent turn status is acknowledged without persistence or Provider execution',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'Agent 正在处理…',
+      routeContext:{protocolVersion:1,turnId:'turn-old-runtime-1',turnStatus:'processing'}});
+    const envelope=await f.createEnvelope('agent-turn-status',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.deepEqual(result,{handled:true,accepted:true,code:'agent_turn_status'});
+    assert.equal(f.store.receipt('agent-turn-status').state,'completed');
+    assert.equal(f.persisted.inbound.length,0);
+    assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('trusted Agent hidden turn receipt is consumed without persistence or Provider execution',async()=>{
+  const receipts=[];
+  const f=fixture({peerKind:'agent',handleTurnReceipt(agentId,peerUid,receipt){receipts.push({agentId,peerUid,receipt});return true;}});
+  try{
+    const turnReceipt={version:1,sourceMessageIds:['source-message-1'],turnId:'turn-1',sequence:1,
+      state:'WORKING',phase:'provider',occurredAt:Date.now()};
+    const payload=JSON.stringify({version:'voko.e2ee.payload/1',kind:'text',text:'VOKO_TURN_RECEIPT',
+      routeContext:{protocolVersion:1,turnReceipt}});
+    const envelope=await f.createEnvelope('agent-turn-receipt',payload);
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.deepEqual(result,{handled:true,accepted:true,code:'agent_turn_receipt'});
+    assert.equal(receipts.length,1);
+    assert.equal(receipts[0].agentId,'gym');
+    assert.equal(receipts[0].peerUid,'guest-im-1');
+    assert.deepEqual(receipts[0].receipt,turnReceipt);
+    assert.equal(f.persisted.inbound.length,0);
+    assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('matching status text without trusted metadata remains an ordinary Agent message',async()=>{
+  const f=fixture({peerKind:'agent'});
+  try{
+    const envelope=await f.createEnvelope('agent-status-text-only','Agent 正在处理…');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.equal(f.persisted.inbound.length,1);
+    assert.equal(f.counts().providerCalls,1);
   }finally{f.close();}
 });
 

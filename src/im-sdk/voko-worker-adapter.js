@@ -18,6 +18,15 @@ class VokoWorkerAdapter extends EventEmitter {
 
   _forward(event, payload) {
     const { agentId, data } = payload;
+    if (event === 'disconnect') {
+      console.warn(`[IM 连接] agent=${agentId} disconnected code=${data?.code ?? '-'} reason=${String(data?.reason || '-').slice(0, 160)}`);
+    } else if (event === 'reconnecting') {
+      console.warn(`[IM 连接] agent=${agentId} reconnecting attempt=${data?.attempt ?? '-'} delay=${data?.delay ?? '-'}ms`);
+    } else if (event === 'reconnectExhausted') {
+      console.error(`[IM 连接] agent=${agentId} reconnect exhausted attempts=${data?.attempts ?? '-'}`);
+    } else if (event === 'error') {
+      console.warn(`[IM 连接] agent=${agentId} error=${String(data?.message || data || 'unknown').slice(0, 160)}`);
+    }
     if (event === 'connect') this.statuses.set(agentId, 'connected');
     else if (event === 'reconnecting') this.statuses.set(agentId, 'connecting');
     else if (event === 'disconnect' && this.statuses.get(agentId) !== 'kicked') this.statuses.set(agentId, 'disconnected');
@@ -84,6 +93,12 @@ class VokoWorkerAdapter extends EventEmitter {
           ? payload._voko.conversationDisposition : undefined,
         canonicalConversationKey: typeof payload._voko.canonicalConversationKey === 'string'
           ? payload._voko.canonicalConversationKey : undefined,
+        ...(['new_topic', 'automatic_reply', 'explicit_reply'].includes(payload._voko.a2aDisposition)
+          ? { a2aDisposition: payload._voko.a2aDisposition } : {}),
+        ...(payload._voko.turnReceiptRequest?.version === 1
+          ? { turnReceiptRequest: { version: 1 } } : {}),
+        ...(payload._voko.turnReceipt?.version === 1
+          ? { turnReceipt: payload._voko.turnReceipt } : {}),
       } : null,
     };
     if (typeof message.ack === 'function') normalized.ack = message.ack;

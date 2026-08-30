@@ -16,6 +16,10 @@ const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./gro
 const { reservedVisitorPrefix } = require('./visitor-id-policy');
 import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
+import type { PushPayload } from './dispatcher/types';
+import { InboundTurnCoalescer, buildMergedTurn, type InboundTurnBatch } from './inbound-turn-coalescer';
+import { OutboundMessageResultStore, normalizeTurnReceipt, type MessageExecutionPhase,
+  type MessageExecutionState } from './outbound-message-result-store';
 import type {
   AgentReplyMessage,
   AuditAction,
@@ -146,6 +150,12 @@ function serializeCapabilityResponse(content: unknown, requestId: string): strin
 
 class MessageHandler extends EventEmitter {
   private readonly db: DatabaseLike;
+  private readonly inboundTurns: InboundTurnCoalescer<PushPayload & { messageId: string; timestamp: number }, void>;
+  private readonly outboundMessageResults: OutboundMessageResultStore;
+  private readonly receiptRequests = new Map<string, { peerUid: string }>();
+  private readonly receiptSourceAliases = new Map<string, string>();
+  private readonly deferredReplyReceipts = new Map<string, { peerUid:string;sourceMessageIds:string[];turnId:string }>();
+  private receiptSequence = 0;
 
   /**
    * @param {object} db - better-sqlite3 实例
@@ -167,6 +177,7 @@ class MessageHandler extends EventEmitter {
   constructor(db: DatabaseLike, options: MessageHandlerOptions = {}) {
     super();
     this.db = db;
+    this.outboundMessageResults = options.outboundMessageResults || new OutboundMessageResultStore();
     this.databaseAPI = options.databaseAPI;
     this.agentWorkers = options.agentWorkers;
     this.hermesHandler = options.hermesHandler || null;
@@ -188,9 +199,120 @@ class MessageHandler extends EventEmitter {
       ? new GroupMembershipSnapshotCache(options.getGroupInfo)
       : null;
     this._groupRouteResolver = new GroupReplyRouteResolver(db, this._messageRoutes, membershipCache);
+    this.inboundTurns = new InboundTurnCoalescer({
+      scopeKey: (payload) => this._turnScopeKey(payload),
+      flush: (batch) => this._dispatchInboundTurn(batch),
+      quietWindowMs: options.inboundTurnQuietWindowMs,
+    });
 
     // 预填充大小写映射（OpenClaw WS）
     this._caseMap = new Map<string, string>();
+  }
+
+  private _turnScopeKey(payload: PushPayload): string {
+    const route = payload.replyRouteContext as { conversationId?: unknown } | null | undefined;
+    const routingSession = String(route?.conversationId || payload.remoteConversationKey || '');
+    return [payload.agentId, payload.fromUid, payload.channelType || 1, payload.channelId || '', routingSession]
+      .map(value => String(value).replaceAll('\0', '')).join('\0');
+  }
+
+  private _queueInboundTurn(payload: PushPayload & { messageId: string; timestamp: number }): void {
+    void this.inboundTurns.enqueue(payload).catch((error: unknown) => {
+      console.error(`[TurnCoalescer] dispatch failed agent=${payload.agentId} message=${payload.messageId} error=${errorMessage(error)}`);
+    });
+  }
+
+  private _dispatchInboundTurn(batch: InboundTurnBatch<PushPayload & { messageId: string; timestamp: number }>): void {
+    if (!this.dispatcher || !batch.items.length) return;
+    const startedAt = Date.now();
+    const last = batch.items[batch.items.length - 1];
+    const merged = buildMergedTurn(batch);
+    const payload: PushPayload = {
+      ...last,
+      content: merged.content,
+      rawContent: merged.content,
+      attachments: merged.attachments,
+      messageSegments: merged.messageSegments,
+      messageId: last.messageId,
+      turnId: batch.turnId,
+      sourceMessageIds: batch.sourceMessageIds,
+    };
+    console.log(`[TurnCoalescer] dispatch turn=${batch.turnId} agent=${last.agentId} messages=${batch.items.length} attachments=${merged.attachments.length} waitMs=${startedAt - batch.firstReceivedAt}`);
+    this._notifyUI('agent-provider:turn-status', {
+      agentId: last.agentId, channelId: last.channelId, channelType: last.channelType || 1,
+      turnId: batch.turnId, sourceMessageIds: batch.sourceMessageIds, status: 'processing',
+    });
+    this.dispatcher.dispatch(last.agentId, payload);
+  }
+
+  async flushInboundTurns(): Promise<void> { await this.inboundTurns.flushAll(); }
+
+  getOutboundMessageResults(): OutboundMessageResultStore { return this.outboundMessageResults; }
+
+  private _receiptKey(agentId: string, sourceMessageId: string): string {
+    return `${agentId}\0${sourceMessageId}`;
+  }
+
+  private _acceptTurnReceipt(agentId: string, data: InboundMessage, authenticatedAgent = false): boolean {
+    const receipt = normalizeTurnReceipt(data._voko?.turnReceipt);
+    if (!receipt) return false;
+    if ((data.channelType || 1) !== 1 || data.channelId !== data.fromUid
+        || (!authenticatedAgent && this.dispatcher?.isAgentImUid?.(data.fromUid) !== true)) return true;
+    const validIds = receipt.sourceMessageIds.filter((sourceMessageId) => {
+      try {
+        const row = this.db.prepare(`SELECT 1 AS found FROM messages
+          WHERE id=? AND agent_id=? AND to_uid=? AND channel_id=? AND channel_type=1 AND is_me=1 LIMIT 1`)
+          .get<AgentExistsRow>(sourceMessageId, agentId, data.fromUid, data.fromUid);
+        return Boolean(row?.found);
+      } catch (_) { return false; }
+    });
+    if (validIds.length !== receipt.sourceMessageIds.length) {
+      console.warn(`[TurnReceipt] rejected agent=${agentId} from=${data.fromUid} code=SOURCE_SCOPE_INVALID`);
+      return true;
+    }
+    const changed = this.outboundMessageResults.apply(agentId, data.fromUid, receipt);
+    console.log(`[TurnReceipt] accepted agent=${agentId} from=${data.fromUid} turn=${receipt.turnId} state=${receipt.state} phase=${receipt.phase} messages=${changed}`);
+    return true;
+  }
+
+  acceptAuthenticatedTurnReceipt(agentId: string, peerUid: string, receipt: unknown): boolean {
+    const normalized = normalizeTurnReceipt(receipt);
+    if (!normalized) return false;
+    return this._acceptTurnReceipt(agentId, { fromUid: peerUid, toUid: '', channelId: peerUid,
+      channelType: 1, content: '', contentType: 1, messageId: `receipt-${Date.now()}`,
+      timestamp: Math.floor(Date.now() / 1000), _voko: { protocolVersion: 1, turnReceipt: normalized } }, true);
+  }
+
+  private async _sendTurnReceipt(agentId: string, peerUid: string, sourceMessageIds: string[], turnId: string,
+    state: MessageExecutionState, phase: MessageExecutionPhase, reasonCode?: string | null,
+    replyMessageId?: string | null): Promise<void> {
+    if (!this._deliver || !sourceMessageIds.length) return;
+    const requested = [...new Set(sourceMessageIds.map((id) =>
+      this.receiptSourceAliases.get(this._receiptKey(agentId, id)) || id))]
+      .filter((id) => this.receiptRequests.get(this._receiptKey(agentId, id))?.peerUid === peerUid);
+    if (!requested.length) return;
+    const normalizedReasonCode = reasonCode
+      ? String(reasonCode).toUpperCase().replace(/[^A-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 128) || null
+      : null;
+    const sequence = ++this.receiptSequence;
+    const receipt = { version: 1 as const, sourceMessageIds: requested.slice(0, 10), turnId,
+      sequence, state, phase, reasonCode: normalizedReasonCode, occurredAt: Date.now(),
+      replyMessageId: replyMessageId || null };
+    const result = await this._deliver(agentId, peerUid, '', 'text', 1, null,
+      `receipt-${agentId}-${sequence}-${Date.now()}`,
+      { _voko: { protocolVersion: 1, turnReceipt: receipt,
+        turnId, turnStatus: state === 'WORKING' ? 'processing'
+          : state === 'AUTH_REQUIRED' ? 'login_expired'
+            : state === 'DELIVERY_UNKNOWN' ? 'outcome_unknown'
+              : state === 'COMPLETED' ? 'completed' : 'failed',
+        ...(normalizedReasonCode ? { turnStatusCode: normalizedReasonCode } : {}) } });
+    if (result?.success === false) console.warn(`[TurnReceipt] delivery failed agent=${agentId} peer=${peerUid} turn=${turnId}`);
+    const terminal = state === 'FAILED' || state === 'AUTH_REQUIRED' || state === 'DELIVERY_UNKNOWN'
+      || (state === 'COMPLETED' && phase === 'reply');
+    if (terminal) {
+      for (const id of requested) this.receiptRequests.delete(this._receiptKey(agentId, id));
+      for (const sourceId of sourceMessageIds) this.receiptSourceAliases.delete(this._receiptKey(agentId, sourceId));
+    }
   }
 
   _resolveInboundConversation(agentId: string, visitorId: string, channelId: string,
@@ -222,9 +344,11 @@ class MessageHandler extends EventEmitter {
   _resolveE2eeAgentPeerConversation(agentId: string, peerUid: string, channelId: string,
     messageId: string, protocolConversationId: string): string | null {
     try {
-      const peer = this.db.prepare('SELECT 1 AS found FROM agents WHERE imUid=? LIMIT 1')
-        .get<AgentExistsRow>(peerUid);
-      if (!peer || peerUid !== channelId) return null;
+      // e2eeAgentPeer is set only after Directory sender resolution and
+      // envelope verification. A remote Agent is not expected to exist in
+      // this runtime's local agents table; requiring that made every
+      // cross-owner/cross-runtime encrypted conversation fail projection.
+      if (peerUid !== channelId) return null;
       const conversation = this._routingConversations.resolveE2eeAgentPeerMirror(
         agentId, channelId, protocolConversationId,
       );
@@ -296,6 +420,12 @@ class MessageHandler extends EventEmitter {
     const route = this._messageRoutes.getByMessage(messageId, agentId);
     if (route?.direction === 'outbound') this._messageRoutes.setStatus(route.route_id, 'active');
     this.db.prepare(`UPDATE messages SET status='sent' WHERE id=? AND agent_id=?`).run(messageId, agentId);
+    const deferred=this.deferredReplyReceipts.get(this._receiptKey(agentId,messageId));
+    if(deferred){
+      this.deferredReplyReceipts.delete(this._receiptKey(agentId,messageId));
+      void this._sendTurnReceipt(agentId,deferred.peerUid,deferred.sourceMessageIds,deferred.turnId,
+        'COMPLETED','reply',null,messageId);
+    }
   }
 
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
@@ -393,7 +523,25 @@ class MessageHandler extends EventEmitter {
   handleAgentMessage(agentId: string, data: InboundMessage, skipForward = false): ForwardPayload | undefined {
     const { fromUid, toUid, channelId, content, messageId, timestamp, channelType, contentType,
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
-    const markIntercepted = (reason: string) => { data._vokoInboundIntercepted = reason; };
+    const markIntercepted = (reason: string) => {
+      data._vokoInboundIntercepted = reason;
+      const prefix = [agentId, fromUid, channelType || 1, channelId || '']
+        .map(value => String(value).replaceAll('\0', '')).join('\0') + '\0';
+      void this.inboundTurns.flushWhere(scopeKey => scopeKey.startsWith(prefix));
+      if (data._voko?.turnReceiptRequest?.version === 1) {
+        void this._sendTurnReceipt(agentId, fromUid, [messageId], messageId,
+          'FAILED', 'receiver', reason === 'manual_mode' || reason === 'agent_unpublished'
+            ? 'AUTOMATIC_DELIVERY_DISABLED' : 'MESSAGE_NOT_DISPATCHED');
+      }
+    };
+
+    if (data._voko?.turnReceipt) {
+      if (!this._acceptTurnReceipt(agentId, data)) {
+        console.warn(`[TurnReceipt] rejected agent=${agentId} from=${fromUid} code=MALFORMED_RECEIPT`);
+      }
+      data._vokoInboundIntercepted = 'agent_turn_receipt';
+      return;
+    }
 
     const reservedPrefix = reservedVisitorPrefix(fromUid);
     if (reservedPrefix) {
@@ -481,6 +629,16 @@ class MessageHandler extends EventEmitter {
       }
       console.error(`[消息存储] 失败:`, errorMessage(error));
       throw error;
+    }
+
+    if (data._voko?.turnReceiptRequest?.version === 1 && (channelType || 1) === 1
+        && channelId === fromUid && this.dispatcher?.isAgentImUid?.(fromUid) === true) {
+      const receiptSourceMessageId = String(clientMsgNo || messageId);
+      this.receiptRequests.set(this._receiptKey(agentId, receiptSourceMessageId), { peerUid: fromUid });
+      if (receiptSourceMessageId !== messageId) {
+        this.receiptSourceAliases.set(this._receiptKey(agentId, messageId), receiptSourceMessageId);
+      }
+      void this._sendTurnReceipt(agentId, fromUid, [messageId], messageId, 'SUBMITTED', 'receiver');
     }
 
     // 更新会话（未读计数 +1）
@@ -686,7 +844,10 @@ class MessageHandler extends EventEmitter {
       try {
         const parsed = JSON.parse(content);
         // 兼容 WK 嵌套格式：{contentObj:{type:1001,...}, content:{type:1001,...}}
-        const inner = parsed.contentObj || parsed.content || parsed;
+        const inner = parsed?.contentObj && typeof parsed.contentObj === 'object'
+          ? parsed.contentObj
+          : parsed?.content && typeof parsed.content === 'object'
+            ? parsed.content : parsed;
         if (inner && inner.type === 'group_invitation') {
           isInvitation = true;
           tipText = inner.content || '';
@@ -1053,7 +1214,7 @@ class MessageHandler extends EventEmitter {
         }
       } catch (_) { /* invalid route remains on legacy/Pull path */ }
     }
-    this.dispatcher.dispatch(agentId, {
+    this._queueInboundTurn({
       agentId, fromUid, senderUid: fromUid, content: agentContent, rawContent: content, channelId,
       sessionTarget: isGroup ? 'group:' + channelId : fromUid,
       channelType: channelType || 1, contentType: contentType || 1,
@@ -1061,6 +1222,7 @@ class MessageHandler extends EventEmitter {
       remoteRouteId,
       remoteConversationKey,
       conversationStart: routeMetadata?.conversationStart === true,
+      a2aDisposition: routeMetadata?.a2aDisposition,
     });
   }
 
@@ -1092,7 +1254,7 @@ class MessageHandler extends EventEmitter {
       return;
     }
     if (resolved.state === 'absent') {
-      this.dispatcher?.dispatch(input.agentId, {
+      this._queueInboundTurn({
         agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
         content: input.agentContent, rawContent: input.content, channelId: input.channelId,
         sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
@@ -1106,7 +1268,7 @@ class MessageHandler extends EventEmitter {
         conversationId: resolved.conversation.id, agentId: input.agentId, peerUid: input.fromUid,
         channelId: input.channelId, channelType: 2 }); } catch (_) {}
     }
-    this.dispatcher?.dispatch(input.agentId, {
+    this._queueInboundTurn({
       agentId: input.agentId, fromUid: input.fromUid, senderUid: input.fromUid,
       content: input.agentContent, rawContent: input.content, channelId: input.channelId,
       sessionTarget: `group:${input.channelId}`, channelType: 2, contentType: input.contentType,
@@ -1366,10 +1528,16 @@ class MessageHandler extends EventEmitter {
         conversationId: conversation.id, replyToRouteId, agentId, peerUid: replyChannelId,
         channelId: replyChannelId, channelType: replyChannelType, direction: 'outbound' });
     } catch (_) {}
+    const automaticA2AReply = replyChannelType === 1
+      && (data.a2aManaged || this.dispatcher?.isAgentImUid?.(replyChannelId) === true);
     const routeMetadata = outboundRouteId ? { _voko: { protocolVersion: 1, routeId: outboundRouteId,
       ...(replyToRouteId ? { replyToRouteId } : {}),
+      ...(data.providerTurnStatus ? { turnId: data.turnId, turnStatus: data.providerTurnStatus,
+        ...(data.providerTurnStatusCode ? { turnStatusCode: data.providerTurnStatusCode } : {}) } : {}),
       ...(routingConversation?.wireConversationKey ? { canonicalConversationKey: routingConversation.wireConversationKey } : {}),
-      ...(conversationDisposition ? { conversationDisposition } : {}) } } : null;
+      ...(conversationDisposition ? { conversationDisposition } : {}),
+      ...(automaticA2AReply ? { a2aDisposition: 'automatic_reply' as const } : {}) } }
+      : automaticA2AReply ? { _voko: { protocolVersion: 1, a2aDisposition: 'automatic_reply' as const } } : null;
     const delivery = await this._deliver(agentId, replyChannelId, trimmedContent, 'text', replyChannelType, replyMentions, msgId, routeMetadata);
     if ((delivery as { success?: boolean })?.success === false) {
       if (outboundRouteId && !(delivery as { outcomeUnknown?: boolean })?.outcomeUnknown) {
@@ -1405,6 +1573,55 @@ class MessageHandler extends EventEmitter {
     console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
       `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
+    const sourceMessageIds = (data.sourceMessageIds?.length ? data.sourceMessageIds
+      : data.sourceMessageId ? [data.sourceMessageId] : []);
+    if (fullyDelivered) {
+      void this._sendTurnReceipt(agentId, replyChannelId, sourceMessageIds,
+        String(data.turnId || data.sourceMessageId || msgId), 'COMPLETED', 'reply', null, msgId);
+    } else if ((delivery as {securityMode?:string})?.securityMode==='e2ee'&&sourceMessageIds.length) {
+      this.deferredReplyReceipts.set(this._receiptKey(agentId,msgId),{peerUid:replyChannelId,
+        sourceMessageIds:[...sourceMessageIds],turnId:String(data.turnId||data.sourceMessageId||msgId)});
+    }
+
+  }
+
+  async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
+    const status = String(data.status || '');
+    if (!data.agentId || !data.visitorId) return;
+    const recipientUid = data.senderUid || data.visitorId;
+    const sourceMessageIds = data.sourceMessageIds?.length ? data.sourceMessageIds
+      : data.sourceMessageId ? [data.sourceMessageId] : [];
+    if (data.a2aManaged || this.dispatcher?.isAgentImUid?.(recipientUid) === true) {
+      const mapped: Record<string, { state: MessageExecutionState; phase: MessageExecutionPhase; reason?: string }> = {
+        processing: { state: 'WORKING', phase: 'provider' },
+        completed: { state: 'COMPLETED', phase: 'provider' },
+        login_expired: { state: 'AUTH_REQUIRED', phase: 'provider', reason: 'PROVIDER_AUTH_EXPIRED' },
+        quota_exhausted: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_QUOTA_EXCEEDED' },
+        timeout: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_TIMEOUT' },
+        failed: { state: 'FAILED', phase: 'provider', reason: 'PROVIDER_CALL_FAILED' },
+        outcome_unknown: { state: 'DELIVERY_UNKNOWN', phase: 'provider', reason: 'PROVIDER_OUTCOME_UNKNOWN' },
+        automatic_delivery_disabled: { state: 'FAILED', phase: 'receiver', reason: 'AUTOMATIC_DELIVERY_DISABLED' },
+      };
+      const value = mapped[status];
+      if (value) await this._sendTurnReceipt(data.agentId, recipientUid, sourceMessageIds,
+        String(data.turnId || data.sourceMessageId || ''), value.state, value.phase,
+        String(data.code || value.reason || '') || null);
+      return;
+    }
+    if (status === 'completed') return;
+    const messages: Record<string, string> = {
+      processing: 'Agent 正在处理…',
+      login_expired: 'Agent 登录已失效，暂时无法回复',
+      quota_exhausted: 'Agent 额度不足，暂时无法回复',
+      timeout: 'Agent 调用超时，请稍后重试',
+      failed: 'Agent 当前无法处理该消息',
+      outcome_unknown: '消息结果暂时无法确认',
+    };
+    const content = messages[status];
+    if (!content) return;
+    await this.handleAgentReply({ ...data, content, done: true,
+      providerTurnStatus: status as AgentReplyMessage['providerTurnStatus'],
+      providerTurnStatusCode: String(data.code || '') || undefined });
   }
 }
 

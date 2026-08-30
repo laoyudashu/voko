@@ -143,14 +143,31 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('keeps an E2EE Agent peer out of foreign local Route Context and ordinary Provider dispatch', () => {
+  it('sends the final reply receipt when queued E2EE delivery completes later', async () => {
+    const fixture = createFixture({ deliver: async () => ({ success: true, securityMode: 'e2ee', deliveryState: 'queued' }) });
+    const receipts = [];
+    fixture.handler._sendTurnReceipt = async (...args) => { receipts.push(args); };
+    try {
+      await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'peer-agent-uid',
+        content: 'delayed encrypted reply', done: true, turnId: 'turn-delayed-1',
+        sourceMessageIds: ['source-delayed-1'], a2aManaged: true });
+      const reply = fixture.db.prepare(`SELECT id,status FROM messages
+        WHERE agent_id='agent-1' AND channel_id='peer-agent-uid' AND is_me=1 LIMIT 1`).get();
+      assert.equal(reply.status,'pending');
+      assert.equal(receipts.length,0);
+      fixture.handler.markE2eeAgentReplyDelivered('agent-1',reply.id);
+      assert.equal(receipts.length,1);
+      assert.deepEqual(receipts[0].slice(0,8),['agent-1','peer-agent-uid',['source-delayed-1'],
+        'turn-delayed-1','COMPLETED','reply',null,reply.id]);
+      assert.equal(fixture.db.prepare('SELECT status FROM messages WHERE id=?').get(reply.id).status,'sent');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('projects a verified remote E2EE Agent peer without requiring a local Agent registration', () => {
     const fixture = createFixture();
     try {
-      const now = Date.now();
-      fixture.db.prepare(`INSERT INTO agents
-        (id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,backend_type,agent_name,created_at,updated_at)
-        VALUES (?,?,?,?,?,'published','public','goose',?,?,?)`)
-        .run('peer-row','peer-agent','peer-agent-uid','token','ws://fake','Peer Agent',now,now);
       const conversation = new RoutingConversationStore(fixture.db).resolveOrCreate({
         agentId: 'agent-1', providerFamily: 'openclaw', providerInstanceKey: '',
         nativeSessionId: 'ordinary-native-session', channelId: 'peer-agent-uid', channelType: 1,
@@ -195,10 +212,11 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('persists and forwards one direct inbound message with stable identifiers', () => {
+  it('persists and forwards one direct inbound message with stable identifiers', async () => {
     const fixture = createFixture();
     try {
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
 
       const row = fixture.db.prepare(
         'SELECT id, agent_id, channel_id, channel_type, from_uid, content, message_seq, client_msg_no, is_me FROM messages',
@@ -223,7 +241,25 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('announces timed pricing and starts the trial on the first inbound message', () => {
+  it('coalesces three consecutive direct messages into one Provider turn', async () => {
+    const fixture = createFixture();
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m1', clientMsgNo: 'turn-c1', content: 'first' }));
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m2', clientMsgNo: 'turn-c2', content: 'second' }));
+      fixture.handler.handleAgentMessage('agent-1', inbound({ messageId: 'turn-m3', clientMsgNo: 'turn-c3', content: 'third' }));
+      await fixture.handler.flushInboundTurns();
+
+      assert.equal(fixture.dispatched.length, 1);
+      assert.deepEqual(fixture.dispatched[0].payload.sourceMessageIds, ['turn-m1', 'turn-m2', 'turn-m3']);
+      assert.equal(fixture.dispatched[0].payload.messageSegments.length, 3);
+      assert.match(fixture.dispatched[0].payload.content, /\[Message 1\]\nfirst/);
+      assert.match(fixture.dispatched[0].payload.content, /\[Message 3\]\nthird/);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('announces timed pricing and starts the trial on the first inbound message', async () => {
     const fixture = createFixture();
     try {
       const now = Date.now();
@@ -233,6 +269,7 @@ describe('Lite Messenger contract smoke', () => {
         .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
 
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
 
       assert.equal(fixture.systemMessages.length, 1);
       assert.equal(fixture.systemMessages[0][2], 'trial_welcome');
@@ -252,7 +289,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('stays silent before timed service expiry and notifies only after expiry', () => {
+  it('stays silent before timed service expiry and notifies only after expiry', async () => {
     const fixture = createFixture();
     try {
       const now = Date.now();
@@ -262,6 +299,7 @@ describe('Lite Messenger contract smoke', () => {
         .run('pricing-1', 'agent-1', 0.01, 60, 3, now, now);
 
       fixture.handler.handleAgentMessage('agent-1', inbound());
+      await fixture.handler.flushInboundTurns();
       fixture.db.prepare(`UPDATE conversations SET session_expire_at=?
         WHERE user_uid=? AND channel_id=?`).run(Date.now() + 30000, 'agent-uid', 'visitor-1');
       fixture.systemMessages.length = 0;
@@ -270,6 +308,7 @@ describe('Lite Messenger contract smoke', () => {
       fixture.handler.handleAgentMessage('agent-1', inbound({
         messageId: 'incoming-2', messageSeq: 2, clientMsgNo: 'client-2',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.systemMessages.length, 0);
       assert.equal(fixture.dispatched.length, 1);
 
@@ -281,6 +320,7 @@ describe('Lite Messenger contract smoke', () => {
       fixture.handler.handleAgentMessage('agent-1', inbound({
         messageId: 'incoming-3', messageSeq: 3, clientMsgNo: 'client-3',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.systemMessages.length, 1);
       assert.equal(fixture.systemMessages[0][2], 'session_expired');
       assert.equal(fixture.dispatched.length, 0);
@@ -302,6 +342,7 @@ describe('Lite Messenger contract smoke', () => {
         _voko: { protocolVersion: 1, routeId: 'canonical-route-12345678901234567890',
           canonicalConversationKey: pending.wireConversationKey },
       }));
+      await fixture.handler.flushInboundTurns();
 
       const inboundRoute = fixture.db.prepare(`SELECT conversation_id,status FROM provider_message_routes
         WHERE message_id='canonical-inbound-1' AND direction='inbound'`).get();
@@ -353,7 +394,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('keeps group scope, sender and mention metadata when forwarding an @ message', () => {
+  it('keeps group scope, sender and mention metadata when forwarding an @ message', async () => {
     const fixture = createFixture();
     try {
       fixture.handler.handleAgentMessage('agent-1', inbound({
@@ -363,6 +404,7 @@ describe('Lite Messenger contract smoke', () => {
         clientMsgNo: 'group-client-1',
         mention: { all: false, uids: ['agent-uid'] },
       }));
+      await fixture.handler.flushInboundTurns();
 
       const row = fixture.db.prepare(
         'SELECT channel_id, channel_type, mention, is_me FROM messages WHERE id=?',
@@ -422,7 +464,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('hard-denies inbound content while soft-deny still forwards, with auditable records', () => {
+  it('hard-denies inbound content while soft-deny still forwards, with auditable records', async () => {
     const interventions = [];
     const systemMessages = [];
     let action = 'hard_deny';
@@ -467,6 +509,7 @@ describe('Lite Messenger contract smoke', () => {
         messageId: 'audit-soft-1',
         clientMsgNo: 'audit-soft-client-1',
       }));
+      await fixture.handler.flushInboundTurns();
       assert.equal(fixture.dispatched.length, 1);
       assert.equal(fixture.dispatched[0].payload.messageId, 'audit-soft-1');
       assert.equal(interventions.length, 4);
@@ -700,6 +743,66 @@ describe('Lite Messenger contract smoke', () => {
       assert.equal(fixture.db.prepare(
         'SELECT COUNT(*) AS count FROM messages WHERE agent_id=? AND is_me=1',
       ).get('agent-1').count, 0);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('never sends Provider processing or failure status back to an Agent peer', async () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    const projected = [];
+    fixture.handler.handleAgentReply = async data => { projected.push(data); };
+    try {
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'agent-peer', senderUid: 'agent-peer',
+        status: 'processing', turnId: 'agent-turn',
+      });
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'visitor-1', senderUid: 'visitor-1',
+        status: 'timeout', turnId: 'visitor-turn',
+      });
+      assert.equal(projected.length, 1);
+      assert.equal(projected[0].content, 'Agent 调用超时，请稍后重试');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('returns hidden receipts using the sender client message id and never persists them as chat', async () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        fromUid: 'agent-peer', channelId: 'agent-peer', messageId: 'receiver-local-id',
+        clientMsgNo: 'sender-message-id', _voko: { protocolVersion: 1, turnReceiptRequest: { version: 1 } },
+      }), true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered[0][2], '');
+      assert.deepEqual(fixture.delivered[0][7]._voko.turnReceipt.sourceMessageIds, ['sender-message-id']);
+      assert.equal(fixture.delivered[0][7]._voko.turnReceipt.state, 'SUBMITTED');
+      assert.equal(fixture.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE content='' AND is_me=1").get().count, 0);
+
+      await fixture.handler.handleProviderTurnStatus({
+        agentId: 'agent-1', visitorId: 'agent-peer', senderUid: 'agent-peer',
+        status: 'timeout', turnId: 'turn-1', sourceMessageIds: ['receiver-local-id'],
+      });
+      assert.equal(fixture.delivered.length, 2);
+      assert.deepEqual(fixture.delivered[1][7]._voko.turnReceipt.sourceMessageIds, ['sender-message-id']);
+      assert.equal(fixture.delivered[1][7]._voko.turnReceipt.reasonCode, 'PROVIDER_TIMEOUT');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('intercepts malformed and out-of-scope hidden receipts before persistence', () => {
+    const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
+    try {
+      fixture.handler.handleAgentMessage('agent-1', inbound({
+        fromUid: 'agent-peer', channelId: 'agent-peer', messageId: 'malformed-receipt',
+        _voko: { protocolVersion: 1, turnReceipt: { version: 1, sourceMessageIds: [] } },
+      }));
+      assert.equal(fixture.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE id='malformed-receipt'").get().count, 0);
+      assert.equal(fixture.dispatched.length, 0);
     } finally {
       fixture.db.close();
     }

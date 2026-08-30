@@ -87,5 +87,13 @@
   "cli.index.stopped": "VOKO 已关闭",
   "cli.index.stop_incomplete": "VOKO 未能彻底关闭，仍存活 PID：{pids}",
   "cli.index.unknown_cmd": "未知命令: {cmd}，输入 voko --help 查看帮助",
-  "cli.index.start_failed": "[VOKO Lite] 启动失败: {msg}"
+  "cli.index.start_failed": "[VOKO Lite] 启动失败: {msg}",
+  "cli.usage.restart": "重启 VOKO Lite 并等待新进程启动",
+  "cli.index.restarting": "正在重启 VOKO Lite...",
+  "cli.index.restarted": "VOKO Lite 重启命令已提交",
+  "cli.interactive.configure_mode": "配置 {mode}?",
+  "cli.interactive.apply_change": "应用这项变更?",
+  "cli.interactive.enable_mode": "启用 {mode}?",
+  "cli.interactive.allow_public": "允许公开访客访问?",
+  "cli.interactive.terminal_restore_warning": "注册已完成，但终端状态恢复失败：{msg}"
 }

@@ -63,7 +63,7 @@ test('delivery_modes order controls Pull versus Push and recovers without bypass
     messageId: `220${suffix}2`, messageSeq: 22002 + suffix, content: 'delivery order push',
   });
   await expect.poll(() => readMessages(pushChannel).some(row => row.is_me === 1)).toBe(true);
-  expect(readMessages(pushChannel).filter(row => row.is_me === 1)).toHaveLength(1);
+  expect(readMessages(pushChannel).filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(1);
 
   await setModes(request, 'e2e-agent', []);
   await expect.poll(async () => (await runtime(request, 'e2e-agent')).deliveryStatus.automaticDeliveryReady).toBe(false);
@@ -105,7 +105,8 @@ test('provider availability is isolated per Agent and restores the affected rout
     toUid: 'e2e-im-uid-2', fromUid: 'e2e-visitor', channelId: secondChannel, channelType: 1,
     messageId: `221${suffix}3`, messageSeq: 22103 + suffix, content: 'second agent recovered',
   });
-  await expect.poll(() => readMessages(secondChannel, 'e2e-agent-2').filter(row => row.is_me === 1).length).toBe(1);
+  await expect.poll(() => readMessages(secondChannel, 'e2e-agent-2')
+    .filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…').length).toBe(1);
 });
 
 test.afterEach(async ({ request }) => {

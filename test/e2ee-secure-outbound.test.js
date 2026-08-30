@@ -18,6 +18,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
   const databasePath=path.join(root,'e2ee.db');
   const db=new DatabaseSync(databasePath);
   const store=new E2eeV2Store(db,databasePath);
+  let activeDirectoryError=directoryError;
   let directoryCalls=0,rawCalls=0;const directoryInputs=[];
   const encrypted=[];
   const delivered=[];const uploads=[];
@@ -25,7 +26,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
   const recipients=[1,2].map(index=>({deviceId:`device-${index}`,generation:index,keyId:`key-${index}`,
     publicBundle:{protocolVersion:'voko.e2ee/2',suite:'X25519-HKDF-SHA256-CHACHA20POLY1305',
       keyId:`key-${index}`,hpkePublicKey:'h',signingPublicKey:'s'}}));
-  const directory={async resolveRecipients(input){directoryCalls+=1;directoryInputs.push(input);if(directoryError)throw directoryError;
+  const directory={async resolveRecipients(input){directoryCalls+=1;directoryInputs.push(input);if(activeDirectoryError)throw activeDirectoryError;
     return{peerKind,peerScopeId,...(peerKind==='agent'?{peerAgentDid:'did:wba:peer-agent'}:{}),capability,
       protocolConversationId:peerKind==='agent'?(input.conversationKey||'agent-context-1'):'guest-conversation',
       revision:'revision-1',expiresAt:Date.now()+300_000,recipients:capability==='supported'?recipients:[]};}};
@@ -44,6 +45,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
       delivered.push({agentId,messageId});},
     enabled:()=>enabled,agentPeerEnabled:()=>agentPeerEnabled,attachmentsEnabled:()=>attachmentsEnabled});
   return{router,store,db,root,encrypted,delivered,uploads,directoryInputs,counts:()=>({directoryCalls,rawCalls}),
+    setDirectoryError(value){activeDirectoryError=value;},
     close(){db.close();fs.rmSync(root,{recursive:true,force:true});}};
 }
 
@@ -61,6 +63,22 @@ test('secure outbound seals one business message for every active guest device',
     assert.deepEqual(new Set(f.encrypted.map(row=>row.envelope.messageId)),new Set(['business-1']));
     assert.equal(f.store.outboundEnvelopes('business-1').every(row=>row.state==='sent'),true);
     assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('trusted E2EE reply route preserves validated correlation metadata in the sealed payload',async()=>{
+  const f=fixture();
+  try{
+    const replyToRouteId='voko_abcdefghijklmnopqrstuvwxyz0123456789';
+    const result=await f.router.deliver('gym','guest-im','reply','text',1,null,'business-correlated',
+      {_voko:{protocolVersion:1,replyToRouteId}},
+      {protocolConversationId:'guest-conversation'});
+    assert.equal(result.success,true);
+    assert.equal(f.encrypted.length,2);
+    for(const delivery of f.encrypted){
+      const payload=JSON.parse(delivery.envelope.plaintext);
+      assert.equal(payload.routeContext.replyToRouteId,replyToRouteId);
+    }
   }finally{f.close();}
 });
 
@@ -114,6 +132,20 @@ test('never-encrypted unsupported and transient peers use plaintext without bein
       assert.equal(f.store.conversation('gym','guest-im','routing-1'),null);
     }finally{f.close();}
   }
+});
+
+test('capability discovery failures log a stable code without target ids or error details',async()=>{
+  const f=fixture({directoryError:Object.assign(new Error('token=/secret user=/Users/private'),{code:'ETIMEDOUT'})});
+  const warnings=[];const originalWarn=console.warn;
+  console.warn=(...args)=>warnings.push(args.join(' '));
+  try{
+    const result=await f.router.deliver('gym','guest-sensitive-im','plain','text',1,null,'diagnostic-1');
+    await f.router.deliver('gym','another-sensitive-im','plain','text',1,null,'diagnostic-2');
+    assert.equal(result.securityReason,'capability_unknown_fallback');
+    assert.equal(warnings.length,1);
+    assert.match(warnings[0],/\[E2EE\] 能力发现 agent=gym target=unknown stage=resolve_recipients code=ETIMEDOUT decision=resolution_failed/);
+    assert.doesNotMatch(warnings[0],/guest-sensitive-im|secret|Users/);
+  }finally{console.warn=originalWarn;f.close();}
 });
 
 test('transient Directory failures are single-flight cached for ten seconds',async()=>{
@@ -171,8 +203,170 @@ test('background refresh reactivates historical transient locks after Directory 
       peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
     f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_502');
     f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
-    await f.router.refreshActive();
+    await f.router.refreshTransientLocked();
     assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('a historical Directory 404 lock reactivates only after identity revalidation',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','after 404 recovery','text',1,null,'business-404-revalidated');
+    assert.equal(result.success,true);
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
+test('background refresh retries a persisted Directory 404 lock',async()=>{
+  const f=fixture();
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
+    assert.deepEqual(f.store.transientLockedConversations().map(row=>row.lock_reason),
+      ['E2EE_V2_DIRECTORY_HTTP_404']);
+    await f.router.refreshTransientLocked();
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('historical lock recovery has an independent fair budget and immediate retries are deferred',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    for(let index=0;index<30;index+=1){
+      f.store.saveConversation({localAgentId:'gym',channelId:`guest-${index}`,routingConversationId:`routing-${index}`,
+        wireConversationKey:`wire-${index}`,protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+        peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+      f.store.lockConversation('gym',`guest-${index}`,`routing-${index}`,'E2EE_V2_DIRECTORY_HTTP_404');
+    }
+    assert.equal(f.store.transientLockedConversationCount(),30);
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,25);
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,30,'deferred head rows must not starve later due rows');
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,30,'backoff must suppress immediate repeated Directory calls');
+  }finally{f.close();}
+});
+
+test('a new message bypasses historical-lock background backoff and can recover immediately',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    await f.router.refreshTransientLocked();
+    assert.equal(f.counts().directoryCalls,1);
+    f.setDirectoryError(null);
+    const result=await f.router.deliver('gym','guest-im','recover now','text',1,null,'business-after-backoff');
+    assert.equal(result.success,true);
+    assert.equal(f.counts().directoryCalls,2);
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('policy-related historical locks use a bounded low-frequency backoff with process-stable jitter',async t=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  const originalNow=Date.now;
+  t.after(()=>{Date.now=originalNow;f.close();});
+  let now=originalNow();
+  Date.now=()=>now;
+  f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+    wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+    peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+  f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+  const key='gym\0guest-im\0routing-1';
+  for(const base of [1_800_000,3_600_000,7_200_000,14_400_000,21_600_000,21_600_000]){
+    await f.router.refreshTransientLocked();
+    const state=f.router.lockedRetryState.get(key);
+    const delay=state.nextAttemptAt-now;
+    assert.ok(delay>=base*0.9&&delay<=base*1.1,`delay ${delay} must be a jittered ${base}`);
+    now=state.nextAttemptAt;
+  }
+});
+
+test('a stable peer-not-found lock remains revalidatable and uses policy backoff',async()=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  const originalNow=Date.now;
+  try{
+    const now=originalNow();
+    Date.now=()=>now;
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','PEER_NOT_FOUND');
+    assert.equal(f.store.transientLockedConversationCount(),1);
+    await f.router.refreshTransientLocked();
+    const state=f.router.lockedRetryState.get('gym\0guest-im\0routing-1');
+    assert.ok(state.nextAttemptAt-now>=1_800_000*0.9);
+    f.setDirectoryError(null);
+    const result=await f.router.deliver('gym','guest-im','retry after access change','text',1,null,'peer-access-restored');
+    assert.equal(result.success,true);
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{Date.now=originalNow;f.close();}
+});
+
+test('a legacy generic 404 lock is refined to the stable Directory business code',async()=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','still blocked','text',1,null,'refine-legacy-lock');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'PEER_NOT_FOUND');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').lock_reason,'PEER_NOT_FOUND');
+  }finally{f.close();}
+});
+
+test('a Directory 404 lock never downgrades while Directory still returns 404',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','must remain encrypted or blocked','text',1,null,
+      'business-404-still-missing');
+    assert.equal(result.success,false);
+    assert.equal(result.securityMode,'e2ee');
+    assert.equal(result.error,'E2EE_V2_DIRECTORY_HTTP_404');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'locked');
+    assert.equal(f.counts().rawCalls,0);
+  }finally{f.close();}
+});
+
+test('a Directory 404 lock becomes permanent when peer identity changes',async()=>{
+  const f=fixture({peerScopeId:'replacement-peer-scope'});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'original-peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','must remain blocked','text',1,null,
+      'business-404-identity-changed');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    const conversation=f.store.conversation('gym','guest-im','routing-1');
+    assert.equal(conversation.mode,'locked');
+    assert.equal(conversation.lock_reason,'E2EE_V2_PEER_IDENTITY_CHANGED');
+    assert.equal(f.counts().rawCalls,0);
   }finally{f.close();}
 });
 
@@ -271,6 +465,24 @@ test('Provider reply receipt and fixed origin-device outbox commit atomically be
   }finally{f.close();}
 });
 
+test('turn status targets the inbound device without completing its Provider receipt',async()=>{
+  const f=fixture();
+  try{
+    f.store.reserve({messageId:'source-processing-1',digest:'digest-processing-1',envelopeJson:JSON.stringify({
+      senderDeviceId:'device-2',senderKeyId:'key-2'}),localAgentId:'gym',
+      channelId:'guest-im',conversationId:'guest-conversation'});
+    assert.equal(f.store.claim('source-processing-1','provider-worker'),true);
+    const result=await f.router.deliver('gym','guest-im','Agent 正在处理…','text',1,null,
+      'turn-status-processing-1',null,{sourceReceiptMessageId:'source-processing-1',
+        protocolConversationId:'guest-conversation',completeSourceReceipt:false});
+    assert.equal(result.deliveryState,'delivered');
+    assert.equal(f.store.receipt('source-processing-1').state,'processing');
+    assert.equal(f.store.receipt('source-processing-1').reply_message_id,null);
+    assert.deepEqual(f.store.outboundEnvelopes('turn-status-processing-1')
+      .map(row=>row.recipient_device_id),['device-2']);
+  }finally{f.close();}
+});
+
 test('a crash between transport delivery and main message projection is recovered without resending ciphertext',async()=>{
   const f=fixture({projectionErrorOnce:true});
   try{
@@ -309,6 +521,39 @@ test('private attachment uploads ciphertext once and seals one manifest per reci
       assert.equal(payload.attachment.messageId,'business-attachment-1');
     }
   }finally{f.close();}
+});
+
+test('attachment delivery consumes its successful preflight without a second Directory lookup',async()=>{
+  const f=fixture();const file=path.join(f.root,'preflight.txt');fs.writeFileSync(file,'prepared attachment');
+  try{
+    const prepared=await f.router.prepare('gym','guest-im',1,null,'attachment');
+    assert.equal(prepared.success,true);
+    assert.equal(prepared.securityMode,'e2ee');
+    assert.ok(prepared.preparationToken);
+    f.setDirectoryError(Object.assign(new Error('directory unavailable'),{code:'E2EE_V2_DIRECTORY_UNAVAILABLE'}));
+    const result=await f.router.deliver('gym','guest-im','local-only-url','file',1,null,
+      'business-prepared-attachment',{_e2eeAttachmentPreparationToken:prepared.preparationToken,
+        _e2eeAttachment:{filePath:file,fileName:'preflight.txt',mediaType:'text/plain'}});
+    assert.equal(result.success,true);
+    assert.equal(result.deliveryState,'delivered');
+    assert.equal(f.counts().directoryCalls,1);
+  }finally{f.close();}
+});
+
+test('private attachment file open is asynchronous so a blocked source does not freeze the runtime',async()=>{
+  const f=fixture();const file=path.join(f.root,'delayed.txt');fs.writeFileSync(file,'delayed attachment');
+  const originalOpen=fs.promises.open;let releaseOpen;let openStarted=false;let completed=false;
+  const gate=new Promise(resolve=>{releaseOpen=resolve;});
+  fs.promises.open=async function(...args){openStarted=true;await gate;return originalOpen.apply(this,args);};
+  try{
+    const pending=f.router.deliver('gym','guest-im','local-only-url','file',1,null,'business-attachment-delayed',
+      {_e2eeAttachment:{filePath:file,fileName:'delayed.txt',mediaType:'text/plain'}}).then(result=>{completed=true;return result;});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(openStarted,true);
+    assert.equal(completed,false);
+    releaseOpen();
+    assert.equal((await pending).deliveryState,'delivered');
+  }finally{fs.promises.open=originalOpen;f.close();}
 });
 
 test('attachment metadata cannot fall through to a plaintext local URL when E2EE attachments are disabled',async()=>{
@@ -382,6 +627,22 @@ test('trusted inbound Agent context routes the secure reply without resolving a 
     assert.equal(f.directoryInputs[0].conversationKey,'trusted-context-1');
     assert.equal(f.store.conversation('gym','peer-agent-im','trusted-context-1').protocol_conversation_id,
       'trusted-context-1');
+  }finally{f.close();}
+});
+
+test('trusted Agent reply preserves only validated hidden result receipt metadata',async()=>{
+  const f=fixture({peerKind:'agent',routeContext:()=>{throw new Error('foreign route must not be resolved');}});
+  try{
+    const turnReceipt={version:1,sourceMessageIds:['source-message-1'],turnId:'turn-1',sequence:2,
+      state:'WORKING',phase:'provider',reasonCode:null,occurredAt:Date.now(),replyMessageId:null};
+    const result=await f.router.deliver('gym','peer-agent-im','VOKO_TURN_RECEIPT','text',1,null,'agent-receipt-1',
+      {_voko:{protocolVersion:1,turnReceipt,routeId:'foreign-route',conversationKey:'foreign-wire'}},
+      {protocolConversationId:'trusted-context-1',completeSourceReceipt:false});
+    assert.equal(result.success,true);
+    for(const delivery of f.encrypted){
+      const payload=JSON.parse(delivery.envelope.plaintext);
+      assert.deepEqual(payload.routeContext,{protocolVersion:1,turnReceipt});
+    }
   }finally{f.close();}
 });
 

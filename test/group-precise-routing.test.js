@@ -37,6 +37,7 @@ test('an unthreaded mention uses the only active group conversation', async (t) 
   });
   const forwarded = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
     getGroupInfo: async () => ({ status: 'active', members: [
       { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
@@ -58,6 +59,7 @@ test('an unthreaded mention with multiple conversations waits for an MCP session
     nativeSessionId: 'session-b', channelId: 'group-1', channelType: 2 });
   const forwarded = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
     getGroupInfo: async () => ({ status: 'active', members: [
       { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
@@ -82,6 +84,7 @@ test('a valid group reply route restores the exact native session', async (t) =>
   routes.setStatus(replyToRouteId, 'active');
   const forwarded = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
     getGroupInfo: async () => ({ status: 'active', members: [
       { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
@@ -99,6 +102,7 @@ test('a present but invalid group route fails closed and cannot enter Pull', asy
   const db = fixture(t);
   const forwarded = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
     getGroupInfo: async () => ({ status: 'active', members: [
       { uid: 'member-b', role: 'member' }, { uid: 'agent-im-a', role: 'member' },
@@ -125,6 +129,7 @@ test('membership lookup failure makes an otherwise valid group route fail closed
   routes.setStatus(replyToRouteId, 'active');
   const forwarded = [];
   const handler = new MessageHandler(db, {
+    inboundTurnQuietWindowMs: 0,
     dispatcher: { dispatch: (_agentId, payload) => forwarded.push(payload) },
     getGroupInfo: async () => { throw new Error('offline'); },
   });

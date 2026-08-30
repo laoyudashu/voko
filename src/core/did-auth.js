@@ -5,6 +5,7 @@
  */
 
 const { signAsync } = require('@noble/ed25519');
+const crypto = require('crypto');
 
 // 将 PEM / base64 / hex 格式 Ed25519 私钥解析为 raw 32 字节
 function extractEd25519PrivateKey(pem) {
@@ -37,13 +38,21 @@ function extractEd25519PrivateKey(pem) {
  * @param {string} did - Agent DID（did:wba:...）
  * @param {string} privateKey - PEM 格式 Ed25519 私钥
  * @param {object} businessFields - 除 did/nonce/timestamp/signature 外的业务字段
+ * @param {object} [options]
+ * @param {number} [options.timestamp] - 可选的 Unix 秒时间戳；用于服务端时钟偏差重试
+ * @param {string} [options.payloadString] - 服务端协议要求的精确 payload；默认按 key 排序序列化
  * @returns {object} { did, nonce, timestamp, signature }
  */
-async function signDidRequest(did, privateKey, businessFields) {
-  const nonce = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-  const timestamp = Math.floor(Date.now() / 1000);
+async function signDidRequest(did, privateKey, businessFields, options = {}) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const requestedTimestamp = Number(options.timestamp);
+  const timestamp = Number.isFinite(requestedTimestamp)
+    ? Math.floor(requestedTimestamp)
+    : Math.floor(Date.now() / 1000);
   const sortedKeys = Object.keys(businessFields).sort();
-  const bodyPayload = JSON.stringify(businessFields, sortedKeys);
+  const bodyPayload = typeof options.payloadString === 'string'
+    ? options.payloadString
+    : JSON.stringify(businessFields, sortedKeys);
   const toSign = did + '\n' + nonce + '\n' + timestamp + '\n' + bodyPayload;
   const rawKey = extractEd25519PrivateKey(privateKey);
   const sigBytes = await signAsync(new TextEncoder().encode(toSign), rawKey);

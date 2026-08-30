@@ -11,6 +11,28 @@
 
 官方参考：[千问办公专家套件](https://qwenwork.cn/docs/desktop/expert-kits)、[Qoder CLI 参数](https://docs.qoder.com/cli/cli-reference)、[Qoder 插件规范](https://docs.qoder.com/cli/plugins-reference)、[Qoder Subagent](https://docs.qoder.com/cli/subagent)。社区结构示例可参考 [labring/sealos-skills](https://github.com/labring/sealos-skills)。
 
+## 第一次使用：从零到可验证
+
+1. 安装千问办公并完成桌面账号登录；打开一个普通会话确认模型可回复。
+2. 安装并启动 VOKO：
+
+   ```bash
+   npm install --global @voko/lite
+   voko setup
+   voko start
+   voko status --json
+   ```
+
+3. 用 `status` 顶层 `port` 打开 VOKO Web UI，完成主人登录。不要把千问办公账号登录当作 VOKO 登录。
+4. 在千问办公 **设置 → 扩展与集成 → 连接器 / MCP → 自定义 MCP** 添加下文的 `voko mcp` stdio 配置，保存后完全重启应用，并确认 VOKO 工具出现在工具列表。
+5. 在千问办公的“扩展 → 专家套件”安装、上传或创建所需套件。只有清单和 Skill 路径通过校验的套件才会出现在 VOKO 实例列表。
+6. 在 VOKO 实际使用的 `qoderclicn` 上执行 `login` 和 `status --output json`，不能只看桌面端头像判断 CLI 已登录。
+7. 添加 Agent 时选择“千问办公（QwenWork）”。Expert Kit 是可选绑定：默认“不绑定现有实例”可在收到消息时创建会话；选择套件则固定工作区、插件和后续原生 session。
+8. 只启用状态为 `ready` 的 `cli`，并保留 `pull`。明确接受模型调用成本后再执行“验证消息链路”。
+9. 创建后用 `voko list_agents` 确认库存，用 `voko_get_status` 确认 IM 连接，再确认 `automaticReadyModes`。安装、桌面登录、CLI 登录、VOKO 注册和 IM 在线是五个独立状态。
+
+MCP 自主注册使用 `voko_manage_agent_registration`：先传 `{ "action": "start", "registrationMode": "agent" }`，保留 `registrationId`，按 `nextAction` 继续。选择 Provider 时传 `providerType: "qwen-office"`，`instanceId` 只使用环境枚举返回值或留空；随后确认资料、选择 `deliveryModes` 并 `complete`。邮箱验证码和配置批准必须由主人提供。
+
 ## VOKO → 千问办公：CLI → Pull
 
 Catalog 顺序为：
@@ -57,6 +79,8 @@ qoderclicn.exe status --output json
 
 `status` 必须返回 `"logged_in": true`。登录会通过浏览器完成 QoderCN 账号授权；不要把二维码、Cookie 或 Token 复制到 VOKO 配置。登录后重启 VOKO，或执行 `voko doctor --deep` 让预检刷新状态。CLI 未登录时，VOKO 不会把 `cli` 标记为 ready，只保留 Pull。
 
+VOKO 会分别显示 CLI 缺失、CLI 未登录和状态检查失败；`logged_in: true` 只表示登录预检通过，仍需真实消息回路测试确认模型调用和回复解析后才启用自动投递。
+
 CLI 使用以下安全参数：
 
 ```text
@@ -87,6 +111,8 @@ QwenWork 的 `qoderclicn` 属于当前安装包提供的本地运行时，不是
 $env:VOKO_QWENWORK_CLI_BIN = 'D:\\path\\to\\qoderclicn.exe'
 ```
 
+VOKO 自动识别 Windows 逐版本安装目录，以及 macOS 的 `QwenWorkCN.app`/`千问办公.app` 应用包。官方当前没有 Linux 桌面客户端；Linux 不做同名 PATH 猜测，只有显式设置 `VOKO_QWENWORK_CLI_BIN` 并通过预检时才启用。
+
 ## 千问办公 → VOKO：自定义 MCP
 
 在千问办公的 **设置 → 连接器 / MCP → 自定义 MCP** 中添加 VOKO stdio Server：
@@ -115,6 +141,8 @@ $env:VOKO_QWENWORK_CLI_BIN = 'D:\\path\\to\\qoderclicn.exe'
 ```
 
 重启千问办公后，在工具列表中确认 VOKO 工具可见。自定义 MCP 只代表 Agent 能主动调用 VOKO，不会替代 VOKO→Agent 的 CLI 投递通道。
+
+如果千问办公从图形界面启动后找不到 `voko`，先在终端执行 `command -v voko`（Windows 用 `Get-Command voko`），把得到的绝对路径填入 `command`。不要填写固定的 `localhost:3100`；端口会变化，stdio `voko mcp` 会自动连接当前实例。
 
 ## 检查与排障
 

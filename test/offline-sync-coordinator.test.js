@@ -25,78 +25,84 @@ function makeFakeTimers() {
 // 记录每次全量同步的调用，返回受控 syncFn。
 function makeSyncFn() {
   const calls = [];
-  const syncFn = async () => { calls.push(Date.now()); return 0; };
+  const syncFn = async (_db, _handler, agentId) => { calls.push(agentId); return 0; };
   return { syncFn, calls };
 }
 
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
 describe('createOfflineSyncCoordinator coalesce 行为', () => {
-  it('500ms 窗口内多个 agent 连接合并为一次全量同步', () => {
+  it('首次就绪前的连接只由 onAllReady 合并成一次全量同步', () => {
     const timers = makeFakeTimers();
     const { syncFn, calls } = makeSyncFn();
     const coord = createOfflineSyncCoordinator({}, {}, {
-      windowMs: 500, fallbackMs: 30000, syncFn,
+      windowMs: 500, cooldownMs: 0, fallbackMs: 30000, syncFn,
       setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
 
     // 模拟 8 个 agent 几乎同时连上
     for (let i = 0; i < 8; i++) coord.onAgentConnected(`agent-${i}`);
-    assert.equal(timers.pendingCount(), 1, '应只有一个合并定时器');
-    assert.equal(calls.length, 0, '窗口内不立即同步');
-
-    timers.fire(500); // 窗口到期
-    assert.equal(calls.length, 1, '8 个连接合并为 1 次全量同步');
-    timers.fireAll(); // 确保无残留
-    assert.equal(calls.length, 1, '不应有额外同步');
+    assert.equal(timers.pendingCount(), 0, '首次就绪前不应反复安排重连同步');
+    coord.onAllReady();
+    assert.deepEqual(calls, [undefined], '首次只执行一次全量同步');
   });
 
-  it('窗口到期前再来的 agent 也并入同一批', () => {
+  it('首次同步后使用尾部防抖并只同步发生重连的 agent', async () => {
     const timers = makeFakeTimers();
     const { syncFn, calls } = makeSyncFn();
     const coord = createOfflineSyncCoordinator({}, {}, {
-      windowMs: 500, syncFn, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+      windowMs: 500, cooldownMs: 0, syncFn, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
 
+    coord.onAllReady();
+    await settle();
     coord.onAgentConnected('a1');
     timers.fire(300); // 未到期
-    assert.equal(calls.length, 0);
-    coord.onAgentConnected('a2'); // 并入同一窗口
-    timers.fire(200); // 累计 500ms，到期
-    assert.equal(calls.length, 1, '两个 agent 仍合并为 1 次');
+    coord.onAgentConnected('a2'); // 重置尾部防抖窗口
+    timers.fire(200);
+    assert.deepEqual(calls, [undefined]);
+    timers.fire(300);
+    await settle();
+    assert.deepEqual(calls, [undefined, 'a1', 'a2']);
   });
 
-  it('分散的连接（间隔超过窗口）各触发一次', () => {
+  it('冷却期间的重连只在冷却结束后执行一批', async () => {
     const timers = makeFakeTimers();
     const { syncFn, calls } = makeSyncFn();
     const coord = createOfflineSyncCoordinator({}, {}, {
-      windowMs: 500, syncFn, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+      windowMs: 500, cooldownMs: 1000, syncFn, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
 
+    coord.onAllReady();
+    await settle();
     coord.onAgentConnected('a1');
-    timers.fire(500);
     coord.onAgentConnected('a2');
+    assert.deepEqual(calls, [undefined]);
+    timers.fire(1000); // 首次同步冷却结束，开始防抖
     timers.fire(500);
-    assert.equal(calls.length, 2, '两次独立窗口各 1 次同步');
+    await settle();
+    assert.deepEqual(calls, [undefined, 'a1', 'a2']);
   });
 
   it('onAllReady 只触发一次首次全量同步（守卫）', () => {
     const timers = makeFakeTimers();
     const { syncFn, calls } = makeSyncFn();
     const coord = createOfflineSyncCoordinator({}, {}, {
-      windowMs: 500, fallbackMs: 30000, syncFn,
+      windowMs: 500, cooldownMs: 0, fallbackMs: 30000, syncFn,
       setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
 
     coord.onAllReady();
     coord.onAllReady();
     coord.onAllReady();
-    assert.equal(calls.length, 1, 'onAllReady 只首次触发');
+    assert.deepEqual(calls, [undefined], 'onAllReady 只首次触发');
   });
 
   it('start 注册的兜底定时器到期触发一次全量（经 onAllReady 守卫）', () => {
     const timers = makeFakeTimers();
     const { syncFn, calls } = makeSyncFn();
     const coord = createOfflineSyncCoordinator({}, {}, {
-      windowMs: 500, fallbackMs: 30000, syncFn,
+      windowMs: 500, cooldownMs: 0, fallbackMs: 30000, syncFn,
       setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
     coord.start();
@@ -140,9 +146,8 @@ describe('createOfflineSyncCoordinator coalesce 行为', () => {
     const coord = createOfflineSyncCoordinator({}, {}, {
       windowMs: 500, syncFn: boom, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
     });
-    coord.onAgentConnected('a1');
     // 不应抛——内部 catch
-    assert.doesNotThrow(() => timers.fire(500));
+    assert.doesNotThrow(() => coord.onAllReady());
     // 给抛出的 promise 的 catch 一点时间
     await new Promise(r => setImmediate(r));
   });

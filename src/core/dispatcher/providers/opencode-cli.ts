@@ -29,10 +29,11 @@ import type { PushPayload } from '../types';
 
 class OpenCodeCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
+    const command=resolveOpenCodeCommand();
     const baseArgs = ['run', '--format', 'json'];
     super({
       name: 'OPENCODE CLI',
-      cmd: resolveOpenCodeCommand(),
+      cmd: command || '__voko_opencode_unavailable__',
       // prompt 经 stdin 传入（Paperclip 一致）
       args: [...baseArgs, '{prompt}'],
       argsForSession: (sessionId: string | null) => [

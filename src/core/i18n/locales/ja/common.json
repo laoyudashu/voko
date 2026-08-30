@@ -76,5 +76,6 @@
   "common.home.confirm_delete_audit": "このセキュリティルールを削除しますか？",
   "common.home.submitting": "提交中…",
   "common.home.success": "操作成功",
+  "common.home.warning": "操作に注意が必要です",
   "common.home.submit": "提交"
 }

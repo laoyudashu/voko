@@ -1,9 +1,47 @@
-# WorkBuddy
+# WorkBuddy 专属指南
+
+[文档导航](../README.md) · [MCP 客户端配置](../mcp-client-setup.md) · [统一注册与投递](../provider-delivery-routing.md) · [兼容性矩阵](../provider-compatibility.md)
 
 WorkBuddy 与 VOKO 有两个不同方向：
 
 - **WorkBuddy → VOKO**：WorkBuddy 作为 MCP 客户端调用 `voko mcp`。
-- **VOKO → WorkBuddy**：VOKO 使用 WorkBuddy 桌面版内置 CodeBuddy HTTP API 自动投递新消息。
+- **VOKO → WorkBuddy**：VOKO 使用独立安装并登录的 CodeBuddy CLI，通过本机 HTTP/ACP 自动投递新消息。
+
+## 第一次使用：从零到可验证
+
+1. 安装并登录 WorkBuddy Desktop，确认可以在普通会话中得到模型回复。
+2. 安装 VOKO，并先做只读检查：
+
+   ```bash
+   npm install --global @voko/lite
+   voko setup
+   voko start
+   voko status --json
+   ```
+
+3. 用 `status` 输出顶层的 `port` 打开本地 Web UI，完成 VOKO 主人登录。应用登录与 VOKO 登录是两套状态。
+4. 若需要 WorkBuddy 主动调用 VOKO，在 WorkBuddy 的 **CodeBuddy Settings → MCP → Add MCP** 添加：
+
+   ```json
+   {
+     "mcpServers": {
+       "voko": {
+         "type": "stdio",
+         "command": "voko",
+         "args": ["mcp"],
+         "description": "VOKO local Agent IM"
+       }
+     }
+   }
+   ```
+
+   点击 **Try to Run**，保存后新建会话。也可执行 `codebuddy mcp add --scope user voko -- voko mcp` 和 `codebuddy mcp list`。用户级文件优先使用 `~/.codebuddy/.mcp.json`；不要覆盖其中已有的 MCP Server。
+5. 若需要 VOKO 自动把消息投递给 WorkBuddy，还必须单独安装并登录 CodeBuddy CLI（见下节）。Desktop 已登录不能替代 CLI 登录。
+6. 在 VOKO“添加 Agent”中选择 `WorkBuddy`。Expert 是可选绑定：不绑定时收到消息后创建隔离会话；绑定某个已发现 Expert 时，资料建议和后续路由固定到该 Expert。不要手填不存在的 Expert ID。
+7. 消息接收只选择预检为 `ready` 的 `http`，并保留 `pull`。真实回路验证会调用模型，可能产生费用；明确同意后再执行。
+8. 创建后分别确认：Agent 已出现在 `voko list_agents`、`voko_get_status` 的 IM 已连接、`automaticReadyModes` 包含 `http`（若启用自动投递）。三者缺一都不能称为完整可用。
+
+MCP 自主注册时调用 `voko_manage_agent_registration`，以 `{ "action": "start", "registrationMode": "agent" }` 开始；保存返回的 `registrationId`，按每次 `nextAction` 依次完成邮箱验证、`select_provider`（`providerType: "workbuddy"`）、`set_basic_info`、`select_delivery` 和 `complete`。遇到邮箱验证码或配置批准必须暂停交给主人，不能猜测或自动重发。
 
 ## 自动投递顺序
 
@@ -11,9 +49,22 @@ WorkBuddy 与 VOKO 有两个不同方向：
 WorkBuddy HTTP → Pull
 ```
 
-VOKO 只寻找桌面版内置 CLI，不会把系统 `PATH` 中独立安装的 `codebuddy` 错当成 WorkBuddy。VOKO 启动的服务只监听 `127.0.0.1`，使用动态端口；停止 Lite 时只关闭自己启动的服务，不关闭 WorkBuddy 桌面应用。
+## 自动投递前置条件
 
-HTTP 请求一旦获得 `runId` 就视为 WorkBuddy 已接受。此后若 SSE 中断，VOKO只恢复同一个 Run；无法确认结果时标记为结果未知，不重新提交任务。Pull 始终保留。
+标准 WorkBuddy Desktop 安装默认不包含系统全局可用的 `@tencent-ai/codebuddy-code`。VOKO 自动投递前需要单独完成：
+
+```bash
+npm install -g @tencent-ai/codebuddy-code
+codebuddy /login
+```
+
+全局 CLI 与 WorkBuddy Desktop 使用不同的登录状态；即使桌面应用已经登录，首次使用全局 CLI 时仍需在浏览器中单独授权一次。登录通常会在本机持久化，凭据过期、主动退出或本机凭据被清除后需要重新登录。安装完成但未登录时，CLI 会返回 `Authentication required`，此时不能视为自动投递可用。
+
+VOKO 优先使用系统 `PATH` 中独立安装的新版 `codebuddy`；找不到时才尝试桌面应用内置 CLI。当前已验证的 WorkBuddy 内置 CLI 2.115.0 可能创建会话后长期不返回完成事件，因此“发现桌面应用”或“HTTP 服务启动成功”都不能作为可转发结论。只有真实 loopback 收到并精确匹配模型回复后，才应将自动投递标记为可用。
+
+VOKO 启动的服务只监听 `127.0.0.1`，使用动态端口；停止 Lite 时只关闭自己启动的服务，不关闭 WorkBuddy 桌面应用。新版 CLI 默认启用网关认证；VOKO 仅对自己创建的随机回环端口关闭网关密码，并继续携带 `X-CodeBuddy-Request: 1` 安全请求头。
+
+VOKO 使用 ACP 会话提交消息并复用精确的原生 Session ID。无法确认结果时标记为结果未知，不重复提交消息。Pull 始终保留；缺少 CLI、尚未登录或真实 loopback 失败时，应继续使用 Pull，而不是显示自动投递已就绪。
 
 ## 注册与资料预填
 
@@ -30,6 +81,34 @@ HTTP 请求一旦获得 `runId` 就视为 WorkBuddy 已接受。此后若 SSE �
 - 该限制只约束 VOKO 管理的消息通道；WorkBuddy 桌面应用自身的文件、网络、命令和人工审批能力仍由 WorkBuddy 管理。
 - `X-CodeBuddy-Request: 1` 是协议头，不是网络认证，因此 VOKO 不允许服务监听局域网或公网地址。
 
+## 安装与检测建议
+
+VOKO 不应在后台静默执行全局 npm 安装或替用户完成腾讯账号授权。推荐的产品流程是：
+
+1. 分别显示“WorkBuddy Desktop”“独立 CodeBuddy CLI”“CLI 登录/真实回路”三层状态。
+2. CLI 缺失时显示安装命令 `npm install -g @tencent-ai/codebuddy-code`，保留 Pull，并允许用户安装后重新检测。
+3. CLI 已安装但真实测试返回 `Authentication required` 时显示 `codebuddy /login`，完成浏览器授权后重新测试。
+4. 只有真实模型 loopback 成功时启用并默认选择 HTTP 自动投递；仅检测到可执行文件时状态应为“待验证”。
+5. CLI 升级和卸载仍由 npm/系统包管理器负责，VOKO 不锁定或覆盖用户已有版本。
+
+由于 CodeBuddy CLI 当前没有稳定、无副作用的结构化登录状态命令，VOKO 不会仅凭可执行文件存在就断言已登录。
+CLI 存在时显示“登录状态待真实回路验证”；真实测试返回认证错误后，才提示执行 `codebuddy /login`。
+
+## 常用检查与故障定位
+
+```bash
+voko status --json
+voko doctor --deep
+voko list_agents
+codebuddy --version
+codebuddy mcp list
+```
+
+- WorkBuddy 看不到 VOKO 工具：确认 WorkBuddy 启动环境能找到 `voko`；必要时把 `command` 改为 `command -v voko` 返回的绝对路径，然后完全退出并重启 WorkBuddy。
+- MCP 可用但收不到自动消息：MCP 是 WorkBuddy → VOKO；自动投递是 VOKO → WorkBuddy，需另行完成全局 CLI 登录和 loopback。
+- `Authentication required`：执行 `codebuddy /login`，不是重复登录 Desktop。
+- 只有 `pull`：消息不会丢失。先修复 CLI/回路，再重新预检；不要手工伪造 `http` ready。
+
 ## 兼容性基线
 
-Windows 真机已验证 WorkBuddy Desktop 5.3.11、内置 CodeBuddy CLI 2.115.0 的健康检查、任务提交、SSE 回复、状态查询、取消和 Session 接口。HTTP API 仍为 Beta，VOKO 每次启动都会检查实际 OpenAPI 是否包含必需路由；不满足时自动保留 Pull。
+macOS 真机已验证全局 CodeBuddy CLI 2.139.0 完成登录后，VOKO HTTP/ACP loopback、精确回复匹配和会话清理成功。WorkBuddy Desktop 内置 CLI 2.115.0 能启动并创建会话，但本次回归中未能在超时前返回模型完成事件。Windows 真机确认标准环境没有 WorkBuddy Desktop/内置 CLI；全局 CLI 2.139.0 未登录时明确返回 `Authentication required`，完成独立登录后的 VOKO 成功回路仍需继续验收。HTTP API 仍为 Beta，VOKO 每次启动都会检查实际 OpenAPI 是否包含必需路由；不满足时自动保留 Pull。

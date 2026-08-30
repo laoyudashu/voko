@@ -1,5 +1,6 @@
 import type { PushPayload } from './dispatcher/types';
 import type { DatabaseLike } from '../types/database';
+import type { OutboundMessageResultStore, TurnReceipt } from './outbound-message-result-store';
 
 export type ChannelType = 1 | 2;
 export type AuditDirection = 'inbound' | 'outbound';
@@ -27,7 +28,9 @@ export interface InboundMessage {
   mention?: Mention | null;
   _voko?: { protocolVersion?: number; routeId?: string; replyToRouteId?: string;
     conversationKey?: string; conversationStart?: boolean;
-    conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string } | null;
+    conversationDisposition?: 'created' | 'reused'; canonicalConversationKey?: string;
+    a2aDisposition?: 'new_topic' | 'automatic_reply' | 'explicit_reply';
+    turnReceiptRequest?: { version: 1 }; turnReceipt?: TurnReceipt } | null;
   e2eeStrictRoute?: boolean;
   e2eeAgentPeer?: boolean;
   /** Authenticated E2EE protocol context. Never accept this from raw IM input. */
@@ -68,7 +71,10 @@ export interface AgentReplyMessage {
   remoteConversationKey?: string | null;
   conversationStart?: boolean;
   sourceMessageId?: string;
+  sourceMessageIds?: string[];
   sourceRouteClaimSafe?: boolean;
+  providerTurnStatus?: 'processing' | 'login_expired' | 'quota_exhausted' | 'timeout' | 'failed' | 'outcome_unknown' | 'automatic_delivery_disabled' | 'completed';
+  providerTurnStatusCode?: string;
   replyRouteContext?: {
     conversationId: string;
     providerFamily: string;
@@ -176,6 +182,9 @@ export interface DatabaseApiLike {
 }
 
 export interface MessageHandlerOptions {
+  /** Override the short inbound Turn collection window (primarily for deterministic tests). */
+  inboundTurnQuietWindowMs?: number;
+  outboundMessageResults?: OutboundMessageResultStore;
   databaseAPI?: DatabaseApiLike;
   agentWorkers?: Map<string, WorkerEntryLike>;
   hermesHandler?: BackendHandlerLike;

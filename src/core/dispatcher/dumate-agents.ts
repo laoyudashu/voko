@@ -29,7 +29,10 @@ function inside(root: string, candidate: string): boolean {
 
 function dataRoots(options: { appData?: string; dataRoots?: string[] } = {}): string[] {
   if (options.dataRoots) return options.dataRoots.map((item) => path.resolve(item));
-  const appData = path.resolve(options.appData || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'));
+  const defaultAppData = process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Application Support')
+    : path.join(os.homedir(), 'AppData', 'Roaming');
+  const appData = path.resolve(options.appData || process.env.APPDATA || defaultAppData);
   const xdgRoot = path.join(appData, 'qianfan-desktop-app', 'qianfan_desk_xdg');
   try {
     return fs.readdirSync(xdgRoot, { withFileTypes: true })

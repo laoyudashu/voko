@@ -186,7 +186,7 @@ describe('shared registration orchestrator', () => {
     });
   });
 
-  it('detects desktop Agents and exposes unavailable WorkBuddy HTTP before Pull', () => {
+  it('detects desktop Agent instances without probing message channels in step one', () => {
     const service = new RegistrationOrchestrator({
       commandAvailable: () => false,
       installedApplications: () => ['ZCode 3.5.3', 'WorkBuddy 5.2.6', '豆包 2.19.9'],
@@ -200,22 +200,133 @@ describe('shared registration orchestrator', () => {
       assert.ok(provider, type + ' should be detected');
       assert.strictEqual(provider.supportsMultipleInstances, false);
       assert.deepStrictEqual(provider.instances, []);
-      const expected = type === 'workbuddy' ? ['http', 'pull'] : ['pull'];
-      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), expected);
-      assert.strictEqual(provider.deliveryModes.at(-1).required, true);
-      if (type === 'workbuddy') assert.strictEqual(provider.deliveryModes[0].status, 'unavailable');
+      assert.strictEqual(provider.deliveryModes, undefined);
+    }
+    assert.strictEqual(environment.summary.deliveryModeCount, undefined);
+  });
+
+  it('defers message-channel detection until basic info advances to step three', async () => {
+    const { db, service } = createService({
+      commandAvailable: () => false,
+      installedApplications: () => [],
+      detectCurrentAgentType: () => null,
+    });
+    let channelProbeCount = 0;
+    const original = service.deliveryCapabilities.bind(service);
+    service.deliveryCapabilities = (...args) => {
+      channelProbeCount++;
+      return original(...args);
+    };
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(channelProbeCount, 0);
+      const selected = service.selectProvider(started.registrationId, { providerType: 'others' });
+      assert.strictEqual(channelProbeCount, 0);
+      assert.deepStrictEqual(selected.deliveryModes, []);
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'Deferred channels' });
+      assert.strictEqual(channelProbeCount, 1);
+      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
+    } finally {
+      db.close();
     }
   });
 
-  it('exposes WorkBuddy HTTP before Pull when the bundled CLI is available', () => {
+  it('reports WorkBuddy component presence without claiming HTTP delivery is verified', () => {
     const service = new RegistrationOrchestrator({
       workBuddyRuntime: () => ({ command: 'codebuddy', source: 'registry' }),
     });
     const modes = service.deliveryCapabilities('workbuddy');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['http', 'pull']);
-    assert.strictEqual(modes[0].status, 'preflight_passed');
-    assert.strictEqual(modes[0].selected, true);
+    assert.strictEqual(modes[0].status, 'verification_required');
+    assert.strictEqual(modes[0].selected, false);
+    assert.strictEqual(modes[0].reason, 'WORKBUDDY_COMPONENT_INSTALLED');
+    assert.strictEqual(modes[0].authenticationStatus, undefined);
+    assert.match(modes[0].description, /消息组件/);
     assert.strictEqual(modes[1].required, true);
+  });
+
+  it('rechecks the WorkBuddy component without promoting installation to verified delivery', async () => {
+    let installed = false;
+    const { db, service } = createService({
+      detectCurrentAgentType: () => 'workbuddy',
+      workBuddyRuntime: () => ({ command: installed ? 'codebuddy' : null, source: installed ? 'path' : 'unavailable' }),
+    });
+    try {
+      const started = await service.start({ registrationMode: 'agent' });
+      service.selectProvider(started.registrationId, { providerType: 'workbuddy' });
+      const basic = service.setBasicInfo(started.registrationId, { agentName: 'Component recheck' });
+      assert.strictEqual(basic.deliveryModes[0].selected, false);
+      installed = true;
+      const checked = service.preflightDelivery(started.registrationId, { mode: 'http' });
+      assert.strictEqual(checked.ready, false);
+      assert.strictEqual(checked.detected, true);
+      const refreshed = service.view(started.registrationId);
+      assert.strictEqual(refreshed.deliveryModes[0].status, 'verification_required');
+      assert.strictEqual(refreshed.deliveryModes[0].selected, false);
+      assert.strictEqual(refreshed.deliveryModes.at(-1).mode, 'pull');
+      assert.strictEqual(refreshed.deliveryModes.at(-1).selected, true);
+    } finally { db.close(); }
+  });
+
+  it('offers a temporary DuMate route when the desktop backend is ready without an existing Agent', () => {
+    const noAgent = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '4567',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(noAgent.status, 'configuration_required');
+    assert.strictEqual(noAgent.selected, false);
+    assert.strictEqual(noAgent.action, 'test');
+    assert.strictEqual(noAgent.reason, 'DUMATE_AUTH_TEST_REQUIRED');
+    assert.strictEqual(noAgent.instanceCount, 0);
+    assert.match(noAgent.description, /自动创建 VOKO 私有临时路由和新会话/);
+
+    const noBackend = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [{ id: 'stock-assistant' }],
+      dumateBackendPort: () => '',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(noBackend.reason, 'DUMATE_BACKEND_UNAVAILABLE');
+    assert.strictEqual(noBackend.action, null);
+
+    const neitherBackendNorAgent = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(neitherBackendNorAgent.reason, 'DUMATE_BACKEND_UNAVAILABLE');
+    assert.match(neitherBackendNorAgent.description, /可能尚未登录/);
+
+    const authUnverified = new RegistrationOrchestrator({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [{ id: 'stock-assistant' }],
+      dumateBackendPort: () => '4567',
+    }).deliveryCapabilities('dumate')[0];
+    assert.strictEqual(authUnverified.reason, 'DUMATE_AUTH_TEST_REQUIRED');
+    assert.strictEqual(authUnverified.authenticationStatus, 'unverified');
+    assert.strictEqual(authUnverified.action, 'test');
+    assert.strictEqual(authUnverified.selected, false);
+  });
+
+  it('keeps DuMate channel readiness out of instance selection', async () => {
+    const { db, service } = createService({
+      dumateRuntimeAvailable: () => true,
+      dumateAgents: () => [],
+      dumateBackendPort: () => '',
+      installedApplications: () => ['百度搭子'],
+    });
+    try {
+      db.prepare('UPDATE config SET data=? WHERE type=?').run(JSON.stringify([
+        { value: 'dumate', label: '百度搭子 (DuMate)' },
+      ]), 'agent_backend_types');
+      const started = await service.start({ email: 'owner@example.com' });
+      const compact = started.environment.detected.find((item) => item.type === 'dumate');
+      assert.strictEqual(compact.blockingReason, undefined);
+      assert.strictEqual(compact.deliveryModes, undefined);
+      const selected = service.selectProvider(started.registrationId, { providerType: 'dumate' });
+      assert.notStrictEqual(selected.success, false);
+      assert.strictEqual(selected.provider.instanceId, null);
+    } finally { db.close(); }
   });
 
   it('detects Qwen Office and Trae desktop installs while keeping headless readiness separate', () => {
@@ -232,15 +343,13 @@ describe('shared registration orchestrator', () => {
       const provider = environment.detected.find((item) => item.type === type);
       assert.ok(provider, `${type} should be detected from the installed-app inventory`);
       assert.deepEqual(provider.instances, []);
-      assert.deepEqual(provider.deliveryModes.map((mode) => mode.mode), type === 'trae' ? ['acp', 'pull'] : ['cli', 'pull']);
-      assert.equal(provider.deliveryModes.at(-1).selected, true);
-      assert.equal(provider.deliveryModes[0].status, 'unavailable');
+      assert.strictEqual(provider.deliveryModes, undefined);
     }
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
   });
 
-  it('marks Qwen Office CLI and Trae ACP ready when their runtimes are available', () => {
+  it('separates Qwen Office login readiness from real loopback verification', () => {
     const service = new RegistrationOrchestrator({
       qwenOfficeRuntimeAvailable: () => true,
       qwenOfficeAgents: () => [],
@@ -248,11 +357,26 @@ describe('shared registration orchestrator', () => {
     });
     assert.deepEqual(service.deliveryCapabilities('qwen-office').map((mode) => mode.mode), ['cli', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('trae').map((mode) => mode.mode), ['acp', 'pull']);
-    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].status, 'verification_required');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].action, 'loopback');
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].selected, false);
+    assert.equal(service.deliveryCapabilities('qwen-office')[0].authenticationStatus, 'logged_in');
     assert.equal(service.deliveryCapabilities('trae')[0].status, 'ready');
   });
 
-  it('discovers QwenWork expert kits and requires an exact selection when more than one is present', async () => {
+  it('reports distinct Qwen Office missing, logged-out, and status-failed states', () => {
+    const capability = (reason, executable = true) => new RegistrationOrchestrator({
+      qwenOfficeReadiness: () => ({ executable, loggedIn: false, ready: false, reason }),
+    }).deliveryCapabilities('qwen-office')[0];
+    assert.strictEqual(capability('not_found', false).reason, 'QWEN_OFFICE_CLI_UNAVAILABLE');
+    assert.strictEqual(capability('not_found', false).status, 'unavailable');
+    assert.strictEqual(capability('cli_not_logged_in').authenticationStatus, 'logged_out');
+    assert.match(capability('cli_not_logged_in').description, /CLI 尚未登录/);
+    assert.strictEqual(capability('status_failed').status, 'configuration_required');
+    assert.match(capability('status_failed').description, /登录状态检查失败/);
+  });
+
+  it('discovers QwenWork expert kits while allowing the generic runtime without a binding', async () => {
     let agents = [
       { id: 'mt80hmwaywym3lje/health-rumor-crusher', name: '养生谣言粉碎机', description: '健康信息核查', available: true },
       { id: 'mt7zxd9zn555pwlu/tieban-shenshu', name: '铁板神数', description: '命理工具箱', available: true },
@@ -266,15 +390,18 @@ describe('shared registration orchestrator', () => {
       const detected = started.environment.detected.find((item) => item.type === 'qwen-office');
       assert.deepEqual(detected.instances.map((item) => item.id), agents.map((item) => item.id));
       assert.equal(detected.supportsMultipleInstances, true);
-      assert.equal(service.selectProvider(started.registrationId, { providerType: 'qwen-office' }).success, false);
-      const selected = service.selectProvider(started.registrationId, {
+      const generic = service.selectProvider(started.registrationId, { providerType: 'qwen-office' });
+      assert.equal(generic.success, true);
+      assert.equal(generic.provider.instanceId, null);
+      const boundStarted = await service.start({ email: 'owner@example.com' });
+      const selected = service.selectProvider(boundStarted.registrationId, {
         providerType: 'qwen-office', instanceId: agents[1].id,
       });
       assert.equal(selected.provider.instanceId, agents[1].id);
       assert.equal(selected.suggestedBasicInfo.agentName, '铁板神数');
-      service.setBasicInfo(started.registrationId, { agentName: '铁板神数' });
+      service.setBasicInfo(boundStarted.registrationId, { agentName: '铁板神数' });
       agents = [];
-      const stale = await service.complete(started.registrationId);
+      const stale = await service.complete(boundStarted.registrationId);
       assert.equal(stale.success, false);
       assert.match(stale.error, /已不存在.*清单无效.*不可用/);
     } finally {
@@ -295,7 +422,8 @@ describe('shared registration orchestrator', () => {
     assert.ok(environment.detected.some((item) => item.type === 'codebuddy'));
     assert.deepEqual(service.deliveryCapabilities('workbuddy').map((item) => item.mode), ['http', 'pull']);
     assert.deepEqual(service.deliveryCapabilities('codebuddy').map((item) => item.mode), ['acp', 'pull']);
-    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'ready');
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].status, 'verification_required');
+    assert.equal(service.deliveryCapabilities('codebuddy')[0].selected, false);
   });
 
   it('injects a synthetic current instance when process_ancestry detects zcode (fixes instances:0 vs detected:true mismatch)', () => {
@@ -333,7 +461,7 @@ describe('shared registration orchestrator', () => {
     const modes = service.deliveryCapabilities('github-copilot');
     assert.deepStrictEqual(modes.map((mode) => mode.mode), ['acp', 'cli', 'pull']);
     assert.deepStrictEqual(modes.map((mode) => mode.role), ['primary', 'fallback', 'final_fallback']);
-    assert.ok(modes.slice(0, 2).every((mode) => mode.status === 'ready' && mode.selected));
+    assert.ok(modes.slice(0, 2).every((mode) => mode.status === 'verification_required' && !mode.selected));
     assert.strictEqual(modes[2].required, true);
   });
 
@@ -353,8 +481,11 @@ describe('shared registration orchestrator', () => {
         category: 'general',
       });
       assert.strictEqual(basic.status, 'delivery_selection_required');
-      assert.ok(basic.environment);
-      assert.deepStrictEqual(provider.deliveryModes.map((mode) => mode.mode), ['pull']);
+      assert.equal(basic.environment, undefined);
+      const inspected = await service.manage({ action: 'inspect_environment', registrationId: started.registrationId });
+      assert.ok(inspected.environment);
+      assert.deepStrictEqual(provider.deliveryModes, []);
+      assert.deepStrictEqual(basic.deliveryModes.map((mode) => mode.mode), ['pull']);
 
       const delivery = service.selectDelivery(started.registrationId, { deliveryModes: [] });
       assert.strictEqual(delivery.status, 'ready_to_create');
@@ -370,6 +501,26 @@ describe('shared registration orchestrator', () => {
       const repeated = await service.complete(started.registrationId);
       assert.strictEqual(repeated.result.agentId, 'agent-created');
       assert.strictEqual(getCreateCount(), 1, 'complete must not create the Agent twice');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('returns the compact environment when reselecting a provider', async () => {
+    const { db, service } = createService();
+    try {
+      const started = await service.start({ email: 'owner@example.com' });
+      const provider = service.selectProvider(started.registrationId, { providerType: 'others' });
+      assert.strictEqual(provider.status, 'basic_info_required');
+
+      const reselected = service.reselectProvider(started.registrationId);
+
+      assert.strictEqual(reselected.status, 'provider_selection_required');
+      assert.strictEqual(reselected.provider, null);
+      assert.strictEqual(reselected.basicInfo, null);
+      assert.strictEqual(reselected.suggestedBasicInfo, null);
+      assert.ok(Array.isArray(reselected.environment.detected));
+      assert.strictEqual(reselected.environment.summary.providerCount, reselected.environment.detected.length);
     } finally {
       db.close();
     }
@@ -501,29 +652,26 @@ describe('shared registration orchestrator', () => {
       const started = await service.start({ registrationMode: 'agent' });
       service.selectProvider(started.registrationId, { providerType: 'codex' });
       const basic = service.setBasicInfo(started.registrationId, { agentName: 'Current Codex' });
-      assert.strictEqual(basic.environment.currentAgent.type, 'codex');
+      assert.strictEqual(started.environment.currentAgent.type, 'codex');
       assert.strictEqual(basic.status, 'delivery_selection_required');
     } finally {
       db.close();
     }
   });
 
-  it('uses the detected current Provider instance without asking the Agent to choose again', async () => {
-    const { db, service } = createService({
-      detectCurrentAgentType: () => 'openclaw',
-      detectCurrentAgentInstance: () => 'main',
-    });
+  it('accepts the detected current Provider instance when the Agent selects it', async () => {
+    const { db, service } = createService();
     try {
-      service.inspectCurrentAgent = (type, instanceId) => ({
+      service.inspectEnvironment = () => ({
         detected: [{
-          type,
+          type: 'openclaw',
           label: 'OpenClaw',
-          instances: [{ id: instanceId, name: instanceId }],
+          instances: [{ id: 'main', name: 'main' }],
           deliveryModes: [],
         }],
         more: [],
         fallback: { type: 'others', label: 'Others', deliveryModes: [] },
-        currentAgent: { type, instanceId },
+        currentAgent: { type: 'openclaw', instanceId: 'main' },
         summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 0 },
       });
       const started = await service.start({ registrationMode: 'agent' });
@@ -558,6 +706,57 @@ describe('shared registration orchestrator', () => {
     }
   });
 
+  it('allows an optional provider with discovered profiles to continue without binding one', async () => {
+    const profiles = [
+      { id: 'teacher', name: 'Teacher' },
+      { id: 'writer', name: 'Writer' },
+    ];
+    const { db, service } = createService({ workBuddyAgents: () => profiles });
+    try {
+      service.inspectEnvironment = () => ({
+        detected: [{
+          type: 'workbuddy', label: 'WorkBuddy', instanceTerm: 'Agent',
+          instances: profiles, supportsMultipleInstances: true, deliveryModes: [],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 2, deliveryModeCount: 0 },
+      });
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(started.environment.detected[0].requiresInstance, false);
+      assert.strictEqual(started.environment.detected[0].instanceTerm, 'Agent');
+      const selected = service.selectProvider(started.registrationId, { providerType: 'workbuddy' });
+      assert.strictEqual(selected.success, true);
+      assert.strictEqual(selected.provider.instanceId, null);
+    } finally { db.close(); }
+  });
+
+  it('requires a choice for multiple mandatory instances and explains when none exist', async () => {
+    const { db, service } = createService();
+    let openclawInstances = [{ id: 'main', name: 'main' }, { id: 'research', name: 'research' }];
+    try {
+      service.inspectEnvironment = () => ({
+        detected: [{
+          type: 'openclaw', label: 'OpenClaw', instanceTerm: 'Agent',
+          instances: openclawInstances,
+          supportsMultipleInstances: true, deliveryModes: [],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 2, deliveryModeCount: 0 },
+      });
+      const started = await service.start({ email: 'owner@example.com' });
+      assert.strictEqual(started.environment.detected[0].requiresInstance, true);
+      const ambiguous = service.selectProvider(started.registrationId, { providerType: 'openclaw' });
+      assert.strictEqual(ambiguous.success, false);
+      assert.match(ambiguous.error, /OpenClaw.*多个Agent.*请选择/);
+
+      openclawInstances = [];
+      const empty = await service.start({ email: 'owner@example.com' });
+      const missing = service.selectProvider(empty.registrationId, { providerType: 'openclaw' });
+      assert.strictEqual(missing.success, false);
+      assert.match(missing.error, /未检测到可用的 OpenClaw Agent.*才能发送消息/);
+    } finally { db.close(); }
+  });
+
   it('restores an unfinished registration session from the database', async () => {
     const { db, service } = createService();
     try {
@@ -570,6 +769,21 @@ describe('shared registration orchestrator', () => {
       const status = restored.view(started.registrationId);
       assert.strictEqual(status.status, 'provider_selection_required');
       assert.strictEqual(status.registrationMode, 'agent');
+      restored.inspectEnvironment = () => ({
+        detected: [{
+          type: 'dumate', label: '百度搭子 (DuMate)', instances: [], deliveryModes: [{
+            status: 'configuration_required', reason: 'DUMATE_BACKEND_UNAVAILABLE',
+            description: '百度搭子桌面后台尚未就绪',
+          }],
+        }],
+        more: [], fallback: { type: 'others', label: 'Others', deliveryModes: [] },
+        summary: { providerCount: 1, instanceCount: 1, deliveryModeCount: 1 },
+      });
+      const refreshed = await restored.manage({ action: 'status', registrationId: started.registrationId });
+      assert.strictEqual(refreshed.environment, undefined);
+      const inspected = await restored.manage({ action: 'inspect_environment', registrationId: started.registrationId });
+      assert.strictEqual(inspected.environment.detected[0].deliveryModes[0].reason, 'DUMATE_BACKEND_UNAVAILABLE');
+      assert.match(inspected.environment.detected[0].deliveryModes[0].description, /后台尚未就绪/);
     } finally {
       db.close();
     }
@@ -702,7 +916,8 @@ describe('shared registration orchestrator', () => {
         { source: 'mcp', providerType: 'openclaw' },
         () => service.start({ email: 'owner@example.com', registrationMode: 'human' }),
       );
-      assert.strictEqual(spoofed.registrationMode, 'agent');
+      assert.strictEqual(spoofed.success, false);
+      assert.strictEqual(spoofed.code, 'REGISTRATION_MODE_NOT_ALLOWED');
     } finally {
       db.close();
     }
@@ -786,6 +1001,15 @@ describe('shared registration orchestrator', () => {
       assert.strictEqual(calls, 1);
       assert.strictEqual(received.providerId, 'qwen-office-cli');
       assert.strictEqual(received.mode, 'cli');
+      const refreshed = await service.manage({ action: 'status', registrationId: started.registrationId });
+      const cli = refreshed.deliveryModes.find((item) => item.mode === 'cli');
+      const pull = refreshed.deliveryModes.find((item) => item.mode === 'pull');
+      assert.strictEqual(cli.selected, true);
+      assert.strictEqual(cli.action, null);
+      assert.match(cli.description, /已通过真实消息回路验证/);
+      assert.strictEqual(pull.selected, true);
+      const selected = service.selectDelivery(started.registrationId, { deliveryModes: ['cli', 'pull'] });
+      assert.deepStrictEqual(selected.deliveryModes.filter((item) => item.selected).map((item) => item.mode), ['cli', 'pull']);
     } finally {
       db.close();
     }

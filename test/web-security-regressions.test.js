@@ -29,6 +29,7 @@ test('cookie parsing cannot mutate an object prototype', () => {
 
 test('web routes encode reflected query state and use a private upload directory', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const registerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'register.js'), 'utf8');
 
   assert.match(source, /status='\+encodeURIComponent\(st\)/);
   assert.match(source, /start='\+encodeURIComponent\(fstart\)/);
@@ -36,6 +37,9 @@ test('web routes encode reflected query state and use a private upload directory
   assert.match(source, /mkdtempSync\(path\.join\(require\('os'\)\.tmpdir\(\), 'voko-upload-'\)\)/);
   assert.match(source, /writeFileSync\(tmpPath, filedata, \{ flag: 'wx', mode: 0o600 \}\)/);
   assert.match(source, /jsonForInlineScript\(\{actionStatus:/);
+  assert.match(source, /if\(req\.query\.ok\)req\.query\.ok=T\('common\.home\.success'\)/);
+  assert.match(source, /if\(req\.query\.warn\)req\.query\.warn=T\('common\.home\.warning'\)/);
+  assert.match(source, /if\(req\.query\.err\)req\.query\.err=T\('common\.action\.failed'\)/);
   assert.match(source, /AGENT_ID='\+jsonForInlineScript\(agentId\)/);
   assert.match(source, /var aid='\+jsonForInlineScript\(agentId\)/);
   assert.match(source, /id="web-conversation-start" value="0"/);
@@ -45,4 +49,8 @@ test('web routes encode reflected query state and use a private upload directory
   assert.match(source, /location\.href='\+jsonForInlineScript\(returnPath\)/);
   assert.doesNotMatch(source, /AGENT_ID='\+JSON\.stringify\(agentId\)/);
   assert.doesNotMatch(source, /var aid='\+JSON\.stringify\(agentId\)/);
+  assert.match(source, /var I = \$\{jsonForInlineScript\(i18nObj\)\}/);
+  assert.match(registerSource, /var I=\$\{jsonForInlineScript\(I\)\}/);
+  assert.match(registerSource, /var I = \$\{jsonForInlineScript\(i18nObj\)\}/);
+  assert.doesNotMatch(registerSource, /var I=?\$\{JSON\.stringify\(/);
 });

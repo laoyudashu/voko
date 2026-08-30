@@ -4,6 +4,7 @@ const readline = require('node:readline/promises');
 const { createContext } = require('./context');
 const { createToolHandlers } = require('./mcp/tools');
 const { runWithRegistrationCaller } = require('./core/registration-caller-context');
+const { t } = require('./core/i18n');
 
 type InteractiveOptions = {
   input?: NodeJS.ReadableStream & { isTTY?: boolean };
@@ -24,6 +25,13 @@ function createPrompt(options: InteractiveOptions = {}) {
 
 function write(output: NodeJS.WritableStream, text: string) {
   output.write(text + '\n');
+}
+
+function closePrompt(prompt: any, output: NodeJS.WritableStream) {
+  try { prompt.close(); }
+  catch (error: any) {
+    write(output, t('cli.interactive.terminal_restore_warning', { msg: error?.message || String(error) }));
+  }
 }
 
 function validEmail(value: string) {
@@ -76,7 +84,7 @@ async function runInteractiveLogin(core: any, options: InteractiveOptions = {}) 
     write(output, `Logged in as ${String(loggedIn.email || email).toLowerCase()}.`);
     return { success: true, email: String(loggedIn.email || email).toLowerCase() };
   } finally {
-    prompt.close();
+    closePrompt(prompt, output);
   }
 }
 
@@ -149,11 +157,11 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
 
     for (const mode of state.deliveryModes || []) {
       if (mode.action !== 'configure') continue;
-      if (!await askYesNo(prompt, `Configure ${mode.label || mode.mode}?`, false)) continue;
+      if (!await askYesNo(prompt, t('cli.interactive.configure_mode', { mode: mode.label || mode.mode }), false)) continue;
       const plan = await manage({ action: 'configure_delivery', registrationId: state.registrationId, mode: mode.mode });
       if (!plan?.success) throw new Error(plan?.error || 'Unable to prepare Provider configuration');
       write(output, plan.changePlan?.message || 'Provider configuration will be backed up before changes.');
-      if (!await askYesNo(prompt, 'Apply this change?', false)) continue;
+      if (!await askYesNo(prompt, t('cli.interactive.apply_change'), false)) continue;
       const started = await manage({
         action: 'configure_delivery', registrationId: state.registrationId, mode: mode.mode,
         approved: true, approvalToken: plan.approvalToken,
@@ -179,18 +187,18 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
     const optionalModes = readyModes.filter((mode: any) => mode.mode !== 'pull');
     const selectedModes: string[] = [];
     for (const mode of optionalModes) {
-      if (await askYesNo(prompt, `Enable ${mode.label || mode.mode}?`, mode.selected !== false)) selectedModes.push(mode.mode);
+      if (await askYesNo(prompt, t('cli.interactive.enable_mode', { mode: mode.label || mode.mode }), mode.selected !== false)) selectedModes.push(mode.mode);
     }
     state = await manage({ action: 'select_delivery', registrationId: state.registrationId, deliveryModes: selectedModes });
     if (!state?.success) throw new Error(state?.error || 'Unable to select delivery modes');
-    const accessMode = await askYesNo(prompt, 'Allow public visitors?', false) ? 'public' : 'private';
+    const accessMode = await askYesNo(prompt, t('cli.interactive.allow_public'), false) ? 'public' : 'private';
     state = await manage({ action: 'complete', registrationId: state.registrationId, accessMode });
     if (!state?.success) throw new Error(state?.error || 'Agent registration failed');
     write(output, `Agent registered: ${state.result?.agentName || agentName} (${state.result?.agentId || ''})`);
     return state;
   } finally {
-    prompt.close();
+    closePrompt(prompt, output);
   }
 }
 
-module.exports = { runInteractiveLogin, runInteractiveRegistration, _test: { chooseIndex, validEmail } };
+module.exports = { runInteractiveLogin, runInteractiveRegistration, _test: { chooseIndex, validEmail, closePrompt } };

@@ -21,6 +21,7 @@ artifacts/real-tests/
 .env.*
 !.env.example
 !.env.real-test.example
+!.env.real-matrix.example
 .npmrc
 *.pem
 *.key

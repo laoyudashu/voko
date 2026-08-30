@@ -2,6 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { createMcpServer, getToolList } = require('../build/mcp/server');
 const registry = require('../build/channels/registry');
+const fs = require('node:fs');
+const path = require('node:path');
+const cli = require('../build/cli');
 
 describe('Lite MCP and channel contracts', () => {
   it('MCP tool list keeps unique names and object schemas', async () => {
@@ -25,6 +28,11 @@ describe('Lite MCP and channel contracts', () => {
     const bindOnce = tools.find((tool) => tool.name === 'voko_bind_agent_instance_once');
     assert.deepEqual(bindOnce.inputSchema.required, ['agentId', 'backendInstanceId']);
     assert.equal(tools.some((tool) => tool.name === 'voko_prepare_identity_handshake' || tool.name === 'voko_complete_identity_handshake'), false);
+    const messageResult = tools.find((tool) => tool.name === 'voko_get_message_result');
+    assert.ok(messageResult);
+    assert.deepEqual(messageResult.inputSchema.required, ['agentId', 'messageId']);
+    assert.equal(messageResult.annotations.readOnlyHint, true);
+    assert.match(messageResult.description, /in-memory transport, remote execution, and reply state/);
   });
 
   it('channel registry exposes every configured channel definition', () => {
@@ -36,5 +44,25 @@ describe('Lite MCP and channel contracts', () => {
       assert.ok(Array.isArray(definition.configFields));
       assert.equal(typeof definition.handlerClass, 'string');
     }
+  });
+
+  it('routes message result queries through the long-lived runtime that owns in-memory state', () => {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.ts'), 'utf8');
+    assert.match(source, /\['send_message', 'get_message_result', 'upload_and_send_file'/);
+  });
+
+  it('exposes the matching message result CLI command and parameters', async () => {
+    assert.equal(cli.isKnownTool('get_message_result'), true);
+    const lines = [];
+    const originalLog = console.log;
+    console.log = (value = '') => lines.push(String(value));
+    try {
+      await cli.printToolHelp('get_message_result');
+    } finally {
+      console.log = originalLog;
+    }
+    const output = lines.join('\n');
+    assert.match(output, /--agentId\s+\[string/);
+    assert.match(output, /--messageId\s+\[string/);
   });
 });

@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 
 const qwenCommand = require('../build/core/dispatcher/qwen-office-command');
 const traeCommand = require('../build/core/dispatcher/trae-command');
-const { QwenOfficeCliProvider } = require('../build/core/dispatcher/providers/qwen-office-cli');
+const { QwenOfficeCliProvider, classifyQwenOfficeDeliveryFailure } = require('../build/core/dispatcher/providers/qwen-office-cli');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const { TraeAcpProvider } = require('../build/core/dispatcher/providers/trae-acp');
 const { withTraeRuntimeLock } = require('../build/core/dispatcher/providers/trae-runtime-coordinator');
@@ -16,6 +19,39 @@ test('QwenWork resolver prefers an explicit binary and keeps the runtime request
   assert.deepEqual(request.candidates, [{ kind: 'explicit', path: explicit }]);
 });
 
+test('QwenWork resolver discovers the macOS application bundle CLI', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-mac-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cli = path.join(home, 'Applications', 'QwenWorkCN.app', 'Contents', 'Resources', 'bin', 'qoderclicn');
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.writeFileSync(cli, 'test');
+  assert.equal(qwenCommand.findBundledQwenCli({ HOME: home }, 'darwin'), cli);
+});
+
+test('QwenWork resolver supports the localized macOS bundle name and fails closed on Linux', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-localized-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const cli = path.join(home, 'Applications', '千问办公.app', 'Contents', 'Resources', 'bin', 'qoderclicn');
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  fs.writeFileSync(cli, 'test');
+  assert.equal(qwenCommand.findBundledQwenCli({ HOME: home }, 'darwin'), cli);
+  assert.equal(qwenCommand.resolveQwenOfficeCommand({}, 'linux'), '');
+  assert.deepEqual(qwenCommand.qwenOfficeRuntimeRequest('cli', {}, 'linux').candidates, []);
+  assert.equal(qwenCommand.qwenOfficeLoginCommand({ HOME: home }, 'darwin'), `${cli} login`);
+});
+
+test('QwenWork resolver discovers the newest machine-wide Windows installation', (t) => {
+  const programFiles = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-program-files-'));
+  t.after(() => fs.rmSync(programFiles, { recursive: true, force: true }));
+  const olderCli = path.join(programFiles, 'QwenWorkCN', '1.0.0-26010101', 'resources', 'bin', 'qoderclicn.exe');
+  const newestCli = path.join(programFiles, 'QwenWorkCN', '1.0.0-26082211', 'resources', 'bin', 'qoderclicn.exe');
+  for (const cli of [olderCli, newestCli]) {
+    fs.mkdirSync(path.dirname(cli), { recursive: true });
+    fs.writeFileSync(cli, 'test');
+  }
+  assert.equal(qwenCommand.findBundledQwenCli({ ProgramW6432: programFiles }, 'win32'), newestCli);
+});
+
 test('QwenWork readiness separates executable discovery from CLI authentication', () => {
   const readiness = qwenCommand.getQwenOfficeReadiness('C:\\does-not-exist\\qoderclicn.exe');
   assert.deepEqual(readiness, {
@@ -24,6 +60,48 @@ test('QwenWork readiness separates executable discovery from CLI authentication'
     ready: false,
     reason: 'not_found',
   });
+});
+
+test('QwenWork status diagnostics distinguish timeout, invalid output, login and command failure', () => {
+  const classify = qwenCommand.classifyQwenOfficeStatusResult;
+  assert.equal(classify({ status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' } }).reason, 'status_timeout');
+  assert.equal(classify({ status: 0, stdout: 'not-json', stderr: '' }).reason, 'status_invalid_output');
+  assert.equal(classify({ status: 1, stdout: '', stderr: 'failed' }).reason, 'status_failed');
+  assert.equal(classify({ status: 0, stdout: '{"logged_in":false}', stderr: '' }).reason, 'cli_not_logged_in');
+  assert.equal(classify({ status: 0, stdout: '{"logged_in":true,"version":"1.2.3"}', stderr: '' }).reason, 'ready');
+});
+
+test('QwenWork shallow readiness allows a cold start and one retry', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/core/dispatcher/qwen-office-command.ts'), 'utf8');
+  assert.match(source, /STATUS_TIMEOUT_MS = 10_000/);
+  assert.match(source, /STATUS_MAX_ATTEMPTS = 2/);
+  assert.match(source, /value\.reason === 'status_timeout' \|\| value\.reason === 'status_invalid_output'/);
+  assert.match(source, /retrying=true/);
+  assert.doesNotMatch(source, /spawnSync/);
+  assert.match(source, /statusRefreshes/);
+});
+
+test('QwenWork readiness never blocks the event loop while the status command is slow', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX executable fixture');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-slow-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cli = path.join(root, 'qoderclicn');
+  const calls = path.join(root, 'calls');
+  fs.writeFileSync(cli, `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(calls)}, '1');setTimeout(() => process.stdout.write('{"logged_in":true,"version":"test"}'), 250);\n`);
+  fs.chmodSync(cli, 0o755);
+  qwenCommand.invalidateQwenOfficeReadiness(cli);
+  let timerFired = false;
+  const timer = new Promise(resolve => setTimeout(() => { timerFired = true; resolve(); }, 25));
+  const startedAt = Date.now();
+  const pending = qwenCommand.getQwenOfficeReadiness(cli);
+  assert.equal(pending.ready, false);
+  assert.ok(Date.now() - startedAt < 100, 'cold readiness lookup must return without waiting for the CLI');
+  await timer;
+  assert.equal(timerFired, true);
+  const ready = await qwenCommand.refreshQwenOfficeReadiness(cli);
+  assert.equal(ready.ready, true);
+  assert.equal(qwenCommand.getQwenOfficeReadiness(cli).ready, true);
+  assert.equal(fs.readFileSync(calls, 'utf8'), '1', 'concurrent readiness lookups must share one status process');
 });
 
 test('Trae resolver prefers an explicit traecli binary and exposes ACP mode', () => {
@@ -66,6 +144,28 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
+});
+
+test('QwenWork delivery failures distinguish quota, timeout, login, and generic failures', () => {
+  assert.equal(classifyQwenOfficeDeliveryFailure("You've reached your credit usage limit").code, 'QWEN_OFFICE_QUOTA_EXHAUSTED');
+  assert.equal(classifyQwenOfficeDeliveryFailure('request timed out').code, 'QWEN_OFFICE_TIMEOUT');
+  assert.equal(classifyQwenOfficeDeliveryFailure('login required').code, 'QWEN_OFFICE_LOGIN_FAILED');
+  assert.equal(classifyQwenOfficeDeliveryFailure('model rejected request').code, 'QWEN_OFFICE_DELIVERY_FAILED');
+});
+
+test('manual refresh clears both the generic CLI runtime state and QwenWork login cache', () => {
+  const provider = new QwenOfficeCliProvider({ binPath: 'C:\\tools\\qoderclicn.exe' });
+  let invalidated = null;
+  provider._available = false;
+  provider._runtimeResolver = {
+    invalidate(request) { invalidated = request; },
+    resolve() { return { available: true, executable: 'C:\\tools\\qoderclicn.exe', argvPrefix: [] }; },
+  };
+  provider.refreshRuntime();
+  assert.equal(provider._available, null);
+  assert.equal(invalidated, provider._runtimeRequest);
+  provider.healthCheck();
+  assert.equal(provider._available, true);
 });
 
 test('QwenWork CLI provider maps the selected expert kit to cwd/plugin-dir and rejects stale instance bindings', async () => {

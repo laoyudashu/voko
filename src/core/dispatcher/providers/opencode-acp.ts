@@ -10,11 +10,12 @@ import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 class OpenCodeAcpProvider extends AcpAdapter {
   constructor(options: CliProviderOptions = {}) {
+    const command=resolveOpenCodeCommand();
     super({
       name: 'OPENCODE ACP',
       matchType: 'opencode',
       adapterType: 'opencode-acp',
-      cliPath: resolveOpenCodeCommand(),
+      cliPath: command || '__voko_opencode_unavailable__',
       args: ['acp'],
       db: options.db,
       sessionPersistence: options.sessionPersistence,

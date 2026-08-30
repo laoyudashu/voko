@@ -100,6 +100,23 @@ async function waitHealth(port, timeoutMs = 20000) {
   throw new Error(`Lite 未在端口 ${port} 就绪`);
 }
 
+async function waitRuntimeSnapshot(dbPath, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = db.prepare("SELECT data FROM config WHERE type = 'runtime'").get();
+        if (row?.data && JSON.parse(row.data)?.ts) return;
+      } finally {
+        db.close();
+      }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('Lite runtime snapshot was not persisted before the deadline');
+}
+
 function runCli(args, timeoutMs = 20000) {
   const safeArgs = args[0] === 'start' && !args.includes('--no-open')
     ? [...args, '--no-open']
@@ -176,6 +193,7 @@ describe('Lite process lifecycle identity', () => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    assert.equal(lifecycle.computeBuildDigest(LITE_ENTRY)?.length, 64);
     assert.equal(
       lifecycle.matchesInstanceProcess(instance, identity),
       true,
@@ -429,6 +447,7 @@ describe('Lite process lifecycle integration', () => {
     const port = await freePort();
     const lite = spawnLite(dbPath, port);
     await waitHealth(port);
+    await waitRuntimeSnapshot(dbPath);
 
     lite.kill('SIGKILL');
     await waitExit(lite, 10000);

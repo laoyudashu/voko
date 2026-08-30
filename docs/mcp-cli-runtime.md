@@ -103,6 +103,33 @@ All Conversation-aware inputs are optional for backwards compatibility. Existing
 
 `send_message` and `upload_and_send_file` return `messageId` plus a nullable `conversationId`. They also return the compatible optional fields `securityMode`, `securityReason`, `encryptedDeviceCount`, and `deliveryState`; old callers may ignore them. Eligible private IM sends from MCP, CLI, Web UI, Provider replies, and system notifications share the same E2EE-first decision, while groups, A2A, REST, and Webhook bypass it. `fetch_new_messages` and `get_chat_history` return a nullable `conversationId` on every message. `get_chat_history` keeps returning the complete Agent channel when `conversationId` is omitted; when supplied, filtering happens before pagination. Old or unrouted messages remain readable with `conversationId: null`.
 
+### Querying a sent message result
+
+For a direct IM message, `send_message` also returns an optional `resultTracking` object. This is an additive field: existing callers may ignore it, and its presence does not change the meaning of `success` or `messageAccepted`. Retain `resultTracking.messageId`, then query the same running Lite instance:
+
+```json
+{
+  "agentId": "agent-1",
+  "messageId": "the-message-id-returned-by-send-message"
+}
+```
+
+The MCP tool is `voko_get_message_result`. The equivalent CLI command is:
+
+```bash
+voko get_message_result --agent-id agent-1 --message-id the-message-id-returned-by-send-message
+```
+
+The command must run against the long-lived Lite runtime because remote execution receipts are intentionally held in bounded memory. Do not invoke the handler in a second short-lived process. The CLI performs this routing automatically and returns `RUNTIME_REQUIRED`, `RUNTIME_MISMATCH`, or `RUNTIME_UNAVAILABLE` when it cannot safely reach the owning runtime.
+
+The result separates three independent stages:
+
+- `transport.state`: local persisted send state (`QUEUED`, `DELIVERED`, or `FAILED`).
+- `execution`: whether a compatible remote Agent confirmed acceptance, progress, completion, or failure. `confirmed: false` means VOKO has no authenticated receipt; it does not prove remote failure.
+- `reply`: the confirmed reply message, or `PENDING` when no correlated reply is known.
+
+Execution and reply tracking do not survive a Lite runtime restart. After restart, a persisted outbound message remains queryable, but `execution.state` is `UNCONFIRMED` with `reasonCode: RUNTIME_STATE_NOT_AVAILABLE`. This read-only query never retries or resends the message. Only query a `messageId` returned for the same `agentId`; missing, inbound, or differently owned messages return `MESSAGE_RESULT_NOT_FOUND` without disclosing their metadata.
+
 `ask_human_for_help` accepts either `replyToMessageId` (preferred) or `conversationId`, and returns the Conversation retained by the intervention. An invalid, cross-Agent, or cross-channel Conversation fails closed; omitting it retains compatible channel-level behavior.
 
 ## Stop and uninstall
