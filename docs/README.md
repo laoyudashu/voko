@@ -30,6 +30,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 
 ### 证据、发布和维护
 
+- [Changelog](../CHANGELOG.md)：各正式版本最重要的用户可见能力。
 - [Ubuntu Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)：Provider 版本、注册结果、消息连续性和 Linux 限制。
 - [Contributing](../CONTRIBUTING.md)：代码变更、测试和提交要求。
 - [Release process](../RELEASING.md)：发布、密钥扫描和 npm 发布门禁。

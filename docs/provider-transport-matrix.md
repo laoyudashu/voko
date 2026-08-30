@@ -67,6 +67,15 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor
   Async CLI queue acceptance is a `delivered` Dispatcher result with
   `accepted`/`queued` metadata; a later queue failure is a separate diagnostic
   event, not permission to resend through another transport.
+- Inbound messages are persisted and validated individually, then coalesced in
+  memory by Agent, sender, channel and routing Conversation. One closed Turn
+  invokes the Provider once and carries its ordered `sourceMessageIds`, message
+  segments and attachments. Messages arriving after execution begins form the
+  next Turn.
+- Online IM, offline synchronization and E2EE use the same Turn construction
+  rules. E2EE decryption, signature checks, per-message acknowledgement,
+  cursor advancement and deduplication happen before coalescing and remain
+  message-scoped.
 - Caller-origin bindings are never rewritten by availability or automatic
   fallback. Cross-transport binding reuse requires an explicit compatibility
   check for family, instance, adapter, mode and native Session.
@@ -102,6 +111,12 @@ the public network or mutate configuration. Explicit Pull is
 `on-demand/configured-on-demand`; missing legacy `delivery_modes` is
 `fallback/legacy-fallback`; a family with no registered Push transport is
 `provider-pull-only`.
+
+`send_message` may additionally expose result tracking. The corresponding MCP
+and CLI result query separates persisted transport state, authenticated remote
+execution state and correlated reply state. Execution receipts are bounded
+runtime memory; after restart, persisted transport remains queryable while the
+execution result becomes `UNCONFIRMED/RUNTIME_STATE_NOT_AVAILABLE`.
 
 ## Rollout and testing
 

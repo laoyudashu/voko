@@ -112,6 +112,12 @@ Dispatcher 按已启用的 `deliveryModes` 从左到右选择第一个可用通�
 
 切换通道只改变投递方式，不改变 `(Agent、私聊/群聊、访客会话)` 的会话边界，也不应改变有效的原生 session ID。
 
+### 4.1 连续消息和 Provider Turn
+
+VOKO 会在同一 `Agent + 发送者 + 频道 + Conversation` 内短暂收集连续到达的消息，再作为一个 Provider Turn 投递。文字、图片和文件保持原始消息边界与顺序；不同访客、群、Agent 或 Conversation 绝不合并。当前 Turn 开始执行后，新消息进入下一 Turn，访客无需等待上一轮完成即可继续发送。
+
+每条原始消息仍独立落库、审核、解密和确认。主人介入、授权、支付及确认类消息不会并入普通连续对话。合并只减少 Provider 调用次数，不改变 Pull、E2EE、幂等或单条消息审计语义。
+
 ## 5. 路由缓存和健康事件刷新
 
 VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测，而是使用 Dispatcher 路由缓存：
