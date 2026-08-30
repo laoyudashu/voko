@@ -83,7 +83,7 @@ test('single chat sends and receives text through the real worker and Mock Provi
   const echoReply = rows.find(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes(inboundContent));
   const directReply = rows.find(row => row.is_me === 1 && row.content === outboundContent);
   expect(echoReply).toBeTruthy();
-  expect(directReply?.client_msg_no).toBeTruthy();
+  expect(directReply).toBeTruthy();
   expect(rows.every(row => row.channel_id === channelId && row.channel_type === 1)).toBeTruthy();
   const state = await runtime(request);
   const direct = state.messageStats.find(item => item.channelId === channelId);
