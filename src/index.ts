@@ -228,14 +228,8 @@ function withRuntimeTimestamp(args: any[], now: Date = new Date()): any[] {
 function _initFileLogger() {
   try {
     const fs = require('fs');
-    let logDir;
-    if (process.platform === 'win32' && process.env.APPDATA) {
-      logDir = path.join(process.env.APPDATA, 'voko');
-    } else if (process.platform === 'darwin') {
-      logDir = path.join(os.homedir(), 'Library', 'Application Support', 'voko');
-    } else {
-      logDir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'voko');
-    }
+    const { resolveVokoLogDirectory } = require('./core/log-path');
+    const logDir = resolveVokoLogDirectory();
     try { fs.mkdirSync(logDir, { recursive: true }); } catch (_: any) {}
     // 清理已废弃的 agent-worker.log（日志统一到 voko-im.log）
     try { fs.unlinkSync(path.join(logDir, 'agent-worker.log')); } catch (_: any) {}

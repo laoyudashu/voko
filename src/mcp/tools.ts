@@ -300,7 +300,7 @@ type McpContext = Omit<LiteContext,
   secureOutboundRouter?: { prepare(agentId:string,channelId:string,channelType?:number,metadata?:unknown,
     purpose?:'text'|'attachment'):Promise<{
     success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;
-    encryptedDeviceCount:number }> };
+    encryptedDeviceCount:number;preparationToken?:string }> };
   getPaymentAuth?(agentId?: string): unknown;
   getAgentImUid?(agentId?: string): string;
   savePaymentOrder(order: DynamicRow): unknown;
@@ -518,6 +518,7 @@ function createdRegistrationData(value: unknown, fallbackAgentId: unknown): Crea
 
 interface McpToolParams {
   _e2eeAttachmentSource?: { filePath:string;fileName:string;mediaType:string };
+  _e2eeAttachmentPreparationToken?: string;
   _requestedMessageId?: string;
   ability?: unknown;
   action?: string;
@@ -1995,10 +1996,14 @@ function createToolHandlers(cx: McpContext) {
         ...(routingConversation?.status === 'pending' ? { conversationStart: true } : {}),
         ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
           a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
-        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) } :
+        ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource,
+          ...(p._e2eeAttachmentPreparationToken
+            ? {_e2eeAttachmentPreparationToken:p._e2eeAttachmentPreparationToken}:{}) } : {}) } :
         { _voko: { protocolVersion: 1, ...(channelType === 1 ? { turnReceiptRequest: { version: 1 },
           a2aDisposition: p.replyToMessageId ? 'explicit_reply' : 'new_topic' } : {}) },
-          ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource } : {}) };
+          ...(p._e2eeAttachmentSource ? { _e2eeAttachment: p._e2eeAttachmentSource,
+            ...(p._e2eeAttachmentPreparationToken
+              ? {_e2eeAttachmentPreparationToken:p._e2eeAttachmentPreparationToken}:{}) } : {}) };
       if (channelType === 1) cx.outboundMessageResults?.register(String(p.agentId), outboundMessageId, String(p.toUid));
       const result = await cx.sendMessage(
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
@@ -2066,13 +2071,18 @@ function createToolHandlers(cx: McpContext) {
       if (!message || Number(message.is_me) !== 1) return { success: false, code: 'MESSAGE_RESULT_NOT_FOUND', error: 'Message not found' };
       const tracked = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
       const transportState = message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
+      const reply = tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
+        : tracked && ['FAILED','AUTH_REQUIRED'].includes(tracked.state)
+          ? { state: 'FAILED', messageId: null, reasonCode: tracked.reasonCode }
+          : tracked?.state === 'DELIVERY_UNKNOWN'
+            ? { state: 'UNKNOWN', messageId: null, reasonCode: tracked.reasonCode }
+            : { state: 'PENDING', messageId: null };
       return { success: true, messageId: message.id, transport: { state: transportState },
         execution: tracked ? { confirmed: tracked.state !== 'UNCONFIRMED', state: tracked.state,
           phase: tracked.phase, turnId: tracked.turnId, reasonCode: tracked.reasonCode }
           : { confirmed: false, state: 'UNCONFIRMED', phase: null, turnId: null,
             reasonCode: 'RUNTIME_STATE_NOT_AVAILABLE' },
-        reply: tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
-          : { state: 'PENDING', messageId: null },
+        reply,
         updatedAt: tracked?.updatedAt || null };
     },
 
@@ -2411,6 +2421,7 @@ function createToolHandlers(cx: McpContext) {
             content: inspected.contentType === 2 ? localUrl : attachment,
             conversationId: effectiveConversationId, replyToMessageId: p.replyToMessageId, webRequest: p.webRequest,
             _requestedMessageId: attachmentMessageId,
+            _e2eeAttachmentPreparationToken: security.preparationToken,
             _e2eeAttachmentSource: { filePath: inspected.filePath, fileName: inspected.fileName,
               mediaType: inspected.mimeType } });
           return { ...safeAttachmentInfo, url: localUrl, textMessageId, messageId: fileResult?.messageId,

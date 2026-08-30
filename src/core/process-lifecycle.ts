@@ -137,7 +137,7 @@ function secureWindowsPathForCurrentUser(filePath: string, isDirectory: boolean)
   const result = spawnSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
-  ], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  ], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
   if (result.error || result.status !== 0) {
     throw new Error(`Unable to protect VOKO runtime path for the current Windows user: ${String(result.error?.message || result.stderr || result.status)}`);
   }

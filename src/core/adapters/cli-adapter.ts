@@ -22,7 +22,8 @@
 const { PushProvider } = require('../dispatcher/base-provider');
 const path = require('path');
 const os = require('os');
-const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCmdArg } = require('./cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, killTree, sanitizeCliDiagnostic,
+  sanitizeCmdArg } = require('./cli-spawner');
 const { createParser } = require('./cli-parsers');
 const { ProviderConversationBindingStore } = require('../provider-conversation-bindings');
 const { AgentIdentityBindingStore } = require('../provider-agent-identity');
@@ -427,6 +428,10 @@ class CliAdapter extends PushProvider {
           : /login|auth|unauthorized|未登录|登录/i.test(cliFailureDetail)
             ? 'PROVIDER_AUTH_REQUIRED' : 'PROVIDER_CLI_EXIT';
         (error as any).exitCode = exitCode;
+        (error as any).retryable = false;
+        (error as any).diagnostic = sanitizeCliDiagnostic(result.stderr) || 'no_stderr';
+        console.error(`[${this._name}] cli_failure code=${(error as any).code} exitCode=${exitCode} `+
+          `retryable=false detail=${(error as any).diagnostic}`);
         if ((error as any).deliveryOutcome === 'not_delivered' && isCliConfigurationUnavailable(cliFailureDetail)) {
           this._available = false;
           this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId,
@@ -444,6 +449,11 @@ class CliAdapter extends PushProvider {
       }
     } catch (err) {
       error = err instanceof Error ? err : new Error(String(err));
+      if ((error as any).code === 'PROVIDER_TIMEOUT') {
+        (error as any).deliveryOutcome = 'outcome_unknown';
+        (error as any).retryable = true;
+        (error as any).diagnostic = sanitizeCliDiagnostic(error.message);
+      }
       if (/ENOENT|EACCES|not found|permission denied/i.test(String((error as any).code || error.message))) {
         if (this._runtimeRequest) this._runtimeResolver.invalidate(this._runtimeRequest);
         (error as any).deliveryOutcome = 'not_delivered';

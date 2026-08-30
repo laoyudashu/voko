@@ -18,6 +18,15 @@ const CASES = [
   { senderHost: 'linux', sender: ['TEST-LINUX-REASONIX', 'reasonix'], targetHost: 'macos', target: ['TEST-MAC-GITHUB-COPILOT', 'github-copilot'], kind: 'image' },
 ];
 
+const SAME_OWNER_CASES = [
+  { senderHost: 'macos', sender: ['TEST-MAC-CODEX', 'codex'], targetHost: 'macos', target: ['TEST-MAC-HERMES', 'hermes'], kind: 'file' },
+  { senderHost: 'macos', sender: ['TEST-MAC-CODEX', 'codex'], targetHost: 'macos', target: ['TEST-MAC-HERMES', 'hermes'], kind: 'image' },
+  { senderHost: 'windows', sender: ['TEST-WINDOWS-GOOSE', 'goose'], targetHost: 'windows', target: ['TEST-WINDOWS-AIDER', 'aider'], kind: 'file' },
+  { senderHost: 'windows', sender: ['TEST-WINDOWS-GOOSE', 'goose'], targetHost: 'windows', target: ['TEST-WINDOWS-AIDER', 'aider'], kind: 'image' },
+  { senderHost: 'linux', sender: ['TEST-LINUX-HERMES', 'hermes'], targetHost: 'linux', target: ['TEST-LINUX-OPENCODE', 'opencode'], kind: 'file' },
+  { senderHost: 'linux', sender: ['TEST-LINUX-HERMES', 'hermes'], targetHost: 'linux', target: ['TEST-LINUX-OPENCODE', 'opencode'], kind: 'image' },
+];
+
 const FILES = {
   macos: {
     file: path.join(ROOT, 'artifacts', 'real-inputs', 'voko-real-test.txt'),
@@ -44,49 +53,37 @@ async function main() {
   const config = configFromEnv();
   const reporter = createReporter('attachment-matrix', ARTIFACT_ROOT);
   const caseFilter = String(process.env.VOKO_REAL_ATTACHMENT_CASE || '').trim();
-  const cases = caseFilter ? CASES.filter(item => `${item.senderHost}:${item.kind}` === caseFilter) : CASES;
+  const topology = String(process.env.VOKO_REAL_MATRIX_TOPOLOGY || 'cross-owner').trim();
+  const configuredCases = topology === 'same-owner' ? SAME_OWNER_CASES : CASES;
+  const cases = caseFilter ? configuredCases.filter(item => `${item.senderHost}:${item.kind}` === caseFilter) : configuredCases;
   if (!cases.length) throw new Error(`no attachment case matched ${caseFilter}`);
   const inventories = Object.fromEntries(Object.entries(config.hosts).map(([name, host]) => [name, host.inventory()]));
-  const changed = [];
-  try {
-    const seen = new Set();
-    for (const item of cases) {
-      for (const [hostName, pair] of [[item.senderHost, item.sender], [item.targetHost, item.target]]) {
-        const agent = resolveAgent(inventories[hostName], selector(pair));
-        if (seen.has(agent.agentId)) continue;
-        seen.add(agent.agentId);
-        changed.push({ host: config.hosts[hostName], agentId: agent.agentId, visibility: Number(agent.visibilityType || 0) });
-        config.hosts[hostName].json(['set_agent_status', '--agentId', agent.agentId, '--visibility', '1', '--json']);
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 10_000));
-    for (const item of cases) {
-      const senderHost = config.hosts[item.senderHost];
-      const sender = resolveAgent(inventories[item.senderHost], selector(item.sender));
-      const target = resolveAgent(inventories[item.targetHost], selector(item.target));
-      const marker = `${reporter.runId}-${item.senderHost}-${item.kind}`;
-      try {
-        const sent = senderHost.json(['upload_and_send_file', '--agentId', sender.agentId, '--toUid', target.imUid,
-          '--channelType', '1', '--filePath', FILES[item.senderHost][item.kind],
-          '--message', `VOKO附件真机测试 ${marker}。请确认附件类型并简短回复。`, '--json'], 180_000);
-        const messageId = resultMessageId(sent);
-        reporter.check(`${item.senderHost} ${item.kind} upload accepted`, sent.success !== false && !!messageId,
-          `target=${item.target[0]} message=${messageId ? 'present' : 'missing'}`);
-        if (!messageId) continue;
-        const result = await pollResult(senderHost, sender.agentId, messageId, 300_000);
-        const completed = result?.execution?.state === 'COMPLETED'
-          && result?.execution?.phase === 'reply' && result?.reply?.state === 'DELIVERED';
-        reporter.check(`${item.targetHost} ${item.target[0]} processed ${item.kind}`, completed,
-          `execution=${result?.execution?.state || 'unknown'} reply=${result?.reply?.state || 'unknown'}`);
-      } catch (error) {
-        reporter.check(`${item.senderHost} to ${item.targetHost} ${item.kind} loop`, false, error.message);
-      }
-    }
-  } finally {
-    while (changed.length) {
-      const item = changed.pop();
-      try { item.host.json(['set_agent_status', '--agentId', item.agentId, '--visibility', String(item.visibility), '--json']); }
-      catch (error) { reporter.check(`restore visibility ${item.agentId.slice(0, 8)}`, false, error.message); }
+  // Keep the production visibility policy intact. Dedicated cross-owner test
+  // Agents need durable visibility or friendship before this matrix is run.
+  for (const item of cases) {
+    const senderHost = config.hosts[item.senderHost];
+    const sender = resolveAgent(inventories[item.senderHost], selector(item.sender));
+    const target = resolveAgent(inventories[item.targetHost], selector(item.target));
+    const marker = `${reporter.runId}-${item.senderHost}-${item.kind}`;
+    try {
+      const sent = senderHost.json(['upload_and_send_file', '--agentId', sender.agentId, '--toUid', target.imUid,
+        '--channelType', '1', '--filePath', FILES[item.senderHost][item.kind],
+        '--message', `VOKO附件真机测试 ${marker}。请确认附件类型并简短回复。`, '--json'], 180_000);
+      const messageId = resultMessageId(sent);
+      reporter.check(`${item.senderHost} ${item.kind} upload accepted`, sent.success !== false && !!messageId,
+        `target=${item.target[0]} message=${messageId ? 'present' : 'missing'}`);
+      if (!messageId) continue;
+      const result = await pollResult(senderHost, sender.agentId, messageId, 300_000);
+      const completed = result?.execution?.state === 'COMPLETED'
+        && result?.execution?.phase === 'reply' && result?.reply?.state === 'DELIVERED';
+      reporter.check(`${item.targetHost} ${item.target[0]} processed ${item.kind}`, completed,
+        `execution=${result?.execution?.state || 'unknown'} reply=${result?.reply?.state || 'unknown'}`);
+    } catch (error) {
+      const detail = String(error?.message || error);
+      const accessHint = /PEER_NOT_FOUND|E2EE_V2_DIRECTORY_HTTP_404/.test(detail)
+        ? ' Durable cross-owner visibility/friendship is required; the matrix does not change Agent visibility.'
+        : '';
+      reporter.check(`${item.senderHost} to ${item.targetHost} ${item.kind} loop`, false, detail + accessHint);
     }
   }
   process.exitCode = reporter.finish() ? 0 : 1;

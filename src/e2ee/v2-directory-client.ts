@@ -9,6 +9,13 @@ export function isTransientE2eeDirectoryError(value: unknown): boolean {
   return row?.name === 'TimeoutError' || row?.name === 'AbortError';
 }
 
+export function isRevalidatableE2eeDirectoryError(value: unknown): boolean {
+  const row=value as any;
+  const code=String(row?.code||row?.message||value||'');
+  return ['PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND','E2EE_V2_DIRECTORY_HTTP_404'].includes(code)
+    ||isTransientE2eeDirectoryError(value);
+}
+
 function bounded(value: unknown, name: string, max = 2048): string {
   const result = String(value || '').trim();
   if (!result || result.length > max || /[\u0000-\u001f\u007f]/.test(result)) {
@@ -136,4 +143,4 @@ export class E2eeV2DirectoryClient {
   }
 }
 
-module.exports = { E2eeV2DirectoryClient, isTransientE2eeDirectoryError };
+module.exports = { E2eeV2DirectoryClient, isRevalidatableE2eeDirectoryError, isTransientE2eeDirectoryError };

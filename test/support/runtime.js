@@ -22,7 +22,8 @@ function createTestRuntime(prefix = 'voko-test-') {
     dbPath: path.join(root, 'voko.db'),
     logPath: path.join(root, 'voko.log'),
     env(extra = {}) {
-      return { ...process.env, VOKO_DB_PATH: this.dbPath, VOKO_SMOKE_TEST: '1', ...extra };
+      return { ...process.env, VOKO_DB_PATH: this.dbPath, VOKO_LOG_DIR: path.join(root, 'logs'),
+        VOKO_SMOKE_TEST: '1', ...extra };
     },
     use(resource, close) {
       resources.push(async () => {

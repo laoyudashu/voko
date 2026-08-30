@@ -28,7 +28,7 @@ const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor
 const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw-cli');
 const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
 const { createParser } = require('../build/core/adapters/cli-parsers');
-const { classifyCliFailure } = require('../build/core/adapters/cli-spawner');
+const { classifyCliFailure, runCli, sanitizeCliDiagnostic } = require('../build/core/adapters/cli-spawner');
 const { CliAdapter } = require('../build/core/adapters/cli-adapter');
 const {
   RegistrationOrchestrator,
@@ -38,6 +38,48 @@ const {
 test('CLI auth messages including signed-in wording are safe to fallback', () => {
   assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'not_delivered');
   assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'not_delivered');
+});
+
+test('CLI timeout carries a stable Provider code and retryability', async () => {
+  await assert.rejects(() => runCli({
+    cmd: process.execPath,
+    args: ['-e', 'setTimeout(() => {}, 10000)'],
+    timeout: 20,
+    tag: 'timeout-contract',
+  }), error => error.code === 'PROVIDER_TIMEOUT'
+    && error.deliveryOutcome === 'outcome_unknown'
+    && error.retryable === true);
+});
+
+test('CLI diagnostics redact credentials and user directories', () => {
+  const diagnostic = sanitizeCliDiagnostic(
+    'failed at C:\\Users\\laoyu\\agent token=secret-value Bearer abc.def.ghi /home/tjyu/config',
+  );
+  assert.equal(diagnostic,
+    'failed at [user-dir]\\agent token=[redacted] Bearer [redacted] [user-dir]/config');
+  assert.doesNotMatch(diagnostic, /laoyu|tjyu|secret-value|abc\.def/);
+});
+
+test('CLI diagnostics preserve the trailing root cause after noisy warnings', () => {
+  const diagnostic = sanitizeCliDiagnostic(`${'warning '.repeat(80)}ROOT_CAUSE model=unsupported`);
+  assert.ok(diagnostic.length <= 400);
+  assert.match(diagnostic, /^warning/);
+  assert.match(diagnostic, /ROOT_CAUSE model=unsupported$/);
+});
+
+test('generic CLI exit exposes only a sanitized stderr diagnostic', async () => {
+  const provider = new CliAdapter({
+    name: 'DIAGNOSTIC TEST CLI', cmd: process.execPath,
+    args: ['-e', "process.stderr.write('failed token=secret-value at /home/private/config'); process.exit(7)"],
+    matchType: 'reasonix', adapterType: 'reasonix-cli', timeout: 5000,
+  });
+  await assert.rejects(() => provider.push({
+    agentId: 'agent-reasonix', fromUid: 'visitor', content: 'private prompt', messageId: 'diagnostic-test',
+  }), error => error.code === 'PROVIDER_CLI_EXIT'
+    && error.exitCode === 7
+    && error.retryable === false
+    && error.diagnostic === 'failed token=[redacted] at [user-dir]/config'
+    && !String(error.diagnostic).includes('private prompt'));
 });
 
 test('CLI auth failure invalidates the route until the next health check', async () => {

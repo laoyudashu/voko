@@ -36,6 +36,23 @@ export interface RunCliResult {
   signal: NodeJS.Signals | null;
 }
 
+/** Keep CLI diagnostics useful without writing credentials or user-specific
+ * paths to the production log. The result is intentionally short and is
+ * derived from stderr only; stdout may contain the user's prompt or reply. */
+function sanitizeCliDiagnostic(value: unknown): string {
+  const sanitized = String(value || '')
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/\b(sk-(?:proj-|svcacct-|ant-)?[A-Za-z0-9_-]{12,})\b/gi, '[redacted]')
+    .replace(/\b(token|secret|password|api[-_ ]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+/gi, '[user-dir]')
+    .replace(/\/(?:Users|home)\/[^/\s]+/g, '[user-dir]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (sanitized.length <= 400) return sanitized;
+  return `${sanitized.slice(0, 180)} ... ${sanitized.slice(-215)}`;
+}
+
 /**
  * Classify a non-zero CLI exit without treating every process failure as a
  * provider rejection. A command that never reached the model is safe to
@@ -188,7 +205,11 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       log(`[${tag}] 超时 (${timeout}ms) — kill pid=${child.pid}`);
       if (child.pid !== undefined) killTree(child.pid);
       settled = true;
-      reject(new Error(`cli 超时 (${timeout}ms)`));
+      const error = new Error(`cli 超时 (${timeout}ms)`);
+      (error as any).code = 'PROVIDER_TIMEOUT';
+      (error as any).deliveryOutcome = 'outcome_unknown';
+      (error as any).retryable = true;
+      reject(error);
     }, timeout);
 
     const rejectOversizedOutput = (stream: 'stdout' | 'stderr'): void => {
@@ -276,4 +297,5 @@ function sanitizeCmdArg(p: unknown): string | null | undefined {
     .trim();
 }
 
-module.exports = { runCli, killTree, checkCliAvailable, classifyCliFailure, sanitizeCmdArg, _makeLogger };
+module.exports = { runCli, killTree, checkCliAvailable, classifyCliFailure, sanitizeCliDiagnostic,
+  sanitizeCmdArg, _makeLogger };

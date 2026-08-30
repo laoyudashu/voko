@@ -276,7 +276,7 @@ test('a new message bypasses historical-lock background backoff and can recover 
   }finally{f.close();}
 });
 
-test('historical-lock retry delay follows bounded exponential backoff with process-stable jitter',async t=>{
+test('policy-related historical locks use a bounded low-frequency backoff with process-stable jitter',async t=>{
   const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
   const f=fixture({directoryError:error});
   const originalNow=Date.now;
@@ -288,13 +288,50 @@ test('historical-lock retry delay follows bounded exponential backoff with proce
     peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
   f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
   const key='gym\0guest-im\0routing-1';
-  for(const base of [60_000,120_000,240_000,480_000,960_000,1_800_000]){
+  for(const base of [1_800_000,3_600_000,7_200_000,14_400_000,21_600_000,21_600_000]){
     await f.router.refreshTransientLocked();
     const state=f.router.lockedRetryState.get(key);
     const delay=state.nextAttemptAt-now;
     assert.ok(delay>=base*0.9&&delay<=base*1.1,`delay ${delay} must be a jittered ${base}`);
     now=state.nextAttemptAt;
   }
+});
+
+test('a stable peer-not-found lock remains revalidatable and uses policy backoff',async()=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  const originalNow=Date.now;
+  try{
+    const now=originalNow();
+    Date.now=()=>now;
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','PEER_NOT_FOUND');
+    assert.equal(f.store.transientLockedConversationCount(),1);
+    await f.router.refreshTransientLocked();
+    const state=f.router.lockedRetryState.get('gym\0guest-im\0routing-1');
+    assert.ok(state.nextAttemptAt-now>=1_800_000*0.9);
+    f.setDirectoryError(null);
+    const result=await f.router.deliver('gym','guest-im','retry after access change','text',1,null,'peer-access-restored');
+    assert.equal(result.success,true);
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{Date.now=originalNow;f.close();}
+});
+
+test('a legacy generic 404 lock is refined to the stable Directory business code',async()=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    const result=await f.router.deliver('gym','guest-im','still blocked','text',1,null,'refine-legacy-lock');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'PEER_NOT_FOUND');
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').lock_reason,'PEER_NOT_FOUND');
+  }finally{f.close();}
 });
 
 test('a Directory 404 lock never downgrades while Directory still returns 404',async()=>{
@@ -483,6 +520,23 @@ test('private attachment uploads ciphertext once and seals one manifest per reci
       assert.equal(payload.kind,'attachment_manifest');
       assert.equal(payload.attachment.messageId,'business-attachment-1');
     }
+  }finally{f.close();}
+});
+
+test('attachment delivery consumes its successful preflight without a second Directory lookup',async()=>{
+  const f=fixture();const file=path.join(f.root,'preflight.txt');fs.writeFileSync(file,'prepared attachment');
+  try{
+    const prepared=await f.router.prepare('gym','guest-im',1,null,'attachment');
+    assert.equal(prepared.success,true);
+    assert.equal(prepared.securityMode,'e2ee');
+    assert.ok(prepared.preparationToken);
+    f.setDirectoryError(Object.assign(new Error('directory unavailable'),{code:'E2EE_V2_DIRECTORY_UNAVAILABLE'}));
+    const result=await f.router.deliver('gym','guest-im','local-only-url','file',1,null,
+      'business-prepared-attachment',{_e2eeAttachmentPreparationToken:prepared.preparationToken,
+        _e2eeAttachment:{filePath:file,fileName:'preflight.txt',mediaType:'text/plain'}});
+    assert.equal(result.success,true);
+    assert.equal(result.deliveryState,'delivered');
+    assert.equal(f.counts().directoryCalls,1);
   }finally{f.close();}
 });
 

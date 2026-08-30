@@ -158,6 +158,9 @@ export class E2eeV2Runtime {
         messageSegments:merged.messageSegments,
         ownerInterventionCreated:interventionSignals.length?Promise.race(interventionSignals):undefined,
         onProviderAccepted:()=>{for(const item of batch.items)item.markProviderAccepted();},});
+      if(!String(result?.reply?.content||'').trim()){
+        throw Object.assign(new Error('Provider completed without a final reply'),{code:'PROVIDER_EMPTY_REPLY'});
+      }
       await last.emitTurnStatus?.('completed',batch.turnId,undefined,batch.sourceMessageIds).catch(()=>undefined);
       return result;
     }catch(error:any){

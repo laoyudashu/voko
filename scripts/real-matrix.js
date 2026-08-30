@@ -173,14 +173,14 @@ function resolveAgent(inventory, selector) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-function allAutomaticTargets(inventories) {
+function allAutomaticTargets(inventories, topology = 'cross-owner') {
   const senderByTargetHost = { macos: 'linux', windows: 'macos', linux: 'windows' };
   return Object.entries(inventories).flatMap(([host, inventory]) => inventory.agents
     .filter(agent => agent.publishStatus === 'published'
       && agent.accessMode === 'public'
       && agent.runtime?.automaticDeliveryReady === true)
     .map(agent => ({
-      senderHost: senderByTargetHost[host],
+      senderHost: topology === 'same-owner' ? host : senderByTargetHost[host],
       host,
       agentName: agent.agentName,
       backendType: agent.backendType,
@@ -229,77 +229,55 @@ function checkPreflight(config, reporter, inventories) {
 }
 
 async function providerMatrix(config, reporter, inventories) {
-  const changedVisibility = [];
-  const restoreVisibility = () => {
-    while (changedVisibility.length) {
-      const item = changedVisibility.pop();
-      try { item.host.json(['set_agent_status', '--agentId', item.agentId, '--visibility', String(item.visibility)]); }
-      catch (error) { reporter.check(`restore visibility ${item.agentId.slice(0, 8)}`, false, error.message); }
-    }
-  };
-  const onSignal = () => { restoreVisibility(); process.exit(130); };
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
-  try {
-    const visibilitySelectors = [
-      ...Object.entries(config.senders).map(([host, selector]) => ({ host, ...selector })),
-      ...config.targets,
-    ];
-    const seenAgents = new Set();
-    for (const target of visibilitySelectors) {
-      const host = config.hosts[target.host];
-      const agent = resolveAgent(inventories[target.host], target);
-      if (seenAgents.has(agent.agentId)) continue;
-      seenAgents.add(agent.agentId);
-      const restore = Number.isInteger(target.restoreVisibility)
-        ? target.restoreVisibility : Number(agent.visibilityType || 0);
-      changedVisibility.push({ host, agentId: agent.agentId, visibility: restore });
-      if (Number(agent.visibilityType) !== 1) {
-        host.json(['set_agent_status', '--agentId', agent.agentId, '--visibility', '1']);
-      }
-    }
-    await sleep(10_000);
+  // Cross-owner E2EE must use the same durable visibility or server-side
+  // friendship policy as production. Temporarily publishing a private Agent
+  // creates a conversation that becomes unauthorized as soon as it is hidden
+  // again, leaving a persistent E2EE history lock.
+  for (const target of config.targets) {
+    const agent = resolveAgent(inventories[target.host], target);
+    const automatic = agent.runtime?.automaticDeliveryReady === true;
+    reporter.check(`${target.host}/${target.agentName} automatic channel ready`, automatic,
+      `mode=${agent.runtime?.activeAutomaticMode || 'none'}`);
+    if (!automatic) continue;
+  }
 
-    for (const target of config.targets) {
-      const agent = resolveAgent(inventories[target.host], target);
-      const automatic = agent.runtime?.automaticDeliveryReady === true;
-      reporter.check(`${target.host}/${target.agentName} automatic channel ready`, automatic,
-        `mode=${agent.runtime?.activeAutomaticMode || 'none'}`);
-      if (!automatic) continue;
+  for (const target of config.targets) {
+    const senderHost = config.hosts[target.senderHost];
+    const targetAgent = resolveAgent(inventories[target.host], target);
+    const configuredSender = resolveAgent(inventories[target.senderHost], config.senders[target.senderHost]);
+    const sender = configuredSender.agentId !== targetAgent.agentId
+      ? configuredSender
+      : inventories[target.senderHost].agents.find(agent => agent.agentId !== targetAgent.agentId
+        && agent.imUid && agent.runtime?.imConnected !== false);
+    if (!sender) {
+      reporter.check(`${target.agentName} sender available`, false, 'no alternate connected sender on target host');
+      continue;
     }
-
-    for (const target of config.targets) {
-      const senderSelector = config.senders[target.senderHost];
-      const senderHost = config.hosts[target.senderHost];
-      const targetHost = config.hosts[target.host];
-      const sender = resolveAgent(inventories[target.senderHost], senderSelector);
-      const targetAgent = resolveAgent(inventories[target.host], target);
-      if (targetAgent.runtime?.automaticDeliveryReady !== true) continue;
-      const marker = `${reporter.runId}-${target.host}-${target.backendType}`.replace(/[^a-zA-Z0-9-]/g, '-');
-      const content = `VOKO真机测试 ${marker}。请用一句自然语言确认收到，并在结尾写数字 ${String(Date.now()).slice(-6)}。`;
-      try {
-        const sent = senderHost.json(['send_message', '--agentId', sender.agentId, '--toUid', targetAgent.imUid,
-          '--channelType', '1', '--content', content], 45_000);
-        reporter.summary.counters.sent += sent?.success === true ? 1 : 0;
-        reporter.check(`${target.agentName} encrypted send accepted`, sent?.success === true && sent?.securityMode === 'e2ee',
-          `security=${sent?.securityMode || 'none'} delivery=${sent?.deliveryState || 'unknown'}`);
-        if (!sent?.messageId) continue;
-        const result = await pollResult(senderHost, sender.agentId, sent.messageId);
-        const completed = result?.execution?.state === 'COMPLETED' && result?.reply?.state === 'DELIVERED';
-        reporter.check(`${target.agentName} Provider replied exactly once`, completed,
-          `execution=${result?.execution?.state || 'unknown'} phase=${result?.execution?.phase || 'none'} `
-          + `reason=${result?.execution?.reasonCode || 'none'} reply=${result?.reply?.state || 'unknown'} `
-          + `message=${String(sent.messageId).slice(0, 32)}`);
-        if (completed) reporter.summary.counters.verified += 1;
-        else reporter.summary.counters.lost += 1;
-      } catch (error) {
-        reporter.check(`${target.agentName} real loop`, false, error.message);
-      }
+    if (targetAgent.runtime?.automaticDeliveryReady !== true) continue;
+    const marker = `${reporter.runId}-${target.host}-${target.backendType}`.replace(/[^a-zA-Z0-9-]/g, '-');
+    const content = `VOKO真机测试 ${marker}。请用一句自然语言确认收到，并在结尾写数字 ${String(Date.now()).slice(-6)}。`;
+    try {
+      const sent = senderHost.json(['send_message', '--agentId', sender.agentId, '--toUid', targetAgent.imUid,
+        '--channelType', '1', '--content', content], 45_000);
+      reporter.summary.counters.sent += sent?.success === true ? 1 : 0;
+      const accessHint = ['PEER_NOT_FOUND', 'E2EE_V2_DIRECTORY_HTTP_404'].includes(String(sent?.error || ''))
+        ? ' durable cross-owner visibility/friendship is required; the matrix does not change Agent visibility'
+        : '';
+      reporter.check(`${target.agentName} encrypted send accepted`, sent?.success === true && sent?.securityMode === 'e2ee',
+        `security=${sent?.securityMode || 'none'} delivery=${sent?.deliveryState || 'unknown'} error=${sent?.error || 'none'}${accessHint}`);
+      if (!sent?.messageId) continue;
+      const resultTimeoutMs = Number(process.env.VOKO_REAL_RESULT_TIMEOUT_MS || 180_000);
+      const result = await pollResult(senderHost, sender.agentId, sent.messageId, resultTimeoutMs);
+      const completed = result?.execution?.state === 'COMPLETED' && result?.reply?.state === 'DELIVERED';
+      reporter.check(`${target.agentName} Provider replied exactly once`, completed,
+        `execution=${result?.execution?.state || 'unknown'} phase=${result?.execution?.phase || 'none'} `
+        + `reason=${result?.execution?.reasonCode || 'none'} reply=${result?.reply?.state || 'unknown'} `
+        + `message=...${String(sent.messageId).slice(-28)}`);
+      if (completed) reporter.summary.counters.verified += 1;
+      else reporter.summary.counters.lost += 1;
+    } catch (error) {
+      reporter.check(`${target.agentName} real loop`, false, error.message);
     }
-  } finally {
-    process.removeListener('SIGINT', onSignal);
-    process.removeListener('SIGTERM', onSignal);
-    restoreVisibility();
   }
 }
 
@@ -332,7 +310,10 @@ async function main() {
   const inventories = {};
   try {
     checkPreflight(config, reporter, inventories);
-    if (scenario === 'providers-all') config.targets = allAutomaticTargets(inventories);
+    if (scenario === 'providers-all') {
+      const topology = String(process.env.VOKO_REAL_MATRIX_TOPOLOGY || 'cross-owner').trim();
+      config.targets = allAutomaticTargets(inventories, topology);
+    }
     const targetFilter = String(process.env.VOKO_REAL_PROVIDER_FILTER || '').trim();
     if (targetFilter) {
       config.targets = config.targets.filter(target => `${target.host}:${target.backendType}` === targetFilter

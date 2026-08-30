@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { isTransientE2eeDirectoryError, type E2eeV2DirectoryClient } from './v2-directory-client';
+import { isRevalidatableE2eeDirectoryError, isTransientE2eeDirectoryError,
+  type E2eeV2DirectoryClient } from './v2-directory-client';
 import { encryptE2eeV2Attachment } from './v2-attachment';
 import { encodeE2eeAttachmentPayload, encodeE2eeTextPayload, normalizeE2eeRouteContext } from './v2-payload';
 import type { E2eeV2Runtime } from './v2-runtime';
@@ -20,6 +21,8 @@ type CachedResolution={expiresAt:number;value:Resolution};
 type RouteContext={routingConversationId:string;wireConversationKey:string;metadata?:Record<string,unknown>};
 type PrivateDecision={mode:'e2ee';route:RouteContext;resolved:Resolution}
   |{mode:'plaintext';reason:string}|{mode:'blocked';error:string;securityMode:'e2ee'|'plaintext';reason:string};
+type PreparedAttachmentDecision={agentId:string;channelId:string;expiresAt:number;
+  decision:Extract<PrivateDecision,{mode:'e2ee'}>};
 
 export interface SecureOutboundResult {
   success:boolean;via?:string;messageId?:string;serverMessageId?:string;clientMsgNo?:string;
@@ -33,9 +36,26 @@ function errorCode(error:unknown):string{
   return /^[A-Z0-9_:-]{1,96}$/.test(candidate)?candidate:'E2EE_V2_DIRECTORY_UNAVAILABLE';
 }
 
+function attachmentStageError(stage:'source'|'encrypt'|'upload'|'persist',error:unknown):Error{
+  const existing=errorCode(error);
+  const code=existing!=='E2EE_V2_DIRECTORY_UNAVAILABLE'?existing
+    :`E2EE_V2_ATTACHMENT_${stage.toUpperCase()}_FAILED`;
+  console.warn(`[E2EE] attachment_failed stage=${stage} code=${code}`);
+  return Object.assign(new Error(code),{code,cause:error});
+}
+
 function safeDiagnosticValue(value:unknown,fallback:string):string{
   const text=String(value||fallback);
   return /^[A-Za-z0-9_.:@-]{1,96}$/.test(text)?text:fallback;
+}
+
+function isStableDirectoryBusinessCode(value:string):boolean{
+  return value==='PEER_NOT_FOUND'||value==='E2EE_KEY_NOT_FOUND';
+}
+
+function isAttachmentOperationalFailure(value:string):boolean{
+  return value==='E2EE_V2_ATTACHMENT_SOURCE_FAILED'||value==='E2EE_V2_ATTACHMENT_UPLOAD_FAILED'
+    ||value.startsWith('UPLOAD_');
 }
 
 function transportId(businessMessageId:string,deviceId:string,keyId:string):string{
@@ -73,6 +93,7 @@ export class SecureOutboundRouter {
   private readonly failureCache=new Map<string,{expiresAt:number;code:string}>();
   private readonly inflight=new Map<string,Promise<Resolution>>();
   private readonly recentDiagnostics=new Map<string,number>();
+  private readonly preparedAttachments=new Map<string,PreparedAttachmentDecision>();
   private readonly pendingProjectionMarks=new Set<string>();
   private readonly lockedRetryState=new Map<string,{attempts:number;nextAttemptAt:number;seenAt:number}>();
   private readonly lockedRetrySalt=crypto.randomBytes(8).toString('hex');
@@ -120,17 +141,20 @@ export class SecureOutboundRouter {
     return `${agentId}\0${channelId}\0${routingConversationId}`;
   }
 
-  private lockedRetryDelay(key:string,attempts:number):number{
-    const base=Math.min(30*60_000,60_000*(2**Math.max(0,attempts-1)));
+  private lockedRetryDelay(key:string,attempts:number,reason:string):number{
+    const policyUnavailable=['PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND','E2EE_V2_DIRECTORY_HTTP_404'].includes(reason);
+    const initial=policyUnavailable?30*60_000:60_000;
+    const maximum=policyUnavailable?6*60*60_000:30*60_000;
+    const base=Math.min(maximum,initial*(2**Math.max(0,attempts-1)));
     const hash=crypto.createHash('sha256').update(`VOKO-E2EE-LOCK-RETRY\0${this.lockedRetrySalt}\0${key}`)
       .digest().readUInt32BE(0);
     return Math.round(base*(0.9+(hash/0xffffffff)*0.2));
   }
 
-  private rememberLockedFailure(key:string,now:number):void{
+  private rememberLockedFailure(key:string,now:number,reason:string):void{
     const previous=this.lockedRetryState.get(key);
     const attempts=Math.min(6,(previous?.attempts||0)+1);
-    this.lockedRetryState.set(key,{attempts,nextAttemptAt:now+this.lockedRetryDelay(key,attempts),seenAt:now});
+    this.lockedRetryState.set(key,{attempts,nextAttemptAt:now+this.lockedRetryDelay(key,attempts,reason),seenAt:now});
     if(this.lockedRetryState.size>2048){
       const oldest=[...this.lockedRetryState.entries()].sort((a,b)=>a[1].seenAt-b[1].seenAt)
         .slice(0,this.lockedRetryState.size-2048);
@@ -200,7 +224,7 @@ export class SecureOutboundRouter {
     try{
       const route=this.routeContext(agentId,channelId,metadata);
       const existing=this.existingConversation(agentId,channelId,route.routingConversationId);
-      if(existing?.mode==='e2ee_active')this.options.store.lockConversation(agentId,channelId,
+      if(existing?.mode==='e2ee_active'&&!isAttachmentOperationalFailure(code))this.options.store.lockConversation(agentId,channelId,
         existing.routing_conversation_id,code);
     }catch{}
     return{success:false,error:code,messageId:businessMessageId,securityMode:'e2ee',securityReason:reason,
@@ -267,7 +291,10 @@ export class SecureOutboundRouter {
         return{mode:'blocked',error:code,securityMode:'e2ee',reason:'active_directory_unavailable'};
       }
       if(existing?.mode==='locked'){
-        return{mode:'blocked',error:existing.lock_reason||code,
+        if(isStableDirectoryBusinessCode(code)&&isRecoverableDirectoryLockReason(existing.lock_reason)){
+          this.options.store.lockConversation(agentId,channelId,existing.routing_conversation_id,code);
+        }
+        return{mode:'blocked',error:isStableDirectoryBusinessCode(code)?code:(existing.lock_reason||code),
           securityMode:'e2ee',reason:'active_conversation_locked'};
       }
       if(code==='E2EE_RECIPIENT_DEVICE_LIMIT'){
@@ -337,7 +364,8 @@ export class SecureOutboundRouter {
 
   async prepare(agentId:string,channelId:string,channelType=1,metadata:unknown=null,
     purpose:'text'|'attachment'='text'):Promise<{
-    success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;encryptedDeviceCount:number}>{
+    success:boolean;securityMode:'e2ee'|'plaintext';securityReason:string;error?:string;encryptedDeviceCount:number;
+    preparationToken?:string}>{
     if(channelType!==1||String(channelId).startsWith('owner_')){
       return{success:true,securityMode:'plaintext',securityReason:'scope_not_e2ee',encryptedDeviceCount:0};
     }
@@ -353,8 +381,16 @@ export class SecureOutboundRouter {
         securityReason:decision.reason,error:decision.error,encryptedDeviceCount:0};
       return{success:true,securityMode:'plaintext',securityReason:'attachment_e2ee_disabled',encryptedDeviceCount:0};
     }
-    if(decision.mode==='e2ee')return{success:true,securityMode:'e2ee',securityReason:'recipient_supported',
-      encryptedDeviceCount:decision.resolved.recipients.length};
+    if(decision.mode==='e2ee'){
+      const preparationToken=purpose==='attachment'?crypto.randomUUID():undefined;
+      if(preparationToken){
+        const now=Date.now();
+        for(const [token,prepared] of this.preparedAttachments)if(prepared.expiresAt<=now)this.preparedAttachments.delete(token);
+        this.preparedAttachments.set(preparationToken,{agentId,channelId,expiresAt:now+30_000,decision});
+      }
+      return{success:true,securityMode:'e2ee',securityReason:'recipient_supported',
+        encryptedDeviceCount:decision.resolved.recipients.length,...(preparationToken?{preparationToken}:{})};
+    }
     if(decision.mode==='plaintext')return{success:true,securityMode:'plaintext',securityReason:decision.reason,
       encryptedDeviceCount:0};
     return{success:false,securityMode:decision.securityMode,securityReason:decision.reason,error:decision.error,
@@ -363,7 +399,11 @@ export class SecureOutboundRouter {
 
   private async deliverAttachment(agentId:string,channelId:string,content:string,messageType:string,
     channelType:number,localMsgId:string,metadata:any):Promise<SecureOutboundResult>{
-    const decision=await this.privateDecision(agentId,channelId,metadata);
+    const preparationToken=String(metadata?._e2eeAttachmentPreparationToken||'');
+    const prepared=preparationToken?this.preparedAttachments.get(preparationToken):undefined;
+    if(preparationToken)this.preparedAttachments.delete(preparationToken);
+    const decision=prepared&&prepared.expiresAt>Date.now()&&prepared.agentId===agentId&&prepared.channelId===channelId
+      ?prepared.decision:await this.privateDecision(agentId,channelId,metadata);
     if(decision.mode!=='e2ee')return{success:false,error:decision.mode==='blocked'?decision.error:'E2EE_V2_ATTACHMENT_MODE_CHANGED',
       messageId:localMsgId,securityMode:decision.mode==='blocked'?decision.securityMode:'plaintext',
       securityReason:decision.reason,encryptedDeviceCount:0,deliveryState:'queued'};
@@ -373,7 +413,8 @@ export class SecureOutboundRouter {
     const fileName=String(source?.fileName||'attachment');
     const mediaType=String(source?.mediaType||'application/octet-stream');
     const openFlags=fs.constants.O_RDONLY|(process.platform==='win32'?0:fs.constants.O_NOFOLLOW);
-    const handle=await fs.promises.open(filePath,openFlags);
+    let handle:fs.promises.FileHandle;
+    try{handle=await fs.promises.open(filePath,openFlags);}catch(error){throw attachmentStageError('source',error);}
     let bytes:Buffer;
     try{
       const stat=await handle.stat();
@@ -386,12 +427,15 @@ export class SecureOutboundRouter {
     }finally{
       await handle.close();
     }
-    const encrypted=encryptE2eeV2Attachment(bytes,{messageId:localMsgId,
-      kind:messageType==='image'?'image':'file',fileName,mediaType});
+    let encrypted:ReturnType<typeof encryptE2eeV2Attachment>;
+    try{encrypted=encryptE2eeV2Attachment(bytes,{messageId:localMsgId,
+      kind:messageType==='image'?'image':'file',fileName,mediaType});}
+    catch(error){bytes.fill(0);throw attachmentStageError('encrypt',error);}
     bytes.fill(0);
     try{
-      const uploaded=await this.options.uploadCiphertext({agentId,channelId,businessMessageId:localMsgId,
-        ciphertext:encrypted.ciphertext});
+      let uploaded:{uploadId:string;url:string};
+      try{uploaded=await this.options.uploadCiphertext({agentId,channelId,businessMessageId:localMsgId,
+        ciphertext:encrypted.ciphertext});}catch(error){throw attachmentStageError('upload',error);}
       const manifest={...encrypted.manifest,uploadId:uploaded.uploadId,url:uploaded.url};
       const payload=encodeE2eeAttachmentPayload(manifest,decision.route.metadata);
       const protocolConversationId=String(decision.resolved.protocolConversationId);
@@ -404,7 +448,7 @@ export class SecureOutboundRouter {
           recipientDeviceId:recipient.deviceId,recipientKeyId:recipient.keyId,
           recipientBundle:recipient.publicBundle,plaintext:payload})}));
       const initialLeaseOwner=`e2ee-out-${crypto.randomUUID()}`;
-      this.options.store.createOutbound({businessMessageId:localMsgId,localAgentId:agentId,channelId,
+      try{this.options.store.createOutbound({businessMessageId:localMsgId,localAgentId:agentId,channelId,
         routingConversationId:decision.route.routingConversationId,protocolConversationId,
         contentKind:'attachment_manifest',recipientRevision:decision.resolved.revision,
         plaintextDigest:encrypted.manifest.plaintextSha256,envelopes,initialLeaseOwner,conversation:{
@@ -412,7 +456,8 @@ export class SecureOutboundRouter {
           peerKind:decision.resolved.peerKind},attachment:{uploadId:uploaded.uploadId,
           manifestJson:JSON.stringify(manifest),ciphertextSha256:crypto.createHash('sha256')
             .update(encrypted.ciphertext).digest('base64url'),ciphertextSize:encrypted.ciphertext.length,
-          mediaMetadata:{kind:manifest.kind,mediaType:manifest.mediaType}}});
+          mediaMetadata:{kind:manifest.kind,mediaType:manifest.mediaType}}});}
+      catch(error){throw attachmentStageError('persist',error);}
       return this.deliverBusiness(localMsgId,initialLeaseOwner);
     }finally{encrypted.ciphertext.fill(0);}
   }
@@ -611,14 +656,19 @@ export class SecureOutboundRouter {
         if(restored||current?.mode!=='locked'||!isRecoverableDirectoryLockReason(current.lock_reason)){
           this.lockedRetryState.delete(key);
           if(restored)recovered+=1;
-        }else this.rememberLockedFailure(key,now);
+        }else this.rememberLockedFailure(key,now,String(current?.lock_reason||row.lock_reason||''));
       }catch(error){
         const code=errorCode(error);
         failures[code]=(failures[code]||0)+1;
-        if(!isTransientE2eeDirectoryError(error)&&code!=='E2EE_V2_DIRECTORY_HTTP_404'){
+        if(!isRevalidatableE2eeDirectoryError(error)){
           this.options.store.lockConversation(row.local_agent_id,row.channel_id,row.routing_conversation_id,code);
           this.lockedRetryState.delete(key);
-        }else this.rememberLockedFailure(key,now);
+        }else{
+          if(isStableDirectoryBusinessCode(code)&&row.lock_reason!==code){
+            this.options.store.lockConversation(row.local_agent_id,row.channel_id,row.routing_conversation_id,code);
+          }
+          this.rememberLockedFailure(key,now,code);
+        }
       }
     }
     for(const [key,state] of this.lockedRetryState){
@@ -634,5 +684,5 @@ module.exports={SecureOutboundRouter};
 function isRecoverableDirectoryLockReason(value: unknown): boolean {
   const row=value as any;
   const code=String(row?.code||row?.message||value||'');
-  return code==='E2EE_V2_DIRECTORY_HTTP_404'||isTransientE2eeDirectoryError(value);
+  return isRevalidatableE2eeDirectoryError(value)||isAttachmentOperationalFailure(code);
 }

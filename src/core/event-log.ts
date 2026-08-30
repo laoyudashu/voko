@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { resolveVokoLogDirectory } = require('./log-path');
 export {};
 
 interface EventPayload {
@@ -21,11 +21,7 @@ interface EventPayload {
 }
 
 function _eventLogPath(): string {
-  const dir = process.platform === 'win32' && process.env.APPDATA
-    ? path.join(process.env.APPDATA, 'voko')
-    : process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Application Support', 'voko')
-      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'voko');
+  const dir = resolveVokoLogDirectory();
   try { fs.mkdirSync(dir, { recursive: true }); } catch {}
   return path.join(dir, 'events.jsonl');
 }

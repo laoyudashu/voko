@@ -154,6 +154,7 @@ class MessageHandler extends EventEmitter {
   private readonly outboundMessageResults: OutboundMessageResultStore;
   private readonly receiptRequests = new Map<string, { peerUid: string }>();
   private readonly receiptSourceAliases = new Map<string, string>();
+  private readonly deferredReplyReceipts = new Map<string, { peerUid:string;sourceMessageIds:string[];turnId:string }>();
   private receiptSequence = 0;
 
   /**
@@ -419,6 +420,12 @@ class MessageHandler extends EventEmitter {
     const route = this._messageRoutes.getByMessage(messageId, agentId);
     if (route?.direction === 'outbound') this._messageRoutes.setStatus(route.route_id, 'active');
     this.db.prepare(`UPDATE messages SET status='sent' WHERE id=? AND agent_id=?`).run(messageId, agentId);
+    const deferred=this.deferredReplyReceipts.get(this._receiptKey(agentId,messageId));
+    if(deferred){
+      this.deferredReplyReceipts.delete(this._receiptKey(agentId,messageId));
+      void this._sendTurnReceipt(agentId,deferred.peerUid,deferred.sourceMessageIds,deferred.turnId,
+        'COMPLETED','reply',null,messageId);
+    }
   }
 
   /** 同一主人名下的本地 Agent 首次单聊时，互相设为可信联系人。 */
@@ -1566,11 +1573,14 @@ class MessageHandler extends EventEmitter {
     console.log(`[Agent回复] ${fullyDelivered?'投递成功':'已进入可靠投递队列'} agent=${agentId} `+
       `peer=${replyChannelId} security=${String((delivery as { securityMode?: unknown })?.securityMode||'plaintext')}`);
 
+    const sourceMessageIds = (data.sourceMessageIds?.length ? data.sourceMessageIds
+      : data.sourceMessageId ? [data.sourceMessageId] : []);
     if (fullyDelivered) {
-      const sourceMessageIds = (data.sourceMessageIds?.length ? data.sourceMessageIds
-        : data.sourceMessageId ? [data.sourceMessageId] : []);
       void this._sendTurnReceipt(agentId, replyChannelId, sourceMessageIds,
         String(data.turnId || data.sourceMessageId || msgId), 'COMPLETED', 'reply', null, msgId);
+    } else if ((delivery as {securityMode?:string})?.securityMode==='e2ee'&&sourceMessageIds.length) {
+      this.deferredReplyReceipts.set(this._receiptKey(agentId,msgId),{peerUid:replyChannelId,
+        sourceMessageIds:[...sourceMessageIds],turnId:String(data.turnId||data.sourceMessageId||msgId)});
     }
 
   }

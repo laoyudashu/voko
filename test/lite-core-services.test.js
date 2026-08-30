@@ -366,18 +366,8 @@ test('Lite set-agent-status classifies invalid external API responses without lo
 
 test('Lite event log writes one structured JSONL record in the configured data directory', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-event-log-'));
-  const env = { ...process.env };
-  let dataDir;
-  if (process.platform === 'win32') {
-    env.APPDATA = tempDir;
-    dataDir = path.join(tempDir, 'voko');
-  } else if (process.platform === 'darwin') {
-    env.HOME = tempDir;
-    dataDir = path.join(tempDir, 'Library', 'Application Support', 'voko');
-  } else {
-    env.XDG_CONFIG_HOME = tempDir;
-    dataDir = path.join(tempDir, 'voko');
-  }
+  const dataDir = path.join(tempDir, 'logs');
+  const env = { ...process.env, VOKO_LOG_DIR: dataDir };
   const script = [
     "const { logEvent } = require('./build/core/event-log');",
     "logEvent('message.received', { level: 'debug', agentId: 'agent-1', data: { count: 2 } });",

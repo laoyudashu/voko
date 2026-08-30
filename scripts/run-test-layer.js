@@ -5,6 +5,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const root = path.join(__dirname, '..');
+const testLogDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'voko-test-logs-'));
+process.on('exit', () => fs.rmSync(testLogDir, { recursive: true, force: true }));
 const testDir = path.join(root, 'test');
 const matrix = JSON.parse(fs.readFileSync(path.join(testDir, 'test-matrix.json'), 'utf8'));
 const inProcessTests = new Set(['lite-core-services.test.js']);
@@ -34,7 +36,8 @@ else throw new Error(`unknown test layer: ${layer}`);
 if (!selected.length) throw new Error(`test layer is empty: ${layer}`);
 
 function run(args) {
-  const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true });
+  const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true,
+    env: { ...process.env, VOKO_LOG_DIR: testLogDir } });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);
 }

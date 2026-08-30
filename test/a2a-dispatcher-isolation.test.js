@@ -57,6 +57,15 @@ test('E2EE owner intervention ends the original turn without waiting for a Provi
   const result=await pending;
   assert.equal(result.reply.content,'NO_REPLY');
 });
+test('E2EE preserves a stable Provider timeout code from the selected CLI', async()=>{
+  const provider=new Provider();
+  provider.push=async()=>{const error=new Error('cli timed out');error.code='PROVIDER_TIMEOUT';
+    error.deliveryOutcome='outcome_unknown';error.retryable=true;throw error;};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
+  await assert.rejects(dispatcher.executeE2ee({agentId:'agent-1',taskId:'timeout-task',
+    contextId:'timeout-context',content:'hello',sourceType:'visitor',sessionScopeId:'timeout-scope',timeoutMs:1000}),
+  error=>error.code==='PROVIDER_TIMEOUT'&&error.deliveryOutcome==='outcome_unknown');
+});
 test('A2A execution without a verified principal scope fails before Provider selection', async()=>{
   const provider=new Provider();const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply(){}});
   await assert.rejects(dispatcher.executeIsolated({agentId:'agent-1',taskId:'task-1',contextId:'same',content:'x',executionScope:'a2a_mailbox'}),

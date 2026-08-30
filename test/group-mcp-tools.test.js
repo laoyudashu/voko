@@ -80,12 +80,13 @@ function setup(options = {}) {
 
   const interventions = [];
   const sentMessages = [];
+  const outboundMessageResults = new OutboundMessageResultStore();
   const cx = {
     db,
     query: (sql, params = []) => { try { return db.prepare(sql).all(...params); } catch (_) { return []; } },
     exec: (sql, params = []) => { try { db.prepare(sql).run(...params); } catch (_) {} },
-    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions) => {
-      sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions });
+    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
+      sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata });
       return { success: true };
     },
     uploadFileToOSS: options.uploadFileToOSS || (async (_filePath, objectName) => `https://oss.example/${objectName}`),
@@ -95,12 +96,12 @@ function setup(options = {}) {
       getCurrentUid: options.getCurrentUid
         || (agentId => db.prepare('SELECT imUid FROM agents WHERE agent_id=?').get(agentId)?.imUid || ''),
     },
-    outboundMessageResults: new OutboundMessageResultStore(),
+    outboundMessageResults,
   };
   const handlers = createToolHandlers(cx);
 
   return {
-    db, handlers, fetchCalls, sentMessages, interventions,
+    db, handlers, fetchCalls, sentMessages, interventions, outboundMessageResults,
     cleanup: () => { try { db.close(); } catch (_) {} try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} delete global.fetch; }
   };
 }
@@ -159,6 +160,20 @@ await test('send_message requests an in-memory result receipt and exposes it thr
     assert.strictEqual(status.execution.state, 'UNCONFIRMED');
     assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
   } finally { cleanup(); }
+});
+await test('get_message_result closes reply state when Provider finishes without a reply', async () => {
+  const { db, handlers, outboundMessageResults, cleanup } = setup();
+  try {
+    const messageId = 'provider-empty-result';
+    db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(messageId, 'imuidA', 'imuidB', 'track me', 'imuidB', 1, 'agentA', Date.now(), 1, 'sent', 1);
+    outboundMessageResults.register('agentA',messageId,'imuidB');
+    outboundMessageResults.apply('agentA','imuidB',{version:1,sourceMessageIds:[messageId],turnId:'turn-empty',
+      sequence:1,state:'FAILED',phase:'provider',reasonCode:'PROVIDER_EMPTY_REPLY',occurredAt:Date.now()});
+    const result=await handlers.get_message_result({agentId:'agentA',messageId});
+    assert.strictEqual(result.execution.state,'FAILED');
+    assert.deepStrictEqual(result.reply,{state:'FAILED',messageId:null,reasonCode:'PROVIDER_EMPTY_REPLY'});
+  }finally{cleanup();}
 });
 await test('get_message_result validates input and does not disclose another Agent message', async () => {
   const { db, handlers, cleanup } = setup();
@@ -260,7 +275,8 @@ await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由�
   let ordinaryUploads = 0;
   const secureOutboundRouter = { prepare: async (_agentId, _channelId, _channelType, _metadata, purpose) => {
     assert.strictEqual(purpose, 'attachment');
-    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2 };
+    return { success: true, securityMode: 'e2ee', securityReason: 'recipient_supported', encryptedDeviceCount: 2,
+      preparationToken: 'prepared-once' };
   } };
   const { handlers, sentMessages, cleanup } = setup({ secureOutboundRouter,
     uploadFileToOSS: async () => { ordinaryUploads++; return 'https://must-not-upload.example/plain'; } });
@@ -273,6 +289,7 @@ await test('upload_and_send_file 在 E2EE 模式只传本地源给安全路由�
     assert.strictEqual(ordinaryUploads, 0, 'plaintext upload must not happen before secure router');
     assert.strictEqual(sentMessages.length, 1);
     assert.strictEqual(sentMessages[0].messageType, 'file');
+    assert.strictEqual(sentMessages[0].metadata._e2eeAttachmentPreparationToken, 'prepared-once');
     assert.match(sentMessages[0].content, /^\{"url":"\/api\/e2ee-v2\/attachments\//);
     assert.strictEqual(Object.hasOwn(r, 'filePath'), false);
     assert.strictEqual(Object.hasOwn(r, 'ext'), false);

@@ -47,6 +47,18 @@ test('directory client does not mutate a native DOMException timeout',async()=>{
   });
 });
 
+test('directory client preserves a stable public business error code',async()=>{
+  const client=new E2eeV2DirectoryClient({baseUrl:'https://directory.invalid',token:'test-token',
+    async fetchImpl(){return new Response(JSON.stringify({success:false,code:'PEER_NOT_FOUND',message:'Peer not found'}),{
+      status:404,headers:{'content-type':'application/json'}});}});
+  await assert.rejects(client.resolveRecipients({senderAgentId:'sender-agent',targetImUid:'target-im'}),error=>{
+    assert.equal(error.code,'PEER_NOT_FOUND');
+    assert.equal(error.status,404);
+    assert.equal(error.operation,'/v1/e2ee/recipients/resolve');
+    return true;
+  });
+});
+
 function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
   deliverSecureReply,handleTurnReceipt,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));

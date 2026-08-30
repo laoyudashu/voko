@@ -143,6 +143,28 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
+  it('sends the final reply receipt when queued E2EE delivery completes later', async () => {
+    const fixture = createFixture({ deliver: async () => ({ success: true, securityMode: 'e2ee', deliveryState: 'queued' }) });
+    const receipts = [];
+    fixture.handler._sendTurnReceipt = async (...args) => { receipts.push(args); };
+    try {
+      await fixture.handler.handleAgentReply({ agentId: 'agent-1', visitorId: 'peer-agent-uid',
+        content: 'delayed encrypted reply', done: true, turnId: 'turn-delayed-1',
+        sourceMessageIds: ['source-delayed-1'], a2aManaged: true });
+      const reply = fixture.db.prepare(`SELECT id,status FROM messages
+        WHERE agent_id='agent-1' AND channel_id='peer-agent-uid' AND is_me=1 LIMIT 1`).get();
+      assert.equal(reply.status,'pending');
+      assert.equal(receipts.length,0);
+      fixture.handler.markE2eeAgentReplyDelivered('agent-1',reply.id);
+      assert.equal(receipts.length,1);
+      assert.deepEqual(receipts[0].slice(0,8),['agent-1','peer-agent-uid',['source-delayed-1'],
+        'turn-delayed-1','COMPLETED','reply',null,reply.id]);
+      assert.equal(fixture.db.prepare('SELECT status FROM messages WHERE id=?').get(reply.id).status,'sent');
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('projects a verified remote E2EE Agent peer without requiring a local Agent registration', () => {
     const fixture = createFixture();
     try {
