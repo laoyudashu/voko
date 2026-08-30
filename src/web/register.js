@@ -17,6 +17,7 @@ const { renderSystemFooter } = require('./footer');
 const { renderLanguageSwitcher } = require('./language-switcher');
 const { COPY_ICON, UI_CONTROL_CSS, copyButton, copyControlScript, messageDialog } = require('./ui-controls');
 const { getProviderManualCommand } = require('../core/provider-setup');
+const { jsonForInlineScript } = require('./html-security');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -406,7 +407,7 @@ function wizardJs(t, manualCommands = {}) {
   };
   return `<script>
 (function(){
-  var I=${JSON.stringify(I)},DEFAULT_AGENT_ICON=${JSON.stringify(DEFAULT_AGENT_ICON)},COPY_ICON=${JSON.stringify(COPY_ICON)},root=document.getElementById('registration-wizard');
+  var I=${jsonForInlineScript(I)},DEFAULT_AGENT_ICON=${jsonForInlineScript(DEFAULT_AGENT_ICON)},COPY_ICON=${jsonForInlineScript(COPY_ICON)},root=document.getElementById('registration-wizard');
   if(!root)return;
   var step=1, regId='', state=null, selectedProvider='', selectedInstance='', selectedAccessMode='private', configMode='', discardDraft=false, detectionPromise=null, workbuddyLoad='idle', workbuddyError='';
   var draftKey='voko.agentRegistrationDraft', restoredDraft=null;
@@ -624,7 +625,7 @@ function pageJs(t) {
     unknown: t('register.add.unknown'),
   };
   return `<script>
-var I = ${JSON.stringify(i18nObj)};
+var I = ${jsonForInlineScript(i18nObj)};
 
 (function(){
   // ── Agent 名称：光标移至末尾 ──

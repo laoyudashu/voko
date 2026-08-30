@@ -29,6 +29,7 @@ test('cookie parsing cannot mutate an object prototype', () => {
 
 test('web routes encode reflected query state and use a private upload directory', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
+  const registerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'web', 'register.js'), 'utf8');
 
   assert.match(source, /status='\+encodeURIComponent\(st\)/);
   assert.match(source, /start='\+encodeURIComponent\(fstart\)/);
@@ -48,4 +49,8 @@ test('web routes encode reflected query state and use a private upload directory
   assert.match(source, /location\.href='\+jsonForInlineScript\(returnPath\)/);
   assert.doesNotMatch(source, /AGENT_ID='\+JSON\.stringify\(agentId\)/);
   assert.doesNotMatch(source, /var aid='\+JSON\.stringify\(agentId\)/);
+  assert.match(source, /var I = \$\{jsonForInlineScript\(i18nObj\)\}/);
+  assert.match(registerSource, /var I=\$\{jsonForInlineScript\(I\)\}/);
+  assert.match(registerSource, /var I = \$\{jsonForInlineScript\(i18nObj\)\}/);
+  assert.doesNotMatch(registerSource, /var I=?\$\{JSON\.stringify\(/);
 });
