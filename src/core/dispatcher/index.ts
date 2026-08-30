@@ -466,6 +466,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
         const explicitCode = String(event.errorCode || event.code || '').trim();
         const kind = String(event.kind || '').trim();
         const inferredCode = kind === 'approval_required' ? 'PROVIDER_APPROVAL_REQUIRED'
+          : kind === 'auth_required' ? 'PROVIDER_AUTH_REQUIRED'
           : kind === 'timeout' ? 'PROVIDER_TIMEOUT'
             : kind === 'execution_failed' ? 'PROVIDER_EXECUTION_FAILED' : 'PROVIDER_DELIVERY_FAILED';
         isolatedSink({ agentId, turnId, done: true,
@@ -900,6 +901,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       _deliveryEvidence.delete(_deliveryEvidenceKey(agentId, providerId));
       (providers[providerId] as any)?.refreshRuntime?.();
       await runtimeRegistry.healthCheck(providerId);
+      await (providers[providerId] as any)?.refreshDeliveryReadiness?.();
     }
     invalidateRoutes({ agentId, reason: 'manual-delivery-refresh' });
     return getAgentDeliveryStatus(agentId);

@@ -34,6 +34,29 @@ test('official upload authorizes, uploads opaque fields, completes and binds wit
   } finally { global.fetch = originalFetch; delete process.env.VOKO_E2E_API_BASE_URL; }
 });
 
+test('upload quota errors keep the service code and stop before object upload, complete, or bind', async () => {
+  process.env.VOKO_E2E_API_BASE_URL = 'https://api.example';
+  const calls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: false, status: 429, json: async () => ({ success: false,
+      error: { code: 'UPLOAD_QUOTA_EXCEEDED', message: 'Upload quota exceeded' } }) };
+  };
+  try {
+    const { uploadToOSS } = require('../build/server/oss');
+    await assert.rejects(
+      uploadToOSS('chat/files/report.txt', Buffer.from('safe'), 'text/plain', null, {
+        userAccessToken: 'ut_test', agentId: 'agent-1', purpose: 'agent_attachment', fileName: 'report.txt',
+        targetScopeType: 'private', targetScopeId: 'peer-1',
+      }),
+      error => error.code === 'UPLOAD_QUOTA_EXCEEDED'
+        && error.message === 'Upload quota exceeded' && error.status === 429,
+    );
+    assert.deepEqual(calls, ['https://api.example/api/external/v1/uploads/authorize']);
+  } finally { global.fetch = originalFetch; delete process.env.VOKO_E2E_API_BASE_URL; }
+});
+
 test('runtime source no longer reads long-term OSS credentials and sanitizes legacy database values', () => {
   const oss = fs.readFileSync(path.join(__dirname, '..', 'src', 'server', 'oss.ts'), 'utf8');
   const database = fs.readFileSync(path.join(__dirname, '..', 'src', 'core', 'database.ts'), 'utf8');

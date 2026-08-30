@@ -9,13 +9,14 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { execFile } = require('child_process');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
 const STATUS_CACHE_TTL_MS = 10_000;
 const STATUS_TIMEOUT_MS = 10_000;
 const STATUS_MAX_ATTEMPTS = 2;
 const statusCache = new Map<string, { value: QwenOfficeReadiness; expiresAt: number }>();
+const statusRefreshes = new Map<string, Promise<QwenOfficeReadiness>>();
 
 export interface QwenOfficeReadiness {
   executable: boolean;
@@ -158,6 +159,18 @@ function resolveQwenOfficeRuntime(
   return resolver.resolve(qwenOfficeRuntimeRequest('cli', process.env, process.platform, overrideCommand));
 }
 
+function runQwenOfficeStatus(runtime: { executable: string; argvPrefix: string[] }): Promise<any> {
+  return new Promise((resolve) => {
+    execFile(runtime.executable, [...runtime.argvPrefix, 'status', '--output', 'json'], {
+      encoding: 'utf8', timeout: STATUS_TIMEOUT_MS, windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    }, (error: any, stdout: string, stderr: string) => {
+      resolve({ status: Number.isInteger(error?.code) ? error.code : (error ? null : 0),
+        signal: error?.signal || null, error, stdout, stderr });
+    });
+  });
+}
+
 function isQwenOfficeRuntimeAvailable(): boolean {
   return !!resolveQwenOfficeRuntime().available;
 }
@@ -182,36 +195,52 @@ function getQwenOfficeReadiness(command?: string): QwenOfficeReadiness {
     return value;
   }
 
-  try {
-    let value: QwenOfficeReadiness = {
-      executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: 'status check did not run',
-    };
-    let attempts = 0;
-    for (let attempt = 1; attempt <= STATUS_MAX_ATTEMPTS; attempt += 1) {
-      attempts = attempt;
-      const result = spawnSync(runtime.executable, [...runtime.argvPrefix, 'status', '--output', 'json'], {
-        encoding: 'utf8',
-        timeout: STATUS_TIMEOUT_MS,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      value = classifyQwenOfficeStatusResult(result);
-      const retryable = value.reason === 'status_timeout' || value.reason === 'status_invalid_output';
-      if (!retryable || attempt === STATUS_MAX_ATTEMPTS) break;
-      console.warn(`[QwenOfficeReadiness] command=${path.basename(resolvedCommand)} reason=${value.reason} attempt=${attempt} retrying=true`);
+  void refreshQwenOfficeReadiness(resolvedCommand);
+  if (cached) return cached.value;
+  return { executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: 'status check pending' };
+}
+
+async function refreshQwenOfficeReadiness(command?: string): Promise<QwenOfficeReadiness> {
+  const resolvedCommand = command || resolveQwenOfficeCommand();
+  const cached = statusCache.get(resolvedCommand);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const active = statusRefreshes.get(resolvedCommand);
+  if (active) return active;
+  const refresh = (async () => {
+    const runtime = resolveQwenOfficeRuntime(defaultAgentRuntimeResolver, resolvedCommand);
+    if (!runtime.available || !runtime.executable) {
+      const value: QwenOfficeReadiness = { executable: false, loggedIn: false, ready: false, reason: 'not_found' };
+      logReadinessDiagnostic(resolvedCommand, value);
+      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
+      return value;
     }
-    value = { ...value, attempts };
-    logReadinessDiagnostic(resolvedCommand, value);
-    statusCache.set(resolvedCommand, { value, expiresAt: now + STATUS_CACHE_TTL_MS });
-    return value;
-  } catch (error) {
-    const value: QwenOfficeReadiness = {
-      executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: safeDiagnostic(error),
-    };
-    logReadinessDiagnostic(resolvedCommand, value);
-    statusCache.set(resolvedCommand, { value, expiresAt: now + STATUS_CACHE_TTL_MS });
-    return value;
-  }
+    try {
+      let value: QwenOfficeReadiness = {
+        executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: 'status check did not run',
+      };
+      let attempts = 0;
+      for (let attempt = 1; attempt <= STATUS_MAX_ATTEMPTS; attempt += 1) {
+        attempts = attempt;
+        value = classifyQwenOfficeStatusResult(await runQwenOfficeStatus(runtime));
+        const retryable = value.reason === 'status_timeout' || value.reason === 'status_invalid_output';
+        if (!retryable || attempt === STATUS_MAX_ATTEMPTS) break;
+        console.warn(`[QwenOfficeReadiness] command=${path.basename(resolvedCommand)} reason=${value.reason} attempt=${attempt} retrying=true`);
+      }
+      value = { ...value, attempts };
+      logReadinessDiagnostic(resolvedCommand, value);
+      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
+      return value;
+    } catch (error) {
+      const value: QwenOfficeReadiness = {
+        executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: safeDiagnostic(error),
+      };
+      logReadinessDiagnostic(resolvedCommand, value);
+      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
+      return value;
+    }
+  })();
+  statusRefreshes.set(resolvedCommand, refresh);
+  try { return await refresh; } finally { statusRefreshes.delete(resolvedCommand); }
 }
 
 function isQwenOfficeRuntimeReady(command?: string): boolean {
@@ -231,6 +260,7 @@ module.exports = {
   resolveQwenOfficeRuntime,
   isQwenOfficeRuntimeAvailable,
   getQwenOfficeReadiness,
+  refreshQwenOfficeReadiness,
   classifyQwenOfficeStatusResult,
   isQwenOfficeRuntimeReady,
   invalidateQwenOfficeReadiness,

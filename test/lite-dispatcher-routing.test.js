@@ -500,6 +500,22 @@ test('background delivery error closes the exact ordinary Turn with a terminal s
   assert.equal(statuses[1].turnId, 'turn-error');
 });
 
+test('background authentication errors close an ordinary Turn as login_expired', async () => {
+  const statuses = [];
+  const target = eventProvider('cli', 1, [], true);
+  target.push = async payload => {
+    setTimeout(() => target.emit('delivery.error', { agentId: payload.agentId, turnId: payload.turnId || payload.messageId,
+      kind: 'auth_required', error: 'Hermes authentication required', errorCode: 'PROVIDER_AUTH_REQUIRED' }), 5);
+  };
+  const dispatcher = createDispatcher({ db: dbFor(['cli']), providers: { 'hermes-cli': target },
+    onAgentReply() {}, onTurnStatus: status => statuses.push(status) });
+  dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
+    content: 'hello', messageId: 'message-auth', turnId: 'turn-auth' });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(statuses.map(status => status.status), ['processing', 'login_expired']);
+  assert.equal(statuses[1].code, 'PROVIDER_AUTH_REQUIRED');
+});
+
 test('rejected delivery is not retried even when the provider marks the channel unavailable', async () => {
   const calls = [];
   const rejected = new Error('provider rejected request');

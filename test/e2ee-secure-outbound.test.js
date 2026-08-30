@@ -18,6 +18,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
   const databasePath=path.join(root,'e2ee.db');
   const db=new DatabaseSync(databasePath);
   const store=new E2eeV2Store(db,databasePath);
+  let activeDirectoryError=directoryError;
   let directoryCalls=0,rawCalls=0;const directoryInputs=[];
   const encrypted=[];
   const delivered=[];const uploads=[];
@@ -25,7 +26,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
   const recipients=[1,2].map(index=>({deviceId:`device-${index}`,generation:index,keyId:`key-${index}`,
     publicBundle:{protocolVersion:'voko.e2ee/2',suite:'X25519-HKDF-SHA256-CHACHA20POLY1305',
       keyId:`key-${index}`,hpkePublicKey:'h',signingPublicKey:'s'}}));
-  const directory={async resolveRecipients(input){directoryCalls+=1;directoryInputs.push(input);if(directoryError)throw directoryError;
+  const directory={async resolveRecipients(input){directoryCalls+=1;directoryInputs.push(input);if(activeDirectoryError)throw activeDirectoryError;
     return{peerKind,peerScopeId,...(peerKind==='agent'?{peerAgentDid:'did:wba:peer-agent'}:{}),capability,
       protocolConversationId:peerKind==='agent'?(input.conversationKey||'agent-context-1'):'guest-conversation',
       revision:'revision-1',expiresAt:Date.now()+300_000,recipients:capability==='supported'?recipients:[]};}};
@@ -44,6 +45,7 @@ function fixture({capability='supported',directoryError=null,agentPeerEnabled=tr
       delivered.push({agentId,messageId});},
     enabled:()=>enabled,agentPeerEnabled:()=>agentPeerEnabled,attachmentsEnabled:()=>attachmentsEnabled});
   return{router,store,db,root,encrypted,delivered,uploads,directoryInputs,counts:()=>({directoryCalls,rawCalls}),
+    setDirectoryError(value){activeDirectoryError=value;},
     close(){db.close();fs.rmSync(root,{recursive:true,force:true});}};
 }
 
@@ -201,7 +203,7 @@ test('background refresh reactivates historical transient locks after Directory 
       peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
     f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_502');
     f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
-    await f.router.refreshActive();
+    await f.router.refreshTransientLocked();
     assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
   }finally{f.close();}
 });
@@ -231,9 +233,68 @@ test('background refresh retries a persisted Directory 404 lock',async()=>{
     f.db.prepare(`UPDATE e2ee_v2_conversations SET last_verified_at=0 WHERE local_agent_id='gym'`).run();
     assert.deepEqual(f.store.transientLockedConversations().map(row=>row.lock_reason),
       ['E2EE_V2_DIRECTORY_HTTP_404']);
-    await f.router.refreshActive();
+    await f.router.refreshTransientLocked();
     assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
   }finally{f.close();}
+});
+
+test('historical lock recovery has an independent fair budget and immediate retries are deferred',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    for(let index=0;index<30;index+=1){
+      f.store.saveConversation({localAgentId:'gym',channelId:`guest-${index}`,routingConversationId:`routing-${index}`,
+        wireConversationKey:`wire-${index}`,protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+        peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+      f.store.lockConversation('gym',`guest-${index}`,`routing-${index}`,'E2EE_V2_DIRECTORY_HTTP_404');
+    }
+    assert.equal(f.store.transientLockedConversationCount(),30);
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,25);
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,30,'deferred head rows must not starve later due rows');
+    await f.router.refreshTransientLocked(25,500);
+    assert.equal(f.counts().directoryCalls,30,'backoff must suppress immediate repeated Directory calls');
+  }finally{f.close();}
+});
+
+test('a new message bypasses historical-lock background backoff and can recover immediately',async()=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+    await f.router.refreshTransientLocked();
+    assert.equal(f.counts().directoryCalls,1);
+    f.setDirectoryError(null);
+    const result=await f.router.deliver('gym','guest-im','recover now','text',1,null,'business-after-backoff');
+    assert.equal(result.success,true);
+    assert.equal(f.counts().directoryCalls,2);
+    assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
+  }finally{f.close();}
+});
+
+test('historical-lock retry delay follows bounded exponential backoff with process-stable jitter',async t=>{
+  const error=Object.assign(new Error('not found'),{code:'E2EE_V2_DIRECTORY_HTTP_404'});
+  const f=fixture({directoryError:error});
+  const originalNow=Date.now;
+  t.after(()=>{Date.now=originalNow;f.close();});
+  let now=originalNow();
+  Date.now=()=>now;
+  f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+    wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+    peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+  f.store.lockConversation('gym','guest-im','routing-1','E2EE_V2_DIRECTORY_HTTP_404');
+  const key='gym\0guest-im\0routing-1';
+  for(const base of [60_000,120_000,240_000,480_000,960_000,1_800_000]){
+    await f.router.refreshTransientLocked();
+    const state=f.router.lockedRetryState.get(key);
+    const delay=state.nextAttemptAt-now;
+    assert.ok(delay>=base*0.9&&delay<=base*1.1,`delay ${delay} must be a jittered ${base}`);
+    now=state.nextAttemptAt;
+  }
 });
 
 test('a Directory 404 lock never downgrades while Directory still returns 404',async()=>{

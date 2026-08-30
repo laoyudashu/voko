@@ -184,6 +184,22 @@ test('isolated delivery error closes only the exact selected Provider Turn', asy
   assert.equal(ordinary.length,0);
 });
 
+test('isolated auth_required delivery errors keep AUTH_REQUIRED while outcome remains unknown',async()=>{
+  const selected=new Provider();
+  selected.push=function(payload){this.payload=payload;return{nativeSessionId:'selected-native'};};
+  const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':selected},onAgentReply() {}});
+  const pending=dispatcher.executeE2ee({agentId:'agent-1',taskId:'auth-task',contextId:'auth-context',
+    content:'hello',sessionScopeId:'auth-scope',timeoutMs:5_000});
+  await new Promise(resolve=>setImmediate(resolve));
+  selected.emit('delivery.error',{agentId:'agent-1',turnId:selected.payload.turnId,
+    kind:'auth_required',error:'Hermes authentication required'});
+  await assert.rejects(pending,error=>{
+    assert.equal(error.code,'PROVIDER_AUTH_REQUIRED');
+    assert.equal(error.deliveryOutcome,'outcome_unknown');
+    return true;
+  });
+});
+
 test('an isolated reply stays dropped after its retirement tombstone expires',async()=>{
   const provider=new Provider();
   provider.push=function(payload){this.payload=payload;return{nativeSessionId:'expired-native'};};

@@ -372,13 +372,23 @@ export class E2eeV2Store {
       ORDER BY last_verified_at ASC LIMIT ?`).all(limit) as E2eeV2ConversationRow[];
   }
 
-  transientLockedConversations(limit=500):E2eeV2ConversationRow[]{
+  transientLockedConversationCount():number{
+    const row=this.db.prepare(`SELECT COUNT(*) AS count FROM e2ee_v2_conversations WHERE mode='locked' AND (
+      lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
+        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404')
+        OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')`).get() as {count?:number}|undefined;
+    return Number(row?.count||0);
+  }
+
+  transientLockedConversations(limit=500,offset=0):E2eeV2ConversationRow[]{
     return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='locked' AND (
       lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
         'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
         'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404')
         OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
-      ORDER BY updated_at ASC LIMIT ?`).all(limit) as E2eeV2ConversationRow[];
+      ORDER BY updated_at ASC,local_agent_id ASC,channel_id ASC,routing_conversation_id ASC LIMIT ? OFFSET ?`)
+      .all(limit,offset) as E2eeV2ConversationRow[];
   }
 
   saveConversation(input:{localAgentId:string;channelId:string;routingConversationId?:string;

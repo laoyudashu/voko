@@ -77,6 +77,31 @@ test('QwenWork shallow readiness allows a cold start and one retry', () => {
   assert.match(source, /STATUS_MAX_ATTEMPTS = 2/);
   assert.match(source, /value\.reason === 'status_timeout' \|\| value\.reason === 'status_invalid_output'/);
   assert.match(source, /retrying=true/);
+  assert.doesNotMatch(source, /spawnSync/);
+  assert.match(source, /statusRefreshes/);
+});
+
+test('QwenWork readiness never blocks the event loop while the status command is slow', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX executable fixture');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-slow-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cli = path.join(root, 'qoderclicn');
+  const calls = path.join(root, 'calls');
+  fs.writeFileSync(cli, `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(calls)}, '1');setTimeout(() => process.stdout.write('{"logged_in":true,"version":"test"}'), 250);\n`);
+  fs.chmodSync(cli, 0o755);
+  qwenCommand.invalidateQwenOfficeReadiness(cli);
+  let timerFired = false;
+  const timer = new Promise(resolve => setTimeout(() => { timerFired = true; resolve(); }, 25));
+  const startedAt = Date.now();
+  const pending = qwenCommand.getQwenOfficeReadiness(cli);
+  assert.equal(pending.ready, false);
+  assert.ok(Date.now() - startedAt < 100, 'cold readiness lookup must return without waiting for the CLI');
+  await timer;
+  assert.equal(timerFired, true);
+  const ready = await qwenCommand.refreshQwenOfficeReadiness(cli);
+  assert.equal(ready.ready, true);
+  assert.equal(qwenCommand.getQwenOfficeReadiness(cli).ready, true);
+  assert.equal(fs.readFileSync(calls, 'utf8'), '1', 'concurrent readiness lookups must share one status process');
 });
 
 test('Trae resolver prefers an explicit traecli binary and exposes ACP mode', () => {

@@ -74,6 +74,9 @@ export class SecureOutboundRouter {
   private readonly inflight=new Map<string,Promise<Resolution>>();
   private readonly recentDiagnostics=new Map<string,number>();
   private readonly pendingProjectionMarks=new Set<string>();
+  private readonly lockedRetryState=new Map<string,{attempts:number;nextAttemptAt:number;seenAt:number}>();
+  private readonly lockedRetrySalt=crypto.randomBytes(8).toString('hex');
+  private lockedScanOffset=0;
   private projectionTimer:ReturnType<typeof setTimeout>|null=null;
 
   constructor(private readonly options:{store:E2eeV2Store;directory:E2eeV2DirectoryClient;runtime:E2eeV2Runtime;
@@ -117,6 +120,24 @@ export class SecureOutboundRouter {
     return `${agentId}\0${channelId}\0${routingConversationId}`;
   }
 
+  private lockedRetryDelay(key:string,attempts:number):number{
+    const base=Math.min(30*60_000,60_000*(2**Math.max(0,attempts-1)));
+    const hash=crypto.createHash('sha256').update(`VOKO-E2EE-LOCK-RETRY\0${this.lockedRetrySalt}\0${key}`)
+      .digest().readUInt32BE(0);
+    return Math.round(base*(0.9+(hash/0xffffffff)*0.2));
+  }
+
+  private rememberLockedFailure(key:string,now:number):void{
+    const previous=this.lockedRetryState.get(key);
+    const attempts=Math.min(6,(previous?.attempts||0)+1);
+    this.lockedRetryState.set(key,{attempts,nextAttemptAt:now+this.lockedRetryDelay(key,attempts),seenAt:now});
+    if(this.lockedRetryState.size>2048){
+      const oldest=[...this.lockedRetryState.entries()].sort((a,b)=>a[1].seenAt-b[1].seenAt)
+        .slice(0,this.lockedRetryState.size-2048);
+      for(const [candidate] of oldest)this.lockedRetryState.delete(candidate);
+    }
+  }
+
   private existingConversation(agentId:string,channelId:string,routingConversationId:string):E2eeV2ConversationRow|null{
     const exact=this.options.store.conversation(agentId,channelId,routingConversationId);
     if(exact||routingConversationId)return exact;
@@ -126,7 +147,7 @@ export class SecureOutboundRouter {
   }
 
   private async resolve(agentId:string,channelId:string,routingConversationId:string,
-    wireConversationKey:string,force=false):Promise<Resolution>{
+    wireConversationKey:string,force=false,diagnostics=true):Promise<Resolution>{
     const key=this.cacheKey(agentId,channelId,routingConversationId);
     const cached=this.cache.get(key);
     if(!force&&cached&&cached.expiresAt>Date.now())return cached.value;
@@ -149,7 +170,7 @@ export class SecureOutboundRouter {
       const value={...row,expiresAt:Math.min(Number(row.expiresAt)||Date.now()+ttl,Date.now()+ttl)} as Resolution;
       this.cache.set(key,{expiresAt:value.expiresAt,value});
       this.failureCache.delete(key);
-      if(value.capability!=='supported')this.capabilityDiagnostic({agentId,peerKind:value.peerKind,
+      if(diagnostics&&value.capability!=='supported')this.capabilityDiagnostic({agentId,peerKind:value.peerKind,
         stage:'resolve_recipients',code:value.capability==='unsupported'
           ?'RECIPIENT_UNSUPPORTED':'DIRECTORY_TEMPORARILY_UNAVAILABLE',decision:value.capability});
       if(value.capability==='supported')this.options.store.saveRecipientSnapshot({localAgentId:agentId,
@@ -159,7 +180,7 @@ export class SecureOutboundRouter {
     }catch(error){
       const code=errorCode(error);
       this.failureCache.set(key,{expiresAt:Date.now()+10_000,code});
-      this.capabilityDiagnostic({agentId,stage:'resolve_recipients',code,decision:'resolution_failed'});
+      if(diagnostics)this.capabilityDiagnostic({agentId,stage:'resolve_recipients',code,decision:'resolution_failed'});
       throw error;
     }
     })().finally(()=>this.inflight.delete(key));
@@ -299,6 +320,7 @@ export class SecureOutboundRouter {
           securityMode:'e2ee',reason:'active_conversation_locked'};
       }
       existing=this.options.store.conversation(agentId,channelId,existing.routing_conversation_id);
+      this.lockedRetryState.delete(this.cacheKey(agentId,channelId,existing?.routing_conversation_id||route.routingConversationId));
     }
     if(existing?.mode==='e2ee_active'&&(existing.peer_scope_id!==resolved.peerScopeId
         ||existing.peer_kind!==resolved.peerKind
@@ -535,33 +557,76 @@ export class SecureOutboundRouter {
     this.flushProjectionMarks();
   }
 
+  private async refreshConversation(row:E2eeV2ConversationRow):Promise<boolean>{
+    const resolved=await this.resolve(row.local_agent_id,row.channel_id,row.routing_conversation_id,
+      row.wire_conversation_key,true,false);
+    if(resolved.capability==='unsupported')this.options.store.lockConversation(row.local_agent_id,row.channel_id,
+      row.routing_conversation_id,'E2EE_V2_RECIPIENT_REVOKED');
+    else if(resolved.capability==='supported'){
+      const identityMatches=row.peer_scope_id===resolved.peerScopeId&&row.peer_kind===resolved.peerKind
+        &&row.protocol_conversation_id===String(resolved.protocolConversationId);
+      if(!identityMatches)this.options.store.lockConversation(row.local_agent_id,row.channel_id,
+        row.routing_conversation_id,'E2EE_V2_PEER_IDENTITY_CHANGED');
+      else if(row.mode==='locked')this.options.store.reactivateConversation({localAgentId:row.local_agent_id,
+        channelId:row.channel_id,routingConversationId:row.routing_conversation_id,
+        expectedLockReason:String(row.lock_reason),protocolConversationId:String(resolved.protocolConversationId),
+        peerScopeId:resolved.peerScopeId,peerKind:resolved.peerKind,recipientRevision:resolved.revision});
+      else this.options.store.saveConversation({localAgentId:row.local_agent_id,channelId:row.channel_id,
+        routingConversationId:row.routing_conversation_id,wireConversationKey:row.wire_conversation_key,
+        protocolConversationId:String(resolved.protocolConversationId),peerScopeId:resolved.peerScopeId,
+        peerKind:resolved.peerKind,mode:'e2ee_active',recipientRevision:resolved.revision});
+      return identityMatches;
+    }
+    return false;
+  }
+
   async refreshActive(limit=500):Promise<void>{
-    const rows=[...this.options.store.activeConversations(limit),
-      ...this.options.store.transientLockedConversations(limit)];
+    const rows=this.options.store.activeConversations(limit);
     for(const row of rows){
       if(Date.now()-row.last_verified_at<50_000+Math.floor(Math.random()*20_000))continue;
       try{
-        const resolved=await this.resolve(row.local_agent_id,row.channel_id,row.routing_conversation_id,
-          row.wire_conversation_key,true);
-        if(resolved.capability==='unsupported')this.options.store.lockConversation(row.local_agent_id,row.channel_id,
-          row.routing_conversation_id,'E2EE_V2_RECIPIENT_REVOKED');
-        else if(resolved.capability==='supported'){
-          const identityMatches=row.peer_scope_id===resolved.peerScopeId&&row.peer_kind===resolved.peerKind
-            &&row.protocol_conversation_id===String(resolved.protocolConversationId);
-          if(!identityMatches)this.options.store.lockConversation(row.local_agent_id,row.channel_id,
-            row.routing_conversation_id,'E2EE_V2_PEER_IDENTITY_CHANGED');
-          else if(row.mode==='locked')this.options.store.reactivateConversation({localAgentId:row.local_agent_id,
-            channelId:row.channel_id,routingConversationId:row.routing_conversation_id,
-            expectedLockReason:String(row.lock_reason),protocolConversationId:String(resolved.protocolConversationId),
-            peerScopeId:resolved.peerScopeId,peerKind:resolved.peerKind,recipientRevision:resolved.revision});
-          else this.options.store.saveConversation({localAgentId:row.local_agent_id,channelId:row.channel_id,
-            routingConversationId:row.routing_conversation_id,wireConversationKey:row.wire_conversation_key,
-            protocolConversationId:String(resolved.protocolConversationId),peerScopeId:resolved.peerScopeId,
-            peerKind:resolved.peerKind,mode:'e2ee_active',recipientRevision:resolved.revision});
-        }
+        await this.refreshConversation(row);
       }catch(error){if(!isTransientE2eeDirectoryError(error))this.options.store.lockConversation(row.local_agent_id,
         row.channel_id,row.routing_conversation_id,errorCode(error));}
     }
+  }
+
+  async refreshTransientLocked(limit=25,scanLimit=500):Promise<void>{
+    const startedAt=Date.now();
+    const total=this.options.store.transientLockedConversationCount();
+    if(total===0){this.lockedScanOffset=0;this.lockedRetryState.clear();return;}
+    if(this.lockedScanOffset>=total)this.lockedScanOffset=0;
+    const rows=this.options.store.transientLockedConversations(Math.min(scanLimit,total),this.lockedScanOffset);
+    this.lockedScanOffset=(this.lockedScanOffset+rows.length)%total;
+    const now=Date.now();
+    const due=rows.filter(row=>(this.lockedRetryState.get(
+      this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id))?.nextAttemptAt||0)<=now).slice(0,limit);
+    const failures:Record<string,number>={};
+    let recovered=0;
+    for(const row of due){
+      const key=this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id);
+      try{
+        const restored=await this.refreshConversation(row);
+        const current=this.options.store.conversation(row.local_agent_id,row.channel_id,row.routing_conversation_id);
+        if(restored||current?.mode!=='locked'||!isRecoverableDirectoryLockReason(current.lock_reason)){
+          this.lockedRetryState.delete(key);
+          if(restored)recovered+=1;
+        }else this.rememberLockedFailure(key,now);
+      }catch(error){
+        const code=errorCode(error);
+        failures[code]=(failures[code]||0)+1;
+        if(!isTransientE2eeDirectoryError(error)&&code!=='E2EE_V2_DIRECTORY_HTTP_404'){
+          this.options.store.lockConversation(row.local_agent_id,row.channel_id,row.routing_conversation_id,code);
+          this.lockedRetryState.delete(key);
+        }else this.rememberLockedFailure(key,now);
+      }
+    }
+    for(const [key,state] of this.lockedRetryState){
+      if(now-state.seenAt>60*60_000)this.lockedRetryState.delete(key);
+    }
+    const deferred=rows.filter(row=>(this.lockedRetryState.get(
+      this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id))?.nextAttemptAt||0)>now).length;
+    if(due.length>0)console.warn(`[E2EE] 历史锁恢复 scanned=${rows.length} due=${due.length} deferred=${deferred} recovered=${recovered} failures=${JSON.stringify(failures)} durationMs=${Date.now()-startedAt}`);
   }
 }
 

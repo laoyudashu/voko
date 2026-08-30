@@ -2184,6 +2184,7 @@ async function startMcpServer(args?: any, core?: any) {
            await e2eeRuntime.recover(50);
            await secureOutboundRouter.recover(100);
            await secureOutboundRouter.refreshActive(500);
+           await secureOutboundRouter.refreshTransientLocked(25,500);
          }finally{running=false;}};
         void Promise.all([e2eeRuntime.recover(50),secureOutboundRouter.recover(100)])
           .catch((error:any)=>console.warn('[E2EE] Outbox恢复失败:',error?.message||'unknown'));

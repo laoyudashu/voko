@@ -287,7 +287,7 @@ test('Hermes CLI fallback classifies approval and timeout failures', async () =>
   }
 });
 
-test('Hermes CLI does not publish an upstream authentication error as an Agent reply', async () => {
+test('Hermes CLI publishes an upstream authentication error as AUTH_REQUIRED, never as an Agent reply', async () => {
   const errors = [];
   const replies = [];
   const provider = new HermesCliProvider({
@@ -299,7 +299,8 @@ test('Hermes CLI does not publish an upstream authentication error as an Agent r
   await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'auth-error' });
   await provider.waitForIdle();
   assert.equal(replies.length, 0);
-  assert.equal(errors[0].kind, 'execution_failed');
+  assert.equal(errors[0].kind, 'auth_required');
+  assert.equal(errors[0].errorCode, 'PROVIDER_AUTH_REQUIRED');
 });
 
 test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {

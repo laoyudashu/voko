@@ -86,7 +86,8 @@ class HermesCliProvider extends PushProvider {
     }
   }
 
-  _failureKind(error: unknown): 'approval_required' | 'timeout' | 'execution_failed' {
+  _failureKind(error: unknown): 'approval_required' | 'auth_required' | 'timeout' | 'execution_failed' {
+    if (String((error as any)?.code || '') === 'PROVIDER_AUTH_REQUIRED') return 'auth_required';
     const message = errorMessage(error);
     if (/pending[_ ]approval|approval.*(?:pending|required)|等待授权/i.test(message)) return 'approval_required';
     if (/超时|timed?\s*out|timeout/i.test(message)) return 'timeout';
@@ -101,9 +102,10 @@ class HermesCliProvider extends PushProvider {
       console.error(`[HermesCli] queue_finish agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId}`);
     }).catch((error: unknown) => {
       const kind = this._failureKind(error);
-      const labels = { approval_required: '等待工具授权', timeout: '执行超时', execution_failed: '执行失败' };
+      const labels = { approval_required: '等待工具授权', auth_required: '认证失效', timeout: '执行超时', execution_failed: '执行失败' };
       console.error(`[HermesCli] ${labels[kind]} profile=${profileId}: ${errorMessage(error)}`);
       this.emit('delivery.error', { provider: 'hermes-cli', profileId, kind, error: errorMessage(error),
+        ...((error as any)?.code ? { errorCode: String((error as any).code) } : {}),
         agentId: context?.agentId, turnId: context?.turnId, sourceMessageIds: context?.sourceMessageIds });
     }).finally(() => {
       if (this._queues.get(profileId) === current) this._queues.delete(profileId);
@@ -191,6 +193,11 @@ class HermesCliProvider extends PushProvider {
 
       if (result.code === 0) {
         const replyText = _extractReply(result.stdout);
+        if (replyText && _isUpstreamAuthErrorReply(replyText)) {
+          const error: any = new Error('Hermes authentication required');
+          error.code = 'PROVIDER_AUTH_REQUIRED';
+          throw error;
+        }
         if (replyText && !_isUpstreamErrorReply(replyText)) {
           this.emit('agent.reply', {
             agentId, visitorId: fromUid,
@@ -348,6 +355,11 @@ function _extractReply(stdout: string): string | null {
 
 function _isUpstreamErrorReply(reply: string): boolean {
   return /^(?:http\s+[45]\d{2}\b|(?:authentication|authorization)\s+(?:error|required|failed)|(?:invalid|missing)\s+(?:api[ _-]?key|authentication))/i.test(reply.trim());
+}
+
+function _isUpstreamAuthErrorReply(reply: string): boolean {
+  return /(?:http\s+401\b|missing\s+authentication\s+header|authentication\s+(?:required|failed|error)|unauthori[sz]ed|invalid\s+(?:api[ _-]?key|authentication))/i
+    .test(reply.trim());
 }
 
 function _buildNotification(
