@@ -48,37 +48,43 @@ async function callMcp(request, name, args, id = Date.now()) {
   return JSON.parse(text);
 }
 
-test('single chat sends and receives text through the real worker and Mock Provider', async ({ page, request }) => {
-  await page.goto('/agents/e2e-agent/c/e2e-visitor');
+test('single chat sends and receives text through the real worker and Mock Provider', async ({ page, request }, testInfo) => {
+  const runOffset = (testInfo.repeatEachIndex || 0) * 100 + (testInfo.retry || 0) * 10;
+  const channelId = `e2e-visitor-${testInfo.repeatEachIndex || 0}-${testInfo.retry || 0}`;
+  const inboundId = String(1101 + runOffset);
+  const inboundContent = `single inbound e2e ${runOffset}`;
+  const outboundContent = `single outbound e2e ${runOffset}`;
+  await page.goto(`/agents/e2e-agent/c/${channelId}`);
   await expect(page.locator('#c')).toBeVisible();
 
   await expect(await inject(request, {
     toUid: 'e2e-im-uid',
-    fromUid: 'e2e-visitor',
-    channelId: 'e2e-visitor',
+    fromUid: channelId,
+    channelId,
     channelType: 1,
-    messageId: '1101',
-    messageSeq: 1,
-    content: 'single inbound e2e',
+    messageId: inboundId,
+    messageSeq: 1 + runOffset,
+    content: inboundContent,
   })).toMatchObject({ success: true, delivered: true, count: 1 });
-  await waitForMessages('e2e-visitor', rows => rows.some(row => row.id === '1101') && rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes('single inbound e2e')));
+  await waitForMessages(channelId, rows => rows.some(row => row.id === inboundId) && rows.some(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes(inboundContent)));
 
   await page.reload();
-  await expect(page.locator('#msg-box')).toContainText('single inbound e2e');
+  await expect(page.locator('#msg-box')).toContainText(inboundContent);
   await expect(page.locator('#msg-box')).toContainText('[echo]');
 
-  await page.locator('#c').fill('single outbound e2e');
+  await page.locator('#c').fill(outboundContent);
   await page.locator('form[action="/messages/send"] button[type="submit"]').click();
-  const rows = await waitForMessages('e2e-visitor', messages => messages.some(row => row.is_me === 1 && row.content === 'single outbound e2e'));
-  await page.waitForURL(/\/agents\/e2e-agent\/c\/e2e-visitor(?:\?|$)/);
-  await expect(page.locator('#msg-box')).toContainText('single outbound e2e');
+  const rows = await waitForMessages(channelId, messages => messages.some(row => row.is_me === 1 && row.content === outboundContent));
+  await page.waitForURL(new RegExp(`/agents/e2e-agent/c/${channelId}(?:\\?|$)`));
+  await expect(page.locator('#msg-box')).toContainText(outboundContent);
 
   const uniqueIds = new Set(rows.map(row => row.id));
   expect(uniqueIds.size).toBe(rows.length);
-  expect(rows.filter(row => row.is_me === 1).every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
-  expect(rows.every(row => row.channel_id === 'e2e-visitor' && row.channel_type === 1)).toBeTruthy();
+  expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')
+    .every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
+  expect(rows.every(row => row.channel_id === channelId && row.channel_type === 1)).toBeTruthy();
   const state = await runtime(request);
-  const direct = state.messageStats.find(item => item.channelId === 'e2e-visitor');
+  const direct = state.messageStats.find(item => item.channelId === channelId);
   expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(2);
   expect(Number(direct.replies)).toBe(3);
   expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
