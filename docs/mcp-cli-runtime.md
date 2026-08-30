@@ -130,6 +130,8 @@ The result separates three independent stages:
 
 Execution and reply tracking do not survive a Lite runtime restart. After restart, a persisted outbound message remains queryable, but `execution.state` is `UNCONFIRMED` with `reasonCode: RUNTIME_STATE_NOT_AVAILABLE`. This read-only query never retries or resends the message. Only query a `messageId` returned for the same `agentId`; missing, inbound, or differently owned messages return `MESSAGE_RESULT_NOT_FOUND` without disclosing their metadata.
 
+Inbound delivery uses Provider Turns independently of this outbound result query. Closely spaced messages in one Agent, peer, channel and routing Conversation may share one in-memory `turnId` and one Provider invocation, while their original `messageId` values, attachment order, database rows and Pull visibility remain independent. Turn membership is not persisted across a runtime restart.
+
 `ask_human_for_help` accepts either `replyToMessageId` (preferred) or `conversationId`, and returns the Conversation retained by the intervention. An invalid, cross-Agent, or cross-channel Conversation fails closed; omitting it retains compatible channel-level behavior.
 
 ## Stop and uninstall

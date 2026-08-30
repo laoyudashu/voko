@@ -19,6 +19,12 @@
 - The npm release workflow additionally runs Chromium E2E before creating the
   verified tarball; real IM checks remain manual and are never run in CI.
 
+Pull requests run Node 22 on Ubuntu, Windows and macOS, Chromium E2E, CodeQL,
+security checks and the E2EE core on all three operating systems. A push to
+protected `main` expands the matrix to Node 22/24 and Chromium, Firefox and
+WebKit. The expanded `main` matrix is part of release evidence and must not be
+replaced by a successful pull-request subset.
+
 The test runners use four-way cross-file concurrency by default. Build-mutating
 and process-identity tests run in isolated serial groups so concurrent tests do
 not replace `build/` or race Windows process inspection. Override the worker
@@ -35,6 +41,12 @@ Supported suites are `unit`, `component`, `targeted` and `ci`. Reports are
 written under `test-reports/` and are intentionally ignored by Git.
 
 The source of truth for file classification and business mapping is `test/test-matrix.json`. New test files default to the component layer until explicitly reviewed as deterministic unit tests.
+
+Continuous-message coverage verifies Turn isolation by Agent, peer, channel and
+routing Conversation; text/attachment ordering; messages arriving during an
+executing Turn; online, offline-sync and E2EE parity; and Provider execution
+counts. Original messages remain independently queryable even when one Provider
+Turn contains several source message IDs.
 
 ## Cline acceptance
 

@@ -43,6 +43,7 @@ Malformed, oversized, replayed, cross-Agent, cross-conversation, wrong-recipient
 - Decrypted messages enter the ordinary local conversation store, so local history and Web UI use the same plaintext projection as non-E2EE messages.
 - Provider acceptance followed by an unknown outcome is not automatically executed again.
 - A reply envelope is persisted before transport and resent with the same message ID if delivery acknowledgement is lost.
+- Provider Turn coalescing occurs only after each envelope has been authenticated, decrypted, acknowledged and deduplicated. Turn IDs are in-memory execution correlation and do not replace per-message persistence or receipt semantics.
 - Recipient capabilities, encrypted outbox state, and Conversation security mode live in the independent E2EE database; the main VOKO schema is unchanged.
 - Once a Conversation has become E2EE-active, an unavailable Directory, revoked key, or changed peer identity locks it instead of silently falling back to plaintext.
 - Loss of an endpoint private key makes old ciphertext unavailable. The new key applies only to later messages; there is no v1 migration or silent historical recovery claim.

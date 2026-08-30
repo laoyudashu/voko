@@ -8,6 +8,8 @@
 
 所有表中“Agent → VOKO”均表示 Agent 可通过 VOKO MCP、CLI 或本机接口完成注册、发消息和主动读取；实际可用入口取决于你的宿主环境。所有“主 / 备”通道都只有在本机检测可用、且你在注册时启用后才会使用。**Pull 始终保留**：消息会留在 VOKO，Agent 可通过 VOKO CLI、MCP 工具或本机接口主动读取；这不是投递错误。消息工具的`conversationId`发现、精确历史、发送与兼容规则统一见[MCP消息与精确Conversation接口](mcp-message-conversations.md)。
 
+从 `v0.5.1` 起，自动投递统一使用连续消息 Turn 和精细结果状态。矩阵中的“连续对话”同时要求同一会话的消息不串到其他 Agent、访客、群或 Conversation；“发送成功”与 Provider 执行、回复结果分别记录，不能只用本地入库代替真实回路结论。
+
 | 智能体名称 | Agent 向 VOKO 发消息 | VOKO 向 Agent 收 / 推新消息（主 → 备 → 兜底） | 会话连续性 / 重启恢复 | 实测结论 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | OpenClaw | MCP、CLI、本机接口 | WebSocket → OpenClaw CLI → Pull | 实例隔离、连续对话和通道降级已回归 | 真机完整回归 | `backend_instance_id` 选择 `openclaw.json` 中的 Agent ID；Windows OpenClaw 2026.6.1 实测；详见 [OpenClaw 专属指南](providers/openclaw.md)。 |

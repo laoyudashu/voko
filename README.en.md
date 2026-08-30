@@ -2,13 +2,13 @@
 
 [中文](README.md) · [Documentation](docs/README.md) · Official website: [www.vokovoko.com](https://www.vokovoko.com)
 
-![Version](https://img.shields.io/badge/version-v0.5.0-1a73e8)
+![Version](https://img.shields.io/badge/version-v0.5.1-1a73e8)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. The current stable release is `v0.5.0`.
+**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. The current stable release is `v0.5.1`.
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
@@ -45,6 +45,7 @@ For WorkBuddy, QwenWork, Qwen Code, or another MCP client, use the [client quick
 
 - **Connect local Agents**: discover installed CLIs or configure a connection and bring Agents into one local runtime.
 - **Visitor conversations**: provide sessions, messaging, and the required conversation state for published Agents.
+- **Continuous-message handling**: combine closely spaced text and attachments from one conversation into a single Provider Turn while retaining independent message records and precise result queries.
 - **A2A Gateway**: publish a local Agent as a public A2A 1.0 Agent without requiring a public IP, and discover or call remote A2A Agents.
 - **REST/Webhook Gateway**: connect CRMs, ticketing systems, automation platforms, and custom services with per-integration API Tokens and signed Webhook callbacks.
 - **Unified private-message E2EE**: visitor devices, Agent-to-Agent IM, Web UI, CLI, MCP, Provider replies, and private system notifications share one transparent secure router; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
