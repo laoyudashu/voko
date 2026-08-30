@@ -72,7 +72,7 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const runtime = resolveWorkBuddyRuntime({ env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ''}` } });
   assert.equal(runtime.source, 'path');
-  assert.equal(runtime.command, path.resolve(command));
+  assert.equal(fs.realpathSync.native(runtime.command), fs.realpathSync.native(command));
   const args = workBuddyServeArgs(['bundled-cli'], 12345, 'voko-session');
   assert.deepEqual(args.slice(0, 10), ['bundled-cli', '--serve', '--host', '127.0.0.1', '--port', '12345',
     '--session-id', 'voko-session', '--permission-mode', 'dontAsk']);
