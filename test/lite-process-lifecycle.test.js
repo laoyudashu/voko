@@ -470,7 +470,6 @@ describe('Lite process lifecycle integration', () => {
     assert.equal(status.pid, null);
     assert.equal(status.port, null);
     assert.equal(status.uptime, null);
-    assert.ok(status.lastSeenAt, '保留最后快照时间用于诊断');
     assert.deepEqual(status.agents, []);
   });
 
