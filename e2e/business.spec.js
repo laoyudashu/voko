@@ -80,8 +80,10 @@ test('single chat sends and receives text through the real worker and Mock Provi
 
   const uniqueIds = new Set(rows.map(row => row.id));
   expect(uniqueIds.size).toBe(rows.length);
-  expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')
-    .every(row => row.client_msg_no || row.content.includes('[echo]'))).toBeTruthy();
+  const echoReply = rows.find(row => row.is_me === 1 && row.content.includes('[echo]') && row.content.includes(inboundContent));
+  const directReply = rows.find(row => row.is_me === 1 && row.content === outboundContent);
+  expect(echoReply).toBeTruthy();
+  expect(directReply?.client_msg_no).toBeTruthy();
   expect(rows.every(row => row.channel_id === channelId && row.channel_type === 1)).toBeTruthy();
   const state = await runtime(request);
   const direct = state.messageStats.find(item => item.channelId === channelId);

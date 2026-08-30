@@ -331,10 +331,14 @@ export function matchesWorkerProcess(
     && command.includes(`--voko-instance-id=${metadata.instanceId}`);
 }
 
-function buildInstanceMetadata(dbPath: string, entryPath: string): InstanceMetadata {
-  const identity = inspectProcess(process.pid);
+function buildInstanceMetadata(
+  dbPath: string,
+  entryPath: string,
+  inspect: (pid: number) => ProcessIdentity | null = inspectProcess,
+): InstanceMetadata {
+  const identity = inspect(process.pid);
   if (!identity) throw new Error(`无法读取当前 Lite 进程身份（PID ${process.pid}）`);
-  const parent = identity.parentPid ? inspectProcess(identity.parentPid) : null;
+  const parent = identity.parentPid ? inspect(identity.parentPid) : null;
   const now = Date.now();
   return {
     version: 1,
@@ -410,7 +414,7 @@ export async function acquireInstanceLock(
       fs.mkdirSync(paths.lockDir, { mode: 0o700 });
       try {
         securePath(paths.lockDir, true);
-        const metadata = buildInstanceMetadata(dbPath, entryPath);
+        const metadata = buildInstanceMetadata(dbPath, entryPath, inspect);
         atomicWriteJson(paths.ownerFile, metadata);
         return { acquired: true, lock: createLockHandle(metadata, paths.lockDir, paths.ownerFile) };
       } catch (error) {
