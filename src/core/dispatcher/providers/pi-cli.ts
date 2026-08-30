@@ -22,6 +22,7 @@
  */
 
 const os = require('os');
+const path = require('path');
 const crypto = require('crypto');
 const { CliAdapter } = require('../../adapters/cli-adapter');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
@@ -29,7 +30,7 @@ import type { CliProviderOptions } from '../../adapters/cli-adapter';
 class PiCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
     const deepseekKey = process.env.DEEPSEEK_API_KEY?.trim();
-    const deepseekModel = process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-chat';
+    const deepseekModel = process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-v4-flash';
     const modelArgs = deepseekKey
       ? ['--provider', 'deepseek', '--model', deepseekModel]
       : [];
@@ -55,7 +56,7 @@ class PiCliProvider extends CliAdapter {
       createManagedSessionId: () => crypto.randomUUID(),
       argsForSession: (sessionId: string | null) => [
         ...baseArgs,
-        ...(sessionId ? ['--session-id', sessionId] : []),
+        ...(sessionId ? ['--session', path.join(os.tmpdir(), `voko-pi-${sessionId}.jsonl`)] : []),
       ],
       db: options.db,
       contextWindow: options.contextWindow,

@@ -375,7 +375,9 @@ test('Pi unattended delivery has native sessions with no tools, extensions or sk
   assert.match(args, /--no-skills/);
   assert.doesNotMatch(args, /--tools\s/);
   const sessionId = provider._createManagedSessionId();
-  assert.deepEqual(provider._argsForSession(sessionId, true).slice(-2), ['--session-id', sessionId]);
+  const sessionArgs = provider._argsForSession(sessionId, true).slice(-2);
+  assert.equal(sessionArgs[0], '--session');
+  assert.match(sessionArgs[1], new RegExp(`voko-pi-${sessionId}\\.jsonl$`));
 });
 
 test('OpenHands ACP runtime always uses UTF-8 without enabling a headless fallback', () => {
@@ -486,6 +488,10 @@ test('DeepSeek environment is mapped without embedding credentials in command ar
 
     const pi = new PiCliProvider();
     assert.match(pi._args.join(' '), /--provider deepseek --model deepseek-chat/);
+    delete process.env.DEEPSEEK_MODEL;
+    const piWithDefaultModel = new PiCliProvider();
+    assert.match(piWithDefaultModel._args.join(' '), /--provider deepseek --model deepseek-v4-flash/);
+    process.env.DEEPSEEK_MODEL = 'deepseek-chat';
 
     const aider = new AiderCliProvider();
     assert.equal(aider._env.AIDER_MODEL, 'deepseek/deepseek-chat');
