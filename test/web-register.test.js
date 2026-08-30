@@ -97,6 +97,19 @@ async function setupServer(t, handlers, db) {
 }
 
 describe('Web POST /agent/add 注册流程', () => {
+  it('escapes an Agent name reflected by the registration completion page', async (t) => {
+    const db = createDb(null);
+    t.after(() => cleanupDb(db));
+    const server = await startServer({}, db);
+    t.after(() => server.close());
+
+    const response = await fetch(`${server.baseUrl}/agent/add?done=${encodeURIComponent('<img src=x onerror=alert(1)>')}`);
+    const html = await response.text();
+    assert.strictEqual(response.status, 200);
+    assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
+  });
+
   it('renders distinct optional-session and required-instance registration guidance', async (t) => {
     const db = createDb('web@test.com');
     const server = await setupServer(t, {}, db);

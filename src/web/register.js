@@ -266,7 +266,7 @@ function doneBody(agentName, tFn) {
     + '<div class="card" style="text-align:center">'
     + '<div style="font-size:48px;margin-bottom:10px">✅</div>'
     + '<h2>' + esc(t('register.done.title')) + '</h2>'
-    + '<p class="desc">' + t('register.done.msg', { name: esc(agentName) }) + '</p>'
+    + '<p class="desc">' + esc(t('register.done.msg', { name: agentName })) + '</p>'
     + '<a href="/" class="btn btn-success" style="margin-top:8px;padding:12px 32px;font-size:16px">' + esc(t('register.done.start')) + '</a>'
     + '</div>';
 }
