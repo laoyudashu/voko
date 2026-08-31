@@ -6,9 +6,9 @@ const MAX_PROFILE_BYTES = 128 * 1024;
 
 function readText(file) {
   try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_PROFILE_BYTES) return '';
-    return fs.readFileSync(file, 'utf8');
+    const data = fs.readFileSync(file);
+    if (data.length <= 0 || data.length > MAX_PROFILE_BYTES) return '';
+    return data.toString('utf8');
   } catch (_) { return ''; }
 }
 

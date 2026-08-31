@@ -66,7 +66,6 @@ function discoverTargets(options: { home?: string; workspaceRoot?: string } = {}
       if (!inside(workspaceRoot, pluginRoot)) continue;
       const manifestPath = path.join(pluginRoot, '.qoder-plugin', 'plugin.json');
       try {
-        if (!fs.statSync(manifestPath).isFile()) continue;
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
         const pluginId = text(manifest?.name);
         if (!PLUGIN_ID_PATTERN.test(pluginId) || !declaredSkillsAreValid(pluginRoot, manifest?.skills)) continue;

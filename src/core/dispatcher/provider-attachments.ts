@@ -36,10 +36,23 @@ export function verifyProviderAttachment(attachment: Attachment): Buffer {
   const filePath = String(attachment.path || '');
   if (!path.isAbsolute(filePath)) throw attachmentError('Provider attachment path must be absolute');
   if (!Number.isSafeInteger(attachment.size) || attachment.size < 1) throw attachmentError('Provider attachment size is invalid');
-  let stat;
-  try { stat = fs.statSync(filePath); } catch { throw attachmentError('Provider attachment is unavailable'); }
-  if (!stat.isFile() || stat.size !== attachment.size) throw attachmentError('Provider attachment metadata does not match the local file');
-  const bytes = fs.readFileSync(filePath);
+  let descriptor: number | null = null;
+  let bytes: Buffer;
+  try {
+    descriptor = fs.openSync(filePath, 'r');
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size !== attachment.size) {
+      throw attachmentError('Provider attachment metadata does not match the local file');
+    }
+    bytes = fs.readFileSync(descriptor);
+  } catch (error: any) {
+    if (error?.deliveryOutcome) throw error;
+    throw attachmentError('Provider attachment is unavailable');
+  } finally {
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+  }
   const digest = crypto.createHash('sha256').update(bytes).digest('hex');
   if (!/^[a-f0-9]{64}$/i.test(String(attachment.sha256 || '')) || digest !== String(attachment.sha256).toLowerCase()) {
     throw attachmentError('Provider attachment integrity check failed');
