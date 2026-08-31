@@ -138,7 +138,7 @@ test('security inspection follows the current delivery mode and exact Goose tran
   assert.deepEqual(cli.controls.filter(item => item.editable).map(item => item.id), ['extensionProfile']);
 });
 
-test('unsupported Hermes transport renders as unsupported instead of a transport mismatch', (t) => {
+test('Hermes CLI transport exposes its exact editable permission controls', (t) => {
   const db = initDatabase(':memory:', { silent: true });
   t.after(() => db.close());
   const now = Date.now();
@@ -152,6 +152,23 @@ test('unsupported Hermes transport renders as unsupported instead of a transport
   const result = dispatcher.inspectProviderSecurity('hermes-agent');
   assert.equal(result.deliveryMode, 'cli');
   assert.equal(result.transportId, 'hermes-cli');
-  assert.equal(result.supported, false);
-  assert.deepEqual(result.controls, []);
+  assert.equal(result.supported, true);
+  assert.deepEqual(result.controls.filter(item => item.editable).map(item => item.id),
+    ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']);
+});
+
+test('Hermes dangerous permission expansion requires typed confirmation', () => {
+  const { service } = fixture('hermes');
+  const safer = service.preflight('agent-1', 'hermes-cli', {
+    toolProfile: 'safe', safeMode: 'enabled', approvalMode: 'required', acceptHooks: 'disabled',
+  });
+  service.commit('agent-1', safer.preflightToken, '');
+  const expansion = service.preflight('agent-1', 'hermes-cli', {
+    toolProfile: 'default', safeMode: 'disabled', approvalMode: 'bypass', acceptHooks: 'enabled',
+  });
+  assert.deepEqual(expansion.risks, [
+    'ENABLES_HERMES_DEFAULT_TOOLS', 'ENABLES_HERMES_PROFILE_CUSTOMIZATIONS',
+    'BYPASSES_DANGEROUS_COMMAND_APPROVAL', 'AUTO_ACCEPTS_UNKNOWN_SHELL_HOOKS',
+  ]);
+  assert.equal(expansion.requiresTypedConfirmation, true);
 });

@@ -293,6 +293,42 @@ test('Hermes CLI fallback queues the same profile serially without blocking disp
   assert.equal(starts.length, 2);
 });
 
+test('Hermes CLI maps the leased visitor policy to real chat permission flags', async () => {
+  let invocation;
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'visitor-profile' }), all: () => [] }) },
+    runCli: async (input) => {
+      invocation = input;
+      return { stdout: 'policy reply', stderr: '', code: 0, signal: null };
+    },
+  });
+  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'policy-turn',
+    providerSecurityPolicy: { transportId: 'hermes-cli', config: {
+      toolProfile: 'default', safeMode: 'disabled', approvalMode: 'bypass', acceptHooks: 'enabled',
+    } } });
+  await provider.waitForIdle();
+  assert.deepEqual(invocation.args.slice(0, 4), ['--profile', 'visitor-profile', 'chat', '-q']);
+  assert.equal(invocation.args.includes('-z'), false);
+  assert.equal(invocation.args.includes('--toolsets'), false);
+  assert.equal(invocation.args.includes('--safe-mode'), false);
+  assert.equal(invocation.args.includes('--yolo'), true);
+  assert.equal(invocation.args.includes('--accept-hooks'), true);
+});
+
+test('Hermes CLI preserves the profile defaults but keeps dangerous approvals enabled by default', async () => {
+  let invocation;
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'visitor-profile' }), all: () => [] }) },
+    runCli: async (input) => { invocation = input; return { stdout: 'safe reply', stderr: '', code: 0, signal: null }; },
+  });
+  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'safe-turn' });
+  await provider.waitForIdle();
+  assert.equal(invocation.args.includes('--toolsets'), false);
+  assert.equal(invocation.args.includes('--safe-mode'), false);
+  assert.equal(invocation.args.includes('--yolo'), false);
+  assert.equal(invocation.args.includes('--accept-hooks'), false);
+});
+
 test('Hermes consecutive attachment turns preserve exact turn correlation while remaining serial', async () => {
   let active = 0; let maxActive = 0;
   const replies = [];

@@ -179,9 +179,17 @@ class HermesCliProvider extends PushProvider {
     let approvalPending = false;
     const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
     try {
+      const policy = payload.providerSecurityPolicy?.transportId === 'hermes-cli'
+        ? payload.providerSecurityPolicy.config
+        : { toolProfile: 'default', safeMode: 'disabled', approvalMode: 'required', acceptHooks: 'disabled' };
+      const args = ['--profile', profileId, 'chat', '-q', safeNotification, '-Q', '--source', 'tool'];
+      if (policy?.toolProfile === 'safe') args.push('--toolsets', 'safe');
+      if (policy?.safeMode !== 'disabled') args.push('--safe-mode');
+      if (policy?.approvalMode === 'bypass') args.push('--yolo');
+      if (policy?.acceptHooks === 'enabled') args.push('--accept-hooks');
       const result = await this._runCli({
         cmd: this._command,
-        args: ['--profile', profileId, '-z', safeNotification],
+        args,
         tag: 'hermes-cli',
         timeout: 120000,
         env: hermesChildEnv(),

@@ -146,7 +146,8 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
     transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { asyncReply: true, sessionResume: true }, exactSession: { nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http' }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
-    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true, exactSession: undefined },
+    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true, exactSession: undefined,
+      securityControls: getProviderSecurityControls('hermes-cli') },
   ] },
   { type: 'zeroclaw', aliases: [], label: 'ZeroClaw', requiresInstance: true, defaultDeliveryModes: ['acp_ws', 'acp', 'cli', 'pull'], transports: [
     transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),

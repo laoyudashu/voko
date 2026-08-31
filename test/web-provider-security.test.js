@@ -15,6 +15,7 @@ test('Provider security page and API expose only controls supported by the Agent
     INSERT INTO agents VALUES('agent-1','陈老师','workbuddy',NULL);
     INSERT INTO agents VALUES('agent-2','A诊','codex',NULL);
     INSERT INTO agents VALUES('agent-3','Goose助手','goose',NULL);
+    INSERT INTO agents VALUES('agent-4','Hermes助手','hermes',NULL);
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -26,7 +27,8 @@ test('Provider security page and API expose only controls supported by the Agent
     inspectProviderSecurity(agentId) {
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
       const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
-        : backend === 'codex' ? ['codex-cli', 'cli'] : ['goose-acp', 'acp'];
+        : backend === 'codex' ? ['codex-cli', 'cli']
+          : backend === 'hermes' ? ['hermes-cli', 'cli'] : ['goose-acp', 'acp'];
       return { ...providerSecurity.inspect(agentId, mapping[0]), deliveryMode: mapping[1], selectedProvider: mapping[0] };
     },
   };
@@ -36,6 +38,7 @@ test('Provider security page and API expose only controls supported by the Agent
       { agentId: 'agent-1', agentName: '陈老师', backendType: 'workbuddy' },
       { agentId: 'agent-2', agentName: 'A诊', backendType: 'codex' },
       { agentId: 'agent-3', agentName: 'Goose助手', backendType: 'goose' },
+      { agentId: 'agent-4', agentName: 'Hermes助手', backendType: 'hermes' },
     ] }),
   };
   const app = express();
@@ -61,7 +64,6 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(html, /data-risk="high"/);
   assert.match(html, /高风险/);
   assert.doesNotMatch(html, /name="shell"/);
-  assert.doesNotMatch(html, /Shell/);
   assert.match(html, /REST\/Webhook Push/);
   assert.match(html, /智能体框架强制执行/);
   assert.match(html, /运行时启动时生效/);
@@ -90,6 +92,40 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.equal(goosePage.status, 200, gooseHtml);
   assert.match(gooseHtml, /尚未接入可验证的动态权限控制/);
   assert.doesNotMatch(gooseHtml, /工具权限/);
+
+  const hermesPage = await fetch(`${origin}/agents/agent-4/security`, { headers: auth });
+  const hermesHtml = await hermesPage.text();
+  assert.equal(hermesPage.status, 200, hermesHtml);
+  for (const control of ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']) {
+    assert.match(hermesHtml, new RegExp(`name="${control}"`));
+  }
+  assert.match(hermesHtml, /自动批准（YOLO）/);
+  assert.match(hermesHtml, /自动批准未知 Hooks/);
+  assert.match(hermesHtml, /id="provider-command-preview"/);
+  assert.match(hermesHtml, /id="provider-prompt-editor"/);
+  assert.equal((hermesHtml.match(/name="additionalPrompt"/g) || []).length, 1);
+  assert.doesNotMatch(hermesHtml, /id="provider-prompt-preview"/);
+  assert.match(hermesHtml, /这里编辑的内容会自动追加到每条访客消息，使得Agent意识到这是一个访客信息/);
+  assert.match(hermesHtml, /权限与安全/);
+  assert.match(hermesHtml, /安全参数/);
+  assert.doesNotMatch(hermesHtml, /当前转发效果/);
+  assert.doesNotMatch(hermesHtml, /转发命令/);
+  assert.match(hermesHtml, /rows="5"/);
+  assert.match(hermesHtml, />保存设置<\/button>/);
+  assert.doesNotMatch(hermesHtml, />预检并保存<\/button>/);
+  assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
+  assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
+  assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
+  assert.match(hermesHtml, /彩色部分表示下方权限选项带来的参数变化/);
+  assert.match(hermesHtml, /#b42318/);
+  assert.match(hermesHtml, /#a85b00/);
+  assert.match(hermesHtml, /#1769aa/);
+  assert.match(hermesHtml, /智能体名称输入错误，请输入页面顶部显示的完整名称/);
+  assert.match(hermesHtml, /PROVIDER_SECURITY_CONFIRMATION_MISMATCH/);
+  const hermesSecurityScript = [...hermesHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1]).find(source => source.includes('provider-security-form'));
+  assert.ok(hermesSecurityScript);
+  assert.doesNotThrow(() => new Function(hermesSecurityScript));
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
