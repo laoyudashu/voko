@@ -170,11 +170,12 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
     { ...cli('cline-cli', './providers/cline-cli', 'ClineCliProvider', 'cline-command-deny'), exactSession: undefined },
   ] },
   { type: 'goose', aliases: ['goose-ai', 'acp-goose'], label: 'Goose', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
-    acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false },
+    { ...acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), securityControls: getProviderSecurityControls('goose-acp') },
+    { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false, securityControls: getProviderSecurityControls('goose-cli') },
   ] },
-  { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools')] },
+  { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools'), securityControls: getProviderSecurityControls('claude-cli') }] },
   { type: 'codex', aliases: [], label: 'Codex', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
-    cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly'),
+    { ...cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly'), securityControls: getProviderSecurityControls('codex-cli') },
     transport({ id: 'codex-app-server', mode: 'owner_io', priority: 100, operations: ['push'],
       modulePath: './providers/codex-app-server', exportName: 'CodexAppServerProvider',
       safetyProfile: 'provider-native-control-plane', sandboxPolicyId: 'provider-managed-local',
@@ -187,8 +188,8 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
     { ...cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container'), exactSession: undefined },
   ] },
-  { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
-  { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
+  { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools'), securityControls: getProviderSecurityControls('pi-cli') }] },
+  { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools'), securityControls: getProviderSecurityControls('qwen-cli') }] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
     { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true,
       securityControls: getProviderSecurityControls('qwen-office-cli') },
@@ -207,7 +208,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider', 'aider-dry-run')] },
   { type: 'grok', aliases: [], label: 'Grok', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('grok-cli', './providers/grok-cli', 'GrokCliProvider', 'grok-plan-no-tools')] },
-  { type: 'reasonix', aliases: [], label: 'Reasonix', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('reasonix-cli', './providers/reasonix-cli', 'ReasonixCliProvider')] },
+  { type: 'reasonix', aliases: [], label: 'Reasonix', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('reasonix-cli', './providers/reasonix-cli', 'ReasonixCliProvider'), securityControls: getProviderSecurityControls('reasonix-cli') }] },
   { type: 'openhands', aliases: [], label: 'OpenHands', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'amazon-q', aliases: [], label: 'Amazon Q Developer CLI', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'zcode', aliases: [], label: 'ZCode', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
@@ -244,7 +245,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   ] },
   { type: 'doubao', aliases: [], label: '豆包办公', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'trae', aliases: ['trae-ide', 'trae-work', 'trae-solo'], label: 'Trae', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [
-    acp('traecli-acp', './providers/trae-acp', 'TraeAcpProvider'),
+    { ...acp('traecli-acp', './providers/trae-acp', 'TraeAcpProvider'), securityControls: getProviderSecurityControls('traecli-acp') },
   ] },
   { type: 'others', aliases: [], label: 'Others', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'mock', aliases: [], label: 'Mock Echo', requiresInstance: false, defaultDeliveryModes: ['mock', 'pull'], transports: [

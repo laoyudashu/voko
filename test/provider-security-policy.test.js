@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
-const { ProviderSecurityPolicyService } = require('../build/core/provider-security-policy');
+const { ProviderSecurityPolicyService, applyProviderSecurityArgs } = require('../build/core/provider-security-policy');
 const { initDatabase } = require('../build/core/database');
 const { createDispatcher } = require('../build/core/dispatcher');
 
@@ -26,6 +26,26 @@ test('provider security definitions are Provider-specific and preserve current d
   assert.equal(policy.config.dataFileAccess, 'read_write');
   assert.deepEqual(policy.controls.filter(item => item.editable).map(item => item.id), ['dataFileAccess']);
   assert.equal(policy.controls.find(item => item.id === 'shell').enforcement, 'unsupported');
+});
+
+test('CLI permissions map the latest leased policy to real Provider argv', () => {
+  const payload = (transportId, config) => ({ providerSecurityPolicy: { transportId, config } });
+  assert.deepEqual(applyProviderSecurityArgs(['--tools=', '--no-chrome'], payload('claude-cli', {
+    toolAccess: 'read_only', browser: 'enabled',
+  })), ['--tools=Read,Grep,Glob', '--chrome']);
+  assert.deepEqual(applyProviderSecurityArgs(['exec', '--sandbox', 'read-only', '-'], payload('codex-cli', {
+    sandboxMode: 'workspace_write',
+  })), ['exec', '--sandbox', 'workspace-write', '-']);
+  assert.deepEqual(applyProviderSecurityArgs(['run'], payload('goose-cli', {
+    extensionProfile: 'disabled',
+  })), ['run', '--no-profile']);
+});
+
+test('permission expansions require typed confirmation for CLI Providers', () => {
+  const { service } = fixture('codex');
+  const expansion = service.preflight('agent-1', 'codex-cli', { sandboxMode: 'workspace_write' });
+  assert.deepEqual(expansion.risks, ['ENABLES_WORKSPACE_WRITE']);
+  assert.equal(expansion.requiresTypedConfirmation, true);
 });
 
 test('dangerous expansion requires typed Agent confirmation and consumes preflight once', () => {

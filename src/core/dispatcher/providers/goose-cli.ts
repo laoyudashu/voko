@@ -174,7 +174,7 @@ class GooseCliProvider extends PushProvider {
     const notification = `session: ${scope.logicalName}\n\n${deliveryContent}`;
     let result;
     try {
-      result = await this._execute(notification, sessionId, createName);
+      result = await this._execute(notification, sessionId, createName, effectivePayload);
     } catch (error) {
       this._handleRuntimeFailure(agentId, error);
       throw error;
@@ -189,7 +189,7 @@ class GooseCliProvider extends PushProvider {
       createName = `${scope.logicalName}-${crypto.randomBytes(5).toString('hex')}`;
       sessionsBefore = (await this._safeListSessions()) || [];
       try {
-        result = await this._execute(notification, null, createName);
+        result = await this._execute(notification, null, createName, effectivePayload);
       } catch (error) {
         this._handleRuntimeFailure(agentId, error);
         throw error;
@@ -243,11 +243,13 @@ class GooseCliProvider extends PushProvider {
     }
   }
 
-  private _execute(input: string, sessionId: string | null, createName: string | null) {
+  private _execute(input: string, sessionId: string | null, createName: string | null, payload: PushPayload) {
     const args = ['run', '-i', '-'];
     if (sessionId) args.push('--session-id', sessionId, '--resume');
     else args.push('--name', createName!);
     args.push('--quiet', '--output-format', 'json');
+    if (payload.providerSecurityPolicy?.transportId === 'goose-cli'
+      && payload.providerSecurityPolicy.config.extensionProfile === 'disabled') args.push('--no-profile');
     const runtime = this._useResolvedRuntime ? resolveGooseRuntime('cli') : null;
     return this._runCli({
       cmd: runtime?.available ? runtime.executable : this._binPath,

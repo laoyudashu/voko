@@ -1445,7 +1445,7 @@ function createWebRouter(handlers, db, opts={}){
       res.json({success:true,data});
     }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
   });
-  R.post('/api/agents/:agentId/provider-security/commit',requireSensitiveLocalAuth,requireSensitiveCsrf,requireFreshSensitiveLocalAuth,(req,res)=>{
+  R.post('/api/agents/:agentId/provider-security/commit',requireSensitiveLocalAuth,requireSensitiveCsrf,(req,res)=>{
     try{
       const service=opts.dispatcher?.providerSecurity;
       if(!service)return res.status(503).json({success:false,error:'PROVIDER_SECURITY_UNAVAILABLE'});
@@ -1519,7 +1519,7 @@ function createWebRouter(handlers, db, opts={}){
       const title=zh?'访客权限与安全':'Visitor permissions & security';
       const unavailableTitle=zh?'尚未接入可验证的动态权限控制':'Verified dynamic permissions are not connected';
       const unavailable=zh?'VOKO 当前不能确定性控制这个智能体框架的 Shell、文件、浏览器或网络权限。访客安全仍依赖框架自身限制和安全提示语，不构成 VOKO 的权限边界。不会显示无法执行的通用权限开关。':'VOKO cannot currently enforce Shell, file, browser, or network permissions for this Agent framework. Visitor safety still depends on the framework and prompt instructions, not a VOKO permission boundary. Unsupported generic toggles are intentionally hidden.';
-      const statusLabel=item=>item.enforcement==='unsupported'?(zh?'不支持配置':'Not configurable'):(zh?'固定启用':'Enforced');
+      const statusLabel=item=>zh?(item.statusLabel||(item.enforcement==='unsupported'?'不支持配置':'固定执行')):(item.statusLabelEn||(item.enforcement==='unsupported'?'Not configurable':'Enforced'));
       const term=(value,map)=>zh?(map[value]||value):value;
       const enforcementLabels={voko_enforced:'VOKO 强制执行',provider_enforced:'智能体框架强制执行',unsupported:'不支持'};
       const applyAtLabels={next_turn:'下一轮消息生效',runtime_start:'运行时启动时生效'};

@@ -58,15 +58,14 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.equal(unsupportedDetail.status, 200, unsupportedDetailHtml);
   assert.match(unsupportedDetailHtml, /href="\/agents\/agent-2\/security" class="op-card"/);
 
-  const unsupportedPage = await fetch(`${origin}/agents/agent-2/security`, { headers: auth });
-  const unsupportedHtml = await unsupportedPage.text();
-  assert.equal(unsupportedPage.status, 200, unsupportedHtml);
-  assert.match(unsupportedHtml, /尚未接入可验证的动态权限控制/);
-  assert.match(unsupportedHtml, /智能体框架.*codex/);
-  assert.doesNotMatch(unsupportedHtml, /安全适配器/);
-  assert.doesNotMatch(unsupportedHtml, /策略修订/);
-  assert.doesNotMatch(unsupportedHtml, /生效范围/);
-  assert.doesNotMatch(unsupportedHtml, /data-control=/);
+  const codexPage = await fetch(`${origin}/agents/agent-2/security`, { headers: auth });
+  const codexHtml = await codexPage.text();
+  assert.equal(codexPage.status, 200, codexHtml);
+  assert.match(codexHtml, /命令与文件沙箱/);
+  assert.match(codexHtml, /name="sandboxMode"/);
+  assert.match(codexHtml, /只读沙箱/);
+  assert.match(codexHtml, /允许写工作区/);
+  assert.match(codexHtml, /网络访问/);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
@@ -97,6 +96,7 @@ test('Provider security page and API expose only controls supported by the Agent
       Cookie: `voko_session=${session.token}; voko_csrf=${session.csrfToken}`, 'X-VOKO-CSRF': session.csrfToken },
     body: JSON.stringify({ preflightToken: stalePreflight.data.preflightToken, confirmation: '陈老师' }),
   });
-  assert.equal(staleCommit.status, 401);
-  assert.equal((await staleCommit.json()).code, 'WEB_AUTH_REQUIRED');
+  assert.equal(staleCommit.status, 200);
+  const staleCommitted = await staleCommit.json();
+  assert.equal(staleCommitted.data.config.dataFileAccess, 'read');
 });

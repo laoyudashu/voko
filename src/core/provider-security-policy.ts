@@ -10,6 +10,8 @@ export interface ProviderSecurityControlDefinition {
   description: string;
   kind: 'enum' | 'status';
   editable: boolean;
+  statusLabel?: string;
+  statusLabelEn?: string;
   values?: Array<{ value: string; label: string }>;
   applyAt: 'next_turn' | 'runtime_start';
   runtimeScope: 'invocation' | 'agent_instance';
@@ -33,6 +35,54 @@ export interface ProviderSecurityTurnLease extends EffectiveProviderSecurityPoli
 }
 
 const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
+  'claude-cli': [
+    { id: 'toolAccess', label: '内置工具', description: '通过 Claude CLI 的 --tools 参数控制访客回合可用的内置工具。',
+      kind: 'enum', editable: true, values: [
+        { value: 'none', label: '全部禁用' }, { value: 'read_only', label: '仅只读工具（Read / Grep / Glob）' },
+      ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+    { id: 'browser', label: 'Chrome 浏览器', description: '通过 --no-chrome / --chrome 控制 Claude 的 Chrome 集成。',
+      kind: 'enum', editable: true, values: [
+        { value: 'disabled', label: '禁用' }, { value: 'enabled', label: '启用' },
+      ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+    { id: 'shellWrite', label: 'Shell 与文件写入', description: '访客回合固定使用 plan 权限模式，不开放 Shell、Edit 或 Write。', statusLabel: '固定禁止', statusLabelEn: 'Always denied',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+  ],
+  'codex-cli': [
+    { id: 'sandboxMode', label: '命令与文件沙箱', description: '直接映射 Codex CLI 的 --sandbox 参数；不开放 danger-full-access。',
+      kind: 'enum', editable: true, values: [
+        { value: 'read_only', label: '只读沙箱' }, { value: 'workspace_write', label: '允许写工作区' },
+      ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+    { id: 'network', label: '网络访问', description: '当前 Codex CLI 转发层没有独立、可验证的网络开关。', statusLabel: '不支持配置', statusLabelEn: 'Not configurable',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'unsupported' },
+  ],
+  'qwen-cli': [
+    { id: 'tools', label: '工具调用', description: '固定传递排除工具与零工具调用预算；当前版本不开放放宽。', statusLabel: '固定禁止', statusLabelEn: 'Always denied',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+    { id: 'sandbox', label: '沙箱运行', description: 'Qwen CLI 虽提供 --sandbox，但不能单独证明工具权限边界，暂不作为可编辑权限。', statusLabel: '不支持配置', statusLabelEn: 'Not configurable',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'unsupported' },
+  ],
+  'pi-cli': [
+    { id: 'tools', label: '工具调用', description: '固定传递 --no-tools、--no-extensions 和 --no-skills。', statusLabel: '固定禁止', statusLabelEn: 'Always denied',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+  ],
+  'reasonix-cli': [
+    { id: 'readOnlyInspection', label: '只读检查', description: '固定使用 dontAsk 权限模式：允许只读检查，拒绝写入与动态 Shell。', statusLabel: '固定只读', statusLabelEn: 'Read-only enforced',
+      kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+  ],
+  'traecli-acp': [
+    { id: 'permissionMode', label: '权限模式', description: 'ACP 进程固定以 plan 模式启动，并禁用 Bash、Edit、Write；修改需重启运行时，当前不开放动态放宽。', statusLabel: '固定计划模式', statusLabelEn: 'Plan mode enforced',
+      kind: 'status', editable: false, applyAt: 'runtime_start', runtimeScope: 'agent_instance', revocation: 'restart_runtime', enforcement: 'provider_enforced' },
+  ],
+  'goose-cli': [
+    { id: 'extensionProfile', label: '扩展配置', description: '通过 --no-profile 禁止加载 Goose 默认扩展；Goose 没有可验证的 Shell、文件、浏览器独立开关。',
+      kind: 'enum', editable: true, values: [
+        { value: 'disabled', label: '禁用全部默认扩展' }, { value: 'default', label: '加载默认扩展' },
+      ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
+  ],
+  'goose-acp': [
+    { id: 'permissions', label: '工具权限', description: 'Goose ACP 没有权限启动参数，且权限回调不能覆盖所有内置能力；当前不允许声称可配置。', statusLabel: '不支持配置', statusLabelEn: 'Not configurable',
+      kind: 'status', editable: false, applyAt: 'runtime_start', runtimeScope: 'agent_instance', revocation: 'restart_runtime', enforcement: 'unsupported' },
+  ],
   'workbuddy-http': [
     { id: 'dataFileAccess', label: '绑定数据文件', description: '仅允许访问当前 WorkBuddy 智能体绑定的 data.json 精确路径。',
       kind: 'enum', editable: true, values: [
@@ -64,6 +114,14 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
 };
 
 const DEFAULTS: Record<string, Record<string, string>> = {
+  'claude-cli': { toolAccess: 'none', browser: 'disabled' },
+  'codex-cli': { sandboxMode: 'read_only' },
+  'qwen-cli': {},
+  'pi-cli': {},
+  'reasonix-cli': {},
+  'traecli-acp': {},
+  'goose-cli': { extensionProfile: 'disabled' },
+  'goose-acp': {},
   'workbuddy-http': { dataFileAccess: 'read_write' },
   'qwen-office-cli': { sessionPersistence: 'conversation' },
   'dumate-http': {},
@@ -89,9 +147,47 @@ function clean(value: unknown, max = 192): string {
 function transportForBackend(backendTypeInput: unknown): string {
   const backendType = clean(backendTypeInput, 64).toLowerCase();
   if (backendType === 'workbuddy') return 'workbuddy-http';
+  if (backendType === 'claude-code') return 'claude-cli';
+  if (backendType === 'codex') return 'codex-cli';
+  if (backendType === 'qwen-code') return 'qwen-cli';
+  if (backendType === 'pi') return 'pi-cli';
+  if (backendType === 'reasonix') return 'reasonix-cli';
+  if (backendType === 'trae') return 'traecli-acp';
+  if (backendType === 'goose') return 'goose-acp';
   if (['qwen-office', 'qwenwork', 'qwen-work', 'qwenworkcn'].includes(backendType)) return 'qwen-office-cli';
   if (['dumate', 'baidu-dumate'].includes(backendType)) return 'dumate-http';
   return '';
+}
+
+function transportMatchesBackend(backendTypeInput: unknown, transportId: string): boolean {
+  const backendType = clean(backendTypeInput, 64).toLowerCase();
+  if (backendType === 'goose') return transportId === 'goose-acp' || transportId === 'goose-cli';
+  return transportForBackend(backendType) === transportId;
+}
+
+/** Apply only parameters represented by the leased policy for this exact turn. */
+export function applyProviderSecurityArgs(argsInput: readonly string[], payload: PushPayload): string[] {
+  const args = [...argsInput];
+  const lease = payload.providerSecurityPolicy;
+  if (!lease) return args;
+  const replacePair = (flag: string, value: string) => {
+    const index = args.indexOf(flag);
+    if (index >= 0 && index + 1 < args.length) args.splice(index, 2, flag, value);
+    else args.push(flag, value);
+  };
+  if (lease.transportId === 'claude-cli') {
+    const tools = lease.config.toolAccess === 'read_only' ? 'Read,Grep,Glob' : '';
+    const toolIndex = args.findIndex(item => item === '--tools' || item.startsWith('--tools='));
+    if (toolIndex >= 0) args.splice(toolIndex, args[toolIndex] === '--tools' ? 2 : 1, `--tools=${tools}`);
+    else args.push(`--tools=${tools}`);
+    const chromeIndex = args.findIndex(item => item === '--chrome' || item === '--no-chrome');
+    const chromeArg = lease.config.browser === 'enabled' ? '--chrome' : '--no-chrome';
+    if (chromeIndex >= 0) args.splice(chromeIndex, 1, chromeArg); else args.push(chromeArg);
+  } else if (lease.transportId === 'codex-cli') {
+    replacePair('--sandbox', lease.config.sandboxMode === 'workspace_write' ? 'workspace-write' : 'read-only');
+  } else if (lease.transportId === 'goose-cli' && lease.config.extensionProfile === 'disabled'
+    && !args.includes('--no-profile')) args.push('--no-profile');
+  return args;
 }
 
 function normalizeConfig(transportId: string, input: unknown): Record<string, string> {
@@ -110,6 +206,14 @@ function normalizeConfig(transportId: string, input: unknown): Record<string, st
 }
 
 function promptInstructions(transportId: string, config: Record<string, string>): string[] {
+  if (transportId === 'claude-cli') return [
+    config.toolAccess === 'read_only' ? '仅可使用 Read、Grep、Glob 只读工具。' : '不得调用任何内置工具。',
+    config.browser === 'enabled' ? '浏览器能力已由所有者启用，仍不得扩大任务范围。' : '不得控制 Chrome 浏览器。',
+  ];
+  if (transportId === 'codex-cli') return [config.sandboxMode === 'workspace_write'
+    ? '仅可在 Provider 工作区沙箱内写入；不得尝试越界。' : '文件系统保持只读，不得写入。'];
+  if (transportId === 'goose-cli') return [config.extensionProfile === 'disabled'
+    ? '默认扩展已禁用，不得声称能够操作 Shell、文件或浏览器。' : '只能使用 Goose 当前配置的默认扩展，不得扩大任务范围。'];
   if (transportId === 'workbuddy-http') {
     const data = config.dataFileAccess === 'read_write' ? '仅可读写绑定的 data.json；不得访问其他文件。'
       : config.dataFileAccess === 'read' ? '仅可读取绑定的 data.json；不得写入或访问其他文件。'
@@ -175,7 +279,7 @@ export class ProviderSecurityPolicyService {
     if (!agent) throw new Error('AGENT_NOT_FOUND');
     const inferred = transportForBackend(agent.backend_type);
     const transportId = clean(transportIdInput || inferred, 64);
-    if (transportIdInput && transportId !== inferred) throw new Error('PROVIDER_SECURITY_TRANSPORT_MISMATCH');
+    if (transportIdInput && !transportMatchesBackend(agent.backend_type, transportId)) throw new Error('PROVIDER_SECURITY_TRANSPORT_MISMATCH');
     const controls = getProviderSecurityControls(transportId);
     if (!controls.length) return { agentId, agentName: agent.agent_name || agentId, backendType: agent.backend_type,
       transportId, supported: false, controls: [], config: {}, revision: 0, assurance: 'unsupported' };
@@ -195,7 +299,7 @@ export class ProviderSecurityPolicyService {
     if (!isProviderSecurityTransport(transportId)) throw new Error('PROVIDER_SECURITY_UNSUPPORTED');
     const agent = this.db.prepare('SELECT backend_type FROM agents WHERE agent_id=? LIMIT 1').get(agentId) as any;
     if (!agent) throw new Error('AGENT_NOT_FOUND');
-    if (transportForBackend(agent.backend_type) !== transportId) throw new Error('PROVIDER_SECURITY_TRANSPORT_MISMATCH');
+    if (!transportMatchesBackend(agent.backend_type, transportId)) throw new Error('PROVIDER_SECURITY_TRANSPORT_MISMATCH');
     const row = this.db.prepare(`SELECT revision,config_json FROM provider_security_policies
       WHERE agent_id=? AND transport_id=? LIMIT 1`).get(agentId, transportId) as any;
     const config = normalizeConfig(transportId, row ? JSON.parse(row.config_json) : {});
@@ -217,6 +321,18 @@ export class ProviderSecurityPolicyService {
     if (current.transportId === 'qwen-office-cli'
       && current.config.sessionPersistence === 'ephemeral' && config.sessionPersistence === 'conversation') {
       risks.push('ENABLES_PROVIDER_SESSION_RETENTION');
+    }
+    if (current.transportId === 'claude-cli') {
+      if (current.config.toolAccess === 'none' && config.toolAccess === 'read_only') risks.push('ENABLES_LOCAL_READ_TOOLS');
+      if (current.config.browser === 'disabled' && config.browser === 'enabled') risks.push('ENABLES_BROWSER_CONTROL');
+    }
+    if (current.transportId === 'codex-cli'
+      && current.config.sandboxMode === 'read_only' && config.sandboxMode === 'workspace_write') {
+      risks.push('ENABLES_WORKSPACE_WRITE');
+    }
+    if (current.transportId === 'goose-cli'
+      && current.config.extensionProfile === 'disabled' && config.extensionProfile === 'default') {
+      risks.push('ENABLES_PROVIDER_EXTENSIONS');
     }
     const id = `psp_${crypto.randomUUID()}`;
     const now = Date.now();

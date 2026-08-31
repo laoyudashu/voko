@@ -33,6 +33,7 @@ const { appendProviderAttachmentBoundary, stageProviderAttachments,
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+import { applyProviderSecurityArgs } from '../provider-security-policy';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -314,6 +315,7 @@ class CliAdapter extends PushProvider {
           : [...configuredArgs, ...scoped.args];
       } catch (_) {}
     }
+    configuredArgs = applyProviderSecurityArgs(configuredArgs, effectivePayload);
     const preparedInvocation = this._prepareInvocation?.(effectivePayload, prompt) || null;
     const invocationArgs = preparedInvocation?.args || configuredArgs;
     let useStdin = preparedInvocation
