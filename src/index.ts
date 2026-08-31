@@ -2537,6 +2537,7 @@ async function startMcpServer(args?: any, core?: any) {
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
     e2eeRuntime,
+    dispatcher,
     uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;

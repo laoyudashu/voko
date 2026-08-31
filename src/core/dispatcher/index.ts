@@ -16,6 +16,7 @@
 import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import { classifyProviderTurnFailure } from '../provider-turn-status';
+import { appendProviderSecurityPrompt, ProviderSecurityPolicyService } from '../provider-security-policy';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -118,7 +119,7 @@ interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   turnId?: string; sourceMessageIds?: readonly string[];
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
-  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
+  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat' | 'external';
   executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
@@ -277,6 +278,8 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
   const _sessionCoordinator = new ProviderSessionCoordinator(db);
+  const providerSecurity = typeof (db as any).exec === 'function'
+    ? new ProviderSecurityPolicyService(db as any) : null;
   const _bindingStore = _sessionCoordinator.store;
   const _modularRollout = getProviderModularRollout(db);
   const _conversationRoutes = new Map<string, Promise<void>>();
@@ -453,7 +456,13 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     if (attachedEventProviders.has(p) || typeof p.on !== 'function') return;
     attachedEventProviders.add(p);
     p.on('provider.event', (event: ProviderCoreEvent) => {
-      _acceptProviderEvent(event);
+      if (!_acceptProviderEvent(event)) return;
+      if (event.turnId) {
+        const state = event.type === 'accepted' ? 'ACCEPTED'
+          : event.type === 'completed' ? 'COMPLETED'
+            : event.type === 'failed' ? 'FAILED' : null;
+        if (state) providerSecurity?.markTurn(event.turnId, state, event.agentId);
+      }
     });
     p.on('delivery.error', (event: Record<string, unknown>) => {
       const agentId = String(event.agentId || '');
@@ -1327,11 +1336,14 @@ Convergence obligations:
     const turnKey = `${agentId}::${String(statusContext.turnId || '')}`;
     if (channelType === 1) _ordinaryTurnDeadlines.set(turnKey, { statusContext });
     const begin = () => {
+      // Binding and security policy are resolved when the queued turn actually
+      // reaches the Provider boundary, so UI changes apply to every unsent turn.
+      const submittingPayload = _captureProviderBinding(agentId, payload);
       if (channelType === 1 && onTurnStatus) {
         return Promise.resolve(onTurnStatus({ ...statusContext, status: 'processing' }))
-          .catch(() => undefined).then(() => _doRoute(agentId, payload, context));
+          .catch(() => undefined).then(() => _doRoute(agentId, submittingPayload, context));
       }
-      return _doRoute(agentId, payload, context);
+      return _doRoute(agentId, submittingPayload, context);
     };
     const next = previous ? previous.catch(() => {}).then(begin) : begin();
     _conversationRoutes.set(key, next);
@@ -1439,19 +1451,23 @@ Convergence obligations:
         ? { ...payload, turnId: payload.turnId || payload.messageId, senderUid: payload.senderUid || payload.fromUid, fromUid: payload.sessionTarget || `group:${payload.channelId}` }
         : { ...payload, turnId: payload.turnId || payload.messageId };
       const executionScope = String((payload as any).executionScope || '');
-      const sourceType = executionScope === 'owner_link'
+      const sourceType = (payload as any).sourceType === 'external'
+        ? 'external'
+        : executionScope === 'owner_link'
         ? 'owner'
         : executionScope === 'owner_chat'
           ? 'owner_chat'
         : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged
           || (executionScope === 'e2ee' && (payload as any).sourceType === 'agent_peer')) ? 'agent_peer' : 'visitor';
       const isOwnerChat = sourceType === 'owner_chat';
+      const securitySourceType = sourceType === 'external' ? 'visitor' : sourceType;
       const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
-        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, sourceType,
-          sourceType === 'agent_peer' ? (routedPayload as any).trustedA2AControl : undefined),
-        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(sourceType) }),
+        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, securitySourceType,
+          securitySourceType === 'agent_peer' ? (routedPayload as any).trustedA2AControl : undefined),
+        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(securitySourceType) }),
+        sourceType,
         providerBinding: payload.providerBinding ?? null,
       };
       const replyContext = {
@@ -1536,17 +1552,24 @@ Convergence obligations:
               throw error;
             }
           }
+          const securityLease = providerSecurity?.acquireTurnLease(baseProviderPayload, selectedRoute.providerId) || null;
           const providerPayload = {
             ...baseProviderPayload,
+            content: appendProviderSecurityPrompt(baseProviderPayload.content, securityLease),
             providerBinding: selectedBinding,
+            providerSecurityPolicy: securityLease,
           };
           payloadByProvider.set(candidate.target, providerPayload);
+          if (securityLease) providerSecurity?.markTurn(securityLease.turnId, 'SUBMITTING', agentId);
           return candidate.target.push!(providerPayload);
         },
         classify: deliveryOutcome,
         onSuccess: (candidate: any, deliveryReceipt: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
           const providerPayload = payloadByProvider.get(candidate.target);
+          if (providerPayload?.providerSecurityPolicy?.turnId) {
+            providerSecurity?.markTurn(providerPayload.providerSecurityPolicy.turnId, 'COMPLETED', agentId);
+          }
           if (!isolated && providerPayload && deliveryReceipt?.nativeSessionId) {
             try {
               _commitProviderSession({
@@ -1573,6 +1596,10 @@ Convergence obligations:
           _recordDeliveryEvidence(agentId, candidate.providerId, { outcome, error }, false);
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
+          if (providerPayload?.providerSecurityPolicy?.turnId) {
+            providerSecurity?.markTurn(providerPayload.providerSecurityPolicy.turnId,
+              outcome === 'outcome_unknown' ? 'OUTCOME_UNKNOWN' : 'FAILED', agentId);
+          }
           try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}
           const action = outcome === 'not_delivered'
             ? '当前通道未送达，正在按已配置路由评估备选通道'
@@ -1653,9 +1680,10 @@ Convergence obligations:
       throw new Error('OWNER_CHAT_REQUIRES_NATIVE_IO_BRIDGE');
     }
     const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
-    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
+    const sourceType = executionScope === 'owner_link' ? 'owner'
+      : options.sourceType === 'external' ? 'external' : 'agent_peer';
     if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
-    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    const prefix = executionScope === 'owner_link' ? 'owner' : sourceType === 'external' ? 'external' : 'a2a';
     if (executionScope === 'a2a_mailbox'
       && (!options.principalScope || !options.sessionScopeId || !options.protocolContextId
         || !Number.isSafeInteger(options.bindingGeneration) || Number(options.bindingGeneration) < 1)) {
@@ -1797,10 +1825,10 @@ Convergence obligations:
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
-    const workingPayload = _captureProviderBinding(agentId, {
+    const workingPayload: PushPayload = {
       ...payload,
       rawContent: payload.rawContent ?? payload.content,
-    });
+    };
     const prepared = _prepareA2A(agentId, workingPayload);
     if (prepared.blocked) return;
     if (prepared.delay) {
@@ -2050,6 +2078,22 @@ Convergence obligations:
     await runtimeRegistry.restart(providerId);
   }
 
+  function applyProviderSecurityPolicyChange(change: { agentId?: string; transportId?: string; lifecycleAction?: string }): boolean {
+    if (change.lifecycleAction !== 'restart_agent_runtime') return false;
+    const provider = providers[String(change.transportId || '')] as any;
+    if (!provider || typeof provider.restartAgentRuntime !== 'function') return false;
+    return provider.restartAgentRuntime(String(change.agentId || '')) === true;
+  }
+
+  function inspectProviderSecurity(agentId: string, transportId?: string): any {
+    if (!providerSecurity) throw new Error('PROVIDER_SECURITY_UNAVAILABLE');
+    const result = providerSecurity.inspect(agentId, transportId);
+    const provider = providers[String(result.transportId || '')] as any;
+    let evidence: Record<string, unknown> | null = null;
+    try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
+    return { ...result, evidence };
+  }
+
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
   function invalidateBindingsForConfigChange(input: {
     agentId: string;
@@ -2071,7 +2115,8 @@ Convergence obligations:
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
-    invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
+    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, applyProviderSecurityPolicyChange,
+    providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher, resolveTurnDeadlineMs };

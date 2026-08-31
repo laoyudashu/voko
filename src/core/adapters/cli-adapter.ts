@@ -64,6 +64,7 @@ export interface CliAdapterOptions {
     fromUid: string;
     nativeSessionId: string | null;
     configuredArgs: string[];
+    payload: PushPayload;
   }) => {
     args: string[];
     useStdin?: boolean;
@@ -229,7 +230,7 @@ class CliAdapter extends PushProvider {
     let args: string[];
     if (this._preparePrompt) {
       const prepared = this._preparePrompt(prompt, { agentId, fromUid: payload.fromUid,
-        nativeSessionId: null, configuredArgs: [...configuredArgs] });
+        nativeSessionId: null, configuredArgs: [...configuredArgs], payload });
       args = [...(prepared.args || [])].map((arg: string) => arg.replace('{prompt}', () => prompt));
       useStdin = prepared.useStdin ?? !args.includes('{prompt}');
       stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
@@ -331,6 +332,7 @@ class CliAdapter extends PushProvider {
         fromUid,
         nativeSessionId,
         configuredArgs: [...configuredArgs],
+        payload: effectivePayload,
       });
       args = [...(prepared.args || [])].map((a: string) => a.replace('{prompt}', () => safePrompt));
       useStdin = prepared.useStdin ?? !args.includes('{prompt}');

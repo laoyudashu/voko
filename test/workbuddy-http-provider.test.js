@@ -87,6 +87,15 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
   }).slice(-7), ['dontAsk', '--tools', 'Read,Write', '--allowedTools',
     'Read(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)',
     'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
+  assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read',
+  }).slice(-5), ['dontAsk', '--tools', 'Read', '--allowedTools', 'Read(/safe/data.json)', '--strict-mcp-config'].slice(-5));
+  const denied = workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'none',
+  });
+  assert.equal(denied.includes('Read'), false);
+  assert.equal(denied.includes('Write'), false);
+  assert.equal(denied[denied.indexOf('--tools') + 1], '');
 });
 
 test('WorkBuddy preflight validates the local component without desktop login state', async () => {

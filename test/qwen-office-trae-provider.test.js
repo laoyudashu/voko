@@ -144,6 +144,13 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
+  const ephemeral = provider._preparePrompt('hello', {
+    configuredArgs: [...provider._args, '--resume', 'native-session'],
+    payload: { providerSecurityPolicy: { config: { sessionPersistence: 'ephemeral' } } },
+  });
+  assert.equal(ephemeral.args.includes('--resume'), false);
+  assert.equal(ephemeral.args.includes('native-session'), false);
+  assert.equal(ephemeral.args.includes('--no-session-persistence'), true);
 });
 
 test('QwenWork delivery failures distinguish quota, timeout, login, and generic failures', () => {

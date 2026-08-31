@@ -865,6 +865,56 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     CREATE INDEX IF NOT EXISTS idx_provider_binding_pending_message
       ON provider_conversation_bindings(pending_message_id)
       WHERE status='pending';
+    CREATE TABLE IF NOT EXISTS provider_security_policies (
+      agent_id TEXT NOT NULL,
+      transport_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      config_json TEXT NOT NULL,
+      policy_digest TEXT NOT NULL,
+      restore_constraint_digest TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, transport_id)
+    );
+    CREATE TABLE IF NOT EXISTS provider_security_preflights (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      transport_id TEXT NOT NULL,
+      expected_revision INTEGER NOT NULL,
+      config_json TEXT NOT NULL,
+      policy_digest TEXT NOT NULL,
+      risk_json TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS provider_security_turns (
+      turn_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      execution_scope TEXT NOT NULL,
+      transport_id TEXT NOT NULL,
+      policy_revision INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      turn_policy_digest TEXT NOT NULL,
+      restore_constraint_digest TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, turn_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_security_turns_agent
+      ON provider_security_turns(agent_id, created_at);
+    CREATE TABLE IF NOT EXISTS provider_security_events (
+      event_id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      turn_id TEXT,
+      transport_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      policy_revision INTEGER,
+      details_digest TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_security_events_agent
+      ON provider_security_events(agent_id, created_at);
   `);
   try {
     const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_session_handles'")

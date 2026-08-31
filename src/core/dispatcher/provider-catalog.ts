@@ -1,4 +1,6 @@
 export type ProviderOperation = 'push' | 'steer';
+import { getProviderSecurityControls } from '../provider-security-policy';
+import type { ProviderSecurityControlDefinition } from '../provider-security-policy';
 
 export interface ProviderCapabilities {
   push: boolean;
@@ -24,6 +26,7 @@ export interface ProviderTransportDefinition {
   safetyProfile: string;
   sandboxPolicyId: string;
   capabilities: ProviderCapabilities;
+  securityControls?: readonly ProviderSecurityControlDefinition[];
   exactSession?: {
     nativeSessionNamespace: string;
     restoreCompatibilityGroup: string;
@@ -187,7 +190,8 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
   { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
-    { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true },
+    { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true,
+      securityControls: getProviderSecurityControls('qwen-office-cli') },
   ] },
   { type: 'dumate', aliases: ['baidu-dumate'], label: '百度搭子 (DuMate)', requiresInstance: false, defaultDeliveryModes: ['http', 'pull'], transports: [
     transport({ id: 'dumate-http', mode: 'http', priority: 10, operations: ['push', 'steer'],
@@ -195,6 +199,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
       supportsLoopback: false,
       capabilities: { streaming: true, sessionResume: true },
+      securityControls: getProviderSecurityControls('dumate-http'),
       exactSession: { nativeSessionNamespace: 'dumate-http', restoreCompatibilityGroup: 'dumate-http' },
       options: context => context.getProviderConfig?.('dumate-http') || {},
     }),
@@ -212,6 +217,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
       supportsLoopback: true,
       capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true },
+      securityControls: getProviderSecurityControls('workbuddy-http'),
       exactSession: { nativeSessionNamespace: 'workbuddy-http', restoreCompatibilityGroup: 'workbuddy-http' },
       options: context => context.getProviderConfig?.('workbuddy-http') || {},
     }),

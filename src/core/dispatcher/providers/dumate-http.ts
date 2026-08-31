@@ -138,6 +138,14 @@ class DuMateHttpProvider extends PushProvider {
       ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}) };
   }
 
+  getSecurityControlEvidence(agentId = ''): Record<string, unknown> {
+    const observed = (this as any).getProviderVersion?.();
+    return { transportId: ADAPTER_TYPE, platform: process.platform, runtimeVersion: observed?.version || null,
+      versionVerified: Boolean(observed?.version && observed?.result === 'known'), versionSource: observed?.source || 'unknown',
+      contract: 'isolated_xdg_root_and_loopback_http',
+      readiness: this.getDeliveryReadiness(agentId) };
+  }
+
   acceptsBinding(binding: any, agentId = ''): boolean {
     const instanceId = this._routeForAgent(agentId);
     return binding?.providerType === 'dumate' && binding.adapterType === ADAPTER_TYPE

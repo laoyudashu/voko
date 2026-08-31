@@ -81,8 +81,10 @@ class QwenOfficeCliProvider extends CliAdapter {
           return typeof id === 'string' && id.trim() ? id : null;
         } catch { return null; }
       },
-      preparePrompt: (prompt: string, context: { configuredArgs: string[] }) => ({
-        args: [...context.configuredArgs],
+      preparePrompt: (prompt: string, context: { configuredArgs: string[]; payload: PushPayload }) => ({
+        args: context.payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+          ? [...context.configuredArgs.filter((_value, index, all) => all[index - 1] !== '--resume' && _value !== '--resume'), '--no-session-persistence']
+          : [...context.configuredArgs],
         useStdin: true,
         stdinInput: JSON.stringify({
           type: 'user',
@@ -137,6 +139,14 @@ class QwenOfficeCliProvider extends CliAdapter {
     };
   }
 
+  getSecurityControlEvidence(agentId = ''): Record<string, unknown> {
+    const observed = (this as any).getProviderVersion?.();
+    return { transportId: 'qwen-office-cli', platform: process.platform, runtimeVersion: observed?.version || null,
+      versionVerified: Boolean(observed?.version && observed?.result === 'known'), versionSource: observed?.source || 'unknown',
+      contract: 'cli_args_empty_tools_and_session_persistence',
+      readiness: this.getDeliveryReadiness(agentId) };
+  }
+
   refreshRuntime(): void {
     super.refreshRuntime();
     invalidateQwenOfficeReadiness(this._cmd);
@@ -176,7 +186,9 @@ class QwenOfficeCliProvider extends CliAdapter {
       throw deliveryError('Bound QwenWork expert kit is unavailable');
     }
     try {
-      const receipt = await super.push(payload);
+      const effectivePayload = payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+        ? { ...payload, providerBinding: null } : payload;
+      const receipt = await super.push(effectivePayload);
       this._verification.set(payload.agentId, {
         status: 'loopback_verified', code: 'QWEN_OFFICE_DELIVERY_VERIFIED', detail: 'QwenWork CLI delivery verified', verifiedAt: Date.now(),
       });

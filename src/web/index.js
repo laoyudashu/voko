@@ -715,6 +715,11 @@ function createWebRouter(handlers, db, opts={}){
     if(opts.webSessions&&opts.webSessions.verifyCsrf(req,req.localAuth))return next();
     return res.status(403).json({success:false,error:'Invalid CSRF token'});
   };
+  const requireFreshSensitiveLocalAuth=(req,res,next)=>{
+    if(req.localAuth?.type==='instance')return next();
+    if(req.localAuth?.type==='web'&&Number(req.localAuth.createdAt)>0&&Date.now()-Number(req.localAuth.createdAt)<=5*60*1000)return next();
+    return res.status(401).json({success:false,code:'WEB_AUTH_REQUIRED',error:req.t('web.reauth.required')});
+  };
   R.use((req,res,next)=>{
     const pathMatch=String(req.path||'').match(/^\/agents?\/([^/]+)/);
     const agentId=String((req.body&&req.body.agentId)||(req.query&&req.query.agentId)||(req.params&&req.params.agentId)||(pathMatch&&pathMatch[1])||'').trim();
@@ -1423,6 +1428,32 @@ function createWebRouter(handlers, db, opts={}){
       res.status(result&&result.success===false?400:200).json(result);
     }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
   });
+  R.get('/api/agents/:agentId/provider-security',requireSensitiveLocalAuth,(req,res)=>{
+    try{
+      const service=opts.dispatcher?.providerSecurity;
+      if(!service)return res.status(503).json({success:false,error:'PROVIDER_SECURITY_UNAVAILABLE'});
+      const data=opts.dispatcher?.inspectProviderSecurity?.(String(req.params.agentId),req.query.transportId)
+        ||service.inspect(String(req.params.agentId),req.query.transportId);
+      res.json({success:true,data});
+    }catch(error){res.status(String(error.message||error)==='AGENT_NOT_FOUND'?404:400).json({success:false,error:String(error.message||error)})}
+  });
+  R.post('/api/agents/:agentId/provider-security/preflight',requireSensitiveLocalAuth,requireSensitiveCsrf,(req,res)=>{
+    try{
+      const service=opts.dispatcher?.providerSecurity;
+      if(!service)return res.status(503).json({success:false,error:'PROVIDER_SECURITY_UNAVAILABLE'});
+      const data=service.preflight(String(req.params.agentId),req.body?.transportId,req.body?.config);
+      res.json({success:true,data});
+    }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
+  });
+  R.post('/api/agents/:agentId/provider-security/commit',requireSensitiveLocalAuth,requireSensitiveCsrf,requireFreshSensitiveLocalAuth,(req,res)=>{
+    try{
+      const service=opts.dispatcher?.providerSecurity;
+      if(!service)return res.status(503).json({success:false,error:'PROVIDER_SECURITY_UNAVAILABLE'});
+      const data=service.commit(String(req.params.agentId),req.body?.preflightToken,req.body?.confirmation);
+      const runtimeRestarted=opts.dispatcher?.applyProviderSecurityPolicyChange?.(data)===true;
+      res.json({success:true,data:{...data,runtimeRestarted}});
+    }catch(error){res.status(400).json({success:false,error:String(error.message||error)})}
+  });
   R.post('/api/provider-setup',async(req,res)=>{
     try{
       if(typeof handlers.setup_provider!=='function')return res.status(503).json({success:false,error:'Provider setup is unavailable'});
@@ -1477,6 +1508,31 @@ function createWebRouter(handlers, db, opts={}){
   // ────────── Agent 看板页（短页面） ──────────
 
   const ownerChatLiveScript=(agentId,selector,conversationId='',fragmentUrl='',includeAgentMessages=false)=>'<script>(function(){var aid='+jsonForInlineScript(agentId)+',cid='+jsonForInlineScript(conversationId)+',selector='+jsonForInlineScript(selector)+',fragmentUrl='+jsonForInlineScript(fragmentUrl)+',includeAgentMessages='+jsonForInlineScript(includeAgentMessages)+',busy=false,timer=null;function scrollToLatest(){var scroller=document.querySelector(selector+" .owner-chat-transcript");if(scroller)scroller.scrollTop=scroller.scrollHeight}requestAnimationFrame(scrollToLatest);window.addEventListener("load",scrollToLatest,{once:true});function refresh(){if(busy)return;busy=true;fetch(fragmentUrl||location.href,{headers:{"Accept":"text/html","X-Requested-With":"voko-owner-chat"},cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var doc=new DOMParser().parseFromString(html,"text/html"),fresh=doc.querySelector(selector),current=document.querySelector(selector);if(fresh&&current){var scroller=current.querySelector(".owner-chat-transcript"),nearBottom=!scroller||scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;current.replaceWith(fresh);var next=document.querySelector(selector+" .owner-chat-transcript");if(next&&nearBottom)next.scrollTop=next.scrollHeight}}).catch(function(){}).finally(function(){busy=false})}function queue(){clearTimeout(timer);timer=setTimeout(refresh,120)}function connect(){try{var protocol=location.protocol==="https:"?"wss://":"ws://",ws=new WebSocket(protocol+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data),data=d.data||{};if((d.event==="owner-chat:updated"||(includeAgentMessages&&d.event==="agent-wukongim:message"))&&data.agentId===aid&&(!cid||!data.conversationId||data.conversationId===cid))queue()}catch(_){}};ws.onclose=function(){setTimeout(connect,3000)}}catch(_){setTimeout(connect,5000)}}connect()})();</script>';
+
+  R.get('/agents/:agentId/security',requireSensitiveLocalAuth,async(req,res,next)=>{
+    try{
+      const agentId=String(req.params.agentId||''),agent=await getAgentInfo(handlers,agentId);
+      if(!agent)return res.status(404).send('Not Found');
+      const service=opts.dispatcher?.providerSecurity;
+      if(!service)return res.status(503).send('Provider security unavailable');
+      const data=opts.dispatcher?.inspectProviderSecurity?.(agentId)||service.inspect(agentId),zh=String(req.locale||'zh').startsWith('zh');
+      const title=zh?'访客权限与安全':'Visitor permissions & security';
+      const unavailable=zh?'当前 Provider 没有可验证的动态权限项。不会显示无法执行的通用权限开关。':'This Provider has no verified dynamic permission controls. Unsupported generic toggles are intentionally hidden.';
+      const statusLabel=item=>item.enforcement==='unsupported'?(zh?'不支持配置':'Not configurable'):(zh?'固定启用':'Enforced');
+      const rows=data.controls.map(item=>{
+        let field='<span class="badge '+(item.enforcement==='unsupported'?'badge-offline':'badge-online')+'">'+esc(statusLabel(item))+'</span>';
+        if(item.editable){field='<select name="'+esc(item.id)+'" data-control="'+esc(item.id)+'" style="margin:0;max-width:240px">'+item.values.map(option=>'<option value="'+esc(option.value)+'"'+(data.config[item.id]===option.value?' selected':'')+'>'+esc(option.label)+'</option>').join('')+'</select>'}
+        return '<div class="card" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,260px);gap:18px;align-items:center"><div><h3>'+esc(item.label)+'</h3><p class="meta" style="margin:3px 0">'+esc(item.description)+'</p><div class="meta">'+esc(item.enforcement)+' · '+esc(item.applyAt)+' · '+esc(item.revocation)+'</div></div><div>'+field+'</div></div>';
+      }).join('');
+      const scope='<div class="card"><strong>'+(zh?'生效范围':'Applies to')+'</strong><p class="meta">'+(zh?'访客私聊、访客群聊、REST/Webhook Push。主人会话、A2A 与 Pull 不受此策略控制。每个尚未提交的 Turn 都读取最新策略；不区分新老对话。':'Visitor direct messages, visitor groups, and REST/Webhook Push. Owner, A2A, and Pull are excluded. Every not-yet-submitted turn reads the latest policy; conversations are not classified as old or new.')+'</p></div>';
+      const form=data.supported?'<form id="provider-security-form" data-transport="'+esc(data.transportId)+'" data-agent-name="'+esc(data.agentName)+'">'+rows+(data.controls.some(item=>item.editable)?'<button type="submit">'+(zh?'预检并保存':'Preflight & save')+'</button>':'')+'<p id="provider-security-result" class="meta" hidden></p></form>':'<div class="card"><p class="meta">'+esc(unavailable)+'</p></div>';
+      const labels={saving:zh?'正在安全预检…':'Running security preflight…',confirm:zh?'此次修改会扩大权限。请输入智能体名称以确认：':'This change expands authority. Type the Agent name to confirm:',saved:zh?'策略已保存，后续尚未提交的消息将使用新权限。':'Policy saved. Unsubmitted messages will use it.',failed:zh?'保存失败':'Save failed'};
+      const script='<script>(function(){var form=document.getElementById("provider-security-form");if(!form)return;var out=document.getElementById("provider-security-result"),L='+jsonForInlineScript(labels)+';function show(text,kind){out.hidden=false;out.textContent=text;out.className=kind||"meta"}form.addEventListener("submit",async function(event){event.preventDefault();var button=form.querySelector("button[type=submit]"),config={};form.querySelectorAll("[data-control]").forEach(function(field){config[field.dataset.control]=field.value});button.disabled=true;show(L.saving,"meta");try{var pre=await fetch("/api/agents/"+encodeURIComponent('+jsonForInlineScript(agentId)+')+"/provider-security/preflight",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({transportId:form.dataset.transport,config:config})}),p=await pre.json();if(!pre.ok||!p.success)throw new Error(p.error||L.failed);var confirmation="";if(p.data.requiresTypedConfirmation){confirmation=window.prompt(L.confirm,"")||"";if(!confirmation)throw new Error(L.failed)}var commit=await fetch("/api/agents/"+encodeURIComponent('+jsonForInlineScript(agentId)+')+"/provider-security/commit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preflightToken:p.data.preflightToken,confirmation:confirmation})}),c=await commit.json();if(!commit.ok||!c.success)throw new Error(c.error||L.failed);show(L.saved,"success")}catch(error){show(error.message||L.failed,"error")}finally{button.disabled=false}})})();</script>';
+      const evidence=data.evidence||{},version=evidence.runtimeVersion||(zh?'版本未验证':'Version unverified');
+      const body='<div class="info-bar"><span><strong>Provider:</strong> '+esc(data.backendType||'-')+'</span><span><strong>Transport:</strong> <code>'+esc(data.transportId||'-')+'</code></span><span><strong>'+(zh?'运行证据':'Runtime evidence')+':</strong> '+esc(version)+' · '+esc(evidence.platform||'-')+'</span><span><strong>'+(zh?'策略修订':'Revision')+':</strong> '+Number(data.revision||0)+'</span></div>'+scope+form+'<p><a href="/agents/'+esc(agentId)+'">← '+(zh?'返回智能体':'Back to Agent')+'</a></p>';
+      res.send(renderPage(req,title,body,{nav:agentNav(agentId,agent.agentName||agentId,req.t)+' › '+esc(title),footer:renderFooter(req.t,req.locale)+script}));
+    }catch(error){next(error)}
+  });
 
   R.get('/agents/:agentId',async(req,res,next)=>{
     try{
@@ -1608,7 +1664,8 @@ function createWebRouter(handlers, db, opts={}){
 
       // 信息条
       const imUid=esc(agent.imUid||'');
-      const infoBar='<div class="info-bar">'+(imUid?'<span style="display:inline-flex;align-items:center;gap:4px">'+L('web.agent.info.im_uid')+': <code>'+imUid+'</code>'+copyButton({esc,label:T('web.agent.info.im_uid_copy_hint'),attrs:'data-voko-copy-value="'+imUid+'"'})+'</span>':'')+'<span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
+      const securityLink=['workbuddy','qwen-office','dumate'].includes(String(agent.backendType||''))?'<span><a href="/agents/'+aId+'/security" style="padding:0">'+(String(req.locale||'zh').startsWith('zh')?'访客权限与安全':'Visitor security')+'</a></span>':'';
+      const infoBar='<div class="info-bar">'+(imUid?'<span style="display:inline-flex;align-items:center;gap:4px">'+L('web.agent.info.im_uid')+': <code>'+imUid+'</code>'+copyButton({esc,label:T('web.agent.info.im_uid_copy_hint'),attrs:'data-voko-copy-value="'+imUid+'"'})+'</span>':'')+'<span>'+L('web.agent.info.status')+': <span class="badge '+stBdg+' '+stCls+'">'+stTxt+'</span></span><span>'+L('web.agent.info.backend')+': '+h(agent.backendType)+'</span><span>'+L('web.agent.info.publish')+': '+h(agent.publishStatus)+'</span>'+securityLink+(agent.ownerEmail?'<span>'+L('web.agent.info.email')+': '+esc(agent.ownerEmail)+'</span>':'')+(warnings.length?'<span class="error">⚠️ '+esc(warnings.join('; '))+'</span>':'')+'</div>';
 
       // 搜索框
       const keywordEsc=esc(keyword);
