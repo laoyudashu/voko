@@ -14,6 +14,7 @@ test('Provider security page and API expose only controls supported by the Agent
     CREATE TABLE agents(agent_id TEXT PRIMARY KEY,agent_name TEXT,backend_type TEXT,owner_email TEXT);
     INSERT INTO agents VALUES('agent-1','陈老师','workbuddy',NULL);
     INSERT INTO agents VALUES('agent-2','A诊','codex',NULL);
+    INSERT INTO agents VALUES('agent-3','Goose助手','goose',NULL);
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -25,6 +26,7 @@ test('Provider security page and API expose only controls supported by the Agent
     list_agents: async () => ({ agents: [
       { agentId: 'agent-1', agentName: '陈老师', backendType: 'workbuddy' },
       { agentId: 'agent-2', agentName: 'A诊', backendType: 'codex' },
+      { agentId: 'agent-3', agentName: 'Goose助手', backendType: 'goose' },
     ] }),
   };
   const app = express();
@@ -45,11 +47,13 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(html, /访客权限与安全/);
   assert.match(html, /name="dataFileAccess"/);
   assert.doesNotMatch(html, /name="shell"/);
-  assert.match(html, /Shell/);
+  assert.doesNotMatch(html, /Shell/);
   assert.match(html, /REST\/Webhook Push/);
   assert.match(html, /智能体框架强制执行/);
   assert.match(html, /运行时启动时生效/);
   assert.match(html, /重启运行时撤销/);
+  assert.doesNotMatch(html, /运行证据/);
+  assert.doesNotMatch(html, /策略修订/);
   assert.match(html, /id="provider-security-confirmation-input"/);
   assert.doesNotMatch(html, /window\.prompt/);
 
@@ -65,7 +69,13 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(codexHtml, /name="sandboxMode"/);
   assert.match(codexHtml, /只读沙箱/);
   assert.match(codexHtml, /允许写工作区/);
-  assert.match(codexHtml, /网络访问/);
+  assert.doesNotMatch(codexHtml, /网络访问/);
+
+  const goosePage = await fetch(`${origin}/agents/agent-3/security`, { headers: auth });
+  const gooseHtml = await goosePage.text();
+  assert.equal(goosePage.status, 200, gooseHtml);
+  assert.match(gooseHtml, /尚未接入可验证的动态权限控制/);
+  assert.doesNotMatch(gooseHtml, /工具权限/);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
