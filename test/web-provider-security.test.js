@@ -13,6 +13,7 @@ test('Provider security page and API expose only controls supported by the Agent
   db.exec(`
     CREATE TABLE agents(agent_id TEXT PRIMARY KEY,agent_name TEXT,backend_type TEXT,owner_email TEXT);
     INSERT INTO agents VALUES('agent-1','陈老师','workbuddy',NULL);
+    INSERT INTO agents VALUES('agent-2','A诊','codex',NULL);
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -21,7 +22,10 @@ test('Provider security page and API expose only controls supported by the Agent
   const dispatcher = { providerSecurity, applyProviderSecurityPolicyChange: () => true };
   const webSessions = createLocalWebSessionStore(db);
   const handlers = {
-    list_agents: async () => ({ agents: [{ agentId: 'agent-1', agentName: '陈老师', backendType: 'workbuddy' }] }),
+    list_agents: async () => ({ agents: [
+      { agentId: 'agent-1', agentName: '陈老师', backendType: 'workbuddy' },
+      { agentId: 'agent-2', agentName: 'A诊', backendType: 'codex' },
+    ] }),
   };
   const app = express();
   app.use(express.json());
@@ -43,6 +47,26 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.doesNotMatch(html, /name="shell"/);
   assert.match(html, /Shell/);
   assert.match(html, /REST\/Webhook Push/);
+  assert.match(html, /智能体框架强制执行/);
+  assert.match(html, /运行时启动时生效/);
+  assert.match(html, /重启运行时撤销/);
+  assert.match(html, /id="provider-security-confirmation-input"/);
+  assert.doesNotMatch(html, /window\.prompt/);
+
+  const unsupportedDetail = await fetch(`${origin}/agents/agent-2`, { headers: auth });
+  const unsupportedDetailHtml = await unsupportedDetail.text();
+  assert.equal(unsupportedDetail.status, 200, unsupportedDetailHtml);
+  assert.match(unsupportedDetailHtml, /href="\/agents\/agent-2\/security" class="op-card"/);
+
+  const unsupportedPage = await fetch(`${origin}/agents/agent-2/security`, { headers: auth });
+  const unsupportedHtml = await unsupportedPage.text();
+  assert.equal(unsupportedPage.status, 200, unsupportedHtml);
+  assert.match(unsupportedHtml, /尚未接入可验证的动态权限控制/);
+  assert.match(unsupportedHtml, /智能体框架.*codex/);
+  assert.doesNotMatch(unsupportedHtml, /安全适配器/);
+  assert.doesNotMatch(unsupportedHtml, /策略修订/);
+  assert.doesNotMatch(unsupportedHtml, /生效范围/);
+  assert.doesNotMatch(unsupportedHtml, /data-control=/);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
