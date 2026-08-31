@@ -139,12 +139,13 @@ export function readWorkBuddyAgentAvatar(id: unknown, options: Parameters<typeof
   const target = resolveWorkBuddyAgentTarget(id, options);
   if (!target?.instance.avatar) return null;
   const avatarPath = path.resolve(target.pluginRoot, target.instance.avatar);
-  if (!inside(target.pluginRoot, avatarPath) || !fs.existsSync(avatarPath)) return null;
-  const stat = fs.statSync(avatarPath);
-  if (!stat.isFile() || stat.size <= 0 || stat.size > 500 * 1024) return null;
-  const data = fs.readFileSync(avatarPath);
-  const mimeType = imageType(data);
-  return mimeType ? { data, mimeType } : null;
+  if (!inside(target.pluginRoot, avatarPath)) return null;
+  try {
+    const data = fs.readFileSync(avatarPath);
+    if (data.length <= 0 || data.length > 500 * 1024) return null;
+    const mimeType = imageType(data);
+    return mimeType ? { data, mimeType } : null;
+  } catch (_) { return null; }
 }
 
 module.exports = { discoverWorkBuddyAgents, resolveWorkBuddyAgent, resolveWorkBuddyAgentTarget, readWorkBuddyAgentAvatar };
