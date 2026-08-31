@@ -20,7 +20,16 @@ test('Provider security page and API expose only controls supported by the Agent
     );
   `);
   const providerSecurity = new ProviderSecurityPolicyService(db);
-  const dispatcher = { providerSecurity, applyProviderSecurityPolicyChange: () => true };
+  const dispatcher = {
+    providerSecurity,
+    applyProviderSecurityPolicyChange: () => true,
+    inspectProviderSecurity(agentId) {
+      const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
+      const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
+        : backend === 'codex' ? ['codex-cli', 'cli'] : ['goose-acp', 'acp'];
+      return { ...providerSecurity.inspect(agentId, mapping[0]), deliveryMode: mapping[1], selectedProvider: mapping[0] };
+    },
+  };
   const webSessions = createLocalWebSessionStore(db);
   const handlers = {
     list_agents: async () => ({ agents: [
@@ -45,6 +54,8 @@ test('Provider security page and API expose only controls supported by the Agent
   const html = await page.text();
   assert.equal(page.status, 200, html);
   assert.match(html, /访客权限与安全/);
+  assert.match(html, /消息推送模式/);
+  assert.match(html, /HTTP/);
   assert.match(html, /name="dataFileAccess"/);
   assert.doesNotMatch(html, /name="shell"/);
   assert.doesNotMatch(html, /Shell/);

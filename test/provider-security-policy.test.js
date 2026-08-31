@@ -113,3 +113,27 @@ test('dispatcher forwards the leased policy and matching prompt at the Provider 
   }
   assert.equal(state, 'COMPLETED');
 });
+
+test('security inspection follows the current delivery mode and exact Goose transport', (t) => {
+  const db = initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  const now = Date.now();
+  const insert = db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,delivery_modes,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`);
+  insert.run('row-goose-acp','goose-acp-agent','im-goose-acp','token','ws://127.0.0.1',
+    'Goose ACP','goose',JSON.stringify(['acp','cli','pull']),now,now);
+  insert.run('row-goose-cli','goose-cli-agent','im-goose-cli','token','ws://127.0.0.1',
+    'Goose CLI','goose',JSON.stringify(['cli','pull']),now,now);
+  const match = (_agentId, meta) => meta.backend_type === 'goose';
+  const provider = { priority: 10, match, isAvailable: () => true, async push() {} };
+  const dispatcher = createDispatcher({ db, providers: { 'goose-acp': provider, 'goose-cli': provider } });
+  const acp = dispatcher.inspectProviderSecurity('goose-acp-agent');
+  assert.equal(acp.deliveryMode, 'acp');
+  assert.equal(acp.transportId, 'goose-acp');
+  assert.equal(acp.controls.some(item => item.editable), false);
+  const cli = dispatcher.inspectProviderSecurity('goose-cli-agent');
+  assert.equal(cli.deliveryMode, 'cli');
+  assert.equal(cli.transportId, 'goose-cli');
+  assert.deepEqual(cli.controls.filter(item => item.editable).map(item => item.id), ['extensionProfile']);
+});

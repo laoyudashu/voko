@@ -2087,11 +2087,25 @@ Convergence obligations:
 
   function inspectProviderSecurity(agentId: string, transportId?: string): any {
     if (!providerSecurity) throw new Error('PROVIDER_SECURITY_UNAVAILABLE');
-    const result = providerSecurity.inspect(agentId, transportId);
+    const deliveryStatus = getAgentDeliveryStatus(agentId);
+    const selectedMode = deliveryStatus.temporaryPreferredMode
+      || deliveryStatus.activeAutomaticMode
+      || deliveryStatus.configuredModes.find(mode => mode !== 'pull')
+      || 'pull';
+    const selectedProvider = transportId
+      || deliveryStatus.temporaryPreferredProvider
+      || deliveryStatus.methods.find(method => method.mode === selectedMode && method.configured
+        && method.automaticReady === true)?.provider
+      || deliveryStatus.methods.find(method => method.mode === selectedMode && method.configured)?.provider
+      || null;
+    const inferred = providerSecurity.inspect(agentId, selectedProvider || undefined);
+    const result = selectedMode === 'pull' || !selectedProvider
+      ? { ...inferred, transportId: '', supported: false, controls: [], config: {}, assurance: 'unsupported' }
+      : inferred;
     const provider = providers[String(result.transportId || '')] as any;
     let evidence: Record<string, unknown> | null = null;
     try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
-    return { ...result, evidence };
+    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence };
   }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
