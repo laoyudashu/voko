@@ -57,6 +57,9 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(html, /消息推送模式/);
   assert.match(html, /HTTP/);
   assert.match(html, /name="dataFileAccess"/);
+  assert.match(html, /data-risk="medium"/);
+  assert.match(html, /data-risk="high"/);
+  assert.match(html, /高风险/);
   assert.doesNotMatch(html, /name="shell"/);
   assert.doesNotMatch(html, /Shell/);
   assert.match(html, /REST\/Webhook Push/);

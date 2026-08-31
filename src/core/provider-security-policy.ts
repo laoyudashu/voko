@@ -12,7 +12,7 @@ export interface ProviderSecurityControlDefinition {
   editable: boolean;
   statusLabel?: string;
   statusLabelEn?: string;
-  values?: Array<{ value: string; label: string }>;
+  values?: Array<{ value: string; label: string; risk?: 'low' | 'medium' | 'high' }>;
   applyAt: 'next_turn' | 'runtime_start';
   runtimeScope: 'invocation' | 'agent_instance';
   revocation: 'next_invocation' | 'restart_runtime';
@@ -38,11 +38,11 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
   'claude-cli': [
     { id: 'toolAccess', label: '内置工具', description: '通过 Claude CLI 的 --tools 参数控制访客回合可用的内置工具。',
       kind: 'enum', editable: true, values: [
-        { value: 'none', label: '全部禁用' }, { value: 'read_only', label: '仅只读工具（Read / Grep / Glob）' },
+        { value: 'none', label: '全部禁用', risk: 'low' }, { value: 'read_only', label: '仅只读工具（Read / Grep / Glob）', risk: 'medium' },
       ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
     { id: 'browser', label: 'Chrome 浏览器', description: '通过 --no-chrome / --chrome 控制 Claude 的 Chrome 集成。',
       kind: 'enum', editable: true, values: [
-        { value: 'disabled', label: '禁用' }, { value: 'enabled', label: '启用' },
+        { value: 'disabled', label: '禁用', risk: 'low' }, { value: 'enabled', label: '启用', risk: 'high' },
       ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
     { id: 'shellWrite', label: 'Shell 与文件写入', description: '访客回合固定使用 plan 权限模式，不开放 Shell、Edit 或 Write。', statusLabel: '固定禁止', statusLabelEn: 'Always denied',
       kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
@@ -50,7 +50,7 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
   'codex-cli': [
     { id: 'sandboxMode', label: '命令与文件沙箱', description: '直接映射 Codex CLI 的 --sandbox 参数；不开放 danger-full-access。',
       kind: 'enum', editable: true, values: [
-        { value: 'read_only', label: '只读沙箱' }, { value: 'workspace_write', label: '允许写工作区' },
+        { value: 'read_only', label: '只读沙箱', risk: 'low' }, { value: 'workspace_write', label: '允许写工作区', risk: 'high' },
       ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
     { id: 'network', label: '网络访问', description: '当前 Codex CLI 转发层没有独立、可验证的网络开关。', statusLabel: '不支持配置', statusLabelEn: 'Not configurable',
       kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'unsupported' },
@@ -76,7 +76,7 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
   'goose-cli': [
     { id: 'extensionProfile', label: '扩展配置', description: '通过 --no-profile 禁止加载 Goose 默认扩展；Goose 没有可验证的 Shell、文件、浏览器独立开关。',
       kind: 'enum', editable: true, values: [
-        { value: 'disabled', label: '禁用全部默认扩展' }, { value: 'default', label: '加载默认扩展' },
+        { value: 'disabled', label: '禁用全部默认扩展', risk: 'low' }, { value: 'default', label: '加载默认扩展', risk: 'high' },
       ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
   ],
   'goose-acp': [
@@ -86,7 +86,7 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
   'workbuddy-http': [
     { id: 'dataFileAccess', label: '绑定数据文件', description: '仅允许访问当前 WorkBuddy 智能体绑定的 data.json 精确路径。',
       kind: 'enum', editable: true, values: [
-        { value: 'none', label: '禁止访问' }, { value: 'read', label: '只读' }, { value: 'read_write', label: '读写' },
+        { value: 'none', label: '禁止访问', risk: 'low' }, { value: 'read', label: '只读', risk: 'medium' }, { value: 'read_write', label: '读写', risk: 'high' },
       ], applyAt: 'runtime_start', runtimeScope: 'agent_instance', revocation: 'restart_runtime', enforcement: 'provider_enforced' },
     { id: 'shell', label: 'Shell', description: '当前适配器不能把 Shell 收窄到可验证边界，因此不开放。',
       kind: 'status', editable: false, applyAt: 'runtime_start', runtimeScope: 'agent_instance', revocation: 'restart_runtime', enforcement: 'unsupported' },
@@ -96,7 +96,7 @@ const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
   'qwen-office-cli': [
     { id: 'sessionPersistence', label: '会话记忆', description: '控制千问办公 CLI 是否复用 Provider 原生会话；工具始终禁用。',
       kind: 'enum', editable: true, values: [
-        { value: 'ephemeral', label: '每次新会话' }, { value: 'conversation', label: '按对话复用' },
+        { value: 'ephemeral', label: '每次新会话', risk: 'low' }, { value: 'conversation', label: '按对话复用', risk: 'medium' },
       ], applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },
     { id: 'tools', label: '工具调用', description: 'VOKO 固定传递空工具列表，用户不能放宽。',
       kind: 'status', editable: false, applyAt: 'next_turn', runtimeScope: 'invocation', revocation: 'next_invocation', enforcement: 'provider_enforced' },

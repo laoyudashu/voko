@@ -137,3 +137,21 @@ test('security inspection follows the current delivery mode and exact Goose tran
   assert.equal(cli.transportId, 'goose-cli');
   assert.deepEqual(cli.controls.filter(item => item.editable).map(item => item.id), ['extensionProfile']);
 });
+
+test('unsupported Hermes transport renders as unsupported instead of a transport mismatch', (t) => {
+  const db = initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,delivery_modes,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`).run('row-hermes','hermes-agent','im-hermes','token','ws://127.0.0.1',
+      'Hermes','hermes',JSON.stringify(['cli','pull']),now,now);
+  const provider = { priority: 10, match: (_agentId, meta) => meta.backend_type === 'hermes',
+    isAvailable: () => true, async push() {} };
+  const dispatcher = createDispatcher({ db, providers: { 'hermes-cli': provider } });
+  const result = dispatcher.inspectProviderSecurity('hermes-agent');
+  assert.equal(result.deliveryMode, 'cli');
+  assert.equal(result.transportId, 'hermes-cli');
+  assert.equal(result.supported, false);
+  assert.deepEqual(result.controls, []);
+});

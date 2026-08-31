@@ -16,7 +16,7 @@
 import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import { classifyProviderTurnFailure } from '../provider-turn-status';
-import { appendProviderSecurityPrompt, ProviderSecurityPolicyService } from '../provider-security-policy';
+import { appendProviderSecurityPrompt, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -2098,10 +2098,13 @@ Convergence obligations:
         && method.automaticReady === true)?.provider
       || deliveryStatus.methods.find(method => method.mode === selectedMode && method.configured)?.provider
       || null;
-    const inferred = providerSecurity.inspect(agentId, selectedProvider || undefined);
+    const hasSecurityDefinition = !!selectedProvider && isProviderSecurityTransport(selectedProvider);
+    const inferred = providerSecurity.inspect(agentId, hasSecurityDefinition ? selectedProvider : undefined);
     const result = selectedMode === 'pull' || !selectedProvider
       ? { ...inferred, transportId: '', supported: false, controls: [], config: {}, assurance: 'unsupported' }
-      : inferred;
+      : hasSecurityDefinition
+        ? inferred
+        : { ...inferred, transportId: selectedProvider, supported: false, controls: [], config: {}, assurance: 'unsupported' };
     const provider = providers[String(result.transportId || '')] as any;
     let evidence: Record<string, unknown> | null = null;
     try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
