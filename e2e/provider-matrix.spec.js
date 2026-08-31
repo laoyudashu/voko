@@ -62,7 +62,8 @@ test('delivery_modes order controls Pull versus Push and recovers without bypass
     toUid: 'e2e-im-uid', fromUid: 'e2e-visitor', channelId: pushChannel, channelType: 1,
     messageId: `220${suffix}2`, messageSeq: 22002 + suffix, content: 'delivery order push',
   });
-  await expect.poll(() => readMessages(pushChannel).some(row => row.is_me === 1)).toBe(true);
+  await expect.poll(() => readMessages(pushChannel)
+    .filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…').length).toBe(1);
   expect(readMessages(pushChannel).filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(1);
 
   await setModes(request, 'e2e-agent', []);
