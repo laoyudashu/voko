@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const express = require('express');
+const http = require('node:http');
 const test = require('node:test');
 const { createWebRouter } = require('../build/web');
 
@@ -35,13 +36,24 @@ async function start(t) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
+function get(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, { agent: false, headers }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body }));
+    });
+    request.once('error', reject);
+  });
+}
+
 test('parked trusted remote UI and local proxy routes are hard-disabled', async t => {
   const base = await start(t);
-  // Do not leave Undici keep-alive handles racing the temporary server cleanup.
-  // Node 24 on Windows can otherwise abort in libuv while the test process exits.
-  const headers = { Accept: 'application/json', Connection: 'close' };
-  const page = await fetch(`${base}/`, { headers: { Connection: 'close' } });
-  const html = await page.text();
+  // Avoid Undici's shared dispatcher in this short-lived test process. Node 24
+  // on Windows can otherwise abort in libuv while its async handle is closing.
+  const page = await get(`${base}/`);
+  const html = page.body;
   assert.equal(page.status, 200);
   assert.doesNotMatch(html, /href="\/trusted-remote"/);
 
@@ -55,7 +67,7 @@ test('parked trusted remote UI and local proxy routes are hard-disabled', async 
     '/api/owner-codex-config/agent-1',
     '/agents/agent-1/owner-chats/conversation-1',
   ]) {
-    const response = await fetch(`${base}${path}`, { headers });
+    const response = await get(`${base}${path}`, { Accept: 'application/json' });
     assert.equal(response.status, 404, path);
   }
 });
