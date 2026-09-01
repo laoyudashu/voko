@@ -21,6 +21,15 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
+function powershellQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function windowsVokoEncodedCommand(node, entry, args) {
+  const command = [node, entry, ...args].map(powershellQuote).join(' ');
+  return Buffer.from(`$env:NODE_NO_WARNINGS='1'; & ${command}`, 'utf16le').toString('base64');
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || ROOT,
@@ -97,6 +106,17 @@ class Host {
       if (result.error) throw result.error;
       return { code: Number(result.status), output: `${result.stdout || ''}${result.stderr || ''}` };
     }
+    if (this.kind === 'ssh-windows') {
+      const encoded = windowsVokoEncodedCommand(this.config.node, this.config.entry, args);
+      const result = spawnSync('ssh', [
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', this.config.host,
+        'powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded,
+      ], {
+        cwd: ROOT, encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+      });
+      if (result.error) throw result.error;
+      return { code: Number(result.status), output: `${result.stdout || ''}${result.stderr || ''}` };
+    }
     if (this.kind === 'utm') return this._utmVoko(args, timeout);
     throw new Error(`unsupported host kind: ${this.kind}`);
   }
@@ -146,13 +166,20 @@ class Host {
 
 function configFromEnv() {
   const utmctl = process.env.VOKO_REAL_UTMCTL || '/Applications/UTM.app/Contents/MacOS/utmctl';
+  const windowsTransport = String(process.env.VOKO_REAL_WINDOWS_TRANSPORT || 'ssh').trim().toLowerCase();
+  const windows = windowsTransport === 'parallels'
+    ? new Host('windows', {
+      kind: 'parallels', vm: required('VOKO_REAL_WINDOWS_VM'), node: required('VOKO_REAL_WINDOWS_NODE'),
+      entry: required('VOKO_REAL_WINDOWS_ENTRY'),
+    })
+    : new Host('windows', {
+      kind: 'ssh-windows', host: process.env.VOKO_REAL_WINDOWS_SSH_HOST || 'voko-windows',
+      node: required('VOKO_REAL_WINDOWS_NODE'), entry: required('VOKO_REAL_WINDOWS_ENTRY'),
+    });
   return {
     hosts: {
       macos: new Host('macos', { kind: 'local', voko: required('VOKO_REAL_MAC_VOKO') }),
-      windows: new Host('windows', {
-        kind: 'parallels', vm: required('VOKO_REAL_WINDOWS_VM'), node: required('VOKO_REAL_WINDOWS_NODE'),
-        entry: required('VOKO_REAL_WINDOWS_ENTRY'),
-      }),
+      windows,
       linux: new Host('linux', {
         kind: 'utm', vm: required('VOKO_REAL_LINUX_VM'), node: required('VOKO_REAL_LINUX_NODE'),
         entry: required('VOKO_REAL_LINUX_ENTRY'), user: process.env.VOKO_REAL_LINUX_USER || 'tjyu',
@@ -218,7 +245,7 @@ function checkPreflight(config, reporter, inventories) {
     const status = inventory.status;
     reporter.check(`${name} runtime READY`, status.runtimeState === 'ready',
       `version=${status.version} schema=${status.schemaVersion} agents=${status.startup?.loadedAgents}/${status.startup?.totalAgents}`);
-    reporter.check(`${name} schema v8`, Number(status.schemaVersion) === 8, `schema=${status.schemaVersion}`);
+    reporter.check(`${name} schema v9`, Number(status.schemaVersion) === 9, `schema=${status.schemaVersion}`);
     reporter.check(`${name} build current`, status.buildMismatch === false && !!status.buildDigest,
       `digest=${String(status.buildDigest || '').slice(0, 12)}`);
     if (status.buildDigest) digests.add(status.buildDigest);
@@ -333,4 +360,5 @@ async function main() {
 
 if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1; });
 
-module.exports = { Host, allAutomaticTargets, configFromEnv, parseJson, pollResult, resolveAgent, shellQuote };
+module.exports = { Host, allAutomaticTargets, configFromEnv, parseJson, pollResult, resolveAgent, shellQuote,
+  windowsVokoEncodedCommand };
