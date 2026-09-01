@@ -240,7 +240,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 // Schema 7 is the current shared Lite/Desktop marker.  The v7 database has
 // the same tables and columns already handled by Lite; keeping the marker in
 // sync prevents a newer Desktop-created database from being rejected by Lite.
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -294,6 +294,28 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
     }
   } catch (e: any) {
     console.warn('[DB] 旧游标迁移失败，已保留原始 config 数据:', e.message);
+  }
+}
+
+function ensureProviderSecuritySchema9(db: DatabaseSync): void {
+  const additions: Record<string, Array<[string, string]>> = {
+    provider_security_policies: [
+      ['runtime_evidence_json', 'TEXT'], ['capability_digest', 'TEXT'],
+      ['capability_observed_at', 'INTEGER'], ['capability_expires_at', 'INTEGER'],
+      ['probe_failure_count', 'INTEGER NOT NULL DEFAULT 0'], ['probe_retry_after', 'INTEGER'],
+    ],
+    provider_security_preflights: [
+      ['expected_capability_digest', 'TEXT'], ['expected_runtime_fingerprint', 'TEXT'],
+    ],
+    provider_security_turns: [
+      ['capability_digest', 'TEXT'], ['runtime_fingerprint', 'TEXT'], ['fallback_mode', 'TEXT'],
+    ],
+  };
+  for (const [table, columns] of Object.entries(additions)) {
+    const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    if (!exists) continue;
+    const current = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as TableInfoRow[]).map(column => column.name));
+    for (const [name, type] of columns) if (!current.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
 }
 
@@ -363,6 +385,7 @@ function runCurrentStartupMaintenance(db: DatabaseSync): void {
       WHERE r.conversation_id=c.id AND r.direction='outbound' AND r.status='active'
     )`);
   ensureSyncCheckpointSchema(db);
+  ensureProviderSecuritySchema9(db);
   try {
     const pkg = require('../../package.json');
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
@@ -872,6 +895,12 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       config_json TEXT NOT NULL,
       policy_digest TEXT NOT NULL,
       restore_constraint_digest TEXT NOT NULL,
+      runtime_evidence_json TEXT,
+      capability_digest TEXT,
+      capability_observed_at INTEGER,
+      capability_expires_at INTEGER,
+      probe_failure_count INTEGER NOT NULL DEFAULT 0,
+      probe_retry_after INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY(agent_id, transport_id)
@@ -884,6 +913,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       config_json TEXT NOT NULL,
       policy_digest TEXT NOT NULL,
       risk_json TEXT NOT NULL,
+      expected_capability_digest TEXT,
+      expected_runtime_fingerprint TEXT,
       expires_at INTEGER NOT NULL,
       consumed_at INTEGER,
       created_at INTEGER NOT NULL
@@ -897,6 +928,9 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       state TEXT NOT NULL,
       turn_policy_digest TEXT NOT NULL,
       restore_constraint_digest TEXT NOT NULL,
+      capability_digest TEXT,
+      runtime_fingerprint TEXT,
+      fallback_mode TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY(agent_id, turn_id)
@@ -916,6 +950,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     CREATE INDEX IF NOT EXISTS idx_provider_security_events_agent
       ON provider_security_events(agent_id, created_at);
   `);
+  ensureProviderSecuritySchema9(db);
   try {
     const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_session_handles'")
       .get() as { sql?: string } | undefined;
@@ -1618,6 +1653,8 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   if (schemaVersion < 8) migrateSchema8ProviderRouting(db, schemaVersion);
   runProviderIdentityBackfill(db);
   runCurrentStartupMaintenance(db);
+  db.prepare('INSERT OR REPLACE INTO config (type,data,updated_at) VALUES (?,?,?)')
+    .run('schema_version', JSON.stringify(SCHEMA_VERSION), Date.now());
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 
   return db;

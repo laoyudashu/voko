@@ -216,10 +216,29 @@ class WorkBuddyHttpProvider extends PushProvider {
   getSecurityControlEvidence(agentId = ''): Record<string, unknown> {
     const observed = (this as any).getProviderVersion?.();
     const runtimeVersion = observed?.version || probeWorkBuddyCliVersion(this._runtime) || null;
-    return { transportId: ADAPTER_TYPE, platform: process.platform,
+    return { transportId: ADAPTER_TYPE, platform: process.platform, frameworkVersion: this._runtime.desktopVersion || null,
       runtimeVersion, versionVerified: Boolean(observed?.version && observed?.result === 'known'),
       versionSource: observed?.source || (runtimeVersion ? 'command' : 'unknown'),
       contract: 'serve_args_exact_allowed_tools', readiness: this.getDeliveryReadiness(agentId) };
+  }
+
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
+    const args = workBuddyServeArgs([], 0, '<session>', {
+      dataFile: '<绑定文件>', dataFileAccess: config.dataFileAccess,
+      permissionMode: config.permissionMode, sessionPersistence: config.sessionPersistence, mcpProfile: config.mcpProfile,
+    });
+    const rendered: Array<{ text: string; risk: 'low'|'medium'|'high' }> = [
+      { text: `codebuddy ${args.slice(0, args.indexOf('--tools')).join(' ')}`.trim(), risk: 'medium' },
+    ];
+    const tools = args.indexOf('--tools');
+    if (tools >= 0 && args[tools + 1] === 'Read') {
+      rendered.push({ text: '--tools Read', risk: 'high' });
+      rendered.push({ text: '--allowedTools Read(<绑定文件>)（仅自动审批，非路径隔离）', risk: 'high' });
+    } else rendered.push({ text: '--tools <空列表>', risk: 'low' });
+    if (args.includes('--no-session-persistence')) rendered.push({ text: '--no-session-persistence', risk: 'low' });
+    rendered.push({ text: args.includes('--strict-mcp-config') ? '--strict-mcp-config' : '加载用户 MCP 配置',
+      risk: args.includes('--strict-mcp-config') ? 'low' : 'high' });
+    return rendered;
   }
 
   refreshRuntime() {

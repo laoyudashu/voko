@@ -23,9 +23,21 @@ test('Provider security page and API expose only controls supported by the Agent
     );
   `);
   const providerSecurity = new ProviderSecurityPolicyService(db);
+  for (const [agentId, transportId, ids] of [
+    ['agent-1','workbuddy-http',['dataFileAccess','permissionMode','sessionPersistence','mcpProfile','additionalPrompt']],
+    ['agent-5','qwen-office-cli',['sessionPersistence','permissionMode','toolAccess','mcpProfile','additionalPrompt']],
+    ['agent-6','dumate-http',['sessionPersistence','additionalPrompt','isolatedDataRoot','loopbackOnly']],
+  ]) providerSecurity.storeCapability(agentId, transportId, {
+    runtimeFingerprint: `${transportId}-test`, capabilityDigest: `${transportId}-capability`, evidenceState: 'static_compatible',
+    supportedControls: Object.fromEntries(ids.map(id => [id,{ values: [] }])), observedAt: Date.now(), expiresAt: Date.now()+10000,
+  });
   const dispatcher = {
     providerSecurity,
     applyProviderSecurityPolicyChange: () => true,
+    refreshProviderSecurityCapability: async () => ({ evidenceState: 'static_compatible', runtimeVersion: '2.139.0' }),
+    describeProviderSecurityInvocation: (_agentId, transportId, config) => transportId === 'workbuddy-http'
+      ? [{ text: config.dataFileAccess === 'read' ? '--tools Read' : '--tools <空列表>', risk: config.dataFileAccess === 'read' ? 'high' : 'low' }]
+      : [],
     inspectProviderSecurity(agentId) {
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
       const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
@@ -64,8 +76,13 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.equal(page.status, 200, html);
   assert.match(html, /访客权限与安全/);
   assert.match(html, /消息推送模式/);
+  assert.match(html, /当前运行环境/);
+  assert.match(html, /重新检测/);
+  assert.match(html, /运行时版本/);
   assert.match(html, /HTTP/);
   assert.match(html, /name="dataFileAccess"/);
+  assert.match(html, /宿主机文件读取/);
+  assert.match(html, /路径不隔离/);
   assert.match(html, /data-risk="medium"/);
   assert.match(html, /data-risk="high"/);
   assert.match(html, /高风险/);

@@ -146,6 +146,14 @@ class DuMateHttpProvider extends PushProvider {
       readiness: this.getDeliveryReadiness(agentId) };
   }
 
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
+    return [
+      { text: 'POST /session/<sessionId>/prompt_async', risk: 'low' },
+      { text: config.sessionPersistence === 'ephemeral' ? '每条消息新建 Session' : '复用当前访客 Session',
+        risk: config.sessionPersistence === 'ephemeral' ? 'low' : 'medium' },
+    ];
+  }
+
   acceptsBinding(binding: any, agentId = ''): boolean {
     const instanceId = this._routeForAgent(agentId);
     return binding?.providerType === 'dumate' && binding.adapterType === ADAPTER_TYPE

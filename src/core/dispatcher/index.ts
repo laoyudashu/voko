@@ -17,6 +17,7 @@ import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import { classifyProviderTurnFailure } from '../provider-turn-status';
 import { appendProviderSecurityPrompt, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
+import { isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -280,10 +281,76 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _sessionCoordinator = new ProviderSessionCoordinator(db);
   const providerSecurity = typeof (db as any).exec === 'function'
     ? new ProviderSecurityPolicyService(db as any) : null;
+  const capabilityRefreshes = new Map<string, Promise<any>>();
   const _bindingStore = _sessionCoordinator.store;
   const _modularRollout = getProviderModularRollout(db);
   const _conversationRoutes = new Map<string, Promise<void>>();
   try { _sessionCoordinator.recoverPending(); } catch (_) {}
+
+  function refreshProviderCapability(agentId: string, providerId: string, force = false): Promise<any> {
+    const provider = providers[providerId] as any;
+    if (!providerSecurity || !provider || !isDynamicCapabilityTransport(providerId)) return Promise.resolve(null);
+    const circuit = providerSecurity.probeStatus(agentId, providerId);
+    if (!force && circuit.retryAfter && circuit.retryAfter > Date.now()) {
+      return Promise.reject(Object.assign(new Error('Provider capability probe circuit is open'),
+        { code: 'PROVIDER_CAPABILITY_PROBE_THROTTLED', deliveryOutcome: 'not_delivered', retryAfter: circuit.retryAfter }));
+    }
+    let observed: any;
+    try { observed = snapshotFromProvider(provider, providerId, agentId); }
+    catch (_) { observed = { runtimeFingerprint: 'unknown' }; }
+    const key = `${providerId}:${observed.runtimeFingerprint}`;
+    const persistForAgent = (shared: Promise<any>) => shared.then(snapshot => {
+      providerSecurity.storeCapability(agentId, providerId, snapshot as any);
+      return snapshot;
+    }, error => {
+      providerSecurity.recordCapabilityFailure(agentId, providerId, error);
+      throw error;
+    });
+    if (capabilityRefreshes.has(key)) return persistForAgent(capabilityRefreshes.get(key)!);
+    const refresh = (async () => {
+      const timeout = new Promise((_, reject) => {
+        const timer = setTimeout(() => reject(Object.assign(new Error('Provider capability probe timed out'),
+          { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' })), 30_000);
+        timer.unref?.();
+      });
+      const probe = (async () => {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        providerSecurity.recordCapabilityEvent?.(agentId, providerId, 'CAPABILITY_PROBE_STARTED', {});
+        provider.refreshRuntime?.();
+        if (typeof provider.refreshDeliveryReadiness === 'function') await provider.refreshDeliveryReadiness();
+        return snapshotFromProvider(provider, providerId, agentId);
+      })();
+      return Promise.race([probe, timeout]);
+    })().finally(() => capabilityRefreshes.delete(key));
+    capabilityRefreshes.set(key, refresh);
+    return persistForAgent(refresh);
+  }
+
+  async function ensureProviderCapability(agentId: string, providerId: string, waitMs = 3000): Promise<any> {
+    if (!providerSecurity || !isDynamicCapabilityTransport(providerId)) return null;
+    const provider = providers[providerId] as any;
+    const persisted = providerSecurity.capability(agentId, providerId);
+    let observed: any = null;
+    try { observed = snapshotFromProvider(provider, providerId, agentId); } catch (_) {}
+    const verified = persisted?.verified;
+    if (verified && observed?.runtimeFingerprint === verified.runtimeFingerprint) {
+      if (Number(verified.expiresAt || 0) <= Date.now()) {
+        providerSecurity.storeCapability(agentId, providerId, { ...verified, evidenceState: 'stale_verified', observedAt: Date.now() });
+        void refreshProviderCapability(agentId, providerId).catch(() => undefined);
+      }
+      return verified;
+    }
+    if (verified && observed?.runtimeFingerprint && observed.runtimeFingerprint !== verified.runtimeFingerprint) {
+      providerSecurity.storeCapability(agentId, providerId, { ...observed, evidenceState: 'changed_unverified' });
+    }
+    const refresh = refreshProviderCapability(agentId, providerId);
+    const timeout = new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(Object.assign(new Error('Provider capability wait timed out'),
+        { code: 'PROVIDER_CAPABILITY_WAIT_TIMEOUT', deliveryOutcome: 'not_delivered' })), waitMs);
+      timer.unref?.();
+    });
+    return Promise.race([refresh, timeout]);
+  }
 
   function _commitProviderSession(input: any): void {
     const mode = providerModularModeForFamily(_modularRollout, input.providerType);
@@ -1552,6 +1619,11 @@ Convergence obligations:
               throw error;
             }
           }
+          // 第一阶段仅让已迁移的 transport 进入异步能力门禁。未迁移 Provider
+          // 必须保持原来的同步调用时序，避免仅仅多一个 microtask 就改变路由/回包竞态。
+          if (isDynamicCapabilityTransport(selectedRoute.providerId)) {
+            await ensureProviderCapability(agentId, selectedRoute.providerId, 3000);
+          }
           const securityLease = providerSecurity?.acquireTurnLease(baseProviderPayload, selectedRoute.providerId) || null;
           const providerPayload = {
             ...baseProviderPayload,
@@ -2045,8 +2117,11 @@ Convergence obligations:
       for (const row of rows) {
         const agentId = String(row?.agent_id || '').trim();
         if (!agentId) continue;
-        _routeProvider(agentId, 'push');
+        const route = _routeProviderEntry(agentId, 'push');
         _routeProvider(agentId, 'steer');
+        if (route?.providerId && isDynamicCapabilityTransport(route.providerId)) {
+          void refreshProviderCapability(agentId, route.providerId).catch(() => undefined);
+        }
       }
     } catch (e) {
       console.error('[Dispatcher] provider 路由初始化失败:', errorMessage(e));
@@ -2108,7 +2183,28 @@ Convergence obligations:
     const provider = providers[String(result.transportId || '')] as any;
     let evidence: Record<string, unknown> | null = null;
     try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
-    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence };
+    const capabilityEvidence = result.transportId ? providerSecurity.capability(agentId, result.transportId) : null;
+    if (isDynamicCapabilityTransport(result.transportId) && (!capabilityEvidence?.verified
+      || Number(capabilityEvidence.verified.expiresAt || 0) <= Date.now())) {
+      void refreshProviderCapability(agentId, result.transportId).catch(() => undefined);
+    }
+    const probing = [...capabilityRefreshes.keys()].some(key => key.startsWith(`${result.transportId}:`));
+    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence,
+      capabilityEvidence, capabilityProbing: probing };
+  }
+
+  async function refreshProviderSecurityCapability(agentId: string): Promise<any> {
+    const inspected = inspectProviderSecurity(agentId);
+    if (!inspected.transportId) throw new Error('PROVIDER_SECURITY_UNSUPPORTED');
+    return refreshProviderCapability(agentId, inspected.transportId, true);
+  }
+
+  function describeProviderSecurityInvocation(agentId: string, transportId: string, config?: Record<string,string>): any {
+    const policy = providerSecurity?.effective(agentId, transportId);
+    const effectiveConfig = config || policy?.config || {};
+    const provider = providers[transportId] as any;
+    return provider?.describeSecurityInvocation?.(effectiveConfig)
+      || redactedInvocation(transportId, effectiveConfig);
   }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
@@ -2132,7 +2228,9 @@ Convergence obligations:
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
-    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, applyProviderSecurityPolicyChange,
+    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, refreshProviderSecurityCapability,
+    describeProviderSecurityInvocation,
+    applyProviderSecurityPolicyChange,
     providers: runtimeRegistry.providers };
 }
 

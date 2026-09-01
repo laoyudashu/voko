@@ -16,23 +16,40 @@ function fixture(backendType = 'workbuddy') {
     INSERT INTO provider_conversation_bindings VALUES('binding-1','agent-1',
       '${backendType === 'workbuddy' ? 'workbuddy-http' : 'qwen-office-cli'}','active',0);
   `);
-  return { db, service: new ProviderSecurityPolicyService(db) };
+  const service = new ProviderSecurityPolicyService(db);
+  const transport = backendType === 'workbuddy' ? 'workbuddy-http'
+    : backendType === 'qwen-office' ? 'qwen-office-cli' : backendType === 'dumate' ? 'dumate-http' : '';
+  if (transport) {
+    const ids = transport === 'workbuddy-http'
+      ? ['dataFileAccess','permissionMode','sessionPersistence','mcpProfile','additionalPrompt']
+      : transport === 'qwen-office-cli'
+        ? ['sessionPersistence','permissionMode','toolAccess','mcpProfile','additionalPrompt']
+        : ['sessionPersistence','additionalPrompt','isolatedDataRoot','loopbackOnly'];
+    service.storeCapability('agent-1', transport, {
+      runtimeFingerprint: `${transport}-test`, capabilityDigest: `${transport}-capability`, evidenceState: 'static_compatible',
+      supportedControls: Object.fromEntries(ids.map(id => [id, { values: [] }])), observedAt: Date.now(), expiresAt: Date.now()+10000,
+    });
+  }
+  return { db, service };
 }
 
 test('provider security definitions are Provider-specific and preserve current defaults', () => {
   const { service } = fixture();
   const policy = service.inspect('agent-1');
   assert.equal(policy.transportId, 'workbuddy-http');
-  assert.equal(policy.config.dataFileAccess, 'read');
+  assert.equal(policy.config.dataFileAccess, 'none');
+  const dataFileControl = policy.controls.find(item => item.id === 'dataFileAccess');
+  assert.equal(dataFileControl.values.find(item => item.value === 'read').risk, 'high');
+  assert.match(dataFileControl.description, /不是路径隔离/);
   assert.deepEqual(policy.controls.filter(item => item.editable).map(item => item.id),
     ['dataFileAccess', 'permissionMode', 'sessionPersistence', 'mcpProfile', 'additionalPrompt']);
-  assert.equal(policy.controls.find(item => item.id === 'shell').enforcement, 'unsupported');
+  assert.equal(policy.controls.find(item => item.id === 'shell'), undefined);
 });
 
 test('legacy WorkBuddy write and bypass policy is read safely without re-enabling it', () => {
   const { db, service } = fixture();
   const now = Date.now();
-  db.prepare(`INSERT INTO provider_security_policies
+  db.prepare(`INSERT OR REPLACE INTO provider_security_policies
     (agent_id,transport_id,revision,config_json,policy_digest,restore_constraint_digest,created_at,updated_at)
     VALUES(?,?,?,?,?,?,?,?)`).run('agent-1', 'workbuddy-http', 4, JSON.stringify({
     dataFileAccess: 'read_write', permissionMode: 'bypassPermissions', sessionPersistence: 'conversation',
@@ -51,6 +68,13 @@ test('office Provider transports expose only controls backed by their real invoc
   const dumate = fixture('dumate').service.inspect('agent-1', 'dumate-http');
   assert.deepEqual(dumate.controls.filter(item => item.editable).map(item => item.id),
     ['sessionPersistence', 'additionalPrompt']);
+});
+
+test('unverified dynamic Provider hides native parameters but keeps VOKO safety prompt editable', () => {
+  const { db, service } = fixture('qwen-office');
+  db.prepare('DELETE FROM provider_security_policies WHERE agent_id=?').run('agent-1');
+  const policy = service.inspect('agent-1', 'qwen-office-cli');
+  assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
 });
 
 test('CLI permissions map the latest leased policy to real Provider argv', () => {
@@ -73,18 +97,32 @@ test('permission expansions require typed confirmation for CLI Providers', () =>
   assert.equal(expansion.requiresTypedConfirmation, true);
 });
 
+test('capability evidence persists without changing policy revision and protects preflight commit', () => {
+  const { service } = fixture();
+  const snapshot = {
+    runtimeFingerprint: 'fingerprint-1', capabilityDigest: 'capability-1', evidenceState: 'static_compatible',
+    supportedControls: { dataFileAccess: { values: ['none','read'] }, additionalPrompt: { values: [] } },
+    observedAt: Date.now(), expiresAt: Date.now() + 1000,
+  };
+  service.storeCapability('agent-1', 'workbuddy-http', snapshot);
+  assert.equal(service.effective('agent-1', 'workbuddy-http').revision, 0);
+  assert.equal(service.effective('agent-1', 'workbuddy-http').runtimeFingerprint, 'fingerprint-1');
+  const preflight = service.preflight('agent-1', 'workbuddy-http', { dataFileAccess: 'none' });
+  service.storeCapability('agent-1', 'workbuddy-http', { ...snapshot,
+    runtimeFingerprint: 'fingerprint-2', capabilityDigest: 'capability-2' });
+  assert.throws(() => service.commit('agent-1', preflight.preflightToken, ''), /PROVIDER_CAPABILITY_CONFLICT/);
+});
+
 test('dangerous expansion requires typed Agent confirmation and consumes preflight once', () => {
   const { db, service } = fixture();
-  const restrictive = service.preflight('agent-1', 'workbuddy-http', { dataFileAccess: 'none' });
-  service.commit('agent-1', restrictive.preflightToken, '');
   const expansion = service.preflight('agent-1', 'workbuddy-http', { dataFileAccess: 'read' });
   assert.deepEqual(expansion.risks, ['EXPANDS_LOCAL_DATA_ACCESS']);
   assert.throws(() => service.commit('agent-1', expansion.preflightToken, 'wrong'), /CONFIRMATION_MISMATCH/);
   const committed = service.commit('agent-1', expansion.preflightToken, '陈老师');
-  assert.equal(committed.revision, 2);
+  assert.equal(committed.revision, 1);
   assert.equal(committed.lifecycleAction, 'restart_agent_runtime');
   assert.equal(db.prepare("SELECT status FROM provider_conversation_bindings WHERE id='binding-1'").get().status, 'stale');
-  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM provider_security_events WHERE event_type='POLICY_COMMITTED'").get().count, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM provider_security_events WHERE event_type='POLICY_COMMITTED'").get().count, 1);
   assert.throws(() => service.commit('agent-1', expansion.preflightToken, '陈老师'), /PREFLIGHT_INVALID/);
 });
 
