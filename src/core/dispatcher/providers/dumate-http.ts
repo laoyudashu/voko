@@ -275,7 +275,8 @@ class DuMateHttpProvider extends PushProvider {
     const boundInstanceId = this._instanceForAgent(payload.agentId);
     const instanceId = this._routeForAgent(payload.agentId);
     if (boundInstanceId && !this._resolveAgentTarget(boundInstanceId)) throw deliveryError('Bound DuMate Agent is unavailable');
-    const binding = payload.providerBinding;
+    const binding = payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+      ? null : payload.providerBinding;
     if (binding?.providerInstanceId && binding.providerInstanceId !== instanceId) throw deliveryError('DuMate Agent binding is stale');
     const state = await this._ensureState(instanceId, payload.agentId);
     let sessionId = this.acceptsBinding(binding, payload.agentId) ? binding!.nativeSessionId : '';

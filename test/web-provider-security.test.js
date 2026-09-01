@@ -16,6 +16,8 @@ test('Provider security page and API expose only controls supported by the Agent
     INSERT INTO agents VALUES('agent-2','A诊','codex',NULL);
     INSERT INTO agents VALUES('agent-3','Goose助手','goose',NULL);
     INSERT INTO agents VALUES('agent-4','Hermes助手','hermes',NULL);
+    INSERT INTO agents VALUES('agent-5','千问办公助手','qwen-office',NULL);
+    INSERT INTO agents VALUES('agent-6','百度搭子助手','dumate',NULL);
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -28,7 +30,9 @@ test('Provider security page and API expose only controls supported by the Agent
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
       const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
         : backend === 'codex' ? ['codex-cli', 'cli']
-          : backend === 'hermes' ? ['hermes-cli', 'cli'] : ['goose-acp', 'acp'];
+          : backend === 'hermes' ? ['hermes-cli', 'cli']
+            : backend === 'qwen-office' ? ['qwen-office-cli', 'cli']
+              : backend === 'dumate' ? ['dumate-http', 'http'] : ['goose-acp', 'acp'];
       return { ...providerSecurity.inspect(agentId, mapping[0]), deliveryMode: mapping[1], selectedProvider: mapping[0] };
     },
   };
@@ -39,6 +43,8 @@ test('Provider security page and API expose only controls supported by the Agent
       { agentId: 'agent-2', agentName: 'A诊', backendType: 'codex' },
       { agentId: 'agent-3', agentName: 'Goose助手', backendType: 'goose' },
       { agentId: 'agent-4', agentName: 'Hermes助手', backendType: 'hermes' },
+      { agentId: 'agent-5', agentName: '千问办公助手', backendType: 'qwen-office' },
+      { agentId: 'agent-6', agentName: '百度搭子助手', backendType: 'dumate' },
     ] }),
   };
   const app = express();
@@ -83,7 +89,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.equal(codexPage.status, 200, codexHtml);
   assert.match(codexHtml, /命令与文件沙箱/);
   assert.match(codexHtml, /name="sandboxMode"/);
-  assert.match(codexHtml, /只读沙箱/);
+  assert.match(codexHtml, /宿主机广泛只读/);
   assert.match(codexHtml, /允许写工作区/);
   assert.doesNotMatch(codexHtml, /网络访问/);
 
@@ -116,7 +122,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
-  assert.match(hermesHtml, /彩色部分表示下方权限选项带来的参数变化/);
+  assert.match(hermesHtml, /彩色部分表示下方权限选项带来的参数或执行策略变化/);
   assert.match(hermesHtml, /#b42318/);
   assert.match(hermesHtml, /#a85b00/);
   assert.match(hermesHtml, /#1769aa/);
@@ -126,6 +132,25 @@ test('Provider security page and API expose only controls supported by the Agent
     .map(match => match[1]).find(source => source.includes('provider-security-form'));
   assert.ok(hermesSecurityScript);
   assert.doesNotThrow(() => new Function(hermesSecurityScript));
+
+  const qwenPage = await fetch(`${origin}/agents/agent-5/security`, { headers: auth });
+  const qwenHtml = await qwenPage.text();
+  assert.equal(qwenPage.status, 200, qwenHtml);
+  for (const control of ['sessionPersistence', 'permissionMode', 'toolAccess', 'mcpProfile', 'additionalPrompt']) {
+    assert.match(qwenHtml, new RegExp(`name="${control}"`));
+  }
+  assert.match(qwenHtml, /qoderclicn --print --permission-mode/);
+  assert.match(qwenHtml, /--strict-mcp-config --mcp-config/);
+  assert.equal((qwenHtml.match(/name="additionalPrompt"/g) || []).length, 1);
+
+  const dumatePage = await fetch(`${origin}/agents/agent-6/security`, { headers: auth });
+  const dumateHtml = await dumatePage.text();
+  assert.equal(dumatePage.status, 200, dumateHtml);
+  for (const control of ['sessionPersistence', 'additionalPrompt']) {
+    assert.match(dumateHtml, new RegExp(`name="${control}"`));
+  }
+  assert.match(dumateHtml, /POST \/session\/<sessionId>\/prompt_async/);
+  assert.equal((dumateHtml.match(/name="additionalPrompt"/g) || []).length, 1);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },

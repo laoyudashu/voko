@@ -69,16 +69,20 @@ function mergeMarkdown(current: string, incoming: string): string {
 }
 
 function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string,
-  target: { agentId?: string; pluginRoot?: string; dataFile?: string; dataFileAccess?: string } = {}): string[] {
-  const access = target.dataFileAccess || 'read_write';
-  const dataTools = target.dataFile && access === 'read_write'
-    ? ['--tools', 'Read,Write', '--allowedTools', `Read(${target.dataFile})`, `Write(${target.dataFile})`]
-    : target.dataFile && access === 'read'
+  target: { agentId?: string; pluginRoot?: string; dataFile?: string; dataFileAccess?: string; permissionMode?: string;
+    sessionPersistence?: string; mcpProfile?: string } = {}): string[] {
+  // CodeBuddy --allowedTools pre-approves a target but does not constrain the
+  // tool to that target. Do not expose Write until VOKO has a real path broker.
+  const access = target.dataFileAccess === 'read' ? 'read' : 'none';
+  const permissionMode = 'dontAsk';
+  const dataTools = target.dataFile && access === 'read'
       ? ['--tools', 'Read', '--allowedTools', `Read(${target.dataFile})`]
-    : ['--agents', VOKO_TEXT_AGENT, '--agent', 'voko', '--tools', ''];
+      : ['--agents', VOKO_TEXT_AGENT, '--agent', 'voko', '--tools', ''];
   return [...argsPrefix, ...(target.pluginRoot ? ['--plugin-dir', target.pluginRoot] : []),
     ...(target.agentId ? ['--agent', target.agentId] : []), '--serve', '--host', '127.0.0.1', '--port', String(port),
-    '--session-id', sessionId, '--permission-mode', 'dontAsk', ...dataTools, '--strict-mcp-config'];
+    '--session-id', sessionId, '--permission-mode', permissionMode, ...dataTools,
+    ...(target.sessionPersistence === 'ephemeral' ? ['--no-session-persistence'] : []),
+    ...(target.mcpProfile === 'user' ? [] : ['--strict-mcp-config'])];
 }
 
 interface ServerState {
@@ -90,6 +94,9 @@ interface ServerState {
   port: number;
   restoreConstraintDigest: string;
   dataFileAccess: string;
+  permissionMode: string;
+  sessionPersistence: string;
+  mcpProfile: string;
 }
 
 class WorkBuddyHttpProvider extends PushProvider {
@@ -125,7 +132,8 @@ class WorkBuddyHttpProvider extends PushProvider {
     this._resolveAgentTarget = options.resolveAgentTarget || resolveWorkBuddyAgentTarget;
     this._configuredCommand = options.binPath;
     this._states.set('', { instanceId: null, pluginRoot: null, dataFile: null, server: null, serverPromise: null, port: 0,
-      restoreConstraintDigest: '', dataFileAccess: 'none' });
+      restoreConstraintDigest: '', dataFileAccess: 'none', permissionMode: 'dontAsk',
+      sessionPersistence: 'conversation', mcpProfile: 'isolated' });
   }
 
   _currentState(): ServerState { return (this._stateContext.getStore() as ServerState | undefined) || this._states.get('')!; }
@@ -149,8 +157,19 @@ class WorkBuddyHttpProvider extends PushProvider {
     const boundInstance = String(payload.providerBinding?.providerInstanceId || '').trim();
     if (boundInstance && boundInstance !== instanceId) throw deliveryError('WorkBuddy instance binding is stale', 'not_delivered');
     const restoreConstraintDigest = String(payload.providerSecurityPolicy?.restoreConstraintDigest || '');
-    const dataFileAccess = String(payload.providerSecurityPolicy?.config.dataFileAccess || 'read_write');
-    if (!instanceId) return this._states.get('')!;
+    const config = payload.providerSecurityPolicy?.config || {};
+    const dataFileAccess = config.dataFileAccess === 'read' ? 'read' : 'none';
+    const permissionMode = 'dontAsk';
+    const sessionPersistence = String(config.sessionPersistence || 'conversation');
+    const mcpProfile = String(config.mcpProfile || 'isolated');
+    if (!instanceId) {
+      const fallback = this._states.get('')!;
+      if (restoreConstraintDigest && fallback.restoreConstraintDigest !== restoreConstraintDigest) {
+        this._stateContext.run(fallback, () => this._disposeServer('security-policy-changed'));
+        Object.assign(fallback, { restoreConstraintDigest, dataFileAccess, permissionMode, sessionPersistence, mcpProfile });
+      }
+      return fallback;
+    }
     const target = this._resolveAgentTarget(instanceId);
     if (!target) throw deliveryError('Bound WorkBuddy agent is unavailable', 'not_delivered');
     let state = this._states.get(instanceId);
@@ -162,12 +181,16 @@ class WorkBuddyHttpProvider extends PushProvider {
       if (!dataRoot.startsWith(`${workBuddyRoot}${path.sep}`)) throw deliveryError('WorkBuddy data path is invalid', 'rejected');
       fs.mkdirSync(dataRoot, { recursive: true });
       state = { instanceId, pluginRoot: target.pluginRoot, dataFile: path.join(dataRoot, 'data.json'),
-        server: null, serverPromise: null, port: 0, restoreConstraintDigest, dataFileAccess };
+        server: null, serverPromise: null, port: 0, restoreConstraintDigest, dataFileAccess,
+        permissionMode, sessionPersistence, mcpProfile };
       this._states.set(instanceId, state);
     } else if (restoreConstraintDigest && state.restoreConstraintDigest !== restoreConstraintDigest) {
       this._stateContext.run(state, () => this._disposeServer('security-policy-changed'));
       state.restoreConstraintDigest = restoreConstraintDigest;
       state.dataFileAccess = dataFileAccess;
+      state.permissionMode = permissionMode;
+      state.sessionPersistence = sessionPersistence;
+      state.mcpProfile = mcpProfile;
     }
     return state;
   }
@@ -255,7 +278,8 @@ class WorkBuddyHttpProvider extends PushProvider {
       const state = this._currentState();
       const args = workBuddyServeArgs(launch.argsPrefix, this._port, `voko-${crypto.randomUUID()}`,
         { agentId: state.instanceId || undefined, pluginRoot: state.pluginRoot || undefined,
-          dataFile: state.dataFile || undefined, dataFileAccess: state.dataFileAccess });
+          dataFile: state.dataFile || undefined, dataFileAccess: state.dataFileAccess, permissionMode: state.permissionMode,
+          sessionPersistence: state.sessionPersistence, mcpProfile: state.mcpProfile });
       const child = this._spawn(launch.command, args, {
         cwd: this._cwd, env: { ...process.env, NO_COLOR: '1', CODEBUDDY_GATEWAY_AUTH: 'none' }, windowsHide: true,
         detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe'],

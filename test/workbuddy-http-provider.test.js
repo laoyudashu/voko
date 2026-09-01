@@ -84,9 +84,7 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
   }).slice(0, 5), ['bundled-cli', '--plugin-dir', 'C:\\safe\\expert-a', '--agent', 'expert-a']);
   assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
     agentId: 'expert-a', dataFile: 'C:\\Users\\test\\.workbuddy\\expert-a\\data.json',
-  }).slice(-7), ['dontAsk', '--tools', 'Read,Write', '--allowedTools',
-    'Read(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)',
-    'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
+  }).slice(-5), ['dontAsk', '--agents', JSON.stringify({ voko: { description: 'VOKO visitor text-only agent', prompt: 'Only answer with text. Do not use tools, files, shell, network, browser, MCP, skills, hooks, or subagents.', tools: [] } }), '--agent', 'voko', '--tools', '', '--strict-mcp-config'].slice(-5));
   assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
     agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read',
   }).slice(-5), ['dontAsk', '--tools', 'Read', '--allowedTools', 'Read(/safe/data.json)', '--strict-mcp-config'].slice(-5));
@@ -96,6 +94,14 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
   assert.equal(denied.includes('Read'), false);
   assert.equal(denied.includes('Write'), false);
   assert.equal(denied[denied.indexOf('--tools') + 1], '');
+  const permissive = workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read_write',
+    permissionMode: 'bypassPermissions', sessionPersistence: 'ephemeral', mcpProfile: 'user',
+  });
+  assert.equal(permissive[permissive.indexOf('--permission-mode') + 1], 'dontAsk');
+  assert.equal(permissive[permissive.indexOf('--tools') + 1], '');
+  assert.equal(permissive.includes('--no-session-persistence'), true);
+  assert.equal(permissive.includes('--strict-mcp-config'), false);
 });
 
 test('WorkBuddy preflight validates the local component without desktop login state', async () => {

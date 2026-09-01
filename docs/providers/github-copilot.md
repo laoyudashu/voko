@@ -52,7 +52,9 @@ copilot login
 VOKO 的 ACP 进程等价于启动：
 
 ```text
-copilot --acp --no-custom-instructions --disable-builtin-mcps --no-remote --no-remote-export --available-tools= --no-ask-user --no-auto-update
+copilot --acp --no-custom-instructions --disable-builtin-mcps --no-remote --no-remote-export \
+  --deny-tool=read --deny-tool=write --deny-tool=shell --deny-tool=url \
+  --no-ask-user --no-auto-update
 ```
 
 这组参数的目的，是让外部访客消息只能得到文字回复，不加载项目指令、不启用内置/远程 MCP、不导出会话、不让 Agent 等待用户确认工具。不要在 Provider 配置里改成 `--allow-all`、`--yolo` 或 `--allow-all-tools`。
@@ -111,3 +113,4 @@ Copilot 凭据、配置文件、Token、原生 session ID 和访客原文都是�
 - 推荐接收通道：`ACP → CLI → Pull`。访客的精确 Token/高风险请求会被安全策略拒绝，普通自然语言回复正常。
 - 无图形设备先在终端完成官方 OAuth；不要把 Token 环境变量写进 Voko 注册参数或问题日志。
 - [完整 Linux 验收矩阵](linux-real-test-2026-08.md)
+`--available-tools=` 在 Copilot CLI 1.0.80 中不会形成空工具集，读取工具仍可能自动执行。VOKO 因此使用显式的工具类别拒绝规则；ACP 的 permission callback 只作为第二层保护。

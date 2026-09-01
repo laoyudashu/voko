@@ -315,7 +315,7 @@ test('Hermes CLI maps the leased visitor policy to real chat permission flags', 
   assert.equal(invocation.args.includes('--accept-hooks'), true);
 });
 
-test('Hermes CLI preserves the profile defaults but keeps dangerous approvals enabled by default', async () => {
+test('Hermes CLI defaults visitor turns to the safe toolset and isolated configuration', async () => {
   let invocation;
   const provider = new HermesCliProvider({
     db: { prepare: () => ({ get: () => ({ backend_instance_id: 'visitor-profile' }), all: () => [] }) },
@@ -323,8 +323,9 @@ test('Hermes CLI preserves the profile defaults but keeps dangerous approvals en
   });
   await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'safe-turn' });
   await provider.waitForIdle();
-  assert.equal(invocation.args.includes('--toolsets'), false);
-  assert.equal(invocation.args.includes('--safe-mode'), false);
+  assert.equal(invocation.args.includes('--toolsets'), true);
+  assert.equal(invocation.args[invocation.args.indexOf('--toolsets') + 1], 'safe');
+  assert.equal(invocation.args.includes('--safe-mode'), true);
   assert.equal(invocation.args.includes('--yolo'), false);
   assert.equal(invocation.args.includes('--accept-hooks'), false);
 });
@@ -410,7 +411,10 @@ test('GitHub Copilot exposes ACP and restricted CLI as independent routes', () =
     '--disable-builtin-mcps',
     '--no-remote',
     '--no-remote-export',
-    '--available-tools=',
+    '--deny-tool=read',
+    '--deny-tool=write',
+    '--deny-tool=shell',
+    '--deny-tool=url',
     '--no-ask-user',
     '--no-auto-update',
   ]) {
@@ -534,7 +538,8 @@ test('Grok unattended delivery is tool-free and resumes only its bound session',
   const args = provider._args.join(' ');
   assert.equal(provider._adapterType, 'grok-cli');
   assert.match(args, /--permission-mode plan/);
-  assert.match(args, /--tools=none/);
+  assert.match(args, /--deny \*/);
+  assert.doesNotMatch(args, /--tools=none/);
   assert.match(args, /--disable-web-search/);
   assert.match(args, /--no-subagents/);
   assert.match(args, /--no-memory/);
@@ -771,19 +776,20 @@ test('current Agent process ancestry recognizes the added CLI families', () => {
   assert.equal(currentAgentTypeFromProcessRows(['zeroclaw.exe agent --agent voko_test']), 'zeroclaw');
 });
 
-test('Reasonix CLI provider spawns headless with stream-json and stdin prompt', () => {
+test('Reasonix CLI provider spawns headless with stream-json and positional prompt', () => {
   const provider = new ReasonixCliProvider();
   assert.equal(provider._cmd, 'reasonix');
   assert.equal(provider._matchType, 'reasonix');
   assert.equal(provider._adapterType, 'reasonix-cli');
   assert.equal(provider._cwd, os.tmpdir());
-  // headless 无人值守 + stream-json 输出 + stdin prompt（不追加 '-'）
+  // Reasonix 1.27 requires a positional task; CliAdapter replaces {prompt}.
   assert.ok(provider._args.includes('run'));
   assert.ok(provider._args.includes('--permission-mode'));
   assert.ok(provider._args.includes('dontAsk'));
   assert.ok(provider._args.includes('--output-format'));
   assert.ok(provider._args.includes('stream-json'));
   assert.equal(provider._args.includes('-'), false);
+  assert.equal(provider._args.at(-1), '{prompt}');
   assert.match(provider._promptTemplate, /不得调用工具/);
   // parser 指向新增的 reasonix 专用解析器
   assert.equal(provider._parserName, 'reasonix-stream-json');
@@ -792,9 +798,11 @@ test('Reasonix CLI provider spawns headless with stream-json and stdin prompt', 
   assert.ok(resumeArgs.includes('--resume'));
   assert.ok(resumeArgs.includes('rx-session-1'));
   assert.equal(resumeArgs.includes('-'), false);
+  assert.equal(resumeArgs.at(-1), '{prompt}');
   // 无 session 时不含 --resume
   const noSessionArgs = provider._argsForSession(null, false);
   assert.ok(!noSessionArgs.includes('--resume'));
+  assert.equal(noSessionArgs.at(-1), '{prompt}');
   // sessionIdFromLine 从 stream-json 事件提取
   assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'session_created', session_id: 'rx-abc' })), 'rx-abc');
   assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'run_done', session_id: 'rx-xyz' })), 'rx-xyz');

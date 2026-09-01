@@ -551,7 +551,7 @@ const WEB_PAGES = [
   ['G1k', null, '访客查询'],
   ['G1l', '/send-message', '发送消息'],
   ['G1m', '/interventions', '人工介入列表'],
-  ['G1n', '/audit-rules', '安全规则'],
+  ['G1n', '/audit-rules', '消息审核'],
   ['G1o', '/payments', '支付流水'],
   ['G1p', '/payment-auth', '银行卡管理'],
   ['G1q', '/api/console', 'JSON 控制台'],

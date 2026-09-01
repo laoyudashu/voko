@@ -151,6 +151,19 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(ephemeral.args.includes('--resume'), false);
   assert.equal(ephemeral.args.includes('native-session'), false);
   assert.equal(ephemeral.args.includes('--no-session-persistence'), true);
+  assert.equal(ephemeral.args.includes('--strict-mcp-config'), true);
+  assert.equal(ephemeral.args[ephemeral.args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
+  const permissive = provider._preparePrompt('hello', {
+    configuredArgs: [...provider._args, '--resume', 'native-session'],
+    payload: { providerSecurityPolicy: { config: {
+      sessionPersistence: 'conversation', permissionMode: 'bypass_permissions',
+      toolAccess: 'default', mcpProfile: 'user',
+    } } },
+  });
+  assert.equal(permissive.args[permissive.args.indexOf('--permission-mode') + 1], 'bypass_permissions');
+  assert.equal(permissive.args[permissive.args.indexOf('--tools') + 1], 'default');
+  assert.equal(permissive.args.includes('--strict-mcp-config'), false);
+  assert.equal(permissive.args.includes('native-session'), true);
 });
 
 test('QwenWork delivery failures distinguish quota, timeout, login, and generic failures', () => {

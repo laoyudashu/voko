@@ -51,7 +51,7 @@ grok --oauth
 每条外部访客消息使用一次非交互、单轮、只读 Grok 进程，等价于：
 
 ```text
-grok --output-format streaming-json --permission-mode plan --tools=none \
+grok --output-format streaming-json --permission-mode plan --deny '*' \
   --disable-web-search --no-subagents --no-memory --max-turns 1 --verbatim \
   --session-id <new-id> --single <prompt>
 ```
@@ -112,3 +112,4 @@ Grok 配置、凭据、原生 session ID、代理认证信息和访客原文均�
 - 推荐接收通道：`CLI → Pull`；让 Voko 自动维护会话绑定，不要手工复制原生 session ID。
 - 认证失败或 PATH 改动后先运行 Provider 自身 doctor/inspect，再重启 Voko；结果不明确时不要立即重发。
 - [完整 Linux 验收矩阵](linux-real-test-2026-08.md)
+Grok 1.0.5 会把 `--tools=none` 视为无法映射的 allowlist 项，并回退到完整工具集。VOKO 使用真机验证过的 `--deny '*'` 实现 fail-closed；不要用退出码或 plan 模式本身推断工具已经禁用。

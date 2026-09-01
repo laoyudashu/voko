@@ -23,9 +23,34 @@ test('provider security definitions are Provider-specific and preserve current d
   const { service } = fixture();
   const policy = service.inspect('agent-1');
   assert.equal(policy.transportId, 'workbuddy-http');
-  assert.equal(policy.config.dataFileAccess, 'read_write');
-  assert.deepEqual(policy.controls.filter(item => item.editable).map(item => item.id), ['dataFileAccess']);
+  assert.equal(policy.config.dataFileAccess, 'read');
+  assert.deepEqual(policy.controls.filter(item => item.editable).map(item => item.id),
+    ['dataFileAccess', 'permissionMode', 'sessionPersistence', 'mcpProfile', 'additionalPrompt']);
   assert.equal(policy.controls.find(item => item.id === 'shell').enforcement, 'unsupported');
+});
+
+test('legacy WorkBuddy write and bypass policy is read safely without re-enabling it', () => {
+  const { db, service } = fixture();
+  const now = Date.now();
+  db.prepare(`INSERT INTO provider_security_policies
+    (agent_id,transport_id,revision,config_json,policy_digest,restore_constraint_digest,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?)`).run('agent-1', 'workbuddy-http', 4, JSON.stringify({
+    dataFileAccess: 'read_write', permissionMode: 'bypassPermissions', sessionPersistence: 'conversation',
+    mcpProfile: 'isolated', additionalPrompt: '',
+  }), 'old', 'old', now, now);
+  const policy = service.inspect('agent-1');
+  assert.equal(policy.config.dataFileAccess, 'read');
+  assert.equal(policy.config.permissionMode, 'dontAsk');
+});
+
+test('office Provider transports expose only controls backed by their real invocation path', () => {
+  const qwen = fixture('qwen-office').service.inspect('agent-1');
+  assert.deepEqual(qwen.controls.filter(item => item.editable).map(item => item.id),
+    ['sessionPersistence', 'permissionMode', 'toolAccess', 'mcpProfile', 'additionalPrompt']);
+  assert.equal(qwen.controls.some(item => item.id === 'tools'), false);
+  const dumate = fixture('dumate').service.inspect('agent-1', 'dumate-http');
+  assert.deepEqual(dumate.controls.filter(item => item.editable).map(item => item.id),
+    ['sessionPersistence', 'additionalPrompt']);
 });
 
 test('CLI permissions map the latest leased policy to real Provider argv', () => {
@@ -171,4 +196,20 @@ test('Hermes dangerous permission expansion requires typed confirmation', () => 
     'BYPASSES_DANGEROUS_COMMAND_APPROVAL', 'AUTO_ACCEPTS_UNKNOWN_SHELL_HOOKS',
   ]);
   assert.equal(expansion.requiresTypedConfirmation, true);
+});
+
+test('office Provider permission expansions require typed confirmation', () => {
+  const workbuddy = fixture('workbuddy').service;
+  const workbuddyExpansion = workbuddy.preflight('agent-1', 'workbuddy-http', { mcpProfile: 'user' });
+  assert.deepEqual(workbuddyExpansion.risks,
+    ['ENABLES_USER_MCP_CONFIGURATION']);
+  assert.equal(workbuddyExpansion.requiresTypedConfirmation, true);
+
+  const qwen = fixture('qwen-office').service;
+  const qwenExpansion = qwen.preflight('agent-1', 'qwen-office-cli', {
+    permissionMode: 'bypass_permissions', toolAccess: 'default', mcpProfile: 'user',
+  });
+  assert.deepEqual(qwenExpansion.risks,
+    ['BYPASSES_PROVIDER_PERMISSIONS', 'EXPANDS_PROVIDER_TOOL_ACCESS', 'ENABLES_USER_MCP_CONFIGURATION']);
+  assert.equal(qwenExpansion.requiresTypedConfirmation, true);
 });

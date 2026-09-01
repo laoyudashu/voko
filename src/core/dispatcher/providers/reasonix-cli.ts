@@ -1,9 +1,10 @@
 /**
  * Reasonix CLI provider.
  *
- * Reasonix reads the prompt from stdin when no task argument is supplied.
- * A literal trailing "-" is treated as the task text by Reasonix 1.21.0,
- * so it must not be appended to the argv list.
+ * Current Reasonix versions require a positional task argument. VOKO uses the
+ * CliAdapter prompt placeholder so the sanitized visitor prompt occupies that
+ * argument instead of being sent only through stdin (which exits with usage 2
+ * on Reasonix 1.27).
  *
  * `dontAsk` is the unattended permission mode: read-only inspection remains
  * available, while writes and dynamic shell commands are denied instead of
@@ -22,12 +23,12 @@ class ReasonixCliProvider extends CliAdapter {
     super({
       name: 'REASONIX CLI',
       cmd: 'reasonix',
-      // No task argument: CliAdapter sends the sanitized prompt through stdin.
-      args: [...BASE_ARGS],
+      args: [...BASE_ARGS, '{prompt}'],
       adapterType: 'reasonix-cli',
       argsForSession: (sessionId: string | null) => [
         ...BASE_ARGS,
         ...(sessionId ? ['--resume', sessionId] : []),
+        '{prompt}',
       ],
       sessionIdFromLine: (line: string) => {
         try {

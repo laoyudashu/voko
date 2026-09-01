@@ -181,7 +181,7 @@ class HermesCliProvider extends PushProvider {
     try {
       const policy = payload.providerSecurityPolicy?.transportId === 'hermes-cli'
         ? payload.providerSecurityPolicy.config
-        : { toolProfile: 'default', safeMode: 'disabled', approvalMode: 'required', acceptHooks: 'disabled' };
+        : { toolProfile: 'safe', safeMode: 'enabled', approvalMode: 'required', acceptHooks: 'disabled' };
       const args = ['--profile', profileId, 'chat', '-q', safeNotification, '-Q', '--source', 'tool'];
       if (policy?.toolProfile === 'safe') args.push('--toolsets', 'safe');
       if (policy?.safeMode !== 'disabled') args.push('--safe-mode');
@@ -269,7 +269,11 @@ class HermesCliProvider extends PushProvider {
     try {
       const result = await this._runCli({
         cmd: this._command,
-        args: ['--profile', profileId, '-z', notification],
+        // `hermes -z` unconditionally enables YOLO and accepts hooks. Owner
+        // steering must not silently bypass the same host boundary that protects
+        // visitor turns, so use the regular single-query chat path instead.
+        args: ['--profile', profileId, 'chat', '-q', notification, '-Q', '--source', 'tool',
+          '--toolsets', 'safe', '--safe-mode'],
         tag: 'hermes-cli',
         timeout: 120000,
         env: hermesChildEnv(),

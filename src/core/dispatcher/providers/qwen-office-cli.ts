@@ -36,9 +36,25 @@ function classifyQwenOfficeDeliveryFailure(detail: unknown): { code: string; ver
   return { code: 'QWEN_OFFICE_DELIVERY_FAILED', verificationStatus: 'failed' };
 }
 
+function qwenOfficeSecurityArgs(configuredArgs: string[], config: Record<string, string>): string[] {
+  const optionsWithValue = new Set(['--permission-mode', '--tools', '--mcp-config']);
+  const args: string[] = [];
+  for (let index = 0; index < configuredArgs.length; index += 1) {
+    const value = configuredArgs[index];
+    if (optionsWithValue.has(value)) { index += 1; continue; }
+    if (value === '--strict-mcp-config') continue;
+    args.push(value);
+  }
+  args.push('--permission-mode', config.permissionMode || 'dont_ask');
+  args.push('--tools', config.toolAccess === 'default' ? 'default'
+    : config.toolAccess === 'read_only' ? 'Read,Grep,Glob' : '');
+  if (config.mcpProfile !== 'user') args.push('--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+  return args;
+}
+
 /**
- * QwenWork's bundled qoderclicn stream-json transport.  Tool access and
- * permission prompts stay disabled for unattended VOKO messages.
+ * QwenWork's bundled qoderclicn stream-json transport. Visitor policy is
+ * translated into explicit per-invocation CLI arguments.
  */
 class QwenOfficeCliProvider extends CliAdapter {
   private readonly _resolveAgentTarget: ResolveAgentTarget;
@@ -83,8 +99,9 @@ class QwenOfficeCliProvider extends CliAdapter {
       },
       preparePrompt: (prompt: string, context: { configuredArgs: string[]; payload: PushPayload }) => ({
         args: context.payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
-          ? [...context.configuredArgs.filter((_value, index, all) => all[index - 1] !== '--resume' && _value !== '--resume'), '--no-session-persistence']
-          : [...context.configuredArgs],
+          ? [...qwenOfficeSecurityArgs(context.configuredArgs, context.payload.providerSecurityPolicy?.config || {})
+            .filter((_value, index, all) => all[index - 1] !== '--resume' && _value !== '--resume'), '--no-session-persistence']
+          : qwenOfficeSecurityArgs(context.configuredArgs, context.payload.providerSecurityPolicy?.config || {}),
         useStdin: true,
         stdinInput: JSON.stringify({
           type: 'user',
