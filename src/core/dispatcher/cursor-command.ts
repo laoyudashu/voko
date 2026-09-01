@@ -19,18 +19,31 @@ function windowsUserPath(): string {
   } catch (_) { return ''; }
 }
 
-function findBundledRuntime(): { command: string; prefixArgs: string[] } | null {
-  if (process.platform !== 'win32') return null;
-  const searchPath = [process.env.PATH || '', windowsUserPath()].filter(Boolean).join(';');
+function findWindowsBundle(searchPath: string): { command: string; prefixArgs: string[] } | null {
   for (const dir of searchPath.split(';').map((item: string) => item.trim().replace(/^"|"$/g, '')).filter(Boolean)) {
     const launcher = path.join(dir, 'cursor-agent.cmd');
-    const node = path.join(dir, 'node.exe');
-    const entry = path.join(dir, 'index.js');
-    if (fs.existsSync(launcher) && fs.existsSync(node) && fs.existsSync(entry)) {
-      return { command: node, prefixArgs: [entry] };
+    if (!fs.existsSync(launcher)) continue;
+    const candidates = [dir];
+    const versionsDir = path.join(dir, 'versions');
+    try {
+      candidates.push(...fs.readdirSync(versionsDir, { withFileTypes: true })
+        .filter((entry: any) => entry.isDirectory() && /^\d{4}\.\d{1,2}\.\d{1,2}(?:-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/i.test(entry.name))
+        .map((entry: any) => path.join(versionsDir, entry.name))
+        .sort((a: string, b: string) => b.localeCompare(a, undefined, { numeric: true })));
+    } catch (_) {}
+    for (const candidate of candidates) {
+      const node = path.join(candidate, 'node.exe');
+      const entry = path.join(candidate, 'index.js');
+      if (fs.existsSync(node) && fs.existsSync(entry)) return { command: node, prefixArgs: [entry] };
     }
   }
   return null;
+}
+
+function findBundledRuntime(): { command: string; prefixArgs: string[] } | null {
+  if (process.platform !== 'win32') return null;
+  const searchPath = [process.env.PATH || '', windowsUserPath()].filter(Boolean).join(';');
+  return findWindowsBundle(searchPath);
 }
 
 function isCursorCommandAvailable(): boolean {
@@ -75,4 +88,4 @@ function resolveCursorRuntime(): { command: string; prefixArgs: string[] } {
   return { command, prefixArgs: [...cachedPrefixArgs] };
 }
 
-module.exports = { isCursorCommandAvailable, resolveCursorCommand, resolveCursorRuntime };
+module.exports = { findWindowsBundle, isCursorCommandAvailable, resolveCursorCommand, resolveCursorRuntime };
