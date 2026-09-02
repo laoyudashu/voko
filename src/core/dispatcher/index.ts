@@ -287,7 +287,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _conversationRoutes = new Map<string, Promise<void>>();
   try { _sessionCoordinator.recoverPending(); } catch (_) {}
 
-  function refreshProviderCapability(agentId: string, providerId: string, force = false): Promise<any> {
+  function refreshProviderCapability(agentId: string, providerId: string, force = false, testDelayMs = 0): Promise<any> {
     const provider = providers[providerId] as any;
     if (!providerSecurity || !provider || !isDynamicCapabilityTransport(providerId)) return Promise.resolve(null);
     const circuit = providerSecurity.probeStatus(agentId, providerId);
@@ -298,7 +298,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     let observed: any;
     try { observed = snapshotFromProvider(provider, providerId, agentId); }
     catch (_) { observed = { runtimeFingerprint: 'unknown' }; }
-    const key = `${providerId}:${observed.runtimeFingerprint}`;
+    const key = `${providerId}:${observed.runtimeFingerprint}${testDelayMs ? `:test-delay-${testDelayMs}` : ''}`;
     const persistForAgent = (shared: Promise<any>) => shared.then(snapshot => {
       providerSecurity.storeCapability(agentId, providerId, snapshot as any);
       return snapshot;
@@ -308,19 +308,28 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     });
     if (capabilityRefreshes.has(key)) return persistForAgent(capabilityRefreshes.get(key)!);
     const refresh = (async () => {
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | null = null;
       const timeout = new Promise((_, reject) => {
-        const timer = setTimeout(() => reject(Object.assign(new Error('Provider capability probe timed out'),
-          { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' })), 30_000);
-        timer.unref?.();
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          reject(Object.assign(new Error('Provider capability probe timed out'),
+            { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' }));
+        }, 30_000);
+        timeoutHandle.unref?.();
       });
       const probe = (async () => {
         await new Promise<void>(resolve => setImmediate(resolve));
+        if (testDelayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, testDelayMs));
+        if (timedOut) throw Object.assign(new Error('Provider capability probe timed out before runtime invocation'),
+          { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' });
         providerSecurity.recordCapabilityEvent?.(agentId, providerId, 'CAPABILITY_PROBE_STARTED', {});
         provider.refreshRuntime?.();
         if (typeof provider.refreshDeliveryReadiness === 'function') await provider.refreshDeliveryReadiness();
         return snapshotFromProvider(provider, providerId, agentId);
       })();
-      return Promise.race([probe, timeout]);
+      try { return await Promise.race([probe, timeout]); }
+      finally { if (timeoutHandle) clearTimeout(timeoutHandle); }
     })().finally(() => capabilityRefreshes.delete(key));
     capabilityRefreshes.set(key, refresh);
     return persistForAgent(refresh);
@@ -1002,7 +1011,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       throw new Error('delivery channel does not support loopback verification');
     }
     provider.refreshRuntime?.();
-    if (!provider.isAvailable?.(agentId)) throw new Error('CodeBuddy CLI is not installed');
+    await provider.refreshDeliveryReadiness?.();
+    if (!provider.isAvailable?.(agentId)) {
+      const readiness = provider.getDeliveryReadiness?.(agentId);
+      const detail = readiness?.detail || readiness?.reason;
+      throw new Error(detail ? `delivery channel is unavailable: ${detail}` : 'delivery channel is unavailable');
+    }
     const result = await provider.runLoopbackTest(agentId, {
       acknowledgeCost: true,
       challenge: `voko-${crypto.randomBytes(12).toString('hex')}`,
@@ -2193,10 +2207,86 @@ Convergence obligations:
       capabilityEvidence, capabilityProbing: probing };
   }
 
-  async function refreshProviderSecurityCapability(agentId: string): Promise<any> {
-    const inspected = inspectProviderSecurity(agentId);
+  function inspectProviderRuntime(agentId: string, transportId: string): any {
+    const provider = providers[transportId] as any;
+    if (!provider) throw new Error('PROVIDER_RUNTIME_NOT_FOUND');
+    const meta = _metaOf(agentId);
+    if (typeof provider.match === 'function' && !provider.match(agentId, meta)) {
+      throw new Error('PROVIDER_RUNTIME_TRANSPORT_MISMATCH');
+    }
+    let version: any = null;
+    let sandbox: any = null;
+    try { version = provider.getProviderVersion?.() || null; } catch (error) {
+      version = { version: null, result: 'unknown', errorCode: String((error as any)?.code || 'PROBE_FAILED').slice(0, 96) };
+    }
+    try { sandbox = provider.getSandboxStatus?.(agentId) || null; } catch (error) {
+      sandbox = { state: 'unknown', errorCode: String((error as any)?.code || 'PROBE_FAILED').slice(0, 96) };
+    }
+    const capability = snapshotFromProvider(provider, transportId, agentId);
+    return { agentId, transportId, providerFamily: getProviderTransport(transportId)?.family || meta.backend_type || null,
+      frameworkVersion: capability.frameworkVersion || version?.version || null,
+      runtimeVersion: capability.runtimeVersion || version?.version || null,
+      runtimeFingerprint: capability.runtimeFingerprint,
+      platform: capability.platform, arch: capability.arch, protocolVersion: capability.protocolVersion,
+      adapterRevision: capability.adapterRevision, versionEvidence: version, sandbox };
+  }
+
+  async function refreshProviderSecurityCapability(agentId: string, transportId?: string): Promise<any> {
+    const inspected = inspectProviderSecurity(agentId, transportId);
     if (!inspected.transportId) throw new Error('PROVIDER_SECURITY_UNSUPPORTED');
     return refreshProviderCapability(agentId, inspected.transportId, true);
+  }
+
+  async function exerciseProviderCapabilityFault(agentId: string, transportId: string, fault: string): Promise<any> {
+    const agent = db.prepare('SELECT agent_name FROM agents WHERE agent_id=? LIMIT 1').get(agentId) as any;
+    if (!String(agent?.agent_name || '').startsWith('TEST-')) throw new Error('PROVIDER_FAULT_TEST_AGENT_REQUIRED');
+    if (!providerSecurity || !isDynamicCapabilityTransport(transportId)) throw new Error('PROVIDER_FAULT_TEST_UNSUPPORTED');
+    const startedAt = Date.now();
+    if (fault === 'probe-timeout') {
+      const refresh = refreshProviderCapability(agentId, transportId, true, 4_000);
+      let code = '';
+      try {
+        await Promise.race([refresh, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('wait timeout'),
+          { code: 'PROVIDER_CAPABILITY_WAIT_TIMEOUT' })), 3_000))]);
+      } catch (error) { code = String((error as any)?.code || ''); }
+      await refresh;
+      return { fault, status: code === 'PROVIDER_CAPABILITY_WAIT_TIMEOUT' ? 'PASS' : 'FAIL', code,
+        durationMs: Date.now() - startedAt, injector: 'dispatcher-delay' };
+    }
+    if (fault === 'runtime-timeout') {
+      let code = '';
+      try { await refreshProviderCapability(agentId, transportId, true, 31_000); }
+      catch (error) { code = String((error as any)?.code || ''); }
+      await refreshProviderCapability(agentId, transportId, true);
+      return { fault, status: code === 'PROVIDER_CAPABILITY_PROBE_TIMEOUT' ? 'PASS' : 'FAIL', code,
+        durationMs: Date.now() - startedAt, injector: 'dispatcher-delay', childTermination: 'not_applicable_no_child_started' };
+    }
+    if (fault === 'circuit-breaker') {
+      for (let index = 0; index < 3; index += 1) providerSecurity.recordCapabilityFailure(agentId, transportId,
+        Object.assign(new Error('injected probe failure'), { code: 'PROVIDER_CAPABILITY_PROBE_FAILED' }));
+      let code = '';
+      try { await refreshProviderCapability(agentId, transportId, false); }
+      catch (error) { code = String((error as any)?.code || ''); }
+      await refreshProviderCapability(agentId, transportId, true);
+      const recovered = providerSecurity.probeStatus(agentId, transportId);
+      return { fault, status: code === 'PROVIDER_CAPABILITY_PROBE_THROTTLED' && recovered.failures === 0 ? 'PASS' : 'FAIL',
+        code, recovered, durationMs: Date.now() - startedAt, injector: 'policy-store' };
+    }
+    if (fault === 'fingerprint-change') {
+      const actual = await refreshProviderCapability(agentId, transportId, true);
+      providerSecurity.storeCapability(agentId, transportId, { ...actual,
+        runtimeFingerprint: `${String(actual.runtimeFingerprint).slice(0, 110)}-changed`,
+        capabilityDigest: `${String(actual.capabilityDigest).slice(0, 110)}-changed`, evidenceState: 'unknown',
+        observedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+      const changed = providerSecurity.capability(agentId, transportId);
+      await refreshProviderCapability(agentId, transportId, true);
+      const restored = providerSecurity.capability(agentId, transportId);
+      const passed = changed?.observed?.evidenceState === 'changed_unverified'
+        && restored?.observed?.runtimeFingerprint === actual.runtimeFingerprint;
+      return { fault, status: passed ? 'PASS' : 'FAIL', changedState: changed?.observed?.evidenceState,
+        restored: passed, durationMs: Date.now() - startedAt, injector: 'capability-snapshot' };
+    }
+    throw new Error('PROVIDER_FAULT_TEST_UNKNOWN');
   }
 
   function describeProviderSecurityInvocation(agentId: string, transportId: string, config?: Record<string,string>): any {
@@ -2228,7 +2318,8 @@ Convergence obligations:
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
-    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, refreshProviderSecurityCapability,
+    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, inspectProviderRuntime, refreshProviderSecurityCapability,
+    exerciseProviderCapabilityFault,
     describeProviderSecurityInvocation,
     applyProviderSecurityPolicyChange,
     providers: runtimeRegistry.providers };

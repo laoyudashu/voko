@@ -340,6 +340,54 @@ class DuMateHttpProvider extends PushProvider {
     }
   }
 
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    }
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
+    }
+    const instanceId = this._routeForAgent(agentId);
+    try {
+      const state = await this._ensureState(instanceId, agentId);
+      const created = await this._json(state, '/session', { method: 'POST', body: '{}' });
+      const sessionId = String(created?.id || created?.sessionId || '');
+      if (!sessionId) throw deliveryError('DuMate loopback session was not created');
+      const previous = (await this._latestAssistant(state, sessionId).catch(() => ({ id: '', reply: '' }))).id;
+      await this._json(state, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+        method: 'POST', body: JSON.stringify({ model: { providerID: 'qianfan-multimodal', modelID: 'model-mm' },
+          agent: 'build', parts: [{ type: 'plugin', name: instanceId },
+            { type: 'text', text: `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}` }] }),
+      }, 15_000);
+      const reply = await this._wait(state, sessionId, previous);
+      const matched = reply.trim() === challenge;
+      this._verification.set(agentId, { status: matched ? 'loopback_verified' : 'failed',
+        detail: matched ? 'DuMate HTTP loopback verified' : 'DuMate returned an unexpected loopback response',
+        ...(matched ? { verifiedAt: Date.now() } : {}) });
+      return { ok: matched, status: matched ? 'loopback_verified' : 'failed',
+        code: matched ? 'DUMATE_LOOPBACK_VERIFIED' : 'DUMATE_LOOPBACK_MISMATCH',
+        challengeMatched: matched, loopbackSessionId: sessionId,
+        detail: matched ? 'DuMate HTTP loopback verified' : 'DuMate returned an unexpected loopback response' };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this._verification.set(agentId, { status: /timeout/i.test(detail) ? 'timeout' : 'failed', detail });
+      return { ok: false, status: /timeout/i.test(detail) ? 'timeout' : 'failed',
+        code: /timeout/i.test(detail) ? 'DUMATE_LOOPBACK_TIMEOUT' : 'DUMATE_LOOPBACK_FAILED', detail };
+    }
+  }
+
+  async cleanupLoopbackSession(agentId: string, sessionId?: string): Promise<Record<string, unknown>> {
+    const id = String(sessionId || '');
+    if (!id) return { ok: true, cleaned: false };
+    const state = this._states.get(this._routeForAgent(agentId));
+    if (!state?.port) return { ok: true, cleaned: false };
+    try {
+      await this._json(state, `/session/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return { ok: true, cleaned: true };
+    } catch (_) { return { ok: true, cleaned: false }; }
+  }
+
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {
     const turnId = metadata.turnId || `steer-${crypto.randomUUID()}`;
     return this.push({ agentId, fromUid: visitorId, content, rawContent: content, messageId: turnId,

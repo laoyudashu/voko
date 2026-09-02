@@ -77,6 +77,28 @@ test('unverified dynamic Provider hides native parameters but keeps VOKO safety 
   assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
 });
 
+test('Providers without verified native flags still lease the editable VOKO visitor prompt', () => {
+  const { service } = fixture('opencode');
+  const policy = service.inspect('agent-1', 'opencode-cli');
+  assert.equal(policy.supported, true);
+  assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
+  assert.match(policy.config.additionalPrompt, /VOKO.*访客消息/);
+  const lease = service.acquireTurnLease({ agentId: 'agent-1', messageId: 'visitor-turn-1', channelType: 1 }, 'opencode-cli');
+  assert.equal(lease.transportId, 'opencode-cli');
+  assert.match(lease.promptInstructions.join('\n'), /访客消息/);
+});
+
+test('a confirmed not-delivered route may re-lease the same turn to a compatible fallback transport', () => {
+  const { service } = fixture('zeroclaw');
+  const payload = { agentId: 'agent-1', messageId: 'fallback-turn-1', channelType: 1 };
+  service.acquireTurnLease(payload, 'zeroclaw-acp');
+  assert.throws(() => service.acquireTurnLease(payload, 'zeroclaw-cli'), /PROVIDER_SECURITY_TURN_LEASE_CONFLICT/);
+  service.markTurn('fallback-turn-1', 'FAILED', 'agent-1');
+  const fallback = service.acquireTurnLease(payload, 'zeroclaw-cli');
+  assert.equal(fallback.transportId, 'zeroclaw-cli');
+  assert.equal(fallback.fallbackMode, 'alternate_route');
+});
+
 test('CLI permissions map the latest leased policy to real Provider argv', () => {
   const payload = (transportId, config) => ({ providerSecurityPolicy: { transportId, config } });
   assert.deepEqual(applyProviderSecurityArgs(['--tools=', '--no-chrome'], payload('claude-cli', {

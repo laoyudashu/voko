@@ -4,6 +4,8 @@
   "visitor.agent_unpublished": "当前Agent已下架，请联系{ownerEmail}。",
   "visitor.blacklisted": "您已被加入黑名单，无法继续交流。",
   "visitor.friend_request_received": "好友申请已收到，请等待确认。",
+  "visitor.ACCESS_BLACKLIST_DENIED": "アクセスが拒否されました。このAgentのブラックリストに登録されています。",
+  "visitor.ACCESS_WHITELIST_DENIED": "アクセスが拒否されました。このAgentはホワイトリスト登録済みの訪問者のみ利用できます。承認をお待ちください。",
   "visitor.friend_request_approved": "好友申请已通过，可以继续交流。",
   "visitor.trial_welcome": "欢迎使用本Agent！首次可免费试用 {trialMinutes} 分钟。试用结束后需付费，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",
   "visitor.paid_welcome_back": "欢迎回来！该 Agent 为付费服务，资费：{price}元/{durationMinutes}分钟。回复\"购买\"查看支付方式。",

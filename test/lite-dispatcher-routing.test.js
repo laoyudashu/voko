@@ -271,6 +271,21 @@ test('delivery diagnostics keeps a shallow-ready Qwen runtime out of automatic r
   assert.equal(status.activeAutomaticMode, null);
 });
 
+test('loopback verification awaits asynchronous Provider readiness refresh before checking availability', async () => {
+  let refreshed = false;
+  const qwen = provider('cli', 1, []);
+  qwen.refreshRuntime = () => { refreshed = false; };
+  qwen.refreshDeliveryReadiness = async () => { refreshed = true; return { ready: true }; };
+  qwen.isAvailable = () => refreshed;
+  qwen.runLoopbackTest = async () => ({ ok: true, challengeMatched: true });
+  qwen.getDeliveryReadiness = () => ({ ready: refreshed, automaticReady: refreshed,
+    verificationStatus: refreshed ? 'loopback_verified' : 'unverified' });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  const verified = await dispatcher.verifyAgentDeliveryChannel('agent-1', 'qwen-office-cli');
+  assert.equal(verified.result.challengeMatched, true);
+  assert.equal(refreshed, true);
+});
+
 test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {
   const dispatcher = createDispatcher({ db: dbFor(['pull']), providers: {} });
   const status = dispatcher.getAgentDeliveryStatus('agent-1');

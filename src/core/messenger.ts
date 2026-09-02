@@ -701,17 +701,17 @@ class MessageHandler extends EventEmitter {
     // 黑白名单检查
     if (agentStatusRow && this.ac) {
       if (this.ac.isBlacklisted(this.db, agentId, fromUid)) {
-        this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp, systemRoute);
-        markIntercepted('blacklisted');
+        this._sendSystemMessage(agentId, fromUid, 'ACCESS_BLACKLIST_DENIED', {}, timestamp, systemRoute);
+        markIntercepted('ACCESS_BLACKLIST_DENIED');
         return;
       }
       if (agentStatusRow.access_mode === 'private') {
         const whitelisted = this.ac.isWhitelisted(this.db, agentId, fromUid);
         if (!whitelisted) {
           if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
-            this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp, systemRoute);
+            this._sendSystemMessage(agentId, fromUid, 'ACCESS_WHITELIST_DENIED', {}, timestamp, systemRoute);
             this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp, messageId, inboundConversationId);
-            markIntercepted('friend_request_received');
+            markIntercepted('ACCESS_WHITELIST_DENIED');
             return;
           }
         }

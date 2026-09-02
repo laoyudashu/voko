@@ -342,6 +342,10 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     try {
       const runtime = typeof instance._resolveRuntime === 'function' ? instance._resolveRuntime() : null;
       if (runtime?.available && runtime.executable) { command=runtime.executable;args=[...(runtime.argvPrefix||[]),'--version']; }
+      else {
+        const resolved = String(instance._command || instance._cmd || instance._binPath || '').trim();
+        if (resolved) { command = resolved; args = ['--version']; }
+      }
     } catch (_) {}
     versionProbe = command ? probeProviderVersion(command,{args}) : {
       version: null, source: 'unknown', observedAt: new Date().toISOString(), result: 'unknown', errorCode: 'failed',

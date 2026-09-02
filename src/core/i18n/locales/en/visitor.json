@@ -4,6 +4,8 @@
   "visitor.agent_unpublished": "This Agent is offline. Please contact {ownerEmail}.",
   "visitor.blacklisted": "You have been blacklisted and cannot continue this conversation.",
   "visitor.friend_request_received": "Your friend request has been received. Please wait for approval.",
+  "visitor.ACCESS_BLACKLIST_DENIED": "Access denied: you are on this Agent's blacklist.",
+  "visitor.ACCESS_WHITELIST_DENIED": "Access denied: this Agent only accepts whitelisted visitors. Your request has been submitted for approval.",
   "visitor.friend_request_approved": "Your friend request has been approved. You can continue chatting now.",
   "visitor.trial_welcome": "Welcome! Your first {trialMinutes} minutes are free. After the trial, paid usage is required: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",
   "visitor.paid_welcome_back": "Welcome back! This Agent is a paid service: {price} CNY / {durationMinutes} min. Reply \"buy\" to see payment options.",

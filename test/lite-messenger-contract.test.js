@@ -57,6 +57,31 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('returns distinct stable access codes for blacklist and whitelist denial', () => {
+    for (const scenario of [
+      { accessMode: 'public', blacklisted: true, expected: 'ACCESS_BLACKLIST_DENIED' },
+      { accessMode: 'private', blacklisted: false, expected: 'ACCESS_WHITELIST_DENIED' },
+    ]) {
+      const fixture = createFixture({ ac: {
+        isBlacklisted: () => scenario.blacklisted,
+        isWhitelisted: () => false,
+        addEntry: () => ({ success: true }),
+      } });
+      try {
+        fixture.db.prepare('UPDATE agents SET access_mode=? WHERE agent_id=?')
+          .run(scenario.accessMode, 'agent-1');
+        const message = inbound({ messageId: `access-${scenario.expected}` });
+        assert.equal(fixture.handler.handleAgentMessage('agent-1', message, true), undefined);
+        assert.equal(message._vokoInboundIntercepted, scenario.expected);
+        assert.equal(fixture.systemMessages.length, 1);
+        assert.equal(fixture.systemMessages[0][2], scenario.expected);
+        assert.equal(fixture.dispatched.length, 0);
+      } finally {
+        fixture.db.close();
+      }
+    }
+  });
+
   it('marks an expired timed session as handled after sending its system response', () => {
     const systemMessages = [];
     const fixture = createFixture({ sendSystemMessage: (...args) => systemMessages.push(args) });

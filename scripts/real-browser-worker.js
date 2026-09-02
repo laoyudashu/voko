@@ -18,6 +18,11 @@ function parseArgs(argv) {
   return values;
 }
 
+function markerOccurrence(text, marker) {
+  if (!marker) return 0;
+  return String(text || '').split(String(marker)).length - 1;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.url) throw new Error('--url is required');
@@ -73,15 +78,40 @@ async function main() {
     const candidates = Array.from(document.querySelectorAll('div.bg-white.border-t input[type="text"]'));
     const candidate = candidates[candidates.length - 1];
     return candidate && !candidate.disabled;
-  }, null, { timeout: Number(args.readyTimeout || 30_000) }).catch(() => {});
+  }, null, { timeout: Number(args.readyTimeout || 45_000) });
   const uploadButton = page.locator('button[title]').filter({ has: page.locator('svg') }).first();
   const messageViewport = page.locator('.overflow-y-auto').filter({ has: page.locator('.space-y-4, .rounded-2xl') }).first();
   await page.screenshot({ path: path.join(artifactDir, 'chat-ready.png'), fullPage: true });
 
+  let turn = null;
+  if (args.message) {
+    const marker = String(args.expect || args.message);
+    const agentBubbles = page.locator('.rounded-2xl:not(.bg-blue-500)');
+    const beforeAgentBubbleCount = await agentBubbles.count();
+    const beforeLastAgentText = beforeAgentBubbleCount > 0 ? await agentBubbles.last().innerText().catch(() => '') : '';
+    const sentAt = Date.now();
+    await input.fill(String(args.message));
+    await input.press('Enter');
+    try {
+      await page.waitForFunction(({ count, lastText }) => {
+        const bubbles = Array.from(document.querySelectorAll('.rounded-2xl'))
+          .filter(element => !element.classList.contains('bg-blue-500'));
+        return bubbles.length > count || (bubbles.length > 0 && (bubbles.at(-1).textContent || '') !== lastText);
+      }, { count: beforeAgentBubbleCount, lastText: beforeLastAgentText }, { timeout: Number(args.replyTimeout || 180_000) });
+      const replyText = await agentBubbles.last().innerText().catch(() => '');
+      turn = { submitted: true, sentAt, repliedAt: Date.now(), marker,
+        replyMatched: true, markerEchoed: replyText.includes(marker), replyText: replyText.slice(0, 1000) };
+    } catch (error) {
+      turn = { submitted: true, sentAt, repliedAt: null, marker, replyMatched: false,
+        error: String(error.message || error).slice(0, 1000), outcome: 'submitted_result_unknown_no_retry' };
+    }
+    await page.screenshot({ path: path.join(artifactDir, 'chat-replied.png'), fullPage: true });
+  }
+
   const inputVisible = await input.isVisible();
   const inputEnabled = await input.isEnabled();
   const result = {
-    ok: inputVisible && inputEnabled,
+    ok: inputVisible && inputEnabled && (!args.message || turn?.replyMatched === true),
     url: page.url(),
     title: await page.title(),
     loadMs: Date.now() - startedAt,
@@ -104,6 +134,7 @@ async function main() {
     httpErrors,
     dialogs,
     websockets,
+    turn,
   };
   fs.writeFileSync(path.join(artifactDir, 'result.json'), `${JSON.stringify(result, null, 2)}\n`);
   await context.close();
@@ -117,4 +148,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs };
+module.exports = { markerOccurrence, parseArgs };

@@ -90,6 +90,8 @@ describe('CLI manage_agent_registration state flow', () => {
     const { convertParam } = require('../build/cli');
     assert.deepStrictEqual(convertParam('[cli,pull]', 'json'), ['cli', 'pull']);
     assert.deepStrictEqual(convertParam('["cli","pull"]', 'json'), ['cli', 'pull']);
+    assert.deepStrictEqual(convertParam(`base64json:${Buffer.from('{"mode":"read_only"}').toString('base64')}`, 'json'),
+      { mode: 'read_only' });
   });
 
   it('keeps extended profile and one-time binding parameters in the CLI bridge', () => {

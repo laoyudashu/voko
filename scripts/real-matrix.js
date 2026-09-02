@@ -26,7 +26,12 @@ function powershellQuote(value) {
 }
 
 function windowsVokoEncodedCommand(node, entry, args) {
-  const command = [node, entry, ...args].map(powershellQuote).join(' ');
+  const safeArgs = args.map(value => {
+    const text = String(value);
+    return (text.startsWith('{') || text.startsWith('['))
+      ? `base64json:${Buffer.from(text, 'utf8').toString('base64')}` : text;
+  });
+  const command = [node, entry, ...safeArgs].map(powershellQuote).join(' ');
   return Buffer.from(`$env:NODE_NO_WARNINGS='1'; & ${command}`, 'utf16le').toString('base64');
 }
 
@@ -155,12 +160,17 @@ class Host {
     return parseJson(this.voko(args, timeout), `${this.name} voko ${args[0]}`);
   }
 
-  inventory() {
-    const status = this.json(['status', '--json']);
-    const listed = this.json(['list_agents']);
+  inventory(timeout = 30_000) {
+    const status = this.json(['status', '--json'], timeout);
+    const listed = this.json(['list_agents'], timeout);
+    let providerEnvironment = null;
+    try {
+      const inspected = this.json(['manage_agent_registration', '--action', 'inspect_environment'], timeout);
+      providerEnvironment = inspected?.environment || null;
+    } catch (_) { /* Agent inventory remains usable when provider discovery is unavailable. */ }
     const runtimeById = new Map((status.agents || []).map((agent) => [agent.agentId, agent]));
     const agents = (listed.agents || []).map((agent) => ({ ...agent, runtime: runtimeById.get(agent.agentId) || null }));
-    return { status, agents };
+    return { status, agents, providerEnvironment };
   }
 }
 

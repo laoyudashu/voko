@@ -2494,6 +2494,67 @@ async function startMcpServer(args?: any, core?: any) {
       throw error;
     }
   };
+  handlers.inspect_provider_security = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.inspectProviderSecurity) return { success: false, error: 'Provider security inspection is unavailable' };
+    return { success: true, data: activeDispatcher.inspectProviderSecurity(String(agentId || ''), String(transportId || '') || undefined) };
+  };
+  handlers.inspect_provider_runtime = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.inspectProviderRuntime) return { success: false, error: 'Provider runtime inspection is unavailable' };
+    return { success: true, data: activeDispatcher.inspectProviderRuntime(String(agentId || ''), String(transportId || '')) };
+  };
+  handlers.refresh_provider_security_capability = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.refreshProviderSecurityCapability) return { success: false, error: 'Provider capability refresh is unavailable' };
+    return { success: true, data: await activeDispatcher.refreshProviderSecurityCapability(
+      String(agentId || ''), String(transportId || '') || undefined,
+    ) };
+  };
+  handlers.preview_provider_security_invocation = async ({ agentId, transportId, config }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.describeProviderSecurityInvocation) return { success: false, error: 'Provider invocation preview is unavailable' };
+    return { success: true, data: activeDispatcher.describeProviderSecurityInvocation(
+      String(agentId || ''), String(transportId || ''), config && typeof config === 'object' ? config : undefined,
+    ) };
+  };
+  handlers.preflight_provider_security = async ({ agentId, transportId, config }: any = {}) => {
+    const service = (global as any).__dispatcher?.providerSecurity;
+    if (!service) return { success: false, error: 'Provider security service is unavailable' };
+    return { success: true, data: service.preflight(String(agentId || ''), String(transportId || ''),
+      config && typeof config === 'object' ? config : {}) };
+  };
+  handlers.commit_provider_security = async ({ agentId, preflightToken, confirmation }: any = {}) => {
+    const dispatcher = (global as any).__dispatcher;
+    const service = dispatcher?.providerSecurity;
+    if (!service) return { success: false, error: 'Provider security service is unavailable' };
+    const data = service.commit(String(agentId || ''), String(preflightToken || ''), String(confirmation || ''));
+    dispatcher.applyProviderSecurityPolicyChange?.(data);
+    return { success: true, data };
+  };
+  handlers.inspect_provider_turn_evidence = async ({ agentId, turnId, channelId, transportId, since }: any = {}) => {
+    const normalizedAgentId = String(agentId || ''), normalizedTurnId = String(turnId || '');
+    const columns = `turn_id,agent_id,execution_scope,transport_id,policy_revision,state,
+      turn_policy_digest,restore_constraint_digest,capability_digest,runtime_fingerprint,fallback_mode,created_at,updated_at
+      `;
+    const turn = normalizedTurnId
+      ? db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND turn_id=? LIMIT 1`).get(normalizedAgentId, normalizedTurnId)
+      : db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND (?='' OR transport_id=?)
+          AND created_at>=? ORDER BY created_at DESC LIMIT 1`).get(normalizedAgentId, String(transportId || ''), String(transportId || ''), Number(since || 0)) || null;
+    const binding = channelId ? db.prepare(`SELECT provider_type,delivery_mode,adapter_type,native_session_id,
+      session_origin,status,binding_version,created_at,updated_at,last_used_at FROM provider_conversation_bindings
+      WHERE agent_id=? AND channel_id=? AND status='active' LIMIT 1`).get(normalizedAgentId, String(channelId)) : null;
+    const hash = (value: unknown) => value ? require('crypto').createHash('sha256').update(String(value)).digest('hex') : null;
+    return { success: true, data: { turn, binding: binding ? { ...binding,
+      nativeSessionDigest: hash(binding.native_session_id), native_session_id: undefined } : null } };
+  };
+  handlers.exercise_provider_capability_fault = async ({ agentId, transportId, fault }: any = {}) => {
+    const dispatcher = (global as any).__dispatcher;
+    if (!dispatcher?.exerciseProviderCapabilityFault) return { success: false, error: 'Provider fault test is unavailable' };
+    return { success: true, data: await dispatcher.exerciseProviderCapabilityFault(
+      String(agentId || ''), String(transportId || ''), String(fault || ''),
+    ) };
+  };
   handlers.restart_agent_runtime = async () => {
     if (__ownerSwitchInProgress || __serviceHealth === 'draining') {
       return { success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换正在进行' };
@@ -3599,7 +3660,11 @@ async function main() {
   // IM Hub clients belong to the long-running VOKO process. Short-lived CLI
   // calls must execute these tools through that process instead of opening a
   // duplicate IM connection or using the removed legacy direct sender.
-  if (['send_message', 'get_message_result', 'upload_and_send_file', 'start_worker', 'stop_worker'].includes(subcommand)) {
+  if (['send_message', 'get_message_result', 'upload_and_send_file', 'start_worker', 'stop_worker',
+    'refresh_delivery_channels', 'verify_delivery_channel', 'select_delivery_channel', 'inspect_provider_security',
+    'inspect_provider_runtime', 'refresh_provider_security_capability', 'preview_provider_security_invocation',
+    'preflight_provider_security', 'commit_provider_security', 'inspect_provider_turn_evidence',
+    'exercise_provider_capability_fault'].includes(subcommand)) {
     const result = await cli.runRuntimeToolCommand(
       subcommand,
       args,
