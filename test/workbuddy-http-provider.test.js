@@ -257,6 +257,44 @@ test('WorkBuddy exact session resume ignores history replay and returns only the
     && JSON.parse(call.init.body || '{}').method === 'session/resume'), true);
 });
 
+for (const scenario of [
+  { name: 'new', binding: null, code: 'WORKBUDDY_NEW_TASK_REFUSED', message: 'refused the new task' },
+  { name: 'resume', binding: { providerType: 'workbuddy', adapterType: 'workbuddy-http', deliveryMode: 'http',
+    nativeSessionId: 'session-existing', channelId: 'visitor-1', channelType: 1 },
+  code: 'WORKBUDDY_RESUMED_TASK_REFUSED', message: 'refused the resumed task' },
+]) {
+  test(`WorkBuddy reports ${scenario.name} session refusal without revoking loopback verification`, async () => {
+    const provider = readyProvider(async (url, init = {}) => {
+      if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+      if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+      if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: `connection-${scenario.name}` });
+      if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+      if (String(url).endsWith('/api/v1/acp')) {
+        const request = JSON.parse(init.body);
+        if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-new' });
+        if (request.method === 'session/prompt') return acpResponse(request, [], { stopReason: 'refusal' });
+        return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1 } : {});
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    provider._verification.set('agent-1', { status: 'loopback_verified', verifiedAt: 123 });
+    await assert.rejects(provider.push({ agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1',
+      channelType: 1, content: 'hello', rawContent: 'hello', messageId: `message-${scenario.name}`,
+      turnId: `message-${scenario.name}`, providerBinding: scenario.binding }), error => {
+      assert.equal(error.code, scenario.code);
+      assert.equal(error.providerStage, 'prompt');
+      assert.equal(error.sessionOperation, scenario.name);
+      assert.match(error.message, new RegExp(scenario.message));
+      return true;
+    });
+    const readiness = provider.getDeliveryReadiness('agent-1');
+    assert.equal(readiness.verificationStatus, 'loopback_verified');
+    assert.equal(readiness.automaticReady, true);
+    assert.equal(readiness.lastDeliveryStatus, 'failed');
+    assert.equal(readiness.lastDeliveryCode, scenario.code);
+  });
+}
+
 test('WorkBuddy sends verified image attachments as ACP image blocks', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-image-'));
   const imagePath = path.join(dir, 'tongue.jpg');
