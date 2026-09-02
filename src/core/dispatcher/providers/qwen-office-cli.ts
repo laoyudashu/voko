@@ -42,12 +42,15 @@ function qwenOfficeSecurityArgs(configuredArgs: string[], config: Record<string,
   for (let index = 0; index < configuredArgs.length; index += 1) {
     const value = configuredArgs[index];
     if (optionsWithValue.has(value)) { index += 1; continue; }
+    if (value.startsWith('--tools=')) continue;
     if (value === '--strict-mcp-config') continue;
     args.push(value);
   }
   args.push('--permission-mode', config.permissionMode || 'dont_ask');
-  args.push('--tools', config.toolAccess === 'default' ? 'default'
-    : config.toolAccess === 'read_only' ? 'Read,Grep,Glob' : '');
+  const tools = config.toolAccess === 'default' ? 'default'
+    : config.toolAccess === 'read_only' ? 'Read,Grep,Glob' : '';
+  if (tools) args.push('--tools', tools);
+  else args.push('--tools=');
   if (config.mcpProfile !== 'user') args.push('--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
   return args;
 }
@@ -69,7 +72,7 @@ class QwenOfficeCliProvider extends CliAdapter {
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--permission-mode', 'dont_ask',
-      '--tools', '',
+      ...(process.platform === 'win32' ? ['--tools='] : ['--tools', '']),
     ];
     super({
       name: 'QWEN OFFICE CLI',
@@ -147,6 +150,7 @@ class QwenOfficeCliProvider extends CliAdapter {
       authenticationStatus: readiness.loggedIn ? 'verified' : 'unverified',
       reason: readiness.reason,
       verificationStatus: verification?.status || 'unverified',
+      ...(readiness.version ? { version: readiness.version } : {}),
       ...(verification?.code ? { verificationCode: verification.code } : {}),
       ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}),
       ...(verification?.detail ? { verificationDetail: verification.detail } : {}),
@@ -167,7 +171,8 @@ class QwenOfficeCliProvider extends CliAdapter {
   describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
     const args = qwenOfficeSecurityArgs(['--print'], config);
     const permission = args[args.indexOf('--permission-mode') + 1] || 'dont_ask';
-    const tools = args[args.indexOf('--tools') + 1] || '';
+    const toolsIndex = args.indexOf('--tools');
+    const tools = toolsIndex >= 0 ? args[toolsIndex + 1] || '' : '';
     return [
       { text: 'qoderclicn --print --permission-mode', risk: 'low' },
       { text: permission, risk: permission === 'bypass_permissions' ? 'high' : 'low' },

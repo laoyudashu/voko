@@ -336,6 +336,18 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     : null;
   instance.getProviderVersion = () => {
     if (versionProbe) return { ...versionProbe };
+    // QwenWork exposes its runtime version through the documented status JSON.
+    // Its bundled Windows CLI does not provide a reliable `--version` process:
+    // probing it can hold the CLI lock long enough for the following readiness
+    // check to fail. Reuse the already bounded/cached status result instead.
+    if (definition.id === 'qwen-office-cli' && typeof instance.getDeliveryReadiness === 'function') {
+      const readiness = instance.getDeliveryReadiness('');
+      const version = String(readiness?.version || '').trim();
+      if (version) {
+        versionProbe = { version, source: 'status', observedAt: new Date().toISOString(), result: 'known' };
+        return { ...versionProbe };
+      }
+    }
     const { probeProviderVersion } = require('../provider-sandbox');
     let command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
     let args: string[]|undefined;
