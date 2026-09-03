@@ -168,17 +168,19 @@ class QwenOfficeCliProvider extends CliAdapter {
       readiness: this.getDeliveryReadiness(agentId) };
   }
 
-  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high'; sourceControl?: string }> {
     const args = qwenOfficeSecurityArgs(['--print'], config);
     const permission = args[args.indexOf('--permission-mode') + 1] || 'dont_ask';
     const toolsIndex = args.indexOf('--tools');
     const tools = toolsIndex >= 0 ? args[toolsIndex + 1] || '' : '';
     return [
       { text: 'qoderclicn --print --permission-mode', risk: 'low' },
-      { text: permission, risk: permission === 'bypass_permissions' ? 'high' : 'low' },
+      { text: permission, risk: permission === 'bypass_permissions' ? 'high' : 'low', sourceControl: 'permissionMode' },
       { text: tools === 'default' ? '--tools default' : tools ? `--tools ${tools}` : '--tools <空列表>',
-        risk: tools === 'default' ? 'high' : tools ? 'medium' : 'low' },
-      ...(args.includes('--strict-mcp-config') ? [{ text: '--strict-mcp-config', risk: 'low' as const }] : [{ text: '加载用户 MCP 配置', risk: 'high' as const }]),
+        risk: tools === 'default' ? 'high' : tools ? 'medium' : 'low', sourceControl: 'toolAccess' },
+      ...(args.includes('--strict-mcp-config')
+        ? [{ text: '--strict-mcp-config', risk: 'low' as const, sourceControl: 'mcpProfile' }]
+        : [{ text: '加载用户 MCP 配置', risk: 'high' as const, sourceControl: 'mcpProfile' }]),
     ];
   }
 

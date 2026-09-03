@@ -169,6 +169,7 @@ export interface RedactedInvocationSegment {
   text: string;
   risk: 'low'|'medium'|'high';
   changed?: boolean;
+  change?: 'added'|'removed'|'unchanged';
   sourceControl?: string;
   enforcement?: 'voko_enforced'|'provider_enforced'|'unsupported';
 }
@@ -184,9 +185,11 @@ export function redactedInvocation(transportId: string, config: Record<string, s
   ];
   if (transportId === 'qwen-office-cli') return [
     { text: 'qoderclicn --print --permission-mode', risk: 'low' },
-    { text: config.permissionMode || 'dont_ask', risk: config.permissionMode === 'bypass_permissions' ? 'high' : 'low' },
+    { text: config.permissionMode || 'dont_ask', risk: config.permissionMode === 'bypass_permissions' ? 'high' : 'low',
+      sourceControl: 'permissionMode' },
     { text: config.toolAccess === 'default' ? '--tools default' : config.toolAccess === 'read_only' ? '--tools Read,Grep,Glob' : '--tools <空列表>',
-      risk: config.toolAccess === 'default' ? 'high' : config.toolAccess === 'read_only' ? 'medium' : 'low' },
+      risk: config.toolAccess === 'default' ? 'high' : config.toolAccess === 'read_only' ? 'medium' : 'low',
+      sourceControl: 'toolAccess' },
   ];
   if (transportId === 'dumate-http') return [
     { text: 'POST /session/<sessionId>/prompt_async', risk: 'low' },

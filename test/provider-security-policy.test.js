@@ -253,6 +253,39 @@ test('Hermes CLI transport exposes its exact editable permission controls', (t) 
   assert.equal(result.supported, true);
   assert.deepEqual(result.controls.filter(item => item.editable).map(item => item.id),
     ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']);
+  const removal = dispatcher.describeProviderSecurityInvocation('hermes-agent', 'hermes-cli', {
+    ...result.config, toolProfile: 'default',
+  }).find(item => item.sourceControl === 'toolProfile');
+  assert.equal(removal.text, '--toolsets safe');
+  assert.equal(removal.changed, true);
+  assert.equal(removal.change, 'removed');
+});
+
+test('Qwen Office preview changes only the permission value, not the fixed command prefix', (t) => {
+  const db = initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,delivery_modes,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`).run('row-qwen-preview','qwen-preview','im-qwen','token','ws://127.0.0.1',
+      '千问预览','qwen-office',JSON.stringify(['cli']),now,now);
+  const provider = { priority: 10, match: () => true, isAvailable: () => true, async push() {} };
+  const dispatcher = createDispatcher({ db, providers: { 'qwen-office-cli': provider } });
+  dispatcher.providerSecurity.storeCapability('qwen-preview', 'qwen-office-cli', {
+    runtimeFingerprint: 'qwen-runtime', capabilityDigest: 'qwen-capability', evidenceState: 'static_compatible',
+    supportedControls: Object.fromEntries(['permissionMode','toolAccess','mcpProfile','sessionPersistence','additionalPrompt']
+      .map(id => [id, { values: [] }])), observedAt: now, expiresAt: now + 60_000,
+  });
+  const inspected = dispatcher.inspectProviderSecurity('qwen-preview');
+  const preview = dispatcher.describeProviderSecurityInvocation('qwen-preview', 'qwen-office-cli', {
+    ...inspected.config, permissionMode: 'bypass_permissions',
+  });
+  const prefix = preview.find(item => item.text === 'qoderclicn --print --permission-mode');
+  const value = preview.find(item => item.text === 'bypass_permissions');
+  assert.equal(prefix.changed, false);
+  assert.equal(prefix.sourceControl, undefined);
+  assert.equal(value.changed, true);
+  assert.equal(value.sourceControl, 'permissionMode');
 });
 
 test('shared preview marks changed controls and returns enforcement metadata', (t) => {

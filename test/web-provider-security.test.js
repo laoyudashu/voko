@@ -74,7 +74,8 @@ test('Provider security page and API expose only controls supported by the Agent
         : [[mapping[0],mapping[1],'ready',true]];
       return { ...providerSecurity.inspect(agentId, transportId), deliveryMode: mapping[1], selectedProvider: transportId,
         transports: transports.map(([id,mode,status,selectable]) => ({ transportId: id, mode, configured: true,
-          available: true, automaticReady: status === 'ready', verificationStatus: 'static_compatible', status,
+          available: true, automaticReady: status === 'ready', verificationStatus: 'static_compatible',
+          evidenceState: id === 'opencode-attach' ? 'unknown' : 'static_compatible', status,
           securitySelectable: selectable })) };
     },
   };
@@ -175,14 +176,16 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
-  assert.match(hermesHtml, /data-provider-delivery-security/);
-  assert.match(hermesHtml, /data-provider-delivery-security[^>]*style="display:inline-flex;align-items:center;gap:14px;white-space:nowrap"/);
+  assert.match(hermesHtml, /provider-security-header/);
+  assert.match(hermesHtml, /grid-template-columns:max-content max-content max-content minmax\(260px,1fr\)/);
   assert.match(hermesHtml, /消息推送模式[\s\S]*安全适配器[\s\S]*hermes-cli[\s\S]*权限对应的通信模式/);
   assert.match(hermesHtml, /<label style="display:inline-flex;[^>]*>权限对应的通信模式/);
   assert.match(hermesHtml, /只有相对已保存策略发生变化的部分会显示彩色高亮/);
   assert.match(hermesHtml, /#b42318/);
   assert.match(hermesHtml, /#a85b00/);
   assert.match(hermesHtml, /#1769aa/);
+  assert.match(hermesHtml, /有未保存的修改/);
+  assert.match(hermesHtml, /textDecoration="line-through"/);
   assert.match(hermesHtml, /智能体名称输入错误，请输入页面顶部显示的完整名称/);
   assert.match(hermesHtml, /PROVIDER_SECURITY_CONFIRMATION_MISMATCH/);
   const hermesSecurityScript = [...hermesHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)]
@@ -197,6 +200,9 @@ test('Provider security page and API expose only controls supported by the Agent
     assert.match(qwenHtml, new RegExp(`name="${control}"`));
   }
   assert.match(qwenHtml, /id="provider-command-preview"/);
+  assert.match(qwenHtml, /投递就绪/);
+  assert.match(qwenHtml, /参数静态兼容/);
+  assert.doesNotMatch(qwenHtml, />[^<]*(?:ready|verification_required)[^<]*<\/option>/);
   assert.equal((qwenHtml.match(/name="additionalPrompt"/g) || []).length, 1);
 
   const dumatePage = await fetch(`${origin}/agents/agent-6/security`, { headers: auth });

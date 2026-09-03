@@ -2216,10 +2216,16 @@ Convergence obligations:
         const latestTurn = providerSecurity.latestTurnForTransport?.(agentId, String(method.provider || ''));
         const stalled = method.provider === 'opencode-attach' && latestTurn?.state === 'SUBMITTING'
           && Date.now() - Number(latestTurn.updated_at || 0) > 180_000;
+        const transportCapability = providerSecurity.capability(agentId, String(method.provider || ''));
+        const transportEvidenceState = String(transportCapability?.observed?.evidenceState
+          || transportCapability?.verified?.evidenceState || 'unknown');
+        const attachUnverified = method.provider === 'opencode-attach'
+          && !['verified', 'static_compatible', 'stale_verified'].includes(transportEvidenceState);
         return { transportId: method.provider, mode: method.mode, configured: method.configured !== false,
           available: method.available !== false, automaticReady: method.automaticReady === true,
           status: stalled ? 'delivery_stalled' : method.status,
-          verificationStatus: method.verificationStatus || null, securitySelectable: !stalled };
+          verificationStatus: method.verificationStatus || null, evidenceState: transportEvidenceState,
+          securitySelectable: !stalled && !attachUnverified };
       });
     return { ...result, deliveryMode: selectedMode, selectedProvider, evidence, transports,
       capabilityEvidence, capabilityProbing: probing };
@@ -2319,6 +2325,7 @@ Convergence obligations:
     const inferControl = (text: string): string | undefined => {
       if (/toolsets|--tools|工具执行预算/.test(text)) return transportId === 'hermes-cli' ? 'toolProfile' : transportId === 'qwen-office-cli' ? 'toolAccess' : 'toolAccess';
       if (/safe-mode/.test(text)) return 'safeMode';
+      if (/^qoderclicn\b/.test(text)) return undefined;
       if (/yolo|permission-mode/.test(text)) return transportId === 'hermes-cli' ? 'approvalMode' : 'permissionMode';
       if (/accept-hooks/.test(text)) return 'acceptHooks';
       if (/session|会话/i.test(text)) return 'sessionPersistence';
@@ -2328,15 +2335,27 @@ Convergence obligations:
       if (/profile|扩展/.test(text)) return 'extensionProfile';
       return undefined;
     };
-    return render(effectiveConfig).map((item: any) => {
+    const baselineSegments = baseline.map((item: any) => ({ ...item,
+      sourceControl: item.sourceControl || inferControl(String(item.text || '')) }));
+    const currentSegments = render(effectiveConfig).map((item: any) => {
       const sourceControl = item.sourceControl || inferControl(String(item.text || ''));
       const definition = sourceControl ? definitions.get(sourceControl) : null;
       const changed = sourceControl
         ? effectiveConfig[sourceControl] !== policy?.config?.[sourceControl]
         : !baselineTexts.has(String(item.text || ''));
-      return { ...item, changed, sourceControl,
+      return { ...item, changed, change: changed ? 'added' : 'unchanged', sourceControl,
         enforcement: item.enforcement || definition?.enforcement || 'provider_enforced' };
     });
+    const currentControls = new Set(currentSegments.map((item: any) => item.sourceControl).filter(Boolean));
+    const currentTexts = new Set(currentSegments.map((item: any) => String(item.text || '')));
+    const removedSegments = baselineSegments.filter((item: any) => item.sourceControl
+      ? effectiveConfig[item.sourceControl] !== policy?.config?.[item.sourceControl] && !currentControls.has(item.sourceControl)
+      : !currentTexts.has(String(item.text || ''))).map((item: any) => {
+      const definition = item.sourceControl ? definitions.get(item.sourceControl) : null;
+      return { ...item, changed: true, change: 'removed',
+        enforcement: item.enforcement || definition?.enforcement || 'provider_enforced' };
+    });
+    return [...currentSegments, ...removedSegments];
   }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
