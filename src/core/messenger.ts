@@ -1582,7 +1582,24 @@ class MessageHandler extends EventEmitter {
       this.deferredReplyReceipts.set(this._receiptKey(agentId,msgId),{peerUid:replyChannelId,
         sourceMessageIds:[...sourceMessageIds],turnId:String(data.turnId||data.sourceMessageId||msgId)});
     }
+    if (fullyDelivered && replyChannelType === 1 && !automaticA2AReply && data.turnId) {
+      await this._deliverGuestTurnStatus(data, replyChannelId, 'reply_delivered', 'Agent 已答复');
+    }
 
+  }
+
+  private async _deliverGuestTurnStatus(data: AgentReplyMessage & { code?: string }, recipientUid: string,
+    status: string, content: string): Promise<void> {
+    const turnId = String(data.turnId || data.sourceMessageId || '');
+    const result = await this._deliver(data.agentId, recipientUid, content, 'text', 1, null,
+      `turn-status-${data.agentId}-${turnId || 'unknown'}-${status}`,
+      { _voko: { protocolVersion: 1, turnId, turnStatus: status,
+        ...(data.code ? { turnStatusCode: String(data.code) } : {}),
+        ...(data.remoteRouteId ? { replyToRouteId: data.remoteRouteId } : {}),
+        ...(data.remoteConversationKey ? { canonicalConversationKey: data.remoteConversationKey } : {}) } });
+    if (result?.success === false) {
+      console.warn(`[Provider状态] 投递失败 agent=${data.agentId} peer=${recipientUid} status=${status}`);
+    }
   }
 
   async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
@@ -1624,16 +1641,7 @@ class MessageHandler extends EventEmitter {
     // without persisting it in Lite's transcript or letting probes mistake it
     // for the real Provider reply. Keep the legacy text as the wire fallback
     // for older clients that do not understand turnStatus metadata yet.
-    const turnId = String(data.turnId || data.sourceMessageId || '');
-    const result = await this._deliver(data.agentId, recipientUid, content, 'text', 1, null,
-      `turn-status-${data.agentId}-${turnId || 'unknown'}-${status}`,
-      { _voko: { protocolVersion: 1, turnId, turnStatus: status,
-        ...(data.code ? { turnStatusCode: String(data.code) } : {}),
-        ...(data.remoteRouteId ? { replyToRouteId: data.remoteRouteId } : {}),
-        ...(data.remoteConversationKey ? { canonicalConversationKey: data.remoteConversationKey } : {}) } });
-    if (result?.success === false) {
-      console.warn(`[Provider状态] 投递失败 agent=${data.agentId} peer=${recipientUid} status=${status}`);
-    }
+    await this._deliverGuestTurnStatus(data, recipientUid, status, content);
   }
 }
 

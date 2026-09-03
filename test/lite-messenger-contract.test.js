@@ -718,10 +718,13 @@ describe('Lite Messenger contract smoke', () => {
         content: 'final answer',
         is_me: 1,
       });
-      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered.length, 2);
       assert.equal(fixture.delivered[0][1], 'visitor-1');
       assert.equal(fixture.delivered[0][2], 'final answer');
       assert.equal(fixture.delivered[0][4], 1);
+      assert.equal(fixture.delivered[1][2], 'Agent 已答复');
+      assert.equal(fixture.delivered[1][7]._voko.turnStatus, 'reply_delivered');
+      assert.equal(fixture.delivered[1][7]._voko.turnId, 'turn-1');
       assert.equal(fixture.notified.length, 1);
       assert.equal(fixture.notified[0].data.content, 'final answer');
     } finally {
