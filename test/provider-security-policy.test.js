@@ -213,14 +213,22 @@ test('security inspection follows the current delivery mode and exact Goose tran
   const match = (_agentId, meta) => meta.backend_type === 'goose';
   const provider = { priority: 10, match, isAvailable: () => true, async push() {} };
   const dispatcher = createDispatcher({ db, providers: { 'goose-acp': provider, 'goose-cli': provider } });
+  for (const [agentId, transportId, ids] of [
+    ['goose-acp-agent', 'goose-acp', ['additionalPrompt']],
+    ['goose-cli-agent', 'goose-cli', ['extensionProfile', 'additionalPrompt']],
+  ]) dispatcher.providerSecurity.storeCapability(agentId, transportId, {
+    runtimeFingerprint: `${transportId}-runtime`, capabilityDigest: `${transportId}-capability`,
+    evidenceState: 'static_compatible', supportedControls: Object.fromEntries(ids.map(id => [id, { values: [] }])),
+    observedAt: now, expiresAt: now + 60_000,
+  });
   const acp = dispatcher.inspectProviderSecurity('goose-acp-agent');
   assert.equal(acp.deliveryMode, 'acp');
   assert.equal(acp.transportId, 'goose-acp');
-  assert.equal(acp.controls.some(item => item.editable), false);
+  assert.deepEqual(acp.controls.filter(item => item.editable).map(item => item.id), ['additionalPrompt']);
   const cli = dispatcher.inspectProviderSecurity('goose-cli-agent');
   assert.equal(cli.deliveryMode, 'cli');
   assert.equal(cli.transportId, 'goose-cli');
-  assert.deepEqual(cli.controls.filter(item => item.editable).map(item => item.id), ['extensionProfile']);
+  assert.deepEqual(cli.controls.filter(item => item.editable).map(item => item.id), ['extensionProfile', 'additionalPrompt']);
 });
 
 test('Hermes CLI transport exposes its exact editable permission controls', (t) => {
@@ -234,12 +242,40 @@ test('Hermes CLI transport exposes its exact editable permission controls', (t) 
   const provider = { priority: 10, match: (_agentId, meta) => meta.backend_type === 'hermes',
     isAvailable: () => true, async push() {} };
   const dispatcher = createDispatcher({ db, providers: { 'hermes-cli': provider } });
+  dispatcher.providerSecurity.storeCapability('hermes-agent', 'hermes-cli', {
+    runtimeFingerprint: 'hermes-runtime', capabilityDigest: 'hermes-capability', evidenceState: 'static_compatible',
+    supportedControls: Object.fromEntries(['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']
+      .map(id => [id, { values: [] }])), observedAt: now, expiresAt: now + 60_000,
+  });
   const result = dispatcher.inspectProviderSecurity('hermes-agent');
   assert.equal(result.deliveryMode, 'cli');
   assert.equal(result.transportId, 'hermes-cli');
   assert.equal(result.supported, true);
   assert.deepEqual(result.controls.filter(item => item.editable).map(item => item.id),
     ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']);
+});
+
+test('shared preview marks changed controls and returns enforcement metadata', (t) => {
+  const db = initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents
+    (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,delivery_modes,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)`).run('row-preview','preview-agent','im-preview','token','ws://127.0.0.1',
+      '预览助手','grok',JSON.stringify(['cli']),now,now);
+  const provider = { priority: 10, match: () => true, isAvailable: () => true, async push() {} };
+  const dispatcher = createDispatcher({ db, providers: { 'grok-cli': provider } });
+  dispatcher.providerSecurity.storeCapability('preview-agent', 'grok-cli', {
+    runtimeFingerprint: 'grok-runtime', capabilityDigest: 'grok-capability', evidenceState: 'static_compatible',
+    supportedControls: { additionalPrompt: { values: [] } }, observedAt: now, expiresAt: now + 60_000,
+  });
+  const preview = dispatcher.describeProviderSecurityInvocation('preview-agent', 'grok-cli', {
+    additionalPrompt: '只回答当前问题。',
+  });
+  const prompt = preview.find(item => item.sourceControl === 'additionalPrompt');
+  assert.equal(prompt.changed, true);
+  assert.equal(prompt.enforcement, 'voko_enforced');
+  assert.equal(typeof prompt.text, 'string');
 });
 
 test('Hermes dangerous permission expansion requires typed confirmation', () => {

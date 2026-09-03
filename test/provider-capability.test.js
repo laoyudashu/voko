@@ -31,3 +31,28 @@ test('shared invocation planner labels WorkBuddy allowedTools as high-risk preap
   assert.equal(preview.some(item => item.text === '--tools Read' && item.risk === 'high'), true);
   assert.equal(preview.some(item => /仅自动审批，非路径隔离/.test(item.text) && item.risk === 'high'), true);
 });
+
+test('shared invocation planner covers native and prompt-only Provider transports', () => {
+  assert.equal(redactedInvocation('hermes-cli', { toolProfile: 'default', approvalMode: 'bypass', acceptHooks: 'enabled' })
+    .some(item => item.text === '--yolo' && item.risk === 'high' && item.sourceControl === 'approvalMode'), true);
+  assert.equal(redactedInvocation('claude-cli', { toolAccess: 'read_only', browser: 'disabled' })
+    .some(item => /--tools Read,Grep,Glob/.test(item.text) && item.sourceControl === 'toolAccess'), true);
+  assert.equal(redactedInvocation('codex-cli', { sandboxMode: 'workspace_write' })
+    .some(item => item.text === 'workspace-write' && item.risk === 'high'), true);
+  assert.equal(redactedInvocation('goose-cli', { extensionProfile: 'disabled' })
+    .some(item => item.sourceControl === 'extensionProfile'), true);
+  assert.equal(redactedInvocation('grok-cli', { additionalPrompt: 'visitor' })
+    .some(item => item.sourceControl === 'additionalPrompt'), true);
+});
+
+test('a verified delivery probe exposes only controls backed by the adapter contract', () => {
+  const provider = {
+    isAvailable: () => true,
+    getDeliveryReadiness: () => ({ verificationStatus: 'loopback_verified' }),
+  };
+  const hermes = snapshotFromProvider(provider, 'hermes-cli', 'agent-1');
+  assert.deepEqual(Object.keys(hermes.supportedControls),
+    ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks', 'additionalPrompt']);
+  const grok = snapshotFromProvider(provider, 'grok-cli', 'agent-1');
+  assert.deepEqual(Object.keys(grok.supportedControls), ['additionalPrompt']);
+});

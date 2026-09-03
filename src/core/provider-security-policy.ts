@@ -292,6 +292,8 @@ export function applyProviderSecurityArgs(argsInput: readonly string[], payload:
 function normalizeConfig(transportId: string, input: unknown): Record<string, string> {
   const config = { ...(DEFAULTS[transportId] || (GENERIC_SECURITY_TRANSPORTS.has(transportId)
     ? { additionalPrompt: GENERIC_PROMPT_DEFAULT } : {})) };
+  if (getProviderSecurityControls(transportId).some(item => item.id === 'additionalPrompt')
+    && !Object.prototype.hasOwnProperty.call(config, 'additionalPrompt')) config.additionalPrompt = GENERIC_PROMPT_DEFAULT;
   const proposed = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
   const definitions = getProviderSecurityControls(transportId);
   const editable = new Map(definitions.filter(item => item.editable).map(item => [item.id, item]));
@@ -334,11 +336,14 @@ function promptInstructions(transportId: string, config: Record<string, string>)
   if (transportId === 'claude-cli') return [
     config.toolAccess === 'read_only' ? '仅可使用 Read、Grep、Glob 只读工具。' : '不得调用任何内置工具。',
     config.browser === 'enabled' ? '浏览器能力已由所有者启用，仍不得扩大任务范围。' : '不得控制 Chrome 浏览器。',
+    ...(config.additionalPrompt ? [config.additionalPrompt] : []),
   ];
   if (transportId === 'codex-cli') return [config.sandboxMode === 'workspace_write'
-    ? '仅可在 Provider 工作区沙箱内写入；不得尝试越界。' : '文件系统保持只读，不得写入。'];
+    ? '仅可在 Provider 工作区沙箱内写入；不得尝试越界。' : '文件系统保持只读，不得写入。',
+    ...(config.additionalPrompt ? [config.additionalPrompt] : [])];
   if (transportId === 'goose-cli') return [config.extensionProfile === 'disabled'
-    ? '默认扩展已禁用，不得声称能够操作 Shell、文件或浏览器。' : '只能使用 Goose 当前配置的默认扩展，不得扩大任务范围。'];
+    ? '默认扩展已禁用，不得声称能够操作 Shell、文件或浏览器。' : '只能使用 Goose 当前配置的默认扩展，不得扩大任务范围。',
+    ...(config.additionalPrompt ? [config.additionalPrompt] : [])];
   if (transportId === 'workbuddy-http') {
     const data = config.dataFileAccess === 'read' ? '所有者已启用 WorkBuddy Read。绑定的 data.json 仅被自动审批，这不是路径隔离；不得主动读取任务无关的其他文件。'
         : '不得读取或写入任何本地文件。';
@@ -366,7 +371,10 @@ function scopeForPayload(payload: PushPayload): ProviderSecurityExecutionScope |
 }
 
 export function getProviderSecurityControls(transportId: string): readonly ProviderSecurityControlDefinition[] {
-  return DEFINITIONS[transportId] || (GENERIC_SECURITY_TRANSPORTS.has(transportId) ? [GENERIC_PROMPT_CONTROL] : []);
+  const definitions = DEFINITIONS[transportId];
+  if (!definitions) return GENERIC_SECURITY_TRANSPORTS.has(transportId) ? [GENERIC_PROMPT_CONTROL] : [];
+  return definitions.some(item => item.id === 'additionalPrompt')
+    ? definitions : [...definitions, GENERIC_PROMPT_CONTROL];
 }
 
 export function isProviderSecurityTransport(transportId: string): boolean {
@@ -425,15 +433,23 @@ export class ProviderSecurityPolicyService {
       && persisted?.verified?.runtimeFingerprint === persisted?.observed?.runtimeFingerprint;
     const supportedIds = new Set(Object.keys((verifiedCurrent ? persisted?.verified?.supportedControls
       : persisted?.observed?.supportedControls) || persisted?.supportedControls || {}));
-    const dynamicTransport = ['workbuddy-http','qwen-office-cli','dumate-http'].includes(transportId);
+    const dynamicTransport = isProviderSecurityTransport(transportId);
     const controls = supportedIds.size
       ? allControls.filter(item => item.id === 'additionalPrompt' || supportedIds.has(item.id))
       : dynamicTransport ? allControls.filter(item => item.id === 'additionalPrompt') : allControls;
     if (!controls.length) return { agentId, agentName: agent.agent_name || agentId, backendType: agent.backend_type,
       transportId, supported: false, controls: [], config: {}, revision: 0, assurance: 'unsupported' };
     const policy = this.effective(agentId, transportId);
+    const editableControls = controls.filter(item => item.editable);
+    // Unsupported switches are omitted rather than presented as controls. DuMate's
+    // providerTools item is an explicit, evidence-backed risk disclosure, not a switch.
+    const fixedBoundaries = allControls.filter(item => !item.editable
+      && (item.enforcement !== 'unsupported' || item.id === 'providerTools'));
+    const activeIds = new Set(editableControls.map(item => item.id));
+    const inactiveConfig = Object.fromEntries(Object.entries(policy.config)
+      .filter(([key]) => key !== 'additionalPrompt' && !activeIds.has(key)));
     return { agentId, agentName: agent.agent_name || agentId, backendType: agent.backend_type, transportId,
-      supported: true, controls, config: policy.config, revision: policy.revision,
+      supported: true, controls: editableControls, fixedBoundaries, inactiveConfig, config: policy.config, revision: policy.revision,
       policyDigest: policy.policyDigest, restoreConstraintDigest: policy.restoreConstraintDigest,
       promptInstructions: policy.promptInstructions,
       capabilityDigest: policy.capabilityDigest, runtimeFingerprint: policy.runtimeFingerprint,
@@ -477,6 +493,12 @@ export class ProviderSecurityPolicyService {
     const row = this.db.prepare(`SELECT probe_failure_count,probe_retry_after FROM provider_security_policies
       WHERE agent_id=? AND transport_id=? LIMIT 1`).get(clean(agentIdInput,128), clean(transportIdInput,64)) as any;
     return { failures: Number(row?.probe_failure_count || 0), retryAfter: row?.probe_retry_after == null ? null : Number(row.probe_retry_after) };
+  }
+
+  latestTurnForTransport(agentIdInput: unknown, transportIdInput: unknown): any {
+    return this.db.prepare(`SELECT state,updated_at FROM provider_security_turns
+      WHERE agent_id=? AND transport_id=? ORDER BY updated_at DESC LIMIT 1`)
+      .get(clean(agentIdInput,128), clean(transportIdInput,64)) || null;
   }
 
   storeCapability(agentIdInput: unknown, transportIdInput: unknown, snapshot: Record<string, any>): void {

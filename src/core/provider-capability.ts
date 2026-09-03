@@ -32,7 +32,18 @@ export interface ProviderCapabilitySnapshot {
 }
 
 const FAMILY: Record<string, string> = {
+  'hermes-cli': 'hermes', 'hermes-http': 'hermes', 'claude-cli': 'claude-code',
+  'codex-cli': 'codex', 'qwen-cli': 'qwen-code',
+  'opencode-acp': 'opencode', 'opencode-attach': 'opencode', 'opencode-cli': 'opencode',
+  'grok-cli': 'grok', 'aider-cli': 'aider', 'goose-cli': 'goose', 'goose-acp': 'goose',
   'workbuddy-http': 'workbuddy', 'qwen-office-cli': 'qwen-office', 'dumate-http': 'dumate',
+  'zeroclaw-ws': 'zeroclaw', 'zeroclaw-acp': 'zeroclaw', 'zeroclaw-cli': 'zeroclaw',
+  'openclaw-ws': 'openclaw', 'openclaw-cli': 'openclaw',
+  'github-copilot-acp': 'github-copilot', 'github-copilot-cli': 'github-copilot',
+  'cursor-acp': 'cursor', 'cursor-cli': 'cursor', 'cline-acp': 'cline', 'cline-cli': 'cline',
+  'codebuddy-acp': 'codebuddy', 'traecli-acp': 'codebuddy', 'kiro-cli': 'kiro',
+  'gemini-cli': 'gemini', 'pi-cli': 'pi', 'reasonix-cli': 'reasonix',
+  'deepseek-harness-http': 'deepseek-harness', 'deepseek-harness-cli': 'deepseek-harness',
 };
 const DYNAMIC_CAPABILITY_TRANSPORTS = new Set(Object.keys(FAMILY));
 
@@ -44,6 +55,24 @@ const VERIFIED_RUNTIME_RULES: Record<string, Partial<Record<NodeJS.Platform, str
   'qwen-office-cli': { win32: ['1.0.47','1.1.18'], darwin: ['1.1.18'] },
   'dumate-http': {},
 };
+
+// Native controls are exposed only where this adapter revision has a tested
+// invocation mapping. Delivery readiness alone proves that a message round-trip
+// works; it does not make every control definition valid for that transport.
+const VERIFIED_NATIVE_CONTROLS: Record<string, string[]> = {
+  'hermes-cli': ['toolProfile', 'safeMode', 'approvalMode', 'acceptHooks'],
+  'claude-cli': ['toolAccess', 'browser', 'shellWrite'],
+  'codex-cli': ['sandboxMode'],
+  'qwen-cli': ['tools'],
+  'goose-cli': ['extensionProfile'],
+  'workbuddy-http': ['dataFileAccess', 'permissionMode', 'sessionPersistence', 'mcpProfile'],
+  'qwen-office-cli': ['sessionPersistence', 'permissionMode', 'toolAccess', 'mcpProfile'],
+  'dumate-http': ['sessionPersistence', 'isolatedDataRoot', 'loopbackOnly'],
+};
+
+export function hasNativeCapabilityControls(transportId: string): boolean {
+  return (VERIFIED_NATIVE_CONTROLS[transportId] || []).length > 0;
+}
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -87,6 +116,9 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   const identity = runtimeIdentity(provider, transportId);
   let evidence: any = null;
   try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
+  if (!evidence) {
+    try { evidence = { readiness: provider?.getDeliveryReadiness?.(agentId) || null }; } catch (_) {}
+  }
   const runtimeVersion = String(evidence?.runtimeVersion || '').trim() || null;
   const frameworkVersion = String(evidence?.frameworkVersion || '').trim() || null;
   const definitions = getProviderSecurityControls(transportId);
@@ -94,13 +126,16 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   const versionRuleMatched = Boolean(runtimeVersion
     && VERIFIED_RUNTIME_RULES[transportId]?.[process.platform]?.includes(runtimeVersion));
   const providerParametersVerified = readinessVerified || versionRuleMatched;
+  const verifiedNativeControls = new Set(VERIFIED_NATIVE_CONTROLS[transportId] || []);
   const supportedControls: ProviderCapabilitySnapshot['supportedControls'] = Object.fromEntries(definitions
     .filter(item => item.enforcement !== 'unsupported'
-      && (item.enforcement === 'voko_enforced' || providerParametersVerified))
+      && (item.enforcement === 'voko_enforced'
+        || (providerParametersVerified && verifiedNativeControls.has(item.id))))
     .map(item => [item.id, {
     values: (item.values || []).map(value => value.value), enforcement: item.enforcement,
     boundary: boundaryFor(transportId, item.id),
-    evidence: transportId === 'dumate-http' ? 'protocol_verified' as const : 'static_documented' as const,
+    evidence: readinessVerified ? 'real_test' as const
+      : transportId === 'dumate-http' ? 'protocol_verified' as const : 'static_documented' as const,
   }]));
   const evidenceState: ProviderCapabilityEvidenceState = identity.available
     ? readinessVerified ? 'verified' : versionRuleMatched ? 'static_compatible' : 'unknown' : 'failed';
@@ -115,7 +150,15 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   return { ...base, capabilityDigest: digest(base) };
 }
 
-export function redactedInvocation(transportId: string, config: Record<string, string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
+export interface RedactedInvocationSegment {
+  text: string;
+  risk: 'low'|'medium'|'high';
+  changed?: boolean;
+  sourceControl?: string;
+  enforcement?: 'voko_enforced'|'provider_enforced'|'unsupported';
+}
+
+export function redactedInvocation(transportId: string, config: Record<string, string>): RedactedInvocationSegment[] {
   if (transportId === 'workbuddy-http') return [
     { text: 'codebuddy --serve --host 127.0.0.1 --permission-mode dontAsk', risk: 'medium' },
     ...(config.dataFileAccess === 'read'
@@ -135,5 +178,26 @@ export function redactedInvocation(transportId: string, config: Record<string, s
     { text: config.sessionPersistence === 'ephemeral' ? '每条消息新建 Session' : '复用当前访客 Session',
       risk: config.sessionPersistence === 'ephemeral' ? 'low' : 'medium' },
   ];
-  return [];
+  if (transportId === 'hermes-cli') return [
+    { text: 'hermes --profile <当前 Profile> chat -q <访客消息> -Q --source tool', risk: 'low' },
+    ...(config.toolProfile === 'safe' ? [{ text: '--toolsets safe', risk: 'medium' as const, sourceControl: 'toolProfile', enforcement: 'provider_enforced' as const }] : []),
+    ...(config.safeMode !== 'disabled' ? [{ text: '--safe-mode', risk: 'medium' as const, sourceControl: 'safeMode', enforcement: 'provider_enforced' as const }] : []),
+    ...(config.approvalMode === 'bypass' ? [{ text: '--yolo', risk: 'high' as const, sourceControl: 'approvalMode', enforcement: 'provider_enforced' as const }] : []),
+    ...(config.acceptHooks === 'enabled' ? [{ text: '--accept-hooks', risk: 'high' as const, sourceControl: 'acceptHooks', enforcement: 'provider_enforced' as const }] : []),
+  ];
+  if (transportId === 'claude-cli') return [
+    { text: 'claude -p <访客消息> --permission-mode plan', risk: 'low' },
+    { text: config.toolAccess === 'read_only' ? '--tools Read,Grep,Glob' : '--tools <空列表>', risk: config.toolAccess === 'read_only' ? 'high' : 'low', sourceControl: 'toolAccess', enforcement: 'provider_enforced' },
+    { text: config.browser === 'enabled' ? '--chrome' : '--no-chrome', risk: config.browser === 'enabled' ? 'high' : 'low', sourceControl: 'browser', enforcement: 'provider_enforced' },
+  ];
+  if (transportId === 'codex-cli') return [
+    { text: 'codex exec --sandbox', risk: 'low' },
+    { text: config.sandboxMode === 'workspace_write' ? 'workspace-write' : 'read-only', risk: config.sandboxMode === 'workspace_write' ? 'high' : 'medium', sourceControl: 'sandboxMode', enforcement: 'provider_enforced' },
+  ];
+  if (transportId === 'goose-cli') return [{ text: 'goose run', risk: 'low' },
+    { text: config.extensionProfile === 'disabled' ? '--no-profile' : '<默认扩展>', risk: config.extensionProfile === 'disabled' ? 'low' : 'high', sourceControl: 'extensionProfile', enforcement: 'provider_enforced' }];
+  if (transportId === 'qwen-cli') return [{ text: 'qwen <访客消息>', risk: 'low' },
+    { text: '工具执行预算：0', risk: 'low', sourceControl: 'tools', enforcement: 'provider_enforced' }];
+  return [{ text: `${transportId} <访客消息>`, risk: 'low' },
+    { text: '仅追加访客安全提示语；无已验证的原生权限参数', risk: 'medium', sourceControl: 'additionalPrompt', enforcement: 'voko_enforced' }];
 }

@@ -18,6 +18,11 @@ test('Provider security page and API expose only controls supported by the Agent
     INSERT INTO agents VALUES('agent-4','Hermes助手','hermes',NULL);
     INSERT INTO agents VALUES('agent-5','千问办公助手','qwen-office',NULL);
     INSERT INTO agents VALUES('agent-6','百度搭子助手','dumate',NULL);
+    INSERT INTO agents VALUES('agent-7','Claude助手','claude-code',NULL);
+    INSERT INTO agents VALUES('agent-8','Qwen助手','qwen-code',NULL);
+    INSERT INTO agents VALUES('agent-9','OpenCode助手','opencode',NULL);
+    INSERT INTO agents VALUES('agent-10','Grok助手','grok',NULL);
+    INSERT INTO agents VALUES('agent-11','Aider助手','aider',NULL);
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -25,8 +30,18 @@ test('Provider security page and API expose only controls supported by the Agent
   const providerSecurity = new ProviderSecurityPolicyService(db);
   for (const [agentId, transportId, ids] of [
     ['agent-1','workbuddy-http',['dataFileAccess','permissionMode','sessionPersistence','mcpProfile','additionalPrompt']],
+    ['agent-2','codex-cli',['sandboxMode','additionalPrompt']],
+    ['agent-3','goose-acp',['additionalPrompt']],
+    ['agent-4','hermes-cli',['toolProfile','safeMode','approvalMode','acceptHooks','additionalPrompt']],
     ['agent-5','qwen-office-cli',['sessionPersistence','permissionMode','toolAccess','mcpProfile','additionalPrompt']],
     ['agent-6','dumate-http',['sessionPersistence','additionalPrompt','isolatedDataRoot','loopbackOnly']],
+    ['agent-7','claude-cli',['toolAccess','browser','shellWrite','additionalPrompt']],
+    ['agent-8','qwen-cli',['tools','additionalPrompt']],
+    ['agent-9','opencode-cli',['additionalPrompt']],
+    ['agent-9','opencode-acp',['additionalPrompt']],
+    ['agent-9','opencode-attach',['additionalPrompt']],
+    ['agent-10','grok-cli',['additionalPrompt']],
+    ['agent-11','aider-cli',['additionalPrompt']],
   ]) providerSecurity.storeCapability(agentId, transportId, {
     runtimeFingerprint: `${transportId}-test`, capabilityDigest: `${transportId}-capability`, evidenceState: 'static_compatible',
     supportedControls: Object.fromEntries(ids.map(id => [id,{ values: [] }])), observedAt: Date.now(), expiresAt: Date.now()+10000,
@@ -38,14 +53,26 @@ test('Provider security page and API expose only controls supported by the Agent
     describeProviderSecurityInvocation: (_agentId, transportId, config) => transportId === 'workbuddy-http'
       ? [{ text: config.dataFileAccess === 'read' ? '--tools Read' : '--tools <空列表>', risk: config.dataFileAccess === 'read' ? 'high' : 'low' }]
       : [],
-    inspectProviderSecurity(agentId) {
+    inspectProviderSecurity(agentId, requestedTransport) {
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
       const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
         : backend === 'codex' ? ['codex-cli', 'cli']
           : backend === 'hermes' ? ['hermes-cli', 'cli']
             : backend === 'qwen-office' ? ['qwen-office-cli', 'cli']
-              : backend === 'dumate' ? ['dumate-http', 'http'] : ['goose-acp', 'acp'];
-      return { ...providerSecurity.inspect(agentId, mapping[0]), deliveryMode: mapping[1], selectedProvider: mapping[0] };
+              : backend === 'dumate' ? ['dumate-http', 'http']
+                : backend === 'claude-code' ? ['claude-cli', 'cli']
+                  : backend === 'qwen-code' ? ['qwen-cli', 'cli']
+                    : backend === 'opencode' ? ['opencode-cli', 'cli']
+                      : backend === 'grok' ? ['grok-cli', 'cli']
+                        : backend === 'aider' ? ['aider-cli', 'cli'] : ['goose-acp', 'acp'];
+      const transportId = requestedTransport || mapping[0];
+      const transports = backend === 'opencode'
+        ? [['opencode-cli','cli','ready',true],['opencode-acp','acp','ready',true],['opencode-attach','attach','delivery_stalled',false]]
+        : [[mapping[0],mapping[1],'ready',true]];
+      return { ...providerSecurity.inspect(agentId, transportId), deliveryMode: mapping[1], selectedProvider: transportId,
+        transports: transports.map(([id,mode,status,selectable]) => ({ transportId: id, mode, configured: true,
+          available: true, automaticReady: status === 'ready', verificationStatus: 'static_compatible', status,
+          securitySelectable: selectable })) };
     },
   };
   const webSessions = createLocalWebSessionStore(db);
@@ -57,6 +84,11 @@ test('Provider security page and API expose only controls supported by the Agent
       { agentId: 'agent-4', agentName: 'Hermes助手', backendType: 'hermes' },
       { agentId: 'agent-5', agentName: '千问办公助手', backendType: 'qwen-office' },
       { agentId: 'agent-6', agentName: '百度搭子助手', backendType: 'dumate' },
+      { agentId: 'agent-7', agentName: 'Claude助手', backendType: 'claude-code' },
+      { agentId: 'agent-8', agentName: 'Qwen助手', backendType: 'qwen-code' },
+      { agentId: 'agent-9', agentName: 'OpenCode助手', backendType: 'opencode' },
+      { agentId: 'agent-10', agentName: 'Grok助手', backendType: 'grok' },
+      { agentId: 'agent-11', agentName: 'Aider助手', backendType: 'aider' },
     ] }),
   };
   const app = express();
@@ -113,7 +145,7 @@ test('Provider security page and API expose only controls supported by the Agent
   const goosePage = await fetch(`${origin}/agents/agent-3/security`, { headers: auth });
   const gooseHtml = await goosePage.text();
   assert.equal(goosePage.status, 200, gooseHtml);
-  assert.match(gooseHtml, /尚未接入可验证的动态权限控制/);
+  assert.match(gooseHtml, /name="additionalPrompt"/);
   assert.doesNotMatch(gooseHtml, /工具权限/);
 
   const hermesPage = await fetch(`${origin}/agents/agent-4/security`, { headers: auth });
@@ -139,7 +171,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
-  assert.match(hermesHtml, /彩色部分表示下方权限选项带来的参数或执行策略变化/);
+  assert.match(hermesHtml, /只有相对已保存策略发生变化的部分会显示彩色高亮/);
   assert.match(hermesHtml, /#b42318/);
   assert.match(hermesHtml, /#a85b00/);
   assert.match(hermesHtml, /#1769aa/);
@@ -156,8 +188,7 @@ test('Provider security page and API expose only controls supported by the Agent
   for (const control of ['sessionPersistence', 'permissionMode', 'toolAccess', 'mcpProfile', 'additionalPrompt']) {
     assert.match(qwenHtml, new RegExp(`name="${control}"`));
   }
-  assert.match(qwenHtml, /qoderclicn --print --permission-mode/);
-  assert.match(qwenHtml, /--strict-mcp-config --mcp-config/);
+  assert.match(qwenHtml, /id="provider-command-preview"/);
   assert.equal((qwenHtml.match(/name="additionalPrompt"/g) || []).length, 1);
 
   const dumatePage = await fetch(`${origin}/agents/agent-6/security`, { headers: auth });
@@ -166,8 +197,31 @@ test('Provider security page and API expose only controls supported by the Agent
   for (const control of ['sessionPersistence', 'additionalPrompt']) {
     assert.match(dumateHtml, new RegExp(`name="${control}"`));
   }
-  assert.match(dumateHtml, /POST \/session\/<sessionId>\/prompt_async/);
+  assert.match(dumateHtml, /id="provider-command-preview"/);
   assert.equal((dumateHtml.match(/name="additionalPrompt"/g) || []).length, 1);
+
+  const frameworkExpectations = [
+    ['agent-7', ['toolAccess','browser','additionalPrompt'], ['shellWrite']],
+    ['agent-8', ['additionalPrompt'], ['tools']],
+    ['agent-10', ['additionalPrompt'], []],
+    ['agent-11', ['additionalPrompt'], []],
+  ];
+  for (const [agentId, editable, fixedControls] of frameworkExpectations) {
+    const response = await fetch(`${origin}/agents/${agentId}/security`, { headers: auth });
+    const frameworkHtml = await response.text();
+    assert.equal(response.status, 200, frameworkHtml);
+    for (const control of editable) assert.match(frameworkHtml, new RegExp(`name="${control}"`));
+    for (const control of fixedControls) assert.match(frameworkHtml, new RegExp(providerSecurity.inspect(agentId).fixedBoundaries
+      .find(item => item.id === control).label));
+  }
+
+  const openCodeAttach = await fetch(`${origin}/agents/agent-9/security?transportId=opencode-attach`, { headers: auth });
+  const openCodeHtml = await openCodeAttach.text();
+  assert.equal(openCodeAttach.status, 200, openCodeHtml);
+  assert.match(openCodeHtml, /opencode-attach/);
+  assert.match(openCodeHtml, /提交停滞/);
+  assert.match(openCodeHtml, /<button type="submit" disabled>保存设置<\/button>/);
+  assert.doesNotMatch(openCodeHtml, /name="shell"/);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },

@@ -16,8 +16,8 @@
 import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import { classifyProviderTurnFailure } from '../provider-turn-status';
-import { appendProviderSecurityPrompt, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
-import { isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
+import { appendProviderSecurityPrompt, getProviderSecurityControls, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
+import { hasNativeCapabilityControls, isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
@@ -337,6 +337,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
 
   async function ensureProviderCapability(agentId: string, providerId: string, waitMs = 3000): Promise<any> {
     if (!providerSecurity || !isDynamicCapabilityTransport(providerId)) return null;
+    // Prompt-only transports have no runtime-dependent argv to guard. Their
+    // snapshot can refresh in the background without delaying message submit.
+    if (!hasNativeCapabilityControls(providerId)) {
+      const current = providerSecurity.capability(agentId, providerId);
+      return current?.verified || current?.observed || null;
+    }
     const provider = providers[providerId] as any;
     const persisted = providerSecurity.capability(agentId, providerId);
     let observed: any = null;
@@ -1635,7 +1641,7 @@ Convergence obligations:
           }
           // 第一阶段仅让已迁移的 transport 进入异步能力门禁。未迁移 Provider
           // 必须保持原来的同步调用时序，避免仅仅多一个 microtask 就改变路由/回包竞态。
-          if (isDynamicCapabilityTransport(selectedRoute.providerId)) {
+          if (hasNativeCapabilityControls(selectedRoute.providerId)) {
             await ensureProviderCapability(agentId, selectedRoute.providerId, 3000);
           }
           const securityLease = providerSecurity?.acquireTurnLease(baseProviderPayload, selectedRoute.providerId) || null;
@@ -2177,7 +2183,9 @@ Convergence obligations:
   function inspectProviderSecurity(agentId: string, transportId?: string): any {
     if (!providerSecurity) throw new Error('PROVIDER_SECURITY_UNAVAILABLE');
     const deliveryStatus = getAgentDeliveryStatus(agentId);
-    const selectedMode = deliveryStatus.temporaryPreferredMode
+    const explicitlySelected = transportId
+      ? deliveryStatus.methods.find(method => method.provider === transportId) : null;
+    const selectedMode = explicitlySelected?.mode || deliveryStatus.temporaryPreferredMode
       || deliveryStatus.activeAutomaticMode
       || deliveryStatus.configuredModes.find(mode => mode !== 'pull')
       || 'pull';
@@ -2203,7 +2211,17 @@ Convergence obligations:
       void refreshProviderCapability(agentId, result.transportId).catch(() => undefined);
     }
     const probing = [...capabilityRefreshes.keys()].some(key => key.startsWith(`${result.transportId}:`));
-    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence,
+    const transports = deliveryStatus.methods.filter(method => method.mode !== 'pull' && method.provider)
+      .map(method => {
+        const latestTurn = providerSecurity.latestTurnForTransport?.(agentId, String(method.provider || ''));
+        const stalled = method.provider === 'opencode-attach' && latestTurn?.state === 'SUBMITTING'
+          && Date.now() - Number(latestTurn.updated_at || 0) > 180_000;
+        return { transportId: method.provider, mode: method.mode, configured: method.configured !== false,
+          available: method.available !== false, automaticReady: method.automaticReady === true,
+          status: stalled ? 'delivery_stalled' : method.status,
+          verificationStatus: method.verificationStatus || null, securitySelectable: !stalled };
+      });
+    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence, transports,
       capabilityEvidence, capabilityProbing: probing };
   }
 
@@ -2293,8 +2311,32 @@ Convergence obligations:
     const policy = providerSecurity?.effective(agentId, transportId);
     const effectiveConfig = config || policy?.config || {};
     const provider = providers[transportId] as any;
-    return provider?.describeSecurityInvocation?.(effectiveConfig)
-      || redactedInvocation(transportId, effectiveConfig);
+    const render = (value: Record<string,string>) => provider?.describeSecurityInvocation?.(value)
+      || redactedInvocation(transportId, value);
+    const baseline = render(policy?.config || {});
+    const baselineTexts = new Set(baseline.map((item: any) => String(item.text || '')));
+    const definitions = new Map(getProviderSecurityControls(transportId).map(item => [item.id, item]));
+    const inferControl = (text: string): string | undefined => {
+      if (/toolsets|--tools|工具执行预算/.test(text)) return transportId === 'hermes-cli' ? 'toolProfile' : transportId === 'qwen-office-cli' ? 'toolAccess' : 'toolAccess';
+      if (/safe-mode/.test(text)) return 'safeMode';
+      if (/yolo|permission-mode/.test(text)) return transportId === 'hermes-cli' ? 'approvalMode' : 'permissionMode';
+      if (/accept-hooks/.test(text)) return 'acceptHooks';
+      if (/session|会话/i.test(text)) return 'sessionPersistence';
+      if (/MCP|strict-mcp/i.test(text)) return 'mcpProfile';
+      if (/chrome/i.test(text)) return 'browser';
+      if (/sandbox|read-only|workspace-write/.test(text)) return 'sandboxMode';
+      if (/profile|扩展/.test(text)) return 'extensionProfile';
+      return undefined;
+    };
+    return render(effectiveConfig).map((item: any) => {
+      const sourceControl = item.sourceControl || inferControl(String(item.text || ''));
+      const definition = sourceControl ? definitions.get(sourceControl) : null;
+      const changed = sourceControl
+        ? effectiveConfig[sourceControl] !== policy?.config?.[sourceControl]
+        : !baselineTexts.has(String(item.text || ''));
+      return { ...item, changed, sourceControl,
+        enforcement: item.enforcement || definition?.enforcement || 'provider_enforced' };
+    });
   }
 
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
