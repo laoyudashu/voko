@@ -52,7 +52,10 @@ test('Provider security page and API expose only controls supported by the Agent
     refreshProviderSecurityCapability: async () => ({ evidenceState: 'static_compatible', runtimeVersion: '2.139.0' }),
     describeProviderSecurityInvocation: (_agentId, transportId, config) => transportId === 'workbuddy-http'
       ? [{ text: config.dataFileAccess === 'read' ? '--tools Read' : '--tools <空列表>', risk: config.dataFileAccess === 'read' ? 'high' : 'low' }]
-      : [],
+      : transportId === 'hermes-cli'
+        ? [{ text: 'hermes chat -q <访客消息>', risk: 'low', changed: false },
+          { text: '--toolsets safe', risk: 'medium', changed: false, sourceControl: 'toolProfile' }]
+        : [{ text: `${transportId} <访客消息>`, risk: 'low', changed: false }],
     inspectProviderSecurity(agentId, requestedTransport) {
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
       const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
@@ -157,6 +160,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(hermesHtml, /自动批准（YOLO）/);
   assert.match(hermesHtml, /自动批准未知 Hooks/);
   assert.match(hermesHtml, /id="provider-command-preview"/);
+  assert.match(hermesHtml, /id="provider-command-preview"[^>]*>[^<]*<span[^>]*>hermes chat -q &lt;访客消息&gt;<\/span>/);
   assert.match(hermesHtml, /id="provider-prompt-editor"/);
   assert.equal((hermesHtml.match(/name="additionalPrompt"/g) || []).length, 1);
   assert.doesNotMatch(hermesHtml, /id="provider-prompt-preview"/);
@@ -171,6 +175,8 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
+  assert.match(hermesHtml, /安全适配器[\s\S]*hermes-cli[\s\S]*权限对应的通信模式/);
+  assert.match(hermesHtml, /<label style="display:inline-flex;[^>]*>权限对应的通信模式/);
   assert.match(hermesHtml, /只有相对已保存策略发生变化的部分会显示彩色高亮/);
   assert.match(hermesHtml, /#b42318/);
   assert.match(hermesHtml, /#a85b00/);
