@@ -410,6 +410,53 @@ test('自动转发结果未知时只收敛一次并保留 Pull 状态', async ()
   assert.equal(row.agent_notified, 1);
 });
 
+test('Pull-only Agent 的主人回复只入库并等待主动获取', async () => {
+  const row = {
+    id: 'oi_pull_only',
+    email_message_id: 'email_pull_only',
+    agent_id: 'agentB',
+    visitor_id: 'uidA',
+    session_key: 'agent:agentB:uidA',
+    problem: '需要确认',
+    status: 'replied',
+    owner_reply: '同意',
+    reply_time: Date.now(),
+    agent_notified: 0,
+  };
+  let resumeAttempts = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        run() { return { changes: 1 }; },
+        all() {
+          if (sql.includes('FROM owner_interventions oi')) return row.agent_notified ? [] : [row];
+          return [];
+        },
+        get() { return undefined; },
+      };
+    },
+  };
+  const notifier = new OwnerInterventionNotifier({
+    db,
+    databaseAPI: {
+      markAgentNotified() { row.agent_notified = 1; },
+      updateOwnerInterventionStatus(_id, status) { row.status = status; },
+    },
+    registry: {},
+    agentEmailApi: { async pollReplies() { return { events: [], next_cursor: '0', has_more: false }; } },
+    buildOwnerReplyPrompt: (_intervention, reply) => `owner:${reply}`,
+    getAgentDeliveryStatus: () => ({ pullOnly: true }),
+    resumeOwnerIntervention: async () => { resumeAttempts += 1; },
+  });
+
+  await notifier._pollEmailReplies();
+  await notifier._pollEmailReplies();
+  assert.equal(resumeAttempts, 0);
+  assert.equal(row.status, 'replied');
+  assert.equal(row.agent_notified, 1);
+  assert.equal(row.owner_reply, '同意');
+});
+
 test('Lite 常驻扫描能接住启动后由独立 CLI 新写入的介入请求', async () => {
   let scans = 0;
   let sends = 0;

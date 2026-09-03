@@ -2366,6 +2366,7 @@ async function startMcpServer(args?: any, core?: any) {
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db, secureOutboundRouter, messageHandler),
+      getAgentDeliveryStatus: (agentId: string) => dispatcher?.getAgentDeliveryStatus?.(agentId) || null,
       autoApproveWhitelistIfFriendRequest: (intervention?: any, reply?: any) =>
         messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply),
     });
