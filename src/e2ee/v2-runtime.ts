@@ -435,7 +435,7 @@ export class E2eeV2Runtime {
             const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
               quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
               failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认',
-              automatic_delivery_disabled:'Agent 尚未启用自动回复'};
+              automatic_delivery_disabled:'Agent 尚未启用自动回复',reply_delivered:'Agent 回复已送达'};
             if(!text[status])return;
             const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
               channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),

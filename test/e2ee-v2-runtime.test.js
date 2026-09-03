@@ -174,6 +174,20 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
   }finally{f.close();}
 });
 
+test('guest reply delivery emits a hidden terminal status for UI convergence',async()=>{
+  const replyInputs=[];
+  const f=fixture({async deliverSecureReply(input){replyInputs.push(input);
+    return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('guest-terminal-status','hello');
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.deepEqual(replyInputs.map(input=>input.turnStatus),['processing',undefined,'reply_delivered']);
+    assert.equal(replyInputs.at(-1).replyToRouteId,undefined);
+  }finally{f.close();}
+});
+
 test('business-policy interception completes the receipt without executing Provider',async()=>{
   const f=fixture({inboundDisposition:'intercepted'});
   try{
