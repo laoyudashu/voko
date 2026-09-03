@@ -59,7 +59,8 @@ test('modular rollout defaults to Goose and supports config and environment over
   }
   assert.equal(providerModularModeForFamily(defaults, 'claude-code'), 'enabled');
   assert.equal(providerModularModeForFamily(defaults, 'codex'), 'enabled');
-  for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix']) {
+  for (const family of ['claude-code', 'codex', 'gemini', 'pi', 'qwen-code', 'kiro', 'aider', 'grok', 'reasonix',
+    'workbuddy', 'qwen-office', 'dumate']) {
     assert.equal(providerModularModeForFamily(defaults, family), 'enabled', family);
   }
 
@@ -72,6 +73,36 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(providerModularModeForFamily(configured, 'cline'), 'enabled');
   assert.equal(providerModularModeForFamily(configured, 'goose'), 'enabled');
   assert.equal(getProviderModularRollout(db, { VOKO_PROVIDER_MODULAR_DISPATCH: 'disabled' }).mode, 'disabled');
+});
+
+test('office Provider defaults persist the first session and resume the next queued visitor turn', async (t) => {
+  for (const family of ['workbuddy', 'qwen-office', 'dumate']) {
+    const db = fixture(t);
+    const now = Date.now();
+    db.prepare(`INSERT INTO agents
+      (id,agent_id,imUid,imToken,im_server_url,publish_status,backend_type,delivery_modes,access_mode,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(`row-${family}`, `agent-${family}`, `im-${family}`, 'token', 'http://im',
+      'published', family, '["http","cli","pull"]', 'private', now, now);
+    const received = [];
+    const transportId = family === 'workbuddy' ? 'workbuddy-http'
+      : family === 'qwen-office' ? 'qwen-office-cli' : 'dumate-http';
+    const deliveryMode = family === 'qwen-office' ? 'cli' : 'http';
+    const provider = {
+      priority: 10, match: (_agentId, meta) => meta.backend_type === family, isAvailable: () => true,
+      push: async payload => {
+        received.push(payload.providerBinding?.nativeSessionId || null);
+        return { nativeSessionId: `session-${family}`, providerInstanceId: `instance-${family}`,
+          deliveryMode, adapterType: transportId };
+      },
+    };
+    const dispatcher = createDispatcher({ db, providers: { [transportId]: provider } });
+    const base = { agentId: `agent-${family}`, fromUid: `visitor-${family}`, channelId: `visitor-${family}`,
+      channelType: 1, content: 'hello' };
+    dispatcher.dispatch(base.agentId, { ...base, messageId: `first-${family}`, turnId: `first-${family}` });
+    dispatcher.dispatch(base.agentId, { ...base, messageId: `second-${family}`, turnId: `second-${family}` });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepEqual(received, [null, `session-${family}`], family);
+  }
 });
 
 test('generic ACP and CLI constructors honor Dispatcher-owned session persistence', (t) => {

@@ -2218,10 +2218,12 @@ async function startMcpServer(args?: any, core?: any) {
         }
         void e2eeRuntime.handle(msg.agentId,data).then((result: any) => {
           if (!result.accepted) {
-            if (result.code === 'E2EE_V2_PROVIDER_REPLY_TIMEOUT') {
-              console.warn('[E2EE] Provider 结果未知，未自动重试 code=E2EE_V2_PROVIDER_REPLY_TIMEOUT');
+            const code = String(result.code || 'E2EE_REJECTED');
+            if (code === 'E2EE_V2_PROVIDER_REPLY_TIMEOUT'
+              || /(?:EMPTY_REPLY|OUTCOME_UNKNOWN|ACP_STAGE_FAILED|TIMEOUT)/.test(code)) {
+              console.warn(`[E2EE] Provider 结果未知，未自动重试 code=${code}`);
             } else {
-              console.warn(`[E2EE] 已拒绝消息: ${result.code || 'E2EE_REJECTED'}`);
+              console.warn(`[E2EE] 已拒绝消息: ${code}`);
             }
           }
           if (!data?.__e2eeReceiptAcked) data?.ack?.();
