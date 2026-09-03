@@ -132,7 +132,13 @@ class Host {
     const outputPath = `/tmp/voko-real-${suffix}.out`;
     const codePath = `/tmp/voko-real-${suffix}.code`;
     const command = [this.config.node, this.config.entry, ...args].map(shellQuote).join(' ');
-    const script = `#!/bin/bash\nset +e\nrunuser -u ${shellQuote(this.config.user)} -- env XDG_RUNTIME_DIR=/run/user/${this.config.uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${this.config.uid}/bus ${command} > ${shellQuote(outputPath)} 2>&1\ncode=$?\nprintf '%s' "$code" > ${shellQuote(codePath)}\nexit 0\n`;
+    // Provider credentials and compatible endpoint settings are commonly
+    // configured in the desktop user's login environment. Running VOKO from a
+    // root-owned UTM helper without that environment makes healthy CLIs look
+    // unauthenticated. Load the user's login profile, then restore the desktop
+    // session variables needed by GUI-backed Providers.
+    const loginCommand = `export XDG_RUNTIME_DIR=/run/user/${this.config.uid}; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${this.config.uid}/bus; exec ${command}`;
+    const script = `#!/bin/bash\nset +e\nrunuser -l ${shellQuote(this.config.user)} -c ${shellQuote(loginCommand)} > ${shellQuote(outputPath)} 2>&1\ncode=$?\nprintf '%s' "$code" > ${shellQuote(codePath)}\nexit 0\n`;
     run(this.config.utmctl, ['file', 'push', this.config.vm, scriptPath], { input: script, timeout: 30_000 });
     run(this.config.utmctl, ['exec', this.config.vm, '--cmd', '/bin/bash', scriptPath], { timeout });
     const deadline = Date.now() + timeout;
