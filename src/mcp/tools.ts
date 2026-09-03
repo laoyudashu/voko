@@ -2277,8 +2277,13 @@ function createToolHandlers(cx: McpContext) {
               channelType: 2,
             };
           }
-          // 单聊：查最后一条消息是谁发的
-          const lastMsg = cx.query(`SELECT is_me, content_type FROM messages WHERE channel_id=? AND agent_id=? ORDER BY timestamp DESC LIMIT 1`, [r.channel_id, p.agentId]);
+          // Conversation.last_message may still point at a historical control
+          // message. Derive the summary from the latest user-visible message
+          // so legacy Turn statuses cannot keep polluting the Agent homepage.
+          const visibleMessageWhere = `channel_id=? AND agent_id=? AND is_me IN (0,1)
+            AND (content_type IS NULL OR content_type<10) AND id NOT LIKE 'e2ee-status-%'`;
+          const lastMsg = cx.query(`SELECT content,timestamp,is_me,content_type FROM messages
+            WHERE ${visibleMessageWhere} ORDER BY timestamp DESC,rowid DESC LIMIT 1`, [r.channel_id, p.agentId]);
           const lastIsMeRow = lastMsg?.[0]?.is_me;
           const lastCtRow = lastMsg?.[0]?.content_type || 1;
           // needsReply：最后一条是真实访客消息（is_me=0 且非拦截/系统）
@@ -2286,15 +2291,16 @@ function createToolHandlers(cx: McpContext) {
           // 计算未回复的访客消息数：最后一条 agent 回复之后，还有多少条访客消息
           let unreadCount = 0;
           if (needsReply) {
-            const lastAgentReply = cx.query(`SELECT timestamp FROM messages WHERE channel_id=? AND agent_id=? AND is_me=1 AND (content_type IS NULL OR content_type<10) ORDER BY timestamp DESC LIMIT 1`, [r.channel_id, p.agentId]);
+            const lastAgentReply = cx.query(`SELECT timestamp FROM messages WHERE ${visibleMessageWhere}
+              AND is_me=1 ORDER BY timestamp DESC,rowid DESC LIMIT 1`, [r.channel_id, p.agentId]);
             const since = lastAgentReply?.[0]?.timestamp || 0;
             unreadCount = cx.query(`SELECT COUNT(*) as cnt FROM messages WHERE channel_id=? AND agent_id=? AND is_me=0 AND timestamp > ?`, [r.channel_id, p.agentId, since])[0]?.cnt || 0;
           }
           return {
             channelId: r.channel_id,
             name: r.name,
-            lastMessage: r.last_message,
-            lastTimestamp: r.last_timestamp,
+            lastMessage: lastMsg?.[0]?.content || '',
+            lastTimestamp: lastMsg?.[0]?.timestamp || r.last_timestamp,
             unreadCount,
             needsReply,
             lastContentType: lastMsg?.[0]?.content_type || 1,
