@@ -1,5 +1,5 @@
 const { PushProvider } = require('../base-provider');
-const { runCli, checkCliAvailable, sanitizeCmdArg } = require('../../adapters/cli-spawner');
+const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCliDiagnostic, sanitizeCmdArg } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
@@ -94,23 +94,33 @@ class HermesCliProvider extends PushProvider {
     return 'execution_failed';
   }
 
-  _enqueue(profileId: string, task: () => Promise<void>, context?: { agentId?: string; turnId?: string; sourceMessageIds?: readonly string[]; attachmentCount?: number }): void {
+  _enqueue(profileId: string, task: () => Promise<void>, context?: { agentId?: string; turnId?: string; messageId?: string; sourceMessageIds?: readonly string[]; attachmentCount?: number }): Promise<void> {
     const previous = this._queues.get(profileId) || Promise.resolve();
     const current = previous.catch(() => {}).then(async () => {
       console.error(`[HermesCli] queue_start agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId} messages=${context?.sourceMessageIds?.length || 1} attachments=${context?.attachmentCount || 0}`);
       await task();
       console.error(`[HermesCli] queue_finish agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId}`);
-    }).catch((error: unknown) => {
+    });
+    const tracked = current.then(() => {
+      this.notifyProviderEvent({ type: 'completed', agentId: context?.agentId,
+        messageId: context?.messageId, turnId: context?.turnId, terminal: true });
+    }, (error: unknown) => {
       const kind = this._failureKind(error);
       const labels = { approval_required: '等待工具授权', auth_required: '认证失效', timeout: '执行超时', execution_failed: '执行失败' };
       console.error(`[HermesCli] ${labels[kind]} profile=${profileId}: ${errorMessage(error)}`);
+      this.notifyProviderEvent({ type: 'failed', agentId: context?.agentId,
+        messageId: context?.messageId, turnId: context?.turnId, terminal: true,
+        payload: { outcome: (error as any)?.deliveryOutcome || 'outcome_unknown' } });
       this.emit('delivery.error', { provider: 'hermes-cli', profileId, kind, error: errorMessage(error),
         ...((error as any)?.code ? { errorCode: String((error as any).code) } : {}),
         agentId: context?.agentId, turnId: context?.turnId, sourceMessageIds: context?.sourceMessageIds });
+      throw error;
     }).finally(() => {
-      if (this._queues.get(profileId) === current) this._queues.delete(profileId);
+      if (this._queues.get(profileId) === tracked) this._queues.delete(profileId);
     });
-    this._queues.set(profileId, current);
+    this._queues.set(profileId, tracked);
+    tracked.catch(() => {});
+    return tracked;
   }
 
   async waitForIdle(profileId?: string): Promise<void> {
@@ -139,8 +149,11 @@ class HermesCliProvider extends PushProvider {
       throw error;
     }
     const turnId = String(payload.turnId || payload.messageId || '');
-    this._enqueue(profileId, () => this._runPush(payload), { agentId: payload.agentId, turnId,
-      sourceMessageIds: payload.sourceMessageIds, attachmentCount: payload.attachments?.length || 0 });
+    this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId,
+      messageId: payload.messageId, turnId, terminal: false });
+    await this._enqueue(profileId, () => this._runPush(payload), { agentId: payload.agentId, turnId,
+      messageId: payload.messageId, sourceMessageIds: payload.sourceMessageIds,
+      attachmentCount: payload.attachments?.length || 0 });
     console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
     return {
       accepted: true,
@@ -222,7 +235,18 @@ class HermesCliProvider extends PushProvider {
         if (approvalPending || /pending[_ ]approval|approval.*(?:pending|required)/i.test(detail)) {
           throw new Error('Hermes pending approval');
         }
-        throw new Error(`Hermes exited with code ${result.code}`);
+        const error: any = new Error(`Hermes exited with code ${result.code}`);
+        error.deliveryOutcome = classifyCliFailure(result);
+        error.code = /quota|credit|额度|配额/i.test(detail)
+          ? 'PROVIDER_QUOTA_EXHAUSTED'
+          : /login|auth|unauthorized|\b(?:401|403)\b|未登录|登录/i.test(detail)
+            ? 'PROVIDER_AUTH_REQUIRED' : 'PROVIDER_CLI_EXIT';
+        error.exitCode = result.code;
+        error.retryable = false;
+        error.diagnostic = sanitizeCliDiagnostic(result.stderr) || 'no_stderr';
+        console.error(`[HermesCli] cli_failure code=${error.code} exitCode=${result.code} `+
+          `retryable=false detail=${error.diagnostic}`);
+        throw error;
       }
     } catch (err) {
       if (/ENOENT|not found/i.test(errorMessage(err))) {
@@ -351,13 +375,20 @@ class HermesCliProvider extends PushProvider {
  */
 function _extractReply(stdout: string): string | null {
   if (!stdout) return null;
-  const lines = stdout.split('\n').map((line: string) => line.trim()).filter(Boolean);
+  // Hermes 0.19 prints its chain-of-thought in dim+italic ANSI spans and the
+  // final answer as ordinary text. Never forward those presentation spans to
+  // visitors; besides leaking reasoning, their ANSI bytes corrupt the Web UI.
+  const visible = stdout
+    .replace(/\x1b\[2;3m[\s\S]*?\x1b\[0m/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+  const lines = visible.split('\n').map((line: string) => line.trim()).filter(Boolean);
   // 跳过明显的日志/元数据行
   const contentLines = lines.filter((line: string) =>
     !line.startsWith('[') &&
     !line.startsWith('{') &&
     !line.startsWith('收到') &&
     !line.startsWith('---') &&
+    !/^session_id\s*:/i.test(line) &&
     line.length > 2
   );
   if (contentLines.length > 0) return contentLines.join('\n').trim();

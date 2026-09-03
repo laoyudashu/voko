@@ -69,9 +69,9 @@ test('not-ready reports preserve the Provider-specific blocking reason', () => {
   const result = matrix.discoverCells({ windows: { agents: [{ agentId: 'd', agentName: 'TEST-DUMATE',
     imUid: 'uid-d', backendType: 'dumate', runtime: { imConnected: true, pullOnly: true,
       deliveryStatus: { methods: [{ mode: 'http', provider: 'dumate-http', configured: false,
-        available: false, automaticReady: false, status: 'configuration_required', reason: 'login_required' }] } } }] } }, 'build');
+        available: false, automaticReady: false, status: 'configuration_required', reason: 'backend_not_running' }] } } }] } }, 'build');
   assert.equal(result.cells.length, 0);
-  assert.equal(result.skipped[0].reason, 'provider_not_ready:login_required');
+  assert.equal(result.skipped[0].reason, 'provider_not_ready:backend_not_running');
 });
 
 test('visitor access preparation covers every TEST Agent and ignores production Agents', () => {
@@ -138,6 +138,30 @@ test('runtime control retries transient runtime startup without retrying other f
   const permanent = { json() { calls += 1; throw new Error('AUTH_REQUIRED'); } };
   assert.equal(matrix.callRuntimeControl(permanent, ['status'], 10, 3).ok, false);
   assert.equal(calls, 1);
+});
+
+test('visitor turn evidence waits for one uniquely persisted Provider Turn', async () => {
+  let calls = 0;
+  const host = { json() {
+    calls += 1;
+    if (calls === 1) return { success: true, data: { turn: null, matchCount: 0 } };
+    return { success: true, data: { turn: { turn_id: 'turn-1', transport_id: 'cline-acp' }, matchCount: 1 } };
+  } };
+  const evidence = await matrix.captureTurnEvidence(host, { agentId: 'agent-1', transport: 'cline-acp' },
+    { since: 100 }, null, { timeoutMs: 50, intervalMs: 1 });
+  assert.equal(calls, 2);
+  assert.equal(evidence.data.turn.turn_id, 'turn-1');
+});
+
+test('visitor turn evidence does not accept an ambiguous time-window match', async () => {
+  const host = { json() { return { success: true, data: {
+    turn: { turn_id: 'latest', transport_id: 'cline-acp' }, matchCount: 2,
+  } }; } };
+  const evidence = await matrix.captureTurnEvidence(host, { agentId: 'agent-1', transport: 'cline-acp' },
+    { since: 100 }, null, { timeoutMs: 0, intervalMs: 1 });
+  assert.equal(evidence.data.matchCount, 2);
+  assert.equal(evidence.data.turn, null);
+  assert.equal(evidence.ambiguous, true);
 });
 
 test('provider runtime matrix redacts secrets and local paths', () => {

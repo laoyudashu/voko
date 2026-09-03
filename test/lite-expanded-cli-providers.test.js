@@ -223,7 +223,7 @@ test('Hermes CLI does not use an Agent UUID when backend instance is missing', a
   assert.equal(invoked, false);
 });
 
-test('OpenClaw rejects a failed CLI process and Hermes reports a background delivery error', async (t) => {
+test('OpenClaw and Hermes reject a failed CLI process with correlated delivery evidence', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-fallback-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const previousPath = process.env.PATH;
@@ -256,7 +256,7 @@ test('OpenClaw rejects a failed CLI process and Hermes reports a background deli
     runCli: async () => ({ stdout: '', stderr: '', code: 7, signal: null }),
   });
   hermes.on('delivery.error', (error) => errors.push(error));
-  await hermes.push(payload);
+  await assert.rejects(hermes.push(payload), /Hermes exited with code 7/);
   await hermes.waitForIdle();
   assert.equal(errors[0].kind, 'execution_failed');
   assert.equal(errors[0].agentId, 'voko-agent');
@@ -360,7 +360,9 @@ test('Hermes CLI fallback classifies approval and timeout failures', async () =>
       runCli: async () => { throw new Error(message); },
     });
     provider.on('delivery.error', (error) => errors.push(error));
-    await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: kind });
+    await assert.rejects(
+      provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: kind }),
+    );
     await provider.waitForIdle();
     assert.equal(errors[0].kind, kind);
   }
@@ -375,11 +377,49 @@ test('Hermes CLI publishes an upstream authentication error as AUTH_REQUIRED, ne
   });
   provider.on('delivery.error', (error) => errors.push(error));
   provider.on('agent.reply', (reply) => replies.push(reply));
-  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'auth-error' });
+  await assert.rejects(
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'auth-error' }),
+    error => error?.code === 'PROVIDER_AUTH_REQUIRED',
+  );
   await provider.waitForIdle();
   assert.equal(replies.length, 0);
   assert.equal(errors[0].kind, 'auth_required');
   assert.equal(errors[0].errorCode, 'PROVIDER_AUTH_REQUIRED');
+});
+
+test('Hermes CLI forwards only the final answer, without ANSI reasoning or session metadata', async () => {
+  const replies = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
+    runCli: async () => ({
+      stdout: '\u001b[2;3m┌─ Reasoning ─┐\u001b[0m\n'
+        + '\u001b[2;3mprivate reasoning\u001b[0m\n'
+        + 'session_id: test-session\n'
+        + 'HERMES_FINAL_OK\n',
+      stderr: '', code: 0, signal: null,
+    }),
+  });
+  provider.on('agent.reply', reply => replies.push(reply));
+  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'clean-reply' });
+  await provider.waitForIdle();
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].content, 'HERMES_FINAL_OK');
+});
+
+test('Hermes CLI classifies non-zero exits from evidence instead of guessing from exit code', async () => {
+  for (const fixture of [
+    { code: 1, stderr: 'HTTP 401 Unauthorized', expectedCode: 'PROVIDER_AUTH_REQUIRED', expectedOutcome: 'not_delivered' },
+    { code: 103, stderr: '', expectedCode: 'PROVIDER_CLI_EXIT', expectedOutcome: 'outcome_unknown' },
+  ]) {
+    const provider = new HermesCliProvider({
+      db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
+      runCli: async () => ({ stdout: '', stderr: fixture.stderr, code: fixture.code, signal: null }),
+    });
+    await assert.rejects(
+      provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: `exit-${fixture.code}` }),
+      error => error?.code === fixture.expectedCode && error?.deliveryOutcome === fixture.expectedOutcome,
+    );
+  }
 });
 
 test('Cursor exposes ACP and CLI as independent Dispatcher routes', () => {

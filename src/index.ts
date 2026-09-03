@@ -2537,15 +2537,20 @@ async function startMcpServer(args?: any, core?: any) {
     const columns = `turn_id,agent_id,execution_scope,transport_id,policy_revision,state,
       turn_policy_digest,restore_constraint_digest,capability_digest,runtime_fingerprint,fallback_mode,created_at,updated_at
       `;
+    const transport = String(transportId || '');
+    const observedSince = Number(since || 0);
     const turn = normalizedTurnId
       ? db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND turn_id=? LIMIT 1`).get(normalizedAgentId, normalizedTurnId)
       : db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND (?='' OR transport_id=?)
-          AND created_at>=? ORDER BY created_at DESC LIMIT 1`).get(normalizedAgentId, String(transportId || ''), String(transportId || ''), Number(since || 0)) || null;
+          AND created_at>=? ORDER BY created_at DESC LIMIT 1`).get(normalizedAgentId, transport, transport, observedSince) || null;
+    const matchCount = normalizedTurnId ? (turn ? 1 : 0) : Number(db.prepare(`SELECT COUNT(*) AS count
+      FROM provider_security_turns WHERE agent_id=? AND (?='' OR transport_id=?) AND created_at>=?`)
+      .get(normalizedAgentId, transport, transport, observedSince)?.count || 0);
     const binding = channelId ? db.prepare(`SELECT provider_type,delivery_mode,adapter_type,native_session_id,
       session_origin,status,binding_version,created_at,updated_at,last_used_at FROM provider_conversation_bindings
       WHERE agent_id=? AND channel_id=? AND status='active' LIMIT 1`).get(normalizedAgentId, String(channelId)) : null;
     const hash = (value: unknown) => value ? require('crypto').createHash('sha256').update(String(value)).digest('hex') : null;
-    return { success: true, data: { turn, binding: binding ? { ...binding,
+    return { success: true, data: { turn, matchCount, binding: binding ? { ...binding,
       nativeSessionDigest: hash(binding.native_session_id), native_session_id: undefined } : null } };
   };
   handlers.exercise_provider_capability_fault = async ({ agentId, transportId, fault }: any = {}) => {

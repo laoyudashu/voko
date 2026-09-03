@@ -132,7 +132,8 @@ class DuMateHttpProvider extends PushProvider {
     const verification = this._verification.get(String(agentId || ''));
     return { installed, ready: backendReady, automaticReady: backendReady && verification?.status === 'loopback_verified',
       authenticationStatus: backendReady ? 'unverified' : 'unverified',
-      reason: !installed ? 'not_found' : !backendReady ? 'login_required' : 'auth_test_required',
+      reason: !installed ? 'not_found' : !backendReady ? 'backend_not_running' : 'auth_test_required',
+      ...(!installed || backendReady ? {} : { detail: 'Open DuMate and enter a workspace so its local backend can start' }),
       verificationStatus: verification?.status || 'unverified',
       ...(verification?.detail ? { detail: verification.detail } : {}),
       ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}) };
@@ -294,7 +295,10 @@ class DuMateHttpProvider extends PushProvider {
         throw deliveryError('DuMate session is not bound to the selected Agent');
       }
     } else {
-      const created = await this._json(state, '/session', { method: 'POST', body: JSON.stringify({}) });
+      // The first Windows session loads the desktop Plugin Packs before the
+      // endpoint responds. Keep ordinary HTTP calls bounded at 10s, but allow
+      // this one-time initialization the same 30s budget as server startup.
+      const created = await this._json(state, '/session', { method: 'POST', body: JSON.stringify({}) }, 30_000);
       sessionId = String(created?.id || created?.sessionId || '');
       if (!sessionId) throw deliveryError('DuMate session was not created');
     }
@@ -351,7 +355,7 @@ class DuMateHttpProvider extends PushProvider {
     const instanceId = this._routeForAgent(agentId);
     try {
       const state = await this._ensureState(instanceId, agentId);
-      const created = await this._json(state, '/session', { method: 'POST', body: '{}' });
+      const created = await this._json(state, '/session', { method: 'POST', body: '{}' }, 30_000);
       const sessionId = String(created?.id || created?.sessionId || '');
       if (!sessionId) throw deliveryError('DuMate loopback session was not created');
       const previous = (await this._latestAssistant(state, sessionId).catch(() => ({ id: '', reply: '' }))).id;

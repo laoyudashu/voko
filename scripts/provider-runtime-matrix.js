@@ -282,14 +282,29 @@ function commitPolicy(host, cell, config, confirmation = '') {
     : { ok: false, stage: 'commit', preflight: redact(data), error: committed.error || committed.value?.error };
 }
 
-function captureTurnEvidence(host, cell, sender, turnId) {
+async function captureTurnEvidence(host, cell, sender, turnId, options = {}) {
+  const timeoutMs = Math.max(0, Number(options.timeoutMs ?? 5000));
+  const intervalMs = Math.max(1, Number(options.intervalMs ?? 250));
   const args = ['inspect_provider_turn_evidence', '--agentId', cell.agentId];
   if (turnId) args.push('--turnId', turnId);
   if (sender?.imUid) args.push('--channelId', sender.imUid);
   if (sender?.since) args.push('--since', String(sender.since));
   if (cell.transport) args.push('--transportId', cell.transport);
-  const result = callSafe(host, args);
-  return result.ok ? redact(result.value) : { unavailable: true, error: result.error };
+  const deadline = Date.now() + timeoutMs;
+  let evidence = null;
+  do {
+    const result = callSafe(host, args);
+    evidence = result.ok ? redact(result.value) : { unavailable: true, error: result.error };
+    const turn = evidence?.data?.turn;
+    const matchCount = Number(evidence?.data?.matchCount ?? (turn ? 1 : 0));
+    if (turn && (turnId || matchCount === 1)) return evidence;
+    if (Date.now() >= deadline) break;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  } while (true);
+  if (!turnId && Number(evidence?.data?.matchCount || 0) > 1) {
+    return { ...evidence, data: { ...evidence.data, turn: null }, ambiguous: true };
+  }
+  return evidence;
 }
 
 class PersistentVisitorDriver {
@@ -410,7 +425,8 @@ async function runVisitorTurn(ctx, cell, round, attempt, options, visitorDriver)
   if (!parsed?.turn?.replyMatched) {
     const error = parsed?.turn?.error || 'visitor_reply_not_observed';
     return { round, attempt, marker, status: /login|auth/i.test(error) ? 'NEEDS_USER_ACTION' : 'FAIL',
-      durationMs: Date.now() - startedAt, error, outcome: parsed?.turn?.submitted ? 'submitted_result_unknown_no_retry' : 'not_submitted' };
+      durationMs: Date.now() - startedAt, error, outcome: parsed?.turn?.submitted ? 'submitted_result_unknown_no_retry' : 'not_submitted',
+      browser: redact({ url: parsed?.url, loadMs: parsed?.loadMs, turn: parsed?.turn }) };
   }
   return { round, attempt, marker, status: 'PASS', durationMs: Date.now() - startedAt,
     browser: redact({ url: parsed.url, loadMs: parsed.loadMs, turn: parsed.turn }) };
@@ -560,7 +576,7 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
       pending.durationMs = Date.now() - pending.startedAtMs;
       pending.execution = redact(result?.execution || {});
       pending.reply = redact(result?.reply || {});
-      pending.turnEvidence = captureTurnEvidence(host, cell, sender, result?.execution?.turnId);
+      pending.turnEvidence = await captureTurnEvidence(host, cell, sender, result?.execution?.turnId);
       record.rounds.push(pending);
       saveCheckpoint(ctx);
       if (pending.status !== 'PASS') {
@@ -580,11 +596,13 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
           if (options.driver === 'visitor') {
             final = await runVisitorTurn(ctx, cell, round, attempt, options, visitorDriver);
             record.attempts.push(final);
-            if (final.status === 'PASS') {
-              final.turnEvidence = captureTurnEvidence(host, cell, { since: startedAt - 1000 }, null);
+            if (final.status === 'PASS' || final.outcome === 'submitted_result_unknown_no_retry') {
+              final.turnEvidence = await captureTurnEvidence(host, cell, { since: startedAt - 1000 }, null);
               const usedTransport = final.turnEvidence?.data?.turn?.transport_id;
-              if (!usedTransport) { final.status = 'FAIL'; final.error = 'provider_turn_evidence_missing'; }
-              else if (usedTransport !== cell.transport) { final.status = 'FAIL'; final.error = `transport_mismatch:${usedTransport}`; }
+              if (final.status === 'PASS') {
+                if (!usedTransport) { final.status = 'FAIL'; final.error = 'provider_turn_evidence_missing'; }
+                else if (usedTransport !== cell.transport) { final.status = 'FAIL'; final.error = `transport_mismatch:${usedTransport}`; }
+              }
             }
             break;
           }
@@ -600,7 +618,7 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
           const status = classifyResult(result);
           Object.assign(final, { durationMs: Date.now() - startedAt, status,
             execution: redact(result?.execution || {}), reply: redact(result?.reply || {}),
-            turnEvidence: captureTurnEvidence(host, cell, sender, result?.execution?.turnId) });
+            turnEvidence: await captureTurnEvidence(host, cell, sender, result?.execution?.turnId) });
           const usedTransport = final.turnEvidence?.data?.turn?.transport_id;
           if (status === 'PASS' && usedTransport && usedTransport !== cell.transport) {
             final.status = 'FAIL';
@@ -686,7 +704,7 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
           const visitor = await runVisitorTurn(ctx, cell, `canary-${canary.controlId}`, 0, options, visitorDriver);
           item.visitorTurn = visitor;
           if (visitor.status === 'PASS') {
-            visitor.turnEvidence = captureTurnEvidence(host, cell, { since: Date.now() - visitor.durationMs - 2000 }, null);
+            visitor.turnEvidence = await captureTurnEvidence(host, cell, { since: Date.now() - visitor.durationMs - 2000 }, null);
             const turn = visitor.turnEvidence?.data?.turn;
             item.status = turn?.transport_id === cell.transport ? 'PASS' : 'FAIL';
             if (item.status === 'FAIL') item.reason = turn ? `transport_mismatch:${turn.transport_id}` : 'provider_turn_evidence_missing';
@@ -891,4 +909,4 @@ async function main() {
 
 if (require.main === module) main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
 
-module.exports = { acquireMatrixLock, atomicJson, callRuntimeControl, checkpointFor, chooseSender, classifyResult, commitPolicy, digest, discoverCells, enrichCellRuntime, faultEligibility, filterCells, mayRetryAttempt, methodNeedsVerification, parseArgs, PersistentVisitorDriver, policyCanaries, prepareVisitorAccess, redact, runFault, runVisitorTurn, saferPolicyChange, submittedOutcomeUnknown, writeCellArtifact };
+module.exports = { acquireMatrixLock, atomicJson, callRuntimeControl, captureTurnEvidence, checkpointFor, chooseSender, classifyResult, commitPolicy, digest, discoverCells, enrichCellRuntime, faultEligibility, filterCells, mayRetryAttempt, methodNeedsVerification, parseArgs, PersistentVisitorDriver, policyCanaries, prepareVisitorAccess, redact, runFault, runVisitorTurn, saferPolicyChange, submittedOutcomeUnknown, writeCellArtifact };

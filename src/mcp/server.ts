@@ -147,6 +147,10 @@ function createMcpServer(toolHandlers: ToolHandlerMap, options: McpServerOptions
     agentId: z.string().describe(T('mcp.param.agentId')), turnId: z.string().min(1).optional(), channelId: z.string().optional(),
     transportId: z.string().optional(), since: z.number().optional(),
   }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.inspect_provider_turn_evidence(params)) }] }), { readOnlyHint: true });
+  server.tool('voko_exercise_provider_capability_fault', 'Exercise one bounded Provider capability fault on a dedicated TEST Agent.', {
+    agentId: z.string().describe(T('mcp.param.agentId')), transportId: z.string().min(1), fault: z.string().min(1),
+  }, async (params: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(await toolHandlers.exercise_provider_capability_fault(params)) }] }),
+  { destructiveHint: true });
 
   // ─── 3. update_agent_profile ───
   server.tool(
