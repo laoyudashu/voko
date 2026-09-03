@@ -143,6 +143,7 @@ class AcpAdapter extends PushProvider {
   _bindingProviderType: string;
   _recoveryNeededSessions: Set<string>;
   _agentHealth: Map<string, AcpAgentHealth>;
+  _terminalUnavailableAgents: Set<string>;
   _recoveryPromises: Map<string, Promise<boolean>>;
   _recoveryEpoch: number;
   _providerStopped: boolean;
@@ -166,6 +167,7 @@ class AcpAdapter extends PushProvider {
     // agentId → { child, agentCtx, sessions, sessionKeys, _readyResolve, _shutdownResolve }
     this._agents = new Map<string, AcpAgentState>();
     this._agentHealth = new Map<string, AcpAgentHealth>();
+    this._terminalUnavailableAgents = new Set<string>();
     this._recoveryPromises = new Map<string, Promise<boolean>>();
     this._recoveryEpoch = 0;
     this._providerStopped = false;
@@ -254,6 +256,7 @@ class AcpAdapter extends PushProvider {
 
   _markAgentHealth(agentId: string, available: boolean, reason: string): void {
     if (!agentId) return;
+    if (available && this._terminalUnavailableAgents.has(agentId)) return;
     const previous = this._agentHealth.get(agentId);
     this._agentHealth.set(agentId, { available, reason, changedAt: Date.now() });
     if (!previous || previous.available !== available) {
@@ -265,6 +268,12 @@ class AcpAdapter extends PushProvider {
         reason,
       });
     }
+  }
+
+  _markTerminalAgentUnavailable(agentId: string, reason: string): void {
+    if (!agentId) return;
+    this._terminalUnavailableAgents.add(agentId);
+    this._markAgentHealth(agentId, false, reason);
   }
 
   _agentStateAlive(state: AcpAgentState | undefined): boolean {
@@ -572,6 +581,9 @@ class AcpAdapter extends PushProvider {
       console.error(`[${this._logPrefix}:${agentId}] session 已就绪`);
     } catch (err) {
       console.error(`[${this._logPrefix}:${agentId}] session/new 失败: ${errorMessage(err)}`);
+      if (/not enabled for dispatch/i.test(errorMessage(err))) {
+        this._markTerminalAgentUnavailable(agentId, 'agent-not-enabled-for-dispatch');
+      }
       if (!(err as any)?.deliveryOutcome) (err as any).deliveryOutcome = 'not_delivered';
       throw err;
     }

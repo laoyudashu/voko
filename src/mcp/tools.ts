@@ -3550,7 +3550,7 @@ function createToolHandlers(cx: McpContext) {
       const limit = p.limit ? Math.min(p.limit, 100) : undefined;
       const offset = p.offset || 0;
       const keyword = p.keyword || '';
-      return ac.getList(cx.db, { agentId: p.agentId, listType: p.listType, limit, offset, keyword });
+      return ac.getList(cx.db, { agentId: p.agentId, listType: p.listType || 'whitelist', limit, offset, keyword });
     },
 
     // ─── 21. 白名单模式 ───

@@ -60,6 +60,17 @@ test('ZeroClaw WebSocket preflight reports missing configuration without probing
   }
 });
 
+test('ZeroClaw ACP marks an alias unavailable after session/new rejects dispatch', async () => {
+  const { ZeroClawAcpProvider } = require('../build/core/dispatcher/providers/zeroclaw-acp');
+  const provider = new ZeroClawAcpProvider({ db: aliasDb('ds') });
+  provider._ensureAgent = async () => ({});
+  provider._ensureSession = async () => { throw new Error('Agent `ds` is not enabled for dispatch'); };
+  await assert.rejects(() => provider._pushViaAcp({ agentId: 'agent-voko', fromUid: 'visitor', content: 'test' }), /not enabled for dispatch/);
+  assert.equal(provider.isAvailable('agent-voko'), false);
+  provider._markAgentHealth('agent-voko', true, 'child-connected-late');
+  assert.equal(provider.isAvailable('agent-voko'), false);
+});
+
 test('ACP client denies tool permission requests by default', async () => {
   let permissionHandler;
   let initialization;
