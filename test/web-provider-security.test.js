@@ -175,7 +175,9 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.ok(hermesHtml.indexOf('name="acceptHooks"') < hermesHtml.indexOf('>保存设置</button>'));
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
-  assert.match(hermesHtml, /安全适配器[\s\S]*hermes-cli[\s\S]*权限对应的通信模式/);
+  assert.match(hermesHtml, /data-provider-delivery-security/);
+  assert.match(hermesHtml, /data-provider-delivery-security[^>]*style="display:inline-flex;align-items:center;gap:14px;white-space:nowrap"/);
+  assert.match(hermesHtml, /消息推送模式[\s\S]*安全适配器[\s\S]*hermes-cli[\s\S]*权限对应的通信模式/);
   assert.match(hermesHtml, /<label style="display:inline-flex;[^>]*>权限对应的通信模式/);
   assert.match(hermesHtml, /只有相对已保存策略发生变化的部分会显示彩色高亮/);
   assert.match(hermesHtml, /#b42318/);
