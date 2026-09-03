@@ -2084,7 +2084,7 @@ async function startMcpServer(args?: any, core?: any) {
           Boolean(messageHandler?.acceptAuthenticatedTurnReceipt(agentId,peerUid,receipt)),
         deliverSecureReply:async(input:any)=>{
           if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
-          const persisted=input.turnReceipt?{routeMetadata:null}:messageHandler.persistE2eeAgentReply(
+          const persisted=input.turnReceipt||input.turnStatus?{routeMetadata:null}:messageHandler.persistE2eeAgentReply(
             input.agentId,input.channelId,input.content,input.messageId,input.sourceMessageId);
           const statusMetadata=input.turnStatus?{turnId:input.turnId,turnStatus:input.turnStatus,
             ...(input.turnStatusCode?{turnStatusCode:input.turnStatusCode}:{})}:{};

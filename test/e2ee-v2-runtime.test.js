@@ -174,7 +174,7 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
   }finally{f.close();}
 });
 
-test('guest reply delivery emits a hidden terminal status for UI convergence',async()=>{
+test('guest reply delivery does not emit progress as chat messages',async()=>{
   const replyInputs=[];
   const f=fixture({async deliverSecureReply(input){replyInputs.push(input);
     return{success:true,deliveryState:'delivered'};}});
@@ -183,8 +183,8 @@ test('guest reply delivery emits a hidden terminal status for UI convergence',as
     const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
       channelType:1,contentType:13,ack(){}});
     assert.equal(result.accepted,true);
-    assert.deepEqual(replyInputs.map(input=>input.turnStatus),['processing',undefined,'reply_delivered']);
-    assert.equal(replyInputs.at(-1).replyToRouteId,undefined);
+    assert.deepEqual(replyInputs.map(input=>input.turnStatus),[undefined]);
+    assert.equal(replyInputs[0].content,'reply:hello');
   }finally{f.close();}
 });
 
@@ -200,7 +200,7 @@ test('business-policy interception completes the receipt without executing Provi
   }finally{f.close();}
 });
 
-test('pull-only delivery emits an explicit automatic-delivery-disabled terminal state',async()=>{
+test('pull-only delivery does not emit status chat messages',async()=>{
   const statuses=[];
   const providerError=Object.assign(new Error('automatic delivery disabled'),{
     code:'AUTOMATIC_DELIVERY_DISABLED',deliveryOutcome:'not_delivered'});
@@ -211,8 +211,7 @@ test('pull-only delivery emits an explicit automatic-delivery-disabled terminal 
       channelType:1,contentType:13,ack(){}});
     assert.equal(result.accepted,false);
     assert.equal(result.code,'AUTOMATIC_DELIVERY_DISABLED');
-    assert.deepEqual(statuses.map(item=>item.turnStatus),['processing','automatic_delivery_disabled']);
-    assert.equal(statuses.at(-1).content,'Agent 尚未启用自动回复');
+    assert.deepEqual(statuses,[]);
   }finally{f.close();}
 });
 

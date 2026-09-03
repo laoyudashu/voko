@@ -431,19 +431,11 @@ export class E2eeV2Runtime {
               if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
               return;
             }
-            if(sender.peerKind!=='guest')return;
-            const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
-              quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
-              failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认',
-              automatic_delivery_disabled:'Agent 尚未启用自动回复',reply_delivered:'Agent 回复已送达'};
-            if(!text[status])return;
-            const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
-              channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),
-              sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
-              completeSourceReceipt:false,
-              protocolConversationId:envelope.conversationId,turnId,turnStatus:status,turnStatusCode:code,
-              ...(typeof prepared.routeContext?.routeId==='string'?{replyToRouteId:prepared.routeContext.routeId}:{}),});
-            if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
+            // Guest progress belongs to the Chatroom UI state, not to the
+            // conversation transcript. Sending it as an IM message pollutes
+            // history and conversation previews. Agent peers still receive
+            // the structured receipt above for protocol convergence.
+            return;
           },
           markProviderAccepted:()=>{if(providerAccepted)return;
             if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
