@@ -66,6 +66,39 @@ test('secure outbound seals one business message for every active guest device',
   }finally{f.close();}
 });
 
+test('E2EE conversation recovery scheduling columns are added in place',()=>{
+  const f=fixture();
+  try{
+    const columns=new Set(f.db.prepare('PRAGMA table_info(e2ee_v2_conversations)').all().map(row=>row.name));
+    assert.equal(columns.has('recovery_attempts'),true);
+    assert.equal(columns.has('next_recovery_at'),true);
+    assert.equal(columns.has('recovery_state'),true);
+  }finally{f.close();}
+});
+
+test('legacy E2EE locks are migrated into a staggered persistent recovery queue',()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-legacy-lock-'));
+  const databasePath=path.join(root,'e2ee.db');
+  const db=new DatabaseSync(databasePath);
+  try{
+    db.exec(`CREATE TABLE e2ee_v2_conversations (
+      local_agent_id TEXT NOT NULL,channel_id TEXT NOT NULL,routing_conversation_id TEXT NOT NULL DEFAULT '',
+      wire_conversation_key TEXT NOT NULL DEFAULT '',protocol_conversation_id TEXT NOT NULL,peer_scope_id TEXT NOT NULL,
+      peer_kind TEXT NOT NULL,mode TEXT NOT NULL,recipient_revision TEXT NOT NULL DEFAULT '',activated_at INTEGER,
+      last_verified_at INTEGER NOT NULL,lock_reason TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,
+      PRIMARY KEY(local_agent_id,channel_id,routing_conversation_id));`);
+    db.prepare(`INSERT INTO e2ee_v2_conversations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      'gym','guest-im','routing-1','wire-1','protocol-1','peer-1','guest','locked','revision-1',1,1,
+      'PEER_NOT_FOUND',1,1);
+    const before=Date.now();
+    const store=new E2eeV2Store(db,databasePath);
+    const row=store.conversation('gym','guest-im','routing-1');
+    assert.equal(row.recovery_state,'active');
+    assert.equal(row.recovery_attempts,0);
+    assert.ok(row.next_recovery_at>=before&&row.next_recovery_at<before+30*60_000);
+  }finally{db.close();fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test('trusted E2EE reply route preserves validated correlation metadata in the sealed payload',async()=>{
   const f=fixture();
   try{
@@ -290,10 +323,10 @@ test('policy-related historical locks use a bounded low-frequency backoff with p
   const key='gym\0guest-im\0routing-1';
   for(const base of [1_800_000,3_600_000,7_200_000,14_400_000,21_600_000,21_600_000]){
     await f.router.refreshTransientLocked();
-    const state=f.router.lockedRetryState.get(key);
-    const delay=state.nextAttemptAt-now;
+    const state=f.store.conversation('gym','guest-im','routing-1');
+    const delay=state.next_recovery_at-now;
     assert.ok(delay>=base*0.9&&delay<=base*1.1,`delay ${delay} must be a jittered ${base}`);
-    now=state.nextAttemptAt;
+    now=state.next_recovery_at;
   }
 });
 
@@ -310,13 +343,63 @@ test('a stable peer-not-found lock remains revalidatable and uses policy backoff
     f.store.lockConversation('gym','guest-im','routing-1','PEER_NOT_FOUND');
     assert.equal(f.store.transientLockedConversationCount(),1);
     await f.router.refreshTransientLocked();
-    const state=f.router.lockedRetryState.get('gym\0guest-im\0routing-1');
-    assert.ok(state.nextAttemptAt-now>=1_800_000*0.9);
+    const state=f.store.conversation('gym','guest-im','routing-1');
+    assert.ok(state.next_recovery_at-now>=1_800_000*0.9);
     f.setDirectoryError(null);
     const result=await f.router.deliver('gym','guest-im','retry after access change','text',1,null,'peer-access-restored');
     assert.equal(result.success,true);
     assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
   }finally{Date.now=originalNow;f.close();}
+});
+
+test('historical lock backoff survives router recreation',async()=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+      wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','routing-1','PEER_NOT_FOUND');
+    await f.router.refreshTransientLocked();
+    assert.equal(f.counts().directoryCalls,1);
+    let replacementCalls=0;
+    const replacement=new SecureOutboundRouter({store:f.store,
+      directory:{async resolveRecipients(){replacementCalls+=1;throw error;}},runtime:{},rawDeliver:async()=>({success:true}),
+      deliverEncrypted:async()=>({success:true}),resolveAgent:()=>({serverAgentId:'server-agent',agentDid:'did',imUid:'im'}),
+      resolveRouteContext:()=>({routingConversationId:'routing-1',wireConversationKey:'wire-1'}),enabled:()=>true});
+    await replacement.refreshTransientLocked();
+    assert.equal(replacementCalls,0,'persisted next_recovery_at must suppress a restart-time retry');
+  }finally{f.close();}
+});
+
+test('stable missing peers become dormant but a new message still forces revalidation',async t=>{
+  const error=Object.assign(new Error('Peer not found'),{code:'PEER_NOT_FOUND'});
+  const f=fixture({directoryError:error});
+  const originalNow=Date.now;
+  t.after(()=>{Date.now=originalNow;f.close();});
+  let now=originalNow();
+  Date.now=()=>now;
+  f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'routing-1',
+    wireConversationKey:'wire-1',protocolConversationId:'guest-conversation',peerScopeId:'peer-scope',
+    peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+  f.store.lockConversation('gym','guest-im','routing-1','PEER_NOT_FOUND');
+  for(let attempt=0;attempt<8;attempt+=1){
+    await f.router.refreshTransientLocked();
+    const row=f.store.conversation('gym','guest-im','routing-1');
+    if(row.recovery_state==='dormant')break;
+    now=row.next_recovery_at;
+  }
+  const dormant=f.store.conversation('gym','guest-im','routing-1');
+  assert.equal(dormant.recovery_state,'dormant');
+  assert.equal(f.store.transientLockedConversationCount(),0);
+  const calls=f.counts().directoryCalls;
+  await f.router.refreshTransientLocked();
+  assert.equal(f.counts().directoryCalls,calls);
+  f.setDirectoryError(null);
+  const result=await f.router.deliver('gym','guest-im','wake dormant peer','text',1,null,'wake-dormant');
+  assert.equal(result.success,true);
+  assert.equal(f.counts().directoryCalls,calls+1);
+  assert.equal(f.store.conversation('gym','guest-im','routing-1').mode,'e2ee_active');
 });
 
 test('a legacy generic 404 lock is refined to the stable Directory business code',async()=>{

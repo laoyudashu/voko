@@ -387,23 +387,99 @@ test('Hermes CLI publishes an upstream authentication error as AUTH_REQUIRED, ne
   assert.equal(errors[0].errorCode, 'PROVIDER_AUTH_REQUIRED');
 });
 
-test('Hermes CLI forwards only the final answer, without ANSI reasoning or session metadata', async () => {
+test('Hermes CLI disables reasoning and forwards only the final answer without ANSI metadata', async () => {
   const replies = [];
+  let invocation;
   const provider = new HermesCliProvider({
     db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
-    runCli: async () => ({
+    runCli: async (input) => {
+      invocation = input;
+      return {
       stdout: '\u001b[2;3m┌─ Reasoning ─┐\u001b[0m\n'
         + '\u001b[2;3mprivate reasoning\u001b[0m\n'
         + 'session_id: test-session\n'
         + 'HERMES_FINAL_OK\n',
       stderr: '', code: 0, signal: null,
-    }),
+      };
+    },
   });
   provider.on('agent.reply', reply => replies.push(reply));
   await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'clean-reply' });
   await provider.waitForIdle();
   assert.equal(replies.length, 1);
   assert.equal(replies[0].content, 'HERMES_FINAL_OK');
+  assert.deepEqual(invocation.args.slice(invocation.args.indexOf('-Q'), invocation.args.indexOf('-Q') + 4),
+    ['-Q', '--reasoning', 'none', '--source']);
+});
+
+test('Hermes CLI rejects the unterminated plain-text Reasoning panel emitted by 0.20.2', async () => {
+  const replies = [];
+  const errors = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
+    runCli: async () => ({
+      stdout: '\n┌─ Reasoning ─────────────────────────┐\n'
+        + 'private reasoning duplicated private reasoning duplicated\n'
+        + 'HERMES_FINAL_SHOULD_NOT_BE_GUESSED\n',
+      stderr: 'session_id: test-session\n', code: 0, signal: null,
+    }),
+  });
+  provider.on('agent.reply', reply => replies.push(reply));
+  provider.on('delivery.error', error => errors.push(error));
+  await assert.rejects(
+    provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'unsafe-output' }),
+    error => error?.code === 'PROVIDER_OUTPUT_UNPARSEABLE',
+  );
+  await provider.waitForIdle();
+  assert.equal(replies.length, 0);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].error, /no safe final reply text/i);
+  assert.equal(errors[0].errorCode, 'PROVIDER_OUTPUT_UNPARSEABLE');
+});
+
+test('structured CLI parsers ignore reasoning and thought event types', () => {
+  const fixtures = [
+    {
+      format: 'stream-json',
+      lines: [
+        { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'CLAUDE_PRIVATE' } } },
+        { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'CLAUDE_VISIBLE' } } },
+      ],
+      expected: 'CLAUDE_VISIBLE',
+    },
+    {
+      format: 'gemini-stream-json',
+      lines: [
+        { type: 'text', parts: [{ type: 'thought', text: 'GEMINI_PRIVATE' }, { type: 'text', text: 'GEMINI_VISIBLE' }] },
+      ],
+      expected: 'GEMINI_VISIBLE',
+    },
+    {
+      format: 'codex-jsonl',
+      lines: [
+        { type: 'item.completed', item: { type: 'message', content: [
+          { type: 'reasoning', text: 'CODEX_PRIVATE' }, { type: 'output_text', text: 'CODEX_VISIBLE' },
+        ] } },
+      ],
+      expected: 'CODEX_VISIBLE',
+    },
+    {
+      format: 'grok-stream-json',
+      lines: [{ type: 'thought', data: 'GROK_PRIVATE' }, { type: 'text', data: 'GROK_VISIBLE' }],
+      expected: 'GROK_VISIBLE',
+    },
+    {
+      format: 'opencode-json',
+      lines: [{ type: 'reasoning', part: { text: 'OPENCODE_PRIVATE' } }, { type: 'text', part: { text: 'OPENCODE_VISIBLE' } }],
+      expected: 'OPENCODE_VISIBLE',
+    },
+  ];
+  for (const fixture of fixtures) {
+    let output = '';
+    const parser = createParser({ format: fixture.format, onText: chunk => { output += chunk; } });
+    fixture.lines.forEach(line => parser.handleLine(JSON.stringify(line)));
+    assert.equal(output, fixture.expected, fixture.format);
+  }
 });
 
 test('Hermes CLI classifies non-zero exits from evidence instead of guessing from exit code', async () => {

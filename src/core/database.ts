@@ -608,9 +608,12 @@ function waitForDbQueue() {
 function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   // CLI tool 调用（options.silent=true）静默例行建表/迁移/seed 日志；
   // server 启动不传 silent，保留完整启动横幅。
-  // initDatabase 全程同步，临时重定向 console.error，finally 恢复。
-  const _origErr = console.error;
-  if (options.silent) console.error = () => {};
+  // initDatabase 全程同步；silent 调用不应因日志等级修正而泄漏迁移输出。
+  const _origConsole = { log: console.log, info: console.info, error: console.error,
+    warn: console.warn, debug: console.debug };
+  if (options.silent) {
+    console.log = console.info = console.error = console.warn = console.debug = () => {};
+  }
   try {
   if (dbPath !== ':memory:') {
     fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
@@ -722,7 +725,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const hasSessionKey = tableInfo.some((col: TableInfoRow) => col.name === 'session_key');
     if (!hasSessionKey) {
       db.exec(`ALTER TABLE conversations ADD COLUMN session_key TEXT`);
-      console.error('Added session_key column to conversations table');
+      console.log('Added session_key column to conversations table');
     }
   } catch (e: any) {
     console.error('Session_key column check/add error (may already exist):', e.message);
@@ -741,36 +744,36 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     if (hasFeishuMsgId && !hasParentMsgId) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN parent_message_id TEXT`);
       db.exec(`UPDATE owner_interventions SET parent_message_id = feishu_message_id WHERE parent_message_id IS NULL`);
-      console.error('Renamed feishu_message_id to parent_message_id');
+      console.log('Renamed feishu_message_id to parent_message_id');
     }
     if (!hasChannelType) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN channel_type TEXT`);
-      console.error('Added channel_type column to owner_interventions table');
+      console.log('Added channel_type column to owner_interventions table');
     }
     if (!hasIsSent) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN is_sent INTEGER DEFAULT 0`);
-      console.error('Added is_sent column to owner_interventions table');
+      console.log('Added is_sent column to owner_interventions table');
     }
     if (!hasRetryCount) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN retry_count INTEGER DEFAULT 0`);
-      console.error('Added retry_count column to owner_interventions table');
+      console.log('Added retry_count column to owner_interventions table');
     }
     if (!hasLastRetryAt) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN last_retry_at INTEGER DEFAULT 0`);
-      console.error('Added last_retry_at column to owner_interventions table');
+      console.log('Added last_retry_at column to owner_interventions table');
     }
     const hasAgentNotified = tableInfo.some((col: TableInfoRow) => col.name === 'agent_notified');
     if (!hasAgentNotified) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN agent_notified INTEGER DEFAULT 0`);
-      console.error('Added agent_notified column to owner_interventions table');
+      console.log('Added agent_notified column to owner_interventions table');
     }
     if (!tableInfo.some((col: TableInfoRow) => col.name === 'skip_reply')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN skip_reply INTEGER DEFAULT 0`);
-      console.error('Added skip_reply column to owner_interventions table');
+      console.log('Added skip_reply column to owner_interventions table');
     }
     if (!tableInfo.some((col: TableInfoRow) => col.name === 'email_message_id')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN email_message_id TEXT`);
-      console.error('Added email_message_id column to owner_interventions table');
+      console.log('Added email_message_id column to owner_interventions table');
     }
     if (!tableInfo.some((col: TableInfoRow) => col.name === 'source_sender_uid')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN source_sender_uid TEXT`);
@@ -803,7 +806,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
 
     if (hasFeishuMsgId) {
       db.exec(`ALTER TABLE owner_interventions DROP COLUMN feishu_message_id`);
-      console.error('Dropped feishu_message_id column');
+      console.log('Dropped feishu_message_id column');
     }
   } catch (e: any) {
     console.error('Owner interventions column migration error:', e.message);
@@ -1001,7 +1004,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const msgTableInfo = db.prepare(`PRAGMA table_info(messages)`).all();
     if (!msgTableInfo.some((col: TableInfoRow) => col.name === 'agent_id')) {
       db.exec(`ALTER TABLE messages ADD COLUMN agent_id TEXT`);
-      console.error('Added agent_id column to messages table');
+      console.log('Added agent_id column to messages table');
     }
   } catch (e: any) {
     console.error('Messages agent_id column migration error:', e.message);
@@ -1012,7 +1015,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const convTableInfo = db.prepare(`PRAGMA table_info(conversations)`).all();
     if (!convTableInfo.some((col: TableInfoRow) => col.name === 'agent_id')) {
       db.exec(`ALTER TABLE conversations ADD COLUMN agent_id TEXT`);
-      console.error('Added agent_id column to conversations table');
+      console.log('Added agent_id column to conversations table');
     }
   } catch (e: any) {
     console.error('Conversations agent_id column migration error:', e.message);
@@ -1023,19 +1026,19 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const agentsTableInfo = db.prepare(`PRAGMA table_info(agents)`).all();
     if (!agentsTableInfo.some((col: TableInfoRow) => col.name === 'ability')) {
       db.exec(`ALTER TABLE agents ADD COLUMN ability TEXT`);
-      console.error('Added ability column to agents table');
+      console.log('Added ability column to agents table');
     }
     if (!agentsTableInfo.some((col: TableInfoRow) => col.name === 'private_key')) {
       db.exec(`ALTER TABLE agents ADD COLUMN private_key TEXT`);
-      console.error('Added private_key column to agents table');
+      console.log('Added private_key column to agents table');
     }
     if (!agentsTableInfo.some((col: TableInfoRow) => col.name === 'short_link_url')) {
       db.exec(`ALTER TABLE agents ADD COLUMN short_link_url TEXT`);
-      console.error('Added short_link_url column to agents table');
+      console.log('Added short_link_url column to agents table');
     }
     if (!agentsTableInfo.some((col: TableInfoRow) => col.name === 'qr_code_url')) {
       db.exec(`ALTER TABLE agents ADD COLUMN qr_code_url TEXT`);
-      console.error('Added qr_code_url column to agents table');
+      console.log('Added qr_code_url column to agents table');
     }
   } catch (e: any) {
     console.error('Agents columns migration error:', e.message);
@@ -1046,7 +1049,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const oiTableInfo = db.prepare(`PRAGMA table_info(owner_interventions)`).all();
     if (!oiTableInfo.some((col: TableInfoRow) => col.name === 'agent_id')) {
       db.exec(`ALTER TABLE owner_interventions ADD COLUMN agent_id TEXT`);
-      console.error('Added agent_id column to owner_interventions table');
+      console.log('Added agent_id column to owner_interventions table');
     }
   } catch (e: any) {
     console.error('Owner interventions agent_id column migration error:', e.message);
@@ -1078,7 +1081,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       if (!agentsCols.some((c: TableInfoRow) => c.name === col)) {
         db.exec(`ALTER TABLE agents ADD COLUMN ${col} ${type}`);
         if (col === 'visibility_type') addedVisibilityType = true;
-        console.error(`Added ${col} column to agents table`);
+        console.log(`Added ${col} column to agents table`);
       }
     }
     if (addedVisibilityType) {
@@ -1095,19 +1098,19 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const agFeeCols = db.prepare(`PRAGMA table_info(agents)`).all();
     if (!agFeeCols.some((col: TableInfoRow) => col.name === 'payment_fee_rate')) {
       db.exec(`ALTER TABLE agents ADD COLUMN payment_fee_rate REAL`);
-      console.error('Added payment_fee_rate column to agents table');
+      console.log('Added payment_fee_rate column to agents table');
     }
     if (!agFeeCols.some((col: TableInfoRow) => col.name === 'agent_usage_fee_rate')) {
       db.exec(`ALTER TABLE agents ADD COLUMN agent_usage_fee_rate REAL`);
-      console.error('Added agent_usage_fee_rate column to agents table');
+      console.log('Added agent_usage_fee_rate column to agents table');
     }
     if (!agFeeCols.some((col: TableInfoRow) => col.name === 'payment_auth_id')) {
       db.exec(`ALTER TABLE agents ADD COLUMN payment_auth_id TEXT`);
-      console.error('Added payment_auth_id column to agents table');
+      console.log('Added payment_auth_id column to agents table');
     }
     if (!agFeeCols.some((col: TableInfoRow) => col.name === 'cap_error')) {
       db.exec(`ALTER TABLE agents ADD COLUMN cap_error TEXT`);
-      console.error('Added cap_error column to agents table');
+      console.log('Added cap_error column to agents table');
     }
   } catch (e: any) {
     console.error('Agents fee/payment migration error:', e.message);
@@ -1118,7 +1121,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const msgCols = db.prepare(`PRAGMA table_info(messages)`).all();
     if (!msgCols.some((col: TableInfoRow) => col.name === 'is_audit_reply')) {
       db.exec(`ALTER TABLE messages ADD COLUMN is_audit_reply INTEGER DEFAULT 0`);
-      console.error('Added is_audit_reply column to messages table');
+      console.log('Added is_audit_reply column to messages table');
     }
   } catch (e: any) {
     console.error('Messages is_audit_reply migration error:', e.message);
@@ -1138,7 +1141,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     for (const [col, type] of wkVars) {
       if (!msgCols2.some((c: TableInfoRow) => c.name === col)) {
         db.exec(`ALTER TABLE messages ADD COLUMN ${col} ${type}`);
-        console.error(`Added ${col} column to messages table`);
+        console.log(`Added ${col} column to messages table`);
       }
     }
   } catch (e: any) {
@@ -1152,7 +1155,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const msgCols3 = db.prepare(`PRAGMA table_info(messages)`).all();
     if (!msgCols3.some((c: TableInfoRow) => c.name === 'mention')) {
       db.exec(`ALTER TABLE messages ADD COLUMN mention TEXT`);
-      console.error('Added mention column to messages table');
+      console.log('Added mention column to messages table');
     }
   } catch (e: any) {
     console.error('Messages mention column migration error:', e.message);
@@ -1218,11 +1221,11 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
           WHERE a.payment_auth_id = payment_auth.id AND a.owner_email IS NOT NULL
         )
       `);
-      console.error('Added owner_email column to payment_auth');
+      console.log('Added owner_email column to payment_auth');
     }
     if (!paCols.includes('payment_user_uid')) {
       db.exec(`ALTER TABLE payment_auth ADD COLUMN payment_user_uid TEXT`);
-      console.error('Added payment_user_uid column to payment_auth');
+      console.log('Added payment_user_uid column to payment_auth');
     }
   } catch (e: any) {
     console.error('payment_auth owner migration:', e.message);
@@ -1252,19 +1255,19 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const poCols = db.prepare(`PRAGMA table_info(payment_orders)`).all();
     if (poCols.some((c: TableInfoRow) => c.name === 'error_msg')) {
       db.exec(`ALTER TABLE payment_orders RENAME COLUMN error_msg TO result`);
-      console.error('payment_orders: error_msg → result');
+      console.log('payment_orders: error_msg → result');
     }
     if (!poCols.some((col: TableInfoRow) => col.name === 'type')) {
       db.exec(`ALTER TABLE payment_orders ADD COLUMN type TEXT`);
-      console.error('Added type column to payment_orders table');
+      console.log('Added type column to payment_orders table');
     }
     if (!poCols.some((col: TableInfoRow) => col.name === 'query_token')) {
       db.exec(`ALTER TABLE payment_orders ADD COLUMN query_token TEXT`);
-      console.error('Added query_token column to payment_orders table');
+      console.log('Added query_token column to payment_orders table');
     }
     if (!poCols.some((col: TableInfoRow) => col.name === 'routing_conversation_id')) {
       db.exec(`ALTER TABLE payment_orders ADD COLUMN routing_conversation_id TEXT`);
-      console.error('Added routing_conversation_id column to payment_orders table');
+      console.log('Added routing_conversation_id column to payment_orders table');
     }
   } catch (e: any) {
     console.error('Payment orders migration error:', e.message);
@@ -1315,7 +1318,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const pkg = require('../../package.json');
     const ver = pkg.version || '0.0.0';
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)').run('version', ver, Date.now());
-    console.error('Version synced to config:', ver);
+    console.log('Version synced to config:', ver);
   } catch (_: any) {}
 
   // DB schema version 协商：lite/desktop 版本脱钩后，用此数字感知对方写入的库结构。
@@ -1355,7 +1358,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
         db.exec(`UPDATE audit_rules SET prompt_key='audit.default.sensitive_keyword' WHERE is_default=1 AND prompt!='' AND prompt_key IS NULL`);
       } catch (e: any) { console.error('[DB migrate v2] audit_rules.prompt_key backfill:', e.message); }
       _addCol('user_cache', 'locale', 'TEXT');        // P5.4 访客 locale
-      console.error('[DB] 迁移到 schema v2（i18n：payment_auth.status 英文化 + messages/audit_rules/user_cache 新列）');
+      console.log('[DB] 迁移到 schema v2（i18n：payment_auth.status 英文化 + messages/audit_rules/user_cache 新列）');
     }
     if (!databaseIsNewer) {
       db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
@@ -1436,7 +1439,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       if (oldRow) {
         db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
           .run('channel_config', oldRow.data, oldRow.updated_at);
-        console.error('[Config] 已迁移旧版数据到 type=channel_config');
+        console.log('[Config] 已迁移旧版数据到 type=channel_config');
       }
     } catch (e: any) {
       console.error('[Config] 迁移失败:', e.message);
@@ -1453,7 +1456,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
         .run('user_access_token', oldRow.data, oldRow.updated_at);
       db.prepare("DELETE FROM config WHERE type = 'user_access_tokens'").run();
-      console.error('[Config] 迁移 user_access_tokens → user_access_token');
+      console.log('[Config] 迁移 user_access_tokens → user_access_token');
     }
   } catch (e: any) {
     console.warn('[Config] 迁移 user_access_tokens 类型名失败:', e.message);
@@ -1493,7 +1496,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       if (stored.accessKeyId || stored.accessKeySecret) {
         db.prepare('UPDATE config SET data = ?, updated_at = ? WHERE type = ?')
           .run(JSON.stringify(defaultOss), Date.now(), 'oss_config');
-        console.error('[上传] 已清除本地数据库中的废弃 OSS 长期凭证');
+        console.log('[上传] 已清除本地数据库中的废弃 OSS 长期凭证');
       }
     } catch (_: unknown) {
       db.prepare('UPDATE config SET data = ?, updated_at = ? WHERE type = ?')
@@ -1503,7 +1506,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   try {
     const migrated = migrateOfficialHttpsUrls(db);
     if (migrated.agents || migrated.oss) {
-      console.error(`[HTTPS] migrated official URLs: agents=${migrated.agents}, oss=${migrated.oss}`);
+      console.log(`[HTTPS] migrated official URLs: agents=${migrated.agents}, oss=${migrated.oss}`);
     }
   } catch (e: any) {
     console.error('[HTTPS] official URL migration failed:', e.message);
@@ -1521,13 +1524,13 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
         cc.channels = supportedChannels;
         db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
           .run('channel_config', JSON.stringify(cc), Date.now());
-        console.error('[Config] 已移除废弃的飞书渠道配置');
+        console.log('[Config] 已移除废弃的飞书渠道配置');
       }
       if (cc.oss_config) {
         delete cc.oss_config;
         db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
           .run('channel_config', JSON.stringify(cc), Date.now());
-        console.error('[Config] 已从 channel_config 清理 oss_config');
+        console.log('[Config] 已从 channel_config 清理 oss_config');
       }
     } catch (_: any) {}
   }
@@ -1537,15 +1540,15 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
     const convCols = db.prepare(`PRAGMA table_info(conversations)`).all();
     if (!convCols.some((col: TableInfoRow) => col.name === 'session_status')) {
       db.exec(`ALTER TABLE conversations ADD COLUMN session_status TEXT`);
-      console.error('Added session_status column to conversations table');
+      console.log('Added session_status column to conversations table');
     }
     if (!convCols.some((col: TableInfoRow) => col.name === 'session_expire_at')) {
       db.exec(`ALTER TABLE conversations ADD COLUMN session_expire_at INTEGER`);
-      console.error('Added session_expire_at column to conversations table');
+      console.log('Added session_expire_at column to conversations table');
     }
     if (!convCols.some((col: TableInfoRow) => col.name === 'mode')) {
       db.exec(`ALTER TABLE conversations ADD COLUMN mode TEXT`);
-      console.error('Added mode column to conversations table');
+      console.log('Added mode column to conversations table');
     }
   } catch (e: any) {
     console.error('Conversations session columns migration error:', e.message);
@@ -1581,7 +1584,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
   })();
   const defaultRuleCount = db.prepare(`SELECT COUNT(*) as cnt FROM audit_rules WHERE is_default = 1`).get()?.cnt || 0;
   if (defaultRuleCount > 0 && (savedAuditRulePackVersion !== auditRulePackVersion || defaultRuleCount !== defaultRules.length)) {
-    console.error(`[审核-出站] 默认规则版本更新 (${defaultRuleCount} → ${defaultRules.length})，重新初始化`);
+    console.log(`[审核-出站] 默认规则版本更新 (${defaultRuleCount} → ${defaultRules.length})，重新初始化`);
     db.prepare(`DELETE FROM audit_rules WHERE is_default = 1`).run();
   }
 
@@ -1615,7 +1618,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       db.exec('ROLLBACK');
       throw e;
     }
-    console.error(`Initialized ${defaultRules.length} default audit rules`);
+    console.log(`Initialized ${defaultRules.length} default audit rules`);
   }
 
   // 新建 bank_head_offices 表
@@ -1646,7 +1649,7 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       db.exec('ROLLBACK');
       throw e;
     }
-    console.error(`Initialized ${BANK_HEAD_OFFICES.length} bank head offices`);
+    console.log(`Initialized ${BANK_HEAD_OFFICES.length} bank head offices`);
   }
 
   if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);
@@ -1659,7 +1662,13 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
 
   return db;
   } finally {
-    if (options.silent) console.error = _origErr;
+    if (options.silent) {
+      console.log = _origConsole.log;
+      console.info = _origConsole.info;
+      console.error = _origConsole.error;
+      console.warn = _origConsole.warn;
+      console.debug = _origConsole.debug;
+    }
   }
 }
 

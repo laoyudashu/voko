@@ -271,6 +271,16 @@ test('delivery diagnostics keeps a shallow-ready Qwen runtime out of automatic r
   assert.equal(status.activeAutomaticMode, null);
 });
 
+test('delivery diagnostics prefers a side-effect-free readiness snapshot', () => {
+  let activeProbes = 0;
+  const qwen = provider('cli', 1, []);
+  qwen.getDeliveryReadiness = () => { activeProbes += 1; return { ready: false }; };
+  qwen.getDeliveryReadinessSnapshot = () => ({ ready: true, automaticReady: true, installed: true });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  for (let index = 0; index < 100; index += 1) dispatcher.getAgentDeliveryStatus('agent-1');
+  assert.equal(activeProbes, 0);
+});
+
 test('loopback verification awaits asynchronous Provider readiness refresh before checking availability', async () => {
   let refreshed = false;
   const qwen = provider('cli', 1, []);

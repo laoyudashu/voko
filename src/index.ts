@@ -1801,7 +1801,7 @@ async function startMcpServer(args?: any, core?: any) {
 
   const orphanResult = cleanupOrphanedWorkers(db._dbPath);
   if (orphanResult.killed.length > 0) {
-    console.error(`[Lite] 已精确清理 ${orphanResult.killed.length} 个孤儿 worker`);
+    console.log(`[Lite] 已精确清理 ${orphanResult.killed.length} 个孤儿 worker`);
   }
 
   // ── 自动恢复已发布的 agent（仅当前用户名下） ──
@@ -1833,7 +1833,7 @@ async function startMcpServer(args?: any, core?: any) {
     config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
   })));
   const startupConnected = startupResults.filter((result: any) => result.connected).length;
-  if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${startupConnected}/${publishedAgentCount} 个 Agent IM 连接`);
+  if (publishedAgentCount > 0) console.log(`[VOKO Lite] 已启动 ${startupConnected}/${publishedAgentCount} 个 Agent IM 连接`);
 
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
@@ -2173,7 +2173,7 @@ async function startMcpServer(args?: any, core?: any) {
       });
       deliver.setSecureRouter?.(secureOutboundRouter);
       const initial=await e2eeRuntime.synchronizeAgentKeys();
-      console.warn(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
+      console.log(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
       await taskManager.start('e2ee-v2-workers',()=>{
         let running=false;
         const run=async()=>{if(running)return;running=true;try{
@@ -2581,7 +2581,7 @@ async function startMcpServer(args?: any, core?: any) {
       }
       __serviceHealth = 'draining';
       __restartAfterShutdown = true;
-      console.error('[账号切换] 已验证新主人，准备重启运行环境');
+      console.log('[账号切换] 已验证新主人，准备重启运行环境');
       setTimeout(() => {
         void shutdownAll(agentManager, wukongimSender, db, 'owner-switch', 0, taskManager);
       }, 150);
@@ -2856,7 +2856,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTu
     providers['openclaw-ws'] = openclawHandler;
     const status = openclawHandler.getStatus();
     if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
-    console.error('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
+    console.log('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
   } catch (err: any) {
     console.error('[Lite] OpenClaw 处理器创建失败:', err.message);
   }
@@ -2865,7 +2865,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTu
   if (needsBackend('hermes')) try {
     hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
     providers['hermes-http'] = hermesHandler;
-    console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
+    console.log(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
@@ -3019,7 +3019,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
 
   let isBeating = false;
   const heartbeatFn = async () => {
-    if (isBeating) { console.error('[心跳] 上一轮未结束，跳过本次'); return; }
+    if (isBeating) { console.warn('[心跳] 上一轮未结束，跳过本次'); return; }
     isBeating = true;
     try {
       const userEmail = getCurrentUserEmail(db);
@@ -3249,7 +3249,7 @@ function checkLiteRunning(dbOrPath?: any) {
     const data = JSON.parse(row.data);
     if (!data || !data.pid) return false;
     if (Date.now() - data.ts > 120000) { console.error('[Runtime] runtime 已过期（>2分钟）'); return false; }
-    try { process.kill(data.pid, 0); console.error('[Runtime] 检测到实例 PID=' + data.pid); return true; }
+    try { process.kill(data.pid, 0); console.log('[Runtime] 检测到实例 PID=' + data.pid); return true; }
     catch { console.error('[Runtime] PID=' + data.pid + ' 已不存在'); return false; }
   } catch { return false; }
 }
@@ -3326,14 +3326,14 @@ async function shutdownAll(
   __shutdownContext = null;
   if (__restartAfterShutdown) {
     __restartAfterShutdown = false;
-    console.error('[账号切换] 旧运行环境已关闭');
+    console.log('[账号切换] 旧运行环境已关闭');
     if (process.env[SUPERVISED_RUNTIME_ENV] === '1') {
-      console.error('[账号切换] 正在由启动监督器重建运行环境');
+      console.log('[账号切换] 正在由启动监督器重建运行环境');
       exitCode = OWNER_SWITCH_RESTART_EXIT_CODE;
     } else {
       try {
         const replacement = spawnReplacementProcess();
-        console.error(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
+        console.log(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
       } catch (error: any) {
         console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
       }

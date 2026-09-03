@@ -80,7 +80,7 @@ function _makeLogger(tag: string): (message: string) => void {
   return (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
     try { fs.appendFileSync(logFile, line); } catch (_) {}
-    console.error(msg);
+    console.debug(msg);
   };
 }
 

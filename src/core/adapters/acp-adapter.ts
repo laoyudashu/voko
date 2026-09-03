@@ -66,12 +66,12 @@ interface AcpUpdate {
   kind: string;
   update?: {
     sessionUpdate?: string;
-    content?: { text?: string };
+    content?: { type?: string; text?: string };
   };
   notification?: {
     update?: {
       sessionUpdate?: string;
-      content?: { text?: string };
+      content?: { type?: string; text?: string };
     };
   };
 }
@@ -546,7 +546,9 @@ class AcpAdapter extends PushProvider {
         }
         if (update.kind === 'stop') break;
         const body = update.update || update.notification?.update;
-        if (body?.sessionUpdate === 'agent_message_chunk' && body.content?.text) reply += body.content.text;
+        if (body?.sessionUpdate === 'agent_message_chunk'
+          && (!body.content?.type || body.content.type === 'text')
+          && body.content?.text) reply += body.content.text;
         if (reply.length > MAX_REPLY_CHARS) break;
       }
       const remaining = deadline - Date.now();
@@ -578,7 +580,7 @@ class AcpAdapter extends PushProvider {
     let session: AcpSession;
     try {
       session = await this._ensureSession(state, agentId, fromUid, payload);
-      console.error(`[${this._logPrefix}:${agentId}] session 已就绪`);
+      console.debug(`[${this._logPrefix}:${agentId}] session 已就绪`);
     } catch (err) {
       console.error(`[${this._logPrefix}:${agentId}] session/new 失败: ${errorMessage(err)}`);
       if (/not enabled for dispatch/i.test(errorMessage(err))) {
@@ -636,7 +638,9 @@ class AcpAdapter extends PushProvider {
           const u = update.update || update.notification?.update;
           if (!u) continue;
 
-          const chunk = u.sessionUpdate === 'agent_message_chunk' && u.content?.text;
+          const chunk = u.sessionUpdate === 'agent_message_chunk'
+            && (!u.content?.type || u.content.type === 'text')
+            && u.content?.text;
 
           if (chunk) {
             fullContent += chunk;
@@ -770,14 +774,14 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
     }
 
-    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
+    console.log(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
     const sdk = await this._loadSdk();
     if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
       const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled during startup`);
       (cancelled as any).deliveryOutcome = 'not_delivered';
       throw cancelled;
     }
-    console.error(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
+    console.debug(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
 
     // ── 状态容器 ──
     let readyResolve: (() => void) | null = null;
@@ -821,7 +825,7 @@ class AcpAdapter extends PushProvider {
       const isNodeScript = !runtime && cliPath.endsWith('.js');
       const cmd = runtime?.executable || (isNodeScript ? process.execPath : cliPath);
       const cmdArgs = runtime ? [...runtime.argvPrefix, ...this._cliArgs] : (isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs]);
-      console.error(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
+      console.log(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -842,12 +846,12 @@ class AcpAdapter extends PushProvider {
         (cancelled as any).deliveryOutcome = 'not_delivered';
         throw cancelled;
       }
-      console.error(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
+      console.log(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
 
       // stderr → console（agent 诊断日志走 stderr，不影响 ACP stdout 流）
       child.stderr.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
-        if (msg) console.error(`[${this._logPrefix}:${agentId}] ${msg}`);
+        if (msg) console.debug(`[${this._logPrefix}:${agentId}] ${msg}`);
       });
 
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
@@ -888,7 +892,7 @@ class AcpAdapter extends PushProvider {
     this._agents.set(stateKey, state);
 
     // ── 客户端连接（用 connectWith 确保 initialize 握手完成） ──
-    console.error(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
+    console.debug(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
     const keepAlivePromise = new Promise<void>(resolve => {
       state._shutdownResolve = resolve;
     });
@@ -910,7 +914,7 @@ class AcpAdapter extends PushProvider {
         state.imagePromptSupported = initialized?.agentCapabilities?.promptCapabilities?.image === true;
         state.embeddedContextSupported = initialized?.agentCapabilities?.promptCapabilities?.embeddedContext === true;
       }
-      console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
+      console.log(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
       this._markStateHealth(state, agentId, true, 'connected');
       if (state._readyResolve) {
@@ -934,7 +938,7 @@ class AcpAdapter extends PushProvider {
 
     // ── 等待连接就绪（超时保护） ──
     const timeout = this.options.connectTimeout || 15000;
-    console.error(`[${this._logPrefix}:${agentId}] 等待 ACP 连接就绪（超时 ${timeout}ms）...`);
+    console.debug(`[${this._logPrefix}:${agentId}] 等待 ACP 连接就绪（超时 ${timeout}ms）...`);
     let readyTimer: NodeJS.Timeout | null = null;
     try {
       await Promise.race([
@@ -965,7 +969,7 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ${agentId} 连接初始化失败（agentCtx 未就绪）`);
     }
     if (this._agents.get(stateKey) !== state) this._agents.set(stateKey, state);
-    console.error(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
+    console.log(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
     return state;
   }
 

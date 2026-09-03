@@ -230,9 +230,9 @@ class GooseCliProvider extends PushProvider {
         agentId, visitorId: fromUid, content: replyText, done: true,
         sessionKey: `goose:${scope.logicalName}`, turnId, replyId: turnId,
       });
-      console.error(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} reply=${replyText.length}chars`);
+      console.log(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} reply=${replyText.length}chars`);
     } else {
-      console.error(`[GooseCli] push OK scope=${scope.logicalName.slice(-12)} no reply text`);
+      console.warn(`[GooseCli] push completed without reply text scope=${scope.logicalName.slice(-12)}`);
     }
     return sessionId ? { nativeSessionId: sessionId, deliveryMode: 'cli', adapterType: 'goose-cli',
       attachmentDelivery: { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,

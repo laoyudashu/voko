@@ -89,7 +89,7 @@ async function toggleWhitelistMode(opts?: ToggleWhitelistOptions): Promise<Toggl
     const now = Date.now();
 
     db.prepare(`UPDATE agents SET access_mode = ?, updated_at = ? WHERE agent_id = ?`).run(newMode, now, agentId);
-    console.error(`[toggleWhitelistMode] Agent ${agentId} access_mode → ${newMode}`);
+    console.log(`[toggleWhitelistMode] Agent ${agentId} access_mode → ${newMode}`);
     let statusSynced = true;
     const syncWarnings: string[] = [];
 

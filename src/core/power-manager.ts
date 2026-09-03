@@ -108,7 +108,7 @@ class PowerManager {
     const elapsed = now - this._lastTs;
     this._lastTs = now;
     if (elapsed <= this.driftThreshold) return;
-    console.error(`[PowerManager] 检测到系统唤醒（间隔 ${Math.round(elapsed / 1000)}s），正在恢复连接...`);
+    console.log(`[PowerManager] 检测到系统唤醒（间隔 ${Math.round(elapsed / 1000)}s），正在恢复连接...`);
     void this._recover().catch((error: unknown) => {
       console.error('[PowerManager] 恢复失败:', errorMessage(error));
     });
@@ -116,7 +116,7 @@ class PowerManager {
 
   async _recover(): Promise<void> {
     if (this._recoveryPromise) {
-      console.error('[PowerManager] 恢复任务已在执行，跳过重复触发');
+      console.debug('[PowerManager] 恢复任务已在执行，跳过重复触发');
       return this._recoveryPromise;
     }
     this._recoveryPromise = this._recoverOnce().finally(() => { this._recoveryPromise = null; });
@@ -149,12 +149,12 @@ class PowerManager {
           },
         });
       } catch (error) {
-        console.error(`[PowerManager] 跳过无效 IM 地址 agent=${agent.agent_id}: ${errorMessage(error)}`);
+        console.warn(`[PowerManager] 跳过无效 IM 地址 agent=${agent.agent_id}: ${errorMessage(error)}`);
       }
     }
 
     if (entries.length === 0) {
-      console.error('[PowerManager] 系统唤醒恢复完成，没有可重启的 Agent IM 连接');
+      console.log('[PowerManager] 系统唤醒恢复完成，没有可重启的 Agent IM 连接');
       return;
     }
 
@@ -166,14 +166,14 @@ class PowerManager {
       if (networkReady) break;
       if (attempt < this.networkProbeAttempts) await this.delay(this.networkProbeDelayMs);
     }
-    if (!networkReady) console.error('[PowerManager] IM 服务端口尚未全部就绪，继续进入受控重试');
+    if (!networkReady) console.warn('[PowerManager] IM 服务端口尚未全部就绪，继续进入受控重试');
 
     const pending = await this._restoreEntries(entries);
     const connected = entries.length - pending.length;
     if (pending.length === 0) {
-      console.error(`[PowerManager] ✅ 系统唤醒恢复成功，IM 已重新连接 ${connected}/${entries.length}`);
+      console.log(`[PowerManager] ✅ 系统唤醒恢复成功，IM 已重新连接 ${connected}/${entries.length}`);
     } else {
-      console.error(`[PowerManager] ⚠️ 系统唤醒恢复完成，IM 已连接 ${connected}/${entries.length}，失败 ${pending.length}`);
+      console.warn(`[PowerManager] ⚠️ 系统唤醒恢复完成，IM 已连接 ${connected}/${entries.length}，失败 ${pending.length}`);
     }
     if (pending.length) this._scheduleFailedRetry(pending);
   }
@@ -184,14 +184,14 @@ class PowerManager {
       let results: StartResult[];
       try { results = await this._startMany(pending); }
       catch (error) {
-        console.error(`[PowerManager] 第 ${attempt} 轮恢复启动异常: ${errorMessage(error)}`);
+        console.warn(`[PowerManager] 第 ${attempt} 轮恢复启动异常: ${errorMessage(error)}`);
         results = [];
       }
       const resultByAgent = new Map(results.map(result => [result.agentId, result]));
       pending = pending.filter(entry => resultByAgent.get(entry.agentId)?.connected !== true);
       if (pending.length > 0 && attempt < this.recoveryAttempts) {
         const retryDelay = this.recoveryBackoffMs * (2 ** (attempt - 1));
-        console.error(`[PowerManager] 第 ${attempt} 轮恢复后仍有 ${pending.length} 个 IM 未连接，${retryDelay}ms 后重试`);
+        console.warn(`[PowerManager] 第 ${attempt} 轮恢复后仍有 ${pending.length} 个 IM 未连接，${retryDelay}ms 后重试`);
         await this.delay(retryDelay);
       }
     }
@@ -205,10 +205,10 @@ class PowerManager {
       this._failedRetryTimer = null;
       const pending = entries.filter(entry => !this.agentManager.getStatus?.(entry.agentId)?.connected);
       if (!pending.length) return;
-      console.error(`[PowerManager] 后台重试 ${pending.length} 个仍断开的 Agent IM`);
+      console.log(`[PowerManager] 后台重试 ${pending.length} 个仍断开的 Agent IM`);
       void this._restoreEntries(pending).then(stillPending => {
         if (stillPending.length) this._scheduleFailedRetry(stillPending);
-        else console.error('[PowerManager] ✅ 后台恢复成功，所有 Agent IM 已连接');
+        else console.log('[PowerManager] ✅ 后台恢复成功，所有 Agent IM 已连接');
       }).catch(error => {
         console.error('[PowerManager] 后台恢复异常:', errorMessage(error));
         this._scheduleFailedRetry(pending);

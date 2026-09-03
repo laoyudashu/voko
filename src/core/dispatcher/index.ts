@@ -19,6 +19,7 @@ import { classifyProviderTurnFailure } from '../provider-turn-status';
 import { appendProviderSecurityPrompt, getProviderSecurityControls, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
 import { hasNativeCapabilityControls, isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
+import { sanitizeFinalProviderReply } from './provider-output-boundary';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
 const { isRoutingPolicyEligible } = require('../provider-routing');
@@ -371,7 +372,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     const mode = providerModularModeForFamily(_modularRollout, input.providerType);
     if (mode === 'shadow') {
       if (input.receipt?.nativeSessionId) {
-        console.error(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
+        console.debug(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
       }
       return;
     }
@@ -597,39 +598,60 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
             return;
           }
           const providerId = _providerIds.get(p) || 'unregistered';
-          if (reply.done !== false && reply.turnId) _finishOrdinaryTurn(String(reply.agentId || ''), reply.turnId);
-          if (reply.done !== false && isInternalProviderProtocol(reply.content)) {
-            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'}`);
-            const isolatedSink = reply.turnId
-              ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+          let boundedReply = reply;
+          if (reply.done !== false) {
+            const bounded = sanitizeFinalProviderReply(reply.content);
+            if (bounded.rejected) {
+              if (reply.turnId) _finishOrdinaryTurn(String(reply.agentId || ''), reply.turnId);
+              console.error(`[Dispatcher] provider_reasoning_output_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'} reason=${bounded.reason || 'unknown'}`);
+              const isolatedSink = reply.turnId
+                ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+                : undefined;
+              if (isolatedSink) {
+                isolatedSink({ ...reply, content: '', error: 'Provider output did not contain a safe final reply',
+                  errorCode: 'PROVIDER_OUTPUT_UNPARSEABLE', deliveryOutcome: 'outcome_unknown' });
+              } else {
+                const contextualized = _contextualizeReply({ ...reply, content: '' });
+                void Promise.resolve(onTurnStatus?.({ ...contextualized, status: 'failed',
+                  code: 'PROVIDER_OUTPUT_UNPARSEABLE' })).catch(() => undefined);
+              }
+              return;
+            }
+            boundedReply = { ...reply, content: bounded.content };
+          }
+          if (boundedReply.done !== false && boundedReply.turnId) _finishOrdinaryTurn(String(boundedReply.agentId || ''), boundedReply.turnId);
+          if (boundedReply.done !== false && isInternalProviderProtocol(boundedReply.content)) {
+            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${boundedReply.agentId || '-'} providerId=${providerId} turnId=${boundedReply.turnId || '-'} replyId=${boundedReply.replyId || '-'}`);
+            const isolatedSink = boundedReply.turnId
+              ? _isolatedReplySinks.get(`${boundedReply.agentId || ''}::${boundedReply.turnId}`)
               : undefined;
-            if (isolatedSink) isolatedSink({ ...reply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
+            if (isolatedSink) isolatedSink({ ...boundedReply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
               errorCode: 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT', deliveryOutcome: 'outcome_unknown' });
             return;
           }
-          if (reply.done !== false) {
-            _recordDeliveryEvidence(String(reply.agentId || ''), providerId, reply, true);
+          if (boundedReply.done !== false) {
+            _recordDeliveryEvidence(String(boundedReply.agentId || ''), providerId, boundedReply, true);
           }
           _acceptProviderEvent({
-            eventId: reply.replyId
-              ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
+            eventId: boundedReply.replyId
+              ? `${providerId}:${boundedReply.agentId || ''}:${boundedReply.replyId}:reply:${boundedReply.done === false ? 'partial' : 'final'}`
               : crypto.randomUUID(),
-            type: 'reply', providerId, agentId: String(reply.agentId || ''),
-            turnId: reply.turnId, occurredAt: Date.now(), terminal: false, payload: reply,
+            type: 'reply', providerId, agentId: String(boundedReply.agentId || ''),
+            turnId: boundedReply.turnId, occurredAt: Date.now(), terminal: false, payload: boundedReply,
           });
-          const isolatedSink = reply.turnId
-            ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+          const isolatedSink = boundedReply.turnId
+            ? _isolatedReplySinks.get(`${boundedReply.agentId || ''}::${boundedReply.turnId}`)
             : undefined;
           if (isolatedSink) {
-            if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
-            isolatedSink(reply);
-            if (reply.done !== false) _retireIsolatedTurn(`${reply.agentId || ''}::${reply.turnId}`);
+            if ((boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(boundedReply)) return;
+            isolatedSink(boundedReply);
+            if (boundedReply.done !== false) _retireIsolatedTurn(`${boundedReply.agentId || ''}::${boundedReply.turnId}`);
             return;
           }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
-          if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
-          const contextualized = _contextualizeReply(reply);
-          if (!(reply.turnId || reply.replyId) && !_acceptFinalReply(contextualized)) return;
+          if ((boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(boundedReply)) return;
+          const contextualized = _contextualizeReply(boundedReply);
+          if (!(boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(contextualized)) return;
           onTurnStatus?.({ ...contextualized, status: 'completed' });
           onAgentReply(contextualized);
     });
@@ -902,8 +924,10 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       try {
         available = typeof provider.isAvailable === 'function' && !!provider.isAvailable(agentId);
         status = available ? 'available' : 'unavailable';
-        readiness = typeof (provider as any).getDeliveryReadiness === 'function'
-          ? (provider as any).getDeliveryReadiness(agentId) : null;
+        const readinessReader = typeof (provider as any).getDeliveryReadinessSnapshot === 'function'
+          ? (provider as any).getDeliveryReadinessSnapshot
+          : (provider as any).getDeliveryReadiness;
+        readiness = typeof readinessReader === 'function' ? readinessReader.call(provider, agentId) : null;
         if (readiness && typeof readiness.then === 'function') readiness = null;
         if (readiness) {
           available = readiness.ready === true;

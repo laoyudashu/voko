@@ -26,6 +26,8 @@ test('AcpAdapter loopback creates and disposes an uncached session without reply
     sessionId: 'loopback-session',
     async prompt(content) {
       const match = content.match(/voko-[a-f0-9]{24}/);
+      updates.push({ kind: 'session_update', update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'private reasoning' } } });
+      updates.push({ kind: 'session_update', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'thought', text: 'private reasoning' } } });
       updates.push({ kind: 'session_update', update: { sessionUpdate: 'agent_message_chunk', content: { text: match[0] } } });
       updates.push({ kind: 'stop' });
     },

@@ -3,6 +3,7 @@ const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCliDiagnostic, sa
 const { resolveHermesCommand } = require('../hermes-command');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
+const { sanitizeFinalProviderReply } = require('../provider-output-boundary');
 const os = require('node:os');
 import type { DatabaseLike } from '../../../types/database';
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
@@ -154,7 +155,7 @@ class HermesCliProvider extends PushProvider {
     await this._enqueue(profileId, () => this._runPush(payload), { agentId: payload.agentId, turnId,
       messageId: payload.messageId, sourceMessageIds: payload.sourceMessageIds,
       attachmentCount: payload.attachments?.length || 0 });
-    console.error(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
+    console.log(`[HermesCli] 已进入后台队列 agent=${payload.agentId} profile=${profileId}`);
     return {
       accepted: true,
       queued: true,
@@ -187,7 +188,7 @@ class HermesCliProvider extends PushProvider {
     const notification = _buildNotification(agentId, fromUid, deliveryContent);
     // Windows 下 -z 经 cmd.exe 传多行/含元字符的 notification 会被截断或注入，净化为单行
     const safeNotification = process.platform === 'win32' ? sanitizeCmdArg(notification) : notification;
-    console.error(`[HermesCli] push agent=${agentId} visitor=${fromUid} session=selected`);
+    console.debug(`[HermesCli] push agent=${agentId} visitor=${fromUid} session=selected`);
 
     let approvalPending = false;
     const observe = (line: string) => { if (/pending[_ ]approval|approval.*(?:pending|required)/i.test(line)) approvalPending = true; };
@@ -195,7 +196,11 @@ class HermesCliProvider extends PushProvider {
       const policy = payload.providerSecurityPolicy?.transportId === 'hermes-cli'
         ? payload.providerSecurityPolicy.config
         : { toolProfile: 'safe', safeMode: 'enabled', approvalMode: 'required', acceptHooks: 'disabled' };
-      const args = ['--profile', profileId, 'chat', '-q', safeNotification, '-Q', '--source', 'tool'];
+      // Hermes 0.20.2 keeps its reasoning callback active under -Q and writes
+      // a plain-text Reasoning panel to stdout. Disable extended reasoning for
+      // untrusted visitor delivery; _extractReply remains a fail-closed guard
+      // for older or non-conforming Hermes builds.
+      const args = ['--profile', profileId, 'chat', '-q', safeNotification, '-Q', '--reasoning', 'none', '--source', 'tool'];
       if (policy?.toolProfile === 'safe') args.push('--toolsets', 'safe');
       if (policy?.safeMode !== 'disabled') args.push('--safe-mode');
       if (policy?.approvalMode === 'bypass') args.push('--yolo');
@@ -226,9 +231,13 @@ class HermesCliProvider extends PushProvider {
             sessionKey,
             turnId, replyId: turnId,
           });
-          console.error(`[HermesCli] push OK agent=${agentId} reply=${replyText.length}chars`);
+          console.log(`[HermesCli] push OK agent=${agentId} reply=${replyText.length}chars`);
         } else {
-          throw new Error('Hermes returned no reply text');
+          const error: any = new Error('Hermes returned no safe final reply text');
+          error.code = 'PROVIDER_OUTPUT_UNPARSEABLE';
+          error.deliveryOutcome = 'outcome_unknown';
+          error.retryable = false;
+          throw error;
         }
       } else {
         const detail = `${result.stdout || ''}\n${result.stderr || ''}`;
@@ -268,7 +277,7 @@ class HermesCliProvider extends PushProvider {
       throw error;
     }
     this._enqueue(profileId, () => this._runSteer(agentId, visitorId, content, metadata));
-    console.error(`[HermesCli] steer 已进入后台队列 agent=${agentId} profile=${profileId}`);
+    console.log(`[HermesCli] steer 已进入后台队列 agent=${agentId} profile=${profileId}`);
     return { queued: true };
   }
 
@@ -280,7 +289,7 @@ class HermesCliProvider extends PushProvider {
       ? metadata.providerBinding.nativeSessionId
       : `hermes:${agentId}:${visitorId}`;
     const turnId = String(metadata?.turnId || `hermes-cli-steer-${Date.now()}`);
-    console.error(`[HermesCli] steer agent=${agentId} visitor=${visitorId}`);
+    console.debug(`[HermesCli] steer agent=${agentId} visitor=${visitorId}`);
     const notification = JSON.stringify({
       type: 'voko_owner_message',
       visitorId,
@@ -296,7 +305,7 @@ class HermesCliProvider extends PushProvider {
         // `hermes -z` unconditionally enables YOLO and accepts hooks. Owner
         // steering must not silently bypass the same host boundary that protects
         // visitor turns, so use the regular single-query chat path instead.
-        args: ['--profile', profileId, 'chat', '-q', notification, '-Q', '--source', 'tool',
+        args: ['--profile', profileId, 'chat', '-q', notification, '-Q', '--reasoning', 'none', '--source', 'tool',
           '--toolsets', 'safe', '--safe-mode'],
         tag: 'hermes-cli',
         timeout: 120000,
@@ -314,9 +323,9 @@ class HermesCliProvider extends PushProvider {
           sessionKey,
           turnId, replyId: turnId,
         });
-        console.error(`[HermesCli] steer OK agent=${agentId} reply=${replyText.length}chars`);
+        console.log(`[HermesCli] steer OK agent=${agentId} reply=${replyText.length}chars`);
       } else {
-        console.error(`[HermesCli] steer OK agent=${agentId}`);
+        console.log(`[HermesCli] steer OK agent=${agentId}`);
       }
     } catch (err) {
       if (approvalPending) throw new Error('Hermes pending approval');
@@ -381,7 +390,9 @@ function _extractReply(stdout: string): string | null {
   const visible = stdout
     .replace(/\x1b\[2;3m[\s\S]*?\x1b\[0m/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-  const lines = visible.split('\n').map((line: string) => line.trim()).filter(Boolean);
+  const bounded = sanitizeFinalProviderReply(visible);
+  if (bounded.rejected) return null;
+  const lines = bounded.content.split('\n').map((line: string) => line.trim()).filter(Boolean);
   // 跳过明显的日志/元数据行
   const contentLines = lines.filter((line: string) =>
     !line.startsWith('[') &&
@@ -392,8 +403,7 @@ function _extractReply(stdout: string): string | null {
     line.length > 2
   );
   if (contentLines.length > 0) return contentLines.join('\n').trim();
-  // 兜底：取全部非空行的前 500 字
-  return lines.join('\n').trim().slice(0, 500);
+  return null;
 }
 
 function _isUpstreamErrorReply(reply: string): boolean {

@@ -62,6 +62,7 @@ function qwenOfficeSecurityArgs(configuredArgs: string[], config: Record<string,
 class QwenOfficeCliProvider extends CliAdapter {
   private readonly _resolveAgentTarget: ResolveAgentTarget;
   private readonly _verification = new Map<string, { status: string; code: string; detail: string; verifiedAt?: number }>();
+  private _readinessTimer: NodeJS.Timeout | null = null;
 
   constructor(options: QwenOfficeCliProviderOptions = {}) {
     const configuredCommand = String(options.binPath || '').trim();
@@ -139,6 +140,10 @@ class QwenOfficeCliProvider extends CliAdapter {
     return !instanceId || !!this._resolveAgentTarget(instanceId);
   }
 
+  getDeliveryReadinessSnapshot(agentId = ''): Record<string, unknown> {
+    return this.getDeliveryReadiness(agentId);
+  }
+
   getDeliveryReadiness(agentId = ''): Record<string, unknown> {
     const readiness = getQwenOfficeReadiness(this._cmd);
     const verification = this._verification.get(String(agentId || ''));
@@ -191,6 +196,20 @@ class QwenOfficeCliProvider extends CliAdapter {
 
   async refreshDeliveryReadiness(): Promise<Record<string, unknown>> {
     return refreshQwenOfficeReadiness(this._cmd);
+  }
+
+  start(): void {
+    super.start();
+    void refreshQwenOfficeReadiness(this._cmd);
+    if (this._readinessTimer) clearInterval(this._readinessTimer);
+    this._readinessTimer = setInterval(() => void refreshQwenOfficeReadiness(this._cmd), 60_000);
+    this._readinessTimer.unref?.();
+  }
+
+  stop(): void {
+    if (this._readinessTimer) clearInterval(this._readinessTimer);
+    this._readinessTimer = null;
+    super.stop();
   }
 
   async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {

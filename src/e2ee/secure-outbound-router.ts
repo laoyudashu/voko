@@ -95,9 +95,6 @@ export class SecureOutboundRouter {
   private readonly recentDiagnostics=new Map<string,number>();
   private readonly preparedAttachments=new Map<string,PreparedAttachmentDecision>();
   private readonly pendingProjectionMarks=new Set<string>();
-  private readonly lockedRetryState=new Map<string,{attempts:number;nextAttemptAt:number;seenAt:number}>();
-  private readonly lockedRetrySalt=crypto.randomBytes(8).toString('hex');
-  private lockedScanOffset=0;
   private projectionTimer:ReturnType<typeof setTimeout>|null=null;
 
   constructor(private readonly options:{store:E2eeV2Store;directory:E2eeV2DirectoryClient;runtime:E2eeV2Runtime;
@@ -146,20 +143,17 @@ export class SecureOutboundRouter {
     const initial=policyUnavailable?30*60_000:60_000;
     const maximum=policyUnavailable?6*60*60_000:30*60_000;
     const base=Math.min(maximum,initial*(2**Math.max(0,attempts-1)));
-    const hash=crypto.createHash('sha256').update(`VOKO-E2EE-LOCK-RETRY\0${this.lockedRetrySalt}\0${key}`)
+    const hash=crypto.createHash('sha256').update(`VOKO-E2EE-LOCK-RETRY\0${key}\0${attempts}`)
       .digest().readUInt32BE(0);
     return Math.round(base*(0.9+(hash/0xffffffff)*0.2));
   }
 
-  private rememberLockedFailure(key:string,now:number,reason:string):void{
-    const previous=this.lockedRetryState.get(key);
-    const attempts=Math.min(6,(previous?.attempts||0)+1);
-    this.lockedRetryState.set(key,{attempts,nextAttemptAt:now+this.lockedRetryDelay(key,attempts,reason),seenAt:now});
-    if(this.lockedRetryState.size>2048){
-      const oldest=[...this.lockedRetryState.entries()].sort((a,b)=>a[1].seenAt-b[1].seenAt)
-        .slice(0,this.lockedRetryState.size-2048);
-      for(const [candidate] of oldest)this.lockedRetryState.delete(candidate);
-    }
+  private rememberLockedFailure(row:E2eeV2ConversationRow,now:number,reason:string):E2eeV2ConversationRow|null{
+    const attempts=Number(row.recovery_attempts||0)+1;
+    const dormant=isStableDirectoryBusinessCode(reason)&&attempts>=8;
+    const key=this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id);
+    return this.options.store.scheduleConversationRecovery(row.local_agent_id,row.channel_id,
+      row.routing_conversation_id,reason,dormant?null:now+this.lockedRetryDelay(key,attempts,reason),dormant);
   }
 
   private existingConversation(agentId:string,channelId:string,routingConversationId:string):E2eeV2ConversationRow|null{
@@ -282,18 +276,25 @@ export class SecureOutboundRouter {
       return{mode:'plaintext',reason:'e2ee_upgrade_disabled'};
     }
     let resolved:Resolution;
+    if(existing?.mode==='locked')this.options.store.wakeConversationRecovery(agentId,channelId,
+      existing.routing_conversation_id);
     try{resolved=await this.resolve(agentId,channelId,route.routingConversationId,route.wireConversationKey,
       existing?.mode==='locked');}catch(error){
       const code=errorCode(error);
       if(existing?.mode==='e2ee_active'){
-        if(!isTransientE2eeDirectoryError(error))this.options.store.lockConversation(agentId,channelId,
-          existing.routing_conversation_id,code);
+        if(!isTransientE2eeDirectoryError(error)){
+          this.options.store.lockConversation(agentId,channelId,existing.routing_conversation_id,code);
+          const locked=this.options.store.conversation(agentId,channelId,existing.routing_conversation_id);
+          if(locked&&isRecoverableDirectoryLockReason(code))this.rememberLockedFailure(locked,Date.now(),code);
+        }
         return{mode:'blocked',error:code,securityMode:'e2ee',reason:'active_directory_unavailable'};
       }
       if(existing?.mode==='locked'){
         if(isStableDirectoryBusinessCode(code)&&isRecoverableDirectoryLockReason(existing.lock_reason)){
           this.options.store.lockConversation(agentId,channelId,existing.routing_conversation_id,code);
         }
+        const locked=this.options.store.conversation(agentId,channelId,existing.routing_conversation_id);
+        if(locked&&isRecoverableDirectoryLockReason(code))this.rememberLockedFailure(locked,Date.now(),code);
         return{mode:'blocked',error:isStableDirectoryBusinessCode(code)?code:(existing.lock_reason||code),
           securityMode:'e2ee',reason:'active_conversation_locked'};
       }
@@ -347,7 +348,6 @@ export class SecureOutboundRouter {
           securityMode:'e2ee',reason:'active_conversation_locked'};
       }
       existing=this.options.store.conversation(agentId,channelId,existing.routing_conversation_id);
-      this.lockedRetryState.delete(this.cacheKey(agentId,channelId,existing?.routing_conversation_id||route.routingConversationId));
     }
     if(existing?.mode==='e2ee_active'&&(existing.peer_scope_id!==resolved.peerScopeId
         ||existing.peer_kind!==resolved.peerKind
@@ -639,44 +639,41 @@ export class SecureOutboundRouter {
   async refreshTransientLocked(limit=25,scanLimit=500):Promise<void>{
     const startedAt=Date.now();
     const total=this.options.store.transientLockedConversationCount();
-    if(total===0){this.lockedScanOffset=0;this.lockedRetryState.clear();return;}
-    if(this.lockedScanOffset>=total)this.lockedScanOffset=0;
-    const rows=this.options.store.transientLockedConversations(Math.min(scanLimit,total),this.lockedScanOffset);
-    this.lockedScanOffset=(this.lockedScanOffset+rows.length)%total;
+    if(total===0)return;
     const now=Date.now();
-    const due=rows.filter(row=>(this.lockedRetryState.get(
-      this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id))?.nextAttemptAt||0)<=now).slice(0,limit);
+    const due=this.options.store.transientLockedConversations(Math.min(limit,scanLimit,total),0,now);
     const failures:Record<string,number>={};
     let recovered=0;
+    let dormant=0;
     for(const row of due){
-      const key=this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id);
       try{
         const restored=await this.refreshConversation(row);
         const current=this.options.store.conversation(row.local_agent_id,row.channel_id,row.routing_conversation_id);
-        if(restored||current?.mode!=='locked'||!isRecoverableDirectoryLockReason(current.lock_reason)){
-          this.lockedRetryState.delete(key);
-          if(restored)recovered+=1;
-        }else this.rememberLockedFailure(key,now,String(current?.lock_reason||row.lock_reason||''));
+        if(restored){recovered+=1;continue;}
+        if(current?.mode==='locked'&&isRecoverableDirectoryLockReason(current.lock_reason)){
+          const scheduled=this.rememberLockedFailure(current,now,String(current.lock_reason||row.lock_reason||''));
+          if(scheduled?.recovery_state==='dormant')dormant+=1;
+        }
       }catch(error){
         const code=errorCode(error);
         failures[code]=(failures[code]||0)+1;
         if(!isRevalidatableE2eeDirectoryError(error)){
           this.options.store.lockConversation(row.local_agent_id,row.channel_id,row.routing_conversation_id,code);
-          this.lockedRetryState.delete(key);
         }else{
           if(isStableDirectoryBusinessCode(code)&&row.lock_reason!==code){
             this.options.store.lockConversation(row.local_agent_id,row.channel_id,row.routing_conversation_id,code);
           }
-          this.rememberLockedFailure(key,now,code);
+          const current=this.options.store.conversation(row.local_agent_id,row.channel_id,row.routing_conversation_id)||row;
+          const scheduled=this.rememberLockedFailure(current,now,code);
+          if(scheduled?.recovery_state==='dormant')dormant+=1;
         }
       }
     }
-    for(const [key,state] of this.lockedRetryState){
-      if(now-state.seenAt>60*60_000)this.lockedRetryState.delete(key);
+    const deferred=this.options.store.deferredLockedConversationCount(now);
+    if(due.length>0){
+      const message=`[E2EE] 历史锁恢复 active=${total} due=${due.length} deferred=${deferred} recovered=${recovered} dormant=${dormant} failures=${JSON.stringify(failures)} durationMs=${Date.now()-startedAt}`;
+      if(Object.keys(failures).length>0)console.warn(message);else console.log(message);
     }
-    const deferred=rows.filter(row=>(this.lockedRetryState.get(
-      this.cacheKey(row.local_agent_id,row.channel_id,row.routing_conversation_id))?.nextAttemptAt||0)>now).length;
-    if(due.length>0)console.warn(`[E2EE] 历史锁恢复 scanned=${rows.length} due=${due.length} deferred=${deferred} recovered=${recovered} failures=${JSON.stringify(failures)} durationMs=${Date.now()-startedAt}`);
   }
 }
 
