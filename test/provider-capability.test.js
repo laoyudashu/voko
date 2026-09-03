@@ -56,3 +56,19 @@ test('a verified delivery probe exposes only controls backed by the adapter cont
   const grok = snapshotFromProvider(provider, 'grok-cli', 'agent-1');
   assert.deepEqual(Object.keys(grok.supportedControls), ['additionalPrompt']);
 });
+
+test('runtime identity and version probing preserve the Agent scope', () => {
+  const calls = [];
+  const provider = {
+    isAvailable: agentId => { calls.push(agentId); return agentId === 'agent-bound'; },
+    getProviderVersion: () => ({ version: '0.20.2', source: 'command', result: 'known' }),
+  };
+  const snapshot = snapshotFromProvider(provider, 'hermes-cli', 'agent-bound');
+  assert.deepEqual(calls, ['agent-bound']);
+  assert.equal(snapshot.runtimeVersion, '0.20.2');
+  assert.equal(snapshot.frameworkVersion, '0.20.2');
+  if (process.platform === 'darwin') {
+    assert.equal(snapshot.evidenceState, 'static_compatible');
+    assert.equal(snapshot.supportedControls.approvalMode.enforcement, 'provider_enforced');
+  }
+});

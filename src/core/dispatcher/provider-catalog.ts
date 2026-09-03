@@ -75,6 +75,7 @@ export interface ProviderFactoryContext {
 // Version probes are read-only `--version` calls. Persistent transports without a
 // stable local executable intentionally remain unknown until their protocol reports one.
 const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
+  'hermes-cli': 'hermes',
   'goose-acp': 'goose', 'goose-cli': 'goose',
   'opencode-acp': 'opencode', 'opencode-attach': 'opencode', 'opencode-cli': 'opencode',
   'cursor-acp': 'cursor-agent', 'cursor-cli': 'cursor-agent',

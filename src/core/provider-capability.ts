@@ -51,6 +51,11 @@ export function isDynamicCapabilityTransport(transportId: string): boolean {
   return DYNAMIC_CAPABILITY_TRANSPORTS.has(transportId);
 }
 const VERIFIED_RUNTIME_RULES: Record<string, Partial<Record<NodeJS.Platform, string[]>>> = {
+  'hermes-cli': { darwin: ['0.20.2'] },
+  'claude-cli': { darwin: ['2.1.234'] },
+  'codex-cli': { darwin: ['0.151.0-alpha.7.1'] },
+  'qwen-cli': { darwin: ['0.21.13'] },
+  'goose-cli': { darwin: ['1.46.0'] },
   'workbuddy-http': { darwin: ['2.139.0'], win32: ['2.141.0'] },
   'qwen-office-cli': { win32: ['1.0.47','1.1.18'], darwin: ['1.1.18'] },
   'dumate-http': {},
@@ -85,9 +90,9 @@ function digest(value: unknown): string {
   return crypto.createHash('sha256').update(canonical(value)).digest('hex');
 }
 
-function runtimeIdentity(provider: any, transportId: string): { fingerprint: string; available: boolean } {
+function runtimeIdentity(provider: any, transportId: string, agentId: string): { fingerprint: string; available: boolean } {
   let runtime: any = null;
-  try { runtime = provider?._resolveRuntime?.() || null; } catch (_) {}
+  try { runtime = provider?._resolveRuntime?.(agentId) || null; } catch (_) {}
   const executable = String(runtime?.canonicalPath || runtime?.executable || provider?._cmd || '').trim();
   let statIdentity = '';
   if (executable) {
@@ -101,7 +106,8 @@ function runtimeIdentity(provider: any, transportId: string): { fingerprint: str
     try { const stat = fs.statSync(candidate); return `${candidate}:${stat.size}:${stat.mtimeMs}`; } catch (_) { return candidate; }
   });
   const raw = runtime?.fingerprint || `${transportId}\0${executable}\0${statIdentity}\0${prefixStats.join('\0')}\0${process.platform}\0${process.arch}`;
-  return { fingerprint: digest(raw), available: runtime?.available !== false && Boolean(executable || provider?.isAvailable?.('')) };
+  return { fingerprint: digest(raw), available: runtime?.available !== false
+    && Boolean(executable || provider?.isAvailable?.(agentId)) };
 }
 
 function boundaryFor(transportId: string, controlId: string): 'enforced' | 'not_enforced' | 'unknown' {
@@ -113,11 +119,20 @@ function boundaryFor(transportId: string, controlId: string): 'enforced' | 'not_
 
 export function snapshotFromProvider(provider: any, transportId: string, agentId: string): ProviderCapabilitySnapshot {
   const now = Date.now();
-  const identity = runtimeIdentity(provider, transportId);
+  const identity = runtimeIdentity(provider, transportId, agentId);
   let evidence: any = null;
   try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
-  if (!evidence) {
-    try { evidence = { readiness: provider?.getDeliveryReadiness?.(agentId) || null }; } catch (_) {}
+  if (!evidence) evidence = {};
+  if (!evidence.runtimeVersion || !evidence.frameworkVersion) {
+    try {
+      const version = provider?.getProviderVersion?.() || null;
+      if (!evidence.runtimeVersion && version?.version) evidence.runtimeVersion = version.version;
+      if (!evidence.frameworkVersion && version?.version) evidence.frameworkVersion = version.version;
+      if (!evidence.versionSource && version?.source) evidence.versionSource = version.source;
+    } catch (_) {}
+  }
+  if (!evidence.readiness) {
+    try { evidence.readiness = provider?.getDeliveryReadiness?.(agentId) || null; } catch (_) {}
   }
   const runtimeVersion = String(evidence?.runtimeVersion || '').trim() || null;
   const frameworkVersion = String(evidence?.frameworkVersion || '').trim() || null;
