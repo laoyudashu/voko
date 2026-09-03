@@ -1619,9 +1619,21 @@ class MessageHandler extends EventEmitter {
     };
     const content = messages[status];
     if (!content) return;
-    await this.handleAgentReply({ ...data, content, done: true,
-      providerTurnStatus: status as AgentReplyMessage['providerTurnStatus'],
-      providerTurnStatusCode: String(data.code || '') || undefined });
+    // Provider progress is transport metadata, not an Agent-authored chat
+    // message. Deliver it directly so the Chatroom can update its status UI
+    // without persisting it in Lite's transcript or letting probes mistake it
+    // for the real Provider reply. Keep the legacy text as the wire fallback
+    // for older clients that do not understand turnStatus metadata yet.
+    const turnId = String(data.turnId || data.sourceMessageId || '');
+    const result = await this._deliver(data.agentId, recipientUid, content, 'text', 1, null,
+      `turn-status-${data.agentId}-${turnId || 'unknown'}-${status}`,
+      { _voko: { protocolVersion: 1, turnId, turnStatus: status,
+        ...(data.code ? { turnStatusCode: String(data.code) } : {}),
+        ...(data.remoteRouteId ? { replyToRouteId: data.remoteRouteId } : {}),
+        ...(data.remoteConversationKey ? { canonicalConversationKey: data.remoteConversationKey } : {}) } });
+    if (result?.success === false) {
+      console.warn(`[Provider状态] 投递失败 agent=${data.agentId} peer=${recipientUid} status=${status}`);
+    }
   }
 }
 

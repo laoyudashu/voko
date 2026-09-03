@@ -773,7 +773,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('never sends Provider processing or failure status back to an Agent peer', async () => {
+  it('keeps Provider status out of business messages and returns hidden metadata only to guests', async () => {
     const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
     const projected = [];
     fixture.handler.handleAgentReply = async data => { projected.push(data); };
@@ -784,10 +784,17 @@ describe('Lite Messenger contract smoke', () => {
       });
       await fixture.handler.handleProviderTurnStatus({
         agentId: 'agent-1', visitorId: 'visitor-1', senderUid: 'visitor-1',
-        status: 'timeout', turnId: 'visitor-turn',
+        status: 'timeout', turnId: 'visitor-turn', remoteRouteId: 'route-1',
       });
-      assert.equal(projected.length, 1);
-      assert.equal(projected[0].content, 'Agent 调用超时，请稍后重试');
+      assert.equal(projected.length, 0);
+      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered[0][1], 'visitor-1');
+      assert.equal(fixture.delivered[0][2], 'Agent 调用超时，请稍后重试');
+      assert.equal(fixture.delivered[0][7]._voko.turnStatus, 'timeout');
+      assert.equal(fixture.delivered[0][7]._voko.replyToRouteId, 'route-1');
+      assert.equal(fixture.db.prepare(
+        "SELECT COUNT(*) AS count FROM messages WHERE content LIKE 'Agent %' AND is_me=1",
+      ).get().count, 0);
     } finally {
       fixture.db.close();
     }
