@@ -1823,7 +1823,7 @@ Convergence obligations:
     } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
-  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown; providerId?: string }> {
     if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
       const error: any = new Error('E2EE_V2_SCOPE_REQUIRED');
       error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_SCOPE_REQUIRED'; throw error;
@@ -1882,6 +1882,8 @@ Convergence obligations:
     });
     const deadline = _createTurnDeadline({ scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
+    const startedAt = Date.now();
+    let selectedProviderId = 'none';
     try {
       const delivery = await _doRoute(options.agentId, {
         ...workingPayload,
@@ -1892,7 +1894,11 @@ Convergence obligations:
         messageSegments: options.messageSegments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      }, prepared.context, (providerId, provider) => deadline.select(providerId, provider));
+      }, prepared.context, (providerId, provider) => {
+        selectedProviderId = providerId;
+        return deadline.select(providerId, provider);
+      });
+      if (delivery?.providerId) selectedProviderId = String(delivery.providerId);
       if (delivery?.outcome !== 'delivered') {
         const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
@@ -1904,7 +1910,19 @@ Convergence obligations:
         ? await Promise.race([replyPromise,
           options.ownerInterventionCreated.then(() => ({ content: 'NO_REPLY', done: true } as ProviderReply))])
         : await replyPromise;
-      return { reply, receipt };
+      console.log(`[ProviderTurn] turn=${turnId} agent=${options.agentId} messages=${options.sourceMessageIds?.length || 1} `+
+        `attachments=${options.attachments?.length || 0} provider=${selectedProviderId} durationMs=${Date.now()-startedAt} `+
+        'outcome=delivered providerOutcome=generated');
+      return { reply, receipt, providerId: selectedProviderId };
+    } catch (error: any) {
+      const rawCode = String(error?.code || 'E2EE_V2_PROVIDER_FAILED');
+      const code = /^[A-Z0-9_:-]{1,80}$/.test(rawCode) ? rawCode : 'E2EE_V2_PROVIDER_FAILED';
+      const providerOutcome = code.includes('TIMEOUT') ? 'timeout'
+        : error?.deliveryOutcome === 'outcome_unknown' ? 'unknown' : 'rejected';
+      console.log(`[ProviderTurn] turn=${turnId} agent=${options.agentId} messages=${options.sourceMessageIds?.length || 1} `+
+        `attachments=${options.attachments?.length || 0} provider=${selectedProviderId} durationMs=${Date.now()-startedAt} `+
+        `outcome=${String(error?.deliveryOutcome || 'failed')} providerOutcome=${providerOutcome} errorCode=${code}`);
+      throw error;
     } finally {
       deadline.clear();
       _retireIsolatedTurn(sinkKey);

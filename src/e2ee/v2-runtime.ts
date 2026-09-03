@@ -37,7 +37,7 @@ type RuntimeOptions={
   store:E2eeV2Store;
   directory:E2eeV2DirectoryClient;
   agents:()=>E2eeV2AgentDescriptor[];
-  dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
+  dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown;providerId?:string}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   handleTurnReceipt?:(agentId:string,peerUid:string,receipt:unknown)=>boolean;
@@ -431,11 +431,19 @@ export class E2eeV2Runtime {
               if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
               return;
             }
-            // Guest progress belongs to the Chatroom UI state, not to the
-            // conversation transcript. Sending it as an IM message pollutes
-            // history and conversation previews. Agent peers still receive
-            // the structured receipt above for protocol convergence.
-            return;
+            if(sender.peerKind!=='guest'||status==='submitted'||status==='completed')return;
+            // Guest status travels as hidden route metadata. The placeholder
+            // is never projected into Lite's business transcript, and the
+            // Chatroom stores the metadata in its receipt state rather than
+            // rendering or summarizing it as a message.
+            const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
+              channelId:envelope.channelId,content:'VOKO_TURN_STATUS',
+              messageId:turnStatusMessageId(envelope,turnId,status),sourceMessageId:localMessageId,
+              sourceReceiptMessageId:envelope.messageId,completeSourceReceipt:false,
+              protocolConversationId:envelope.conversationId,turnId,turnStatus:status,turnStatusCode:code,
+              ...(typeof prepared.routeContext?.routeId==='string'
+                ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
+            if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
           },
           markProviderAccepted:()=>{if(providerAccepted)return;
             if(!this.options.store.transition(envelope.messageId,['processing'],'provider_accepted')){
@@ -485,6 +493,12 @@ export class E2eeV2Runtime {
           ...(sender.peerKind==='agent'?{a2aDisposition:'automatic_reply' as const}:{}),
           ...(typeof prepared.routeContext?.routeId==='string'
             ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
+        const deliveryState=delivered?.success===false
+          ?(delivered.outcomeUnknown?'outcome_unknown':'not_delivered')
+          :delivered?.deliveryState==='delivered'?'delivered':'queued';
+        console.log(`[DeliveryTurn] turn=${queued.batch.turnId} agent=${agent.localAgentId} `+
+          `provider=${String(queued.result?.providerId||'none')} message=${replyMessageId} `+
+          `providerOutcome=generated deliveryState=${deliveryState} terminal=${deliveryState!=='queued'}`);
         if(delivered?.success===false){
           const failure=Object.assign(new Error(String(delivered.error||'E2EE_V2_REPLY_NOT_DELIVERED')),
             {outcomeUnknown:Boolean(delivered.outcomeUnknown)});

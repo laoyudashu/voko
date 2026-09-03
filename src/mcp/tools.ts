@@ -3514,15 +3514,11 @@ function createToolHandlers(cx: McpContext) {
       if (!p.agentId || !p.visitorId) return { success: false, error: 'add 需要 agentId+visitorId' };
       const result = ac.addEntry(cx.db, { agentId: p.agentId, listType: 'whitelist', visitorId: p.visitorId, reason: p.reason });
       if (!result.success) return result;
-      const statusRoute = resolveStatusNotificationRoute(p);
-      if (!statusRoute.route && statusRoute.resolution.status === 'selection_required') {
-        return { ...result, notificationStatus: 'skipped', notificationReason: 'conversation_required',
-          candidateConversationIds: statusRoute.resolution.candidateConversationIds };
-      }
-      const notification = cx.sendSystemMessage
-        ? await cx.sendSystemMessage(p.agentId, p.visitorId, 'whitelist_enabled', {}, Math.floor(Date.now() / 1000), statusRoute.route || undefined)
-        : { notificationStatus: 'skipped', notificationReason: 'delivery_unavailable' };
-      return { ...result, ...notification };
+      // Access-list mutation is authoritative state, not conversation
+      // content. The former welcome text polluted message history and
+      // summaries, so whitelist changes intentionally have no chat side
+      // effect. The visitor observes the new access state on the next action.
+      return { ...result, notificationStatus: 'skipped', notificationReason: 'non_conversational' };
     },
 
     // ─── 19. 黑名单管理 ───
