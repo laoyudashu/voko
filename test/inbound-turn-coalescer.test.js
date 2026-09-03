@@ -114,6 +114,29 @@ test('flushes the current turn before accepting an item that exceeds a limit', a
   assert.deepEqual(flushed.map(batch => batch.sourceMessageIds), [['m1', 'm2'], ['m3']]);
 });
 
+test('serializes split provider turns within the same scope', async () => {
+  let releaseFirst;
+  const firstBlocked = new Promise(resolve => { releaseFirst = resolve; });
+  const events = [];
+  const coalescer = new InboundTurnCoalescer({
+    scopeKey: value => value.scope,
+    quietWindowMs: 100,
+    maxMessages: 1,
+    flush: async batch => {
+      events.push(`start:${batch.sourceMessageIds[0]}`);
+      if (batch.sourceMessageIds[0] === 'm1') await firstBlocked;
+      events.push(`finish:${batch.sourceMessageIds[0]}`);
+    },
+  });
+  const first = coalescer.enqueue(item('m1', 'first'));
+  const second = coalescer.enqueue(item('m2', 'second'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events, ['start:m1']);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ['start:m1', 'finish:m1', 'start:m2', 'finish:m2']);
+});
+
 test('flushAll submits pending turns during graceful shutdown', async () => {
   const flushed = [];
   const coalescer = new InboundTurnCoalescer({

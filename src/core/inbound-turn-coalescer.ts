@@ -77,6 +77,7 @@ export function buildMergedTurn<T extends InboundTurnItem>(batch: InboundTurnBat
 
 export class InboundTurnCoalescer<T extends InboundTurnItem, R = void> {
   private readonly pending = new Map<string, PendingTurn<T, R>>();
+  private readonly inFlight = new Map<string, Promise<void>>();
   private readonly quietWindowMs: number;
   private readonly hardWindowMs: number;
   private readonly maxMessages: number;
@@ -171,6 +172,12 @@ export class InboundTurnCoalescer<T extends InboundTurnItem, R = void> {
       firstReceivedAt: turn.firstReceivedAt,
       lastReceivedAt: turn.lastReceivedAt,
     };
+    const previous = this.inFlight.get(turn.scopeKey) || Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.inFlight.set(turn.scopeKey, tail);
+    await previous.catch(() => undefined);
     try {
       const result = await this.options.flush(batch);
       const replyOwner = turn.waiters[turn.waiters.length - 1]?.item;
@@ -181,6 +188,9 @@ export class InboundTurnCoalescer<T extends InboundTurnItem, R = void> {
     } catch (error) {
       for (const waiter of turn.waiters) waiter.reject(error);
       return undefined;
+    } finally {
+      release();
+      if (this.inFlight.get(turn.scopeKey) === tail) this.inFlight.delete(turn.scopeKey);
     }
   }
 }
