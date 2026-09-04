@@ -40,6 +40,24 @@ function addMode(db, family, mode, prefix) {
   return changed;
 }
 
+function atomicWritePrivate(filePath, content) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  let fd;
+  try {
+    fd = fs.openSync(temporaryPath, 'wx', 0o600);
+    fs.writeFileSync(fd, content, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temporaryPath, filePath);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temporaryPath); } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
 function configureHermes(db, profile, port) {
   const windowsRoot = process.platform === 'win32' && process.env.LOCALAPPDATA
     ? path.join(process.env.LOCALAPPDATA, 'hermes') : null;
@@ -62,7 +80,7 @@ function configureHermes(db, profile, port) {
   if (/^platforms:\s*$/m.test(yaml)) yaml = yaml.replace(/^(platforms:\s*\n)/m, `$1${block}`);
   else yaml = `${yaml}${yaml.endsWith('\n') || !yaml ? '' : '\n'}platforms:\n${block}`;
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, crlf ? yaml.replace(/\n/g, '\r\n') : yaml, { mode: 0o600 });
+  atomicWritePrivate(configPath, crlf ? yaml.replace(/\n/g, '\r\n') : yaml);
 
   let config = {};
   try {

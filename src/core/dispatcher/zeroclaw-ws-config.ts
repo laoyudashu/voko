@@ -28,16 +28,20 @@ function configuredToken(env: NodeJS.ProcessEnv = process.env): string | null {
   const explicit = String(env.ZEROCLAW_ACP_TOKEN || '').trim();
   if (explicit) return /[\r\n]/.test(explicit) ? null : explicit;
   const tokenPath = path.resolve(String(env.ZEROCLAW_ACP_TOKEN_FILE || defaultTokenPath(env)));
+  let fd: number | null = null;
   try {
-    const stat = fs.statSync(tokenPath);
+    fd = fs.openSync(tokenPath, 'r');
+    const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return null;
     // Bearer tokens are reusable credentials. On POSIX, fail closed when the
     // credential is readable by the group or other users.
     if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) return null;
-    const token = String(fs.readFileSync(tokenPath, 'utf8')).trim();
+    const token = String(fs.readFileSync(fd, 'utf8')).trim();
     return token && !/[\r\n]/.test(token) ? token : null;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 
