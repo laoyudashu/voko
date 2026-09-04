@@ -14,7 +14,11 @@ test('capability snapshot binds controls to a redacted runtime fingerprint', (t)
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const provider = {
     _resolveRuntime: () => ({ available: true, executable, canonicalPath: executable }),
-    getSecurityControlEvidence: () => ({ runtimeVersion: process.platform === 'darwin' ? '2.139.0' : '2.141.0', versionVerified: true }),
+    getSecurityControlEvidence: () => ({
+      runtimeVersion: process.platform === 'darwin' ? '2.139.0' : '2.141.0',
+      versionVerified: true,
+      controlEvidence: { dataFileAccess: { testKind: 'runtime_canary' } },
+    }),
   };
   const snapshot = snapshotFromProvider(provider, 'workbuddy-http', 'agent-1');
   assert.equal(snapshot.runtimeVersion, process.platform === 'darwin' ? '2.139.0' : '2.141.0');
