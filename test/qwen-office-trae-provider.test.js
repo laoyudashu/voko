@@ -156,11 +156,11 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider._adapterType, 'qwen-office-cli');
   assert.equal(provider._bindingProviderType, 'qwen-office');
   assert.equal(provider._parserName, 'gemini-stream-json');
-  assert.deepEqual(provider._args.slice(0, 8), [
+  assert.deepEqual(provider._args.slice(0, 7), [
     '--print', '--output-format', 'stream-json', '--input-format', 'stream-json',
-    '--permission-mode', 'dont_ask', '--tools',
+    '--permission-mode', 'dont_ask',
   ]);
-  assert.equal(provider._args[8], '');
+  assert.deepEqual(provider._args.slice(7), process.platform === 'win32' ? ['--tools='] : ['--tools', '']);
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
