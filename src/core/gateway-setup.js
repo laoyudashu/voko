@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { getHermesProfilePath, getHermesProfilesDir } = require('./hermes-paths');
+const { getHermesProfilePath, getHermesProfilesDir, getHermesConfigPath } = require('./hermes-paths');
 const { resolveHermesCommand } = require('./dispatcher/hermes-command');
 
 // ════════════════════════════════════════
@@ -147,7 +147,7 @@ function _profileHasRootPlatforms(yaml) {
 }
 
 function _writeKeyToProfile(profileName, apiKey, port, log) {
-  const p = getHermesProfilePath(profileName, 'config.yaml');
+  const p = profileName === 'default' ? getHermesConfigPath() : getHermesProfilePath(profileName, 'config.yaml');
   let yaml = '';
   try { yaml = fs.readFileSync(p, 'utf-8'); }
   catch (error) {
@@ -173,7 +173,8 @@ function _writeKeyToProfile(profileName, apiKey, port, log) {
 
 function _readGatewayFromProfile(profileName) {
   try {
-    const yaml = fs.readFileSync(getHermesProfilePath(profileName, 'config.yaml'), 'utf-8');
+    const profilePath = profileName === 'default' ? getHermesConfigPath() : getHermesProfilePath(profileName, 'config.yaml');
+    const yaml = fs.readFileSync(profilePath, 'utf-8');
     const block = yaml.match(/^\s{2}api_server:\s*\r?\n((?:\s{4,}.*(?:\r?\n|$))*)/m)?.[1] || '';
     const apiKey = block.match(/^\s+key:\s*([^\r\n#]+)/m)?.[1]?.trim().replace(/^['"]|['"]$/g, '') || '';
     const port = Number(block.match(/^\s+port:\s*(\d+)/m)?.[1]);

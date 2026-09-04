@@ -27,6 +27,8 @@ const { CursorAcpProvider } = require('../build/core/dispatcher/providers/cursor
 const { CursorCliProvider } = require('../build/core/dispatcher/providers/cursor-cli');
 const OpenClawCliProvider = require('../build/core/dispatcher/providers/openclaw-cli');
 const HermesCliProvider = require('../build/core/dispatcher/providers/hermes-cli');
+const { resolveHermesCommand } = require('../build/core/dispatcher/hermes-command');
+const { isZeroClawAgentDispatchable } = require('../build/core/dispatcher/zeroclaw-command');
 const { createParser } = require('../build/core/adapters/cli-parsers');
 const { classifyCliFailure, runCli, sanitizeCliDiagnostic } = require('../build/core/adapters/cli-spawner');
 const { CliAdapter } = require('../build/core/adapters/cli-adapter');
@@ -38,6 +40,35 @@ const {
 test('CLI auth messages including signed-in wording are safe to fallback', () => {
   assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'not_delivered');
   assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'not_delivered');
+});
+
+test('Hermes resolution prefers the managed Windows runtime over a stale PATH shim', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-hermes-managed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const managed = path.join(root, 'voko-tools', 'hermes-agent', 'Scripts', 'hermes.exe');
+  fs.mkdirSync(path.dirname(managed), { recursive: true });
+  fs.writeFileSync(managed, 'managed');
+  assert.equal(resolveHermesCommand({ LOCALAPPDATA: root, HOME: path.join(root, 'home'), PATH: process.env.PATH }), managed);
+});
+
+test('Hermes resolves the managed Windows runtime when a service omits LOCALAPPDATA', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-hermes-userprofile-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const managed = path.join(home, 'AppData', 'Local', 'voko-tools', 'hermes-agent', 'Scripts', 'hermes.exe');
+  fs.mkdirSync(path.dirname(managed), { recursive: true });
+  fs.writeFileSync(managed, 'managed');
+  assert.equal(resolveHermesCommand({ USERPROFILE: home, PATH: process.env.PATH }), managed);
+});
+
+test('Hermes prefers its managed virtualenv over the bare Python launcher', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-hermes-venv-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const bare = path.join(home, '.hermes', 'hermes-agent', 'hermes');
+  const managed = path.join(home, '.hermes', 'hermes-agent', 'venv', 'bin', 'hermes');
+  fs.mkdirSync(path.dirname(managed), { recursive: true });
+  fs.writeFileSync(bare, 'stale');
+  fs.writeFileSync(managed, 'managed');
+  assert.equal(resolveHermesCommand({ HOME: home, PATH: process.env.PATH }), managed);
 });
 
 test('CLI timeout carries a stable Provider code and retryability', async () => {
@@ -170,7 +201,9 @@ test('ZeroClaw exposes ACP and isolated stateful CLI as independent routes', (t)
   const acp = new ZeroClawAcpProvider({ db });
   const provider = new ZeroClawCliProvider({ db });
   assert.equal(acp._adapterType, 'zeroclaw-acp');
-  assert.deepEqual(acp._cliArgs, ['acp']);
+  assert.equal(acp._cliArgs[0], 'acp');
+  assert.equal(acp._cliArgs[1], '--config-dir');
+  assert.equal(path.isAbsolute(acp._cliArgs[2]), true);
   assert.deepEqual(acp.options.sessionRequest('agent-voko'), { agentAlias: 'voko_test' });
   assert.equal(acp._instanceAlias('agent-voko'), 'voko_test');
   assert.equal(provider._adapterType, 'zeroclaw-cli');
@@ -188,6 +221,24 @@ test('ZeroClaw exposes ACP and isolated stateful CLI as independent routes', (t)
   fs.writeFileSync(stateFile, '{}', { mode: 0o644 });
   invocation.afterRun();
   if (process.platform !== 'win32') assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
+});
+
+test('ZeroClaw ACP readiness requires every upstream dispatch identity field', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-zeroclaw-dispatch-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const configDir = path.join(home, '.zeroclaw');
+  fs.mkdirSync(configDir, { recursive: true });
+  const write = (runtimeProfile) => fs.writeFileSync(path.join(configDir, 'config.toml'), `
+[agents.test_agent]
+enabled = true
+model_provider = "deepseek.default"
+risk_profile = "safe"
+${runtimeProfile ? 'runtime_profile = "default"' : ''}
+`);
+  write(false);
+  assert.equal(isZeroClawAgentDispatchable('test_agent', { HOME: home }), false);
+  write(true);
+  assert.equal(isZeroClawAgentDispatchable('test_agent', { HOME: home }), true);
 });
 
 test('OpenClaw and Hermes CLI fallbacks target the persisted backend instance', () => {
@@ -221,6 +272,16 @@ test('Hermes CLI does not use an Agent UUID when backend instance is missing', a
     /Hermes CLI unavailable: agent is not bound to a Hermes profile/,
   );
   assert.equal(invoked, false);
+});
+
+test('Hermes 0.19 invocation omits the unsupported reasoning flag', () => {
+  const provider = new HermesCliProvider({
+    supportsReasoningFlag: false,
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
+  });
+  assert.deepEqual(provider._baseInvocationArgs('profile-a', 'hello'),
+    ['--profile', 'profile-a', 'chat', '-q', 'hello', '-Q', '--source', 'tool']);
+  assert.doesNotMatch(provider.describeSecurityInvocation({})[0].text, /--reasoning/);
 });
 
 test('OpenClaw and Hermes reject a failed CLI process with correlated delivery evidence', async (t) => {
@@ -391,6 +452,7 @@ test('Hermes CLI disables reasoning and forwards only the final answer without A
   const replies = [];
   let invocation;
   const provider = new HermesCliProvider({
+    supportsReasoningFlag: true,
     db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
     runCli: async (input) => {
       invocation = input;
@@ -410,6 +472,18 @@ test('Hermes CLI disables reasoning and forwards only the final answer without A
   assert.equal(replies[0].content, 'HERMES_FINAL_OK');
   assert.deepEqual(invocation.args.slice(invocation.args.indexOf('-Q'), invocation.args.indexOf('-Q') + 4),
     ['-Q', '--reasoning', 'none', '--source']);
+});
+
+test('Hermes CLI preserves a valid Chinese reply beginning with 收到', async () => {
+  const replies = [];
+  const provider = new HermesCliProvider({
+    db: { prepare: () => ({ get: () => ({ backend_instance_id: 'profile-a' }), all: () => [] }) },
+    runCli: async () => ({ stdout: '收到，HERMES_VISITOR_OK\n', stderr: 'session_id: test-session\n', code: 0, signal: null }),
+  });
+  provider.on('agent.reply', reply => replies.push(reply));
+  await provider.push({ agentId: 'agent-a', fromUid: 'visitor', content: 'hello', messageId: 'chinese-reply' });
+  await provider.waitForIdle();
+  assert.equal(replies[0].content, '收到，HERMES_VISITOR_OK');
 });
 
 test('Hermes CLI rejects the unterminated plain-text Reasoning panel emitted by 0.20.2', async () => {
@@ -485,6 +559,7 @@ test('structured CLI parsers ignore reasoning and thought event types', () => {
 test('Hermes CLI classifies non-zero exits from evidence instead of guessing from exit code', async () => {
   for (const fixture of [
     { code: 1, stderr: 'HTTP 401 Unauthorized', expectedCode: 'PROVIDER_AUTH_REQUIRED', expectedOutcome: 'not_delivered' },
+    { code: 2, stderr: 'usage: hermes [-h] {login,chat}\nhermes: error: unrecognized arguments: --reasoning none', expectedCode: 'PROVIDER_CLI_EXIT', expectedOutcome: 'outcome_unknown' },
     { code: 103, stderr: '', expectedCode: 'PROVIDER_CLI_EXIT', expectedOutcome: 'outcome_unknown' },
   ]) {
     const provider = new HermesCliProvider({

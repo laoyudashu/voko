@@ -88,6 +88,131 @@ test('Providers without verified native flags still lease the editable VOKO visi
   assert.match(lease.promptInstructions.join('\n'), /访客消息/);
 });
 
+test('scoped Provider policy keeps one Agent policy and independent transport policies', () => {
+  const { db, service } = fixture('zeroclaw');
+  const instance = service.agentPolicy('agent-1');
+  assert.equal(instance.providerFamily, 'zeroclaw');
+  assert.deepEqual(instance.controls.filter(item => item.editable).map(item => item.id), [
+    'autonomyLevel', 'requireApprovalForMediumRisk', 'blockHighRiskCommands', 'workspaceOnly',
+  ]);
+  const preflight = service.preflight('agent-1', 'zeroclaw-cli', {
+    instanceConfig: { autonomyLevel: 'readonly' },
+    transportConfig: { additionalPrompt: 'CLI visitor boundary' },
+  });
+  assert.equal(preflight.expectedAgentRevision, 0);
+  const committed = service.commit('agent-1', preflight.preflightToken, '');
+  assert.equal(committed.agentRevision, 1);
+  assert.equal(committed.revision, 1);
+  assert.equal(service.effective('agent-1', 'zeroclaw-acp').agentConfig.autonomyLevel, 'readonly');
+  assert.notEqual(service.effective('agent-1', 'zeroclaw-acp').config.additionalPrompt, 'CLI visitor boundary');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM provider_agent_security_policies').get().count, 1);
+  const lease = service.acquireTurnLease({ agentId: 'agent-1', messageId: 'scoped-turn', channelType: 1 }, 'zeroclaw-cli');
+  const row = db.prepare("SELECT * FROM provider_security_turns WHERE turn_id='scoped-turn'").get();
+  assert.equal(row.agent_policy_revision, 1);
+  assert.equal(row.agent_policy_digest, lease.agentPolicyDigest);
+  assert.equal(row.transport_policy_digest, lease.transportPolicyDigest);
+});
+
+test('scoped Provider policy rejects concurrent Agent-level revisions and high-risk expansion', () => {
+  const { service } = fixture('zeroclaw');
+  const first = service.preflight('agent-1', 'zeroclaw-cli', {
+    instanceConfig: { autonomyLevel: 'readonly' }, transportConfig: {},
+  });
+  service.commit('agent-1', first.preflightToken, '');
+  const expansion = service.preflight('agent-1', 'zeroclaw-acp', {
+    instanceConfig: { autonomyLevel: 'full' }, transportConfig: {},
+  });
+  assert.equal(expansion.requiresTypedConfirmation, true);
+  assert.ok(expansion.risks.includes('EXPANDS_ZEROCLAW_AUTONOMY'));
+  assert.throws(() => service.commit('agent-1', expansion.preflightToken, 'wrong'), /CONFIRMATION_MISMATCH/);
+});
+
+test('native Agent policy is staged outside the SQLite transaction and finalized only after verification', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE agents(agent_id TEXT PRIMARY KEY,agent_name TEXT,backend_type TEXT,backend_instance_id TEXT);
+    INSERT INTO agents VALUES('agent-native','Zero测试','zeroclaw','ds');
+    CREATE TABLE provider_conversation_bindings(
+      id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
+    );
+    INSERT INTO provider_conversation_bindings VALUES('binding-native','agent-native','zeroclaw-cli','active',0);
+  `);
+  let nativeConfig = { autonomyLevel: 'supervised', requireApprovalForMediumRisk: 'enabled',
+    blockHighRiskCommands: 'enabled', workspaceOnly: 'enabled' };
+  let transactionOpen = false;
+  const originalExec = db.exec.bind(db);
+  db.exec = (sql) => {
+    const normalized = String(sql).trim().toUpperCase();
+    if (normalized.startsWith('BEGIN')) transactionOpen = true;
+    const result = originalExec(sql);
+    if (normalized.startsWith('COMMIT') || normalized.startsWith('ROLLBACK')) transactionOpen = false;
+    return result;
+  };
+  let applySawTransaction = null;
+  const adapter = {
+    inspect: () => ({ config: { ...nativeConfig }, nativePolicyDigest: `native-${nativeConfig.autonomyLevel}` }),
+    async apply(_context, proposed) {
+      applySawTransaction = transactionOpen;
+      assert.equal(db.prepare(`SELECT sync_state FROM provider_agent_security_policies
+        WHERE agent_id='agent-native'`).get().sync_state, 'applying');
+      nativeConfig = { ...proposed };
+      return { config: { ...nativeConfig }, nativePolicyDigest: `native-${nativeConfig.autonomyLevel}`,
+        lifecycleAction: 'restart_agent_runtime' };
+    },
+    recover(_context, pending, applied) {
+      return JSON.stringify(nativeConfig) === JSON.stringify(pending) ? 'pending'
+        : JSON.stringify(nativeConfig) === JSON.stringify(applied) ? 'applied' : 'drifted';
+    },
+  };
+  const service = new ProviderSecurityPolicyService(db, { nativeAdapters: { zeroclaw: adapter } });
+  service.inspect('agent-native', 'zeroclaw-cli');
+  const preflight = service.preflight('agent-native', 'zeroclaw-cli', {
+    instanceConfig: { autonomyLevel: 'readonly' }, transportConfig: { additionalPrompt: 'native test' },
+  });
+  const committed = await service.commitAsync('agent-native', preflight.preflightToken, '');
+  assert.equal(applySawTransaction, false);
+  assert.equal(committed.agentConfig.autonomyLevel, 'readonly');
+  assert.equal(committed.agentRevision, 1);
+  assert.equal(committed.revision, 1);
+  const row = db.prepare(`SELECT * FROM provider_agent_security_policies WHERE agent_id='agent-native'`).get();
+  assert.equal(row.sync_state, 'applied');
+  assert.equal(row.pending_config_json, null);
+  assert.equal(row.native_policy_digest, 'native-readonly');
+  assert.equal(db.prepare(`SELECT status FROM provider_conversation_bindings WHERE id='binding-native'`).get().status, 'stale');
+});
+
+test('startup recovery finalizes a native policy applied before process interruption', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE agents(agent_id TEXT PRIMARY KEY,agent_name TEXT,backend_type TEXT,backend_instance_id TEXT);
+    INSERT INTO agents VALUES('agent-recover','Zero恢复','zeroclaw','ds');
+    CREATE TABLE provider_conversation_bindings(id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER);`);
+  let nativeConfig = { autonomyLevel: 'supervised', requireApprovalForMediumRisk: 'enabled',
+    blockHighRiskCommands: 'enabled', workspaceOnly: 'enabled' };
+  const adapter = {
+    inspect: () => ({ config: { ...nativeConfig }, nativePolicyDigest: `native-${nativeConfig.autonomyLevel}` }),
+    async apply() { throw new Error('not used'); },
+    recover(_context, pending, applied) {
+      return JSON.stringify(nativeConfig) === JSON.stringify(pending) ? 'pending'
+        : JSON.stringify(nativeConfig) === JSON.stringify(applied) ? 'applied' : 'drifted';
+    },
+  };
+  const service = new ProviderSecurityPolicyService(db, { nativeAdapters: { zeroclaw: adapter } });
+  service.inspect('agent-recover', 'zeroclaw-cli');
+  const preflight = service.preflight('agent-recover', 'zeroclaw-cli', {
+    instanceConfig: { autonomyLevel: 'readonly' }, transportConfig: {},
+  });
+  const pending = { ...nativeConfig, autonomyLevel: 'readonly' };
+  db.prepare(`UPDATE provider_agent_security_policies SET sync_state='applying',pending_config_json=?,
+    pending_policy_digest=? WHERE agent_id='agent-recover'`).run(JSON.stringify(pending),
+    db.prepare('SELECT agent_policy_digest FROM provider_security_preflights WHERE id=?').get(preflight.preflightToken).agent_policy_digest);
+  nativeConfig = pending;
+  await service.recoverApplying();
+  const recovered = service.agentPolicy('agent-recover');
+  assert.equal(recovered.config.autonomyLevel, 'readonly');
+  assert.equal(recovered.revision, 1);
+  assert.equal(recovered.nativePolicyState, 'applied');
+});
+
 test('a confirmed not-delivered route may re-lease the same turn to a compatible fallback transport', () => {
   const { service } = fixture('zeroclaw');
   const payload = { agentId: 'agent-1', messageId: 'fallback-turn-1', channelType: 1 };
@@ -110,6 +235,9 @@ test('CLI permissions map the latest leased policy to real Provider argv', () =>
   assert.deepEqual(applyProviderSecurityArgs(['run'], payload('goose-cli', {
     extensionProfile: 'disabled',
   })), ['run', '--no-profile']);
+  assert.deepEqual(applyProviderSecurityArgs(['run', '--format', 'json', '{prompt}'], payload('opencode-cli', {
+    pluginMode: 'isolated', approvalMode: 'auto',
+  })), ['run', '--format', 'json', '{prompt}', '--pure', '--auto']);
 });
 
 test('permission expansions require typed confirmation for CLI Providers', () => {

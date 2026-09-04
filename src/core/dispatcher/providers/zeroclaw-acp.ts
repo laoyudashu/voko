@@ -1,7 +1,7 @@
 const os = require('os');
 const fs = require('fs');
 const { AcpAdapter } = require('../../adapters/acp-adapter');
-const { resolveZeroClawCommand } = require('../zeroclaw-command');
+const { resolveZeroClawCommand, resolveZeroClawConfigDir, isZeroClawAgentDispatchable } = require('../zeroclaw-command');
 import type { AgentMeta } from '../types';
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
@@ -30,7 +30,7 @@ class ZeroClawAcpProvider extends AcpAdapter {
       matchType: 'zeroclaw',
       adapterType: 'zeroclaw-acp',
       cliPath: command,
-      args: ['acp'],
+      args: ['acp', '--config-dir', resolveZeroClawConfigDir()],
       db: options.db,
       sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),
@@ -47,7 +47,8 @@ class ZeroClawAcpProvider extends AcpAdapter {
   }
 
   isAvailable(agentId: string): boolean {
-    return super.isAvailable(agentId) && !!this._instanceAlias(agentId);
+    const alias = this._instanceAlias(agentId);
+    return super.isAvailable(agentId) && !!alias && isZeroClawAgentDispatchable(alias);
   }
 
   _instanceAlias: (agentId: string) => string | null;

@@ -8,10 +8,10 @@ const matrix = require('../scripts/provider-runtime-matrix');
 
 test('provider runtime matrix parses resumable execution options', () => {
   assert.deepEqual(matrix.parseArgs(['--hosts=windows,linux', '--repeat', '5', '--resume', 'run-1',
-    '--faults=probe-timeout,circuit-breaker', '--continue-on-user-action']), {
+    '--faults=probe-timeout,circuit-breaker', '--permissions=none', '--continue-on-user-action']), {
     hosts: ['windows', 'linux'], providers: 'installed-ready', transports: 'all-ready', repeat: 5,
     resume: 'run-1', faults: ['probe-timeout', 'circuit-breaker'], continueOnUserAction: true,
-    retries: 2, resultTimeoutMs: 180000, driver: 'visitor', visitorBaseUrl: 'https://im.vokovoko.com',
+    retries: 2, resultTimeoutMs: 180000, driver: 'visitor', permissions: 'none', visitorBaseUrl: 'https://im.vokovoko.com',
     visitorProfile: path.join(path.dirname(__dirname), 'artifacts', 'real-tests', 'visitor-profile'), visitorHeaded: false, dryRun: false,
   });
 });
@@ -102,6 +102,15 @@ test('provider and transport selectors filter discovered ready cells', () => {
   assert.deepEqual(matrix.filterCells(cells, { providers: 'installed-ready', transports: 'opencode-cli' }), [cells[0]]);
 });
 
+test('formal matrix evidence uses the running process build instead of replaced files', () => {
+  assert.deepEqual(matrix.runtimeBuildEvidence({ buildDigest: 'disk', runtimeBuildDigest: 'running', buildState: 'stale' }),
+    { digest: 'running', state: 'stale', usable: false });
+  assert.deepEqual(matrix.runtimeBuildEvidence({ buildDigest: 'same', runtimeBuildDigest: 'same', buildState: 'current' }),
+    { digest: 'same', state: 'current', usable: true });
+  assert.deepEqual(matrix.runtimeBuildEvidence({ buildDigest: 'legacy' }),
+    { digest: 'legacy', state: 'legacy', usable: true });
+});
+
 test('matrix sender is passive and cannot create an automatic Agent reply loop', () => {
   const inventory = { agents: [
     { agentId: 'target', imUid: 'target-uid', runtime: { automaticDeliveryReady: true } },
@@ -179,6 +188,10 @@ test('fault injection is restricted to dedicated TEST Agents and explicit adapte
     /not_applicable/);
   assert.deepEqual(matrix.faultEligibility({ agentName: 'TEST-WORKBUDDY', transport: 'workbuddy-http' }, 'probe-timeout'),
     { ok: true, injector: 'dispatcher-delay' });
+  assert.deepEqual(matrix.faultEligibility({ agentName: 'TEST-OPENCODE', transport: 'opencode-acp' }, 'fingerprint-change'),
+    { ok: true, injector: 'capability-snapshot' });
+  assert.deepEqual(matrix.faultEligibility({ agentName: 'TEST-ZEROCLAW', transport: 'zeroclaw-ws' }, 'circuit-breaker'),
+    { ok: true, injector: 'policy-store' });
 });
 
 test('policy mutation selects only a strictly safer enum value', () => {
@@ -194,17 +207,22 @@ test('policy mutation selects only a strictly safer enum value', () => {
   }] }), null);
 });
 
-test('permission canaries isolate one control and reserve risk expansion for TEST Agents', () => {
+test('permission canaries isolate transport and Agent-scoped controls and reserve risk expansion for TEST Agents', () => {
   const security = { config: { shell: 'off', prompt: 'base' }, controls: [
     { id: 'shell', kind: 'enum', editable: true, values: [{ value: 'off', risk: 'low' }, { value: 'on', risk: 'high' }] },
     { id: 'prompt', kind: 'text', editable: true, maxLength: 200 },
     { id: 'fixed', kind: 'status', editable: false },
-  ] };
+  ], instancePolicy: { config: { workspace: 'on' }, controls: [
+    { id: 'workspace', kind: 'enum', editable: true, values: [{ value: 'on', risk: 'low' }, { value: 'off', risk: 'high' }] },
+  ] } };
   assert.deepEqual(matrix.policyCanaries(security, 'PRODUCTION').map(item => item.controlId), ['prompt']);
   const testCanaries = matrix.policyCanaries(security, 'TEST-HERMES');
-  assert.deepEqual(testCanaries.map(item => item.controlId), ['shell', 'prompt']);
-  assert.equal(testCanaries[0].config.prompt, 'base');
-  assert.equal(testCanaries[1].config.shell, 'off');
+  assert.deepEqual(testCanaries.map(item => item.controlId), ['workspace', 'shell', 'prompt']);
+  assert.deepEqual(testCanaries.map(item => item.scope), ['agent', 'transport', 'transport']);
+  assert.equal(testCanaries[0].config.instanceConfig.workspace, 'off');
+  assert.equal(testCanaries[0].config.transportConfig.prompt, 'base');
+  assert.equal(testCanaries[1].config.instanceConfig.workspace, 'on');
+  assert.equal(testCanaries[2].config.transportConfig.shell, 'off');
 });
 
 test('policy commit omits an empty optional confirmation argument', () => {

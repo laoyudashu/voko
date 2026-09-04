@@ -1,10 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
 const {
   ZeroClawWsProvider,
   configuredUrl,
+  configuredToken,
 } = require('../build/core/dispatcher/providers/zeroclaw-ws');
 
 function aliasDb(alias = 'voko_test') {
@@ -44,10 +48,37 @@ test('ZeroClaw WebSocket provider requires a loopback URL, token and agent alias
   }
 });
 
-test('ZeroClaw WebSocket preflight reports missing configuration without probing the network', async () => {
-  const previousToken = process.env.ZEROCLAW_ACP_TOKEN;
+test('ZeroClaw WebSocket provider reads a private persisted token file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-zc-token-'));
+  const tokenFile = path.join(root, 'token');
+  const previous = {
+    token: process.env.ZEROCLAW_ACP_TOKEN,
+    tokenFile: process.env.ZEROCLAW_ACP_TOKEN_FILE,
+  };
   try {
     delete process.env.ZEROCLAW_ACP_TOKEN;
+    process.env.ZEROCLAW_ACP_TOKEN_FILE = tokenFile;
+    fs.writeFileSync(tokenFile, 'persisted-test-token\n', { mode: 0o600 });
+    assert.equal(configuredToken(), 'persisted-test-token');
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tokenFile, 0o644);
+      assert.equal(configuredToken(), null);
+    }
+  } finally {
+    if (previous.token === undefined) delete process.env.ZEROCLAW_ACP_TOKEN;
+    else process.env.ZEROCLAW_ACP_TOKEN = previous.token;
+    if (previous.tokenFile === undefined) delete process.env.ZEROCLAW_ACP_TOKEN_FILE;
+    else process.env.ZEROCLAW_ACP_TOKEN_FILE = previous.tokenFile;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ZeroClaw WebSocket preflight reports missing configuration without probing the network', async () => {
+  const previousToken = process.env.ZEROCLAW_ACP_TOKEN;
+  const previousTokenFile = process.env.ZEROCLAW_ACP_TOKEN_FILE;
+  try {
+    delete process.env.ZEROCLAW_ACP_TOKEN;
+    process.env.ZEROCLAW_ACP_TOKEN_FILE = path.join(os.tmpdir(), `missing-voko-zc-${process.pid}`);
     const provider = new ZeroClawWsProvider({ db: aliasDb() });
     const result = await provider.preflightDelivery('agent-voko');
     assert.equal(result.ok, false);
@@ -57,6 +88,8 @@ test('ZeroClaw WebSocket preflight reports missing configuration without probing
   } finally {
     if (previousToken === undefined) delete process.env.ZEROCLAW_ACP_TOKEN;
     else process.env.ZEROCLAW_ACP_TOKEN = previousToken;
+    if (previousTokenFile === undefined) delete process.env.ZEROCLAW_ACP_TOKEN_FILE;
+    else process.env.ZEROCLAW_ACP_TOKEN_FILE = previousTokenFile;
   }
 });
 

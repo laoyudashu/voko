@@ -23,6 +23,9 @@ test('Provider security page and API expose only controls supported by the Agent
     INSERT INTO agents VALUES('agent-9','OpenCode助手','opencode',NULL);
     INSERT INTO agents VALUES('agent-10','Grok助手','grok',NULL);
     INSERT INTO agents VALUES('agent-11','Aider助手','aider',NULL);
+    ALTER TABLE agents ADD COLUMN backend_instance_id TEXT;
+    INSERT INTO agents(agent_id,agent_name,backend_type,owner_email,backend_instance_id)
+      VALUES('agent-12','Zero助手','zeroclaw',NULL,'ds');
     CREATE TABLE provider_conversation_bindings(
       id TEXT PRIMARY KEY,agent_id TEXT,adapter_type TEXT,status TEXT,updated_at INTEGER
     );
@@ -37,11 +40,12 @@ test('Provider security page and API expose only controls supported by the Agent
     ['agent-6','dumate-http',['sessionPersistence','additionalPrompt','isolatedDataRoot','loopbackOnly']],
     ['agent-7','claude-cli',['toolAccess','browser','shellWrite','additionalPrompt']],
     ['agent-8','qwen-cli',['tools','additionalPrompt']],
-    ['agent-9','opencode-cli',['additionalPrompt']],
-    ['agent-9','opencode-acp',['additionalPrompt']],
-    ['agent-9','opencode-attach',['additionalPrompt']],
+    ['agent-9','opencode-cli',['pluginMode','approvalMode','additionalPrompt']],
+    ['agent-9','opencode-acp',['pluginMode','permissionCallback','additionalPrompt']],
+    ['agent-9','opencode-attach',['loopbackServer','additionalPrompt']],
     ['agent-10','grok-cli',['additionalPrompt']],
     ['agent-11','aider-cli',['additionalPrompt']],
+    ['agent-12','zeroclaw-cli',['additionalPrompt']],
   ]) providerSecurity.storeCapability(agentId, transportId, {
     runtimeFingerprint: `${transportId}-test`, capabilityDigest: `${transportId}-capability`, evidenceState: 'static_compatible',
     supportedControls: Object.fromEntries(ids.map(id => [id,{ values: [] }])), observedAt: Date.now(), expiresAt: Date.now()+10000,
@@ -66,13 +70,17 @@ test('Provider security page and API expose only controls supported by the Agent
                 : backend === 'claude-code' ? ['claude-cli', 'cli']
                   : backend === 'qwen-code' ? ['qwen-cli', 'cli']
                     : backend === 'opencode' ? ['opencode-cli', 'cli']
+                      : backend === 'zeroclaw' ? ['zeroclaw-cli', 'cli']
                       : backend === 'grok' ? ['grok-cli', 'cli']
                         : backend === 'aider' ? ['aider-cli', 'cli'] : ['goose-acp', 'acp'];
       const transportId = requestedTransport || mapping[0];
       const transports = backend === 'opencode'
         ? [['opencode-cli','cli','ready',true],['opencode-acp','acp','ready',true],['opencode-attach','attach','delivery_stalled',false]]
         : [[mapping[0],mapping[1],'ready',true]];
-      return { ...providerSecurity.inspect(agentId, transportId), deliveryMode: mapping[1], selectedProvider: transportId,
+      const inspected = providerSecurity.inspect(agentId, transportId);
+      if (backend === 'zeroclaw') inspected.instancePolicy.nativePolicyState = 'applied';
+      return { ...inspected, deliveryMode: mapping[1], selectedProvider: transportId,
+        capabilityProbing: backend === 'zeroclaw',
         transports: transports.map(([id,mode,status,selectable]) => ({ transportId: id, mode, configured: true,
           available: true, automaticReady: status === 'ready', verificationStatus: 'static_compatible',
           evidenceState: id === 'opencode-attach' ? 'unknown' : 'static_compatible', status,
@@ -93,6 +101,7 @@ test('Provider security page and API expose only controls supported by the Agent
       { agentId: 'agent-9', agentName: 'OpenCode助手', backendType: 'opencode' },
       { agentId: 'agent-10', agentName: 'Grok助手', backendType: 'grok' },
       { agentId: 'agent-11', agentName: 'Aider助手', backendType: 'aider' },
+      { agentId: 'agent-12', agentName: 'Zero助手', backendType: 'zeroclaw' },
     ] }),
   };
   const app = express();
@@ -236,6 +245,24 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(openCodeHtml, /提交停滞/);
   assert.match(openCodeHtml, /<button type="submit" disabled>保存设置<\/button>/);
   assert.doesNotMatch(openCodeHtml, /name="shell"/);
+
+  const openCodeCli = await fetch(`${origin}/agents/agent-9/security?transportId=opencode-cli`, { headers: auth });
+  const openCodeCliHtml = await openCodeCli.text();
+  assert.equal(openCodeCli.status, 200, openCodeCliHtml);
+  assert.match(openCodeCliHtml, /当前通信模式权限/);
+  assert.match(openCodeCliHtml, /name="pluginMode"[^>]*data-scope="transport"/);
+  assert.match(openCodeCliHtml, /name="approvalMode"[^>]*data-scope="transport"/);
+  assert.match(openCodeCliHtml, /OpenCode项目与配置/);
+
+  const zeroPage = await fetch(`${origin}/agents/agent-12/security`, { headers: auth });
+  const zeroHtml = await zeroPage.text();
+  assert.equal(zeroPage.status, 200, zeroHtml);
+  assert.match(zeroHtml, /Agent 公共权限/);
+  assert.match(zeroHtml, /name="autonomyLevel"[^>]*data-scope="agent"/);
+  assert.match(zeroHtml, /name="workspaceOnly"[^>]*data-scope="agent"/);
+  assert.doesNotMatch(zeroHtml, /<button type="submit" disabled>保存设置<\/button>/);
+  assert.match(zeroHtml, /Agent 原生策略已同步；当前通信模式没有额外权限参数/);
+  assert.match(zeroHtml, /无额外权限参数/);
 
   const preflightResponse = await fetch(`${origin}/api/agents/agent-1/provider-security/preflight`, {
     method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },

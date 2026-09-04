@@ -1,6 +1,6 @@
 const { PushProvider } = require('../base-provider');
 const { runCli, checkCliAvailable, classifyCliFailure, sanitizeCliDiagnostic, sanitizeCmdArg } = require('../../adapters/cli-spawner');
-const { resolveHermesCommand } = require('../hermes-command');
+const { resolveHermesCommand, hermesSupportsReasoningFlag } = require('../hermes-command');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments } = require('../provider-attachments');
 const { sanitizeFinalProviderReply } = require('../provider-output-boundary');
@@ -12,6 +12,7 @@ interface HermesCliOptions {
   contextWindow?: number;
   db?: Pick<DatabaseLike, 'prepare'> | null;
   runCli?: typeof runCli;
+  supportsReasoningFlag?: boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -56,8 +57,26 @@ class HermesCliProvider extends PushProvider {
     this._db = options.db || null;
     this._available = null;
     this._command = resolveHermesCommand();
+    this._supportsReasoningFlag = options.supportsReasoningFlag ?? hermesSupportsReasoningFlag(this._command);
     this._runCli = options.runCli || runCli;
     this._queues = new Map();
+  }
+
+  _baseInvocationArgs(profileId: string, prompt: string): string[] {
+    const args = ['--profile', profileId, 'chat', '-q', prompt, '-Q'];
+    if (this._supportsReasoningFlag) args.push('--reasoning', 'none');
+    args.push('--source', 'tool');
+    return args;
+  }
+
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high'; sourceControl?: string; enforcement?: string }> {
+    return [
+      { text: `hermes --profile <当前 Profile> chat -q <访客消息> -Q${this._supportsReasoningFlag ? ' --reasoning none' : ''} --source tool`, risk: 'low' },
+      ...(config.toolProfile === 'safe' ? [{ text: '--toolsets safe', risk: 'medium' as const, sourceControl: 'toolProfile', enforcement: 'provider_enforced' }] : []),
+      ...(config.safeMode !== 'disabled' ? [{ text: '--safe-mode', risk: 'medium' as const, sourceControl: 'safeMode', enforcement: 'provider_enforced' }] : []),
+      ...(config.approvalMode === 'bypass' ? [{ text: '--yolo', risk: 'high' as const, sourceControl: 'approvalMode', enforcement: 'provider_enforced' }] : []),
+      ...(config.acceptHooks === 'enabled' ? [{ text: '--accept-hooks', risk: 'high' as const, sourceControl: 'acceptHooks', enforcement: 'provider_enforced' }] : []),
+    ];
   }
 
   get priority() { return 1; }
@@ -200,7 +219,7 @@ class HermesCliProvider extends PushProvider {
       // a plain-text Reasoning panel to stdout. Disable extended reasoning for
       // untrusted visitor delivery; _extractReply remains a fail-closed guard
       // for older or non-conforming Hermes builds.
-      const args = ['--profile', profileId, 'chat', '-q', safeNotification, '-Q', '--reasoning', 'none', '--source', 'tool'];
+      const args = this._baseInvocationArgs(profileId, safeNotification);
       if (policy?.toolProfile === 'safe') args.push('--toolsets', 'safe');
       if (policy?.safeMode !== 'disabled') args.push('--safe-mode');
       if (policy?.approvalMode === 'bypass') args.push('--yolo');
@@ -246,9 +265,10 @@ class HermesCliProvider extends PushProvider {
         }
         const error: any = new Error(`Hermes exited with code ${result.code}`);
         error.deliveryOutcome = classifyCliFailure(result);
+        const syntaxFailure = /usage:\s*hermes\b|unrecognized arguments?|invalid choice/i.test(detail);
         error.code = /quota|credit|额度|配额/i.test(detail)
           ? 'PROVIDER_QUOTA_EXHAUSTED'
-          : /login|auth|unauthorized|\b(?:401|403)\b|未登录|登录/i.test(detail)
+          : !syntaxFailure && /login|auth|unauthorized|\b(?:401|403)\b|未登录|登录/i.test(detail)
             ? 'PROVIDER_AUTH_REQUIRED' : 'PROVIDER_CLI_EXIT';
         error.exitCode = result.code;
         error.retryable = false;
@@ -305,8 +325,7 @@ class HermesCliProvider extends PushProvider {
         // `hermes -z` unconditionally enables YOLO and accepts hooks. Owner
         // steering must not silently bypass the same host boundary that protects
         // visitor turns, so use the regular single-query chat path instead.
-        args: ['--profile', profileId, 'chat', '-q', notification, '-Q', '--reasoning', 'none', '--source', 'tool',
-          '--toolsets', 'safe', '--safe-mode'],
+        args: [...this._baseInvocationArgs(profileId, notification), '--toolsets', 'safe', '--safe-mode'],
         tag: 'hermes-cli',
         timeout: 120000,
         env: hermesChildEnv(),
@@ -397,7 +416,6 @@ function _extractReply(stdout: string): string | null {
   const contentLines = lines.filter((line: string) =>
     !line.startsWith('[') &&
     !line.startsWith('{') &&
-    !line.startsWith('收到') &&
     !line.startsWith('---') &&
     !/^session_id\s*:/i.test(line) &&
     line.length > 2

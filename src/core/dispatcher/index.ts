@@ -18,6 +18,7 @@ import { classifyProviderDeliveryPresentation } from '../provider-delivery-prese
 import { classifyProviderTurnFailure } from '../provider-turn-status';
 import { appendProviderSecurityPrompt, getProviderSecurityControls, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
 import { hasNativeCapabilityControls, isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
+import { ZeroClawNativePolicyAdapter } from '../zeroclaw-native-policy';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
 import { sanitizeFinalProviderReply } from './provider-output-boundary';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
@@ -32,6 +33,7 @@ const { ProviderEventGate } = require('./provider-event-gate');
 const { parseA2AState, extractA2AVisibleReply } = require('./parse-state');
 const crypto = require('crypto');
 const { qwenOfficeLoginCommand } = require('./qwen-office-command');
+const { configuredUrl: configuredZeroClawWsUrl, configuredToken: configuredZeroClawWsToken } = require('./zeroclaw-ws-config');
 
 interface DispatcherProvider {
   priority?: number;
@@ -280,8 +282,13 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
   const _sessionCoordinator = new ProviderSessionCoordinator(db);
+  const hasZeroClawProvider = ['zeroclaw-cli','zeroclaw-acp','zeroclaw-ws'].some(id => Boolean(providers[id]));
+  const hasConfiguredZeroClawWs = Boolean(providers['zeroclaw-ws']
+    && configuredZeroClawWsUrl()
+    && configuredZeroClawWsToken());
   const providerSecurity = typeof (db as any).exec === 'function'
-    ? new ProviderSecurityPolicyService(db as any) : null;
+    ? new ProviderSecurityPolicyService(db as any, { nativeAdapters: hasZeroClawProvider
+      ? { zeroclaw: new ZeroClawNativePolicyAdapter({ reloadGateway: hasConfiguredZeroClawWs }) } : {} }) : null;
   const capabilityRefreshes = new Map<string, Promise<any>>();
   const _bindingStore = _sessionCoordinator.store;
   const _modularRollout = getProviderModularRollout(db);
@@ -1095,6 +1102,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       _temporaryPreferredChannels.set(agentId, { mode: selectedMode, providerId: selectedProviderId });
     }
     invalidateRoutes({ agentId, reason: 'manual-delivery-selection' });
+    return getAgentDeliveryStatus(agentId);
+  }
+
+  function clearTemporaryDeliveryChannel(agentId: string): AgentDeliveryStatus {
+    _temporaryPreferredChannels.delete(agentId);
+    invalidateRoutes({ agentId, reason: 'manual-delivery-selection-cleared' });
     return getAgentDeliveryStatus(agentId);
   }
 
@@ -2173,6 +2186,8 @@ Convergence obligations:
   }
 
   async function start() {
+    try { await providerSecurity?.recoverApplying(); }
+    catch (e) { console.error('[Dispatcher] Provider 原生权限恢复失败:', errorMessage(e)); }
     try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     try {
       const rows = db.prepare('SELECT agent_id FROM agents').all() as Array<{ agent_id?: string }>;
@@ -2215,11 +2230,18 @@ Convergence obligations:
     await runtimeRegistry.restart(providerId);
   }
 
-  function applyProviderSecurityPolicyChange(change: { agentId?: string; transportId?: string; lifecycleAction?: string }): boolean {
+  function applyProviderSecurityPolicyChange(change: { agentId?: string; transportId?: string; providerFamily?: string;
+    lifecycleAction?: string; agentScopeChanged?: boolean }): boolean {
     if (change.lifecycleAction !== 'restart_agent_runtime') return false;
-    const provider = providers[String(change.transportId || '')] as any;
-    if (!provider || typeof provider.restartAgentRuntime !== 'function') return false;
-    return provider.restartAgentRuntime(String(change.agentId || '')) === true;
+    const targets = change.agentScopeChanged
+      ? Object.entries(providers).filter(([id]) => getProviderTransport(id)?.family === change.providerFamily)
+      : [[String(change.transportId || ''), providers[String(change.transportId || '')]]] as Array<[string, any]>;
+    let restarted = false;
+    for (const [, provider] of targets) {
+      if (typeof (provider as any)?.restartAgentRuntime !== 'function') continue;
+      restarted = (provider as any).restartAgentRuntime(String(change.agentId || '')) === true || restarted;
+    }
+    return restarted;
   }
 
   function inspectProviderSecurity(agentId: string, transportId?: string): any {
@@ -2340,6 +2362,10 @@ Convergence obligations:
     }
     if (fault === 'fingerprint-change') {
       const actual = await refreshProviderCapability(agentId, transportId, true);
+      const before = providerSecurity.capability(agentId, transportId);
+      if (!before?.verified) return { fault, status: 'SKIPPED_NOT_READY',
+        reason: 'not_applicable_without_verified_capability', durationMs: Date.now() - startedAt,
+        injector: 'capability-snapshot' };
       providerSecurity.storeCapability(agentId, transportId, { ...actual,
         runtimeFingerprint: `${String(actual.runtimeFingerprint).slice(0, 110)}-changed`,
         capabilityDigest: `${String(actual.capabilityDigest).slice(0, 110)}-changed`, evidenceState: 'unknown',
@@ -2355,9 +2381,13 @@ Convergence obligations:
     throw new Error('PROVIDER_FAULT_TEST_UNKNOWN');
   }
 
-  function describeProviderSecurityInvocation(agentId: string, transportId: string, config?: Record<string,string>): any {
+  function describeProviderSecurityInvocation(agentId: string, transportId: string,
+    config?: Record<string,string>|{ transportConfig?: Record<string,string>; instanceConfig?: Record<string,string> }): any {
     const policy = providerSecurity?.effective(agentId, transportId);
-    const effectiveConfig = config || policy?.config || {};
+    const scopedConfig = config as { transportConfig?: Record<string,string> } | undefined;
+    const effectiveConfig: Record<string,string> = scopedConfig?.transportConfig
+      && typeof scopedConfig.transportConfig === 'object'
+      ? scopedConfig.transportConfig : config as Record<string,string> || policy?.config || {};
     const provider = providers[transportId] as any;
     const render = (value: Record<string,string>) => provider?.describeSecurityInvocation?.(value)
       || redactedInvocation(transportId, value);
@@ -2420,6 +2450,7 @@ Convergence obligations:
     clearDeliveryEvidence,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
+    clearTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
     invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, inspectProviderRuntime, refreshProviderSecurityCapability,
     exerciseProviderCapabilityFault,

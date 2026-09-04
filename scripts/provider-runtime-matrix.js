@@ -27,6 +27,7 @@ const HELP = `Usage: node scripts/provider-runtime-matrix.js [options]
   --faults probe-timeout,runtime-timeout,fingerprint-change,circuit-breaker
   --continue-on-user-action
   --driver visitor|a2a
+  --permissions all|none
   --visitor-base-url https://im.vokovoko.com
   --visitor-profile <persistent-profile-directory>
   --dry-run
@@ -107,6 +108,7 @@ function parseArgs(argv) {
     retries: Math.max(0, Number(values.retries || 2)),
     resultTimeoutMs: Math.max(10_000, Number(values['result-timeout-ms'] || process.env.VOKO_REAL_RESULT_TIMEOUT_MS || 180_000)),
     driver: String(values.driver || 'visitor'),
+    permissions: String(values.permissions || 'all') === 'none' ? 'none' : 'all',
     visitorBaseUrl: String(values['visitor-base-url'] || process.env.VOKO_VISITOR_BASE_URL || 'https://im.vokovoko.com'),
     visitorProfile: String(values['visitor-profile'] || process.env.VOKO_VISITOR_PROFILE || path.join(ARTIFACT_ROOT, 'visitor-profile')),
     visitorHeaded: values['visitor-headed'] === true,
@@ -183,6 +185,12 @@ function filterCells(cells, options) {
     && (!transports || transports.has(cell.transport) || transports.has(cell.mode)));
 }
 
+function runtimeBuildEvidence(status = {}) {
+  const digestValue = String(status.runtimeBuildDigest || status.buildDigest || '');
+  const state = status.buildState || (status.runtimeBuildDigest ? 'unknown' : 'legacy');
+  return { digest: digestValue, state, usable: Boolean(digestValue) && !['stale', 'unknown'].includes(state) };
+}
+
 function enrichCellRuntime(host, cell) {
   const inspected = callRuntimeControl(host, ['inspect_provider_runtime', '--agentId', cell.agentId,
     '--transportId', cell.transport], 30_000);
@@ -245,16 +253,26 @@ function saferPolicyChange(security) {
 
 function policyCanaries(security, agentName, marker = 'VOKO-CANARY') {
   const rank = { low: 0, medium: 1, high: 2 };
-  const config = security?.config || {};
+  const transportConfig = security?.transportPolicy?.config || security?.config || {};
+  const instanceConfig = security?.instancePolicy?.config || {};
   const dedicated = String(agentName || '').startsWith('TEST-');
   const canaries = [];
-  for (const control of security?.controls || []) {
+  const scopedControls = [
+    ...(security?.instancePolicy?.controls || []).map(control => ({ control, scope: 'agent', config: instanceConfig })),
+    ...(security?.controls || []).map(control => ({ control, scope: 'transport', config: transportConfig })),
+  ];
+  for (const { control, scope, config } of scopedControls) {
     if (!control?.editable) continue;
+    const scopedConfig = (next) => ({
+      instanceConfig: scope === 'agent' ? next : instanceConfig,
+      transportConfig: scope === 'transport' ? next : transportConfig,
+    });
     if (control.kind === 'text') {
       const current = String(config[control.id] || '');
       const suffix = `\n[${marker}:${control.id}]`;
-      canaries.push({ controlId: control.id, kind: 'text', from: current, to: `${current}${suffix}`.slice(0, control.maxLength || 2000),
-        config: { ...config, [control.id]: `${current}${suffix}`.slice(0, control.maxLength || 2000) } });
+      const next = { ...config, [control.id]: `${current}${suffix}`.slice(0, control.maxLength || 2000) };
+      canaries.push({ controlId: control.id, scope, kind: 'text', from: current, to: next[control.id],
+        config: scopedConfig(next) });
       continue;
     }
     if (control.kind !== 'enum' || !Array.isArray(control.values)) continue;
@@ -263,8 +281,9 @@ function policyCanaries(security, agentName, marker = 'VOKO-CANARY') {
       .sort((a, b) => (rank[a.risk] ?? 99) - (rank[b.risk] ?? 99));
     const selected = alternatives.find(item => dedicated || (rank[item.risk] ?? 99) <= (rank[current?.risk] ?? 99));
     if (!selected) continue;
-    canaries.push({ controlId: control.id, kind: 'enum', from: current?.value, to: selected.value, risk: selected.risk,
-      config: { ...config, [control.id]: selected.value } });
+    const next = { ...config, [control.id]: selected.value };
+    canaries.push({ controlId: control.id, scope, kind: 'enum', from: current?.value, to: selected.value, risk: selected.risk,
+      config: scopedConfig(next) });
   }
   return canaries;
 }
@@ -438,12 +457,12 @@ function checkpointFor(runId, options, artifactRoot = ARTIFACT_ROOT) {
   const file = path.join(dir, 'checkpoint.json');
   if (fs.existsSync(file)) {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const immutable = ['hosts', 'providers', 'transports', 'repeat', 'faults', 'driver'];
+    const immutable = ['hosts', 'providers', 'transports', 'repeat', 'faults', 'driver', 'permissions'];
     const changed = immutable.filter(key => JSON.stringify(data.options?.[key]) !== JSON.stringify(options[key]));
     if (changed.length) throw new Error(`resume options differ from checkpoint: ${changed.join(', ')}`);
     return { dir, file, data };
   }
-  const data = { schema: 1, runId, startedAt: new Date().toISOString(), updatedAt: null, options, buildDigests: {},
+  const data = { schema: 1, runId, startedAt: new Date().toISOString(), updatedAt: null, options, buildDigests: {}, buildStates: {},
     visitorAccess: {}, cells: {}, skipped: [], userActions: [], events: [] };
   atomicJson(file, data);
   return { dir, file, data };
@@ -467,8 +486,10 @@ function callSafe(host, args, timeout = 60_000) {
   catch (error) { return { ok: false, error: String(error.message || error) }; }
 }
 
-function prepareVisitorAccess(host, inventory, visitorId) {
-  const agents = inventory.agents.filter(agent => String(agent.agentName || '').startsWith('TEST-'));
+function prepareVisitorAccess(host, inventory, visitorId, agentIds = null) {
+  const selectedAgentIds = agentIds ? new Set(agentIds) : null;
+  const agents = inventory.agents.filter(agent => String(agent.agentName || '').startsWith('TEST-')
+    && (!selectedAgentIds || selectedAgentIds.has(agent.agentId)));
   const results = [];
   for (const agent of agents) {
     const remove = callSafe(host, ['manage_blacklist', '--agentId', agent.agentId, '--action', 'remove',
@@ -680,12 +701,24 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
     record.status = statuses.includes('NEEDS_USER_ACTION') ? 'NEEDS_USER_ACTION'
       : statuses.length === options.repeat && statuses.every(item => item === 'PASS')
         && record.reason !== 'native_session_not_reused' ? 'PASS' : 'FAIL';
-    if (record.status === 'PASS' && options.driver === 'visitor' && securityData) {
+    if (record.status === 'PASS' && options.driver === 'visitor' && options.permissions !== 'none' && securityData) {
       record.permissionCanaries = record.permissionCanaries || [];
       const canaries = policyCanaries(securityData, cell.agentName, `${ctx.data.runId}-${cell.transport}`);
       for (const canary of canaries) {
         if (record.permissionCanaries.some(item => item.controlId === canary.controlId && item.status === 'PASS')) continue;
-        const item = { controlId: canary.controlId, kind: canary.kind, from: canary.from, to: canary.to,
+        if (canary.scope === 'agent') {
+          const prior = Object.values(ctx.data.cells).find(item => item !== record && item.host === cell.host
+            && item.agentId === cell.agentId && item.provider === cell.provider
+            && item.permissionCanaries?.some(entry => entry.scope === 'agent'
+              && entry.controlId === canary.controlId && entry.status === 'PASS'));
+          if (prior) {
+            record.permissionCanaries.push({ controlId: canary.controlId, scope: 'agent', status: 'PASS',
+              reusedEvidenceFrom: prior.transport, reason: 'agent_scope_already_verified' });
+            saveCheckpoint(ctx);
+            continue;
+          }
+        }
+        const item = { controlId: canary.controlId, scope: canary.scope, kind: canary.kind, from: canary.from, to: canary.to,
           status: 'RUNNING', startedAt: new Date().toISOString() };
         record.permissionCanaries.push(item);
         const changed = commitPolicy(host, cell, canary.config, cell.agentName);
@@ -701,19 +734,31 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
           const refreshedAfter = callSafe(host, ['refresh_provider_security_capability', '--agentId', cell.agentId,
             '--transportId', cell.transport], 35_000);
           item.capabilityRefresh = refreshedAfter.ok ? redact(refreshedAfter.value) : { error: refreshedAfter.error };
-          const visitor = await runVisitorTurn(ctx, cell, `canary-${canary.controlId}`, 0, options, visitorDriver);
-          item.visitorTurn = visitor;
-          if (visitor.status === 'PASS') {
-            visitor.turnEvidence = await captureTurnEvidence(host, cell, { since: Date.now() - visitor.durationMs - 2000 }, null);
-            const turn = visitor.turnEvidence?.data?.turn;
-            item.status = turn?.transport_id === cell.transport ? 'PASS' : 'FAIL';
-            if (item.status === 'FAIL') item.reason = turn ? `transport_mismatch:${turn.transport_id}` : 'provider_turn_evidence_missing';
-          } else { item.status = visitor.status; item.reason = visitor.error || 'visitor_canary_failed'; }
+          const reselected = callRuntimeControl(host, ['select_delivery_channel', '--agentId', cell.agentId,
+            '--mode', cell.mode, '--providerId', cell.transport], 35_000, 2);
+          item.transportReselection = reselected.ok ? redact(reselected.value) : { error: reselected.error };
+          if (!reselected.ok || reselected.value?.success === false) {
+            item.status = 'FAIL'; item.reason = 'transport_not_ready_after_policy_restart';
+          } else {
+            const visitor = await runVisitorTurn(ctx, cell, `canary-${canary.controlId}`, 0, options, visitorDriver);
+            item.visitorTurn = visitor;
+            if (visitor.status === 'PASS') {
+              visitor.turnEvidence = await captureTurnEvidence(host, cell, { since: Date.now() - visitor.durationMs - 2000 }, null);
+              const turn = visitor.turnEvidence?.data?.turn;
+              item.status = turn?.transport_id === cell.transport ? 'PASS' : 'FAIL';
+              if (item.status === 'FAIL') item.reason = turn ? `transport_mismatch:${turn.transport_id}` : 'provider_turn_evidence_missing';
+            } else { item.status = visitor.status; item.reason = visitor.error || 'visitor_canary_failed'; }
+          }
         } finally {
-          item.restore = commitPolicy(host, cell, securityData.config, cell.agentName);
+          const baselineScoped = { instanceConfig: securityData.instancePolicy?.config || {},
+            transportConfig: securityData.transportPolicy?.config || securityData.config || {} };
+          item.restore = commitPolicy(host, cell, baselineScoped, cell.agentName);
           const restored = callSafe(host, ['inspect_provider_security', '--agentId', cell.agentId, '--transportId', cell.transport]);
           item.securityAfterRestore = restored.ok ? redact(restored.value) : { error: restored.error };
-          if (!item.restore.ok || digest(restored.value?.data?.config || {}) !== digest(securityData.config)) {
+          const restoredData = restored.value?.data || {};
+          if (!item.restore.ok
+            || digest(restoredData.transportPolicy?.config || restoredData.config || {}) !== digest(baselineScoped.transportConfig)
+            || digest(restoredData.instancePolicy?.config || {}) !== digest(baselineScoped.instanceConfig)) {
             item.status = 'FAIL'; item.reason = 'isolated_canary_restore_failed';
           }
           item.finishedAt = new Date().toISOString();
@@ -736,12 +781,7 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
         record.reason = 'policy_restore_failed';
       }
     }
-    const baselineProvider = record.baseline.activeProvider;
-    const baselineMode = record.baseline.activeAutomaticMode;
-    const selectionChanged = baselineProvider !== cell.transport || baselineMode !== cell.mode;
-    record.restore = baselineProvider && baselineMode && selectionChanged
-      ? callRuntimeControl(host, ['select_delivery_channel', '--agentId', cell.agentId, '--mode', baselineMode, '--providerId', baselineProvider])
-      : { ok: true, value: { unchanged: true } };
+    record.restore = callRuntimeControl(host, ['select_delivery_channel', '--agentId', cell.agentId, '--mode', 'auto']);
     record.finishedAt = new Date().toISOString();
     if (!record.restore.ok && record.status !== 'NEEDS_USER_ACTION') record.status = 'FAIL';
     saveCheckpoint(ctx);
@@ -752,7 +792,12 @@ async function runCell(ctx, host, inventory, cell, options, visitorDriver) {
 
 function faultEligibility(cell, fault) {
   if (!String(cell.agentName || '').startsWith('TEST-')) return { ok: false, reason: 'faults_require_TEST_agent' };
-  if (!['workbuddy-http', 'qwen-office-cli', 'dumate-http'].includes(cell.transport)) {
+  if (![
+    'workbuddy-http', 'qwen-office-cli', 'dumate-http',
+    'zeroclaw-cli', 'zeroclaw-acp', 'zeroclaw-ws',
+    'hermes-cli', 'hermes-http',
+    'opencode-cli', 'opencode-acp', 'opencode-attach',
+  ].includes(cell.transport)) {
     return { ok: false, reason: `capability_faults_not_applicable_to_${cell.transport}` };
   }
   if (!['probe-timeout', 'runtime-timeout', 'fingerprint-change', 'circuit-breaker'].includes(fault)) {
@@ -773,8 +818,10 @@ async function runFault(host, cell, fault) {
     : { fault, status: 'FAIL', ...eligible, error: result.error || result.value?.error };
 }
 
-async function runRecoveryTurn(ctx, host, cell, sender, timeoutMs) {
+async function runRecoveryTurn(ctx, host, cell, sender, timeoutMs, options, visitorDriver) {
   const marker = `${ctx.data.runId}-${cell.host}-${cell.transport}-recovery`.replace(/[^a-zA-Z0-9-]/g, '-');
+  if (visitorDriver) return runVisitorTurn(ctx, cell, 'fault-recovery', 0,
+    { ...options, resultTimeoutMs: timeoutMs }, visitorDriver);
   const startedAt = Date.now();
   try {
     const sent = host.json(['send_message', '--agentId', sender.agentId, '--toUid', cell.imUid,
@@ -802,11 +849,12 @@ function writeReport(ctx) {
       && (fault.status === 'PASS' || (fault.status === 'SKIPPED_NOT_READY' && /not_applicable/.test(String(fault.reason || '')))))));
   const summary = { runId: ctx.data.runId, startedAt: ctx.data.startedAt, finishedAt: new Date().toISOString(),
     counts, faultCounts, acceptancePassed: (counts.FAIL || 0) === 0 && (counts.BLOCKED_BUILD_MISMATCH || 0) === 0
-      && requestedFaultsComplete, buildDigests: ctx.data.buildDigests, userActions: ctx.data.userActions, cells, skipped: ctx.data.skipped };
+      && requestedFaultsComplete, buildDigests: ctx.data.buildDigests, buildStates: ctx.data.buildStates,
+    userActions: ctx.data.userActions, cells, skipped: ctx.data.skipped };
   atomicJson(path.join(ctx.dir, 'summary.json'), redact(summary));
   const esc = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[char]));
   const rows = [...cells, ...ctx.data.skipped].map(item => `<tr><td>${esc(item.status)}</td><td>${esc(item.host)}</td><td>${esc(item.agentName)}</td><td>${esc(item.provider)}</td><td>${esc(item.transport || '-')}</td><td>${esc(item.reason || '')}</td></tr>`).join('');
-  fs.writeFileSync(path.join(ctx.dir, 'report.html'), `<!doctype html><meta charset="utf-8"><title>VOKO Provider runtime matrix</title><style>body{font:14px system-ui;max-width:1200px;margin:30px auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}th{background:#f5f5f5}</style><h1>VOKO Provider runtime matrix</h1><pre>${esc(JSON.stringify({ runId: summary.runId, acceptancePassed: summary.acceptancePassed, counts, faultCounts, buildDigests: summary.buildDigests }, null, 2))}</pre><table><tr><th>Status</th><th>Host</th><th>Agent</th><th>Provider</th><th>Transport</th><th>Reason</th></tr>${rows}</table>`);
+  fs.writeFileSync(path.join(ctx.dir, 'report.html'), `<!doctype html><meta charset="utf-8"><title>VOKO Provider runtime matrix</title><style>body{font:14px system-ui;max-width:1200px;margin:30px auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}th{background:#f5f5f5}</style><h1>VOKO Provider runtime matrix</h1><pre>${esc(JSON.stringify({ runId: summary.runId, acceptancePassed: summary.acceptancePassed, counts, faultCounts, buildDigests: summary.buildDigests, buildStates: summary.buildStates }, null, 2))}</pre><table><tr><th>Status</th><th>Host</th><th>Agent</th><th>Provider</th><th>Transport</th><th>Reason</th></tr>${rows}</table>`);
   return summary;
 }
 
@@ -831,7 +879,18 @@ async function main() {
     const digests = new Set();
     for (const [name, host] of Object.entries(hosts)) {
       let inventory;
-      try { inventory = host.inventory(20_000); }
+      try {
+        inventory = host.inventory(20_000, options.providers === 'installed-ready');
+        // A freshly restarted VOKO publishes its process status before all
+        // Provider adapters finish their first readiness pass. Do not freeze
+        // that transient all-unready snapshot into the matrix inventory.
+        for (let attempt = 0; attempt < 6
+          && inventory.agents.length > 0
+          && !inventory.agents.some(agent => agent.runtime?.automaticDeliveryReady === true); attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 5_000));
+          inventory = host.inventory(20_000, options.providers === 'installed-ready');
+        }
+      }
       catch (error) {
         ctx.data.skipped.push({ host: name, status: 'NEEDS_USER_ACTION', reason: 'host_inventory_unavailable',
           error: String(error.message || error) });
@@ -839,24 +898,36 @@ async function main() {
         continue;
       }
       inventories[name] = inventory;
-      const buildDigest = String(inventory.status.buildDigest || '');
+      // The CLI executable can be replaced while an older VOKO process keeps
+      // running. Formal evidence must bind to the digest captured by that
+      // process at startup, not merely to the files currently on disk.
+      const buildEvidence = runtimeBuildEvidence(inventory.status);
+      const buildDigest = buildEvidence.digest;
       ctx.data.buildDigests[name] = buildDigest;
+      ctx.data.buildStates[name] = buildEvidence.state;
       if (buildDigest) digests.add(buildDigest);
     }
+  const discoveries = {};
+  for (const [name, inventory] of Object.entries(inventories)) {
+    discoveries[name] = discoverCells({ [name]: inventory }, ctx.data.buildDigests[name]);
+    discoveries[name].selected = filterCells(discoveries[name].cells, options);
+  }
   ctx.data.visitorAccess ||= {};
   if (visitorDriver && !options.dryRun) {
     const visitorId = await visitorDriver.visitorId();
     for (const [name, inventory] of Object.entries(inventories)) {
+      const selectedAgentIds = [...new Set(discoveries[name].selected.map(cell => cell.agentId))];
       ctx.data.visitorAccess[name] = { visitorId: digest(visitorId).slice(0, 16),
-        agents: prepareVisitorAccess(hosts[name], inventory, visitorId) };
+        agents: prepareVisitorAccess(hosts[name], inventory, visitorId, selectedAgentIds) };
     }
     saveCheckpoint(ctx);
   }
-  const sameBuild = digests.size === 1 && Object.values(ctx.data.buildDigests).every(Boolean);
+  const sameBuild = digests.size === 1 && Object.values(ctx.data.buildDigests).every(Boolean)
+    && Object.values(ctx.data.buildStates || {}).every(state => !['stale', 'unknown'].includes(state));
   for (const [name, inventory] of Object.entries(inventories)) {
-    const discovered = discoverCells({ [name]: inventory }, ctx.data.buildDigests[name]);
+    const discovered = discoveries[name];
     ctx.data.skipped.push(...discovered.skipped.filter(item => !ctx.data.skipped.some(old => old.host === item.host && old.agentId === item.agentId)));
-    for (const discoveredCell of filterCells(discovered.cells, options)) {
+    for (const discoveredCell of discovered.selected) {
       if (options.dryRun) {
         ctx.data.cells[discoveredCell.key] = { ...discoveredCell, status: 'SKIPPED_NOT_READY', reason: 'dry_run' };
         continue;
@@ -884,7 +955,8 @@ async function main() {
       }
       if (performedFault) {
         const sender = chooseSender(inventory, cell);
-        result.recoveryTurn = sender ? await runRecoveryTurn(ctx, hosts[name], cell, sender, options.resultTimeoutMs)
+        result.recoveryTurn = sender ? await runRecoveryTurn(ctx, hosts[name], cell, sender, options.resultTimeoutMs,
+          options, visitorDriver)
           : { status: 'SKIPPED_NOT_READY', reason: 'no_connected_sender' };
         if (result.recoveryTurn.status !== 'PASS' || result.faults.some(item => item.ok && item.status !== 'PASS')) {
           result.status = 'FAIL';
@@ -909,4 +981,4 @@ async function main() {
 
 if (require.main === module) main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });
 
-module.exports = { acquireMatrixLock, atomicJson, callRuntimeControl, captureTurnEvidence, checkpointFor, chooseSender, classifyResult, commitPolicy, digest, discoverCells, enrichCellRuntime, faultEligibility, filterCells, mayRetryAttempt, methodNeedsVerification, parseArgs, PersistentVisitorDriver, policyCanaries, prepareVisitorAccess, redact, runFault, runVisitorTurn, saferPolicyChange, submittedOutcomeUnknown, writeCellArtifact };
+module.exports = { acquireMatrixLock, atomicJson, callRuntimeControl, captureTurnEvidence, checkpointFor, chooseSender, classifyResult, commitPolicy, digest, discoverCells, enrichCellRuntime, faultEligibility, filterCells, mayRetryAttempt, methodNeedsVerification, parseArgs, PersistentVisitorDriver, policyCanaries, prepareVisitorAccess, redact, runFault, runVisitorTurn, runtimeBuildEvidence, saferPolicyChange, submittedOutcomeUnknown, writeCellArtifact };

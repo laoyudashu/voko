@@ -166,11 +166,11 @@ class Host {
     return parseJson(this.voko(args, timeout), `${this.name} voko ${args[0]}`);
   }
 
-  inventory(timeout = 30_000) {
+  inventory(timeout = 30_000, inspectEnvironment = true) {
     const status = this.json(['status', '--json'], timeout);
     const listed = this.json(['list_agents'], timeout);
     let providerEnvironment = null;
-    try {
+    if (inspectEnvironment) try {
       const inspected = this.json(['manage_agent_registration', '--action', 'inspect_environment'], timeout);
       providerEnvironment = inspected?.environment || null;
     } catch (_) { /* Agent inventory remains usable when provider discovery is unavailable. */ }

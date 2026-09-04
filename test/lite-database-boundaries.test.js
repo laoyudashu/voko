@@ -41,11 +41,17 @@ test('database initialization creates a missing parent directory', (t) => {
   assert.equal(policyColumns.has('runtime_evidence_json'), true);
   assert.equal(policyColumns.has('capability_digest'), true);
   assert.equal(policyColumns.has('probe_retry_after'), true);
+  const agentPolicyColumns = new Set(db.prepare('PRAGMA table_info(provider_agent_security_policies)').all().map(row => row.name));
+  assert.equal(agentPolicyColumns.has('provider_subject_key'), true);
+  assert.equal(agentPolicyColumns.has('native_policy_digest'), true);
+  assert.equal(agentPolicyColumns.has('pending_config_json'), true);
   const preflightColumns = new Set(db.prepare('PRAGMA table_info(provider_security_preflights)').all().map(row => row.name));
   assert.equal(preflightColumns.has('expected_capability_digest'), true);
+  assert.equal(preflightColumns.has('expected_agent_revision'), true);
   const turnColumns = new Set(db.prepare('PRAGMA table_info(provider_security_turns)').all().map(row => row.name));
   assert.equal(turnColumns.has('runtime_fingerprint'), true);
   assert.equal(turnColumns.has('fallback_mode'), true);
+  assert.equal(turnColumns.has('agent_policy_digest'), true);
 });
 
 test('current Lite accepts the shared schema v9 marker', (t) => {

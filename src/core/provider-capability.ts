@@ -56,6 +56,8 @@ const VERIFIED_RUNTIME_RULES: Record<string, Partial<Record<NodeJS.Platform, str
   'codex-cli': { darwin: ['0.151.0-alpha.7.1'] },
   'qwen-cli': { darwin: ['0.21.13'] },
   'goose-cli': { darwin: ['1.46.0'] },
+  'opencode-cli': { darwin: ['1.18.18'] },
+  'opencode-acp': { darwin: ['1.18.18'] },
   'workbuddy-http': { darwin: ['2.139.0'], win32: ['2.141.0'] },
   'qwen-office-cli': { win32: ['1.0.47','1.1.18'], darwin: ['1.1.18'] },
   'dumate-http': {},
@@ -70,6 +72,9 @@ const VERIFIED_NATIVE_CONTROLS: Record<string, string[]> = {
   'codex-cli': ['sandboxMode'],
   'qwen-cli': ['tools'],
   'goose-cli': ['extensionProfile'],
+  'opencode-cli': ['pluginMode', 'approvalMode'],
+  'opencode-acp': ['pluginMode', 'permissionCallback'],
+  'opencode-attach': ['loopbackServer'],
   'workbuddy-http': ['dataFileAccess', 'permissionMode', 'sessionPersistence', 'mcpProfile'],
   'qwen-office-cli': ['sessionPersistence', 'permissionMode', 'toolAccess', 'mcpProfile'],
   'dumate-http': ['sessionPersistence', 'isolatedDataRoot', 'loopbackOnly'],
@@ -140,17 +145,19 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   const readinessVerified = evidence?.readiness?.verificationStatus === 'loopback_verified';
   const versionRuleMatched = Boolean(runtimeVersion
     && VERIFIED_RUNTIME_RULES[transportId]?.[process.platform]?.includes(runtimeVersion));
-  const providerParametersVerified = readinessVerified || versionRuleMatched;
+  const explicitControlEvidence = evidence?.controlEvidence && typeof evidence.controlEvidence === 'object'
+    ? evidence.controlEvidence : {};
   const verifiedNativeControls = new Set(VERIFIED_NATIVE_CONTROLS[transportId] || []);
   const supportedControls: ProviderCapabilitySnapshot['supportedControls'] = Object.fromEntries(definitions
     .filter(item => item.enforcement !== 'unsupported'
       && (item.enforcement === 'voko_enforced'
-        || (providerParametersVerified && verifiedNativeControls.has(item.id))))
+        || (verifiedNativeControls.has(item.id) && (versionRuleMatched || explicitControlEvidence[item.id]))))
     .map(item => [item.id, {
     values: (item.values || []).map(value => value.value), enforcement: item.enforcement,
     boundary: boundaryFor(transportId, item.id),
-    evidence: readinessVerified ? 'real_test' as const
-      : transportId === 'dumate-http' ? 'protocol_verified' as const : 'static_documented' as const,
+    evidence: explicitControlEvidence[item.id] ? 'real_test' as const
+      : item.enforcement === 'voko_enforced' || transportId === 'dumate-http'
+        ? 'protocol_verified' as const : 'static_documented' as const,
   }]));
   const evidenceState: ProviderCapabilityEvidenceState = identity.available
     ? readinessVerified ? 'verified' : versionRuleMatched ? 'static_compatible' : 'unknown' : 'failed';
@@ -214,6 +221,20 @@ export function redactedInvocation(transportId: string, config: Record<string, s
   ];
   if (transportId === 'goose-cli') return [{ text: 'goose run', risk: 'low' },
     { text: config.extensionProfile === 'disabled' ? '--no-profile' : '<默认扩展>', risk: config.extensionProfile === 'disabled' ? 'low' : 'high', sourceControl: 'extensionProfile', enforcement: 'provider_enforced' }];
+  if (transportId === 'opencode-cli') return [
+    { text: 'opencode run --format json <访客消息>', risk: 'low' },
+    ...(config.pluginMode === 'isolated' ? [{ text: '--pure', risk: 'low' as const, sourceControl: 'pluginMode', enforcement: 'provider_enforced' as const }] : []),
+    ...(config.approvalMode === 'auto' ? [{ text: '--auto', risk: 'high' as const, sourceControl: 'approvalMode', enforcement: 'provider_enforced' as const }] : []),
+  ];
+  if (transportId === 'opencode-acp') return [
+    { text: 'opencode acp', risk: 'low' },
+    ...(config.pluginMode === 'isolated' ? [{ text: '--pure', risk: 'low' as const, sourceControl: 'pluginMode', enforcement: 'provider_enforced' as const }] : []),
+    { text: 'ACP permission request -> denied', risk: 'low', sourceControl: 'permissionCallback', enforcement: 'voko_enforced' },
+  ];
+  if (transportId === 'opencode-attach') return [
+    { text: 'POST http://127.0.0.1:<随机端口>/session/<id>/prompt_async', risk: 'low' },
+    { text: 'Basic Auth <随机凭据>', risk: 'low', sourceControl: 'loopbackServer', enforcement: 'voko_enforced' },
+  ];
   if (transportId === 'qwen-cli') return [{ text: 'qwen <访客消息>', risk: 'low' },
     { text: '工具执行预算：0', risk: 'low', sourceControl: 'tools', enforcement: 'provider_enforced' }];
   return [{ text: `${transportId} <访客消息>`, risk: 'low' },

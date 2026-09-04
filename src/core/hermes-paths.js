@@ -49,7 +49,14 @@ function getHermesProfilePath(profileName, ...segments) {
 }
 
 function getHermesProfilePathCandidates(profileName, ...segments) {
-  return getHermesDirCandidates().map(dir => path.join(dir, 'profiles', profileName, ...segments));
+  const candidates = getHermesDirCandidates().map(dir => path.join(dir, 'profiles', profileName, ...segments));
+  // Hermes versions through 0.19 resolve `--profile default` from the root
+  // profile, while newer builds may also materialize profiles/default. Read
+  // both without conflating any named profile with the root configuration.
+  if (profileName === 'default') {
+    candidates.push(...getHermesDirCandidates().map(dir => path.join(dir, ...segments)));
+  }
+  return [...new Set(candidates)];
 }
 
 function getHermesEnvPath() {

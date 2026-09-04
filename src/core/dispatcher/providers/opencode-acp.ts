@@ -11,12 +11,23 @@ import type { CliProviderOptions } from '../../adapters/cli-adapter';
 class OpenCodeAcpProvider extends AcpAdapter {
   constructor(options: CliProviderOptions = {}) {
     const command=resolveOpenCodeCommand();
+    const db = options.db || null;
+    const argsForAgent = (agentId: string): string[] => {
+      let pluginMode = 'isolated';
+      try {
+        const row = db?.prepare(`SELECT config_json FROM provider_security_policies
+          WHERE agent_id=? AND transport_id='opencode-acp' LIMIT 1`).get(agentId) as any;
+        if (row?.config_json) pluginMode = JSON.parse(row.config_json).pluginMode === 'default' ? 'default' : 'isolated';
+      } catch (_) {}
+      return ['acp', ...(pluginMode === 'isolated' ? ['--pure'] : [])];
+    };
     super({
       name: 'OPENCODE ACP',
       matchType: 'opencode',
       adapterType: 'opencode-acp',
       cliPath: command || '__voko_opencode_unavailable__',
       args: ['acp'],
+      argsForAgent,
       db: options.db,
       sessionPersistence: options.sessionPersistence,
       cwd: options.cwd || os.tmpdir(),

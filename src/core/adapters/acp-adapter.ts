@@ -38,6 +38,7 @@ export interface AcpAdapterOptions {
   runtimeRequest?: RuntimeRequest;
   runtimeResolver?: AgentRuntimeResolver;
   args?: string[];
+  argsForAgent?: (agentId: string) => string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
   loopbackTimeout?: number;
@@ -391,6 +392,17 @@ class AcpAdapter extends PushProvider {
       this._markAgentHealth(agentId, false, 'provider-stopped');
     }
     this._started = false;
+  }
+
+  /** Drop only this Agent's native process/session after a runtime-scoped policy change. */
+  restartAgentRuntime(agentId: string): boolean {
+    const state = this._stateForAgent(agentId);
+    if (!state) return true;
+    for (const [key, value] of this._agents) if (value === state) this._agents.delete(key);
+    this._cancelScheduledRecovery(agentId);
+    this._disconnectAgent(agentId, state, 'security-policy-changed');
+    this._markAgentHealth(agentId, true, 'security-policy-restart-pending');
+    return true;
   }
 
   /**
@@ -824,7 +836,8 @@ class AcpAdapter extends PushProvider {
       const cliPath = this._cliPath as string;
       const isNodeScript = !runtime && cliPath.endsWith('.js');
       const cmd = runtime?.executable || (isNodeScript ? process.execPath : cliPath);
-      const cmdArgs = runtime ? [...runtime.argvPrefix, ...this._cliArgs] : (isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs]);
+      const configuredArgs = this.options.argsForAgent?.(agentId) || this._cliArgs;
+      const cmdArgs = runtime ? [...runtime.argvPrefix, ...configuredArgs] : (isNodeScript ? [cliPath, ...configuredArgs] : [...configuredArgs]);
       console.log(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -857,8 +870,11 @@ class AcpAdapter extends PushProvider {
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         state.transportAlive = false;
         const currentState = this._agents.get(stateKey);
+        // A deliberately detached process (for example after a policy change)
+        // must not be allowed to mark the replacement runtime unavailable when
+        // its delayed exit event arrives.
         if (!this._providerStopped && state.lifecycleEpoch === this._recoveryEpoch
-          && (!currentState || currentState === state)) {
+          && currentState === state) {
           this._markStateHealth(state, agentId, false, 'process-exit:' + (code ?? signal ?? 'unknown'));
           this._scheduleRecovery(agentId);
         }
@@ -925,7 +941,7 @@ class AcpAdapter extends PushProvider {
     }).catch((err: unknown) => {
       state.transportAlive = false;
       const currentState = this._agents.get(stateKey);
-      if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch) return;
+      if (currentState !== state || state.lifecycleEpoch !== this._recoveryEpoch) return;
       this._markStateHealth(state, agentId, false, 'connection-error:' + errorMessage(err));
       this._scheduleRecovery(agentId);
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
@@ -983,6 +999,7 @@ class AcpAdapter extends PushProvider {
     const channelId = String((payload as any).sessionScopeId || payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, ''));
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     let binding = payload.providerBinding?.providerType === this._bindingProviderType
+      && payload.providerBinding?.adapterType === this._adapterType
       ? payload.providerBinding
       : null;
     if (!binding && this._bindingStore) {

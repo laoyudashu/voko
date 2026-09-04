@@ -129,6 +129,13 @@ test('temporary delivery selection overrides persisted order without changing th
   dispatchOnce(dispatcher);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, ['cli']);
+
+  const restored = dispatcher.clearTemporaryDeliveryChannel('agent-1');
+  assert.equal(restored.temporaryPreferredMode, null);
+  assert.equal(restored.temporaryPreferredProvider, null);
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['cli', 'websocket']);
 });
 
 test('temporary pull selection leaves new messages for on-demand pickup until restart', async () => {

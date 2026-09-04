@@ -45,18 +45,34 @@ test('OpenCode visitor prompts carry explicit role and session boundaries', () =
   assert.match(prompt, /Visitor message:\nhello/);
 });
 
-test('OpenCode CLI resumes the exact ACP native session instead of continuing the latest session', () => {
+test('OpenCode CLI never reuses a native session created by another transport', () => {
   const provider = new OpenCodeCliProvider();
   const args = provider._argsForSession('session-from-acp', false);
   assert.deepEqual(args.slice(-3), ['--session', 'session-from-acp', '{prompt}']);
   assert.equal(args.includes('--continue'), false);
   assert.equal(provider.acceptsBinding({
     providerType: 'opencode', adapterType: 'opencode-acp', deliveryMode: 'acp', nativeSessionId: 'session-from-acp',
+  }, 'agent-a'), false);
+  assert.equal(provider.acceptsBinding({
+    providerType: 'opencode', adapterType: 'opencode-cli', deliveryMode: 'cli', nativeSessionId: 'session-from-cli',
   }, 'agent-a'), true);
   assert.equal(provider.acceptsBinding({
     providerType: 'opencode', adapterType: 'foreign-cli', deliveryMode: 'cli', nativeSessionId: 'session-from-acp',
   }, 'agent-a'), false);
   assert.equal(provider._sessionIdFromLine(JSON.stringify({ type: 'step_start', sessionID: 'session-from-acp' })), 'session-from-acp');
+});
+
+test('OpenCode ACP builds startup arguments from its own transport policy only', () => {
+  const db = sessionDb();
+  db.exec(`CREATE TABLE provider_security_policies(
+    agent_id TEXT,transport_id TEXT,config_json TEXT,PRIMARY KEY(agent_id,transport_id));
+    INSERT INTO provider_security_policies VALUES('agent-a','opencode-acp','{"pluginMode":"default"}');
+    INSERT INTO provider_security_policies VALUES('agent-a','opencode-cli','{"pluginMode":"isolated"}');`);
+  try {
+    const provider = new OpenCodeAcpProvider({ db });
+    assert.deepEqual(provider.options.argsForAgent('agent-a'), ['acp']);
+    assert.deepEqual(provider.options.argsForAgent('agent-without-policy'), ['acp', '--pure']);
+  } finally { db.close(); }
 });
 
 test('ACP session handles are isolated by agent, visitor, and adapter', () => {
@@ -128,7 +144,7 @@ test('attach does not retry an indeterminate timeout with a fresh session', asyn
     attempts++;
     throw new Error('cli timeout (120000ms)');
   };
-  const binding = { id: 'binding-1', providerType: 'opencode' };
+  const binding = { id: 'binding-1', providerType: 'opencode', adapterType: 'opencode-attach' };
   await assert.rejects(() => provider.push({
     agentId: 'agent-a',
     fromUid: 'visitor-a',
@@ -157,7 +173,7 @@ test('attach safely falls back after a pre-delivery serve failure', async () => 
   await provider.push({
     agentId: 'agent-a', fromUid: 'visitor-a', content: 'hello',
     messageId: 'message-a', timestamp: Date.now(),
-    providerBinding: { id: 'binding-1', providerType: 'opencode' },
+    providerBinding: { id: 'binding-1', providerType: 'opencode', adapterType: 'opencode-attach' },
   });
   assert.equal(attempts, 2);
   assert.equal(staleMarks, 1);

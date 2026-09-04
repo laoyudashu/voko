@@ -2473,6 +2473,10 @@ async function startMcpServer(args?: any, core?: any) {
     if (!activeDispatcher?.selectTemporaryDeliveryChannel) return { success: false, error: 'Dispatcher unavailable' };
     const normalizedAgentId = String(agentId || '');
     const normalizedMode = String(mode || '');
+    if (normalizedMode === 'auto') {
+      if (!activeDispatcher.clearTemporaryDeliveryChannel) return { success: false, error: 'Automatic delivery selection is unavailable' };
+      return { success: true, agentId, deliveryStatus: activeDispatcher.clearTemporaryDeliveryChannel(normalizedAgentId) };
+    }
     const row = db.prepare('SELECT backend_type, delivery_modes FROM agents WHERE agent_id=? LIMIT 1').get(normalizedAgentId);
     let previousModes: string | null | undefined;
     if (row?.backend_type === 'workbuddy' && normalizedMode === 'http' && providerId === 'workbuddy-http') {
@@ -2531,14 +2535,15 @@ async function startMcpServer(args?: any, core?: any) {
     const dispatcher = (global as any).__dispatcher;
     const service = dispatcher?.providerSecurity;
     if (!service) return { success: false, error: 'Provider security service is unavailable' };
-    const data = service.commit(String(agentId || ''), String(preflightToken || ''), String(confirmation || ''));
+    const data = await service.commitAsync(String(agentId || ''), String(preflightToken || ''), String(confirmation || ''));
     dispatcher.applyProviderSecurityPolicyChange?.(data);
     return { success: true, data };
   };
   handlers.inspect_provider_turn_evidence = async ({ agentId, turnId, channelId, transportId, since }: any = {}) => {
     const normalizedAgentId = String(agentId || ''), normalizedTurnId = String(turnId || '');
     const columns = `turn_id,agent_id,execution_scope,transport_id,policy_revision,state,
-      turn_policy_digest,restore_constraint_digest,capability_digest,runtime_fingerprint,fallback_mode,created_at,updated_at
+      turn_policy_digest,restore_constraint_digest,capability_digest,runtime_fingerprint,fallback_mode,
+      agent_policy_revision,agent_policy_digest,transport_policy_digest,created_at,updated_at
       `;
     const transport = String(transportId || '');
     const observedSince = Number(since || 0);

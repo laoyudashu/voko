@@ -355,6 +355,19 @@ test('ACP health gate blocks a still-live process until explicit recovery', asyn
   assert.equal(await adapter._ensureAgent('agent-a', true), state);
 });
 
+test('ACP policy restart removes the old process before marking lazy restart ready', () => {
+  const adapter = new AcpAdapter({ streamFactory: async () => ({ stream: {} }) });
+  const state = {
+    child: null, transportAlive: true, transportClose: null, agentCtx: {},
+    agentIds: new Set(['agent-a']), sessions: new Map(), ready: Promise.resolve(),
+    _readyResolve: null, _shutdownResolve: null,
+  };
+  adapter._agents.set('agent-a', state);
+  assert.equal(adapter.restartAgentRuntime('agent-a'), true);
+  assert.equal(adapter._agents.has('agent-a'), false);
+  assert.equal(adapter.isAvailable('agent-a'), true);
+});
+
 test('shared ACP recovery is single-flight across agents using one connection key', async () => {
   let calls = 0;
   const adapter = new AcpAdapter({ connectionKey: () => 'shared-profile' });

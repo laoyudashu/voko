@@ -45,10 +45,14 @@ test('shared invocation planner covers native and prompt-only Provider transport
     .some(item => item.sourceControl === 'additionalPrompt'), true);
 });
 
-test('a verified delivery probe exposes only controls backed by the adapter contract', () => {
+test('delivery readiness alone does not certify controls; per-control evidence does', () => {
   const provider = {
     isAvailable: () => true,
-    getDeliveryReadiness: () => ({ verificationStatus: 'loopback_verified' }),
+    getSecurityControlEvidence: () => ({
+      readiness: { verificationStatus: 'loopback_verified' },
+      controlEvidence: Object.fromEntries(['toolProfile','safeMode','approvalMode','acceptHooks']
+        .map(id => [id, { testKind: 'argv_canary' }])),
+    }),
   };
   const hermes = snapshotFromProvider(provider, 'hermes-cli', 'agent-1');
   assert.deepEqual(Object.keys(hermes.supportedControls),

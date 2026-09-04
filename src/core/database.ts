@@ -298,6 +298,26 @@ function ensureSyncCheckpointSchema(db: DatabaseSync): void {
 }
 
 function ensureProviderSecuritySchema9(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_agent_security_policies (
+      agent_id TEXT NOT NULL,
+      provider_family TEXT NOT NULL,
+      provider_subject_key TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      config_json TEXT NOT NULL,
+      policy_digest TEXT NOT NULL,
+      native_policy_digest TEXT,
+      sync_state TEXT NOT NULL DEFAULT 'applied'
+        CHECK(sync_state IN ('applied','applying','drifted','failed','read_only')),
+      pending_config_json TEXT,
+      pending_policy_digest TEXT,
+      last_error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, provider_family),
+      UNIQUE(provider_family, provider_subject_key)
+    );
+  `);
   const additions: Record<string, Array<[string, string]>> = {
     provider_security_policies: [
       ['runtime_evidence_json', 'TEXT'], ['capability_digest', 'TEXT'],
@@ -306,9 +326,12 @@ function ensureProviderSecuritySchema9(db: DatabaseSync): void {
     ],
     provider_security_preflights: [
       ['expected_capability_digest', 'TEXT'], ['expected_runtime_fingerprint', 'TEXT'],
+      ['provider_family', 'TEXT'], ['expected_agent_revision', 'INTEGER'],
+      ['agent_config_json', 'TEXT'], ['agent_policy_digest', 'TEXT'], ['expected_native_policy_digest', 'TEXT'],
     ],
     provider_security_turns: [
       ['capability_digest', 'TEXT'], ['runtime_fingerprint', 'TEXT'], ['fallback_mode', 'TEXT'],
+      ['agent_policy_revision', 'INTEGER'], ['agent_policy_digest', 'TEXT'], ['transport_policy_digest', 'TEXT'],
     ],
   };
   for (const [table, columns] of Object.entries(additions)) {
@@ -908,6 +931,24 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY(agent_id, transport_id)
     );
+    CREATE TABLE IF NOT EXISTS provider_agent_security_policies (
+      agent_id TEXT NOT NULL,
+      provider_family TEXT NOT NULL,
+      provider_subject_key TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      config_json TEXT NOT NULL,
+      policy_digest TEXT NOT NULL,
+      native_policy_digest TEXT,
+      sync_state TEXT NOT NULL DEFAULT 'applied'
+        CHECK(sync_state IN ('applied','applying','drifted','failed','read_only')),
+      pending_config_json TEXT,
+      pending_policy_digest TEXT,
+      last_error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, provider_family),
+      UNIQUE(provider_family, provider_subject_key)
+    );
     CREATE TABLE IF NOT EXISTS provider_security_preflights (
       id TEXT PRIMARY KEY,
       agent_id TEXT NOT NULL,
@@ -918,6 +959,11 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       risk_json TEXT NOT NULL,
       expected_capability_digest TEXT,
       expected_runtime_fingerprint TEXT,
+      provider_family TEXT,
+      expected_agent_revision INTEGER,
+      agent_config_json TEXT,
+      agent_policy_digest TEXT,
+      expected_native_policy_digest TEXT,
       expires_at INTEGER NOT NULL,
       consumed_at INTEGER,
       created_at INTEGER NOT NULL
@@ -934,6 +980,9 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       capability_digest TEXT,
       runtime_fingerprint TEXT,
       fallback_mode TEXT,
+      agent_policy_revision INTEGER,
+      agent_policy_digest TEXT,
+      transport_policy_digest TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY(agent_id, turn_id)
