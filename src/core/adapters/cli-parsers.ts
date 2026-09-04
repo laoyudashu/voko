@@ -48,6 +48,13 @@ interface ParserContext {
   _clineFinalEmitted?: boolean;
 }
 
+function visibleTextPart(part: any): string | null {
+  if (!part || typeof part.text !== 'string') return null;
+  const type = String(part.type || '').toLowerCase();
+  if (['thinking', 'reasoning', 'thought', 'analysis', 'reasoning_content'].includes(type)) return null;
+  return part.text;
+}
+
 interface ParserOptions {
   extractField?: string;
   [key: string]: unknown;
@@ -139,8 +146,9 @@ function geminiStreamJsonParser(line: string, ctx: ParserContext) {
     if (msg && Array.isArray(msg.content)) {
       // content 数组：[{type:"output_text"/"text","text":"..."}]
       for (const part of msg.content) {
-        if ((part.type === 'output_text' || part.type === 'text') && typeof part.text === 'string') {
-          ctx.onText(part.text);
+        if (part.type === 'output_text' || part.type === 'text') {
+          const text = visibleTextPart(part);
+          if (text !== null) ctx.onText(text);
         }
       }
     }
@@ -154,8 +162,9 @@ function geminiStreamJsonParser(line: string, ctx: ParserContext) {
       ctx.onText(content);                         // {"type":"message","role":"assistant","content":"..."}
     } else if (Array.isArray(content)) {
       for (const part of content) {
-        if ((part.type === 'output_text' || part.type === 'text') && typeof part.text === 'string') {
-          ctx.onText(part.text);                   // {"type":"message","role":"assistant","content":[{"type":"text","text":"..."}]}
+        if (part.type === 'output_text' || part.type === 'text') {
+          const text = visibleTextPart(part);
+          if (text !== null) ctx.onText(text);      // {"type":"message","role":"assistant","content":[{"type":"text","text":"..."}]}
         }
       }
     }
@@ -166,7 +175,8 @@ function geminiStreamJsonParser(line: string, ctx: ParserContext) {
   if (obj.type === 'text') {
     const parts = obj.parts || (obj.part ? [obj.part] : []);
     for (const p of parts) {
-      if (typeof p.text === 'string') ctx.onText(p.text);
+      const text = visibleTextPart(p);
+      if (text !== null) ctx.onText(text);
     }
     return;
   }
@@ -200,7 +210,9 @@ function codexJsonlParser(line: string, ctx: ParserContext) {
     } else if (Array.isArray(item.content)) {
       // content 数组：[{type:"output_text",text:"..."}]
       for (const block of item.content) {
-        if (typeof block.text === 'string') ctx.onText(block.text);
+        if (block?.type !== 'output_text' && block?.type !== 'text') continue;
+        const text = visibleTextPart(block);
+        if (text !== null) ctx.onText(text);
       }
     }
   }

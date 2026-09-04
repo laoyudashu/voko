@@ -84,9 +84,24 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
   }).slice(0, 5), ['bundled-cli', '--plugin-dir', 'C:\\safe\\expert-a', '--agent', 'expert-a']);
   assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
     agentId: 'expert-a', dataFile: 'C:\\Users\\test\\.workbuddy\\expert-a\\data.json',
-  }).slice(-7), ['dontAsk', '--tools', 'Read,Write', '--allowedTools',
-    'Read(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)',
-    'Write(C:\\Users\\test\\.workbuddy\\expert-a\\data.json)', '--strict-mcp-config']);
+  }).slice(-5), ['dontAsk', '--agents', JSON.stringify({ voko: { description: 'VOKO visitor text-only agent', prompt: 'Only answer with text. Do not use tools, files, shell, network, browser, MCP, skills, hooks, or subagents.', tools: [] } }), '--agent', 'voko', '--tools', '', '--strict-mcp-config'].slice(-5));
+  assert.deepEqual(workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read',
+  }).slice(-5), ['dontAsk', '--tools', 'Read', '--allowedTools', 'Read(/safe/data.json)', '--strict-mcp-config'].slice(-5));
+  const denied = workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'none',
+  });
+  assert.equal(denied.includes('Read'), false);
+  assert.equal(denied.includes('Write'), false);
+  assert.equal(denied[denied.indexOf('--tools') + 1], '');
+  const permissive = workBuddyServeArgs([], 12345, 'voko-session', {
+    agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read_write',
+    permissionMode: 'bypassPermissions', sessionPersistence: 'ephemeral', mcpProfile: 'user',
+  });
+  assert.equal(permissive[permissive.indexOf('--permission-mode') + 1], 'dontAsk');
+  assert.equal(permissive[permissive.indexOf('--tools') + 1], '');
+  assert.equal(permissive.includes('--no-session-persistence'), true);
+  assert.equal(permissive.includes('--strict-mcp-config'), false);
 });
 
 test('WorkBuddy preflight validates the local component without desktop login state', async () => {
@@ -241,6 +256,44 @@ test('WorkBuddy exact session resume ignores history replay and returns only the
   assert.equal(calls.some(call => call.url.endsWith('/api/v1/acp')
     && JSON.parse(call.init.body || '{}').method === 'session/resume'), true);
 });
+
+for (const scenario of [
+  { name: 'new', binding: null, code: 'WORKBUDDY_NEW_TASK_REFUSED', message: 'refused the new task' },
+  { name: 'resume', binding: { providerType: 'workbuddy', adapterType: 'workbuddy-http', deliveryMode: 'http',
+    nativeSessionId: 'session-existing', channelId: 'visitor-1', channelType: 1 },
+  code: 'WORKBUDDY_RESUMED_TASK_REFUSED', message: 'refused the resumed task' },
+]) {
+  test(`WorkBuddy reports ${scenario.name} session refusal without revoking loopback verification`, async () => {
+    const provider = readyProvider(async (url, init = {}) => {
+      if (String(url).endsWith('/api/v1/health')) return response({ status: 'ok' });
+      if (String(url).endsWith('/api/openapi.json')) return response({ paths: Object.fromEntries(requiredPaths.map(item => [item, {}])) });
+      if (String(url).endsWith('/api/v1/acp/connect')) return response({ connectionId: `connection-${scenario.name}` });
+      if (String(url).endsWith('/api/v1/acp') && init.method === 'DELETE') return response({ ok: true });
+      if (String(url).endsWith('/api/v1/acp')) {
+        const request = JSON.parse(init.body);
+        if (request.method === 'session/new') return acpResponse(request, [], { sessionId: 'session-new' });
+        if (request.method === 'session/prompt') return acpResponse(request, [], { stopReason: 'refusal' });
+        return acpResponse(request, [], request.method === 'initialize' ? { protocolVersion: 1 } : {});
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    provider._verification.set('agent-1', { status: 'loopback_verified', verifiedAt: 123 });
+    await assert.rejects(provider.push({ agentId: 'agent-1', fromUid: 'visitor-1', channelId: 'visitor-1',
+      channelType: 1, content: 'hello', rawContent: 'hello', messageId: `message-${scenario.name}`,
+      turnId: `message-${scenario.name}`, providerBinding: scenario.binding }), error => {
+      assert.equal(error.code, scenario.code);
+      assert.equal(error.providerStage, 'prompt');
+      assert.equal(error.sessionOperation, scenario.name);
+      assert.match(error.message, new RegExp(scenario.message));
+      return true;
+    });
+    const readiness = provider.getDeliveryReadiness('agent-1');
+    assert.equal(readiness.verificationStatus, 'loopback_verified');
+    assert.equal(readiness.automaticReady, true);
+    assert.equal(readiness.lastDeliveryStatus, 'failed');
+    assert.equal(readiness.lastDeliveryCode, scenario.code);
+  });
+}
 
 test('WorkBuddy sends verified image attachments as ACP image blocks', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-workbuddy-image-'));

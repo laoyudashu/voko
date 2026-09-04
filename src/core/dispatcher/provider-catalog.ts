@@ -1,4 +1,6 @@
 export type ProviderOperation = 'push' | 'steer';
+import { getProviderSecurityControls } from '../provider-security-policy';
+import type { ProviderSecurityControlDefinition } from '../provider-security-policy';
 
 export interface ProviderCapabilities {
   push: boolean;
@@ -24,6 +26,7 @@ export interface ProviderTransportDefinition {
   safetyProfile: string;
   sandboxPolicyId: string;
   capabilities: ProviderCapabilities;
+  securityControls?: readonly ProviderSecurityControlDefinition[];
   exactSession?: {
     nativeSessionNamespace: string;
     restoreCompatibilityGroup: string;
@@ -72,6 +75,7 @@ export interface ProviderFactoryContext {
 // Version probes are read-only `--version` calls. Persistent transports without a
 // stable local executable intentionally remain unknown until their protocol reports one.
 const PROVIDER_VERSION_COMMANDS: Record<string, string> = {
+  'hermes-cli': 'hermes',
   'goose-acp': 'goose', 'goose-cli': 'goose',
   'opencode-acp': 'opencode', 'opencode-attach': 'opencode', 'opencode-cli': 'opencode',
   'cursor-acp': 'cursor-agent', 'cursor-cli': 'cursor-agent',
@@ -143,7 +147,8 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   ] },
   { type: 'hermes', aliases: [], label: 'Hermes', requiresInstance: true, defaultDeliveryModes: ['http', 'cli', 'pull'], transports: [
     transport({ id: 'hermes-http', mode: 'http', priority: 10, operations: ['push', 'steer'], modulePath: './providers/hermes-http', safetyProfile: 'local-authenticated-http', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { asyncReply: true, sessionResume: true }, exactSession: { nativeSessionNamespace: 'hermes-http', restoreCompatibilityGroup: 'hermes-http' }, create(context) { const Ctor = require('./providers/hermes-http'); const config = context.getProviderConfig?.('hermes-http') || {}; return new Ctor(context.db, null, { host: config.apiHost || '127.0.0.1', port: config.apiPort || 8642, apiKey: config.apiKey || '', profiles: config.profiles || {} }); } }),
-    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true, exactSession: undefined },
+    { ...cli('hermes-cli', './providers/hermes-cli'), supportsLoopback: true, exactSession: undefined,
+      securityControls: getProviderSecurityControls('hermes-cli') },
   ] },
   { type: 'zeroclaw', aliases: [], label: 'ZeroClaw', requiresInstance: true, defaultDeliveryModes: ['acp_ws', 'acp', 'cli', 'pull'], transports: [
     transport({ id: 'zeroclaw-ws', mode: 'acp_ws', priority: 20, operations: ['push', 'steer'], modulePath: './providers/zeroclaw-ws', exportName: 'ZeroClawWsProvider', safetyProfile: 'paired-acp-websocket', sandboxPolicyId: 'provider-managed-local', supportsLoopback: true, capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true, progress: true } }),
@@ -167,11 +172,12 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
     { ...cli('cline-cli', './providers/cline-cli', 'ClineCliProvider', 'cline-command-deny'), exactSession: undefined },
   ] },
   { type: 'goose', aliases: ['goose-ai', 'acp-goose'], label: 'Goose', requiresInstance: false, defaultDeliveryModes: ['acp', 'cli', 'pull'], transports: [
-    acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false },
+    { ...acp('goose-acp', './providers/goose-acp', 'GooseAcpProvider'), securityControls: getProviderSecurityControls('goose-acp') },
+    { ...cli('goose-cli', './providers/goose-cli'), supportsLoopback: false, securityControls: getProviderSecurityControls('goose-cli') },
   ] },
-  { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools')] },
+  { type: 'claude-code', aliases: [], label: 'Claude Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('claude-cli', './providers/claude-cli', 'ClaudeCliProvider', 'claude-plan-no-tools'), securityControls: getProviderSecurityControls('claude-cli') }] },
   { type: 'codex', aliases: [], label: 'Codex', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
-    cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly'),
+    { ...cli('codex-cli', './providers/codex-cli', 'CodexCliProvider', 'codex-readonly'), securityControls: getProviderSecurityControls('codex-cli') },
     transport({ id: 'codex-app-server', mode: 'owner_io', priority: 100, operations: ['push'],
       modulePath: './providers/codex-app-server', exportName: 'CodexAppServerProvider',
       safetyProfile: 'provider-native-control-plane', sandboxPolicyId: 'provider-managed-local',
@@ -184,10 +190,11 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'gemini', aliases: [], label: 'Gemini CLI', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
     { ...cli('gemini-cli', './providers/gemini-cli', 'GeminiCliProvider', 'gemini-container'), exactSession: undefined },
   ] },
-  { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools')] },
-  { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools')] },
+  { type: 'pi', aliases: [], label: 'Pi Coding Agent', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('pi-cli', './providers/pi-cli', 'PiCliProvider', 'pi-no-tools'), securityControls: getProviderSecurityControls('pi-cli') }] },
+  { type: 'qwen-code', aliases: [], label: 'Qwen Code', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('qwen-cli', './providers/qwen-cli', 'QwenCliProvider', 'qwen-plan-no-tools'), securityControls: getProviderSecurityControls('qwen-cli') }] },
   { type: 'qwen-office', aliases: ['qwenwork', 'qwen-work', 'qwenworkcn'], label: '千问办公 (QwenWork)', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [
-    { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true },
+    { ...cli('qwen-office-cli', './providers/qwen-office-cli', 'QwenOfficeCliProvider', 'qwen-office-restricted'), supportsLoopback: true,
+      securityControls: getProviderSecurityControls('qwen-office-cli') },
   ] },
   { type: 'dumate', aliases: ['baidu-dumate'], label: '百度搭子 (DuMate)', requiresInstance: false, defaultDeliveryModes: ['http', 'pull'], transports: [
     transport({ id: 'dumate-http', mode: 'http', priority: 10, operations: ['push', 'steer'],
@@ -195,6 +202,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
       supportsLoopback: false,
       capabilities: { streaming: true, sessionResume: true },
+      securityControls: getProviderSecurityControls('dumate-http'),
       exactSession: { nativeSessionNamespace: 'dumate-http', restoreCompatibilityGroup: 'dumate-http' },
       options: context => context.getProviderConfig?.('dumate-http') || {},
     }),
@@ -202,7 +210,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   { type: 'kiro', aliases: [], label: 'Kiro', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('kiro-cli', './providers/kiro-cli', 'KiroCliProvider')] },
   { type: 'aider', aliases: [], label: 'Aider', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('aider-cli', './providers/aider-cli', 'AiderCliProvider', 'aider-dry-run')] },
   { type: 'grok', aliases: [], label: 'Grok', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('grok-cli', './providers/grok-cli', 'GrokCliProvider', 'grok-plan-no-tools')] },
-  { type: 'reasonix', aliases: [], label: 'Reasonix', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [cli('reasonix-cli', './providers/reasonix-cli', 'ReasonixCliProvider')] },
+  { type: 'reasonix', aliases: [], label: 'Reasonix', requiresInstance: false, defaultDeliveryModes: ['cli', 'pull'], transports: [{ ...cli('reasonix-cli', './providers/reasonix-cli', 'ReasonixCliProvider'), securityControls: getProviderSecurityControls('reasonix-cli') }] },
   { type: 'openhands', aliases: [], label: 'OpenHands', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'amazon-q', aliases: [], label: 'Amazon Q Developer CLI', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'zcode', aliases: [], label: 'ZCode', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
@@ -212,6 +220,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
       safetyProfile: 'loopback-provider-managed-http', sandboxPolicyId: 'provider-managed-local',
       supportsLoopback: true,
       capabilities: { streaming: true, asyncReply: true, sessionResume: true, cancel: true },
+      securityControls: getProviderSecurityControls('workbuddy-http'),
       exactSession: { nativeSessionNamespace: 'workbuddy-http', restoreCompatibilityGroup: 'workbuddy-http' },
       options: context => context.getProviderConfig?.('workbuddy-http') || {},
     }),
@@ -238,7 +247,7 @@ export const PROVIDER_CATALOG: ProviderFamilyDefinition[] = [
   ] },
   { type: 'doubao', aliases: [], label: '豆包办公', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'trae', aliases: ['trae-ide', 'trae-work', 'trae-solo'], label: 'Trae', requiresInstance: false, defaultDeliveryModes: ['acp', 'pull'], transports: [
-    acp('traecli-acp', './providers/trae-acp', 'TraeAcpProvider'),
+    { ...acp('traecli-acp', './providers/trae-acp', 'TraeAcpProvider'), securityControls: getProviderSecurityControls('traecli-acp') },
   ] },
   { type: 'others', aliases: [], label: 'Others', requiresInstance: false, defaultDeliveryModes: ['pull'], transports: [] },
   { type: 'mock', aliases: [], label: 'Mock Echo', requiresInstance: false, defaultDeliveryModes: ['mock', 'pull'], transports: [
@@ -328,12 +337,28 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     : null;
   instance.getProviderVersion = () => {
     if (versionProbe) return { ...versionProbe };
+    // QwenWork exposes its runtime version through the documented status JSON.
+    // Its bundled Windows CLI does not provide a reliable `--version` process:
+    // probing it can hold the CLI lock long enough for the following readiness
+    // check to fail. Reuse the already bounded/cached status result instead.
+    if (definition.id === 'qwen-office-cli' && typeof instance.getDeliveryReadiness === 'function') {
+      const readiness = instance.getDeliveryReadiness('');
+      const version = String(readiness?.version || '').trim();
+      if (version) {
+        versionProbe = { version, source: 'status', observedAt: new Date().toISOString(), result: 'known' };
+        return { ...versionProbe };
+      }
+    }
     const { probeProviderVersion } = require('../provider-sandbox');
     let command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
     let args: string[]|undefined;
     try {
       const runtime = typeof instance._resolveRuntime === 'function' ? instance._resolveRuntime() : null;
       if (runtime?.available && runtime.executable) { command=runtime.executable;args=[...(runtime.argvPrefix||[]),'--version']; }
+      else {
+        const resolved = String(instance._command || instance._cmd || instance._binPath || '').trim();
+        if (resolved) { command = resolved; args = ['--version']; }
+      }
     } catch (_) {}
     versionProbe = command ? probeProviderVersion(command,{args}) : {
       version: null, source: 'unknown', observedAt: new Date().toISOString(), result: 'unknown', errorCode: 'failed',

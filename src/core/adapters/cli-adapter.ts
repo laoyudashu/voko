@@ -33,6 +33,7 @@ const { appendProviderAttachmentBoundary, stageProviderAttachments,
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
+import { applyProviderSecurityArgs } from '../provider-security-policy';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -64,6 +65,7 @@ export interface CliAdapterOptions {
     fromUid: string;
     nativeSessionId: string | null;
     configuredArgs: string[];
+    payload: PushPayload;
   }) => {
     args: string[];
     useStdin?: boolean;
@@ -229,7 +231,7 @@ class CliAdapter extends PushProvider {
     let args: string[];
     if (this._preparePrompt) {
       const prepared = this._preparePrompt(prompt, { agentId, fromUid: payload.fromUid,
-        nativeSessionId: null, configuredArgs: [...configuredArgs] });
+        nativeSessionId: null, configuredArgs: [...configuredArgs], payload });
       args = [...(prepared.args || [])].map((arg: string) => arg.replace('{prompt}', () => prompt));
       useStdin = prepared.useStdin ?? !args.includes('{prompt}');
       stdinInput = prepared.stdinInput ?? (useStdin ? prompt : undefined);
@@ -313,6 +315,7 @@ class CliAdapter extends PushProvider {
           : [...configuredArgs, ...scoped.args];
       } catch (_) {}
     }
+    configuredArgs = applyProviderSecurityArgs(configuredArgs, effectivePayload);
     const preparedInvocation = this._prepareInvocation?.(effectivePayload, prompt) || null;
     const invocationArgs = preparedInvocation?.args || configuredArgs;
     let useStdin = preparedInvocation
@@ -331,6 +334,7 @@ class CliAdapter extends PushProvider {
         fromUid,
         nativeSessionId,
         configuredArgs: [...configuredArgs],
+        payload: effectivePayload,
       });
       args = [...(prepared.args || [])].map((a: string) => a.replace('{prompt}', () => safePrompt));
       useStdin = prepared.useStdin ?? !args.includes('{prompt}');

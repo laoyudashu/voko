@@ -86,8 +86,9 @@ describe('Lite reply idempotency end-to-end', () => {
       ).all('gym');
       assert.equal(rows.length, 1);
       assert.equal(rows[0].content, '已经在确认时间，请稍等。');
-      assert.equal(delivered.length, 1);
+      assert.equal(delivered.length, 2);
       assert.equal(delivered[0][2], '已经在确认时间，请稍等。');
+      assert.equal(delivered[1][7]._voko.turnStatus, 'reply_delivered');
     } finally {
       provider.destroy();
       db.close();

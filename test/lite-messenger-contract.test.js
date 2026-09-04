@@ -57,6 +57,31 @@ function inbound(overrides = {}) {
 }
 
 describe('Lite Messenger contract smoke', () => {
+  it('returns distinct stable access codes for blacklist and whitelist denial', () => {
+    for (const scenario of [
+      { accessMode: 'public', blacklisted: true, expected: 'ACCESS_BLACKLIST_DENIED' },
+      { accessMode: 'private', blacklisted: false, expected: 'ACCESS_WHITELIST_DENIED' },
+    ]) {
+      const fixture = createFixture({ ac: {
+        isBlacklisted: () => scenario.blacklisted,
+        isWhitelisted: () => false,
+        addEntry: () => ({ success: true }),
+      } });
+      try {
+        fixture.db.prepare('UPDATE agents SET access_mode=? WHERE agent_id=?')
+          .run(scenario.accessMode, 'agent-1');
+        const message = inbound({ messageId: `access-${scenario.expected}` });
+        assert.equal(fixture.handler.handleAgentMessage('agent-1', message, true), undefined);
+        assert.equal(message._vokoInboundIntercepted, scenario.expected);
+        assert.equal(fixture.systemMessages.length, 1);
+        assert.equal(fixture.systemMessages[0][2], scenario.expected);
+        assert.equal(fixture.dispatched.length, 0);
+      } finally {
+        fixture.db.close();
+      }
+    }
+  });
+
   it('marks an expired timed session as handled after sending its system response', () => {
     const systemMessages = [];
     const fixture = createFixture({ sendSystemMessage: (...args) => systemMessages.push(args) });
@@ -693,10 +718,13 @@ describe('Lite Messenger contract smoke', () => {
         content: 'final answer',
         is_me: 1,
       });
-      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered.length, 2);
       assert.equal(fixture.delivered[0][1], 'visitor-1');
       assert.equal(fixture.delivered[0][2], 'final answer');
       assert.equal(fixture.delivered[0][4], 1);
+      assert.equal(fixture.delivered[1][2], 'Agent 已答复');
+      assert.equal(fixture.delivered[1][7]._voko.turnStatus, 'reply_delivered');
+      assert.equal(fixture.delivered[1][7]._voko.turnId, 'turn-1');
       assert.equal(fixture.notified.length, 1);
       assert.equal(fixture.notified[0].data.content, 'final answer');
     } finally {
@@ -748,7 +776,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('never sends Provider processing or failure status back to an Agent peer', async () => {
+  it('keeps Provider status out of business messages and returns hidden metadata only to guests', async () => {
     const fixture = createFixture({ dispatcher: { isAgentImUid: uid => uid === 'agent-peer' } });
     const projected = [];
     fixture.handler.handleAgentReply = async data => { projected.push(data); };
@@ -759,10 +787,17 @@ describe('Lite Messenger contract smoke', () => {
       });
       await fixture.handler.handleProviderTurnStatus({
         agentId: 'agent-1', visitorId: 'visitor-1', senderUid: 'visitor-1',
-        status: 'timeout', turnId: 'visitor-turn',
+        status: 'timeout', turnId: 'visitor-turn', remoteRouteId: 'route-1',
       });
-      assert.equal(projected.length, 1);
-      assert.equal(projected[0].content, 'Agent 调用超时，请稍后重试');
+      assert.equal(projected.length, 0);
+      assert.equal(fixture.delivered.length, 1);
+      assert.equal(fixture.delivered[0][1], 'visitor-1');
+      assert.equal(fixture.delivered[0][2], 'Agent 调用超时，请稍后重试');
+      assert.equal(fixture.delivered[0][7]._voko.turnStatus, 'timeout');
+      assert.equal(fixture.delivered[0][7]._voko.replyToRouteId, 'route-1');
+      assert.equal(fixture.db.prepare(
+        "SELECT COUNT(*) AS count FROM messages WHERE content LIKE 'Agent %' AND is_me=1",
+      ).get().count, 0);
     } finally {
       fixture.db.close();
     }

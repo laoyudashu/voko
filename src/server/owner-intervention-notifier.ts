@@ -33,7 +33,7 @@ const EMAIL_REPLY_CHECKPOINT_SCOPE = 'primary_owner';
 
 class OwnerInterventionNotifier {
   [key: string]: any;
-  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention, autoApproveWhitelistIfFriendRequest }: any) {
+  constructor({ databaseAPI, registry, db, getEnabledChannel, agentEmailApi, buildOwnerReplyPrompt, sendSystemMessage, resumeOwnerIntervention, autoApproveWhitelistIfFriendRequest, getAgentDeliveryStatus }: any) {
     this.databaseAPI = databaseAPI;
     this.registry = registry;
     this.db = db;
@@ -43,6 +43,7 @@ class OwnerInterventionNotifier {
     this.sendSystemMessage = sendSystemMessage || (() => {});
     this.resumeOwnerIntervention = resumeOwnerIntervention || null;
     this.autoApproveWhitelistIfFriendRequest = autoApproveWhitelistIfFriendRequest || null;
+    this.getAgentDeliveryStatus = getAgentDeliveryStatus || null;
 
     /** 重试队列: { [id]: { record, retryCount, timer } } */
     this._retryQueue = {};
@@ -565,6 +566,17 @@ ${t('errors.intervention.time', {}, locale)}${new Date(record.askTime).toLocaleS
     const forwardMsg = this.buildOwnerReplyPrompt(
       { id: row.id, visitorId: row.visitor_id, problem: row.problem, agentId: row.agent_id }, replyText
     );
+    const deliveryStatus = this.getAgentDeliveryStatus?.(row.agent_id);
+    if (deliveryStatus?.pullOnly === true) {
+      // The reply remains readable through check_human_replies. This flag also
+      // prevents the email poller from treating Pull as a failed push forever.
+      this.databaseAPI.markAgentNotified(row.id);
+      bus.emit('owner-intervention:email-reply', {
+        id: row.id, ownerReply: replyText, replyTime: row.reply_time, status: 'replied',
+      });
+      console.log('[OwnerInterventionNotifier] 主人回复已入库，当前为 Pull 模式，等待 Agent 主动获取, id:', row.id);
+      return;
+    }
     let forwardOutcome: string | null = null;
     let requestedStatus: string | null = null;
     const settle = (result: unknown) => {

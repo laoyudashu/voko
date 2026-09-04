@@ -29,6 +29,9 @@ const DEFAULT_ROLLOUT: ProviderModularRollout = {
     grok: 'enabled',
     reasonix: 'enabled',
     'deepseek-harness': 'enabled',
+    workbuddy: 'enabled',
+    'qwen-office': 'enabled',
+    dumate: 'enabled',
   },
 };
 

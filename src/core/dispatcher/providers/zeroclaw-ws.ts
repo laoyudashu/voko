@@ -1,5 +1,6 @@
 const { WebSocket } = require('ws');
 const { AcpAdapter } = require('../../adapters/acp-adapter');
+const { configuredUrl, configuredToken } = require('../zeroclaw-ws-config');
 import type { AgentMeta } from '../types';
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
@@ -15,24 +16,6 @@ class GuardedWebSocket extends WebSocket {
     // uncaught EventEmitter error; connectWith still receives the failure.
     this.on('error', () => {});
   }
-}
-
-function configuredUrl(): string | null {
-  const raw = String(process.env.ZEROCLAW_ACP_URL || 'ws://127.0.0.1:42617/acp').trim();
-  try {
-    const url = new URL(raw);
-    const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
-    if (!loopback || !['ws:', 'wss:'].includes(url.protocol) || url.username || url.password
-      || url.search || url.hash) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-function configuredToken(): string | null {
-  const token = String(process.env.ZEROCLAW_ACP_TOKEN || '').trim();
-  return token && !/[\r\n]/.test(token) ? token : null;
 }
 
 class ZeroClawWsProvider extends AcpAdapter {

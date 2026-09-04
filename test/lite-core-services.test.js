@@ -542,8 +542,11 @@ test('PowerManager recovery restarts only published agents for the active owner'
 
 test('PowerManager only logs a visible success message after resume recovery', async () => {
   const logs = [];
+  const errors = [];
+  const originalLog = console.log;
   const originalError = console.error;
-  console.error = (...args) => logs.push(args.join(' '));
+  console.log = (...args) => logs.push(args.join(' '));
+  console.error = (...args) => errors.push(args.join(' '));
   try {
     const manager = {
       workers: new Map(),
@@ -572,7 +575,9 @@ test('PowerManager only logs a visible success message after resume recovery', a
 
     await power._recover();
     assert.equal(logs.some(log => log.includes('✅ 系统唤醒恢复成功')), true);
+    assert.equal(errors.some(log => log.includes('✅ 系统唤醒恢复成功')), false);
   } finally {
+    console.log = originalLog;
     console.error = originalError;
   }
 });

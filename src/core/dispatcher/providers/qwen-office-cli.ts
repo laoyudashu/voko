@@ -36,13 +36,33 @@ function classifyQwenOfficeDeliveryFailure(detail: unknown): { code: string; ver
   return { code: 'QWEN_OFFICE_DELIVERY_FAILED', verificationStatus: 'failed' };
 }
 
+function qwenOfficeSecurityArgs(configuredArgs: string[], config: Record<string, string>): string[] {
+  const optionsWithValue = new Set(['--permission-mode', '--tools', '--mcp-config']);
+  const args: string[] = [];
+  for (let index = 0; index < configuredArgs.length; index += 1) {
+    const value = configuredArgs[index];
+    if (optionsWithValue.has(value)) { index += 1; continue; }
+    if (value.startsWith('--tools=')) continue;
+    if (value === '--strict-mcp-config') continue;
+    args.push(value);
+  }
+  args.push('--permission-mode', config.permissionMode || 'dont_ask');
+  const tools = config.toolAccess === 'default' ? 'default'
+    : config.toolAccess === 'read_only' ? 'Read,Grep,Glob' : '';
+  if (tools) args.push('--tools', tools);
+  else args.push('--tools=');
+  if (config.mcpProfile !== 'user') args.push('--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+  return args;
+}
+
 /**
- * QwenWork's bundled qoderclicn stream-json transport.  Tool access and
- * permission prompts stay disabled for unattended VOKO messages.
+ * QwenWork's bundled qoderclicn stream-json transport. Visitor policy is
+ * translated into explicit per-invocation CLI arguments.
  */
 class QwenOfficeCliProvider extends CliAdapter {
   private readonly _resolveAgentTarget: ResolveAgentTarget;
   private readonly _verification = new Map<string, { status: string; code: string; detail: string; verifiedAt?: number }>();
+  private _readinessTimer: NodeJS.Timeout | null = null;
 
   constructor(options: QwenOfficeCliProviderOptions = {}) {
     const configuredCommand = String(options.binPath || '').trim();
@@ -53,7 +73,7 @@ class QwenOfficeCliProvider extends CliAdapter {
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--permission-mode', 'dont_ask',
-      '--tools', '',
+      ...(process.platform === 'win32' ? ['--tools='] : ['--tools', '']),
     ];
     super({
       name: 'QWEN OFFICE CLI',
@@ -81,8 +101,11 @@ class QwenOfficeCliProvider extends CliAdapter {
           return typeof id === 'string' && id.trim() ? id : null;
         } catch { return null; }
       },
-      preparePrompt: (prompt: string, context: { configuredArgs: string[] }) => ({
-        args: [...context.configuredArgs],
+      preparePrompt: (prompt: string, context: { configuredArgs: string[]; payload: PushPayload }) => ({
+        args: context.payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+          ? [...qwenOfficeSecurityArgs(context.configuredArgs, context.payload.providerSecurityPolicy?.config || {})
+            .filter((_value, index, all) => all[index - 1] !== '--resume' && _value !== '--resume'), '--no-session-persistence']
+          : qwenOfficeSecurityArgs(context.configuredArgs, context.payload.providerSecurityPolicy?.config || {}),
         useStdin: true,
         stdinInput: JSON.stringify({
           type: 'user',
@@ -117,6 +140,10 @@ class QwenOfficeCliProvider extends CliAdapter {
     return !instanceId || !!this._resolveAgentTarget(instanceId);
   }
 
+  getDeliveryReadinessSnapshot(agentId = ''): Record<string, unknown> {
+    return this.getDeliveryReadiness(agentId);
+  }
+
   getDeliveryReadiness(agentId = ''): Record<string, unknown> {
     const readiness = getQwenOfficeReadiness(this._cmd);
     const verification = this._verification.get(String(agentId || ''));
@@ -128,6 +155,7 @@ class QwenOfficeCliProvider extends CliAdapter {
       authenticationStatus: readiness.loggedIn ? 'verified' : 'unverified',
       reason: readiness.reason,
       verificationStatus: verification?.status || 'unverified',
+      ...(readiness.version ? { version: readiness.version } : {}),
       ...(verification?.code ? { verificationCode: verification.code } : {}),
       ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}),
       ...(verification?.detail ? { verificationDetail: verification.detail } : {}),
@@ -137,6 +165,30 @@ class QwenOfficeCliProvider extends CliAdapter {
     };
   }
 
+  getSecurityControlEvidence(agentId = ''): Record<string, unknown> {
+    const observed = (this as any).getProviderVersion?.();
+    return { transportId: 'qwen-office-cli', platform: process.platform, runtimeVersion: observed?.version || null,
+      versionVerified: Boolean(observed?.version && observed?.result === 'known'), versionSource: observed?.source || 'unknown',
+      contract: 'cli_args_empty_tools_and_session_persistence',
+      readiness: this.getDeliveryReadiness(agentId) };
+  }
+
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high'; sourceControl?: string }> {
+    const args = qwenOfficeSecurityArgs(['--print'], config);
+    const permission = args[args.indexOf('--permission-mode') + 1] || 'dont_ask';
+    const toolsIndex = args.indexOf('--tools');
+    const tools = toolsIndex >= 0 ? args[toolsIndex + 1] || '' : '';
+    return [
+      { text: 'qoderclicn --print --permission-mode', risk: 'low' },
+      { text: permission, risk: permission === 'bypass_permissions' ? 'high' : 'low', sourceControl: 'permissionMode' },
+      { text: tools === 'default' ? '--tools default' : tools ? `--tools ${tools}` : '--tools <空列表>',
+        risk: tools === 'default' ? 'high' : tools ? 'medium' : 'low', sourceControl: 'toolAccess' },
+      ...(args.includes('--strict-mcp-config')
+        ? [{ text: '--strict-mcp-config', risk: 'low' as const, sourceControl: 'mcpProfile' }]
+        : [{ text: '加载用户 MCP 配置', risk: 'high' as const, sourceControl: 'mcpProfile' }]),
+    ];
+  }
+
   refreshRuntime(): void {
     super.refreshRuntime();
     invalidateQwenOfficeReadiness(this._cmd);
@@ -144,6 +196,20 @@ class QwenOfficeCliProvider extends CliAdapter {
 
   async refreshDeliveryReadiness(): Promise<Record<string, unknown>> {
     return refreshQwenOfficeReadiness(this._cmd);
+  }
+
+  start(): void {
+    super.start();
+    void refreshQwenOfficeReadiness(this._cmd);
+    if (this._readinessTimer) clearInterval(this._readinessTimer);
+    this._readinessTimer = setInterval(() => void refreshQwenOfficeReadiness(this._cmd), 60_000);
+    this._readinessTimer.unref?.();
+  }
+
+  stop(): void {
+    if (this._readinessTimer) clearInterval(this._readinessTimer);
+    this._readinessTimer = null;
+    super.stop();
   }
 
   async preflightDelivery(agentId: string): Promise<Record<string, unknown>> {
@@ -176,7 +242,9 @@ class QwenOfficeCliProvider extends CliAdapter {
       throw deliveryError('Bound QwenWork expert kit is unavailable');
     }
     try {
-      const receipt = await super.push(payload);
+      const effectivePayload = payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+        ? { ...payload, providerBinding: null } : payload;
+      const receipt = await super.push(effectivePayload);
       this._verification.set(payload.agentId, {
         status: 'loopback_verified', code: 'QWEN_OFFICE_DELIVERY_VERIFIED', detail: 'QwenWork CLI delivery verified', verifiedAt: Date.now(),
       });

@@ -49,14 +49,14 @@ function createLocalWebSessionStore(db, options = {}) {
     const token = parseCookies(req?.headers?.cookie)[COOKIE_NAME];
     if (!token) return null;
     const timestamp = now();
-    const row = db.prepare(`SELECT owner_email, csrf_hash, expires_at
+    const row = db.prepare(`SELECT owner_email, csrf_hash, created_at, expires_at
       FROM local_web_sessions WHERE token_hash=? LIMIT 1`).get(digest(token));
     if (!row || Number(row.expires_at) <= timestamp) {
       if (row) db.prepare('DELETE FROM local_web_sessions WHERE token_hash=?').run(digest(token));
       return null;
     }
     db.prepare('UPDATE local_web_sessions SET last_used_at=? WHERE token_hash=?').run(timestamp, digest(token));
-    return { ownerEmail: row.owner_email, csrfHash: row.csrf_hash, tokenHash: digest(token) };
+    return { ownerEmail: row.owner_email, csrfHash: row.csrf_hash, tokenHash: digest(token), createdAt: Number(row.created_at) };
   }
 
   function destroyRequest(req) {

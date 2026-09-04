@@ -174,6 +174,26 @@ test('v2 runtime decrypts, persists, executes once and returns a decryptable rep
   }finally{f.close();}
 });
 
+test('guest reply delivery emits hidden turn metadata without projecting status as a business reply',async()=>{
+  const replyInputs=[];
+  const f=fixture({async deliverSecureReply(input){replyInputs.push(input);
+    return{success:true,deliveryState:'delivered'};}});
+  try{
+    const envelope=await f.createEnvelope('guest-terminal-status',JSON.stringify({
+      version:'voko.e2ee.payload/1',kind:'text',text:'hello',routeContext:{protocolVersion:1,
+        routeId:'voko_12345678901234567890123456789012'},
+    }));
+    const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
+      channelType:1,contentType:13,ack(){}});
+    assert.equal(result.accepted,true);
+    assert.deepEqual(replyInputs.map(input=>input.turnStatus),['processing',undefined,'reply_delivered']);
+    assert.equal(replyInputs[0].content,'VOKO_TURN_STATUS');
+    assert.equal(replyInputs[0].replyToRouteId,'voko_12345678901234567890123456789012');
+    assert.equal(replyInputs[1].content,'reply:hello');
+    assert.equal(replyInputs[2].content,'VOKO_TURN_STATUS');
+  }finally{f.close();}
+});
+
 test('business-policy interception completes the receipt without executing Provider',async()=>{
   const f=fixture({inboundDisposition:'intercepted'});
   try{
@@ -186,7 +206,7 @@ test('business-policy interception completes the receipt without executing Provi
   }finally{f.close();}
 });
 
-test('pull-only delivery emits an explicit automatic-delivery-disabled terminal state',async()=>{
+test('pull-only delivery emits a hidden automatic-delivery-disabled terminal state',async()=>{
   const statuses=[];
   const providerError=Object.assign(new Error('automatic delivery disabled'),{
     code:'AUTOMATIC_DELIVERY_DISABLED',deliveryOutcome:'not_delivered'});
@@ -198,7 +218,7 @@ test('pull-only delivery emits an explicit automatic-delivery-disabled terminal 
     assert.equal(result.accepted,false);
     assert.equal(result.code,'AUTOMATIC_DELIVERY_DISABLED');
     assert.deepEqual(statuses.map(item=>item.turnStatus),['processing','automatic_delivery_disabled']);
-    assert.equal(statuses.at(-1).content,'Agent 尚未启用自动回复');
+    assert.ok(statuses.every(item=>item.content==='VOKO_TURN_STATUS'));
   }finally{f.close();}
 });
 

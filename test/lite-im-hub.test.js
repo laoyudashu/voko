@@ -180,3 +180,20 @@ test('initial WebSocket code 1006 schedules reconnect instead of permanently fai
   assert.equal(client.stats.reconnects, 1);
   client.disconnect();
 });
+
+test('worker watchdog restarts a connection that remains disconnected', async () => {
+  const transport = new AgentWorkerManager(null, {
+    connectDelay: 0,
+    clientFactory: (options) => new FakeClient(options),
+  });
+  transport.adapter.recoveryDelayMs = 5;
+  await transport.start('agent-watchdog', config('uid-watchdog'));
+  const first = transport.adapter.pool.get('agent-watchdog');
+  first.state = 'disconnected';
+  first.emit('disconnect', { code: 1006, reason: 'dns failure' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const replacement = transport.adapter.pool.get('agent-watchdog');
+  assert.notStrictEqual(replacement, first);
+  assert.equal(transport.getStatus('agent-watchdog').connected, true);
+  await transport.stopAll();
+});

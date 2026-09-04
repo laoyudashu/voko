@@ -128,6 +128,30 @@ test('Hermes sends history only when no resumable binding is available', async (
   }
 });
 
+test('ACP forwards only agent text and ignores thought update variants', async () => {
+  const adapter = new AcpAdapter({ streamFactory: async () => ({ stream: {} }) });
+  const updates = [
+    { kind: 'session_update', update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'PRIVATE_A' } } },
+    { kind: 'session_update', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'thought', text: 'PRIVATE_B' } } },
+    { kind: 'session_update', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'VISIBLE' } } },
+    { kind: 'stop' },
+  ];
+  const session = {
+    sessionId: 'session-a', prompt: async () => {},
+    nextUpdate: async () => updates.shift(), dispose() {},
+  };
+  adapter._ensureAgent = async () => ({ sessions: new Map(), agentIds: new Set(['agent-a']) });
+  adapter._ensureSession = async () => session;
+  const replies = [];
+  adapter.on('agent.reply', reply => replies.push(reply));
+
+  await adapter._pushViaAcp({ ...basePayload, messageId: 'acp-visible', turnId: 'acp-visible' });
+
+  assert.ok(replies.length >= 1);
+  assert.equal(replies.at(-1).content, 'VISIBLE');
+  assert.ok(replies.every(reply => !/PRIVATE_[AB]/.test(reply.content)));
+});
+
 test('ACP restores only when its session is newly created', async () => {
   const db = dbWithHistory();
   try {
@@ -329,6 +353,19 @@ test('ACP health gate blocks a still-live process until explicit recovery', asyn
     (error) => error.deliveryOutcome === 'not_delivered',
   );
   assert.equal(await adapter._ensureAgent('agent-a', true), state);
+});
+
+test('ACP policy restart removes the old process before marking lazy restart ready', () => {
+  const adapter = new AcpAdapter({ streamFactory: async () => ({ stream: {} }) });
+  const state = {
+    child: null, transportAlive: true, transportClose: null, agentCtx: {},
+    agentIds: new Set(['agent-a']), sessions: new Map(), ready: Promise.resolve(),
+    _readyResolve: null, _shutdownResolve: null,
+  };
+  adapter._agents.set('agent-a', state);
+  assert.equal(adapter.restartAgentRuntime('agent-a'), true);
+  assert.equal(adapter._agents.has('agent-a'), false);
+  assert.equal(adapter.isAvailable('agent-a'), true);
 });
 
 test('shared ACP recovery is single-flight across agents using one connection key', async () => {

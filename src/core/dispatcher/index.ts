@@ -16,7 +16,11 @@
 import type { DatabaseLike } from '../../types/database';
 import { classifyProviderDeliveryPresentation } from '../provider-delivery-presentation';
 import { classifyProviderTurnFailure } from '../provider-turn-status';
+import { appendProviderSecurityPrompt, getProviderSecurityControls, isProviderSecurityTransport, ProviderSecurityPolicyService } from '../provider-security-policy';
+import { hasNativeCapabilityControls, isDynamicCapabilityTransport, redactedInvocation, snapshotFromProvider } from '../provider-capability';
+import { ZeroClawNativePolicyAdapter } from '../zeroclaw-native-policy';
 import type { AgentDeliveryStatus, AgentMeta, ProviderCoreEvent, PushPayload } from './types';
+import { sanitizeFinalProviderReply } from './provider-output-boundary';
 const { createMessageSecurityContext, wrapPushContent } = require('./safety-prompt');
 const { ProviderSessionCoordinator } = require('../provider-session-coordinator');
 const { isRoutingPolicyEligible } = require('../provider-routing');
@@ -29,6 +33,7 @@ const { ProviderEventGate } = require('./provider-event-gate');
 const { parseA2AState, extractA2AVisibleReply } = require('./parse-state');
 const crypto = require('crypto');
 const { qwenOfficeLoginCommand } = require('./qwen-office-command');
+const { configuredUrl: configuredZeroClawWsUrl, configuredToken: configuredZeroClawWsToken } = require('./zeroclaw-ws-config');
 
 interface DispatcherProvider {
   priority?: number;
@@ -118,7 +123,7 @@ interface IsolatedExecutionOptions {
   agentId: string; content: string; taskId: string; contextId: string;
   turnId?: string; sourceMessageIds?: readonly string[];
   binding?: PushPayload['providerBinding']; timeoutMs?: number;
-  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat';
+  sourceType?: 'visitor' | 'agent_peer' | 'owner' | 'owner_chat' | 'external';
   executionScope?: 'a2a_mailbox' | 'owner_link' | 'owner_chat' | 'e2ee';
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
@@ -277,16 +282,104 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   const _replyContexts = new Map<string, ReplyContext[]>();
   const _replyContextsByTurn = new Map<string, ReplyContext>();
   const _sessionCoordinator = new ProviderSessionCoordinator(db);
+  const hasZeroClawProvider = ['zeroclaw-cli','zeroclaw-acp','zeroclaw-ws'].some(id => Boolean(providers[id]));
+  const hasConfiguredZeroClawWs = Boolean(providers['zeroclaw-ws']
+    && configuredZeroClawWsUrl()
+    && configuredZeroClawWsToken());
+  const providerSecurity = typeof (db as any).exec === 'function'
+    ? new ProviderSecurityPolicyService(db as any, { nativeAdapters: hasZeroClawProvider
+      ? { zeroclaw: new ZeroClawNativePolicyAdapter({ reloadGateway: hasConfiguredZeroClawWs }) } : {} }) : null;
+  const capabilityRefreshes = new Map<string, Promise<any>>();
   const _bindingStore = _sessionCoordinator.store;
   const _modularRollout = getProviderModularRollout(db);
   const _conversationRoutes = new Map<string, Promise<void>>();
   try { _sessionCoordinator.recoverPending(); } catch (_) {}
 
+  function refreshProviderCapability(agentId: string, providerId: string, force = false, testDelayMs = 0): Promise<any> {
+    const provider = providers[providerId] as any;
+    if (!providerSecurity || !provider || !isDynamicCapabilityTransport(providerId)) return Promise.resolve(null);
+    const circuit = providerSecurity.probeStatus(agentId, providerId);
+    if (!force && circuit.retryAfter && circuit.retryAfter > Date.now()) {
+      return Promise.reject(Object.assign(new Error('Provider capability probe circuit is open'),
+        { code: 'PROVIDER_CAPABILITY_PROBE_THROTTLED', deliveryOutcome: 'not_delivered', retryAfter: circuit.retryAfter }));
+    }
+    let observed: any;
+    try { observed = snapshotFromProvider(provider, providerId, agentId); }
+    catch (_) { observed = { runtimeFingerprint: 'unknown' }; }
+    const key = `${providerId}:${observed.runtimeFingerprint}${testDelayMs ? `:test-delay-${testDelayMs}` : ''}`;
+    const persistForAgent = (shared: Promise<any>) => shared.then(snapshot => {
+      providerSecurity.storeCapability(agentId, providerId, snapshot as any);
+      return snapshot;
+    }, error => {
+      providerSecurity.recordCapabilityFailure(agentId, providerId, error);
+      throw error;
+    });
+    if (capabilityRefreshes.has(key)) return persistForAgent(capabilityRefreshes.get(key)!);
+    const refresh = (async () => {
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const timeout = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          reject(Object.assign(new Error('Provider capability probe timed out'),
+            { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' }));
+        }, 30_000);
+        timeoutHandle.unref?.();
+      });
+      const probe = (async () => {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        if (testDelayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, testDelayMs));
+        if (timedOut) throw Object.assign(new Error('Provider capability probe timed out before runtime invocation'),
+          { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' });
+        providerSecurity.recordCapabilityEvent?.(agentId, providerId, 'CAPABILITY_PROBE_STARTED', {});
+        provider.refreshRuntime?.();
+        if (typeof provider.refreshDeliveryReadiness === 'function') await provider.refreshDeliveryReadiness();
+        return snapshotFromProvider(provider, providerId, agentId);
+      })();
+      try { return await Promise.race([probe, timeout]); }
+      finally { if (timeoutHandle) clearTimeout(timeoutHandle); }
+    })().finally(() => capabilityRefreshes.delete(key));
+    capabilityRefreshes.set(key, refresh);
+    return persistForAgent(refresh);
+  }
+
+  async function ensureProviderCapability(agentId: string, providerId: string, waitMs = 3000): Promise<any> {
+    if (!providerSecurity || !isDynamicCapabilityTransport(providerId)) return null;
+    // Prompt-only transports have no runtime-dependent argv to guard. Their
+    // snapshot can refresh in the background without delaying message submit.
+    if (!hasNativeCapabilityControls(providerId)) {
+      const current = providerSecurity.capability(agentId, providerId);
+      return current?.verified || current?.observed || null;
+    }
+    const provider = providers[providerId] as any;
+    const persisted = providerSecurity.capability(agentId, providerId);
+    let observed: any = null;
+    try { observed = snapshotFromProvider(provider, providerId, agentId); } catch (_) {}
+    const verified = persisted?.verified;
+    if (verified && observed?.runtimeFingerprint === verified.runtimeFingerprint) {
+      if (Number(verified.expiresAt || 0) <= Date.now()) {
+        providerSecurity.storeCapability(agentId, providerId, { ...verified, evidenceState: 'stale_verified', observedAt: Date.now() });
+        void refreshProviderCapability(agentId, providerId).catch(() => undefined);
+      }
+      return verified;
+    }
+    if (verified && observed?.runtimeFingerprint && observed.runtimeFingerprint !== verified.runtimeFingerprint) {
+      providerSecurity.storeCapability(agentId, providerId, { ...observed, evidenceState: 'changed_unverified' });
+    }
+    const refresh = refreshProviderCapability(agentId, providerId);
+    const timeout = new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(Object.assign(new Error('Provider capability wait timed out'),
+        { code: 'PROVIDER_CAPABILITY_WAIT_TIMEOUT', deliveryOutcome: 'not_delivered' })), waitMs);
+      timer.unref?.();
+    });
+    return Promise.race([refresh, timeout]);
+  }
+
   function _commitProviderSession(input: any): void {
     const mode = providerModularModeForFamily(_modularRollout, input.providerType);
     if (mode === 'shadow') {
       if (input.receipt?.nativeSessionId) {
-        console.error(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
+        console.debug(`[ProviderShadow] session commit candidate agent=${input.agentId} provider=${input.providerType} adapter=${input.adapterType}`);
       }
       return;
     }
@@ -453,7 +546,13 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     if (attachedEventProviders.has(p) || typeof p.on !== 'function') return;
     attachedEventProviders.add(p);
     p.on('provider.event', (event: ProviderCoreEvent) => {
-      _acceptProviderEvent(event);
+      if (!_acceptProviderEvent(event)) return;
+      if (event.turnId) {
+        const state = event.type === 'accepted' ? 'ACCEPTED'
+          : event.type === 'completed' ? 'COMPLETED'
+            : event.type === 'failed' ? 'FAILED' : null;
+        if (state) providerSecurity?.markTurn(event.turnId, state, event.agentId);
+      }
     });
     p.on('delivery.error', (event: Record<string, unknown>) => {
       const agentId = String(event.agentId || '');
@@ -506,39 +605,60 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
             return;
           }
           const providerId = _providerIds.get(p) || 'unregistered';
-          if (reply.done !== false && reply.turnId) _finishOrdinaryTurn(String(reply.agentId || ''), reply.turnId);
-          if (reply.done !== false && isInternalProviderProtocol(reply.content)) {
-            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'}`);
-            const isolatedSink = reply.turnId
-              ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+          let boundedReply = reply;
+          if (reply.done !== false) {
+            const bounded = sanitizeFinalProviderReply(reply.content);
+            if (bounded.rejected) {
+              if (reply.turnId) _finishOrdinaryTurn(String(reply.agentId || ''), reply.turnId);
+              console.error(`[Dispatcher] provider_reasoning_output_dropped agent=${reply.agentId || '-'} providerId=${providerId} turnId=${reply.turnId || '-'} replyId=${reply.replyId || '-'} reason=${bounded.reason || 'unknown'}`);
+              const isolatedSink = reply.turnId
+                ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+                : undefined;
+              if (isolatedSink) {
+                isolatedSink({ ...reply, content: '', error: 'Provider output did not contain a safe final reply',
+                  errorCode: 'PROVIDER_OUTPUT_UNPARSEABLE', deliveryOutcome: 'outcome_unknown' });
+              } else {
+                const contextualized = _contextualizeReply({ ...reply, content: '' });
+                void Promise.resolve(onTurnStatus?.({ ...contextualized, status: 'failed',
+                  code: 'PROVIDER_OUTPUT_UNPARSEABLE' })).catch(() => undefined);
+              }
+              return;
+            }
+            boundedReply = { ...reply, content: bounded.content };
+          }
+          if (boundedReply.done !== false && boundedReply.turnId) _finishOrdinaryTurn(String(boundedReply.agentId || ''), boundedReply.turnId);
+          if (boundedReply.done !== false && isInternalProviderProtocol(boundedReply.content)) {
+            console.error(`[Dispatcher] provider_internal_protocol_dropped agent=${boundedReply.agentId || '-'} providerId=${providerId} turnId=${boundedReply.turnId || '-'} replyId=${boundedReply.replyId || '-'}`);
+            const isolatedSink = boundedReply.turnId
+              ? _isolatedReplySinks.get(`${boundedReply.agentId || ''}::${boundedReply.turnId}`)
               : undefined;
-            if (isolatedSink) isolatedSink({ ...reply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
+            if (isolatedSink) isolatedSink({ ...boundedReply, content: '', error: 'Provider returned internal tool protocol instead of a final reply',
               errorCode: 'PROVIDER_INTERNAL_PROTOCOL_OUTPUT', deliveryOutcome: 'outcome_unknown' });
             return;
           }
-          if (reply.done !== false) {
-            _recordDeliveryEvidence(String(reply.agentId || ''), providerId, reply, true);
+          if (boundedReply.done !== false) {
+            _recordDeliveryEvidence(String(boundedReply.agentId || ''), providerId, boundedReply, true);
           }
           _acceptProviderEvent({
-            eventId: reply.replyId
-              ? `${providerId}:${reply.agentId || ''}:${reply.replyId}:reply:${reply.done === false ? 'partial' : 'final'}`
+            eventId: boundedReply.replyId
+              ? `${providerId}:${boundedReply.agentId || ''}:${boundedReply.replyId}:reply:${boundedReply.done === false ? 'partial' : 'final'}`
               : crypto.randomUUID(),
-            type: 'reply', providerId, agentId: String(reply.agentId || ''),
-            turnId: reply.turnId, occurredAt: Date.now(), terminal: false, payload: reply,
+            type: 'reply', providerId, agentId: String(boundedReply.agentId || ''),
+            turnId: boundedReply.turnId, occurredAt: Date.now(), terminal: false, payload: boundedReply,
           });
-          const isolatedSink = reply.turnId
-            ? _isolatedReplySinks.get(`${reply.agentId || ''}::${reply.turnId}`)
+          const isolatedSink = boundedReply.turnId
+            ? _isolatedReplySinks.get(`${boundedReply.agentId || ''}::${boundedReply.turnId}`)
             : undefined;
           if (isolatedSink) {
-            if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
-            isolatedSink(reply);
-            if (reply.done !== false) _retireIsolatedTurn(`${reply.agentId || ''}::${reply.turnId}`);
+            if ((boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(boundedReply)) return;
+            isolatedSink(boundedReply);
+            if (boundedReply.done !== false) _retireIsolatedTurn(`${boundedReply.agentId || ''}::${boundedReply.turnId}`);
             return;
           }
           // Provider 已携带身份时先去重，避免重复 final 消费下一条排队上下文。
-          if ((reply.turnId || reply.replyId) && !_acceptFinalReply(reply)) return;
-          const contextualized = _contextualizeReply(reply);
-          if (!(reply.turnId || reply.replyId) && !_acceptFinalReply(contextualized)) return;
+          if ((boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(boundedReply)) return;
+          const contextualized = _contextualizeReply(boundedReply);
+          if (!(boundedReply.turnId || boundedReply.replyId) && !_acceptFinalReply(contextualized)) return;
           onTurnStatus?.({ ...contextualized, status: 'completed' });
           onAgentReply(contextualized);
     });
@@ -811,8 +931,10 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       try {
         available = typeof provider.isAvailable === 'function' && !!provider.isAvailable(agentId);
         status = available ? 'available' : 'unavailable';
-        readiness = typeof (provider as any).getDeliveryReadiness === 'function'
-          ? (provider as any).getDeliveryReadiness(agentId) : null;
+        const readinessReader = typeof (provider as any).getDeliveryReadinessSnapshot === 'function'
+          ? (provider as any).getDeliveryReadinessSnapshot
+          : (provider as any).getDeliveryReadiness;
+        readiness = typeof readinessReader === 'function' ? readinessReader.call(provider, agentId) : null;
         if (readiness && typeof readiness.then === 'function') readiness = null;
         if (readiness) {
           available = readiness.ready === true;
@@ -926,7 +1048,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       throw new Error('delivery channel does not support loopback verification');
     }
     provider.refreshRuntime?.();
-    if (!provider.isAvailable?.(agentId)) throw new Error('CodeBuddy CLI is not installed');
+    await provider.refreshDeliveryReadiness?.();
+    if (!provider.isAvailable?.(agentId)) {
+      const readiness = provider.getDeliveryReadiness?.(agentId);
+      const detail = readiness?.detail || readiness?.reason;
+      throw new Error(detail ? `delivery channel is unavailable: ${detail}` : 'delivery channel is unavailable');
+    }
     const result = await provider.runLoopbackTest(agentId, {
       acknowledgeCost: true,
       challenge: `voko-${crypto.randomBytes(12).toString('hex')}`,
@@ -975,6 +1102,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       _temporaryPreferredChannels.set(agentId, { mode: selectedMode, providerId: selectedProviderId });
     }
     invalidateRoutes({ agentId, reason: 'manual-delivery-selection' });
+    return getAgentDeliveryStatus(agentId);
+  }
+
+  function clearTemporaryDeliveryChannel(agentId: string): AgentDeliveryStatus {
+    _temporaryPreferredChannels.delete(agentId);
+    invalidateRoutes({ agentId, reason: 'manual-delivery-selection-cleared' });
     return getAgentDeliveryStatus(agentId);
   }
 
@@ -1327,11 +1460,14 @@ Convergence obligations:
     const turnKey = `${agentId}::${String(statusContext.turnId || '')}`;
     if (channelType === 1) _ordinaryTurnDeadlines.set(turnKey, { statusContext });
     const begin = () => {
+      // Binding and security policy are resolved when the queued turn actually
+      // reaches the Provider boundary, so UI changes apply to every unsent turn.
+      const submittingPayload = _captureProviderBinding(agentId, payload);
       if (channelType === 1 && onTurnStatus) {
         return Promise.resolve(onTurnStatus({ ...statusContext, status: 'processing' }))
-          .catch(() => undefined).then(() => _doRoute(agentId, payload, context));
+          .catch(() => undefined).then(() => _doRoute(agentId, submittingPayload, context));
       }
-      return _doRoute(agentId, payload, context);
+      return _doRoute(agentId, submittingPayload, context);
     };
     const next = previous ? previous.catch(() => {}).then(begin) : begin();
     _conversationRoutes.set(key, next);
@@ -1439,19 +1575,23 @@ Convergence obligations:
         ? { ...payload, turnId: payload.turnId || payload.messageId, senderUid: payload.senderUid || payload.fromUid, fromUid: payload.sessionTarget || `group:${payload.channelId}` }
         : { ...payload, turnId: payload.turnId || payload.messageId };
       const executionScope = String((payload as any).executionScope || '');
-      const sourceType = executionScope === 'owner_link'
+      const sourceType = (payload as any).sourceType === 'external'
+        ? 'external'
+        : executionScope === 'owner_link'
         ? 'owner'
         : executionScope === 'owner_chat'
           ? 'owner_chat'
         : (executionScope === 'a2a_mailbox' || a2aContext?.a2aManaged
           || (executionScope === 'e2ee' && (payload as any).sourceType === 'agent_peer')) ? 'agent_peer' : 'visitor';
       const isOwnerChat = sourceType === 'owner_chat';
+      const securitySourceType = sourceType === 'external' ? 'visitor' : sourceType;
       const baseProviderPayload = {
         ...routedPayload,
         rawContent: payload.rawContent ?? payload.content,
-        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, sourceType,
-          sourceType === 'agent_peer' ? (routedPayload as any).trustedA2AControl : undefined),
-        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(sourceType) }),
+        content: isOwnerChat ? routedPayload.content : wrapPushContent(routedPayload.content, securitySourceType,
+          securitySourceType === 'agent_peer' ? (routedPayload as any).trustedA2AControl : undefined),
+        ...(isOwnerChat ? {} : { securityContext: createMessageSecurityContext(securitySourceType) }),
+        sourceType,
         providerBinding: payload.providerBinding ?? null,
       };
       const replyContext = {
@@ -1536,17 +1676,29 @@ Convergence obligations:
               throw error;
             }
           }
+          // 第一阶段仅让已迁移的 transport 进入异步能力门禁。未迁移 Provider
+          // 必须保持原来的同步调用时序，避免仅仅多一个 microtask 就改变路由/回包竞态。
+          if (hasNativeCapabilityControls(selectedRoute.providerId)) {
+            await ensureProviderCapability(agentId, selectedRoute.providerId, 3000);
+          }
+          const securityLease = providerSecurity?.acquireTurnLease(baseProviderPayload, selectedRoute.providerId) || null;
           const providerPayload = {
             ...baseProviderPayload,
+            content: appendProviderSecurityPrompt(baseProviderPayload.content, securityLease),
             providerBinding: selectedBinding,
+            providerSecurityPolicy: securityLease,
           };
           payloadByProvider.set(candidate.target, providerPayload);
+          if (securityLease) providerSecurity?.markTurn(securityLease.turnId, 'SUBMITTING', agentId);
           return candidate.target.push!(providerPayload);
         },
         classify: deliveryOutcome,
         onSuccess: (candidate: any, deliveryReceipt: any) => {
           const selectedRoute = routeByProvider.get(candidate.target)!;
           const providerPayload = payloadByProvider.get(candidate.target);
+          if (providerPayload?.providerSecurityPolicy?.turnId) {
+            providerSecurity?.markTurn(providerPayload.providerSecurityPolicy.turnId, 'COMPLETED', agentId);
+          }
           if (!isolated && providerPayload && deliveryReceipt?.nativeSessionId) {
             try {
               _commitProviderSession({
@@ -1573,6 +1725,10 @@ Convergence obligations:
           _recordDeliveryEvidence(agentId, candidate.providerId, { outcome, error }, false);
           _forgetRoute(agentId, 'push', candidate.target);
           const providerPayload = payloadByProvider.get(candidate.target);
+          if (providerPayload?.providerSecurityPolicy?.turnId) {
+            providerSecurity?.markTurn(providerPayload.providerSecurityPolicy.turnId,
+              outcome === 'outcome_unknown' ? 'OUTCOME_UNKNOWN' : 'FAILED', agentId);
+          }
           try { _sessionCoordinator.onDeliveryFailure(providerPayload?.providerBinding || null, outcome); } catch (_) {}
           const action = outcome === 'not_delivered'
             ? '当前通道未送达，正在按已配置路由评估备选通道'
@@ -1653,9 +1809,10 @@ Convergence obligations:
       throw new Error('OWNER_CHAT_REQUIRES_NATIVE_IO_BRIDGE');
     }
     const executionScope = options.executionScope === 'owner_link' ? 'owner_link' : 'a2a_mailbox';
-    const sourceType = executionScope === 'owner_link' ? 'owner' : 'agent_peer';
+    const sourceType = executionScope === 'owner_link' ? 'owner'
+      : options.sourceType === 'external' ? 'external' : 'agent_peer';
     if (options.sourceType && options.sourceType !== sourceType) throw new Error('Isolated source scope mismatch');
-    const prefix = executionScope === 'owner_link' ? 'owner' : 'a2a';
+    const prefix = executionScope === 'owner_link' ? 'owner' : sourceType === 'external' ? 'external' : 'a2a';
     if (executionScope === 'a2a_mailbox'
       && (!options.principalScope || !options.sessionScopeId || !options.protocolContextId
         || !Number.isSafeInteger(options.bindingGeneration) || Number(options.bindingGeneration) < 1)) {
@@ -1703,7 +1860,7 @@ Convergence obligations:
     } finally { deadline.clear(); _retireIsolatedTurn(sinkKey); }
   }
 
-  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown }> {
+  async function executeE2ee(options: IsolatedExecutionOptions): Promise<{ reply: ProviderReply; receipt?: unknown; providerId?: string }> {
     if (!options.agentId || !options.taskId || !options.contextId || !options.sessionScopeId) {
       const error: any = new Error('E2EE_V2_SCOPE_REQUIRED');
       error.deliveryOutcome = 'rejected'; error.code = 'E2EE_V2_SCOPE_REQUIRED'; throw error;
@@ -1762,6 +1919,8 @@ Convergence obligations:
     });
     const deadline = _createTurnDeadline({ scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
+    const startedAt = Date.now();
+    let selectedProviderId = 'none';
     try {
       const delivery = await _doRoute(options.agentId, {
         ...workingPayload,
@@ -1772,7 +1931,11 @@ Convergence obligations:
         messageSegments: options.messageSegments,
         attachmentOutputDirectory: options.attachmentOutputDirectory,
         onDeliveryReceipt: (value: unknown) => { receipt = value; },
-      }, prepared.context, (providerId, provider) => deadline.select(providerId, provider));
+      }, prepared.context, (providerId, provider) => {
+        selectedProviderId = providerId;
+        return deadline.select(providerId, provider);
+      });
+      if (delivery?.providerId) selectedProviderId = String(delivery.providerId);
       if (delivery?.outcome !== 'delivered') {
         const error: any = new Error(`E2EE v2 Provider delivery ${delivery?.outcome || 'failed'}`);
         error.deliveryOutcome = delivery?.outcome || 'outcome_unknown';
@@ -1784,7 +1947,19 @@ Convergence obligations:
         ? await Promise.race([replyPromise,
           options.ownerInterventionCreated.then(() => ({ content: 'NO_REPLY', done: true } as ProviderReply))])
         : await replyPromise;
-      return { reply, receipt };
+      console.log(`[ProviderTurn] turn=${turnId} agent=${options.agentId} messages=${options.sourceMessageIds?.length || 1} `+
+        `attachments=${options.attachments?.length || 0} provider=${selectedProviderId} durationMs=${Date.now()-startedAt} `+
+        'outcome=delivered providerOutcome=generated');
+      return { reply, receipt, providerId: selectedProviderId };
+    } catch (error: any) {
+      const rawCode = String(error?.code || 'E2EE_V2_PROVIDER_FAILED');
+      const code = /^[A-Z0-9_:-]{1,80}$/.test(rawCode) ? rawCode : 'E2EE_V2_PROVIDER_FAILED';
+      const providerOutcome = code.includes('TIMEOUT') ? 'timeout'
+        : error?.deliveryOutcome === 'outcome_unknown' ? 'unknown' : 'rejected';
+      console.log(`[ProviderTurn] turn=${turnId} agent=${options.agentId} messages=${options.sourceMessageIds?.length || 1} `+
+        `attachments=${options.attachments?.length || 0} provider=${selectedProviderId} durationMs=${Date.now()-startedAt} `+
+        `outcome=${String(error?.deliveryOutcome || 'failed')} providerOutcome=${providerOutcome} errorCode=${code}`);
+      throw error;
     } finally {
       deadline.clear();
       _retireIsolatedTurn(sinkKey);
@@ -1797,10 +1972,10 @@ Convergence obligations:
       console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
-    const workingPayload = _captureProviderBinding(agentId, {
+    const workingPayload: PushPayload = {
       ...payload,
       rawContent: payload.rawContent ?? payload.content,
-    });
+    };
     const prepared = _prepareA2A(agentId, workingPayload);
     if (prepared.blocked) return;
     if (prepared.delay) {
@@ -2011,14 +2186,19 @@ Convergence obligations:
   }
 
   async function start() {
+    try { await providerSecurity?.recoverApplying(); }
+    catch (e) { console.error('[Dispatcher] Provider 原生权限恢复失败:', errorMessage(e)); }
     try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
     try {
       const rows = db.prepare('SELECT agent_id FROM agents').all() as Array<{ agent_id?: string }>;
       for (const row of rows) {
         const agentId = String(row?.agent_id || '').trim();
         if (!agentId) continue;
-        _routeProvider(agentId, 'push');
+        const route = _routeProviderEntry(agentId, 'push');
         _routeProvider(agentId, 'steer');
+        if (route?.providerId && isDynamicCapabilityTransport(route.providerId)) {
+          void refreshProviderCapability(agentId, route.providerId).catch(() => undefined);
+        }
       }
     } catch (e) {
       console.error('[Dispatcher] provider 路由初始化失败:', errorMessage(e));
@@ -2050,6 +2230,206 @@ Convergence obligations:
     await runtimeRegistry.restart(providerId);
   }
 
+  function applyProviderSecurityPolicyChange(change: { agentId?: string; transportId?: string; providerFamily?: string;
+    lifecycleAction?: string; agentScopeChanged?: boolean }): boolean {
+    if (change.lifecycleAction !== 'restart_agent_runtime') return false;
+    const targets = change.agentScopeChanged
+      ? Object.entries(providers).filter(([id]) => getProviderTransport(id)?.family === change.providerFamily)
+      : [[String(change.transportId || ''), providers[String(change.transportId || '')]]] as Array<[string, any]>;
+    let restarted = false;
+    for (const [, provider] of targets) {
+      if (typeof (provider as any)?.restartAgentRuntime !== 'function') continue;
+      restarted = (provider as any).restartAgentRuntime(String(change.agentId || '')) === true || restarted;
+    }
+    return restarted;
+  }
+
+  function inspectProviderSecurity(agentId: string, transportId?: string): any {
+    if (!providerSecurity) throw new Error('PROVIDER_SECURITY_UNAVAILABLE');
+    const deliveryStatus = getAgentDeliveryStatus(agentId);
+    const explicitlySelected = transportId
+      ? deliveryStatus.methods.find(method => method.provider === transportId) : null;
+    const selectedMode = explicitlySelected?.mode || deliveryStatus.temporaryPreferredMode
+      || deliveryStatus.activeAutomaticMode
+      || deliveryStatus.configuredModes.find(mode => mode !== 'pull')
+      || 'pull';
+    const selectedProvider = transportId
+      || deliveryStatus.temporaryPreferredProvider
+      || deliveryStatus.methods.find(method => method.mode === selectedMode && method.configured
+        && method.automaticReady === true)?.provider
+      || deliveryStatus.methods.find(method => method.mode === selectedMode && method.configured)?.provider
+      || null;
+    const hasSecurityDefinition = !!selectedProvider && isProviderSecurityTransport(selectedProvider);
+    const inferred = providerSecurity.inspect(agentId, hasSecurityDefinition ? selectedProvider : undefined);
+    const result = selectedMode === 'pull' || !selectedProvider
+      ? { ...inferred, transportId: '', supported: false, controls: [], config: {}, assurance: 'unsupported' }
+      : hasSecurityDefinition
+        ? inferred
+        : { ...inferred, transportId: selectedProvider, supported: false, controls: [], config: {}, assurance: 'unsupported' };
+    const provider = providers[String(result.transportId || '')] as any;
+    let evidence: Record<string, unknown> | null = null;
+    try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
+    const capabilityEvidence = result.transportId ? providerSecurity.capability(agentId, result.transportId) : null;
+    if (isDynamicCapabilityTransport(result.transportId) && (!capabilityEvidence?.verified
+      || Number(capabilityEvidence.verified.expiresAt || 0) <= Date.now())) {
+      void refreshProviderCapability(agentId, result.transportId).catch(() => undefined);
+    }
+    const probing = [...capabilityRefreshes.keys()].some(key => key.startsWith(`${result.transportId}:`));
+    const transports = deliveryStatus.methods.filter(method => method.mode !== 'pull' && method.provider)
+      .map(method => {
+        const latestTurn = providerSecurity.latestTurnForTransport?.(agentId, String(method.provider || ''));
+        const stalled = method.provider === 'opencode-attach' && latestTurn?.state === 'SUBMITTING'
+          && Date.now() - Number(latestTurn.updated_at || 0) > 180_000;
+        const transportCapability = providerSecurity.capability(agentId, String(method.provider || ''));
+        const transportEvidenceState = String(transportCapability?.observed?.evidenceState
+          || transportCapability?.verified?.evidenceState || 'unknown');
+        const attachUnverified = method.provider === 'opencode-attach'
+          && !['verified', 'static_compatible', 'stale_verified'].includes(transportEvidenceState);
+        return { transportId: method.provider, mode: method.mode, configured: method.configured !== false,
+          available: method.available !== false, automaticReady: method.automaticReady === true,
+          status: stalled ? 'delivery_stalled' : method.status,
+          verificationStatus: method.verificationStatus || null, evidenceState: transportEvidenceState,
+          securitySelectable: !stalled && !attachUnverified };
+      });
+    return { ...result, deliveryMode: selectedMode, selectedProvider, evidence, transports,
+      capabilityEvidence, capabilityProbing: probing };
+  }
+
+  function inspectProviderRuntime(agentId: string, transportId: string): any {
+    const provider = providers[transportId] as any;
+    if (!provider) throw new Error('PROVIDER_RUNTIME_NOT_FOUND');
+    const meta = _metaOf(agentId);
+    if (typeof provider.match === 'function' && !provider.match(agentId, meta)) {
+      throw new Error('PROVIDER_RUNTIME_TRANSPORT_MISMATCH');
+    }
+    let version: any = null;
+    let sandbox: any = null;
+    try { version = provider.getProviderVersion?.() || null; } catch (error) {
+      version = { version: null, result: 'unknown', errorCode: String((error as any)?.code || 'PROBE_FAILED').slice(0, 96) };
+    }
+    try { sandbox = provider.getSandboxStatus?.(agentId) || null; } catch (error) {
+      sandbox = { state: 'unknown', errorCode: String((error as any)?.code || 'PROBE_FAILED').slice(0, 96) };
+    }
+    const capability = snapshotFromProvider(provider, transportId, agentId);
+    return { agentId, transportId, providerFamily: getProviderTransport(transportId)?.family || meta.backend_type || null,
+      frameworkVersion: capability.frameworkVersion || version?.version || null,
+      runtimeVersion: capability.runtimeVersion || version?.version || null,
+      runtimeFingerprint: capability.runtimeFingerprint,
+      platform: capability.platform, arch: capability.arch, protocolVersion: capability.protocolVersion,
+      adapterRevision: capability.adapterRevision, versionEvidence: version, sandbox };
+  }
+
+  async function refreshProviderSecurityCapability(agentId: string, transportId?: string): Promise<any> {
+    const inspected = inspectProviderSecurity(agentId, transportId);
+    if (!inspected.transportId) throw new Error('PROVIDER_SECURITY_UNSUPPORTED');
+    return refreshProviderCapability(agentId, inspected.transportId, true);
+  }
+
+  async function exerciseProviderCapabilityFault(agentId: string, transportId: string, fault: string): Promise<any> {
+    const agent = db.prepare('SELECT agent_name FROM agents WHERE agent_id=? LIMIT 1').get(agentId) as any;
+    if (!String(agent?.agent_name || '').startsWith('TEST-')) throw new Error('PROVIDER_FAULT_TEST_AGENT_REQUIRED');
+    if (!providerSecurity || !isDynamicCapabilityTransport(transportId)) throw new Error('PROVIDER_FAULT_TEST_UNSUPPORTED');
+    const startedAt = Date.now();
+    if (fault === 'probe-timeout') {
+      const refresh = refreshProviderCapability(agentId, transportId, true, 4_000);
+      let code = '';
+      try {
+        await Promise.race([refresh, new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('wait timeout'),
+          { code: 'PROVIDER_CAPABILITY_WAIT_TIMEOUT' })), 3_000))]);
+      } catch (error) { code = String((error as any)?.code || ''); }
+      await refresh;
+      return { fault, status: code === 'PROVIDER_CAPABILITY_WAIT_TIMEOUT' ? 'PASS' : 'FAIL', code,
+        durationMs: Date.now() - startedAt, injector: 'dispatcher-delay' };
+    }
+    if (fault === 'runtime-timeout') {
+      let code = '';
+      try { await refreshProviderCapability(agentId, transportId, true, 31_000); }
+      catch (error) { code = String((error as any)?.code || ''); }
+      await refreshProviderCapability(agentId, transportId, true);
+      return { fault, status: code === 'PROVIDER_CAPABILITY_PROBE_TIMEOUT' ? 'PASS' : 'FAIL', code,
+        durationMs: Date.now() - startedAt, injector: 'dispatcher-delay', childTermination: 'not_applicable_no_child_started' };
+    }
+    if (fault === 'circuit-breaker') {
+      for (let index = 0; index < 3; index += 1) providerSecurity.recordCapabilityFailure(agentId, transportId,
+        Object.assign(new Error('injected probe failure'), { code: 'PROVIDER_CAPABILITY_PROBE_FAILED' }));
+      let code = '';
+      try { await refreshProviderCapability(agentId, transportId, false); }
+      catch (error) { code = String((error as any)?.code || ''); }
+      await refreshProviderCapability(agentId, transportId, true);
+      const recovered = providerSecurity.probeStatus(agentId, transportId);
+      return { fault, status: code === 'PROVIDER_CAPABILITY_PROBE_THROTTLED' && recovered.failures === 0 ? 'PASS' : 'FAIL',
+        code, recovered, durationMs: Date.now() - startedAt, injector: 'policy-store' };
+    }
+    if (fault === 'fingerprint-change') {
+      const actual = await refreshProviderCapability(agentId, transportId, true);
+      const before = providerSecurity.capability(agentId, transportId);
+      if (!before?.verified) return { fault, status: 'SKIPPED_NOT_READY',
+        reason: 'not_applicable_without_verified_capability', durationMs: Date.now() - startedAt,
+        injector: 'capability-snapshot' };
+      providerSecurity.storeCapability(agentId, transportId, { ...actual,
+        runtimeFingerprint: `${String(actual.runtimeFingerprint).slice(0, 110)}-changed`,
+        capabilityDigest: `${String(actual.capabilityDigest).slice(0, 110)}-changed`, evidenceState: 'unknown',
+        observedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+      const changed = providerSecurity.capability(agentId, transportId);
+      await refreshProviderCapability(agentId, transportId, true);
+      const restored = providerSecurity.capability(agentId, transportId);
+      const passed = changed?.observed?.evidenceState === 'changed_unverified'
+        && restored?.observed?.runtimeFingerprint === actual.runtimeFingerprint;
+      return { fault, status: passed ? 'PASS' : 'FAIL', changedState: changed?.observed?.evidenceState,
+        restored: passed, durationMs: Date.now() - startedAt, injector: 'capability-snapshot' };
+    }
+    throw new Error('PROVIDER_FAULT_TEST_UNKNOWN');
+  }
+
+  function describeProviderSecurityInvocation(agentId: string, transportId: string,
+    config?: Record<string,string>|{ transportConfig?: Record<string,string>; instanceConfig?: Record<string,string> }): any {
+    const policy = providerSecurity?.effective(agentId, transportId);
+    const scopedConfig = config as { transportConfig?: Record<string,string> } | undefined;
+    const effectiveConfig: Record<string,string> = scopedConfig?.transportConfig
+      && typeof scopedConfig.transportConfig === 'object'
+      ? scopedConfig.transportConfig : config as Record<string,string> || policy?.config || {};
+    const provider = providers[transportId] as any;
+    const render = (value: Record<string,string>) => provider?.describeSecurityInvocation?.(value)
+      || redactedInvocation(transportId, value);
+    const baseline = render(policy?.config || {});
+    const baselineTexts = new Set(baseline.map((item: any) => String(item.text || '')));
+    const definitions = new Map(getProviderSecurityControls(transportId).map(item => [item.id, item]));
+    const inferControl = (text: string): string | undefined => {
+      if (/toolsets|--tools|工具执行预算/.test(text)) return transportId === 'hermes-cli' ? 'toolProfile' : transportId === 'qwen-office-cli' ? 'toolAccess' : 'toolAccess';
+      if (/safe-mode/.test(text)) return 'safeMode';
+      if (/^qoderclicn\b/.test(text)) return undefined;
+      if (/yolo|permission-mode/.test(text)) return transportId === 'hermes-cli' ? 'approvalMode' : 'permissionMode';
+      if (/accept-hooks/.test(text)) return 'acceptHooks';
+      if (/session|会话/i.test(text)) return 'sessionPersistence';
+      if (/MCP|strict-mcp/i.test(text)) return 'mcpProfile';
+      if (/chrome/i.test(text)) return 'browser';
+      if (/sandbox|read-only|workspace-write/.test(text)) return 'sandboxMode';
+      if (/profile|扩展/.test(text)) return 'extensionProfile';
+      return undefined;
+    };
+    const baselineSegments = baseline.map((item: any) => ({ ...item,
+      sourceControl: item.sourceControl || inferControl(String(item.text || '')) }));
+    const currentSegments = render(effectiveConfig).map((item: any) => {
+      const sourceControl = item.sourceControl || inferControl(String(item.text || ''));
+      const definition = sourceControl ? definitions.get(sourceControl) : null;
+      const changed = sourceControl
+        ? effectiveConfig[sourceControl] !== policy?.config?.[sourceControl]
+        : !baselineTexts.has(String(item.text || ''));
+      return { ...item, changed, change: changed ? 'added' : 'unchanged', sourceControl,
+        enforcement: item.enforcement || definition?.enforcement || 'provider_enforced' };
+    });
+    const currentControls = new Set(currentSegments.map((item: any) => item.sourceControl).filter(Boolean));
+    const currentTexts = new Set(currentSegments.map((item: any) => String(item.text || '')));
+    const removedSegments = baselineSegments.filter((item: any) => item.sourceControl
+      ? effectiveConfig[item.sourceControl] !== policy?.config?.[item.sourceControl] && !currentControls.has(item.sourceControl)
+      : !currentTexts.has(String(item.text || ''))).map((item: any) => {
+      const definition = item.sourceControl ? definitions.get(item.sourceControl) : null;
+      return { ...item, changed: true, change: 'removed',
+        enforcement: item.enforcement || definition?.enforcement || 'provider_enforced' };
+    });
+    return [...currentSegments, ...removedSegments];
+  }
+
   /** 按 Agent 配置变更失效 provider 会话绑定（转发到绑定存储）。 */
   function invalidateBindingsForConfigChange(input: {
     agentId: string;
@@ -2070,8 +2450,13 @@ Convergence obligations:
     clearDeliveryEvidence,
     getProviderEventStats, steer, start, stop, restartProvider, addProviders, healthCheck, invalidateMeta,
     refreshAgentDeliveryChannels, verifyAgentDeliveryChannel, verifyProviderDeliveryRuntime, selectTemporaryDeliveryChannel,
+    clearTemporaryDeliveryChannel,
     invalidateRoutes, markConverged, isConverged, resetA2AForAgent, isAgentImUid: _isAgentImUid,
-    invalidateBindingsForConfigChange, providers: runtimeRegistry.providers };
+    invalidateBindingsForConfigChange, providerSecurity, inspectProviderSecurity, inspectProviderRuntime, refreshProviderSecurityCapability,
+    exerciseProviderCapabilityFault,
+    describeProviderSecurityInvocation,
+    applyProviderSecurityPolicyChange,
+    providers: runtimeRegistry.providers };
 }
 
 module.exports = { createDispatcher, resolveTurnDeadlineMs };

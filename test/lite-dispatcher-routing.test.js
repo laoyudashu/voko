@@ -129,6 +129,13 @@ test('temporary delivery selection overrides persisted order without changing th
   dispatchOnce(dispatcher);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, ['cli']);
+
+  const restored = dispatcher.clearTemporaryDeliveryChannel('agent-1');
+  assert.equal(restored.temporaryPreferredMode, null);
+  assert.equal(restored.temporaryPreferredProvider, null);
+  dispatchOnce(dispatcher);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['cli', 'websocket']);
 });
 
 test('temporary pull selection leaves new messages for on-demand pickup until restart', async () => {
@@ -269,6 +276,31 @@ test('delivery diagnostics keeps a shallow-ready Qwen runtime out of automatic r
   assert.equal(method.status, 'verification_required');
   assert.deepEqual(status.automaticReadyModes, []);
   assert.equal(status.activeAutomaticMode, null);
+});
+
+test('delivery diagnostics prefers a side-effect-free readiness snapshot', () => {
+  let activeProbes = 0;
+  const qwen = provider('cli', 1, []);
+  qwen.getDeliveryReadiness = () => { activeProbes += 1; return { ready: false }; };
+  qwen.getDeliveryReadinessSnapshot = () => ({ ready: true, automaticReady: true, installed: true });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  for (let index = 0; index < 100; index += 1) dispatcher.getAgentDeliveryStatus('agent-1');
+  assert.equal(activeProbes, 0);
+});
+
+test('loopback verification awaits asynchronous Provider readiness refresh before checking availability', async () => {
+  let refreshed = false;
+  const qwen = provider('cli', 1, []);
+  qwen.refreshRuntime = () => { refreshed = false; };
+  qwen.refreshDeliveryReadiness = async () => { refreshed = true; return { ready: true }; };
+  qwen.isAvailable = () => refreshed;
+  qwen.runLoopbackTest = async () => ({ ok: true, challengeMatched: true });
+  qwen.getDeliveryReadiness = () => ({ ready: refreshed, automaticReady: refreshed,
+    verificationStatus: refreshed ? 'loopback_verified' : 'unverified' });
+  const dispatcher = createDispatcher({ db: dbFor(['cli', 'pull']), providers: { 'qwen-office-cli': qwen } });
+  const verified = await dispatcher.verifyAgentDeliveryChannel('agent-1', 'qwen-office-cli');
+  assert.equal(verified.result.challengeMatched, true);
+  assert.equal(refreshed, true);
 });
 
 test('delivery diagnostics treats configured pull as an available on-demand receiver', () => {

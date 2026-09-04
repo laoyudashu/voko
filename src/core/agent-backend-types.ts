@@ -162,7 +162,7 @@ function seedBackendTypes(db: DatabaseLike): void {
       : DEFAULT_BACKEND_TYPES;
     db.prepare('INSERT OR REPLACE INTO config (type, data, updated_at) VALUES (?, ?, ?)')
       .run(CONFIG_TYPE, JSON.stringify(merged), Date.now());
-    console.error('[AgentBackendTypes] 已写入默认后端类型配置');
+    console.log('[AgentBackendTypes] 已写入默认后端类型配置');
   } catch (e) {
     console.error('[AgentBackendTypes] seed 失败:', (e as Error).message);
   }

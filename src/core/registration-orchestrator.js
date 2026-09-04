@@ -14,6 +14,7 @@ const { discoverHermes, getLastHermesDiscoveryStatus } = require('../server/herm
 const { getRegistrationCaller } = require('./registration-caller-context');
 const { getBackendTypes, normalizeBackendType } = require('./agent-backend-types');
 const { resolveZeroClawCommand } = require('./dispatcher/zeroclaw-command');
+const { configuredUrl: configuredZeroClawWsUrl, configuredToken: configuredZeroClawWsToken } = require('./dispatcher/zeroclaw-ws-config');
 const { resolveCursorCommand, isCursorCommandAvailable } = require('./dispatcher/cursor-command');
 const { isGeminiSandboxAvailable } = require('./dispatcher/providers/gemini-cli');
 const { isGooseRuntimeAvailable } = require('./dispatcher/goose-command');
@@ -437,9 +438,10 @@ function zeroclawReadiness(instanceId) {
 function zeroclawWsReadiness(instanceId) {
   const base = zeroclawReadiness(instanceId);
   if (!base.ready) return base;
-  const rawUrl = cleanText(process.env.ZEROCLAW_ACP_URL, 500) || 'ws://127.0.0.1:42617/acp';
-  const token = cleanText(process.env.ZEROCLAW_ACP_TOKEN, 2000);
+  const rawUrl = configuredZeroClawWsUrl();
+  const token = configuredZeroClawWsToken();
   try {
+    if (!rawUrl) throw new Error('invalid URL');
     const url = new URL(rawUrl);
     const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
     if (!loopback || !['ws:', 'wss:'].includes(url.protocol) || url.search || url.hash) {

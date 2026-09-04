@@ -484,6 +484,32 @@ await test('list_conversations 返回 channelType，群聊 needsReply=false', as
   } finally { cleanup(); }
 });
 
+await test('list_conversations 单聊摘要跳过可信系统和历史 Turn 状态消息', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare(`DELETE FROM messages WHERE channel_id='visitor1' AND agent_id='agentA'`).run();
+    db.prepare(`INSERT INTO conversations
+      (user_uid,channel_id,channel_type,name,last_message,last_timestamp,unread_count,agent_id)
+      VALUES (?,?,?,?,?,?,?,?)`).run('imuidA','visitor1',1,'visitor1','Agent 回复已送达',200,0,'agentA');
+    db.prepare(`INSERT INTO messages
+      (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('reply-visible','imuidA','visitor1','真实答复','visitor1',1,'agentA',100,1,'sent',1);
+    db.prepare(`INSERT INTO messages
+      (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('e2ee-status-old','imuidA','visitor1','Agent 回复已送达','visitor1',1,'agentA',200,1,'sent',1);
+    db.prepare(`INSERT INTO messages
+      (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run('system-new','system','visitor1','系统通知','visitor1',1,'agentA',300,2,'sent',10);
+
+    const result = await handlers.list_conversations({ agentId: 'agentA', channelType: 'direct', filter: 'all' });
+    const direct = result.conversations.find(c => c.channelId === 'visitor1');
+    assert.strictEqual(direct.lastMessage, '真实答复');
+    assert.strictEqual(direct.lastTimestamp, 100);
+    assert.strictEqual(direct.lastIsMe, 1);
+    assert.strictEqual(direct.needsReply, false);
+  } finally { cleanup(); }
+});
+
 await test('list_conversations channelType=group 过滤只返回群聊', async () => {
   const { handlers, cleanup } = setup();
   try {

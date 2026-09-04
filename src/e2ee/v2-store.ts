@@ -51,7 +51,8 @@ export interface E2eeV2ConversationRow {
   local_agent_id:string;channel_id:string;routing_conversation_id:string;wire_conversation_key:string;
   protocol_conversation_id:string;peer_scope_id:string;peer_kind:'guest'|'agent';
   mode:E2eeV2ConversationMode;recipient_revision:string;activated_at:number|null;
-  last_verified_at:number;lock_reason:string|null;created_at:number;updated_at:number;
+  last_verified_at:number;lock_reason:string|null;recovery_attempts:number;next_recovery_at:number|null;
+  recovery_state:'active'|'dormant'|'terminal'|null;created_at:number;updated_at:number;
 }
 
 export interface E2eeV2OutboundEnvelopeRow {
@@ -68,6 +69,14 @@ export interface E2eeV2OutboundAttachmentRow {
 function ensureColumn(db:any,table:string,column:string,definition:string):void{
   const columns=db.prepare(`PRAGMA table_info(${table})`).all() as Array<{name?:string}>;
   if(!columns.some(row=>row.name===column))db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function isBackgroundRecoverableLockReason(reason:unknown):boolean{
+  const value=String(reason||'');
+  return ['ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+    'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
+    'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404','PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND']
+    .includes(value)||value.startsWith('E2EE_V2_DIRECTORY_HTTP_5');
 }
 
 function keyFile(databasePath: string): string {
@@ -187,6 +196,9 @@ export class E2eeV2Store {
         activated_at INTEGER,
         last_verified_at INTEGER NOT NULL,
         lock_reason TEXT,
+        recovery_attempts INTEGER NOT NULL DEFAULT 0,
+        next_recovery_at INTEGER,
+        recovery_state TEXT CHECK(recovery_state IN ('active','dormant','terminal')),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY(local_agent_id,channel_id,routing_conversation_id)
@@ -242,6 +254,20 @@ export class E2eeV2Store {
       );
     `);
     ensureColumn(db,'e2ee_v2_outbound_messages','projected_at','INTEGER');
+    ensureColumn(db,'e2ee_v2_conversations','recovery_attempts','INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(db,'e2ee_v2_conversations','next_recovery_at','INTEGER');
+    ensureColumn(db,'e2ee_v2_conversations','recovery_state',"TEXT CHECK(recovery_state IN ('active','dormant','terminal'))");
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_e2ee_v2_conversations_recovery
+      ON e2ee_v2_conversations(mode,recovery_state,next_recovery_at)`);
+    const now=Date.now();
+    db.prepare(`UPDATE e2ee_v2_conversations SET recovery_state='active',recovery_attempts=0,
+      next_recovery_at=?+(ABS(rowid)%30)*60000 WHERE mode='locked' AND recovery_state IS NULL AND (
+      lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
+        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
+        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404','PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND')
+        OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')`).run(now);
+    db.prepare(`UPDATE e2ee_v2_conversations SET recovery_state='terminal',next_recovery_at=NULL
+      WHERE mode='locked' AND recovery_state IS NULL`).run();
   }
 
   key(localAgentId: string): (E2eeV2KeyRow & {private_bundle_json:string})|null {
@@ -373,22 +399,22 @@ export class E2eeV2Store {
   }
 
   transientLockedConversationCount():number{
-    const row=this.db.prepare(`SELECT COUNT(*) AS count FROM e2ee_v2_conversations WHERE mode='locked' AND (
-      lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
-        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
-        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404','PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND')
-        OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')`).get() as {count?:number}|undefined;
+    const row=this.db.prepare(`SELECT COUNT(*) AS count FROM e2ee_v2_conversations
+      WHERE mode='locked' AND recovery_state='active'`).get() as {count?:number}|undefined;
     return Number(row?.count||0);
   }
 
-  transientLockedConversations(limit=500,offset=0):E2eeV2ConversationRow[]{
-    return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='locked' AND (
-      lock_reason IN ('ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ABORT_ERR',
-        'E2EE_V2_DIRECTORY_UNAVAILABLE','E2EE_V2_DIRECTORY_HTTP_408','E2EE_V2_DIRECTORY_HTTP_425',
-        'E2EE_V2_DIRECTORY_HTTP_429','E2EE_V2_DIRECTORY_HTTP_404','PEER_NOT_FOUND','E2EE_KEY_NOT_FOUND')
-        OR lock_reason LIKE 'E2EE_V2_DIRECTORY_HTTP_5%')
-      ORDER BY updated_at ASC,local_agent_id ASC,channel_id ASC,routing_conversation_id ASC LIMIT ? OFFSET ?`)
-      .all(limit,offset) as E2eeV2ConversationRow[];
+  transientLockedConversations(limit=500,_offset=0,now=Date.now()):E2eeV2ConversationRow[]{
+    return this.db.prepare(`SELECT * FROM e2ee_v2_conversations WHERE mode='locked'
+      AND recovery_state='active' AND COALESCE(next_recovery_at,0)<=?
+      ORDER BY COALESCE(next_recovery_at,0),updated_at,local_agent_id,channel_id,routing_conversation_id LIMIT ?`)
+      .all(now,limit) as E2eeV2ConversationRow[];
+  }
+
+  deferredLockedConversationCount(now=Date.now()):number{
+    const row=this.db.prepare(`SELECT COUNT(*) AS count FROM e2ee_v2_conversations WHERE mode='locked'
+      AND recovery_state='active' AND next_recovery_at>?`).get(now) as {count?:number}|undefined;
+    return Number(row?.count||0);
   }
 
   saveConversation(input:{localAgentId:string;channelId:string;routingConversationId?:string;
@@ -400,30 +426,62 @@ export class E2eeV2Store {
     if(existing?.mode==='locked'&&input.mode!=='locked')throw new Error('E2EE_V2_CONVERSATION_LOCKED');
     if(existing?.mode==='e2ee_active'&&input.mode==='plaintext')throw new Error('E2EE_V2_DOWNGRADE_FORBIDDEN');
     const activatedAt=input.mode==='e2ee_active'?(existing?.activated_at||now):existing?.activated_at||null;
+    const recoveryState=input.mode==='locked'
+      ?(isBackgroundRecoverableLockReason(input.lockReason)?'active':'terminal'):null;
+    const nextRecoveryAt=recoveryState==='active'?now:null;
     this.db.prepare(`INSERT INTO e2ee_v2_conversations(local_agent_id,channel_id,routing_conversation_id,
       wire_conversation_key,protocol_conversation_id,peer_scope_id,peer_kind,mode,recipient_revision,
-      activated_at,last_verified_at,lock_reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      activated_at,last_verified_at,lock_reason,recovery_attempts,next_recovery_at,recovery_state,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(local_agent_id,channel_id,routing_conversation_id) DO UPDATE SET
       wire_conversation_key=excluded.wire_conversation_key,protocol_conversation_id=excluded.protocol_conversation_id,
       peer_scope_id=excluded.peer_scope_id,peer_kind=excluded.peer_kind,mode=excluded.mode,
       recipient_revision=excluded.recipient_revision,activated_at=excluded.activated_at,
-      last_verified_at=excluded.last_verified_at,lock_reason=excluded.lock_reason,updated_at=excluded.updated_at`)
+      last_verified_at=excluded.last_verified_at,lock_reason=excluded.lock_reason,
+      recovery_attempts=excluded.recovery_attempts,next_recovery_at=excluded.next_recovery_at,
+      recovery_state=excluded.recovery_state,updated_at=excluded.updated_at`)
       .run(input.localAgentId,input.channelId,routingConversationId,input.wireConversationKey||'',
         input.protocolConversationId,input.peerScopeId,input.peerKind,input.mode,input.recipientRevision||'',
-        activatedAt,now,input.lockReason||null,existing?.created_at||now,now);
+        activatedAt,now,input.lockReason||null,0,nextRecoveryAt,recoveryState,existing?.created_at||now,now);
     return this.conversation(input.localAgentId,input.channelId,routingConversationId)!;
   }
 
   lockConversation(localAgentId:string,channelId:string,routingConversationId:string,reason:string):void{
-    this.db.prepare(`UPDATE e2ee_v2_conversations SET mode='locked',lock_reason=?,updated_at=?
+    const existing=this.conversation(localAgentId,channelId,routingConversationId);
+    const recoverable=isBackgroundRecoverableLockReason(reason);
+    const same=existing?.mode==='locked'&&existing.lock_reason===reason;
+    const state=recoverable?(same&&existing?.recovery_state==='dormant'?'dormant':'active'):'terminal';
+    const attempts=same?Number(existing?.recovery_attempts||0):0;
+    const next=recoverable?(same?existing?.next_recovery_at||Date.now():Date.now()):null;
+    this.db.prepare(`UPDATE e2ee_v2_conversations SET mode='locked',lock_reason=?,recovery_attempts=?,
+      next_recovery_at=?,recovery_state=?,updated_at=?
       WHERE local_agent_id=? AND channel_id=? AND routing_conversation_id=? AND mode IN ('e2ee_active','locked')`)
-      .run(reason,Date.now(),localAgentId,channelId,routingConversationId||'');
+      .run(reason,attempts,next,state,Date.now(),localAgentId,channelId,routingConversationId||'');
+  }
+
+  scheduleConversationRecovery(localAgentId:string,channelId:string,routingConversationId:string,
+    reason:string,nextRecoveryAt:number|null,dormant=false):E2eeV2ConversationRow|null{
+    const existing=this.conversation(localAgentId,channelId,routingConversationId);
+    if(!existing||existing.mode!=='locked')return existing;
+    const attempts=Number(existing.recovery_attempts||0)+1;
+    this.db.prepare(`UPDATE e2ee_v2_conversations SET lock_reason=?,recovery_attempts=?,next_recovery_at=?,
+      recovery_state=?,updated_at=? WHERE local_agent_id=? AND channel_id=? AND routing_conversation_id=? AND mode='locked'`)
+      .run(reason,attempts,dormant?null:nextRecoveryAt,dormant?'dormant':'active',Date.now(),
+        localAgentId,channelId,routingConversationId||'');
+    return this.conversation(localAgentId,channelId,routingConversationId);
+  }
+
+  wakeConversationRecovery(localAgentId:string,channelId:string,routingConversationId:string):void{
+    this.db.prepare(`UPDATE e2ee_v2_conversations SET recovery_state='active',next_recovery_at=?
+      WHERE local_agent_id=? AND channel_id=? AND routing_conversation_id=? AND mode='locked'
+        AND recovery_state='dormant'`).run(Date.now(),localAgentId,channelId,routingConversationId||'');
   }
 
   reactivateConversation(input:{localAgentId:string;channelId:string;routingConversationId:string;
     expectedLockReason:string;protocolConversationId:string;peerScopeId:string;peerKind:'guest'|'agent';
     recipientRevision?:string}):boolean{
     const result=this.db.prepare(`UPDATE e2ee_v2_conversations SET mode='e2ee_active',lock_reason=NULL,
+      recovery_attempts=0,next_recovery_at=NULL,recovery_state=NULL,
       recipient_revision=?,last_verified_at=?,updated_at=? WHERE local_agent_id=? AND channel_id=?
       AND routing_conversation_id=? AND mode='locked' AND lock_reason=? AND protocol_conversation_id=?
       AND peer_scope_id=? AND peer_kind=?`).run(input.recipientRevision||'',Date.now(),Date.now(),

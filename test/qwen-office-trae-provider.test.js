@@ -71,12 +71,13 @@ test('QwenWork status diagnostics distinguish timeout, invalid output, login and
   assert.equal(classify({ status: 0, stdout: '{"logged_in":true,"version":"1.2.3"}', stderr: '' }).reason, 'ready');
 });
 
-test('QwenWork shallow readiness allows a cold start and one retry', () => {
+test('QwenWork shallow readiness is snapshot-only and a refresh performs one bounded attempt', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/core/dispatcher/qwen-office-command.ts'), 'utf8');
   assert.match(source, /STATUS_TIMEOUT_MS = 10_000/);
-  assert.match(source, /STATUS_MAX_ATTEMPTS = 2/);
-  assert.match(source, /value\.reason === 'status_timeout' \|\| value\.reason === 'status_invalid_output'/);
-  assert.match(source, /retrying=true/);
+  assert.doesNotMatch(source, /STATUS_MAX_ATTEMPTS/);
+  assert.match(source, /statusFailureCounts/);
+  assert.match(source, /Math\.min\(10 \* 60_000, 30_000/);
+  assert.match(source, /killTree\(child\.pid\)/);
   assert.doesNotMatch(source, /spawnSync/);
   assert.match(source, /statusRefreshes/);
 });
@@ -98,10 +99,29 @@ test('QwenWork readiness never blocks the event loop while the status command is
   assert.ok(Date.now() - startedAt < 100, 'cold readiness lookup must return without waiting for the CLI');
   await timer;
   assert.equal(timerFired, true);
+  assert.equal(fs.existsSync(calls), false, 'snapshot reads must not launch qoderclicn');
   const ready = await qwenCommand.refreshQwenOfficeReadiness(cli);
   assert.equal(ready.ready, true);
-  assert.equal(qwenCommand.getQwenOfficeReadiness(cli).ready, true);
+  for (let index = 0; index < 100; index += 1) {
+    assert.equal(qwenCommand.getQwenOfficeReadiness(cli).ready, true);
+  }
   assert.equal(fs.readFileSync(calls, 'utf8'), '1', 'concurrent readiness lookups must share one status process');
+});
+
+test('QwenWork failed status probes use a negative-cache backoff', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX executable fixture');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-qwenwork-failed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cli = path.join(root, 'qoderclicn');
+  const calls = path.join(root, 'calls');
+  fs.writeFileSync(cli, `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(calls)}, '1');process.stdout.write('invalid');\n`);
+  fs.chmodSync(cli, 0o755);
+  qwenCommand.invalidateQwenOfficeReadiness(cli);
+  const first = await qwenCommand.refreshQwenOfficeReadiness(cli);
+  const second = await qwenCommand.refreshQwenOfficeReadiness(cli);
+  assert.equal(first.reason, 'status_invalid_output');
+  assert.equal(second.reason, 'status_invalid_output');
+  assert.equal(fs.readFileSync(calls, 'utf8'), '1');
 });
 
 test('Trae resolver prefers an explicit traecli binary and exposes ACP mode', () => {
@@ -136,14 +156,34 @@ test('QwenWork CLI provider uses stream-json, no tools, and a stable binding ada
   assert.equal(provider._adapterType, 'qwen-office-cli');
   assert.equal(provider._bindingProviderType, 'qwen-office');
   assert.equal(provider._parserName, 'gemini-stream-json');
-  assert.deepEqual(provider._args.slice(0, 8), [
+  assert.deepEqual(provider._args.slice(0, 7), [
     '--print', '--output-format', 'stream-json', '--input-format', 'stream-json',
-    '--permission-mode', 'dont_ask', '--tools',
+    '--permission-mode', 'dont_ask',
   ]);
-  assert.equal(provider._args[8], '');
+  assert.deepEqual(provider._args.slice(7), process.platform === 'win32' ? ['--tools='] : ['--tools', '']);
   assert.equal(provider.acceptsBinding({
     providerType: 'qwen-office', adapterType: 'qwen-office-cli', deliveryMode: 'cli', nativeSessionId: 's1',
   }), true);
+  const ephemeral = provider._preparePrompt('hello', {
+    configuredArgs: [...provider._args, '--resume', 'native-session'],
+    payload: { providerSecurityPolicy: { config: { sessionPersistence: 'ephemeral' } } },
+  });
+  assert.equal(ephemeral.args.includes('--resume'), false);
+  assert.equal(ephemeral.args.includes('native-session'), false);
+  assert.equal(ephemeral.args.includes('--no-session-persistence'), true);
+  assert.equal(ephemeral.args.includes('--strict-mcp-config'), true);
+  assert.equal(ephemeral.args[ephemeral.args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
+  const permissive = provider._preparePrompt('hello', {
+    configuredArgs: [...provider._args, '--resume', 'native-session'],
+    payload: { providerSecurityPolicy: { config: {
+      sessionPersistence: 'conversation', permissionMode: 'bypass_permissions',
+      toolAccess: 'default', mcpProfile: 'user',
+    } } },
+  });
+  assert.equal(permissive.args[permissive.args.indexOf('--permission-mode') + 1], 'bypass_permissions');
+  assert.equal(permissive.args[permissive.args.indexOf('--tools') + 1], 'default');
+  assert.equal(permissive.args.includes('--strict-mcp-config'), false);
+  assert.equal(permissive.args.includes('native-session'), true);
 });
 
 test('QwenWork delivery failures distinguish quota, timeout, login, and generic failures', () => {

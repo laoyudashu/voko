@@ -81,8 +81,8 @@ test('cached Provider push failure falls back to Pull and recovery restores Push
 
   const failedRows = readMessages(channelId);
   expect(failedRows.filter(row => row.is_me === 0)).toHaveLength(1);
-  expect(failedRows.some(row => row.content === 'Agent 正在处理…')).toBe(true);
-  expect(failedRows.some(row => row.content === 'Agent 当前无法处理该消息')).toBe(true);
+  expect(failedRows.some(row => row.content === 'Agent 正在处理…')).toBe(false);
+  expect(failedRows.some(row => row.content === 'Agent 当前无法处理该消息')).toBe(false);
   expect(failedRows.some(row => row.content.includes('[echo]'))).toBe(false);
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
@@ -133,7 +133,7 @@ test('outcome-unknown Provider failure is not retried and later messages recover
     timeout: 5_000,
   }).toBe(faultedBefore + 1);
   await expect.poll(() => readMessages(channelId).some(row => row.id === failedMessageId), { timeout: 5_000 }).toBe(true);
-  await expect.poll(() => readMessages(channelId).some(row => row.content === '消息结果暂时无法确认'), { timeout: 5_000 }).toBe(true);
+  expect(readMessages(channelId).some(row => row.content === '消息结果暂时无法确认')).toBe(false);
 
   const pulled = await callMcp(request, 'voko_fetch_new_messages', {
     agentId: 'e2e-agent', visitorId: channelId, onlyReplies: true, limit: 10,

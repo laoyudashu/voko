@@ -10,13 +10,13 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+const { killTree } = require('../adapters/cli-spawner');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
-const STATUS_CACHE_TTL_MS = 10_000;
 const STATUS_TIMEOUT_MS = 10_000;
-const STATUS_MAX_ATTEMPTS = 2;
 const statusCache = new Map<string, { value: QwenOfficeReadiness; expiresAt: number }>();
 const statusRefreshes = new Map<string, Promise<QwenOfficeReadiness>>();
+const statusFailureCounts = new Map<string, number>();
 
 export interface QwenOfficeReadiness {
   executable: boolean;
@@ -68,6 +68,25 @@ function classifyQwenOfficeStatusResult(result: any): QwenOfficeReadiness {
   const loggedIn = parsed.logged_in === true;
   return { executable: true, loggedIn, ready: loggedIn, reason: loggedIn ? 'ready' : 'cli_not_logged_in', exitCode,
     ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}) };
+}
+
+function readinessTtl(command: string, value: QwenOfficeReadiness): number {
+  if (value.ready) {
+    statusFailureCounts.delete(command);
+    return 60_000;
+  }
+  if (value.reason === 'cli_not_logged_in' || value.reason === 'not_found') {
+    statusFailureCounts.delete(command);
+    return 5 * 60_000;
+  }
+  const failures = Math.min(6, (statusFailureCounts.get(command) || 0) + 1);
+  statusFailureCounts.set(command, failures);
+  return Math.min(10 * 60_000, 30_000 * (2 ** (failures - 1)));
+}
+
+function cacheReadiness(command: string, value: QwenOfficeReadiness): QwenOfficeReadiness {
+  statusCache.set(command, { value, expiresAt: Date.now() + readinessTtl(command, value) });
+  return value;
 }
 
 function localAppDataRoot(env: NodeJS.ProcessEnv): string {
@@ -161,13 +180,26 @@ function resolveQwenOfficeRuntime(
 
 function runQwenOfficeStatus(runtime: { executable: string; argvPrefix: string[] }): Promise<any> {
   return new Promise((resolve) => {
-    execFile(runtime.executable, [...runtime.argvPrefix, 'status', '--output', 'json'], {
-      encoding: 'utf8', timeout: STATUS_TIMEOUT_MS, windowsHide: true,
+    let settled = false;
+    let child: any;
+    const finish = (value: any) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    child = execFile(runtime.executable, [...runtime.argvPrefix, 'status', '--output', 'json'], {
+      encoding: 'utf8', windowsHide: true,
       maxBuffer: 1024 * 1024,
     }, (error: any, stdout: string, stderr: string) => {
-      resolve({ status: Number.isInteger(error?.code) ? error.code : (error ? null : 0),
+      finish({ status: Number.isInteger(error?.code) ? error.code : (error ? null : 0),
         signal: error?.signal || null, error, stdout, stderr });
     });
+    const timer = setTimeout(() => {
+      if (child?.pid) killTree(child.pid);
+      finish({ status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' }, stdout: '', stderr: '' });
+    }, STATUS_TIMEOUT_MS);
+    timer.unref?.();
   });
 }
 
@@ -182,8 +214,7 @@ function isQwenOfficeRuntimeAvailable(): boolean {
 function getQwenOfficeReadiness(command?: string): QwenOfficeReadiness {
   const resolvedCommand = command || resolveQwenOfficeCommand();
   const cached = statusCache.get(resolvedCommand);
-  const now = Date.now();
-  if (cached && cached.expiresAt > now) return cached.value;
+  if (cached) return cached.value;
 
   const runtime = resolveQwenOfficeRuntime(defaultAgentRuntimeResolver, resolvedCommand);
   if (!runtime.available || !runtime.executable) {
@@ -191,12 +222,9 @@ function getQwenOfficeReadiness(command?: string): QwenOfficeReadiness {
       executable: false, loggedIn: false, ready: false, reason: 'not_found',
     };
     logReadinessDiagnostic(resolvedCommand, value);
-    statusCache.set(resolvedCommand, { value, expiresAt: now + STATUS_CACHE_TTL_MS });
-    return value;
+    return cacheReadiness(resolvedCommand, value);
   }
 
-  void refreshQwenOfficeReadiness(resolvedCommand);
-  if (cached) return cached.value;
   return { executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: 'status check pending' };
 }
 
@@ -211,32 +239,18 @@ async function refreshQwenOfficeReadiness(command?: string): Promise<QwenOfficeR
     if (!runtime.available || !runtime.executable) {
       const value: QwenOfficeReadiness = { executable: false, loggedIn: false, ready: false, reason: 'not_found' };
       logReadinessDiagnostic(resolvedCommand, value);
-      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
-      return value;
+      return cacheReadiness(resolvedCommand, value);
     }
     try {
-      let value: QwenOfficeReadiness = {
-        executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: 'status check did not run',
-      };
-      let attempts = 0;
-      for (let attempt = 1; attempt <= STATUS_MAX_ATTEMPTS; attempt += 1) {
-        attempts = attempt;
-        value = classifyQwenOfficeStatusResult(await runQwenOfficeStatus(runtime));
-        const retryable = value.reason === 'status_timeout' || value.reason === 'status_invalid_output';
-        if (!retryable || attempt === STATUS_MAX_ATTEMPTS) break;
-        console.warn(`[QwenOfficeReadiness] command=${path.basename(resolvedCommand)} reason=${value.reason} attempt=${attempt} retrying=true`);
-      }
-      value = { ...value, attempts };
+      const value = { ...classifyQwenOfficeStatusResult(await runQwenOfficeStatus(runtime)), attempts: 1 };
       logReadinessDiagnostic(resolvedCommand, value);
-      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
-      return value;
+      return cacheReadiness(resolvedCommand, value);
     } catch (error) {
       const value: QwenOfficeReadiness = {
         executable: true, loggedIn: false, ready: false, reason: 'status_failed', detail: safeDiagnostic(error),
       };
       logReadinessDiagnostic(resolvedCommand, value);
-      statusCache.set(resolvedCommand, { value, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
-      return value;
+      return cacheReadiness(resolvedCommand, value);
     }
   })();
   statusRefreshes.set(resolvedCommand, refresh);
@@ -248,8 +262,13 @@ function isQwenOfficeRuntimeReady(command?: string): boolean {
 }
 
 function invalidateQwenOfficeReadiness(command?: string): void {
-  if (command) statusCache.delete(command);
-  else statusCache.clear();
+  if (command) {
+    statusCache.delete(command);
+    statusFailureCounts.delete(command);
+  } else {
+    statusCache.clear();
+    statusFailureCounts.clear();
+  }
 }
 
 module.exports = {

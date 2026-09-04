@@ -37,7 +37,7 @@ type RuntimeOptions={
   store:E2eeV2Store;
   directory:E2eeV2DirectoryClient;
   agents:()=>E2eeV2AgentDescriptor[];
-  dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown}>};
+  dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown;providerId?:string}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   handleTurnReceipt?:(agentId:string,peerUid:string,receipt:unknown)=>boolean;
@@ -431,18 +431,18 @@ export class E2eeV2Runtime {
               if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
               return;
             }
-            if(sender.peerKind!=='guest')return;
-            const text:Record<string,string>={processing:'Agent 正在处理…',login_expired:'Agent 登录已失效，暂时无法回复',
-              quota_exhausted:'Agent 额度不足，暂时无法回复',timeout:'Agent 调用超时，请稍后重试',
-              failed:'Agent 当前无法处理该消息',outcome_unknown:'消息结果暂时无法确认',
-              automatic_delivery_disabled:'Agent 尚未启用自动回复'};
-            if(!text[status])return;
+            if(sender.peerKind!=='guest'||status==='submitted'||status==='completed')return;
+            // Guest status travels as hidden route metadata. The placeholder
+            // is never projected into Lite's business transcript, and the
+            // Chatroom stores the metadata in its receipt state rather than
+            // rendering or summarizing it as a message.
             const delivered=await this.options.deliverSecureReply({agentId:agent.localAgentId,
-              channelId:envelope.channelId,content:text[status],messageId:turnStatusMessageId(envelope,turnId,status),
-              sourceMessageId:localMessageId,sourceReceiptMessageId:envelope.messageId,
-              completeSourceReceipt:false,
+              channelId:envelope.channelId,content:'VOKO_TURN_STATUS',
+              messageId:turnStatusMessageId(envelope,turnId,status),sourceMessageId:localMessageId,
+              sourceReceiptMessageId:envelope.messageId,completeSourceReceipt:false,
               protocolConversationId:envelope.conversationId,turnId,turnStatus:status,turnStatusCode:code,
-              ...(typeof prepared.routeContext?.routeId==='string'?{replyToRouteId:prepared.routeContext.routeId}:{}),});
+              ...(typeof prepared.routeContext?.routeId==='string'
+                ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
             if(delivered?.success===false)throw new Error(String(delivered.error||'E2EE_V2_STATUS_NOT_DELIVERED'));
           },
           markProviderAccepted:()=>{if(providerAccepted)return;
@@ -493,6 +493,12 @@ export class E2eeV2Runtime {
           ...(sender.peerKind==='agent'?{a2aDisposition:'automatic_reply' as const}:{}),
           ...(typeof prepared.routeContext?.routeId==='string'
             ?{replyToRouteId:prepared.routeContext.routeId}:{}),});
+        const deliveryState=delivered?.success===false
+          ?(delivered.outcomeUnknown?'outcome_unknown':'not_delivered')
+          :delivered?.deliveryState==='delivered'?'delivered':'queued';
+        console.log(`[DeliveryTurn] turn=${queued.batch.turnId} agent=${agent.localAgentId} `+
+          `provider=${String(queued.result?.providerId||'none')} message=${replyMessageId} `+
+          `providerOutcome=generated deliveryState=${deliveryState} terminal=${deliveryState!=='queued'}`);
         if(delivered?.success===false){
           const failure=Object.assign(new Error(String(delivered.error||'E2EE_V2_REPLY_NOT_DELIVERED')),
             {outcomeUnknown:Boolean(delivered.outcomeUnknown)});

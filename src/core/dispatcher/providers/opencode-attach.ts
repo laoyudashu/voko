@@ -190,7 +190,8 @@ class OpenCodeAttachProvider extends PushProvider {
     try {
       return await this._pushOnce(payload);
     } catch (error) {
-      const binding = payload.providerBinding?.providerType === 'opencode' ? payload.providerBinding : null;
+      const binding = payload.providerBinding?.providerType === 'opencode'
+        && payload.providerBinding?.adapterType === ADAPTER_TYPE ? payload.providerBinding : null;
       if (this._sessionPersistence === 'dispatcher' || !binding || (payload as any).__vokoManagedRetry) throw error;
       const message = String((error as any)?.message || error || '');
       const outcome = (error as any)?.deliveryOutcome
@@ -213,6 +214,7 @@ class OpenCodeAttachProvider extends PushProvider {
     const activeBinding = (payload as any).__vokoManagedRetry
       ? null
       : payload.providerBinding?.providerType === 'opencode'
+        && payload.providerBinding?.adapterType === ADAPTER_TYPE
       ? payload.providerBinding
       : this._bindingStore?.getByAdapter(agentId, channelId, channelType, ADAPTER_TYPE)
         || this._bindingStore?.importLegacy({

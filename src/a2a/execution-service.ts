@@ -54,6 +54,7 @@ class A2AExecutionService {
     try {
       result = await this.dispatcher.executeIsolated({ agentId: envelope.agentId, taskId: envelope.gatewayTaskId,
         contextId: envelope.contextId, content, binding, executionScope: 'a2a_mailbox', sessionScopeId,
+        sourceType: envelope.caller.provenance === 'external_gateway' ? 'external' : 'agent_peer',
         principalScope, bindingGeneration, protocolContextId: envelope.contextId,
         timeoutMs: this.executionTimeoutMs,
         attachments: prepared?.inputs, attachmentOutputDirectory: prepared?.outputDirectory,

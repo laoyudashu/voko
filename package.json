@@ -1,6 +1,6 @@
 {
   "name": "@voko/lite",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Cross-platform local Agent IM runtime for secure Agent-to-Agent communication and collaboration via MCP, CLI, HTTP, and Web UI.",
   "license": "AGPL-3.0-only",
   "author": "Hong Kong Leung Pin Ho On Technology Limited",
@@ -100,6 +100,7 @@
     "test:real:stability": "npm run build:ts && node scripts/real-test.js stability",
     "test:real:all": "npm run build:ts && node scripts/real-test.js all",
     "test:real:matrix": "npm run build:ts && node scripts/real-matrix.js",
+    "test:real:provider-runtime-matrix": "npm run build:ts && node scripts/provider-runtime-matrix.js",
     "test:real:browser": "node scripts/real-browser-worker.js",
     "test:real:web": "node scripts/real-voko-web-worker.js",
     "test:real:group-turn": "node scripts/real-group-turn.js",

@@ -701,17 +701,17 @@ class MessageHandler extends EventEmitter {
     // 黑白名单检查
     if (agentStatusRow && this.ac) {
       if (this.ac.isBlacklisted(this.db, agentId, fromUid)) {
-        this._sendSystemMessage(agentId, fromUid, 'blacklisted', {}, timestamp, systemRoute);
-        markIntercepted('blacklisted');
+        this._sendSystemMessage(agentId, fromUid, 'ACCESS_BLACKLIST_DENIED', {}, timestamp, systemRoute);
+        markIntercepted('ACCESS_BLACKLIST_DENIED');
         return;
       }
       if (agentStatusRow.access_mode === 'private') {
         const whitelisted = this.ac.isWhitelisted(this.db, agentId, fromUid);
         if (!whitelisted) {
           if (!this.ac.isWhitelisted(this.db, agentId, fromUid)) {
-            this._sendSystemMessage(agentId, fromUid, 'friend_request_received', {}, timestamp, systemRoute);
+            this._sendSystemMessage(agentId, fromUid, 'ACCESS_WHITELIST_DENIED', {}, timestamp, systemRoute);
             this._triggerFriendRequestIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), timestamp, messageId, inboundConversationId);
-            markIntercepted('friend_request_received');
+            markIntercepted('ACCESS_WHITELIST_DENIED');
             return;
           }
         }
@@ -1582,7 +1582,24 @@ class MessageHandler extends EventEmitter {
       this.deferredReplyReceipts.set(this._receiptKey(agentId,msgId),{peerUid:replyChannelId,
         sourceMessageIds:[...sourceMessageIds],turnId:String(data.turnId||data.sourceMessageId||msgId)});
     }
+    if (fullyDelivered && replyChannelType === 1 && !automaticA2AReply && data.turnId) {
+      await this._deliverGuestTurnStatus(data, replyChannelId, 'reply_delivered', 'Agent 已答复');
+    }
 
+  }
+
+  private async _deliverGuestTurnStatus(data: AgentReplyMessage & { code?: string }, recipientUid: string,
+    status: string, content: string): Promise<void> {
+    const turnId = String(data.turnId || data.sourceMessageId || '');
+    const result = await this._deliver(data.agentId, recipientUid, content, 'text', 1, null,
+      `turn-status-${data.agentId}-${turnId || 'unknown'}-${status}`,
+      { _voko: { protocolVersion: 1, turnId, turnStatus: status,
+        ...(data.code ? { turnStatusCode: String(data.code) } : {}),
+        ...(data.remoteRouteId ? { replyToRouteId: data.remoteRouteId } : {}),
+        ...(data.remoteConversationKey ? { canonicalConversationKey: data.remoteConversationKey } : {}) } });
+    if (result?.success === false) {
+      console.warn(`[Provider状态] 投递失败 agent=${data.agentId} peer=${recipientUid} status=${status}`);
+    }
   }
 
   async handleProviderTurnStatus(data: AgentReplyMessage & { status?: string; code?: string }): Promise<void> {
@@ -1619,9 +1636,12 @@ class MessageHandler extends EventEmitter {
     };
     const content = messages[status];
     if (!content) return;
-    await this.handleAgentReply({ ...data, content, done: true,
-      providerTurnStatus: status as AgentReplyMessage['providerTurnStatus'],
-      providerTurnStatusCode: String(data.code || '') || undefined });
+    // Provider progress is transport metadata, not an Agent-authored chat
+    // message. Deliver it directly so the Chatroom can update its status UI
+    // without persisting it in Lite's transcript or letting probes mistake it
+    // for the real Provider reply. Keep the legacy text as the wire fallback
+    // for older clients that do not understand turnStatus metadata yet.
+    await this._deliverGuestTurnStatus(data, recipientUid, status, content);
   }
 }
 

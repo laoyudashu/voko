@@ -1801,7 +1801,7 @@ async function startMcpServer(args?: any, core?: any) {
 
   const orphanResult = cleanupOrphanedWorkers(db._dbPath);
   if (orphanResult.killed.length > 0) {
-    console.error(`[Lite] 已精确清理 ${orphanResult.killed.length} 个孤儿 worker`);
+    console.log(`[Lite] 已精确清理 ${orphanResult.killed.length} 个孤儿 worker`);
   }
 
   // ── 自动恢复已发布的 agent（仅当前用户名下） ──
@@ -1833,7 +1833,7 @@ async function startMcpServer(args?: any, core?: any) {
     config: { uid: agent.imUid, token: agent.imToken, serverUrl: agent.im_server_url },
   })));
   const startupConnected = startupResults.filter((result: any) => result.connected).length;
-  if (publishedAgentCount > 0) console.error(`[VOKO Lite] 已启动 ${startupConnected}/${publishedAgentCount} 个 Agent IM 连接`);
+  if (publishedAgentCount > 0) console.log(`[VOKO Lite] 已启动 ${startupConnected}/${publishedAgentCount} 个 Agent IM 连接`);
 
   // ── 版本检查（异步，不阻塞） ──
   checkVersionAndPersist(db);
@@ -2084,7 +2084,7 @@ async function startMcpServer(args?: any, core?: any) {
           Boolean(messageHandler?.acceptAuthenticatedTurnReceipt(agentId,peerUid,receipt)),
         deliverSecureReply:async(input:any)=>{
           if(!messageHandler||!secureOutboundRouter)throw new Error('E2EE_V2_SECURE_ROUTER_UNAVAILABLE');
-          const persisted=input.turnReceipt?{routeMetadata:null}:messageHandler.persistE2eeAgentReply(
+          const persisted=input.turnReceipt||input.turnStatus?{routeMetadata:null}:messageHandler.persistE2eeAgentReply(
             input.agentId,input.channelId,input.content,input.messageId,input.sourceMessageId);
           const statusMetadata=input.turnStatus?{turnId:input.turnId,turnStatus:input.turnStatus,
             ...(input.turnStatusCode?{turnStatusCode:input.turnStatusCode}:{})}:{};
@@ -2173,7 +2173,7 @@ async function startMcpServer(args?: any, core?: any) {
       });
       deliver.setSecureRouter?.(secureOutboundRouter);
       const initial=await e2eeRuntime.synchronizeAgentKeys();
-      console.warn(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
+      console.log(`[E2EE] v2无状态加密已启用 Agent=${initial.registered} failed=${initial.failed}`);
       await taskManager.start('e2ee-v2-workers',()=>{
         let running=false;
         const run=async()=>{if(running)return;running=true;try{
@@ -2218,10 +2218,12 @@ async function startMcpServer(args?: any, core?: any) {
         }
         void e2eeRuntime.handle(msg.agentId,data).then((result: any) => {
           if (!result.accepted) {
-            if (result.code === 'E2EE_V2_PROVIDER_REPLY_TIMEOUT') {
-              console.warn('[E2EE] Provider 结果未知，未自动重试 code=E2EE_V2_PROVIDER_REPLY_TIMEOUT');
+            const code = String(result.code || 'E2EE_REJECTED');
+            if (code === 'E2EE_V2_PROVIDER_REPLY_TIMEOUT'
+              || /(?:EMPTY_REPLY|OUTCOME_UNKNOWN|ACP_STAGE_FAILED|TIMEOUT)/.test(code)) {
+              console.warn(`[E2EE] Provider 结果未知，未自动重试 code=${code}`);
             } else {
-              console.warn(`[E2EE] 已拒绝消息: ${result.code || 'E2EE_REJECTED'}`);
+              console.warn(`[E2EE] 已拒绝消息: ${code}`);
             }
           }
           if (!data?.__e2eeReceiptAcked) data?.ack?.();
@@ -2364,6 +2366,7 @@ async function startMcpServer(args?: any, core?: any) {
       agentEmailApi: _agentEmailApi,
       sendSystemMessage: (...a: any) => agentManager.sendSystemMessage(...a),
       resumeOwnerIntervention: createResumeOwnerIntervention(dispatcher, db, secureOutboundRouter, messageHandler),
+      getAgentDeliveryStatus: (agentId: string) => dispatcher?.getAgentDeliveryStatus?.(agentId) || null,
       autoApproveWhitelistIfFriendRequest: (intervention?: any, reply?: any) =>
         messageHandler?.autoApproveWhitelistIfFriendRequest(intervention, reply),
     });
@@ -2470,6 +2473,10 @@ async function startMcpServer(args?: any, core?: any) {
     if (!activeDispatcher?.selectTemporaryDeliveryChannel) return { success: false, error: 'Dispatcher unavailable' };
     const normalizedAgentId = String(agentId || '');
     const normalizedMode = String(mode || '');
+    if (normalizedMode === 'auto') {
+      if (!activeDispatcher.clearTemporaryDeliveryChannel) return { success: false, error: 'Automatic delivery selection is unavailable' };
+      return { success: true, agentId, deliveryStatus: activeDispatcher.clearTemporaryDeliveryChannel(normalizedAgentId) };
+    }
     const row = db.prepare('SELECT backend_type, delivery_modes FROM agents WHERE agent_id=? LIMIT 1').get(normalizedAgentId);
     let previousModes: string | null | undefined;
     if (row?.backend_type === 'workbuddy' && normalizedMode === 'http' && providerId === 'workbuddy-http') {
@@ -2494,6 +2501,73 @@ async function startMcpServer(args?: any, core?: any) {
       throw error;
     }
   };
+  handlers.inspect_provider_security = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.inspectProviderSecurity) return { success: false, error: 'Provider security inspection is unavailable' };
+    return { success: true, data: activeDispatcher.inspectProviderSecurity(String(agentId || ''), String(transportId || '') || undefined) };
+  };
+  handlers.inspect_provider_runtime = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.inspectProviderRuntime) return { success: false, error: 'Provider runtime inspection is unavailable' };
+    return { success: true, data: activeDispatcher.inspectProviderRuntime(String(agentId || ''), String(transportId || '')) };
+  };
+  handlers.refresh_provider_security_capability = async ({ agentId, transportId }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.refreshProviderSecurityCapability) return { success: false, error: 'Provider capability refresh is unavailable' };
+    return { success: true, data: await activeDispatcher.refreshProviderSecurityCapability(
+      String(agentId || ''), String(transportId || '') || undefined,
+    ) };
+  };
+  handlers.preview_provider_security_invocation = async ({ agentId, transportId, config }: any = {}) => {
+    const activeDispatcher = (global as any).__dispatcher;
+    if (!activeDispatcher?.describeProviderSecurityInvocation) return { success: false, error: 'Provider invocation preview is unavailable' };
+    return { success: true, data: activeDispatcher.describeProviderSecurityInvocation(
+      String(agentId || ''), String(transportId || ''), config && typeof config === 'object' ? config : undefined,
+    ) };
+  };
+  handlers.preflight_provider_security = async ({ agentId, transportId, config }: any = {}) => {
+    const service = (global as any).__dispatcher?.providerSecurity;
+    if (!service) return { success: false, error: 'Provider security service is unavailable' };
+    return { success: true, data: service.preflight(String(agentId || ''), String(transportId || ''),
+      config && typeof config === 'object' ? config : {}) };
+  };
+  handlers.commit_provider_security = async ({ agentId, preflightToken, confirmation }: any = {}) => {
+    const dispatcher = (global as any).__dispatcher;
+    const service = dispatcher?.providerSecurity;
+    if (!service) return { success: false, error: 'Provider security service is unavailable' };
+    const data = await service.commitAsync(String(agentId || ''), String(preflightToken || ''), String(confirmation || ''));
+    dispatcher.applyProviderSecurityPolicyChange?.(data);
+    return { success: true, data };
+  };
+  handlers.inspect_provider_turn_evidence = async ({ agentId, turnId, channelId, transportId, since }: any = {}) => {
+    const normalizedAgentId = String(agentId || ''), normalizedTurnId = String(turnId || '');
+    const columns = `turn_id,agent_id,execution_scope,transport_id,policy_revision,state,
+      turn_policy_digest,restore_constraint_digest,capability_digest,runtime_fingerprint,fallback_mode,
+      agent_policy_revision,agent_policy_digest,transport_policy_digest,created_at,updated_at
+      `;
+    const transport = String(transportId || '');
+    const observedSince = Number(since || 0);
+    const turn = normalizedTurnId
+      ? db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND turn_id=? LIMIT 1`).get(normalizedAgentId, normalizedTurnId)
+      : db.prepare(`SELECT ${columns} FROM provider_security_turns WHERE agent_id=? AND (?='' OR transport_id=?)
+          AND created_at>=? ORDER BY created_at DESC LIMIT 1`).get(normalizedAgentId, transport, transport, observedSince) || null;
+    const matchCount = normalizedTurnId ? (turn ? 1 : 0) : Number(db.prepare(`SELECT COUNT(*) AS count
+      FROM provider_security_turns WHERE agent_id=? AND (?='' OR transport_id=?) AND created_at>=?`)
+      .get(normalizedAgentId, transport, transport, observedSince)?.count || 0);
+    const binding = channelId ? db.prepare(`SELECT provider_type,delivery_mode,adapter_type,native_session_id,
+      session_origin,status,binding_version,created_at,updated_at,last_used_at FROM provider_conversation_bindings
+      WHERE agent_id=? AND channel_id=? AND status='active' LIMIT 1`).get(normalizedAgentId, String(channelId)) : null;
+    const hash = (value: unknown) => value ? require('crypto').createHash('sha256').update(String(value)).digest('hex') : null;
+    return { success: true, data: { turn, matchCount, binding: binding ? { ...binding,
+      nativeSessionDigest: hash(binding.native_session_id), native_session_id: undefined } : null } };
+  };
+  handlers.exercise_provider_capability_fault = async ({ agentId, transportId, fault }: any = {}) => {
+    const dispatcher = (global as any).__dispatcher;
+    if (!dispatcher?.exerciseProviderCapabilityFault) return { success: false, error: 'Provider fault test is unavailable' };
+    return { success: true, data: await dispatcher.exerciseProviderCapabilityFault(
+      String(agentId || ''), String(transportId || ''), String(fault || ''),
+    ) };
+  };
   handlers.restart_agent_runtime = async () => {
     if (__ownerSwitchInProgress || __serviceHealth === 'draining') {
       return { success: false, code: 'OWNER_SWITCH_IN_PROGRESS', error: '账号切换正在进行' };
@@ -2512,7 +2586,7 @@ async function startMcpServer(args?: any, core?: any) {
       }
       __serviceHealth = 'draining';
       __restartAfterShutdown = true;
-      console.error('[账号切换] 已验证新主人，准备重启运行环境');
+      console.log('[账号切换] 已验证新主人，准备重启运行环境');
       setTimeout(() => {
         void shutdownAll(agentManager, wukongimSender, db, 'owner-switch', 0, taskManager);
       }, 150);
@@ -2537,6 +2611,7 @@ async function startMcpServer(args?: any, core?: any) {
     ownerChatReadStore,
     ownerChatDatabase: ownerLinkModule.running ? ownerLinkModule.getDatabase() : null,
     e2eeRuntime,
+    dispatcher,
     uploadAgentIcon: async (data: Buffer, name: string, mime: string, agentId: string) => {
       const ownerEmail = getPrimaryOwnerEmail(db);
       const token = ownerEmail ? getUserAccessToken(db, ownerEmail) : null;
@@ -2786,7 +2861,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTu
     providers['openclaw-ws'] = openclawHandler;
     const status = openclawHandler.getStatus();
     if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
-    console.error('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
+    console.log('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
   } catch (err: any) {
     console.error('[Lite] OpenClaw 处理器创建失败:', err.message);
   }
@@ -2795,7 +2870,7 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTu
   if (needsBackend('hermes')) try {
     hermesHandler = instantiateProviderTransport(getProviderTransport('hermes-http'), providerFactoryContext);
     providers['hermes-http'] = hermesHandler;
-    console.error(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
+    console.log(`[Lite] Hermes 处理器已创建 host=${hermesConfig.apiHost || '127.0.0.1'}:${hermesConfig.apiPort || 8642}`);
   } catch (err: any) {
     console.error('[Lite] Hermes 处理器创建失败:', err.message);
   }
@@ -2949,7 +3024,7 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
 
   let isBeating = false;
   const heartbeatFn = async () => {
-    if (isBeating) { console.error('[心跳] 上一轮未结束，跳过本次'); return; }
+    if (isBeating) { console.warn('[心跳] 上一轮未结束，跳过本次'); return; }
     isBeating = true;
     try {
       const userEmail = getCurrentUserEmail(db);
@@ -3179,7 +3254,7 @@ function checkLiteRunning(dbOrPath?: any) {
     const data = JSON.parse(row.data);
     if (!data || !data.pid) return false;
     if (Date.now() - data.ts > 120000) { console.error('[Runtime] runtime 已过期（>2分钟）'); return false; }
-    try { process.kill(data.pid, 0); console.error('[Runtime] 检测到实例 PID=' + data.pid); return true; }
+    try { process.kill(data.pid, 0); console.log('[Runtime] 检测到实例 PID=' + data.pid); return true; }
     catch { console.error('[Runtime] PID=' + data.pid + ' 已不存在'); return false; }
   } catch { return false; }
 }
@@ -3256,14 +3331,14 @@ async function shutdownAll(
   __shutdownContext = null;
   if (__restartAfterShutdown) {
     __restartAfterShutdown = false;
-    console.error('[账号切换] 旧运行环境已关闭');
+    console.log('[账号切换] 旧运行环境已关闭');
     if (process.env[SUPERVISED_RUNTIME_ENV] === '1') {
-      console.error('[账号切换] 正在由启动监督器重建运行环境');
+      console.log('[账号切换] 正在由启动监督器重建运行环境');
       exitCode = OWNER_SWITCH_RESTART_EXIT_CODE;
     } else {
       try {
         const replacement = spawnReplacementProcess();
-        console.error(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
+        console.log(`[账号切换] 已启动新运行环境：PID=${replacement.pid || 'unknown'}，模式=${replacement.foreground ? '继承当前终端' : '后台运行'}`);
       } catch (error: any) {
         console.error('[账号切换] 新运行环境启动失败，请运行 voko start --no-open --no-interactive:', error.message);
       }
@@ -3598,7 +3673,11 @@ async function main() {
   // IM Hub clients belong to the long-running VOKO process. Short-lived CLI
   // calls must execute these tools through that process instead of opening a
   // duplicate IM connection or using the removed legacy direct sender.
-  if (['send_message', 'get_message_result', 'upload_and_send_file', 'start_worker', 'stop_worker'].includes(subcommand)) {
+  if (['send_message', 'get_message_result', 'upload_and_send_file', 'start_worker', 'stop_worker',
+    'refresh_delivery_channels', 'verify_delivery_channel', 'select_delivery_channel', 'inspect_provider_security',
+    'inspect_provider_runtime', 'refresh_provider_security_capability', 'preview_provider_security_invocation',
+    'preflight_provider_security', 'commit_provider_security', 'inspect_provider_turn_evidence',
+    'exercise_provider_capability_fault'].includes(subcommand)) {
     const result = await cli.runRuntimeToolCommand(
       subcommand,
       args,

@@ -207,7 +207,7 @@
   "mcp.tool.fetch_new_messages.p.limit": "最多返回条数（上限 200）",
   "mcp.tool.fetch_new_messages.p.blockTimeout": "阻塞等待秒数。不传则立即返回。传了后若没有新消息会等待最多指定秒数，期间每秒检查一次，有新消息立即返回。可用于减少轮询次数。建议根据自身超时能力设置（如 30 秒）",
 
-  "mcp.tool.manage_whitelist.desc": "添加或移出白名单。action=add 时自动通知访客",
+  "mcp.tool.manage_whitelist.desc": "添加或移出白名单。仅变更访问状态，不发送聊天消息",
   "mcp.tool.manage_whitelist.p.agentId": "Agent 标识 ID（remove by id 时可省略）",
   "mcp.tool.manage_whitelist.p.action": "add=添加，remove=移除",
   "mcp.tool.manage_whitelist.p.visitorId": "访客 UID（remove by id 时可省略）",

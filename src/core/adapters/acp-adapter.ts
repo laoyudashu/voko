@@ -38,6 +38,7 @@ export interface AcpAdapterOptions {
   runtimeRequest?: RuntimeRequest;
   runtimeResolver?: AgentRuntimeResolver;
   args?: string[];
+  argsForAgent?: (agentId: string) => string[];
   env?: NodeJS.ProcessEnv;
   connectTimeout?: number;
   loopbackTimeout?: number;
@@ -66,12 +67,12 @@ interface AcpUpdate {
   kind: string;
   update?: {
     sessionUpdate?: string;
-    content?: { text?: string };
+    content?: { type?: string; text?: string };
   };
   notification?: {
     update?: {
       sessionUpdate?: string;
-      content?: { text?: string };
+      content?: { type?: string; text?: string };
     };
   };
 }
@@ -143,6 +144,7 @@ class AcpAdapter extends PushProvider {
   _bindingProviderType: string;
   _recoveryNeededSessions: Set<string>;
   _agentHealth: Map<string, AcpAgentHealth>;
+  _terminalUnavailableAgents: Set<string>;
   _recoveryPromises: Map<string, Promise<boolean>>;
   _recoveryEpoch: number;
   _providerStopped: boolean;
@@ -166,6 +168,7 @@ class AcpAdapter extends PushProvider {
     // agentId → { child, agentCtx, sessions, sessionKeys, _readyResolve, _shutdownResolve }
     this._agents = new Map<string, AcpAgentState>();
     this._agentHealth = new Map<string, AcpAgentHealth>();
+    this._terminalUnavailableAgents = new Set<string>();
     this._recoveryPromises = new Map<string, Promise<boolean>>();
     this._recoveryEpoch = 0;
     this._providerStopped = false;
@@ -254,6 +257,7 @@ class AcpAdapter extends PushProvider {
 
   _markAgentHealth(agentId: string, available: boolean, reason: string): void {
     if (!agentId) return;
+    if (available && this._terminalUnavailableAgents.has(agentId)) return;
     const previous = this._agentHealth.get(agentId);
     this._agentHealth.set(agentId, { available, reason, changedAt: Date.now() });
     if (!previous || previous.available !== available) {
@@ -265,6 +269,12 @@ class AcpAdapter extends PushProvider {
         reason,
       });
     }
+  }
+
+  _markTerminalAgentUnavailable(agentId: string, reason: string): void {
+    if (!agentId) return;
+    this._terminalUnavailableAgents.add(agentId);
+    this._markAgentHealth(agentId, false, reason);
   }
 
   _agentStateAlive(state: AcpAgentState | undefined): boolean {
@@ -382,6 +392,17 @@ class AcpAdapter extends PushProvider {
       this._markAgentHealth(agentId, false, 'provider-stopped');
     }
     this._started = false;
+  }
+
+  /** Drop only this Agent's native process/session after a runtime-scoped policy change. */
+  restartAgentRuntime(agentId: string): boolean {
+    const state = this._stateForAgent(agentId);
+    if (!state) return true;
+    for (const [key, value] of this._agents) if (value === state) this._agents.delete(key);
+    this._cancelScheduledRecovery(agentId);
+    this._disconnectAgent(agentId, state, 'security-policy-changed');
+    this._markAgentHealth(agentId, true, 'security-policy-restart-pending');
+    return true;
   }
 
   /**
@@ -537,7 +558,9 @@ class AcpAdapter extends PushProvider {
         }
         if (update.kind === 'stop') break;
         const body = update.update || update.notification?.update;
-        if (body?.sessionUpdate === 'agent_message_chunk' && body.content?.text) reply += body.content.text;
+        if (body?.sessionUpdate === 'agent_message_chunk'
+          && (!body.content?.type || body.content.type === 'text')
+          && body.content?.text) reply += body.content.text;
         if (reply.length > MAX_REPLY_CHARS) break;
       }
       const remaining = deadline - Date.now();
@@ -569,9 +592,12 @@ class AcpAdapter extends PushProvider {
     let session: AcpSession;
     try {
       session = await this._ensureSession(state, agentId, fromUid, payload);
-      console.error(`[${this._logPrefix}:${agentId}] session 已就绪`);
+      console.debug(`[${this._logPrefix}:${agentId}] session 已就绪`);
     } catch (err) {
       console.error(`[${this._logPrefix}:${agentId}] session/new 失败: ${errorMessage(err)}`);
+      if (/not enabled for dispatch/i.test(errorMessage(err))) {
+        this._markTerminalAgentUnavailable(agentId, 'agent-not-enabled-for-dispatch');
+      }
       if (!(err as any)?.deliveryOutcome) (err as any).deliveryOutcome = 'not_delivered';
       throw err;
     }
@@ -624,7 +650,9 @@ class AcpAdapter extends PushProvider {
           const u = update.update || update.notification?.update;
           if (!u) continue;
 
-          const chunk = u.sessionUpdate === 'agent_message_chunk' && u.content?.text;
+          const chunk = u.sessionUpdate === 'agent_message_chunk'
+            && (!u.content?.type || u.content.type === 'text')
+            && u.content?.text;
 
           if (chunk) {
             fullContent += chunk;
@@ -758,14 +786,14 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ACP agent CLI 未配置（agentId=${agentId}）`);
     }
 
-    console.error(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
+    console.log(`[${this._logPrefix}:${agentId}] 开始初始化 ACP 连接 (cli=${this._cliPath ? path.basename(this._cliPath) : (this._runtimeRequest?.providerId || '-')})`);
     const sdk = await this._loadSdk();
     if (this._providerStopped || lifecycleEpoch !== this._recoveryEpoch) {
       const cancelled = new Error(`[${this._logPrefix}] ACP recovery cancelled during startup`);
       (cancelled as any).deliveryOutcome = 'not_delivered';
       throw cancelled;
     }
-    console.error(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
+    console.debug(`[${this._logPrefix}:${agentId}] ACP SDK 已加载，准备 spawn 子进程`);
 
     // ── 状态容器 ──
     let readyResolve: (() => void) | null = null;
@@ -808,8 +836,9 @@ class AcpAdapter extends PushProvider {
       const cliPath = this._cliPath as string;
       const isNodeScript = !runtime && cliPath.endsWith('.js');
       const cmd = runtime?.executable || (isNodeScript ? process.execPath : cliPath);
-      const cmdArgs = runtime ? [...runtime.argvPrefix, ...this._cliArgs] : (isNodeScript ? [cliPath, ...this._cliArgs] : [...this._cliArgs]);
-      console.error(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
+      const configuredArgs = this.options.argsForAgent?.(agentId) || this._cliArgs;
+      const cmdArgs = runtime ? [...runtime.argvPrefix, ...configuredArgs] : (isNodeScript ? [cliPath, ...configuredArgs] : [...configuredArgs]);
+      console.log(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -830,19 +859,22 @@ class AcpAdapter extends PushProvider {
         (cancelled as any).deliveryOutcome = 'not_delivered';
         throw cancelled;
       }
-      console.error(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
+      console.log(`[${this._logPrefix}:${agentId}] 子进程已启动 PID=${child.pid}`);
 
       // stderr → console（agent 诊断日志走 stderr，不影响 ACP stdout 流）
       child.stderr.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
-        if (msg) console.error(`[${this._logPrefix}:${agentId}] ${msg}`);
+        if (msg) console.debug(`[${this._logPrefix}:${agentId}] ${msg}`);
       });
 
       child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         state.transportAlive = false;
         const currentState = this._agents.get(stateKey);
+        // A deliberately detached process (for example after a policy change)
+        // must not be allowed to mark the replacement runtime unavailable when
+        // its delayed exit event arrives.
         if (!this._providerStopped && state.lifecycleEpoch === this._recoveryEpoch
-          && (!currentState || currentState === state)) {
+          && currentState === state) {
           this._markStateHealth(state, agentId, false, 'process-exit:' + (code ?? signal ?? 'unknown'));
           this._scheduleRecovery(agentId);
         }
@@ -876,7 +908,7 @@ class AcpAdapter extends PushProvider {
     this._agents.set(stateKey, state);
 
     // ── 客户端连接（用 connectWith 确保 initialize 握手完成） ──
-    console.error(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
+    console.debug(`[${this._logPrefix}:${agentId}] ACP NDJSON 流已创建，开始 connectWith...`);
     const keepAlivePromise = new Promise<void>(resolve => {
       state._shutdownResolve = resolve;
     });
@@ -898,7 +930,7 @@ class AcpAdapter extends PushProvider {
         state.imagePromptSupported = initialized?.agentCapabilities?.promptCapabilities?.image === true;
         state.embeddedContextSupported = initialized?.agentCapabilities?.promptCapabilities?.embeddedContext === true;
       }
-      console.error(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
+      console.log(`[${this._logPrefix}:${agentId}] ACP 连接已建立 (initialize 完成)`);
       state.agentCtx = agentCtx;
       this._markStateHealth(state, agentId, true, 'connected');
       if (state._readyResolve) {
@@ -909,7 +941,7 @@ class AcpAdapter extends PushProvider {
     }).catch((err: unknown) => {
       state.transportAlive = false;
       const currentState = this._agents.get(stateKey);
-      if ((currentState && currentState !== state) || state.lifecycleEpoch !== this._recoveryEpoch) return;
+      if (currentState !== state || state.lifecycleEpoch !== this._recoveryEpoch) return;
       this._markStateHealth(state, agentId, false, 'connection-error:' + errorMessage(err));
       this._scheduleRecovery(agentId);
       console.error(`[${this._logPrefix}:${agentId}] 连接异常: ${errorMessage(err)}`);
@@ -922,7 +954,7 @@ class AcpAdapter extends PushProvider {
 
     // ── 等待连接就绪（超时保护） ──
     const timeout = this.options.connectTimeout || 15000;
-    console.error(`[${this._logPrefix}:${agentId}] 等待 ACP 连接就绪（超时 ${timeout}ms）...`);
+    console.debug(`[${this._logPrefix}:${agentId}] 等待 ACP 连接就绪（超时 ${timeout}ms）...`);
     let readyTimer: NodeJS.Timeout | null = null;
     try {
       await Promise.race([
@@ -953,7 +985,7 @@ class AcpAdapter extends PushProvider {
       throw new Error(`[${this._logPrefix}] ${agentId} 连接初始化失败（agentCtx 未就绪）`);
     }
     if (this._agents.get(stateKey) !== state) this._agents.set(stateKey, state);
-    console.error(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
+    console.log(`[${this._logPrefix}:${agentId}] ACP 连接就绪 (PID=${state.child?.pid})`);
     return state;
   }
 
@@ -967,6 +999,7 @@ class AcpAdapter extends PushProvider {
     const channelId = String((payload as any).sessionScopeId || payload.providerBinding?.channelId || payload.channelId || visitorId.replace(/^group:/, ''));
     const channelType = payload.providerBinding?.channelType || (payload.channelType === 2 ? 2 : 1);
     let binding = payload.providerBinding?.providerType === this._bindingProviderType
+      && payload.providerBinding?.adapterType === this._adapterType
       ? payload.providerBinding
       : null;
     if (!binding && this._bindingStore) {

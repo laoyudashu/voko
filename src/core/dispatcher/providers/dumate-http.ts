@@ -132,10 +132,27 @@ class DuMateHttpProvider extends PushProvider {
     const verification = this._verification.get(String(agentId || ''));
     return { installed, ready: backendReady, automaticReady: backendReady && verification?.status === 'loopback_verified',
       authenticationStatus: backendReady ? 'unverified' : 'unverified',
-      reason: !installed ? 'not_found' : !backendReady ? 'login_required' : 'auth_test_required',
+      reason: !installed ? 'not_found' : !backendReady ? 'backend_not_running' : 'auth_test_required',
+      ...(!installed || backendReady ? {} : { detail: 'Open DuMate and enter a workspace so its local backend can start' }),
       verificationStatus: verification?.status || 'unverified',
       ...(verification?.detail ? { detail: verification.detail } : {}),
       ...(verification?.verifiedAt ? { verifiedAt: verification.verifiedAt } : {}) };
+  }
+
+  getSecurityControlEvidence(agentId = ''): Record<string, unknown> {
+    const observed = (this as any).getProviderVersion?.();
+    return { transportId: ADAPTER_TYPE, platform: process.platform, runtimeVersion: observed?.version || null,
+      versionVerified: Boolean(observed?.version && observed?.result === 'known'), versionSource: observed?.source || 'unknown',
+      contract: 'isolated_xdg_root_and_loopback_http',
+      readiness: this.getDeliveryReadiness(agentId) };
+  }
+
+  describeSecurityInvocation(config: Record<string,string>): Array<{ text: string; risk: 'low'|'medium'|'high' }> {
+    return [
+      { text: 'POST /session/<sessionId>/prompt_async', risk: 'low' },
+      { text: config.sessionPersistence === 'ephemeral' ? '每条消息新建 Session' : '复用当前访客 Session',
+        risk: config.sessionPersistence === 'ephemeral' ? 'low' : 'medium' },
+    ];
   }
 
   acceptsBinding(binding: any, agentId = ''): boolean {
@@ -267,7 +284,8 @@ class DuMateHttpProvider extends PushProvider {
     const boundInstanceId = this._instanceForAgent(payload.agentId);
     const instanceId = this._routeForAgent(payload.agentId);
     if (boundInstanceId && !this._resolveAgentTarget(boundInstanceId)) throw deliveryError('Bound DuMate Agent is unavailable');
-    const binding = payload.providerBinding;
+    const binding = payload.providerSecurityPolicy?.config.sessionPersistence === 'ephemeral'
+      ? null : payload.providerBinding;
     if (binding?.providerInstanceId && binding.providerInstanceId !== instanceId) throw deliveryError('DuMate Agent binding is stale');
     const state = await this._ensureState(instanceId, payload.agentId);
     let sessionId = this.acceptsBinding(binding, payload.agentId) ? binding!.nativeSessionId : '';
@@ -277,7 +295,10 @@ class DuMateHttpProvider extends PushProvider {
         throw deliveryError('DuMate session is not bound to the selected Agent');
       }
     } else {
-      const created = await this._json(state, '/session', { method: 'POST', body: JSON.stringify({}) });
+      // The first Windows session loads the desktop Plugin Packs before the
+      // endpoint responds. Keep ordinary HTTP calls bounded at 10s, but allow
+      // this one-time initialization the same 30s budget as server startup.
+      const created = await this._json(state, '/session', { method: 'POST', body: JSON.stringify({}) }, 30_000);
       sessionId = String(created?.id || created?.sessionId || '');
       if (!sessionId) throw deliveryError('DuMate session was not created');
     }
@@ -321,6 +342,54 @@ class DuMateHttpProvider extends PushProvider {
       }
       throw error;
     }
+  }
+
+  async runLoopbackTest(agentId: string, options: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (options.acknowledgeCost !== true) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CONFIRMATION_REQUIRED' };
+    }
+    const challenge = String(options.challenge || '');
+    if (!/^voko-[a-f0-9]{24}$/.test(challenge)) {
+      return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
+    }
+    const instanceId = this._routeForAgent(agentId);
+    try {
+      const state = await this._ensureState(instanceId, agentId);
+      const created = await this._json(state, '/session', { method: 'POST', body: '{}' }, 30_000);
+      const sessionId = String(created?.id || created?.sessionId || '');
+      if (!sessionId) throw deliveryError('DuMate loopback session was not created');
+      const previous = (await this._latestAssistant(state, sessionId).catch(() => ({ id: '', reply: '' }))).id;
+      await this._json(state, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+        method: 'POST', body: JSON.stringify({ model: { providerID: 'qianfan-multimodal', modelID: 'model-mm' },
+          agent: 'build', parts: [{ type: 'plugin', name: instanceId },
+            { type: 'text', text: `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}` }] }),
+      }, 15_000);
+      const reply = await this._wait(state, sessionId, previous);
+      const matched = reply.trim() === challenge;
+      this._verification.set(agentId, { status: matched ? 'loopback_verified' : 'failed',
+        detail: matched ? 'DuMate HTTP loopback verified' : 'DuMate returned an unexpected loopback response',
+        ...(matched ? { verifiedAt: Date.now() } : {}) });
+      return { ok: matched, status: matched ? 'loopback_verified' : 'failed',
+        code: matched ? 'DUMATE_LOOPBACK_VERIFIED' : 'DUMATE_LOOPBACK_MISMATCH',
+        challengeMatched: matched, loopbackSessionId: sessionId,
+        detail: matched ? 'DuMate HTTP loopback verified' : 'DuMate returned an unexpected loopback response' };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this._verification.set(agentId, { status: /timeout/i.test(detail) ? 'timeout' : 'failed', detail });
+      return { ok: false, status: /timeout/i.test(detail) ? 'timeout' : 'failed',
+        code: /timeout/i.test(detail) ? 'DUMATE_LOOPBACK_TIMEOUT' : 'DUMATE_LOOPBACK_FAILED', detail };
+    }
+  }
+
+  async cleanupLoopbackSession(agentId: string, sessionId?: string): Promise<Record<string, unknown>> {
+    const id = String(sessionId || '');
+    if (!id) return { ok: true, cleaned: false };
+    const state = this._states.get(this._routeForAgent(agentId));
+    if (!state?.port) return { ok: true, cleaned: false };
+    try {
+      await this._json(state, `/session/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return { ok: true, cleaned: true };
+    } catch (_) { return { ok: true, cleaned: false }; }
   }
 
   async steer(agentId: string, visitorId: string, content: string, metadata: ProviderSteerMetadata = {}): Promise<unknown> {

@@ -60,7 +60,7 @@ class OpenCodeCliProvider extends CliAdapter {
       bindingProviderType: 'opencode',
       adapterType: 'opencode-cli',
       acceptsBinding: (binding: any) => binding?.providerType === 'opencode'
-        && ['opencode-acp', 'opencode-attach', 'opencode-cli'].includes(binding.adapterType)
+        && binding.adapterType === 'opencode-cli'
         && typeof binding.nativeSessionId === 'string'
         && binding.nativeSessionId.length > 0,
       priority: 1,

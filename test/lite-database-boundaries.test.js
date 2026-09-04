@@ -37,9 +37,24 @@ test('database initialization creates a missing parent directory', (t) => {
   const schema = db.prepare("SELECT data FROM config WHERE type='schema_version'").get();
   assert.equal(JSON.parse(schema.data), SCHEMA_VERSION);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  const policyColumns = new Set(db.prepare('PRAGMA table_info(provider_security_policies)').all().map(row => row.name));
+  assert.equal(policyColumns.has('runtime_evidence_json'), true);
+  assert.equal(policyColumns.has('capability_digest'), true);
+  assert.equal(policyColumns.has('probe_retry_after'), true);
+  const agentPolicyColumns = new Set(db.prepare('PRAGMA table_info(provider_agent_security_policies)').all().map(row => row.name));
+  assert.equal(agentPolicyColumns.has('provider_subject_key'), true);
+  assert.equal(agentPolicyColumns.has('native_policy_digest'), true);
+  assert.equal(agentPolicyColumns.has('pending_config_json'), true);
+  const preflightColumns = new Set(db.prepare('PRAGMA table_info(provider_security_preflights)').all().map(row => row.name));
+  assert.equal(preflightColumns.has('expected_capability_digest'), true);
+  assert.equal(preflightColumns.has('expected_agent_revision'), true);
+  const turnColumns = new Set(db.prepare('PRAGMA table_info(provider_security_turns)').all().map(row => row.name));
+  assert.equal(turnColumns.has('runtime_fingerprint'), true);
+  assert.equal(turnColumns.has('fallback_mode'), true);
+  assert.equal(turnColumns.has('agent_policy_digest'), true);
 });
 
-test('current Lite accepts the shared schema v8 marker', (t) => {
+test('current Lite accepts the shared schema v9 marker', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-db-shared-v8-'));
   const dbPath = path.join(root, 'voko.db');
   const first = initDatabase(dbPath, { silent: true });

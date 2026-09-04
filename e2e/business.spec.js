@@ -88,7 +88,7 @@ test('single chat sends and receives text through the real worker and Mock Provi
   const state = await runtime(request);
   const direct = state.messageStats.find(item => item.channelId === channelId);
   expect(rows.filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(2);
-  expect(Number(direct.replies)).toBe(3);
+  expect(Number(direct.replies)).toBe(2);
   expect(Number(direct.uniqueIds)).toBe(Number(direct.total));
   expect(Number(direct.uniqueTurns)).toBe(Number(direct.total));
   expect(state.deliveryStatus.activeAutomaticMode).toBe('mock');
@@ -208,10 +208,10 @@ test('duplicate and reordered inbound frames remain idempotent in SQLite', async
   await waitForMessages('e2e-dedupe', messages => messages.some(row => row.is_me === 1 && row.content.includes('[echo]')));
   const state = await runtime(request);
   const dedupe = state.messageStats.find(item => item.channelId === 'e2e-dedupe');
-  expect(Number(dedupe.total)).toBe(5);
-  expect(Number(dedupe.replies)).toBe(2);
-  expect(Number(dedupe.uniqueIds)).toBe(5);
-  expect(Number(dedupe.uniqueTurns)).toBe(5);
+  expect(Number(dedupe.total)).toBe(4);
+  expect(Number(dedupe.replies)).toBe(1);
+  expect(Number(dedupe.uniqueIds)).toBe(4);
+  expect(Number(dedupe.uniqueTurns)).toBe(4);
 });
 
 test('provider failure leaves the message available for Pull and recovery restores push', async ({ page, request }, testInfo) => {
@@ -272,7 +272,7 @@ test('provider failure leaves the message available for Pull and recovery restor
   expect(recovered.deliveryStatus.activeAutomaticMode).toBe('mock');
   const pullStats = recovered.messageStats.find(item => item.channelId === channelId);
   expect(readMessages(channelId).filter(row => row.is_me === 1 && row.content !== 'Agent 正在处理…')).toHaveLength(1);
-  expect(Number(pullStats.replies)).toBe(2);
+  expect(Number(pullStats.replies)).toBe(1);
   expect(Number(pullStats.uniqueIds)).toBe(Number(pullStats.total));
 });
 

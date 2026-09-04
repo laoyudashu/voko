@@ -10,6 +10,8 @@ class VokoWorkerAdapter extends EventEmitter {
     this.pool = options.pool || new VokoIMHubPool(options);
     this.configs = new Map();
     this.statuses = new Map();
+    this.recoveryDelayMs = options.recoveryDelayMs ?? 45_000;
+    this.recoveryTimers = new Map();
     this.on('error', () => {});
     for (const event of ['connect', 'disconnect', 'reconnecting', 'reconnectExhausted', 'kicked', 'error', 'message', 'sent', 'pong', 'event', 'ackTimeout', 'quarantined']) {
       this.pool.on(event, (payload) => this._forward(event, payload));
@@ -18,6 +20,7 @@ class VokoWorkerAdapter extends EventEmitter {
 
   _forward(event, payload) {
     const { agentId, data } = payload;
+    if (event === 'connect') this._clearRecovery(agentId);
     if (event === 'disconnect') {
       console.warn(`[IM 连接] agent=${agentId} disconnected code=${data?.code ?? '-'} reason=${String(data?.reason || '-').slice(0, 160)}`);
     } else if (event === 'reconnecting') {
@@ -32,6 +35,7 @@ class VokoWorkerAdapter extends EventEmitter {
     else if (event === 'disconnect' && this.statuses.get(agentId) !== 'kicked') this.statuses.set(agentId, 'disconnected');
     else if (event === 'kicked') this.statuses.set(agentId, 'kicked');
     else if (event === 'reconnectExhausted') this.statuses.set(agentId, 'connect_fail');
+    if (event === 'disconnect') this._scheduleRecovery(agentId);
     this.emit(event, { agentId, data });
     if (event === 'message') this.emit('worker.message', { agentId, data: this._normalizeMessage(data) });
     if (event === 'sent') this.emit('worker.sent', { agentId, localMsgId: data.clientMsgNo, messageId: data.messageId, messageSeq: data.messageSeq, clientMsgNo: data.clientMsgNo, success: data.reasonCode === 1 });
@@ -45,6 +49,29 @@ class VokoWorkerAdapter extends EventEmitter {
       const statusCode = { disconnected: 0, connected: 1, connecting: 2, connect_fail: 3, kicked: 4 }[status];
       this.emit('worker.status', { agentId, status, statusCode, data });
     }
+  }
+
+  _clearRecovery(agentId) {
+    const timer = this.recoveryTimers.get(agentId);
+    if (timer) clearTimeout(timer);
+    this.recoveryTimers.delete(agentId);
+  }
+
+  _scheduleRecovery(agentId) {
+    if (!this.configs.has(agentId) || this.recoveryTimers.has(agentId)) return;
+    const timer = setTimeout(async () => {
+      this.recoveryTimers.delete(agentId);
+      if (!this.configs.has(agentId) || this.statuses.get(agentId) === 'connected') return;
+      const config = this.configs.get(agentId);
+      console.warn(`[IM 连接] agent=${agentId} watchdog restarting stalled connection`);
+      try { await this.restart(agentId, config); }
+      catch (error) {
+        console.warn(`[IM 连接] agent=${agentId} watchdog restart failed: ${String(error?.message || error).slice(0, 160)}`);
+        this._scheduleRecovery(agentId);
+      }
+    }, this.recoveryDelayMs);
+    timer.unref?.();
+    this.recoveryTimers.set(agentId, timer);
   }
 
   _normalizeMessage(message) {
@@ -123,6 +150,7 @@ class VokoWorkerAdapter extends EventEmitter {
   }
 
   stop(agentId) {
+    this._clearRecovery(agentId);
     const removed = this.pool.remove(agentId);
     this.configs.delete(agentId);
     this.statuses.delete(agentId);

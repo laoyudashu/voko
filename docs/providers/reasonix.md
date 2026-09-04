@@ -33,13 +33,13 @@ Reasonix 当前没有 VOKO ACP、HTTP 或 WebSocket 主通道。注册后运行 
 
 ## VOKO 如何调用 Reasonix
 
-Reasonix 的无头调用必须把提示词写入 stdin，并使用：
+Reasonix 的无头调用使用 positional task，并使用：
 
 ```text
 reasonix run --output-format stream-json --permission-mode dontAsk
 ```
 
-注意：**不要在参数末尾追加单独的 `-`**。Reasonix `1.21.0` 会把这个 `-` 当作任务文本，从而忽略 stdin 中的访客消息。这是 VOKO 适配器已修复的关键差异。
+注意：**不要在参数末尾追加单独的 `-`**。Reasonix `1.27.0` 要求 positional task，仅通过 stdin 会直接返回 usage exit 2。不同版本的 stdin 行为存在差异，VOKO 使用 positional task 兼容当前受测版本。
 
 `stream-json` 当前会先输出 `kind=text` 的增量，再输出 `type=result` 的最终结果；适配器同时兼容旧版 `type=text/data` 和 `run_done` 字段，避免把流式增量重复拼接。
 

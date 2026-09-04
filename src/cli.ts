@@ -104,6 +104,17 @@ async function updateLite(options: { installDir?: string; spawn?: any; exit?: (c
  */
 const TOOL_PARAM_SCHEMAS = {
   manage_agent_registration: { action: 'string', registrationId: 'string', email: 'string', code: 'string', agentName: 'string', description: 'string', category: 'string', tags: 'json', iconUrl: 'string', contactPhone: 'string', address: 'string', providerType: 'string', instanceId: 'string', deliveryModes: 'json', mode: 'string', taskId: 'string', approved: 'boolean', approvalToken: 'string', acknowledgeCost: 'boolean', registrationMode: 'string' },
+  refresh_delivery_channels: { agentId: 'string' },
+  verify_delivery_channel: { agentId: 'string', providerId: 'string' },
+  select_delivery_channel: { agentId: 'string', mode: 'string', providerId: 'string' },
+  inspect_provider_security: { agentId: 'string', transportId: 'string' },
+  inspect_provider_runtime: { agentId: 'string', transportId: 'string' },
+  refresh_provider_security_capability: { agentId: 'string', transportId: 'string' },
+  preview_provider_security_invocation: { agentId: 'string', transportId: 'string', config: 'json' },
+  preflight_provider_security: { agentId: 'string', transportId: 'string', config: 'json' },
+  commit_provider_security: { agentId: 'string', preflightToken: 'string', confirmation: 'string' },
+  inspect_provider_turn_evidence: { agentId: 'string', turnId: 'string', channelId: 'string', transportId: 'string', since: 'number' },
+  exercise_provider_capability_fault: { agentId: 'string', transportId: 'string', fault: 'string' },
   bug_report: { action: 'string', title: 'string', description: 'string', steps: 'string', expected: 'string', actual: 'string', severity: 'string', category: 'string', agentId: 'string', ownerEmail: 'string' },
   update_agent_profile:    { agentId: 'string', name: 'string', description: 'string', short_description: 'string', category: 'string', tags: 'string', iconUrl: 'string', address: 'string', contact_phone: 'string', backendType: 'string', backendInstanceId: 'string' },
   bind_agent_instance_once: { agentId: 'string', backendInstanceId: 'string' },
@@ -199,6 +210,10 @@ function convertParam(value?: any, expectedType?: any) {
     return Boolean(value);
   }
   if (expectedType === 'json') {
+    if (typeof value === 'string' && value.startsWith('base64json:')) {
+      try { return JSON.parse(Buffer.from(value.slice('base64json:'.length), 'base64').toString('utf8')); }
+      catch (_: any) { return value; }
+    }
     if (typeof value === 'string' && (value.startsWith('[') || value.startsWith('{'))) {
       try { return JSON.parse(value); } catch (_: any) {
         if (value.startsWith('[') && value.endsWith(']')) {

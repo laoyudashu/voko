@@ -6,7 +6,12 @@ const COPILOT_SAFETY_ARGS = [
   '--disable-builtin-mcps',
   '--no-remote',
   '--no-remote-export',
-  '--available-tools=',
+  // An empty --available-tools value keeps default tools in Copilot 1.0.80.
+  // Explicit kind-level deny rules are documented and verified fail-closed.
+  '--deny-tool=read',
+  '--deny-tool=write',
+  '--deny-tool=shell',
+  '--deny-tool=url',
   '--no-ask-user',
   '--no-auto-update',
 ];

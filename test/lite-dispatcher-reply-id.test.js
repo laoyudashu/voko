@@ -29,6 +29,46 @@ function createDb() {
 }
 
 describe('Dispatcher final reply idempotency', () => {
+  it('filters explicit reasoning blocks and rejects output without a final-answer boundary', async () => {
+    const provider = new ReplyProvider();
+    const replies = [];
+    const statuses = [];
+    const dispatcher = createDispatcher({
+      db: createDb(),
+      providers: { 'mock-echo': provider },
+      onAgentReply: reply => replies.push(reply),
+      onTurnStatus: status => statuses.push(status),
+    });
+
+    dispatcher.dispatch('gym', {
+      agentId: 'gym', fromUid: 'visitor', content: 'first', channelId: 'visitor',
+      channelType: 1, senderUid: 'sender-1', messageId: 'turn-reasoning-closed',
+    });
+    dispatcher.dispatch('gym', {
+      agentId: 'gym', fromUid: 'visitor', content: 'second', channelId: 'visitor',
+      channelType: 1, senderUid: 'sender-1', messageId: 'turn-reasoning-open',
+    });
+    await new Promise(resolve => setImmediate(resolve));
+
+    provider.emit('agent.reply', {
+      agentId: 'gym', visitorId: 'visitor', done: true,
+      content: '<think>private chain of thought</think>\n'
+        + '┌─ Reasoning ───┐\nprivate recap\n└────────────────┘\nVisible answer',
+      turnId: 'turn-reasoning-closed', replyId: 'reply-reasoning-closed',
+    });
+    provider.emit('agent.reply', {
+      agentId: 'gym', visitorId: 'visitor', done: true,
+      content: '┌─ Reasoning ───────────────────┐\nprivate chain of thought\nVisible but ambiguous answer',
+      turnId: 'turn-reasoning-open', replyId: 'reply-reasoning-open',
+    });
+
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].content, 'Visible answer');
+    assert.ok(statuses.some(status => status.status === 'failed'
+      && status.code === 'PROVIDER_OUTPUT_UNPARSEABLE'
+      && status.turnId === 'turn-reasoning-open'));
+  });
+
   it('同一 turn 的重复 final 只向下游投递一次，且不消费下一轮上下文', async () => {
     const provider = new ReplyProvider();
     const replies = [];

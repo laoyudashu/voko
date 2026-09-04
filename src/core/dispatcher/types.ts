@@ -1,6 +1,7 @@
 export type SessionMode = 'deterministic-key' | 'agent-issued-id';
 import type { ProviderCapabilities } from './provider-catalog';
 import type { ProviderDeliveryPresentation } from '../provider-delivery-presentation';
+import type { ProviderSecurityTurnLease } from '../provider-security-policy';
 export type ProviderDeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 export interface ProviderDeliveryReceipt {
@@ -59,6 +60,7 @@ export interface PushPayload {
   messageId?: string;
   turnId?: string;
   sourceMessageIds?: readonly string[];
+  a2aDisposition?: 'new_topic' | 'automatic_reply' | 'explicit_reply';
   timestamp?: number;
   securityContext?: Readonly<{
     version: number;
@@ -68,6 +70,7 @@ export interface PushPayload {
     instructions: readonly string[];
     ownerCommandsOnlyVia: string;
   }>;
+  providerSecurityPolicy?: Readonly<ProviderSecurityTurnLease> | null;
   providerBinding?: {
     id: string;
     bindingVersion: number;

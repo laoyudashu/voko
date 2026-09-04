@@ -67,6 +67,8 @@ test('DuMate preflight fails closed until backend and authentication are verifie
     ok: false, status: 'configuration_required', sideEffects: false,
     code: 'DUMATE_BACKEND_UNAVAILABLE', providerInstanceId: 'stock-assistant',
   });
+  assert.equal(withoutBackend.getDeliveryReadiness('agent-1').reason, 'backend_not_running');
+  assert.match(withoutBackend.getDeliveryReadiness('agent-1').detail, /Open DuMate/);
 
   const unverifiedAuth = new DuMateHttpProvider({ db, binPath: process.execPath,
     resolveAgentTarget: target, resolveBackendPort: () => '4567' });

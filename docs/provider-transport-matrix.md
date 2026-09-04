@@ -50,6 +50,10 @@ Provider Catalog → Runtime Registry → Dispatcher → Delivery Executor
 
 ## Normative invariants
 
+- Provider permissions are resolved from the Agent-level policy, the selected
+  transport policy, and that transport's current capability snapshot. The UI,
+  preflight, invocation preview, and immutable Provider Turn must use the same
+  capability digest and planner; see [Provider 动态能力与权限管理](provider-security-permissions.md).
 - `delivery_modes = null` uses Catalog priority and keeps the legacy Pull
   fallback; `[]` disables Push; a non-empty list is strict and ordered; `pull`
   is always on-demand.

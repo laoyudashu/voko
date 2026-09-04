@@ -16,15 +16,15 @@ function fixture(sendSystemMessage) {
   return { db, handlers };
 }
 
-test('whitelist mutation succeeds while unavailable notification is reported as skipped', async () => {
-  const { db, handlers } = fixture(async () => ({
-    notificationStatus: 'skipped', notificationReason: 'agent_worker_unavailable',
-  }));
+test('whitelist mutation changes access state without sending conversational content', async () => {
+  let calls = 0;
+  const { db, handlers } = fixture(async () => { calls++; return { notificationStatus: 'sent' }; });
   try {
     const result = await handlers.manage_whitelist({ action: 'add', agentId: 'agent-1', visitorId: 'visitor-1' });
     assert.equal(result.success, true);
     assert.equal(result.notificationStatus, 'skipped');
-    assert.equal(result.notificationReason, 'agent_worker_unavailable');
+    assert.equal(result.notificationReason, 'non_conversational');
+    assert.equal(calls, 0);
     assert.ok(db.prepare("SELECT 1 FROM agent_access_lists WHERE agent_id='agent-1' AND visitor_id='visitor-1'").get());
   } finally { db.close(); }
 });
@@ -59,7 +59,7 @@ test('short-lived context skips notification before calling a missing Agent work
   } finally { db.close(); }
 });
 
-test('access status notification keeps an explicitly selected Conversation', async () => {
+test('whitelist mutation remains non-conversational even when a Conversation is selected', async () => {
   const calls = [];
   const { db, handlers } = fixture(async (...args) => {
     calls.push(args);
@@ -72,8 +72,8 @@ test('access status notification keeps an explicitly selected Conversation', asy
     const result = await handlers.manage_whitelist({
       action: 'add', agentId: 'agent-1', visitorId: 'visitor-1', conversationId: conversation.id,
     });
-    assert.equal(result.notificationStatus, 'sent');
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][5].conversationId, conversation.id);
+    assert.equal(result.notificationStatus, 'skipped');
+    assert.equal(result.notificationReason, 'non_conversational');
+    assert.equal(calls.length, 0);
   } finally { db.close(); }
 });

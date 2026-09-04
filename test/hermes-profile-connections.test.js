@@ -1,9 +1,31 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const { HermesApiClient } = require('../build/core/adapters/hermes-api-client');
 const HermesHttpProvider = require('../build/core/dispatcher/providers/hermes-http');
+const { getHermesProfilePathCandidates } = require('../build/core/hermes-paths');
+
+test('Hermes default profile can read both profile-directory and root configs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-hermes-home-'));
+  const previous = process.env.HERMES_HOME;
+  try {
+    process.env.HERMES_HOME = root;
+    const candidates = getHermesProfilePathCandidates('default', 'config.yaml');
+    assert.ok(candidates.includes(path.join(root, 'profiles', 'default', 'config.yaml')));
+    assert.ok(candidates.includes(path.join(root, 'config.yaml')));
+    const namedCandidates = getHermesProfilePathCandidates('named', 'config.yaml');
+    assert.equal(namedCandidates[0], path.join(root, 'profiles', 'named', 'config.yaml'));
+    assert.ok(namedCandidates.every(candidate => !candidate.endsWith(path.join('.hermes', 'config.yaml'))));
+  } finally {
+    if (previous === undefined) delete process.env.HERMES_HOME;
+    else process.env.HERMES_HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 async function keyServer(expectedKey, reply) {
   const server = http.createServer((req, res) => {

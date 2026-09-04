@@ -36,7 +36,10 @@ class GrokCliProvider extends CliAdapter {
     const baseArgs = [
       '--output-format', 'streaming-json',
       '--permission-mode', 'plan',
-      '--tools=none',
+      // Grok 1.0.5 treats `--tools=none` as an unknown allowlist entry and
+      // falls back to the full toolset. A deny-all rule is the documented,
+      // fail-closed way to make visitor turns genuinely tool-free.
+      '--deny', '*',
       '--disable-web-search',
       '--no-subagents',
       '--no-memory',

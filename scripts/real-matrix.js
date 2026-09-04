@@ -21,6 +21,20 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
+function powershellQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function windowsVokoEncodedCommand(node, entry, args) {
+  const safeArgs = args.map(value => {
+    const text = String(value);
+    return (text.startsWith('{') || text.startsWith('['))
+      ? `base64json:${Buffer.from(text, 'utf8').toString('base64')}` : text;
+  });
+  const command = [node, entry, ...safeArgs].map(powershellQuote).join(' ');
+  return Buffer.from(`$env:NODE_NO_WARNINGS='1'; & ${command}`, 'utf16le').toString('base64');
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || ROOT,
@@ -97,6 +111,17 @@ class Host {
       if (result.error) throw result.error;
       return { code: Number(result.status), output: `${result.stdout || ''}${result.stderr || ''}` };
     }
+    if (this.kind === 'ssh-windows') {
+      const encoded = windowsVokoEncodedCommand(this.config.node, this.config.entry, args);
+      const result = spawnSync('ssh', [
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', this.config.host,
+        'powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded,
+      ], {
+        cwd: ROOT, encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, windowsHide: true,
+      });
+      if (result.error) throw result.error;
+      return { code: Number(result.status), output: `${result.stdout || ''}${result.stderr || ''}` };
+    }
     if (this.kind === 'utm') return this._utmVoko(args, timeout);
     throw new Error(`unsupported host kind: ${this.kind}`);
   }
@@ -107,7 +132,13 @@ class Host {
     const outputPath = `/tmp/voko-real-${suffix}.out`;
     const codePath = `/tmp/voko-real-${suffix}.code`;
     const command = [this.config.node, this.config.entry, ...args].map(shellQuote).join(' ');
-    const script = `#!/bin/bash\nset +e\nrunuser -u ${shellQuote(this.config.user)} -- env XDG_RUNTIME_DIR=/run/user/${this.config.uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${this.config.uid}/bus ${command} > ${shellQuote(outputPath)} 2>&1\ncode=$?\nprintf '%s' "$code" > ${shellQuote(codePath)}\nexit 0\n`;
+    // Provider credentials and compatible endpoint settings are commonly
+    // configured in the desktop user's login environment. Running VOKO from a
+    // root-owned UTM helper without that environment makes healthy CLIs look
+    // unauthenticated. Load the user's login profile, then restore the desktop
+    // session variables needed by GUI-backed Providers.
+    const loginCommand = `export XDG_RUNTIME_DIR=/run/user/${this.config.uid}; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${this.config.uid}/bus; exec ${command}`;
+    const script = `#!/bin/bash\nset +e\nrunuser -l ${shellQuote(this.config.user)} -c ${shellQuote(loginCommand)} > ${shellQuote(outputPath)} 2>&1\ncode=$?\nprintf '%s' "$code" > ${shellQuote(codePath)}\nexit 0\n`;
     run(this.config.utmctl, ['file', 'push', this.config.vm, scriptPath], { input: script, timeout: 30_000 });
     run(this.config.utmctl, ['exec', this.config.vm, '--cmd', '/bin/bash', scriptPath], { timeout });
     const deadline = Date.now() + timeout;
@@ -135,24 +166,36 @@ class Host {
     return parseJson(this.voko(args, timeout), `${this.name} voko ${args[0]}`);
   }
 
-  inventory() {
-    const status = this.json(['status', '--json']);
-    const listed = this.json(['list_agents']);
+  inventory(timeout = 30_000, inspectEnvironment = true) {
+    const status = this.json(['status', '--json'], timeout);
+    const listed = this.json(['list_agents'], timeout);
+    let providerEnvironment = null;
+    if (inspectEnvironment) try {
+      const inspected = this.json(['manage_agent_registration', '--action', 'inspect_environment'], timeout);
+      providerEnvironment = inspected?.environment || null;
+    } catch (_) { /* Agent inventory remains usable when provider discovery is unavailable. */ }
     const runtimeById = new Map((status.agents || []).map((agent) => [agent.agentId, agent]));
     const agents = (listed.agents || []).map((agent) => ({ ...agent, runtime: runtimeById.get(agent.agentId) || null }));
-    return { status, agents };
+    return { status, agents, providerEnvironment };
   }
 }
 
 function configFromEnv() {
   const utmctl = process.env.VOKO_REAL_UTMCTL || '/Applications/UTM.app/Contents/MacOS/utmctl';
+  const windowsTransport = String(process.env.VOKO_REAL_WINDOWS_TRANSPORT || 'ssh').trim().toLowerCase();
+  const windows = windowsTransport === 'parallels'
+    ? new Host('windows', {
+      kind: 'parallels', vm: required('VOKO_REAL_WINDOWS_VM'), node: required('VOKO_REAL_WINDOWS_NODE'),
+      entry: required('VOKO_REAL_WINDOWS_ENTRY'),
+    })
+    : new Host('windows', {
+      kind: 'ssh-windows', host: process.env.VOKO_REAL_WINDOWS_SSH_HOST || 'voko-windows',
+      node: required('VOKO_REAL_WINDOWS_NODE'), entry: required('VOKO_REAL_WINDOWS_ENTRY'),
+    });
   return {
     hosts: {
       macos: new Host('macos', { kind: 'local', voko: required('VOKO_REAL_MAC_VOKO') }),
-      windows: new Host('windows', {
-        kind: 'parallels', vm: required('VOKO_REAL_WINDOWS_VM'), node: required('VOKO_REAL_WINDOWS_NODE'),
-        entry: required('VOKO_REAL_WINDOWS_ENTRY'),
-      }),
+      windows,
       linux: new Host('linux', {
         kind: 'utm', vm: required('VOKO_REAL_LINUX_VM'), node: required('VOKO_REAL_LINUX_NODE'),
         entry: required('VOKO_REAL_LINUX_ENTRY'), user: process.env.VOKO_REAL_LINUX_USER || 'tjyu',
@@ -218,7 +261,7 @@ function checkPreflight(config, reporter, inventories) {
     const status = inventory.status;
     reporter.check(`${name} runtime READY`, status.runtimeState === 'ready',
       `version=${status.version} schema=${status.schemaVersion} agents=${status.startup?.loadedAgents}/${status.startup?.totalAgents}`);
-    reporter.check(`${name} schema v8`, Number(status.schemaVersion) === 8, `schema=${status.schemaVersion}`);
+    reporter.check(`${name} schema v9`, Number(status.schemaVersion) === 9, `schema=${status.schemaVersion}`);
     reporter.check(`${name} build current`, status.buildMismatch === false && !!status.buildDigest,
       `digest=${String(status.buildDigest || '').slice(0, 12)}`);
     if (status.buildDigest) digests.add(status.buildDigest);
@@ -333,4 +376,5 @@ async function main() {
 
 if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1; });
 
-module.exports = { Host, allAutomaticTargets, configFromEnv, parseJson, pollResult, resolveAgent, shellQuote };
+module.exports = { Host, allAutomaticTargets, configFromEnv, parseJson, pollResult, resolveAgent, shellQuote,
+  windowsVokoEncodedCommand };

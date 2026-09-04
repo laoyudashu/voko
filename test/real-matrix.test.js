@@ -2,7 +2,8 @@
 
 const assert = require('node:assert');
 const test = require('node:test');
-const { allAutomaticTargets, parseJson, pollResult, resolveAgent, shellQuote } = require('../scripts/real-matrix');
+const { allAutomaticTargets, parseJson, pollResult, resolveAgent, shellQuote,
+  windowsVokoEncodedCommand } = require('../scripts/real-matrix');
 const { confirmsAllSegments } = require('../scripts/real-group-turn');
 
 test('real matrix parses structured CLI output surrounded by logs', () => {
@@ -22,6 +23,15 @@ test('real matrix resolves one exact host Agent and rejects ambiguity', () => {
 
 test('real matrix shell quoting preserves single quotes as one argument', () => {
   assert.strictEqual(shellQuote("a'b"), `'a'"'"'b'`);
+});
+
+test('Windows SSH invocation preserves VOKO arguments through encoded PowerShell', () => {
+  const encoded = windowsVokoEncodedCommand('C:\\Program Files\\node.exe', 'C:\\voko\\index.js',
+    ['send_message', '--content', "visitor's text"]);
+  const decoded = Buffer.from(encoded, 'base64').toString('utf16le');
+  assert.match(decoded, /NODE_NO_WARNINGS/);
+  assert.match(decoded, /'C:\\Program Files\\node\.exe'/);
+  assert.match(decoded, /'visitor''s text'/);
 });
 
 test('real matrix expands only published public automatic targets', () => {

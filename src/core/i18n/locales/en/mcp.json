@@ -207,7 +207,7 @@
   "mcp.tool.fetch_new_messages.p.limit": "Maximum number of messages to return (max 200)",
   "mcp.tool.fetch_new_messages.p.blockTimeout": "Blocking wait in seconds. When omitted, returns immediately. When provided, waits up to the specified seconds if no new messages are available, checking every second and returning immediately when a new message arrives. Useful for reducing polling frequency. It's recommended to set based on your timeout tolerance (e.g. 30 seconds).",
 
-  "mcp.tool.manage_whitelist.desc": "Add or remove from the whitelist. Automatically notifies the visitor when action=add.",
+  "mcp.tool.manage_whitelist.desc": "Add or remove from the whitelist. This changes access state without sending a chat message.",
   "mcp.tool.manage_whitelist.p.agentId": "Agent ID (may be omitted when removing by id)",
   "mcp.tool.manage_whitelist.p.action": "add=add, remove=remove",
   "mcp.tool.manage_whitelist.p.visitorId": "Visitor UID (may be omitted when removing by id)",

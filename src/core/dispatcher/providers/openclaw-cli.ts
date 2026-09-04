@@ -102,7 +102,7 @@ class OpenClawCliProvider extends PushProvider {
     const deliveryContent = appendProviderAttachmentBoundary(buildConversationDeliveryPrompt(
       this._db, effectivePayload, canResumeBinding, this._contextWindow,
     ), effectivePayload);
-    console.error(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=${canResumeBinding ? 'resume' : 'new-or-recovery'}`);
+    console.debug(`[OpenClawCli] push agent=${agentId} visitor=${fromUid} session=${canResumeBinding ? 'resume' : 'new-or-recovery'}`);
 
     const notification = _buildNotification(agentId, fromUid, deliveryContent, sessionKey);
     // Windows 下 --message 经 cmd.exe 传多行/含元字符 notification 会被截断或注入，净化为单行
@@ -141,7 +141,7 @@ class OpenClawCliProvider extends PushProvider {
           sessionKey,
           turnId, replyId: turnId,
         });
-        console.error(`[OpenClawCli] push OK agent=${agentId} reply=${replyText.length}chars`);
+        console.log(`[OpenClawCli] push OK agent=${agentId} reply=${replyText.length}chars`);
       } else {
         throw new Error('OpenClaw returned no reply text');
       }
@@ -174,7 +174,7 @@ class OpenClawCliProvider extends PushProvider {
       ? binding.nativeSessionId
       : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     const turnId = String(metadata?.turnId || `openclaw-cli-steer-${Date.now()}`);
-    console.error(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} session=selected`);
+    console.debug(`[OpenClawCli] steer agent=${agentId} visitor=${visitorId} session=selected`);
     const notification = JSON.stringify({
       type: 'voko_owner_message',
       visitorId,
@@ -203,9 +203,9 @@ class OpenClawCliProvider extends PushProvider {
           sessionKey,
           turnId, replyId: turnId,
         });
-        console.error(`[OpenClawCli] steer OK agent=${agentId} reply=${replyText.length}chars`);
+        console.log(`[OpenClawCli] steer OK agent=${agentId} reply=${replyText.length}chars`);
       } else {
-        console.error(`[OpenClawCli] steer OK agent=${agentId}`);
+        console.log(`[OpenClawCli] steer OK agent=${agentId}`);
       }
     } catch (err) {
       console.error(`[OpenClawCli] steer 失败 agent=${agentId}: ${errorMessage(err)}`);
