@@ -4,6 +4,14 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+## 0.5.2 - 2026-09-03
+
+- Added Provider capability discovery and a capability-driven permissions UI. Controls are now derived from the active Provider transport, operating system, architecture, framework/runtime version, runtime fingerprint, and verified enforcement evidence instead of a shared front-end template.
+- Added Schema 9 scoped Provider security policies, including Agent-level policy identity, independent transport-level policy revisions, capability-bound preflight/Turn evidence, and safe recovery for interrupted native-policy updates. ZeroClaw, Hermes, and OpenCode now exercise the scoped model while existing Providers remain backward compatible.
+- Added runtime probe caching, single-flight refresh, bounded timeouts, circuit breaking, stale-compatible fallback, and safe Pull retention when a changed runtime cannot be verified. Invocation previews and actual Provider calls now share the same planner.
+- Added the resumable three-platform Provider runtime matrix and real-browser visitor coverage for capability initialization, policy changes, refresh, transport switching, timeout/fallback behavior, session continuity, rollback, and reply delivery.
+- Hardened visitor delivery and reply recovery across WorkBuddy, Qwen Office, DuMate, ZeroClaw, Hermes, OpenCode, Copilot, Cursor, Grok, Goose, and other adapters. Provider status events no longer become business chat history, and only confirmed `not_delivered` outcomes may cross transports.
+
 ## 0.5.1 - 2026-08-30
 
 - Added continuous-message Turn coalescing: consecutive visitor, group, and Agent-to-Agent inputs can be grouped into one Provider turn while preserving message boundaries, attachment order, and conversation isolation; system messages remain outside Provider execution.

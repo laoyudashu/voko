@@ -18,6 +18,7 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 - [E2EE 安全模型](e2ee-security-model.md)：`voko.e2ee/2` 的密码套件、可信路由、持久化与明确排除项。
 - [Provider 注册、投递与路由恢复](provider-delivery-routing.md)：注册入口、推荐通道、Pull 兜底和用户侧排障。
 - [Provider 兼容性矩阵](provider-compatibility.md)：已验证版本、平台边界和实测证据。
+- [Provider 动态能力与权限管理](provider-security-permissions.md)：运行时探测、Agent/transport 两级策略、权限页面、超时降级和生效边界。
 - [Provider 专属指南](providers/README.md)：某个框架的安装、登录、配置和特殊排障。
 
 ### Provider 开发者和贡献者
