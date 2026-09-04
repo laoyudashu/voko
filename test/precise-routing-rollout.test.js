@@ -47,6 +47,15 @@ function enableGroupExact(db, providerFamilies = ['codex']) {
 
 async function settle() { await new Promise((resolve) => setTimeout(resolve, 25)); }
 
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return true;
+}
+
 test('precise routing injects a strict native session only for allowlisted private text', async (t) => {
   const db = fixture(t, 'codex', ['cli', 'pull']);
   const calls = [];
@@ -100,7 +109,7 @@ test('ACP failure falls back once while retaining the same strict native session
   } });
   dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-1', channelId: 'peer-1', channelType: 1,
     contentType: 1, content: 'reply', messageId: 'm4', replyRouteContext: candidate('opencode') });
-  await settle();
+  assert.equal(await waitFor(() => calls.length === 2), true, 'expected ACP failure to reach the CLI fallback');
   assert.deepEqual(calls.map((call) => call.name), ['opencode-acp', 'opencode-cli']);
   assert.equal(calls.every((call) => call.binding?.nativeSessionId === 'native-session-1'), true);
   assert.equal(calls.every((call) => call.binding?.strictSessionRoute === true), true);
