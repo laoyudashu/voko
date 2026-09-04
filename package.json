@@ -118,7 +118,6 @@
     "smoke:standalone": "npm run build:ts && node scripts/smoke-standalone.js",
     "github:preflight": "node scripts/check-release-state.js push && npm run release:gate && npm run security:local && npm pack --dry-run",
     "release:preflight": "node scripts/check-release-state.js release && npm run release:gate && npm run security:local && npm pack --dry-run",
-    "release:publish:update-source": "node scripts/publish-lite.js",
     "release:verify": "node scripts/check-release-state.js published && npm run verify:published-release",
     "verify:published-release": "node scripts/verify-release-sources.js",
     "scan:package-secrets": "node scripts/scan-package-secrets.js",

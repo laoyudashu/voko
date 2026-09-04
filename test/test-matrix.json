@@ -6,7 +6,6 @@
     "heartbeat-delivery-status.test.js",
     "language-switcher.test.js",
     "lite-adaptive-recovery.test.js",
-    "lite-auto-updater-security.test.js",
     "lite-channel-registry.test.js",
     "lite-cli-output-limit.test.js",
     "lite-cross-platform-command.test.js",
@@ -19,6 +18,7 @@
     "lite-typescript.test.js",
     "mcp-checkpoint-cursors.test.js",
     "provider-conversation-bindings.test.js",
+    "release-sources.test.js",
     "task-manager.test.js"
   ],
   "component": "all remaining *.test.js files",

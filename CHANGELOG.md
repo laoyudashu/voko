@@ -4,6 +4,8 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+- Unified update discovery, installation, and release verification on the official npm registry. Removed the unused OSS staged-update implementation and its separate release manifest, and made the local Web UI show the exact available version before users run `voko update`.
+
 ## 0.5.2 - 2026-09-03
 
 - Added Provider capability discovery and a capability-driven permissions UI. Controls are now derived from the active Provider transport, operating system, architecture, framework/runtime version, runtime fingerprint, and verified enforcement evidence instead of a shared front-end template.

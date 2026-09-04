@@ -8,10 +8,6 @@
     "endpoint": "https://vokofiles.oss-cn-beijing.aliyuncs.com",
     "publicUrl": "https://files.vokovoko.com"
   },
-  "update": {
-    "baseUrl": "https://files.vokovoko.com/updates",
-    "liteManifest": "lite/lite-latest.json"
-  },
   "im": {
     "baseUrl": "https://im.vokovoko.com",
     "apiBaseUrl": "https://im.vokovoko.com/api/im",
