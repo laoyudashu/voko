@@ -1,0 +1,53 @@
+name: Publish OSS update source
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact published package version to mirror
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oss-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: npm-production
+    env:
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Validate the published version and credentials
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          const requested = process.env.REQUESTED_VERSION;
+          if (requested !== pkg.version) {
+            throw new Error(`Requested ${requested}, package.json contains ${pkg.version}`);
+          }
+          if (!process.env.OSS_ACCESS_KEY_ID || !process.env.OSS_ACCESS_KEY_SECRET) {
+            throw new Error('npm-production is missing OSS_ACCESS_KEY_ID or OSS_ACCESS_KEY_SECRET');
+          }
+          NODE
+          published="$(npm view "@voko/lite@${REQUESTED_VERSION}" version --registry=https://registry.npmjs.org)"
+          test "$published" = "$REQUESTED_VERSION"
+      - name: Publish the automatic-update tarball and manifest
+        run: npm run release:publish:update-source
+      - name: Verify the public npm and OSS release sources
+        run: npm run verify:published-release
