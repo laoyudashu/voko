@@ -152,10 +152,9 @@ class OpenClawCliProvider extends PushProvider {
           mode: staged.attachments.length ? 'staged_path' : 'none' } };
     } catch (err) {
       console.error(`[OpenClawCli] push 失败 agent=${agentId}: ${errorMessage(err)}`);
-      if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
+      if ((err as any)?.cliExecutionStarted === false && (err as any)?.deliveryOutcome === 'not_delivered') {
         this._available = false;
         this._runtime = null;
-        (err as any).deliveryOutcome = 'not_delivered';
         this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
       }
       throw err;
@@ -209,10 +208,9 @@ class OpenClawCliProvider extends PushProvider {
       }
     } catch (err) {
       console.error(`[OpenClawCli] steer 失败 agent=${agentId}: ${errorMessage(err)}`);
-      if (/ENOENT|not found|not recognized/i.test(errorMessage(err))) {
+      if ((err as any)?.cliExecutionStarted === false && (err as any)?.deliveryOutcome === 'not_delivered') {
         this._available = false;
         this._runtime = null;
-        (err as any).deliveryOutcome = 'not_delivered';
         this.notifyAvailability({ backendType: 'openclaw', mode: 'cli', agentId, available: false, reason: errorMessage(err) });
       }
       throw err;

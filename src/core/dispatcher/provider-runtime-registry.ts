@@ -95,11 +95,11 @@ export class ProviderRuntimeRegistry extends EventEmitter {
 
   async stopAll(): Promise<void> {
     this.started = false;
-    for (const [id, provider] of Object.entries(this.providers)) {
+    await Promise.all(Object.entries(this.providers).map(async ([id, provider]) => {
       this.detach(provider);
       try { await provider.stop?.(); }
       catch (error) { this.emit('providerError', { providerId: id, operation: 'stop', error }); }
-    }
+    }));
   }
 
   async healthCheck(providerId?: string): Promise<Record<string, unknown>> {

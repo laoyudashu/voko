@@ -37,9 +37,9 @@ const {
   currentAgentTypeFromProcessRows,
 } = require('../build/core/registration-orchestrator');
 
-test('CLI auth messages including signed-in wording are safe to fallback', () => {
-  assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'not_delivered');
-  assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'not_delivered');
+test('CLI auth diagnostics do not prove that a launched task was never accepted', () => {
+  assert.equal(classifyCliFailure({ stdout: 'Not signed in. Run login.', stderr: '' }), 'outcome_unknown');
+  assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'outcome_unknown');
 });
 
 test('Hermes resolution prefers the managed Windows runtime over a stale PATH shim', (t) => {
@@ -116,13 +116,13 @@ test('generic CLI exit exposes only a sanitized stderr diagnostic', async () => 
 test('CLI auth failure invalidates the route until the next health check', async () => {
   const provider = new CliAdapter({
     name: 'AUTH TEST CLI', cmd: process.execPath,
-    args: ['-e', "process.stdout.write('Not signed in.\n'); process.exit(1)"],
+    args: ['-e', "process.stdout.write('Not signed in.\\n'); process.exit(1)"],
     matchType: 'grok', adapterType: 'grok-cli', timeout: 5000,
   });
   provider._available = true;
   await assert.rejects(() => provider.push({
     agentId: 'agent-grok', fromUid: 'visitor-grok', content: 'hello', messageId: 'auth-test',
-  }), error => error.deliveryOutcome === 'not_delivered');
+  }), error => error.deliveryOutcome === 'outcome_unknown');
   assert.equal(provider._available, false);
 });
 
@@ -558,7 +558,7 @@ test('structured CLI parsers ignore reasoning and thought event types', () => {
 
 test('Hermes CLI classifies non-zero exits from evidence instead of guessing from exit code', async () => {
   for (const fixture of [
-    { code: 1, stderr: 'HTTP 401 Unauthorized', expectedCode: 'PROVIDER_AUTH_REQUIRED', expectedOutcome: 'not_delivered' },
+    { code: 1, stderr: 'HTTP 401 Unauthorized', expectedCode: 'PROVIDER_AUTH_REQUIRED', expectedOutcome: 'outcome_unknown' },
     { code: 2, stderr: 'usage: hermes [-h] {login,chat}\nhermes: error: unrecognized arguments: --reasoning none', expectedCode: 'PROVIDER_CLI_EXIT', expectedOutcome: 'outcome_unknown' },
     { code: 103, stderr: '', expectedCode: 'PROVIDER_CLI_EXIT', expectedOutcome: 'outcome_unknown' },
   ]) {

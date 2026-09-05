@@ -87,12 +87,6 @@ class OpenHandsCliProvider extends CliAdapter {
       timeout: 300000,
       requireOutput: true,
       requireSessionId: true,
-      classifyResult: (result: { stdout: string; stderr: string; code: number | null }) => {
-        const output = `${result.stdout}\n${result.stderr}`;
-        return /conversation[^\r\n]*(?:not found|does not exist|invalid)|(?:resume|session)[^\r\n]*(?:not found|does not exist)/i.test(output)
-          ? 'not_delivered'
-          : 'rejected';
-      },
       sessionIdFromLine: (line: string) => {
         const match = line.match(/Conversation ID:\s*([0-9a-f]{32}|[0-9a-f-]{36})/i);
         return match ? normalizeOpenHandsSessionId(match[1]) : null;

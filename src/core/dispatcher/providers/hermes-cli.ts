@@ -60,6 +60,8 @@ class HermesCliProvider extends PushProvider {
     this._supportsReasoningFlag = options.supportsReasoningFlag ?? hermesSupportsReasoningFlag(this._command);
     this._runCli = options.runCli || runCli;
     this._queues = new Map();
+    this._stopped = false;
+    this._lifecycleGeneration = 0;
   }
 
   _baseInvocationArgs(profileId: string, prompt: string): string[] {
@@ -115,8 +117,13 @@ class HermesCliProvider extends PushProvider {
   }
 
   _enqueue(profileId: string, task: () => Promise<void>, context?: { agentId?: string; turnId?: string; messageId?: string; sourceMessageIds?: readonly string[]; attachmentCount?: number }): Promise<void> {
+    const generation = this._lifecycleGeneration;
     const previous = this._queues.get(profileId) || Promise.resolve();
     const current = previous.catch(() => {}).then(async () => {
+      if (this._stopped || generation !== this._lifecycleGeneration) {
+        throw Object.assign(new Error('Hermes provider stopped before submission'),
+          { code: 'DISPATCHER_STOPPED', deliveryOutcome: 'not_delivered' });
+      }
       console.error(`[HermesCli] queue_start agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId} messages=${context?.sourceMessageIds?.length || 1} attachments=${context?.attachmentCount || 0}`);
       await task();
       console.error(`[HermesCli] queue_finish agent=${context?.agentId || '-'} turn=${context?.turnId || '-'} profile=${profileId}`);
@@ -383,8 +390,9 @@ class HermesCliProvider extends PushProvider {
     };
   }
 
-  start() { this._refreshAvailability(); }
+  start() { this._stopped = false; this._refreshAvailability(); }
   stop() {
+    this._stopped = true; this._lifecycleGeneration += 1;
     if (this._available === true) this.notifyAvailability({ backendType: 'hermes', mode: 'cli', available: false, reason: 'provider-stopped' });
     this._available = false;
   }

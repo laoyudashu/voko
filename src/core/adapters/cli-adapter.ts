@@ -73,7 +73,6 @@ export interface CliAdapterOptions {
     cleanup?: () => void;
   };
   requireSessionId?: boolean;
-  classifyResult?: (result: { stdout: string; stderr: string; code: number | null }) => 'not_delivered' | 'rejected' | 'outcome_unknown' | null;
   prepareInvocation?: (payload: PushPayload, prompt: string) => {
     args: string[];
     stdinInput?: string;
@@ -155,7 +154,6 @@ class CliAdapter extends PushProvider {
     this._preparePrompt = opts.preparePrompt || null;
     this._requireOutput = !!opts.requireOutput;
     this._requireSessionId = !!opts.requireSessionId;
-    this._classifyResult = opts.classifyResult || null;
     this._prepareInvocation = opts.prepareInvocation || null;
     this._sessionIdFromLine = opts.sessionIdFromLine || null;
     this._resolveSessionIdAfterRun = opts.resolveSessionIdAfterRun || null;
@@ -426,7 +424,7 @@ class CliAdapter extends PushProvider {
       if (exitCode !== 0) {
         const cliFailureDetail = `${result.stdout || ''}\n${result.stderr || ''}`;
         error = new Error(`${this._name} 退出 code=${exitCode}`);
-        (error as any).deliveryOutcome = this._classifyResult?.(result) || classifyCliFailure(result);
+        (error as any).deliveryOutcome = classifyCliFailure(result);
         (error as any).code = /quota|credit|额度|配额/i.test(cliFailureDetail)
           ? 'PROVIDER_QUOTA_EXHAUSTED'
           : /login|auth|unauthorized|未登录|登录/i.test(cliFailureDetail)
@@ -436,7 +434,7 @@ class CliAdapter extends PushProvider {
         (error as any).diagnostic = sanitizeCliDiagnostic(result.stderr) || 'no_stderr';
         console.error(`[${this._name}] cli_failure code=${(error as any).code} exitCode=${exitCode} `+
           `retryable=false detail=${(error as any).diagnostic}`);
-        if ((error as any).deliveryOutcome === 'not_delivered' && isCliConfigurationUnavailable(cliFailureDetail)) {
+        if (isCliConfigurationUnavailable(cliFailureDetail)) {
           this._available = false;
           this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId,
             available: false, reason: 'cli-auth-required' });
@@ -458,9 +456,9 @@ class CliAdapter extends PushProvider {
         (error as any).retryable = true;
         (error as any).diagnostic = sanitizeCliDiagnostic(error.message);
       }
-      if (/ENOENT|EACCES|not found|permission denied/i.test(String((error as any).code || error.message))) {
+      if ((error as any).cliExecutionStarted === false && (error as any).deliveryOutcome === 'not_delivered'
+        && /^(?:ENOENT|EACCES)$/.test(String((error as any).code || ''))) {
         if (this._runtimeRequest) this._runtimeResolver.invalidate(this._runtimeRequest);
-        (error as any).deliveryOutcome = 'not_delivered';
         if (this._available !== false) {
           this._available = false;
           this.notifyAvailability({ backendType: this._matchType, mode: 'cli', agentId, available: false, reason: 'cli-not-found' });
