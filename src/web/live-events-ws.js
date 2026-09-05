@@ -1,112 +1,79 @@
-/**
- * live-events-ws.js — 控制台实时 WebSocket 服务
- *
- * 挂载到 /voko/events/ws，依附于已有的 WebSocket.Server。
- * 推送 agent 状态、消息流、审计日志等实时事件。
- *
- * 注意：不自行创建 WebSocket.Server，由调用方传入已有 wss，
- * 通过 connection handler 按 URL 路径路由。
- *
- * 鉴权：通过 URL query ?token= 或 origin localhost 校验。
- */
-
-const { getHistory, clearHistory } = require('../core/lite-events');
+/** Local event streams require current-owner cookies or an instance credential. */
+const { getHistory } = require('../core/lite-events');
 const { query } = require('../core/audit-log');
-const { RuntimeState } = require('../core/runtime-state');
-const {
-  isAllowedLocalHost,
-  isAllowedLocalWebSocketOrigin,
-} = require('../core/local-http-security');
+const { isAllowedLocalHost, isAllowedLocalWebSocketOrigin } = require('../core/local-http-security');
 
-function authorizeConsoleRequest(req, authToken) {
-  if (!isAllowedLocalHost(req.headers.host)) return false;
-  if (!authToken) {
-    return isAllowedLocalWebSocketOrigin(req.headers.origin, req.headers.host);
-  }
-  const rawUrl = req.url || '';
-  const qIdx = rawUrl.indexOf('?');
-  const qs = new URLSearchParams(qIdx >= 0 ? rawUrl.slice(qIdx) : '');
-  const token = qs.get('token') || req.headers['x-voko-console-token'] || '';
-  return token === authToken;
+function authorizeConsoleRequest(req, authToken, webSessions) {
+  const headers = req.headers || {};
+  if (!isAllowedLocalHost(headers.host)
+      || !isAllowedLocalWebSocketOrigin(headers.origin, headers.host)) return false;
+  const bearer = String(headers.authorization || '').match(/^Bearer (.+)$/i)?.[1];
+  const token = headers['x-voko-token'] || bearer || headers['x-voko-console-token'];
+  if (authToken && token === authToken) return true;
+  try { return Boolean(webSessions?.resolveRequest(req)); } catch (_) { return false; }
 }
 
-/**
- * @param {object} wss  - 已有的 WebSocket.Server 实例
- * @param {object} runtimeState - RuntimeState 实例
- * @returns {{ broadcast, clients, close }}
- */
-function createLiveEventsWs(wss, runtimeState, taskManager) {
+function createAuthenticatedEventStream(wss, path, options = {}, onConnect) {
   const clients = new Set();
-  const PATH_PREFIX = '/voko/events/ws';
-
-  // ── 简易鉴权 ──
-  const _authToken = process.env.VOKO_CONSOLE_TOKEN || '';
-
-  function _authorize(req) {
-    return authorizeConsoleRequest(req, _authToken);
+  const requests = new WeakMap();
+  function authorized(ws) {
+    if (authorizeConsoleRequest(requests.get(ws), options.authToken, options.webSessions)) return true;
+    clients.delete(ws);
+    try { ws.close(4001, 'Unauthorized'); } catch (_) {}
+    return false;
   }
-
-  // ── 心跳 ──
+  function connection(ws, req) {
+    if (String(req.url || '').split('?', 1)[0] !== path) return;
+    requests.set(ws, req);
+    if (!authorized(ws)) return;
+    clients.add(ws);
+    ws.on('close', () => clients.delete(ws));
+    ws.on('error', () => clients.delete(ws));
+    if (onConnect) onConnect(ws);
+    ws.on('message', raw => {
+      if (!authorized(ws)) return;
+      try { if (JSON.parse(raw).type === 'ping') ws.send(JSON.stringify({ type: 'pong' })); } catch (_) {}
+    });
+  }
+  wss.on('connection', connection);
   const heartbeatInterval = setInterval(() => {
     for (const ws of clients) {
-      try { ws.ping(); } catch {}
+      if (authorized(ws)) { try { ws.ping(); } catch (_) {} }
     }
   }, 30000);
-
-  // ── 挂接到已有 wss（按路径过滤） ──
-  wss.on('connection', (ws, req) => {
-    const reqUrl = req.url || '';
-    const reqPath = reqUrl.indexOf('?') >= 0 ? reqUrl.slice(0, reqUrl.indexOf('?')) : reqUrl;
-    if (reqPath !== PATH_PREFIX) return; // 不是控制台连接，忽略
-
-    if (!_authorize(req)) {
-      ws.close(4001, 'Unauthorized');
-      return;
-    }
-    clients.add(ws);
-
-    // 推送初始快照
-    if (runtimeState) {
-      try {
-        ws.send(JSON.stringify({ type: 'snapshot', data: {
-          agents: runtimeState.getAll(),
-          summary: runtimeState.summary(),
-          tasks: taskManager?.snapshot?.() || [],
-          recentEvents: getHistory(null, null, 100),
-          recentAudit: query({ limit: 50 }),
-        }}));
-      } catch (_) {}
-    }
-
-    ws.on('close', () => {
-      clients.delete(ws);
-    });
-
-    ws.on('message', (raw) => {
-      try {
-        const msg = JSON.parse(raw);
-        if (msg.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
-      } catch {}
-    });
-
-    ws.on('error', () => { clients.delete(ws); });
-  });
-
-  // 广播
+  heartbeatInterval.unref?.();
   function broadcast(data) {
-    const msg = JSON.stringify(data);
+    const message = JSON.stringify(data);
     for (const ws of clients) {
-      try { ws.send(msg); } catch {}
+      if (authorized(ws) && ws.readyState === 1) { try { ws.send(message); } catch (_) {} }
     }
   }
-
   function close() {
     clearInterval(heartbeatInterval);
-    for (const ws of clients) { try { ws.close(); } catch {} }
+    wss.off('connection', connection);
+    wss.off('close', close);
+    for (const ws of clients) { try { ws.close(); } catch (_) {} }
     clients.clear();
   }
-
+  wss.once('close', close);
   return { broadcast, clients, close };
 }
 
-module.exports = { authorizeConsoleRequest, createLiveEventsWs };
+function createMessageEventsWs(wss, options) {
+  return createAuthenticatedEventStream(wss, '/ws', options);
+}
+
+function createLiveEventsWs(wss, runtimeState, taskManager, options) {
+  return createAuthenticatedEventStream(wss, '/voko/events/ws', options, ws => {
+    if (!runtimeState) return;
+    try {
+      ws.send(JSON.stringify({ type: 'snapshot', data: {
+        agents: runtimeState.getAll(), summary: runtimeState.summary(),
+        tasks: taskManager?.snapshot?.() || [],
+        recentEvents: getHistory(null, null, 100), recentAudit: query({ limit: 50 }),
+      }}));
+    } catch (_) {}
+  });
+}
+
+module.exports = { authorizeConsoleRequest, createLiveEventsWs, createMessageEventsWs };

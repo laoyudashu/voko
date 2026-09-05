@@ -285,6 +285,8 @@ test('Provider security page and API expose only controls supported by the Agent
     body: JSON.stringify({ transportId: 'workbuddy-http', config: { dataFileAccess: 'read' } }),
   });
   const stalePreflight = await stalePreflightResponse.json();
+  db.exec('CREATE TABLE IF NOT EXISTS config (type TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
+  require('../build/core/database').saveUserAccessToken(db, 'owner@example.com', 'synthetic-owner-token');
   const session = webSessions.create('owner@example.com');
   db.prepare('UPDATE local_web_sessions SET created_at=? WHERE token_hash=?')
     .run(Date.now()-10*60*1000,webSessions.digest(session.token));

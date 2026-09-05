@@ -106,6 +106,9 @@ export function activatePendingOwnerSwitch(db: DatabaseLike, options: { previous
     db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
       .run('current_user_email', JSON.stringify(pending.email), now);
     db.prepare('DELETE FROM config WHERE type=?').run(PENDING_OWNER_SWITCH_CONFIG);
+    if (ownerChanged && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_web_sessions'").get()) {
+      db.prepare('DELETE FROM local_web_sessions WHERE lower(trim(owner_email)) <> ?').run(pending.email);
+    }
     if (ownerChanged || tokenChanged) {
       db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,?)')
         .run(OWNER_SWITCH_RESTART_NOTICE_CONFIG, JSON.stringify({

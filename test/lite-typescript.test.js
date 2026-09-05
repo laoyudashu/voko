@@ -356,6 +356,8 @@ test('sensitive Web endpoints accept instance tokens or HttpOnly local sessions'
   });
   assert.equal(agent.status, 200);
 
+  db.exec('CREATE TABLE IF NOT EXISTS config (type TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
+  require('../build/core/database').saveUserAccessToken(db, 'owner@example.com', 'synthetic-owner-token');
   const created = sessions.create('owner@example.com');
   const browser = await fetch(`${base}/api/console`, {
     headers: { Cookie: `voko_session=${created.token}` }, redirect: 'manual',
