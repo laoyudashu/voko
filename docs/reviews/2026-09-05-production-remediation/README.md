@@ -161,3 +161,7 @@ OpenHands 启动失败的根因已定位并修复：其 pyvenv.cfg 的 home 指�
 47e257c 修复 WorkBuddy 子进程未处理错误、退出期间错误报告 ready 和启动原因丢失；9b9baff 修复 Aider 费用摘要换行后把独立 session. 当作回复的问题。最终完整门禁 1571 项通过、2 项既有跳过、0 失败；同一候选已在三端备份、部署，安装后的 6 项新增测试在三端分别通过。
 
 macOS 网页向全部原有 50 个身份发送本候选 R1 消息，16:07 UTC 完成复核：44/50 正确可见回复（Mac 16/17、Linux 12/12、Windows 16/21）。Windows Aider 本轮没有多余费用文字，CodeBuddy 回复成功。WorkBuddy 仍在启动阶段约 21.6 秒后失败，最后检查为 ECONNREFUSED；两个 AUTO-REG、Windows OpenHands、千问办公、DuMate 仍未通过。官方 DuMate 1.0.76 的隔离原生组件也复现崩溃，未作为修复安装。详见 [修复、部署和完整网页验收记录](startup-and-footer-remediation.md)。目标仍 active，未宣称全部优化完成。
+
+## 16:45 UTC 增量日志与 WorkBuddy 原生会话复核
+
+三端仍 READY、50/50 IM 连接。新确认 WorkBuddy 回环答案进入正常 IM 投递路径并被 PEER_NOT_FOUND 拦下；回环通过后的网页 R2 又出现 WORKBUDDY_NEW_EMPTY_REPLY，原生会话包含当前标记但没有助手回复。未知结果未重放，网页通过数仍为 44/50。Linux 目录超时、Windows 千问办公原生崩溃再次出现。详见 [最新日志复核与解决建议](log-review-1645-utc.md)。
