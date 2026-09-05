@@ -624,9 +624,13 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
           const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
-          if (replyTurnKey && reply.done !== false && unresolvedStoppedTurns.delete(replyTurnKey)) {
-            _retireIsolatedTurn(replyTurnKey);
-            return; // Resolve the old uncertainty without delivering its retired result.
+          if (replyTurnKey && unresolvedStoppedTurns.has(replyTurnKey)) {
+            if (reply.done !== false && !reply.error
+                && (!reply.deliveryOutcome || reply.deliveryOutcome === 'delivered')) {
+              unresolvedStoppedTurns.delete(replyTurnKey);
+              _retireIsolatedTurn(replyTurnKey);
+            }
+            return; // An uncertain/error final does not prove the old execution ended.
           }
           if (stopping) return;
           const retired = replyTurnKey ? _retiredIsolatedTurn(replyTurnKey) : null;

@@ -83,12 +83,15 @@ export class ProviderRuntimeRegistry extends EventEmitter {
   }
 
   async restart(providerId?: string): Promise<void> {
+    const generation = this.lifecycleGeneration;
     const entries = providerId
       ? (this.providers[providerId] ? [[providerId, this.providers[providerId]] as const] : [])
       : Object.entries(this.providers);
     for (const [id, provider] of entries) {
+      if (generation !== this.lifecycleGeneration) return;
       try {
         await provider.stop?.();
+        if (generation !== this.lifecycleGeneration) return;
         await provider.start?.();
       } catch (error) {
         this.emit('providerError', { providerId: id, operation: 'restart', error });

@@ -115,3 +115,55 @@ for (const disconnected of [false, true]) for (const oldHasFiles of [true, false
     message: { role: 'assistant', content: [{ type: 'text', text: 'new final' }] } } });
   assert.equal(fs.existsSync(stagedPath), false);
 });
+
+test('a completed turn duplicate cannot release the next turn, whose same-text final remains valid', async t => {
+  const { provider, payload } = fixture(t);
+  delete provider.sendToSession; provider._supportsSessionSubscribe = () => false;
+  const requests = []; provider.send = request => requests.push(request);
+  const replies = []; provider.on('agent.reply', reply => replies.push(reply));
+  await provider.push({ ...payload, messageId: 'completed-old', attachments: [] });
+  const sessionKey = requests.find(request => request.method === 'chat.send').params.sessionKey;
+  const final = (runId, replyId) => ({ payload: { state: 'final', sessionKey, runId,
+    message: { id: replyId, role: 'assistant', content: [{ type: 'text', text: 'identical final text' }] } } });
+  const oldFinal = final('old-run', 'old-reply'); provider._handleChatEvent(oldFinal);
+  await provider.push({ ...payload, messageId: 'new-files' });
+  const sent = requests.filter(request => request.method === 'chat.send').at(-1);
+  const stagedPath = JSON.parse(sent.params.message).content.match(/local_path=([^\n]+)/)[1];
+  provider._handleChatEvent(oldFinal);
+  assert.equal(fs.existsSync(stagedPath), true);
+  assert.equal(provider._activeAgentTurns.get(payload.agentId)?.turnId, 'new-files');
+  const newFinal = final('new-run', 'new-reply'); newFinal.payload.turnId = 'new-files';
+  provider._handleChatEvent(newFinal);
+  assert.equal(fs.existsSync(stagedPath), false);
+  assert.deepEqual(replies.map(reply => reply.turnId), ['completed-old', 'new-files']);
+});
+
+test('a session-only final can finish a single turn but cannot prove its attachment read is complete', async t => {
+  const { provider, payload } = fixture(t);
+  delete provider.sendToSession; provider._supportsSessionSubscribe = () => false;
+  const requests = []; provider.send = request => requests.push(request);
+  await provider.push(payload);
+  const sent = requests.find(request => request.method === 'chat.send');
+  const stagedPath = JSON.parse(sent.params.message).content.match(/local_path=([^\n]+)/)[1];
+  provider._handleChatEvent({ payload: { state: 'final', sessionKey: sent.params.sessionKey, runId: 'backend-only-id',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'legacy final' }] } } });
+  assert.equal(fs.existsSync(stagedPath), true);
+});
+
+
+test('unknown session metadata is bounded and rejects new sessions before submission at capacity', async t => {
+  const { provider } = fixture(t); let sends = 0; provider.send = () => { sends++; };
+  for (let i = 0; i < 1000; i++) provider.sendChatSend(`agent:synthetic:visitor-${i}`, 'synthetic', { turnId: `turn-${i}` });
+  assert.throws(() => provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' }),
+    error => error.code === 'PROVIDER_SESSION_CAPACITY' && error.deliveryOutcome === 'not_delivered');
+  assert.equal(sends, 1000);
+  assert.equal(provider._sessionTurns.size, 1000);
+  // Existing unknown sessions retain their state and cannot misattribute old finals.
+  provider.sendChatSend('agent:synthetic:visitor-0', 'synthetic', { turnId: 'new-turn' });
+  assert.equal(provider._replyIdentity({ payload: {} }, 'agent:synthetic:visitor-0').ambiguous, true);
+  assert.equal(sends, 1001);
+  provider._handleChatEvent({ payload: { state: 'final', sessionKey: 'agent:synthetic:visitor-1', turnId: 'turn-1',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'completed' }] } } });
+  provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' });
+  assert.equal(sends, 1002, 'a confirmed, unambiguous completed session makes room for a new one');
+});

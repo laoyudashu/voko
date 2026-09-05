@@ -252,3 +252,27 @@ test('a queued but never submitted turn does not block its conversation after re
   assert.deepEqual(f.calls, ['new']);
   await f.dispatcher.stop({ timeoutMs: 5 });
 });
+
+test('an unknown or error final cannot unblock a submitted turn after restart', async () => {
+  const active = deferred(); const f = fixture();
+  f.provider.push = async payload => { f.calls.push(payload.messageId); await active.promise; };
+  f.dispatcher.dispatch('agent', f.payload('old')); await tick();
+  await f.dispatcher.stop({ timeoutMs: 5 }); await f.dispatcher.start();
+  for (const outcome of [{ error: 'transport lost' }, { deliveryOutcome: 'outcome_unknown' }]) {
+    f.provider.emit('agent.reply', { agentId: 'agent', visitorId: 'visitor', turnId: 'old', done: true, ...outcome });
+    f.dispatcher.dispatch('agent', f.payload('must-stay-blocked')); await tick();
+    assert.deepEqual(f.calls, ['old']);
+  }
+  active.resolve(); await f.dispatcher.stop({ timeoutMs: 5 });
+});
+
+test('a registry restart waiting on stop cannot start a Provider after global stop', async () => {
+  const { ProviderRuntimeRegistry } = require('../build/core/dispatcher/provider-runtime-registry');
+  const stopping = deferred(); let starts = 0, stops = 0;
+  const registry = new ProviderRuntimeRegistry({ synthetic: {
+    start() { starts++; }, stop() { if (++stops === 1) return stopping.promise; },
+  } });
+  await registry.startAll(); const restarting = registry.restart(); await tick();
+  await registry.stopAll(); stopping.resolve(); await restarting;
+  assert.equal(starts, 1);
+});

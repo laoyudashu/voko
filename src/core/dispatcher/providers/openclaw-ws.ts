@@ -303,38 +303,42 @@ class OpenClawWsProvider {
     };
   }
 
-  _replyIdentity(msg: ProtocolMessage, sessionKey: string): { turnId?: string; replyId?: string; ambiguous?: boolean } {
+  _replyIdentity(msg: ProtocolMessage, sessionKey: string): { turnId?: string; replyId?: string; ambiguous?: boolean; correlated?: boolean } {
     const payload = msg?.payload || {};
     const innerMsg = payload.message || {};
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
     // An explicit turn id must never be overwritten by the newest session turn.
     // A backend runId can change at tool boundaries and is not an inbound turn id.
-    if (!payload.turnId && tracked?.pendingTurnIds?.size > 1) return { ambiguous: true };
-    const pendingTurnId = tracked?.pendingTurnIds?.size === 1 ? [...tracked.pendingTurnIds][0] : undefined;
-    const turnId = payload.turnId || pendingTurnId || tracked?.turnId || payload.runId || payload.requestId;
+    if (!payload.turnId && tracked?.uncertain) return { ambiguous: true };
+    const turnId = payload.turnId || tracked?.turnId || payload.runId || payload.requestId;
     const replyId = innerMsg.id || innerMsg.messageId || payload.replyId || payload.messageId || payload.runId || turnId;
     return {
       ...(turnId ? { turnId: String(turnId) } : {}),
       ...(replyId ? { replyId: String(replyId) } : {}),
+      correlated: !!payload.turnId,
     };
   }
 
   _emitAgentReplyFromSession(
     sessionKey: string,
     text: string,
-    identity: { turnId?: string; replyId?: string; ambiguous?: boolean } = {},
+    identity: { turnId?: string; replyId?: string; ambiguous?: boolean; correlated?: boolean } = {},
   ): void {
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const { agentId, visitorId } = this._parseAgentSessionKey(resolvedKey);
     if (!text.trim() || identity.ambiguous) return;
-    const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
-    if (identity.turnId) tracked?.pendingTurnIds?.delete(identity.turnId);
-    if (agentId) this._releaseAgentTurn(agentId, identity.turnId);
-    const dedupKey = (resolvedKey || '') + ':' + text.substring(0, 100);
+    // Check stable event identity before releasing resources: a repeated old
+    // final must not be rebound to the newest pending turn in this session.
+    const eventId = identity.replyId || identity.turnId;
+    const dedupKey = resolvedKey + (eventId ? ':reply:' + eventId : ':text:' + text.substring(0, 100));
     const lastTime = this._processedMsgs.get(dedupKey);
-    if (lastTime && Date.now() - lastTime < 30000) return;
+    if (lastTime && (eventId || Date.now() - lastTime < 30000)) return;
     this._processedMsgs.set(dedupKey, Date.now());
+    if (this._processedMsgs.size > 1000) this._processedMsgs.delete(this._processedMsgs.keys().next().value);
+    const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
+    if (identity.turnId && tracked?.turnId === identity.turnId) tracked.pending = false;
+    if (agentId) this._releaseAgentTurn(agentId, identity.turnId, identity.correlated !== false);
     console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
     this.emit('agent.reply', { agentId, visitorId, content: text, sessionKey: resolvedKey, ...identity });
   }
@@ -369,10 +373,10 @@ class OpenClawWsProvider {
     return release;
   }
 
-  _releaseAgentTurn(agentId: string, turnId?: string): void {
+  _releaseAgentTurn(agentId: string, turnId?: string, cleanupAttachments = true): void {
     const active = this._activeAgentTurns.get(agentId);
     // An uncorrelated reply cannot prove which turn has finished reading files.
-    if (turnId) {
+    if (turnId && cleanupAttachments) {
       const attachment = [...this._turnAttachments.values()].find((item: any) => item.agentId === agentId && item.turnId === turnId);
       attachment?.cleanup();
     }
@@ -425,7 +429,7 @@ class OpenClawWsProvider {
   _scheduleLegacyAgentReply(
     sessionKey: string,
     text: string,
-    identity: { turnId?: string; replyId?: string; ambiguous?: boolean } = {},
+    identity: { turnId?: string; replyId?: string; ambiguous?: boolean; correlated?: boolean } = {},
   ): void {
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const chatFinal = this._chatFinalSessions.get(resolvedKey);
@@ -1445,15 +1449,22 @@ class OpenClawWsProvider {
     }
     const turnId = String(extraData?.turnId || extraData?.messageId || this.generateId());
     const turnKey = this._resolveSessionKey(sessionKey).toLowerCase();
-    const pendingTurnIds = this._sessionTurns.get(turnKey)?.pendingTurnIds || new Set<string>();
-    pendingTurnIds.add(turnId);
-    this._sessionTurns.set(turnKey, { turnId, pendingTurnIds, timestamp: Date.now() });
-    if (this._sessionTurns.size > 1000) {
-      const cutoff = Date.now() - 10 * 60 * 1000;
+    const previous = this._sessionTurns.get(turnKey);
+    if (!previous && this._sessionTurns.size >= 1000) {
       for (const [key, tracked] of this._sessionTurns) {
-        if (tracked.timestamp < cutoff && !tracked.pendingTurnIds?.size) this._sessionTurns.delete(key);
+        if (!tracked.pending && !tracked.uncertain) this._sessionTurns.delete(key);
+        if (this._sessionTurns.size < 1000) break;
+      }
+      if (this._sessionTurns.size >= 1000) {
+        throw Object.assign(new Error('OpenClaw has too many unconfirmed sessions'), {
+          code: 'PROVIDER_SESSION_CAPACITY', deliveryOutcome: 'not_delivered',
+        });
       }
     }
+    // One constant-sized marker per session is sufficient. Once an unknown
+    // turn overlaps its successor, session-only finals cannot restore certainty.
+    this._sessionTurns.set(turnKey, { turnId, pending: true,
+      uncertain: !!(previous?.pending || previous?.uncertain), timestamp: Date.now() });
     // 构造结构化 JSON（去掉 untrusted 标记）
     const structuredMsg = JSON.stringify({
       type: 'message',
