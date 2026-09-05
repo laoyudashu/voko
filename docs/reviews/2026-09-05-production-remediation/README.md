@@ -81,3 +81,17 @@ Windows 安装包上的两项新增策略测试通过；结合真实目录接口
 2026-09-05 12:21 UTC 完成三端最近一小时日志复核，详见 [日志复核记录](log-review-1221-utc.md)。Mac 无新增错误/告警；Linux 间歇性目录和 A2A 请求失败；Windows 千问办公原生故障与历史锁 PEER_NOT_FOUND 仍存在。未确认新包引入的新回归。另记录 ACP 正常进度被标为 ERR 的既有日志分类问题。
 
 Mac 锁定障碍已解除，网页输入恢复；当前候选 0f4ada3 的 Linux Qwen、Goose、OpenCode 已取得实际可见正确回复和对应 generated/delivered 日志。当前进度 3/50，剩余 47 个，目标 active。此前 blocked 章节为历史状态。
+
+## 50 个 Agent 首轮网页矩阵完成，修复目标尚未完成
+
+2026-09-05 12:45 UTC，当前候选 0f4ada3 已通过 macOS Chrome 向三端全部 50 个 IM 身份各发送一条“7加8等于多少？”并逐项检查网页。36 个网页显示正确答案 15，14 个未通过；最新逐项状态在 execution.json 的 currentCandidateBrowserRegression。
+
+- macOS：13/17 正确回复；Copilot 拒答；千问办公 o9hPdJ、AUTO-REG、DuMate 提示自动回复未启用。陈老师 WorkBuddy 和另一千问办公 pBp2ts 实际对话成功，不能继续把之前 readiness 快照当成当前交付失败结论。
+- Linux：11/12 正确回复；Copilot 拒答。ZeroClaw 的 IM UID 经实时 list_agents 验证为 agent_cc612a3bef4fef7a，网页仍显示旧 AUTO-REG-LINUX-20260828 名称，按同一 IM 身份完成补测并取得正确回复。
+- Windows：12/21 正确回复；Copilot、AUTO-REG、OpenHands、千问办公、DuMate 未启用自动回复；CodeBuddy、OpenCode、Cline 显示结果未知；WorkBuddy 显示当前无法处理。
+
+Mac/Linux Copilot 的可见回复明确拒绝将嵌入的 security context 当作系统指令，并未回答普通算术问题；暂时归类为提示上下文兼容性问题，不得将其作为提示绕过或放宽权限的理由。
+
+部分会话首次切回时仍显示“处理中”，再次进入并完成后台历史同步后正确回复出现。此现象仍需区分同步延迟与前端交互问题，不能依据第一次 DOM 快照断言消息丢失。本轮曾出现页面自动聚焦输入框与连续搜索竞争，已清理工具误填的搜索词草稿，未发送该草稿；后续操作需逐步核验搜索框和会话标题。
+
+Windows CodeBuddy/OpenCode/Cline 日志均在 ACP initialize 连接等待 15000ms 后失败，未记录本次 session/prompt 调用，却由 Dispatcher 记为 outcome_unknown，阻止后备通道判断。代码复核确认 _ensureAgent 抛错位于现有 session/new 的 not_delivered 分类之外。新增 3 项边界测试，原实现 1 失败、2 通过；最小修复仅给未提交当前请求的连接失败补上 not_delivered，保留显式不确定结果，并验证 session/prompt 发出后的断连仍 outcome_unknown、仅调用一次。构建及关联路由/安全策略 62 项测试通过，完整 release:gate:code 门禁通过（1553 项通过、2 项既有平台跳过、0 失败），覆盖率基线、类型检查、构建、i18n 和源码包扫描通过。原始请求未重放，生产仍运行 0f4ada3。
