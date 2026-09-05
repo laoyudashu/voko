@@ -50,7 +50,7 @@ function classifyQwenOfficeStatusResult(result: any): QwenOfficeReadiness {
   const stderr = safeDiagnostic(result?.stderr || result?.error?.message);
   if (errorCode === 'ETIMEDOUT' || result?.signal === 'SIGTERM') {
     return { executable: true, loggedIn: false, ready: false, reason: 'status_timeout', exitCode,
-      detail: stderr || 'status command exceeded 5000ms' };
+      detail: stderr || `status command exceeded ${STATUS_TIMEOUT_MS}ms` };
   }
   if (result?.error || exitCode !== 0) {
     return { executable: true, loggedIn: false, ready: false, reason: 'status_failed', exitCode,
