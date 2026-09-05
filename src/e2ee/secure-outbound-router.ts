@@ -53,6 +53,13 @@ function isStableDirectoryBusinessCode(value:string):boolean{
   return value==='PEER_NOT_FOUND'||value==='E2EE_KEY_NOT_FOUND';
 }
 
+function isDirectoryPolicyDenial(error:unknown):boolean{
+  const code=errorCode(error);
+  const status=Number((error as any)?.status);
+  return isStableDirectoryBusinessCode(code)||code==='AGENT_NOT_FOUND'
+    ||code==='E2EE_V2_AGENT_IDENTITY_UNAVAILABLE'||status===401||status===403;
+}
+
 function isAttachmentOperationalFailure(value:string):boolean{
   return value==='E2EE_V2_ATTACHMENT_SOURCE_FAILED'||value==='E2EE_V2_ATTACHMENT_UPLOAD_FAILED'
     ||value.startsWith('UPLOAD_');
@@ -90,7 +97,7 @@ function agentControlMetadata(value:Record<string,unknown>|undefined):Record<str
 
 export class SecureOutboundRouter {
   private readonly cache=new Map<string,CachedResolution>();
-  private readonly failureCache=new Map<string,{expiresAt:number;code:string}>();
+  private readonly failureCache=new Map<string,{expiresAt:number;code:string;status?:number}>();
   private readonly inflight=new Map<string,Promise<Resolution>>();
   private readonly recentDiagnostics=new Map<string,number>();
   private readonly preparedAttachments=new Map<string,PreparedAttachmentDecision>();
@@ -171,7 +178,7 @@ export class SecureOutboundRouter {
     if(!force&&cached&&cached.expiresAt>Date.now())return cached.value;
     const failed=this.failureCache.get(key);
     if(!force&&failed&&failed.expiresAt>Date.now()){
-      throw Object.assign(new Error(failed.code),{code:failed.code});
+      throw Object.assign(new Error(failed.code),{code:failed.code,status:failed.status});
     }
     const pending=this.inflight.get(key);
     if(pending)return pending;
@@ -197,7 +204,9 @@ export class SecureOutboundRouter {
       return value;
     }catch(error){
       const code=errorCode(error);
-      this.failureCache.set(key,{expiresAt:Date.now()+10_000,code});
+      const status=Number((error as any)?.status);
+      this.failureCache.set(key,{expiresAt:Date.now()+10_000,code,
+        ...(Number.isInteger(status)&&status>=100&&status<=599?{status}:{})});
       if(diagnostics)this.capabilityDiagnostic({agentId,stage:'resolve_recipients',code,decision:'resolution_failed'});
       throw error;
     }
@@ -297,6 +306,11 @@ export class SecureOutboundRouter {
         if(locked&&isRecoverableDirectoryLockReason(code))this.rememberLockedFailure(locked,Date.now(),code);
         return{mode:'blocked',error:isStableDirectoryBusinessCode(code)?code:(existing.lock_reason||code),
           securityMode:'e2ee',reason:'active_conversation_locked'};
+      }
+      // An explicit access or identity refusal is not an unsupported E2EE
+      // capability. Never use another transport to bypass that refusal.
+      if(isDirectoryPolicyDenial(error)){
+        return{mode:'blocked',error:code,securityMode:'e2ee',reason:'recipient_policy_error'};
       }
       if(code==='E2EE_RECIPIENT_DEVICE_LIMIT'){
         return{mode:'blocked',error:code,securityMode:'plaintext',reason:'recipient_policy_error'};

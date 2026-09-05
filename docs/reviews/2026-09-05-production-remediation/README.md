@@ -45,3 +45,17 @@
 第二次启动后的日志复核：Mac 的 A2A 警告是当前无符合发布条件的 Agent，属于目录发布条件；不能据此认定通信故障，也不应自动修改可见性。Linux 当前窗口只有启动横幅造成的空 ERR。Windows 00:27:53 仍有 Hermes models 401，须通过后续真实任务区分默认探针和实际 profile 的认证状态；00:29:29 千问办公再次记录 status_failed、exitCode=3221225477，原生异常退出仍可复现。新窗口仅几分钟，不能代替长期稳定性或全 Agent 对话验收。
 
 此轮第二批证据在 `artifacts/production-remediation-process-20260905/`。前述 15 次网页发送、3 次可见回复属于第一批提交 fa45ecb；第二批提交的全量网页回归仍 pending。Mac 锁定阻碍网页操作，已请求用户手动解锁，未尝试绕过设备锁或索取密码。
+
+## Provider 诊断复核与第三批安全修复
+
+2026-09-05 07:32 UTC 对 Windows Hermes 做只读原生 HTTP 检查：当前数据库选用的 default profile 对 /health 和 /v1/models 都返回 200。LocalAppData 根 config.yaml 与其凭据一致；profiles/default/config.yaml 和 ~/.hermes/config.yaml 的旧凭据分别返回 401。因此启动时选候选配置产生的 401 不能作为当前 Hermes 整体认证失败的证据。没有修改或泄露凭据，也未把认证可用记为网页对话通过。
+
+Windows 千问办公原生矩阵：--version 退出 0；status 在用户目录和 binary 目录均以 3221225477 退出，均无 stdout/stderr。Windows Node 架构为 arm64，所用 PE machine 为 8664（x64）。[Qoder CN CLI 官方安装文档](https://docs.qoder.cn/cli/installation) 当前明确列出 Windows arm64 暂不支持。该事实提示兼容性限制，但不证明此次崩溃的唯一根因；未替换原生程序、删除登录数据或声称通过 VOKO 延长超时能解决。证据在 artifacts/provider-diagnostics-20260905/。
+
+对 Windows Goose 的旧回执失败进一步复核：同一 peer 下，新普通会话的路由与旧 E2EE 锁使用不同 conversation key；目录实测无 key 和带当前 key 两次都返回 PEER_NOT_FOUND。原快测源消息实际标记 securityMode=plaintext。故单纯给回执补一个新会话 key 并不能修复目录访问拒绝，反而可能绕过旧加密锁。
+
+确认的新缺陷：对从未建立 E2EE 的本地 route，SecureOutboundRouter 原先把明确的 Directory 身份/访问拒绝当作能力未知，允许调用明文发送器。两个最小复现原实现均失败：首次拒绝仍发送、新 route 能避开旧会话拒绝。修复在明确 PEER_NOT_FOUND、E2EE_KEY_NOT_FOUND、AGENT_NOT_FOUND、E2EE_V2_AGENT_IDENTITY_UNAVAILABLE 或 HTTP 401/403 时停止发送，保留错误码。10 秒失败缓存也保留 HTTP 状态，避免 prepare 拒绝后 deliver 从缓存中丢失拒绝语义。既有身份/加密/可见性边界未放宽，未修改独立 voko-server 仓库。
+
+定向 E2EE、运行时、回执组合 80 项全部通过。测试覆盖 prepare 与随后缓存路径的 deliver 均拒绝、旧锁保持、无明文/密文发送，以及既有恢复流程。此修复不会让服务端本来拒绝的跨主人私有 Agent 通信变成成功；那需要真实授权，不能作为代码修复擅自添加白名单或公开 Agent。
+
+第三批安全修复的完整 release:gate:code 门禁通过：1550 项通过、2 项既有平台跳过、0 失败；覆盖率基线、类型检查、构建、i18n 与源码包扫描均通过。
