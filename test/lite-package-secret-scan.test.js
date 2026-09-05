@@ -36,3 +36,113 @@ test('package secret scan accepts environment-only secret configuration', () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+const { execFileSync, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
+const { scanTarball } = require('../scripts/scan-package-secrets');
+const scanner = path.resolve(__dirname, '../scripts/scan-package-secrets.js');
+
+function packedFixture(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-packed-secret-scan-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const [name, content] of Object.entries(files)) {
+    const file = path.join(root, 'package', name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  const archive = path.join(root, 'release.tgz');
+  execFileSync('tar', ['-czf', archive, '-C', root, 'package']);
+  return { root, archive };
+}
+
+test('release artifact scan covers built code, README and text without a recognized suffix', t => {
+  const secret = "const password = 'synthetic-release-value';\n";
+  const { archive } = packedFixture(t, {
+    'build/main.js': secret, 'README.md': secret, 'assets/notes.data': secret, LICENSE: secret,
+  });
+  const result = scanTarball(archive);
+  assert.deepEqual(result.findings.map(item => item.file).sort(),
+    ['LICENSE', 'README.md', 'assets/notes.data', 'build/main.js']);
+  assert.equal(result.filesScanned, 4);
+  assert.equal(result.sha256, crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex'));
+  assert.equal(JSON.stringify(result).includes('synthetic-release-value'), false);
+});
+
+test('artifact bytes are authoritative and unpackaged workspace fixtures are ignored', t => {
+  const { root, archive } = packedFixture(t, { 'build/main.js': 'module.exports = true;\n' });
+  fs.mkdirSync(path.join(root, 'test'));
+  fs.writeFileSync(path.join(root, 'test', 'fixture.js'), "const password = 'synthetic-not-packed';\n");
+  // Changing the source tree after packing must not change which bytes are scanned.
+  fs.writeFileSync(path.join(root, 'package', 'build', 'main.js'), "const password = 'synthetic-after-pack';\n");
+  assert.deepEqual(scanTarball(archive).findings, []);
+});
+
+test('artifact CLI fails closed and prints only rule locations, never matched values', t => {
+  const { archive } = packedFixture(t, { 'build/main.js': "const password = 'synthetic-secret-value';\n" });
+  const result = spawnSync(process.execPath, [scanner, '--tarball', archive], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  const output = result.stdout + result.stderr;
+  assert.match(output, /literal-secret: build\/main\.js:1/);
+  assert.doesNotMatch(output, /synthetic-secret-value/);
+});
+
+test('artifact scan skips binary contents while recognizing UTF-16 text with a BOM', t => {
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("const password = 'synthetic-utf16-value';\n", 'utf16le')]);
+  const { archive } = packedFixture(t, {
+    'binary.wasm': Buffer.from([0, 97, 115, 109, 0xff]), 'notes.dat': utf16,
+  });
+  const result = scanTarball(archive);
+  assert.equal(result.filesScanned, 1);
+  assert.deepEqual(result.findings.map(item => item.file), ['notes.dat']);
+});
+
+// Minimal ustar fixtures exercise dangerous metadata without asking tar to create devices or outside paths.
+function maliciousArchive(t, entries) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-archive-boundary-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const chunks = [];
+  for (const { name, type = '0', link = '', content = 'synthetic', size } of entries) {
+    const bytes = Buffer.from(content);
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write('0000644\0', 100); header.write('0000000\0', 108); header.write('0000000\0', 116);
+    header.write((size ?? bytes.length).toString(8).padStart(11, '0') + '\0', 124);
+    header.write('00000000000\0', 136); header.fill(32, 148, 156); header.write(type, 156);
+    header.write(link, 157, 100); header.write('ustar\0', 257); header.write('00', 263);
+    const checksum = [...header].reduce((sum, value) => sum + value, 0);
+    header.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148);
+    chunks.push(header, bytes, Buffer.alloc((512 - bytes.length % 512) % 512));
+  }
+  chunks.push(Buffer.alloc(1024));
+  const archive = path.join(root, 'unsafe.tgz');
+  fs.writeFileSync(archive, require('node:zlib').gzipSync(Buffer.concat(chunks)));
+  return { root, archive };
+}
+
+for (const [label, entry] of [
+  ['parent traversal', { name: 'package/../../outside.txt' }],
+  ['absolute path', { name: '/tmp/voko-archive-outside.txt' }],
+  ['symlink', { name: 'package/link', type: '2', link: '../../outside', content: '' }],
+  ['hardlink', { name: 'package/link', type: '1', link: '../../outside', content: '' }],
+  ['device', { name: 'package/device', type: '3', content: '' }],
+]) {
+  test(`artifact ${label} is rejected before extracting anything`, t => {
+    const { archive } = maliciousArchive(t, [entry]);
+    let extraction = false;
+    // The external tar binary is only allowed to list entries until validation succeeds.
+    const childProcess = require('node:child_process');
+    const original = childProcess.execFileSync;
+    t.mock.method(childProcess, 'execFileSync', (cmd, args, options) => {
+      if (args.some(arg => /^-x/.test(arg))) { extraction = true; throw new Error('Unexpected extraction'); }
+      return original(cmd, args, options);
+    });
+    assert.throws(() => scanTarball(archive), /archive/i);
+    assert.equal(extraction, false);
+  });
+}
+
+test('artifact member and expanded-byte budgets reject before extraction', t => {
+  const { archive } = packedFixture(t, { 'a.txt': '12345', 'b.txt': '67890' });
+  assert.throws(() => scanTarball(archive, { maxMembers: 1 }), /archive/i);
+  assert.throws(() => scanTarball(archive, { maxExpandedBytes: 4 }), /archive/i);
+});
