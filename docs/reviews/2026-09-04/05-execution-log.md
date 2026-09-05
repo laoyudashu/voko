@@ -50,3 +50,17 @@
 - 第一轮code gate在独立并行用例中1417通过/1失败/1平台跳过；另外前置1通过、23通过/1平台跳过。失败为旧provider-modularization测试仍把已写marker的子进程退出7当not_delivered；根据批准R12改为outcome_unknown并保留只执行一次断言，定向49/49通过。未削弱实现或绕过测试。
 - 第一轮完整Chromium38/38通过。早期新增浏览器fixture使用非数字IM ID导致Fake服务退出，修为协议要求的数字ID；该失败留下的两个临时E2E runtime进程已按精确临时db路径停止。
 - npm audit --omit=dev --audit-level=high：0 vulnerabilities。Gitleaks第一轮645 commits无命中。最终CodeQL和完整code gate在产品源码15b2f48启动，等待结果。
+
+## 最终静态扫描追加修正
+
+- 产品代码完整gate在15b2f48通过：1520 pass、2平台skip、0 fail；类型/构建/i18n/覆盖率基线/源码扫描全部通过。最终产品Chromium38/38再次通过（56.6秒）。
+- CodeQL在制品扫描新增脚本发现2个high7.7 filesystem-race（文件路径stat与read之间）。追加2cdcbf6改同fd open/fstat/逐块限额读取/finallyclose，f12146c用非阻塞打开拒绝FIFO；没有改allowlist。
+- 实施者最终26/26；独立专家精确26/26及额外3个异常关闭/目录边界通过；实际包扫描通过。正在对f12146c运行最终完整gate与CodeQL。
+
+## 完成
+
+- f12146c完整最终code gate退出0：1530通过、2既有平台跳过、0失败。CodeQL复扫退出0，新增竞态告警已清除；保留15个既有精确高等级豁免，未改allowlist。
+- 最终产品Chromium38/38；Gitleaks0命中，生产依赖audit0；源码/build schema v9一致。
+- 同一实际tgz共324成员/320文本，扫描通过；dry-run清单一致，不含审查记录/测试。摘要6f53716a96ebe01f62a1bb24604b43858778edda308c4298a9dfaf4d260123af。
+- 原main仍a6e8f35，只有本轮docs/reviews记录；未触碰其产品改动/生产服务。隔离分支保留聚焦本地提交；最后仅更新文档。
+- 批准默认本地范围完成；R08部分、R14测量、R19设计暂缓按原计划执行。跨平台、Node24、Firefox/WebKit、真实Provider/云端验证仍未覆盖。

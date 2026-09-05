@@ -19,3 +19,13 @@ Other inspected boundaries:
 - Current local system tar is macOS bsdtar; no GNU gtar executable was found. GNU listing parsing is source-reviewed but not runtime-validated here. Windows filesystem/tar behavior remains unverified.
 
 Verdict: no remaining blocking R18 issue found in the reviewed amended diff. Full integration/release gate and platform boundaries remain parent's responsibility. No workflow was triggered, no package published, no source file changed by this reviewer.
+
+## Final descriptor-read follow-up: 2ecbb0a + 732fbe9
+
+Independent read-only review of exact final source and test changes passes. Both former stat/lstat-by-path then read-by-path sequences now open once, fstat that descriptor, reject non-regular objects, read the same descriptor in at most64KiB chunks, and close it in finally. A sentinel byte detects post-fstat growth without unbounded reads. The compressed64MiB and aggregate extracted-member256MiB budgets remain enforced. The regular-member list is taken from already-validated tar metadata; directories are not treated as text files. Archive/member final-component symlinks are rejected where O_NOFOLLOW exists. Actual device/inode alias detection now uses the descriptor stat and remains intact.
+
+Review caught a FIFO edge case before final acceptance: blocking O_RDONLY could wait forever before fstat type rejection. The final O_NONBLOCK addition makes this fail promptly; implementation agent preserved a failing timeout regression before the fix.
+
+Exact committed script and test copied to /tmp/voko-s6-fd-independent without modifying any checkout; Node22 independent26/26 passed, zero skips/failures: /tmp/voko-s6-fd-independent-tests.log. Three additional reviewer-written tests verify fd closure when fstat throws, fd closure when read throws, and rejection/closure of a directory passed as the archive:3/3 passed, /tmp/voko-s6-fd-independent-adversarial.log. Tests/source live only under /tmp for this review. No allowlist edits, builds, full gate, or production actions.
+
+No blocking issue remains in this focused follow-up. This is Mac/bsdtar local evidence; GNU tar and platforms without the POSIX flags have not been independently executed here. CodeQL clean status is for the coordinating agent to verify by rerunning its analyzer; this review does not infer analyzer output from source inspection.

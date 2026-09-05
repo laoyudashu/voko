@@ -1,6 +1,6 @@
 # VOKO v1 优化实施与验收
 
-当前为最终验收中的报告；以 execution-plan.json 的最终状态为准。
+**批准范围内的本地实施与验收已完成。** 16项修复/加固，R08完成约定的部分缓解，R14完成测量，R19按批准条件保持设计暂缓。跨平台与真实账号验收仍未完成；不宣称所有已知问题已解决。
 
 ## 范围与项目意图
 
@@ -49,7 +49,24 @@ VOKO Lite 是连接本地 Agent、访客、其他 Agent 与外部业务系统的
 
 ## 最终验证
 
-最终门禁、静态扫描、制品摘要和提交信息在验收结束后填写。早期红/绿记录及中途失败均保存在 `05-execution-log.md`，不以较早成功冒充最终版本验证。
+验证对应产品源码 `f12146c38b23ce5f85fa53aa233485b5ce5b703a`；之后仅更新验收文档。机器可读结果见 `evidence/final-verification.json`。
+
+| 验证 | 最终结果 |
+| --- | --- |
+| `release:gate:code` | **1530通过、2既有平台跳过、0失败**；类型、构建、i18n、覆盖率基线及348文本源码扫描通过 |
+| Chromium E2E | **38/38**；包含无实例请求头的真实Cookie认证、注销、重新认证 |
+| CodeQL | 门禁通过；313 JS/TS与3 Actions文件。53条静态提示中15条高等级匹配仓库既有精确豁免；未豁免high/critical为0，未修改豁免。工具提示不等于53个真实漏洞 |
+| Gitleaks | 0命中；日志保留在 `/tmp/voko-optimization-evidence-20260904/final-gitleaks.log` |
+| npm production dependency audit | 0 vulnerabilities |
+| 包契约 | 源码/build schema v9一致；actual pack与dry-run文件清单相同；324成员，320文本扫描通过，未包含审查记录和测试 |
+| 独立复核 | S1/S2/S3/S4/S5/S6/S7均有非实施者审查；关键反例修复后重新验证 |
+
+覆盖率达到既定基线：dispatcher68.33%、message/cursors70.26%、IM58.42%、providers64.37%、Web50.41%；没有提高到所有长期目标，未降低门槛。
+
+本地测试包：`/tmp/voko-optimization-evidence-20260904/voko-lite-0.5.2.tgz`，3,740,503字节。SHA256：`6f53716a96ebe01f62a1bb24604b43858778edda308c4298a9dfaf4d260123af`。版本号保持0.5.2，仅用于本地验收，未发布。
+
+完整原始日志位于 `/tmp/voko-optimization-evidence-20260904/`。早期红/绿、错误fixture、独立反例及CodeQL发现的新竞态均在 `05-execution-log.md` 和分报告中保留。没有把早期结果冒充最终源码结果。
+
 
 ## 保留的问题与回退
 
