@@ -1157,6 +1157,21 @@ test('Lite version comparison remains deterministic', () => {
   assert.equal(compareVersions('0.3.7', '0.4.0'), -1);
 });
 
+// These cases exercise persisted scan checkpoints; a permissive SQL stub
+// cannot model their precedence over MAX or retain committed progress.
+function createOfflineSyncDb(t) {
+  const { initDatabase } = require('../build/core/database');
+  const db = initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  db.prepare('INSERT OR REPLACE INTO config(type,data,updated_at) VALUES(?,?,0)')
+    .run('user_access_token', JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }));
+  db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,owner_email,publish_status,created_at,updated_at)
+    VALUES('synthetic','agent-1','agent-uid','token','ws://im.test:5200','owner@example.test','published',0,0)`).run();
+  db.prepare(`INSERT INTO conversations(user_uid,channel_id,channel_type,name,agent_id)
+    VALUES('agent-uid','visitor-1',1,'Synthetic visitor','agent-1')`).run();
+  return db;
+}
+
 test('Lite offline sync decodes, persists and forwards a pulled message', async (t) => {
   const originalFetch = global.fetch;
   global.fetch = async (_url, options) => {
@@ -1178,27 +1193,9 @@ test('Lite offline sync decodes, persists and forwards a pulled message', async 
     };
   };
   t.after(() => { global.fetch = originalFetch; });
-  const db = {
-    exec() {},
-    prepare(sql) {
-      return {
-        all() {
-          if (sql.includes('FROM agents')) {
-            return [{ agent_id: 'agent-1', imUid: 'agent-uid', imToken: 'token', im_server_url: 'ws://im.test:5200', owner_email: 'owner@example.test' }];
-          }
-          if (sql.includes('FROM conversations')) return [{ channel_id: 'visitor-1' }];
-          return [];
-        },
-        get() {
-          if (sql.includes("type = ?")) {
-            return { data: JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }) };
-          }
-          return { m: 7 };
-        },
-        run() {},
-      };
-    },
-  };
+  const db = createOfflineSyncDb(t);
+  db.prepare(`INSERT INTO messages(id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,message_seq)
+    VALUES('historical-7','visitor-1','agent-uid','synthetic','visitor-1',1,'agent-1',0,0,'received',7)`).run();
   const forwarded = [];
   const handler = {
     handleAgentMessage(agentId, data, skipForward) {
@@ -1247,35 +1244,7 @@ test('Lite offline sync advances past an intentionally skipped empty message', a
   };
   t.after(() => { global.fetch = originalFetch; console.log = originalLog; });
 
-  let cursorData;
-  const db = {
-    prepare(sql) {
-      return {
-        all() {
-          if (sql.includes('FROM agents')) {
-            return [{ agent_id: 'agent-1', imUid: 'agent-uid', owner_email: 'owner@example.test' }];
-          }
-          if (sql.includes('FROM conversations')) return [{ channel_id: 'visitor-1' }];
-          return [];
-        },
-        get() {
-          if (sql === 'SELECT data FROM config WHERE type=?') {
-            return cursorData ? { data: cursorData } : undefined;
-          }
-          if (sql.includes('SELECT MAX(message_seq)')) return { m: null };
-          if (sql.includes('type = ?')) {
-            return { data: JSON.stringify({ 'owner@example.test': { user_access_token: 'ut_owner' } }) };
-          }
-          return undefined;
-        },
-        run(type, data) {
-          if (sql.includes('INSERT OR REPLACE INTO config') && type === 'offline_sync_cursors') {
-            cursorData = data;
-          }
-        },
-      };
-    },
-  };
+  const db = createOfflineSyncDb(t);
   let handled = 0;
   const handler = {
     handleAgentMessage() {

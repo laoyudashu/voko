@@ -11,7 +11,6 @@ const {
   enqueueDbWrite,
   getCurrentUserEmail,
   getUserAccessToken,
-  waitForDbQueue,
 } = require('./database');
 const { advanceCheckpoint, getCheckpoint, setCheckpoint } = require('./checkpoint-store');
 const ENDPOINTS = require('../endpoints.json');
@@ -138,6 +137,14 @@ function isPermanentE2eeRejection(code: unknown): boolean {
   return PERMANENT_E2EE_REJECTIONS.has(String(code || ''));
 }
 
+interface OfflineSyncOptions {
+  /** A bounded page budget per channel; the coordinator reschedules the rest. */
+  maxPagesPerChannel?: number;
+  requestTimeoutMs?: number;
+  signal?: AbortSignal;
+  requestContinuation?: (agentId: string, ownerEmail: string) => void;
+}
+
 /**
  * 拉取离线消息并转发
  *
@@ -146,220 +153,193 @@ function isPermanentE2eeRejection(code: unknown): boolean {
  * @param {string} [agentIdFilter] - 可选，仅同步指定 agent
  * @returns {Promise<number>} 同步的消息总数
  */
-async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHandlerLike, agentIdFilter?: string): Promise<number> {
+async function syncOfflineMessages(db: DatabaseLike, messageHandler?: MessageHandlerLike, agentIdFilter?: string, options: OfflineSyncOptions = {}): Promise<number> {
   if (!messageHandler) {
     console.debug('[离线同步] 跳过：messageHandler 未初始化（Lite 独立模式下无需同步）');
     return 0;
   }
   try {
-    // 离线同步必须绑定当前登录用户。没有当前用户时，不能按 agents 表的
-    // “最近 owner”或全表回退，否则会把其他用户/其他电脑的 Agent 消息拉到本机。
     const currentOwnerEmail = String(getCurrentUserEmail(db) || '').trim().toLowerCase();
     if (!currentOwnerEmail) return 0;
-    // A single sync run must keep the owner identity it started with. Account
-    // switching updates the active token before shutdown completes; re-reading
-    // it inside the loop would send the new owner's token for old-owner Agents.
+    // Capture the credential with the owner; never send a new owner's token
+    // for Agents selected by an earlier run.
     const ownerAccessToken = getUserAccessToken(db, currentOwnerEmail);
-    const ownerStillActive = () => String(getCurrentUserEmail(db) || '').trim().toLowerCase() === currentOwnerEmail;
+    const ownerStillActive = () => !options.signal?.aborted
+      && String(getCurrentUserEmail(db) || '').trim().toLowerCase() === currentOwnerEmail;
+    const maxPages = Math.max(1, Math.min(100, Math.floor(options.maxPagesPerChannel || 5)));
+    const requestTimeoutMs = Math.max(1, Math.min(60000, Math.floor(options.requestTimeoutMs || 10000)));
     const agents = db.prepare(`
       SELECT agent_id, imUid, imToken, im_server_url, owner_email
       FROM agents
       WHERE publish_status = 'published' AND LOWER(TRIM(owner_email)) = ?
     `).all<AgentRow>(currentOwnerEmail);
     const cursorMap = loadCursorMap(db);
-    const pendingMessages: Array<{ agentId: string; data?: InboundMessage; cursorKey: string;
-      messageSeq?: number; agentAuthored?: boolean }> = [];
+    let processed = 0;
+    let forwarded = 0;
 
     for (const agent of agents) {
-      if (!ownerStillActive()) {
-        console.log('[离线同步] 主人已切换，停止旧主人同步');
-        return 0;
-      }
-      if (agentIdFilter && agent.agent_id !== agentIdFilter) {
-        continue;
-      }
+      if (!ownerStillActive()) return 0;
+      if (agentIdFilter && agent.agent_id !== agentIdFilter) continue;
       const httpBase = String(ENDPOINTS.im.apiBaseUrl || '').replace(/\/$/, '');
       const convs = db.prepare(`SELECT DISTINCT channel_id FROM conversations WHERE agent_id = ?`).all<ConversationRow>(agent.agent_id);
-
       for (const conv of convs) {
-        if (!ownerStillActive()) {
-          console.log('[离线同步] 主人已切换，停止旧主人同步');
-          return 0;
-        }
-        const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`).get<MaxSeqRow>(conv.channel_id, agent.agent_id);
+        if (!ownerStillActive()) return 0;
         const key = cursorKey(agent.agent_id, conv.channel_id);
         let checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
-        if (!checkpoint && cursorMap[key] !== undefined) {
-          setCheckpoint(db, CHECKPOINT_NAMESPACE, key, 'sequence', cursorMap[key]);
+        if (!checkpoint) {
+          // Legacy/bootstrap only: avoid replaying historical tasks. Once a
+          // checkpoint exists it is the scan boundary, even if live messages
+          // have already raised MAX beyond a temporarily rejected ciphertext.
+          const maxRow = db.prepare(`SELECT MAX(message_seq) as m FROM messages WHERE channel_id = ? AND agent_id = ?`)
+            .get<MaxSeqRow>(conv.channel_id, agent.agent_id);
+          const initial = cursorMap[key] !== undefined ? Number(cursorMap[key]) || 0 : maxRow?.m || 0;
+          setCheckpoint(db, CHECKPOINT_NAMESPACE, key, 'sequence', initial);
           checkpoint = getCheckpoint(db, CHECKPOINT_NAMESPACE, key);
         }
-        const startSeq = Math.max(maxRow?.m || 0, Number(checkpoint?.committedValue) || 0, Number(cursorMap[key]) || 0) + 1;
-
-        try {
-          const resp = await fetch(`${httpBase}/channel/messagesync`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(ownerAccessToken ? {
-                Authorization: `Bearer ${ownerAccessToken}`,
-                'X-Voko-Agent-Uid': agent.imUid,
-              } : {}),
-            },
-            body: JSON.stringify({
-              login_uid: agent.imUid,
-              channel_id: conv.channel_id,
-              channel_type: 1,
-              start_message_seq: startSeq,
-              end_message_seq: 0,
-              limit: 100,
-              pull_mode: 1
-            })
-          });
-          if (!ownerStillActive()) {
-            console.log('[离线同步] 主人已切换，停止旧主人同步');
-            return 0;
-          }
-          if (!resp.ok) {
-            console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} HTTP ${resp.status}`);
-            continue;
-          }
-          const data = await resp.json() as { messages?: SyncMessage[] };
-          const msgs = data.messages || [];
-
-          for (const msg of msgs) {
-            const msgId = msg.message_id || msg.messageID;
-            const messageSeq = Number.isSafeInteger(Number(msg.message_seq)) && Number(msg.message_seq) > 0
-              ? Number(msg.message_seq)
-              : undefined;
-            if (!msgId) {
-              pendingMessages.push({ agentId: agent.agent_id, cursorKey: key, messageSeq });
-              continue;
+        let scanned = Number(checkpoint?.committedValue) || 0;
+        for (let page = 0; page < maxPages; page++) {
+          if (!ownerStillActive()) return 0;
+          const pageStart = scanned;
+          let msgs: SyncMessage[];
+          try {
+            const resp = await fetch(`${httpBase}/channel/messagesync`, {
+              method: 'POST',
+              signal: AbortSignal.any([AbortSignal.timeout(requestTimeoutMs), ...(options.signal ? [options.signal] : [])]),
+              headers: {
+                'Content-Type': 'application/json',
+                ...(ownerAccessToken ? {
+                  Authorization: `Bearer ${ownerAccessToken}`,
+                  'X-Voko-Agent-Uid': agent.imUid,
+                } : {}),
+              },
+              body: JSON.stringify({
+                login_uid: agent.imUid, channel_id: conv.channel_id, channel_type: 1,
+                start_message_seq: scanned + 1, end_message_seq: 0, limit: 100, pull_mode: 1,
+              }),
+            });
+            if (!ownerStillActive()) return 0;
+            if (!resp.ok) {
+              console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} HTTP ${resp.status}`);
+              break;
             }
-            let content = msg.content || '';
-            let contentType = msg.content_type || 1;
-            const decoded = decodeOfflinePayload(msg.payload);
-            if (!content) content = decoded.content || '';
-            if (!msg.content_type && decoded.type) contentType = decoded.type;
-            const toUid = msg.from_uid === agent.imUid ? conv.channel_id : agent.imUid;
-            pendingMessages.push({
-              agentId: agent.agent_id,
-              cursorKey: key,
-              messageSeq,
-              agentAuthored: msg.from_uid === agent.imUid,
-              data: {
-                fromUid: msg.from_uid || '',
-                toUid,
-                channelId: conv.channel_id,
-                channelType: 1,
-                content,
-                contentType,
-                messageId: msgId,
-                timestamp: msg.timestamp || 0,
-                messageSeq,
-                clientMsgNo: msg.client_msg_no,
-                noPersist: msg.header?.no_persist ? 1 : 0,
-                redDot: msg.header?.red_dot ? 1 : 0,
-                syncOnce: msg.header?.sync_once ? 1 : 0,
-                _voko: decoded._voko,
+            const data = await resp.json() as { messages?: SyncMessage[] };
+            if (!ownerStillActive()) return 0;
+            msgs = data.messages || [];
+          } catch (error) {
+            console.error(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 请求失败:`, errorMessage(error));
+            break;
+          }
+          // A sequence is an opaque increasing scan position, not a demand that
+          // every integer exists. Without valid positions this page cannot be
+          // ordered or checkpointed safely.
+          if (!Array.isArray(msgs) || msgs.some(msg => !Number.isSafeInteger(Number(msg.message_seq)) || Number(msg.message_seq) <= 0)) {
+            console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 无效消息序号，停止该频道`);
+            break;
+          }
+          msgs.sort((left, right) => Number(left.message_seq) - Number(right.message_seq));
+          const ordinary: Array<{ sequence: number; data?: InboundMessage }> = [];
+          const flushOrdinary = async (): Promise<void> => {
+            if (!ordinary.length || !ownerStillActive()) return;
+            const collected: ForwardPayload[] = [];
+            const lastSequence = ordinary[ordinary.length - 1].sequence;
+            let committed = false;
+            await enqueueDbWrite(() => {
+              if (!ownerStillActive()) return;
+              const supportsTransactions = typeof (db as any).exec === 'function';
+              if (supportsTransactions) (db as any).exec('BEGIN IMMEDIATE');
+              try {
+                for (const pending of ordinary) {
+                  if (!pending.data) continue;
+                  const payload = messageHandler.handleAgentMessage(agent.agent_id, pending.data, true);
+                  if (payload) collected.push(payload);
+                }
+                saveCursorMap(db, new Map([[key, lastSequence]]));
+                if (supportsTransactions) (db as any).exec('COMMIT');
+                committed = true;
+              } catch (error) {
+                if (supportsTransactions) {
+                  try { (db as any).exec('ROLLBACK'); } catch (_) {}
+                }
+                throw error;
               }
             });
-          }
-        } catch (e: unknown) {
-          console.error(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 请求失败:`, errorMessage(e));
-        }
-      }
-    }
-
-    if (!ownerStillActive()) {
-      console.log('[离线同步] 主人已切换，停止旧主人同步');
-      return 0;
-    }
-    if (pendingMessages.length) console.log(`[离线同步] 共收集 ${pendingMessages.length} 条离线消息，开始处理...`);
-
-    // E2EE messages are claimed before the ordinary persistence/forwarding
-    // path. A disabled or rejected Canary is still handled fail-closed and is
-    // never reinterpreted as visitor plaintext.
-    const blockedE2eeAt = new Map<string, number>();
-    for (const pending of pendingMessages) {
-      if (Number(pending.data?.contentType) !== 13) continue;
-      // The channel history also contains the Agent's encrypted replies. They
-      // have already advanced the local sender ratchet and must never be fed
-      // back into the inbound E2EE runtime.
-      if (pending.agentAuthored) {
-        pending.data = undefined;
-        continue;
-      }
-      if (typeof messageHandler.handleEncryptedMessage === 'function') {
-        const result = await messageHandler.handleEncryptedMessage(pending.agentId,pending.data!);
-        if (!result?.accepted) {
-          const code = String(result?.code || 'E2EE_REJECTED');
-          if (isPermanentE2eeRejection(code)) {
-            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 永久拒绝，隔离密文并推进游标 code=${code}`);
-          } else {
-            const sequence = pending.messageSeq || 0;
-            const previous = blockedE2eeAt.get(pending.cursorKey);
-            blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
-            console.warn(`[离线同步][E2EE] agent=${pending.agentId} 暂未接受，保留当前密文等待重试 code=${code}`);
-          }
-        }
-      } else {
-        const sequence = pending.messageSeq || 0;
-        const previous = blockedE2eeAt.get(pending.cursorKey);
-        blockedE2eeAt.set(pending.cursorKey, previous === undefined ? sequence : Math.min(previous,sequence));
-        console.warn(`[离线同步][E2EE] agent=${pending.agentId} 处理器不可用，保留游标等待重试`);
-      }
-      pending.data = undefined;
-    }
-
-    // 逐条审核落库（skipForward=true），收集“通过审核、待转发”的载荷。
-    // handleAgentMessage 是同步函数，enqueueDbWrite 回调内 push 到闭包外数组可正常收集
-    // （enqueueDbWrite 的 .then(fn,fn) 会吞掉返回值，必须用闭包外数组，不能从其取回）。
-    // UNIQUE constraint 时返回 undefined 跳过已存在的消息，所以无论 WebSocket 是否已处理过，
-    // 都不会重复通知 UI。
-    const collected: ForwardPayload[] = [];
-    await new Promise<void>(resolve => {
-      enqueueDbWrite(() => {
-        const supportsTransactions = typeof (db as any).exec === 'function';
-        if (supportsTransactions) (db as any).exec('BEGIN IMMEDIATE');
-        try {
-          const advances = new Map<string, number>();
-          for (const p of pendingMessages) {
-            if (p.data) {
-              const payload = messageHandler.handleAgentMessage(p.agentId, p.data, true);
-              if (payload) collected.push(payload);
+            if (!committed) return;
+            scanned = lastSequence;
+            processed += ordinary.length;
+            ordinary.length = 0;
+            // skipForward only defers Provider forwarding. UI/system/E2EE
+            // effects in the handler are not made transactional by this queue.
+            for (const message of collected) {
+              if (!ownerStillActive()) return;
+              messageHandler.forwardToAgent(message.agentId, message.fromUid, message.content, message.channelId,
+                message.channelType, message.contentType, message.messageId, message.timestamp,
+                message.mention || null, message._voko);
+              forwarded++;
             }
-            const blockedAt = blockedE2eeAt.get(p.cursorKey);
-            if (p.messageSeq !== undefined && (blockedAt === undefined || (blockedAt > 0 && p.messageSeq < blockedAt))) {
-              advances.set(p.cursorKey, Math.max(advances.get(p.cursorKey) || 0, p.messageSeq));
+          };
+          let blocked = false;
+          let seenSequence = scanned;
+          for (const msg of msgs) {
+            if (!ownerStillActive()) return 0;
+            const sequence = Number(msg.message_seq);
+            if (sequence <= seenSequence) continue;
+            seenSequence = sequence;
+            const msgId = msg.message_id || msg.messageID;
+            if (!msgId) { ordinary.push({ sequence }); continue; }
+            const decoded = decodeOfflinePayload(msg.payload);
+            const contentType = msg.content_type || decoded.type || 1;
+            const data: InboundMessage = {
+              fromUid: msg.from_uid || '',
+              toUid: msg.from_uid === agent.imUid ? conv.channel_id : agent.imUid,
+              channelId: conv.channel_id, channelType: 1,
+              content: msg.content || decoded.content || '', contentType,
+              messageId: msgId, timestamp: msg.timestamp || 0, messageSeq: sequence,
+              clientMsgNo: msg.client_msg_no, noPersist: msg.header?.no_persist ? 1 : 0,
+              redDot: msg.header?.red_dot ? 1 : 0, syncOnce: msg.header?.sync_once ? 1 : 0,
+              _voko: decoded._voko,
+            };
+            if (contentType !== 13) { ordinary.push({ sequence, data }); continue; }
+            // Agent-authored ciphertext is a sender echo, never inbound ratchet
+            // input. Other ciphertext must be processed in sequence, not in a
+            // separate whole-page pass ahead of ordinary messages.
+            if (msg.from_uid === agent.imUid) { ordinary.push({ sequence }); continue; }
+            await flushOrdinary();
+            if (!ownerStillActive()) return 0;
+            let result;
+            try {
+              result = await messageHandler.handleEncryptedMessage?.(agent.agent_id, data);
+            } catch (_) {
+              result = { accepted: false, code: 'E2EE_HANDLER_FAILED' };
             }
+            if (!ownerStillActive()) return 0;
+            if (!result?.accepted) {
+              const code = String(result?.code || 'E2EE_HANDLER_UNAVAILABLE');
+              if (!isPermanentE2eeRejection(code)) {
+                console.warn(`[离线同步][E2EE] agent=${agent.agent_id} 暂未接受，停止该频道等待重试 code=${code}`);
+                blocked = true;
+                break;
+              }
+              console.warn(`[离线同步][E2EE] agent=${agent.agent_id} 永久拒绝，隔离密文并推进游标 code=${code}`);
+            }
+            ordinary.push({ sequence });
+            await flushOrdinary();
           }
-          saveCursorMap(db, advances);
-          if (supportsTransactions) (db as any).exec('COMMIT');
-        } catch (error) {
-          if (supportsTransactions) {
-            try { (db as any).exec('ROLLBACK'); } catch (_) {}
+          await flushOrdinary();
+          if (!ownerStillActive()) return 0;
+          if (blocked || !msgs.length) break;
+          if (scanned <= pageStart) {
+            console.warn(`[离线同步] agent=${agent.agent_id} channel=${conv.channel_id} 游标未前进，停止该频道`);
+            break;
           }
-          throw error;
+          if (msgs.length < 100) break;
+          if (page + 1 === maxPages) options.requestContinuation?.(agent.agent_id, currentOwnerEmail);
         }
-      });
-      waitForDbQueue().then(() => setImmediate(resolve));
-    });
-
-    // 在线与离线消息统一进入 MessageHandler 的会话级 Turn 合并器。这里逐条保留
-    // fromUid/channelType/路由元数据，避免旧逻辑仅按 agentId+channelId 错合会话。
-    for (const message of collected) {
-      messageHandler.forwardToAgent(message.agentId, message.fromUid, message.content, message.channelId,
-        message.channelType, message.contentType, message.messageId, message.timestamp,
-        message.mention || null, message._voko);
+      }
     }
-    const forwarded = collected.length;
-
-    if (pendingMessages.length || collected.length || forwarded) {
-      console.log(`[离线同步] 完成：收集 ${pendingMessages.length} 条，入库通过 ${collected.length} 条，加入 Turn 合并器 ${forwarded} 条`);
-    }
-    return pendingMessages.length;
-  } catch (e: unknown) {
-    console.error('[离线同步] 失败:', errorMessage(e));
+    if (processed) console.log(`[离线同步] 完成：扫描 ${processed} 条，加入 Turn 合并器 ${forwarded} 条`);
+    return processed;
+  } catch (error) {
+    console.error('[离线同步] 失败:', errorMessage(error));
     return 0;
   }
 }
@@ -372,7 +352,8 @@ interface CoordinatorOptions {
   /** 兜底定时器（ms），默认 30000 */
   fallbackMs?: number;
   /** 注入的同步函数，默认 syncOfflineMessages */
-  syncFn?: (db: any, handler: any, agentIdFilter?: string) => Promise<number>;
+  syncFn?: (db: any, handler: any, agentIdFilter?: string, options?: OfflineSyncOptions) => Promise<number>;
+  syncOptions?: Pick<OfflineSyncOptions, 'maxPagesPerChannel' | 'requestTimeoutMs'>;
   /** 注入 setTimeout（测试用），默认全局 setTimeout */
   setTimeout?: (fn: () => void, ms: number) => any;
   /** 注入 clearTimeout（测试用），默认全局 clearTimeout */
@@ -397,19 +378,30 @@ interface Coordinator {
  * - start：注册 fallbackMs 兜底定时器（到期再试一次全量）。
  * - stop：清理所有定时器。
  *
- * 幂等：syncFn 内部按 agentIdFilter + checkpoint(MAX) + UNIQUE 去重，
+ * 幂等：syncFn 内部按 agentIdFilter + committed checkpoint + UNIQUE 去重，
  *       全量调用不会重复处理已拉过的消息。
  */
 function createOfflineSyncCoordinator(db: any, messageHandler: any, options: CoordinatorOptions = {}): Coordinator {
   const windowMs = Math.max(0, options.windowMs ?? 2000);
   const cooldownMs = Math.max(0, options.cooldownMs ?? 30000);
   const fallbackMs = Math.max(0, options.fallbackMs ?? 30000);
-  const syncFn = options.syncFn || ((d: any, h: any, f?: string) => syncOfflineMessages(d, h, f));
+  const syncFn = options.syncFn || syncOfflineMessages;
   const _setTimeout = options.setTimeout || setTimeout;
   const _clearTimeout = options.clearTimeout || clearTimeout;
 
   let _firstFullSyncDone = false;
-  const _pendingAgents = new Set<string>();
+  // undefined denotes a fresh connection event; continuation entries retain
+  // the owner which requested them so a later account cannot inherit a batch.
+  const _pendingAgents = new Map<string, string | undefined>();
+  const _stopController = new AbortController();
+  const _syncOptions: OfflineSyncOptions = {
+    ...options.syncOptions,
+    signal: _stopController.signal,
+    requestContinuation(agentId, ownerEmail) {
+      if (_stopped || String(getCurrentUserEmail(db) || '').trim().toLowerCase() !== ownerEmail) return;
+      if (!_pendingAgents.has(agentId)) _pendingAgents.set(agentId, ownerEmail);
+    },
+  };
   let _coalesceTimer: any = null;
   let _cooldownTimer: any = null;
   let _fallbackTimer: any = null;
@@ -447,14 +439,19 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
     const agents = [..._pendingAgents];
     _pendingAgents.clear();
     _run('重连', async () => {
-      for (const agentId of agents) await syncFn(db, messageHandler, agentId);
+      for (const [agentId, continuationOwner] of agents) {
+        if (_stopped) break;
+        if (continuationOwner && String(getCurrentUserEmail(db) || '').trim().toLowerCase() !== continuationOwner) continue;
+        await syncFn(db, messageHandler, agentId, _syncOptions);
+      }
     });
   };
 
   return {
     onAgentConnected(agentId: string) {
       if (!agentId || !messageHandler) return;
-      _pendingAgents.add(agentId);
+      if (_stopped) return;
+      _pendingAgents.set(agentId, undefined);
       _schedulePending();
     },
     onAllReady() {
@@ -463,7 +460,7 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
       _pendingAgents.clear();
       if (_coalesceTimer) { _clearTimeout(_coalesceTimer); _coalesceTimer = null; }
       console.log('[Lite] 开始离线同步');
-      _run('首次', () => syncFn(db, messageHandler));
+      _run('首次', () => syncFn(db, messageHandler, undefined, _syncOptions));
     },
     start() {
       if (_fallbackTimer) return;
@@ -472,6 +469,7 @@ function createOfflineSyncCoordinator(db: any, messageHandler: any, options: Coo
     },
     stop() {
       _stopped = true;
+      _stopController.abort();
       if (_coalesceTimer) { _clearTimeout(_coalesceTimer); _coalesceTimer = null; }
       if (_cooldownTimer) { _clearTimeout(_cooldownTimer); _cooldownTimer = null; }
       if (_fallbackTimer) { _clearTimeout(_fallbackTimer); _fallbackTimer = null; }
