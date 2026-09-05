@@ -39,10 +39,10 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
         id: null,
       });
     }
-    // JSON-RPC distinguishes a missing id from valid falsy ids (including null).
+    // MCP request ids are strings or integers; a missing id is a notification.
     const hasId = Object.prototype.hasOwnProperty.call(msg, 'id');
-    if (hasId && msg.id !== null && typeof msg.id !== 'string'
-      && !(typeof msg.id === 'number' && Number.isFinite(msg.id))) {
+    if (hasId && typeof msg.id !== 'string'
+      && !(typeof msg.id === 'number' && Number.isInteger(msg.id))) {
       return res.status(400).json({
         jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request: invalid id' }, id: null,
       });
