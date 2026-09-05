@@ -173,3 +173,7 @@ macOS 网页向全部原有 50 个身份发送本候选 R1 消息，16:07 UTC �
 ## dcc7f7b 完成 50 个身份的网页回归
 
 Mac 解锁后，原网页补发剩余 26 个身份并完成全部 50 项复核：42/50 正确可见回复（Mac 16/17、Linux 12/12、Windows 14/21）。WorkBuddy 本轮业务成功；Windows CodeBuddy、OpenCode、Hermes 与五项原有配置/原生问题仍未通过。独立原生握手与 Hermes 当前凭据检查成功，不能替代业务失败结论。详见 [完整网页矩阵与诊断](dcc7f7b-complete-browser-regression.md)。
+
+## OpenHands 已配置 DeepSeek 并通过原生模型回环
+
+使用用户授权的既有环境变量 key 完成 Windows OpenHands 模型配置，DeepSeek 模型列表验证及约 35 秒的实际回环通过，无需额外登录 OpenHands。自动通道权限与网页验收尚未完成，未改变 42/50 历史矩阵。详见 [模型配置记录](openhands-deepseek-configuration.md)。

@@ -8238,6 +8238,34 @@
       "backupEvidence": "artifacts/production-remediation-acp-20260905/windows-openhands-python-repair.json",
       "verification": "Python 3.12.14 and OpenHands CLI 1.16.0 exit 0; diagnostic ACP initialize completed in 39655ms.",
       "scope": "No package upgrade, no Catalog activation, no business session/prompt during ACP initialize-only diagnostic."
+    },
+    {
+      "component": "openhandsDeepSeek",
+      "configured": true,
+      "host": "windows",
+      "model": "deepseek/deepseek-v4-flash",
+      "baseURL": "https://api.deepseek.com",
+      "keySource": "Existing Windows DEEPSEEK_API_KEY environment variable; never printed",
+      "modelsHTTP": 200,
+      "configPath": "C:\\Users\\laoyu\\.openhands\\agent_settings.json",
+      "nativeLoopback": {
+        "at": "2026-09-05T23:45:20.580Z",
+        "passed": true,
+        "exactChallengeMatched": true,
+        "elapsedMs": 34941,
+        "confirmationMode": "always-ask",
+        "modeConfirmed": 1,
+        "permissionDenied": 0
+      },
+      "fileACL": {
+        "protected": true,
+        "onlyCurrentUser": true,
+        "verifiedAt": "2026-09-05T23:46:40.321Z"
+      },
+      "manualLoginRequired": false,
+      "vokoAutomaticDeliveryEnabled": false,
+      "browserAcceptance": "not_yet_passed",
+      "remaining": "Verify permissions for new/resumed sessions before enabling automatic transport and run actual webpage acceptance."
     }
   ]
 }
