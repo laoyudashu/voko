@@ -103,7 +103,7 @@ class OpenHandsCliProvider extends CliAdapter {
         OPENHANDS_SUPPRESS_BANNER: '1',
         LITELLM_LOCAL_MODEL_COST_MAP: 'True',
         VOKO_OPENHANDS_CLI_SAFE: '1',
-        ...resolveOpenHandsPythonEnv(),
+        ...resolveOpenHandsPythonEnv(true),
         ...resolveOpenHandsGitEnv(),
         ...resolveOpenHandsCliLlmEnv(),
       },

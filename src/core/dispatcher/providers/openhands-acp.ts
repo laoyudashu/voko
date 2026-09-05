@@ -18,9 +18,12 @@ function resolveOpenHandsLlmEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function resolveOpenHandsPythonEnv(): NodeJS.ProcessEnv {
+function resolveOpenHandsPythonEnv(required = false): NodeJS.ProcessEnv {
   const hookDir = path.join(__dirname, 'openhands-python');
-  if (!fs.existsSync(path.join(hookDir, 'sitecustomize.py'))) return {};
+  if (!fs.existsSync(path.join(hookDir, 'sitecustomize.py'))) {
+    if (required) throw new Error('VOKO_OPENHANDS_CLI_SAFETY_UNAVAILABLE');
+    return {};
+  }
   const existing = String(process.env.PYTHONPATH || '').trim();
   return {
     PYTHONPATH: existing ? `${hookDir}${path.delimiter}${existing}` : hookDir,
