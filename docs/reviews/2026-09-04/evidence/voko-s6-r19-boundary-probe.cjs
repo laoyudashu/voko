@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {A2ABridgeWorker,A2ALocalTaskStore,A2AScopeResolver,initA2ADatabase}=require('/Users/laoyu/Documents/ChatGPT/voko-opt-boundaries-20260904/build/a2a');
+const {A2ABridgeWorker,A2ALocalTaskStore,A2AScopeResolver,initA2ADatabase}=require(path.join(process.cwd(),'build/a2a'));
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'voko-r19-proof-')),db=initA2ADatabase(path.join(dir,'isolated.db'));
  try {
