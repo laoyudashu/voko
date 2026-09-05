@@ -107,11 +107,12 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
       const name = names[index];
       const normalized = name.replace(/\/$/, '');
       if (/[\x00-\x1f\x7f]/.test(name)) throw new Error('Unsafe release archive path');
+      const collisionKey = normalized.normalize('NFC').toLowerCase();
       if (name.includes('\\') || (normalized !== 'package' && !normalized.startsWith('package/'))
-        || normalized.split('/').some(part => !part || part === '.' || part === '..') || seen.has(normalized)) {
+        || normalized.split('/').some(part => !part || part === '.' || part === '..') || seen.has(collisionKey)) {
         throw new Error('Unsafe release archive path');
       }
-      seen.add(normalized);
+      seen.add(collisionKey);
       const fields = details[index].trim().split(/\s+/);
       // GNU tar prints uid/gid together; bsdtar prints links, uid and gid separately.
       const size = Number(fields[1]?.includes('/') ? fields[2] : fields[4]);
@@ -127,11 +128,16 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
     tar(['--no-same-owner', '--no-same-permissions', '-xf', snapshot, '-C', extracted]);
     const findings = [];
     let filesScanned = 0;
+    const fileIdentities = new Set();
     for (const name of names) {
       const file = path.join(extracted, name);
       const stat = fs.lstatSync(file);
       if (stat.isDirectory()) continue;
       if (!stat.isFile() || stat.size > maxExpandedBytes) throw new Error('Unsafe extracted release archive member');
+      // Fail closed for additional aliases recognized by the extraction filesystem.
+      const identity = `${stat.dev}:${stat.ino}`;
+      if (fileIdentities.has(identity)) throw new Error('Aliased release archive members');
+      fileIdentities.add(identity);
       const source = archiveText(fs.readFileSync(file));
       if (source === null) continue;
       filesScanned++;

@@ -146,3 +146,47 @@ test('artifact member and expanded-byte budgets reject before extraction', t => 
   assert.throws(() => scanTarball(archive, { maxMembers: 1 }), /archive/i);
   assert.throws(() => scanTarball(archive, { maxExpandedBytes: 4 }), /archive/i);
 });
+
+for (const [label, names] of [
+  ['case-folded', ['package/README.md', 'package/readme.md']],
+  ['Unicode-normalized', ['package/caf\u00e9.txt', 'package/cafe\u0301.txt']],
+]) {
+  test(`artifact ${label} collisions are rejected before extraction`, t => {
+    const { archive } = maliciousArchive(t, [
+      { name: names[0], content: "const password = 'synthetic-collision-secret';\n" },
+      { name: names[1], content: 'safe replacement\n' },
+    ]);
+    const childProcess = require('node:child_process');
+    const original = childProcess.execFileSync;
+    let extraction = false;
+    t.mock.method(childProcess, 'execFileSync', (cmd, args, options) => {
+      if (args.some(arg => /^-x/.test(arg))) { extraction = true; throw new Error('Unexpected extraction'); }
+      return original(cmd, args, options);
+    });
+    assert.throws(() => scanTarball(archive), /archive/i);
+    assert.equal(extraction, false);
+  });
+}
+
+test('artifact filesystem aliases fail closed even if their path spellings differ', t => {
+  const { archive } = packedFixture(t, { 'first.txt': 'first file', 'second.txt': 'second file' });
+  const original = fs.lstatSync;
+  // Model a filesystem equivalence not captured by the portable name check.
+  t.mock.method(fs, 'lstatSync', (file, ...args) => {
+    const stat = original(file, ...args);
+    if (stat.isFile()) { stat.dev = 42; stat.ino = 100; }
+    return stat;
+  });
+  assert.throws(() => scanTarball(archive), /archive/i);
+});
+
+test('additional filesystem case folding cannot turn a secret member into a clean scan', t => {
+  const { root, archive } = maliciousArchive(t, [
+    { name: 'package/stra\u00dfe.txt', content: "const password = 'synthetic-filesystem-secret';\n" },
+    { name: 'package/strasse.txt', content: 'safe replacement\n' },
+  ]);
+  fs.writeFileSync(path.join(root, 'stra\u00dfe.txt'), 'filesystem probe');
+  const aliases = fs.existsSync(path.join(root, 'strasse.txt'));
+  if (aliases) assert.throws(() => scanTarball(archive), /Aliased release archive/);
+  else assert.equal(scanTarball(archive).findings.length, 1);
+});
