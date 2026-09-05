@@ -17,27 +17,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_ZEROCLAW",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-c35ccff4-6e18-4ee5-8d29-39d51ca42d17",
-            "agent": "302266f1-471c-4ec9-882d-38e004ae7350",
-            "messages": "1",
-            "provider": "zeroclaw-ws",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_ZEROCLAW",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c35ccff4-6e18-4ee5-8d29-39d51ca42d17",
+              "agent": "302266f1-471c-4ec9-882d-38e004ae7350",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -54,27 +60,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_HERMES",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-dfb13e62-cc1b-415b-936c-1d9eced1a2b1",
-            "agent": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
-            "messages": "1",
-            "provider": "hermes-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_HERMES",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-dfb13e62-cc1b-415b-936c-1d9eced1a2b1",
+              "agent": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -90,27 +102,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_CLAUDE_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-41e23586-78c5-4161-8631-3532e246e480",
-            "agent": "bce42fe5-53e4-4ab1-887c-270230b116ae",
-            "messages": "1",
-            "provider": "claude-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_CLAUDE_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-41e23586-78c5-4161-8631-3532e246e480",
+              "agent": "bce42fe5-53e4-4ab1-887c-270230b116ae",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -126,27 +144,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "answer_refused",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GITHUB_COPILOT",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "answer_refused",
-        "providerTurns": [
-          {
-            "turn": "e2ee-417abf88-f91b-4086-b7d8-c509d693800c",
-            "agent": "b204bc80-8428-43af-8f25-e5f0971dabf9",
-            "messages": "1",
-            "provider": "github-copilot-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GITHUB_COPILOT",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "answer_refused",
+          "providerTurns": [
+            {
+              "turn": "e2ee-417abf88-f91b-4086-b7d8-c509d693800c",
+              "agent": "b204bc80-8428-43af-8f25-e5f0971dabf9",
+              "messages": "1",
+              "provider": "github-copilot-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -158,27 +182,33 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_QWEN_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-7733437e-87de-46d6-a361-963ee2b14720",
-            "agent": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
-            "messages": "1",
-            "provider": "qwen-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_QWEN_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-7733437e-87de-46d6-a361-963ee2b14720",
+              "agent": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -194,27 +224,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GOOSE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-c3122c48-ad16-4f8e-aa49-05225eb31878",
-            "agent": "b07f8c68-dbab-4def-bdc0-381cac55f110",
-            "messages": "1",
-            "provider": "goose-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GOOSE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c3122c48-ad16-4f8e-aa49-05225eb31878",
+              "agent": "b07f8c68-dbab-4def-bdc0-381cac55f110",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -230,27 +266,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_OPENCODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-0b20a41f-6924-417a-a9cf-21641cd5030b",
-            "agent": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
-            "messages": "1",
-            "provider": "opencode-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_OPENCODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0b20a41f-6924-417a-a9cf-21641cd5030b",
+              "agent": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
+              "messages": "1",
+              "provider": "opencode-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -266,27 +308,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_KIRO",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-e682c4f7-306c-4405-bf92-d6c97da28948",
-            "agent": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
-            "messages": "1",
-            "provider": "kiro-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_KIRO",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-e682c4f7-306c-4405-bf92-d6c97da28948",
+              "agent": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
+              "messages": "1",
+              "provider": "kiro-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -302,27 +350,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_AIDER",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-986df681-4a1c-428f-ac21-795fd5ed4120",
-            "agent": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
-            "messages": "1",
-            "provider": "aider-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_AIDER",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-986df681-4a1c-428f-ac21-795fd5ed4120",
+              "agent": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -334,27 +388,33 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GROK",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-f325ddac-b347-4509-aa59-7add86ac569c",
-            "agent": "bee1a79c-320e-4612-aaae-61fde6312b7c",
-            "messages": "1",
-            "provider": "grok-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_GROK",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-f325ddac-b347-4509-aa59-7add86ac569c",
+              "agent": "bee1a79c-320e-4612-aaae-61fde6312b7c",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -370,27 +430,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_REASONIX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-0efccdc1-9d5c-4db4-9769-60856776e2cb",
-            "agent": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
-            "messages": "1",
-            "provider": "reasonix-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_REASONIX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0efccdc1-9d5c-4db4-9769-60856776e2cb",
+              "agent": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -406,27 +472,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1____",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-5821e620-2f0c-4a3f-943c-dc618080c857",
-            "agent": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
-            "messages": "1",
-            "provider": "workbuddy-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1____",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-5821e620-2f0c-4a3f-943c-dc618080c857",
+              "agent": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
+              "messages": "1",
+              "provider": "workbuddy-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -438,28 +510,34 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_tjyu_qwen_office_o9hPdJ",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-806eca98-f292-43aa-9025-01012ba9b83a",
-            "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_tjyu_qwen_office_o9hPdJ",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-806eca98-f292-43aa-9025-01012ba9b83a",
+              "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -475,27 +553,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_CODEX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-14e1fb6e-93e8-487b-a6b4-3f7eecc6fc54",
-            "agent": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
-            "messages": "1",
-            "provider": "codex-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_CODEX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-14e1fb6e-93e8-487b-a6b4-3f7eecc6fc54",
+              "agent": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -507,27 +591,33 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_tjyu_qwen_office_pBp2ts",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-a621873c-3c89-4ef0-9702-ea5bd9432770",
-            "agent": "c46ee329-1409-4672-af13-4755d7f470cc",
-            "messages": "1",
-            "provider": "qwen-office-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_tjyu_qwen_office_pBp2ts",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-a621873c-3c89-4ef0-9702-ea5bd9432770",
+              "agent": "c46ee329-1409-4672-af13-4755d7f470cc",
+              "messages": "1",
+              "provider": "qwen-office-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -539,28 +629,34 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_AUTO_REG_MAC_20260828",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-3a812915-dff1-4c40-a930-d5f663afdd16",
-            "agent": "8baabfb1-aed0-4d60-98ca-d86da042e501",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_AUTO_REG_MAC_20260828",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3a812915-dff1-4c40-a930-d5f663afdd16",
+              "agent": "8baabfb1-aed0-4d60-98ca-d86da042e501",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "macos",
@@ -578,28 +674,34 @@
       "issues": [
         "网页明确提示 Agent 尚未启用自动回复；ProviderTurn=AUTOMATIC_DELIVERY_DISABLED"
       ],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_DUMATE",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-f3ed82ba-91f6-440b-9327-ac9a9709bdfc",
-            "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_MAC_DUMATE",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-f3ed82ba-91f6-440b-9327-ac9a9709bdfc",
+              "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -615,27 +717,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_HERMES",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-3d273a0b-aabf-4bce-9757-5b40e47d0b09",
-            "agent": "7542cd12-0458-4124-890f-4d499c835cb3",
-            "messages": "1",
-            "provider": "hermes-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_HERMES",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3d273a0b-aabf-4bce-9757-5b40e47d0b09",
+              "agent": "7542cd12-0458-4124-890f-4d499c835cb3",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -652,27 +760,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_CLAUDE_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-14c8ea55-7fe4-4fd1-b042-c1afa0a46bf8",
-            "agent": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
-            "messages": "1",
-            "provider": "claude-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_CLAUDE_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-14c8ea55-7fe4-4fd1-b042-c1afa0a46bf8",
+              "agent": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -684,27 +798,33 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_CODEX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-17264eb5-c8f5-403b-b271-4d3f36603c74",
-            "agent": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
-            "messages": "1",
-            "provider": "codex-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_CODEX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-17264eb5-c8f5-403b-b271-4d3f36603c74",
+              "agent": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -716,27 +836,33 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "answer_refused",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GITHUB_COPILOT",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "answer_refused",
-        "providerTurns": [
-          {
-            "turn": "e2ee-afbcb44f-a22a-410d-8962-e276d52bb082",
-            "agent": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
-            "messages": "1",
-            "provider": "github-copilot-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GITHUB_COPILOT",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "answer_refused",
+          "providerTurns": [
+            {
+              "turn": "e2ee-afbcb44f-a22a-410d-8962-e276d52bb082",
+              "agent": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
+              "messages": "1",
+              "provider": "github-copilot-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -753,27 +879,33 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_QWEN_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-bf8ce6ec-d44f-4060-8ac5-60503602a006",
-            "agent": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
-            "messages": "1",
-            "provider": "qwen-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_QWEN_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-bf8ce6ec-d44f-4060-8ac5-60503602a006",
+              "agent": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -783,27 +915,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GOOSE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-60fd6c9b-92f7-4dbd-b7ab-847c4d7a6911",
-            "agent": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
-            "messages": "1",
-            "provider": "goose-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GOOSE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-60fd6c9b-92f7-4dbd-b7ab-847c4d7a6911",
+              "agent": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -813,27 +951,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_OPENCODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-54debf68-264e-49a4-94f2-7a578fa0dd87",
-            "agent": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
-            "messages": "1",
-            "provider": "opencode-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_OPENCODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-54debf68-264e-49a4-94f2-7a578fa0dd87",
+              "agent": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
+              "messages": "1",
+              "provider": "opencode-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -843,27 +987,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_AIDER",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-14d517fe-314a-4864-8f41-cec78935915f",
-            "agent": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
-            "messages": "1",
-            "provider": "aider-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_AIDER",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-14d517fe-314a-4864-8f41-cec78935915f",
+              "agent": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -873,27 +1023,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GROK",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-f4556ee0-7244-49ec-bcc6-5b212c185ba2",
-            "agent": "b7522169-e48f-4f10-87b1-27941fd48ae4",
-            "messages": "1",
-            "provider": "grok-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GROK",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-f4556ee0-7244-49ec-bcc6-5b212c185ba2",
+              "agent": "b7522169-e48f-4f10-87b1-27941fd48ae4",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -903,27 +1059,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_REASONIX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-421c5d6a-5517-49e5-bba4-4b11c98f243c",
-            "agent": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
-            "messages": "1",
-            "provider": "reasonix-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_REASONIX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-421c5d6a-5517-49e5-bba4-4b11c98f243c",
+              "agent": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -933,27 +1095,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_HERMES_HUMAN",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-aaba5a77-cd66-4b74-92a5-8bd41583a29c",
-            "agent": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
-            "messages": "1",
-            "provider": "hermes-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_HERMES_HUMAN",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-aaba5a77-cd66-4b74-92a5-8bd41583a29c",
+              "agent": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "linux",
@@ -963,30 +1131,36 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_ZEROCLAW",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "displayedName": "AUTO-REG-LINUX-20260828",
-        "imUid": "agent_cc612a3bef4fef7a",
-        "identityEvidence": "live Linux list_agents maps this IM UID to current ZeroClaw agentId",
-        "providerTurns": [
-          {
-            "turn": "e2ee-8fb7cc38-275b-46ac-8b91-3629f28ae195",
-            "agent": "0c20465f-7c09-4990-b896-176e794f089e",
-            "messages": "1",
-            "provider": "zeroclaw-ws",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_ZEROCLAW",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "displayedName": "AUTO-REG-LINUX-20260828",
+          "imUid": "agent_cc612a3bef4fef7a",
+          "identityEvidence": "live Linux list_agents maps this IM UID to current ZeroClaw agentId",
+          "providerTurns": [
+            {
+              "turn": "e2ee-8fb7cc38-275b-46ac-8b91-3629f28ae195",
+              "agent": "0c20465f-7c09-4990-b896-176e794f089e",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -996,7 +1170,7 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "nativeReadinessEvidence": {
         "checkedAt": "2026-09-05T07:49:56Z",
         "selectedProfileHealthStatus": 200,
@@ -1004,25 +1178,31 @@
         "note": "401来自其他旧候选配置，不等于当前profile整体认证失败；网页回归仍未完成"
       },
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_HERMES",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-78ca63f0-c30e-4072-8555-58ece87a622d",
-            "agent": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
-            "messages": "1",
-            "provider": "hermes-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_HERMES",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-78ca63f0-c30e-4072-8555-58ece87a622d",
+              "agent": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1032,27 +1212,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CLAUDE_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-34ed9881-b4c9-4806-ab30-ad9ab538bb41",
-            "agent": "467ee38f-98ca-4270-9c18-97edf2e30435",
-            "messages": "1",
-            "provider": "claude-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CLAUDE_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-34ed9881-b4c9-4806-ab30-ad9ab538bb41",
+              "agent": "467ee38f-98ca-4270-9c18-97edf2e30435",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1062,27 +1248,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CODEX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-63ed0019-9ccb-44f7-b064-36e2e8c6e8af",
-            "agent": "3e8e403d-921d-4e51-85d1-0a35ce359812",
-            "messages": "1",
-            "provider": "codex-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CODEX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-63ed0019-9ccb-44f7-b064-36e2e8c6e8af",
+              "agent": "3e8e403d-921d-4e51-85d1-0a35ce359812",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1092,28 +1284,49 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
+        "testedCommit": "e58a0d2",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GITHUB_COPILOT",
+        "verifiedAt": "2026-09-05T13:07:13.475Z",
+        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GITHUB_COPILOT",
         "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
+        "answerCorrect": true,
+        "reply": "正确答案 15",
         "providerTurns": [
           {
-            "turn": "e2ee-0003527d-0dc7-4554-bbec-c6c1647a27c8",
+            "turn": "e2ee-3fb03b0a-b9de-4835-8782-1d2e65f90d4a",
             "agent": "c50bb49f-1f72-40c9-81e7-14374436aeec",
             "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            "provider": "github-copilot-acp",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
           }
         ]
-      }
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GITHUB_COPILOT",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0003527d-0dc7-4554-bbec-c6c1647a27c8",
+              "agent": "c50bb49f-1f72-40c9-81e7-14374436aeec",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1123,28 +1336,50 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "outcome_unknown",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
+        "testedCommit": "e58a0d2",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CODEBUDDY",
+        "verifiedAt": "2026-09-05T13:07:13.475Z",
+        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CODEBUDDY",
         "question": "7加8等于多少？",
         "answerCorrect": false,
-        "result": "outcome_unknown",
+        "reply": "Agent 当前无法处理该消息",
         "providerTurns": [
           {
-            "turn": "e2ee-7356c5e2-d54b-4c46-8e32-a07c63313381",
+            "turn": "e2ee-9c8dbe5c-3e46-4fb2-8fcd-81c52082e313",
             "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
             "messages": "1",
             "provider": "codebuddy-acp",
-            "outcome": "outcome_unknown",
-            "providerOutcome": "unknown",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
             "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
           }
         ]
-      }
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CODEBUDDY",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "outcome_unknown",
+          "providerTurns": [
+            {
+              "turn": "e2ee-7356c5e2-d54b-4c46-8e32-a07c63313381",
+              "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+              "messages": "1",
+              "provider": "codebuddy-acp",
+              "outcome": "outcome_unknown",
+              "providerOutcome": "unknown",
+              "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1154,27 +1389,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_QWEN_CODE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-5f318a64-1b3b-432a-a4aa-d77f255593b8",
-            "agent": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
-            "messages": "1",
-            "provider": "qwen-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_QWEN_CODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-5f318a64-1b3b-432a-a4aa-d77f255593b8",
+              "agent": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1184,27 +1425,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GOOSE",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-6a909b83-70c9-4c66-836f-81fe36e8025c",
-            "agent": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
-            "messages": "1",
-            "provider": "goose-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GOOSE",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-6a909b83-70c9-4c66-836f-81fe36e8025c",
+              "agent": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1214,28 +1461,49 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "outcome_unknown",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
+        "testedCommit": "e58a0d2",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_OPENCODE",
+        "verifiedAt": "2026-09-05T13:07:13.475Z",
+        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_OPENCODE",
         "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "outcome_unknown",
+        "answerCorrect": true,
+        "reply": "正确答案 15",
         "providerTurns": [
           {
-            "turn": "e2ee-9e3daf13-33fa-43e0-84db-6e917f1396fa",
+            "turn": "e2ee-a9ce7ece-346e-4548-9cf4-028d3ecf4f0b",
             "agent": "befdeb16-56d7-4b90-84c7-eb0526e42956",
             "messages": "1",
-            "provider": "opencode-acp",
-            "outcome": "outcome_unknown",
-            "providerOutcome": "unknown",
-            "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            "provider": "opencode-attach",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
           }
         ]
-      }
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_OPENCODE",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "outcome_unknown",
+          "providerTurns": [
+            {
+              "turn": "e2ee-9e3daf13-33fa-43e0-84db-6e917f1396fa",
+              "agent": "befdeb16-56d7-4b90-84c7-eb0526e42956",
+              "messages": "1",
+              "provider": "opencode-acp",
+              "outcome": "outcome_unknown",
+              "providerOutcome": "unknown",
+              "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1245,27 +1513,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_AIDER",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-b10fa89e-d372-4071-a4f1-efe35b80aa96",
-            "agent": "6ae1db46-e988-440a-b3f7-339ff8941d14",
-            "messages": "1",
-            "provider": "aider-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_AIDER",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b10fa89e-d372-4071-a4f1-efe35b80aa96",
+              "agent": "6ae1db46-e988-440a-b3f7-339ff8941d14",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1275,27 +1549,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_PI",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-b3ae04ba-b143-4bd1-ae25-4033272e0f35",
-            "agent": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
-            "messages": "1",
-            "provider": "pi-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_PI",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b3ae04ba-b143-4bd1-ae25-4033272e0f35",
+              "agent": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
+              "messages": "1",
+              "provider": "pi-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1305,27 +1585,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GROK",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-e00c598b-6147-49d6-bf80-383604eb14a8",
-            "agent": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
-            "messages": "1",
-            "provider": "grok-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_GROK",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-e00c598b-6147-49d6-bf80-383604eb14a8",
+              "agent": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1335,27 +1621,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_REASONIX",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-58e0a26e-8820-4b99-b936-56a343405a43",
-            "agent": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
-            "messages": "1",
-            "provider": "reasonix-cli",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_REASONIX",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-58e0a26e-8820-4b99-b936-56a343405a43",
+              "agent": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1365,27 +1657,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_ZEROCLAW",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-5768b0b1-dbfe-4ca7-9632-e59fd82eb7d4",
-            "agent": "2587ee04-633f-4ce9-b259-e29732a90d6f",
-            "messages": "1",
-            "provider": "zeroclaw-ws",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_ZEROCLAW",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-5768b0b1-dbfe-4ca7-9632-e59fd82eb7d4",
+              "agent": "2587ee04-633f-4ce9-b259-e29732a90d6f",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1395,27 +1693,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-c04c780e-03b8-4d6d-ba95-72411f8b516b",
-            "agent": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
-            "messages": "1",
-            "provider": "zeroclaw-ws",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c04c780e-03b8-4d6d-ba95-72411f8b516b",
+              "agent": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1425,28 +1729,34 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "provider_failed",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_394591614_workbuddy_n3WNrD",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "provider_failed",
-        "providerTurns": [
-          {
-            "turn": "e2ee-6a5f418c-39b2-44af-9a1a-0f609c48ba4f",
-            "agent": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
-            "messages": "1",
-            "provider": "workbuddy-http",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "WORKBUDDY_DELIVERY_FAILED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_394591614_workbuddy_n3WNrD",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "provider_failed",
+          "providerTurns": [
+            {
+              "turn": "e2ee-6a5f418c-39b2-44af-9a1a-0f609c48ba4f",
+              "agent": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
+              "messages": "1",
+              "provider": "workbuddy-http",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "WORKBUDDY_DELIVERY_FAILED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1456,28 +1766,34 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_AUTO_REG_WINDOWS_20260828",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-6c429e30-742f-4bab-a443-1462a9071941",
-            "agent": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_AUTO_REG_WINDOWS_20260828",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-6c429e30-742f-4bab-a443-1462a9071941",
+              "agent": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1487,28 +1803,49 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "outcome_unknown",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
+        "testedCommit": "e58a0d2",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CLINE",
+        "verifiedAt": "2026-09-05T13:07:13.475Z",
+        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CLINE",
         "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "outcome_unknown",
+        "answerCorrect": true,
+        "reply": "正确答案 15",
         "providerTurns": [
           {
-            "turn": "e2ee-5e48d351-c1c5-4924-b6a0-adf0939567a5",
+            "turn": "e2ee-34126b92-98f0-4d39-bc2c-dda4c3357a9c",
             "agent": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
             "messages": "1",
-            "provider": "cline-acp",
-            "outcome": "outcome_unknown",
-            "providerOutcome": "unknown",
-            "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            "provider": "cline-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
           }
         ]
-      }
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CLINE",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "outcome_unknown",
+          "providerTurns": [
+            {
+              "turn": "e2ee-5e48d351-c1c5-4924-b6a0-adf0939567a5",
+              "agent": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
+              "messages": "1",
+              "provider": "cline-acp",
+              "outcome": "outcome_unknown",
+              "providerOutcome": "unknown",
+              "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1518,28 +1855,34 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_OPENHANDS",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-89e53bb6-eff7-4f64-9086-216eebebeb41",
-            "agent": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_OPENHANDS",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-89e53bb6-eff7-4f64-9086-216eebebeb41",
+              "agent": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1549,27 +1892,33 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CURSOR",
-        "question": "7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
-        "providerTurns": [
-          {
-            "turn": "e2ee-42ac3206-3b64-4bc8-8aa7-03c724d2deb6",
-            "agent": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
-            "messages": "1",
-            "provider": "cursor-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_CURSOR",
+          "question": "7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-42ac3206-3b64-4bc8-8aa7-03c724d2deb6",
+              "agent": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
+              "messages": "1",
+              "provider": "cursor-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1581,28 +1930,34 @@
       "issues": [
         "原生 --version 成功，status 在用户目录和 binary 目录均以 3221225477 退出；Windows ARM64使用x64程序，官方CLI文档暂不支持Windows ARM64；唯一崩溃原因未证实。需兼容运行环境或厂商修复，不能计为通过。"
       ],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_QWEN_OFFICE",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-b1c3d4ca-39b5-41ec-bd40-cbb46c67d4e9",
-            "agent": "c06eabd6-570e-41fa-914d-79e08951dbe1",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_QWEN_OFFICE",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b1c3d4ca-39b5-41ec-bd40-cbb46c67d4e9",
+              "agent": "c06eabd6-570e-41fa-914d-79e08951dbe1",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     },
     {
       "host": "windows",
@@ -1612,28 +1967,34 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "pending",
       "currentCandidateEvidence": {
-        "testedCommit": "0f4ada3",
-        "browser": "macOS Chrome",
-        "verifiedBy": "actual webpage message and subsequent conversation DOM",
-        "verifiedAt": "2026-09-05T12:45:09.395Z",
-        "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_DUMATE",
-        "question": "7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
-        "providerTurns": [
-          {
-            "turn": "e2ee-b33250d5-db54-4c0e-b848-5f9e7ade28e2",
-            "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          }
-        ]
-      }
+        "testedCommit": "e58a0d2",
+        "result": "pending"
+      },
+      "candidateEvidenceHistory": [
+        {
+          "testedCommit": "0f4ada3",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual webpage message and subsequent conversation DOM",
+          "verifiedAt": "2026-09-05T12:45:09.395Z",
+          "marker": "VOKO_UI_0F4ADA3_R1_TEST_WINDOWS_DUMATE",
+          "question": "7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b33250d5-db54-4c0e-b848-5f9e7ade28e2",
+              "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        }
+      ]
     }
   ],
   "steps": [
@@ -1736,28 +2097,31 @@
   ],
   "latestDeployment": [
     {
+      "runtimeState": "ready",
+      "pid": 51666,
+      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+      "buildMismatch": false,
       "host": "macos",
-      "pid": 88753,
-      "runtimeState": "ready",
       "imConnected": 17,
-      "total": 17,
-      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
+      "total": 17
     },
     {
+      "runtimeState": "ready",
+      "pid": 243244,
+      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+      "buildMismatch": false,
       "host": "linux",
-      "pid": 232247,
-      "runtimeState": "ready",
       "imConnected": 12,
-      "total": 12,
-      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
+      "total": 12
     },
     {
-      "host": "windows",
-      "pid": 7744,
       "runtimeState": "ready",
+      "pid": 11836,
+      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+      "buildMismatch": false,
+      "host": "windows",
       "imConnected": 21,
-      "total": 21,
-      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
+      "total": 21
     }
   ],
   "inventoryRecheck": {
@@ -1766,7 +2130,7 @@
     "removed": 0,
     "total": 50
   },
-  "uiPrerequisite": "Resolved. All 50 IM identities tested through macOS Chrome; 36 correct replies, 14 failures remain.",
+  "uiPrerequisite": "Mac webpage available; e58a0d2 deployed and READY on all hosts. Windows Copilot, OpenCode, Cline replies verified; CodeBuddy failed; 46 current-candidate first attempts pending.",
   "blockerAudit": {
     "checkedAt": "2026-09-05T07:55:33.520840+00:00",
     "primary": "Mac remains locked; native CUA app access explicitly reports automatic unlock failure. Manual unlock required for the requested macOS web conversations.",
@@ -1809,18 +2173,51 @@
     "remainingBrowserAgents": 47
   },
   "currentMatrix": {
-    "candidate": "0f4ada3",
-    "checkedAt": "2026-09-05T12:45:09.395Z",
-    "attempted": 50,
-    "correctVisibleReplies": 36,
-    "notPassed": 14,
-    "pendingFirstAttempt": 0,
-    "failureCounts": {
-      "automatic_delivery_disabled": 8,
-      "outcome_unknown": 3,
-      "answer_refused": 2,
-      "provider_failed": 1
-    },
-    "allComplete": false
+    "candidate": "e58a0d2",
+    "attempted": 4,
+    "correctVisibleReplies": 3,
+    "notPassed": 1,
+    "pendingFirstAttempt": 46,
+    "allComplete": false,
+    "checkedAt": "2026-09-05T13:07:13.475Z"
+  },
+  "browserMatrixHistory": [
+    {
+      "candidate": "0f4ada3",
+      "checkedAt": "2026-09-05T12:45:09.395Z",
+      "attempted": 50,
+      "correctVisibleReplies": 36,
+      "notPassed": 14,
+      "pendingFirstAttempt": 0,
+      "failureCounts": {
+        "automatic_delivery_disabled": 8,
+        "outcome_unknown": 3,
+        "answer_refused": 2,
+        "provider_failed": 1
+      },
+      "allComplete": false
+    }
+  ],
+  "latestCandidate": {
+    "commit": "e58a0d2",
+    "sha256": "fd3d7b2049ef955b31951abce0e726fe3f507775fc9efd155c6c7f51d74745b6",
+    "buildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+    "packageVersion": "0.5.2",
+    "registryPublished": false,
+    "tests": {
+      "gate": {
+        "passed": 1557,
+        "skipped": 2,
+        "failed": 0
+      },
+      "windowsNative": {
+        "passed": 7,
+        "failed": 0
+      },
+      "tarballSecretScan": {
+        "textFiles": 320,
+        "findings": 0
+      }
+    }
   }
 }

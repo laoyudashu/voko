@@ -103,3 +103,17 @@ Windows CodeBuddy/OpenCode/Cline 日志均在 ACP initialize 连接等待 15000m
 4 项路径测试原实现 2 失败/2 通过，修复后全部通过；构建和相关 Provider/权限策略测试 81 项通过。完整 release:gate:code 门禁通过：1557 项通过、2 项既有平台跳过、0 失败。Windows 原生运行新解析函数找到正确 loader，--version 退出 0、版本 1.0.80。版本探针不代表登录或完整对话通过。
 
 使用独立进程对现有 Windows OpenCode、CodeBuddy、Cline 做 initialize-only 诊断，没有创建业务 session/prompt 或发送生产 IM：三者握手均成功，耗时分别约 13.9、11.1、11.4 秒。诊断允许最长 45 秒，但观察值均小于 15 秒；本修复未改变运行时 15 秒上限。先前业务矩阵的超时仍真实存在，当前证据只能说明不是永久无法启动，尚不能把唯一原因定为负载或首次启动耗时。
+
+## 第四批部署与针对性网页回归
+
+0d273a5 修复 ACP 请求提交前的失败分类；e58a0d2 修复 Windows Copilot 安装发现。两者已打包为同一份 @voko/lite 0.5.2 本地候选并在三端备份、部署、重启，未发布 npm registry。tarball SHA-256：fd3d7b2049ef955b31951abce0e726fe3f507775fc9efd155c6c7f51d74745b6；三端实际构建摘要：14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732。实际包扫描 320 个文本文件通过。
+
+当前 Mac PID 51666、Linux PID 243244、Windows PID 11836 均 READY，分别 17/17、12/12、21/21 IM 连接，buildMismatch=false。Windows 安装包原生测试 7 项全部通过。启动阶段一直检查同一 PID，没有因 starting 状态重复重启。
+
+13:05–13:07 UTC，通过 macOS 网页给 Windows Copilot、CodeBuddy、OpenCode、Cline 各发一条新候选标记消息。Copilot、OpenCode、Cline 均显示正确答案 15。CodeBuddy 仍显示“Agent 当前无法处理该消息”，其本次日志明确 not_delivered，而非旧的 outcome_unknown。Cline 对应日志通过 cline-cli 生成并交付；原先 ACP 初始化超时不再被误分类而阻止既有路由判断。尚未将 CodeBuddy 失败视为已解决。
+
+旧候选 0f4ada3 的 36/50 结果已保存在 browserMatrixHistory 和逐 Agent candidateEvidenceHistory。新候选当前仅 3/50 正确可见回复，1 个失败、46 个待首测；整个目标仍 active。
+
+另外，macOS Copilot 在旧候选下对不含测试编号的普通问题“9加6等于多少？”仍拒答，排除仅由测试标记触发这一解释。其历史会话与 Windows 新建可用会话表现不同，不能直接归因为所有 Copilot 均不支持外部问答；没有清除会话、放宽工具权限或变更身份来强行通过。
+
+第四批原始证据：artifacts/production-remediation-acp-20260905/。网页自动化旧帮助函数曾保留旧候选标记，发现后未将去重的旧消息视为新测，改用显式标记参数与搜索框/输入框事后校验再实际发送。
