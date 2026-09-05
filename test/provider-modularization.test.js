@@ -217,7 +217,7 @@ test('Dispatcher-owned CLI session failure is attempted once and returned to Dis
       deliveryMode: 'cli', adapterType: 'cline-cli', nativeSessionId: 'session-a',
       sessionOrigin: 'voko_managed', channelId: 'visitor-a', channelType: 1,
     },
-  }), error => error.deliveryOutcome === 'not_delivered');
+  }), error => error.deliveryOutcome === 'outcome_unknown');
   assert.equal(fs.readFileSync(marker, 'utf8'), '1');
 });
 
