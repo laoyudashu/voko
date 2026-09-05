@@ -76,6 +76,30 @@ function archiveText(bytes) {
   catch (_) { return null; }
 }
 
+// Inspect and read the same opened object; path replacement cannot redirect the read.
+function readBoundedRegularFile(file, maxBytes) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('Unsafe release archive file type');
+    if (stat.size > maxBytes) throw new Error('Release archive exceeds size budget');
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      // One extra byte detects growth after fstat without an unbounded read.
+      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes - total + 1));
+      const length = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (!length) break;
+      total += length;
+      if (total > maxBytes) throw new Error('Release archive exceeds size budget');
+      chunks.push(chunk.subarray(0, length));
+    }
+    return { stat, bytes: Buffer.concat(chunks, total) };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Scan the bytes of the already-created npm artifact, never the mutable build tree.
  * Requires the system tar utility (available on the release Ubuntu runner).
  * Only regular files/directories under package/ are accepted for extraction. */
@@ -83,9 +107,7 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
   const maxArchiveBytes = 64 * 1024 * 1024;
   if (!Number.isSafeInteger(maxMembers) || maxMembers < 1
     || !Number.isSafeInteger(maxExpandedBytes) || maxExpandedBytes < 1) throw new Error('Invalid archive scan budget');
-  if (fs.statSync(archivePath).size > maxArchiveBytes) throw new Error('Release archive exceeds compressed size budget');
-  const compressed = fs.readFileSync(archivePath);
-  if (compressed.length > maxArchiveBytes) throw new Error('Release archive exceeds compressed size budget');
+  const { bytes: compressed } = readBoundedRegularFile(archivePath, maxArchiveBytes);
   let expanded;
   try { expanded = zlib.gunzipSync(compressed, { maxOutputLength: maxExpandedBytes }); }
   catch (_) { throw new Error('Invalid release archive or expanded size budget exceeded'); }
@@ -102,6 +124,7 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
     const details = tar(['--numeric-owner', '-tvf', snapshot]).trimEnd().split('\n').filter(Boolean);
     if (!names.length || names.length > maxMembers || details.length !== names.length) throw new Error('Invalid release archive member count');
     const seen = new Set();
+    const regularNames = [];
     let totalSize = 0;
     for (let index = 0; index < names.length; index++) {
       const name = names[index];
@@ -120,6 +143,7 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
         || !Number.isSafeInteger(size) || size < 0) {
         throw new Error('Unsafe release archive member type or size');
       }
+      if (details[index][0] === '-') regularNames.push(name);
       totalSize += size;
       if (totalSize > maxExpandedBytes) throw new Error('Release archive exceeds member size budget');
     }
@@ -129,16 +153,16 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
     const findings = [];
     let filesScanned = 0;
     const fileIdentities = new Set();
-    for (const name of names) {
+    let totalRead = 0;
+    for (const name of regularNames) {
       const file = path.join(extracted, name);
-      const stat = fs.lstatSync(file);
-      if (stat.isDirectory()) continue;
-      if (!stat.isFile() || stat.size > maxExpandedBytes) throw new Error('Unsafe extracted release archive member');
+      const { stat, bytes } = readBoundedRegularFile(file, maxExpandedBytes - totalRead);
+      totalRead += bytes.length;
       // Fail closed for additional aliases recognized by the extraction filesystem.
       const identity = `${stat.dev}:${stat.ino}`;
       if (fileIdentities.has(identity)) throw new Error('Aliased release archive members');
       fileIdentities.add(identity);
-      const source = archiveText(fs.readFileSync(file));
+      const source = archiveText(bytes);
       if (source === null) continue;
       filesScanned++;
       findings.push(...scanText(source, name.slice('package/'.length)));

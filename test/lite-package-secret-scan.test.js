@@ -170,9 +170,9 @@ for (const [label, names] of [
 
 test('artifact filesystem aliases fail closed even if their path spellings differ', t => {
   const { archive } = packedFixture(t, { 'first.txt': 'first file', 'second.txt': 'second file' });
-  const original = fs.lstatSync;
+  const original = fs.fstatSync;
   // Model a filesystem equivalence not captured by the portable name check.
-  t.mock.method(fs, 'lstatSync', (file, ...args) => {
+  t.mock.method(fs, 'fstatSync', (file, ...args) => {
     const stat = original(file, ...args);
     if (stat.isFile()) { stat.dev = 42; stat.ino = 100; }
     return stat;
@@ -190,3 +190,93 @@ test('additional filesystem case folding cannot turn a secret member into a clea
   if (aliases) assert.throws(() => scanTarball(archive), /Aliased release archive/);
   else assert.equal(scanTarball(archive).findings.length, 1);
 });
+
+// Mutate real temporary files immediately after the scanner inspects them.
+// Supports both the previous path-based checks and descriptor-based checks.
+function afterInspection(t, matches, mutate) {
+  const opened = new Map();
+  const originalOpen = fs.openSync;
+  t.mock.method(fs, 'openSync', (file, ...args) => {
+    const fd = originalOpen(file, ...args); opened.set(fd, file); return fd;
+  });
+  let mutated = false;
+  for (const method of ['statSync', 'lstatSync', 'fstatSync']) {
+    const original = fs[method];
+    t.mock.method(fs, method, (fileOrFd, ...args) => {
+      const stat = original(fileOrFd, ...args);
+      const file = method === 'fstatSync' ? opened.get(fileOrFd) : fileOrFd;
+      if (!mutated && typeof file === 'string' && matches(file)) {
+        mutated = true; mutate(file);
+      }
+      return stat;
+    });
+  }
+  return () => assert.equal(mutated, true, 'filesystem race fixture must execute');
+}
+
+for (const target of ['archive', 'member']) {
+  test(`artifact scan reads the inspected ${target} even if its pathname is replaced`, t => {
+    const { archive } = packedFixture(t, { 'entry.txt': "const password = 'synthetic-descriptor-secret';\n" });
+    const wasMutated = afterInspection(t,
+      file => target === 'archive' ? file === archive : file.endsWith('/contents/package/entry.txt'),
+      file => { fs.renameSync(file, file + '.original'); fs.writeFileSync(file, 'safe replacement'); });
+    const result = scanTarball(archive);
+    wasMutated();
+    assert.deepEqual(result.findings.map(f => f.file), ['entry.txt']);
+  });
+
+  test(`artifact scan rejects ${target} growth beyond its read budget`, t => {
+    const { archive } = packedFixture(t, { 'entry.txt': 'safe initial file' });
+    const budget = target === 'archive' ? 64 * 1024 * 1024 : 16 * 1024;
+    const wasMutated = afterInspection(t,
+      file => target === 'archive' ? file === archive : file.endsWith('/contents/package/entry.txt'),
+      file => fs.truncateSync(file, budget + 1));
+    assert.throws(() => scanTarball(archive, { maxExpandedBytes: 16 * 1024 }), /size budget/i);
+    wasMutated();
+  });
+}
+
+test('artifact archive symlinks are not followed', t => {
+  if (!fs.constants.O_NOFOLLOW) return t.skip('O_NOFOLLOW is unavailable on this platform');
+  const { root, archive } = packedFixture(t, { 'entry.txt': 'safe file' });
+  const link = path.join(root, 'linked.tgz');
+  fs.symlinkSync(archive, link);
+  assert.throws(() => scanTarball(link));
+});
+
+for (const replacement of ['symlink', 'directory']) {
+  test(`extracted regular members replaced with a ${replacement} are rejected`, t => {
+    if (replacement === 'symlink' && !fs.constants.O_NOFOLLOW) return t.skip('O_NOFOLLOW is unavailable on this platform');
+    const { root, archive } = packedFixture(t, { 'entry.txt': 'safe file' });
+    const outside = path.join(root, 'outside.txt'); fs.writeFileSync(outside, 'outside fixture');
+    const childProcess = require('node:child_process'), original = childProcess.execFileSync;
+    t.mock.method(childProcess, 'execFileSync', (cmd, args, options) => {
+      const result = original(cmd, args, options);
+      if (args.includes('-xf')) {
+        const file = path.join(args[args.indexOf('-C') + 1], 'package/entry.txt');
+        fs.unlinkSync(file);
+        if (replacement === 'symlink') fs.symlinkSync(outside, file);
+        else fs.mkdirSync(file);
+      }
+      return result;
+    });
+    assert.throws(() => scanTarball(archive));
+  });
+}
+
+for (const outcome of ['success', 'budget failure']) {
+  test(`artifact descriptors are closed after ${outcome}`, t => {
+    const { archive } = packedFixture(t, { 'entry.txt': 'safe file' });
+    if (outcome === 'budget failure') fs.truncateSync(archive, 64 * 1024 * 1024 + 1);
+    const descriptors = new Set(), originalOpen = fs.openSync, originalClose = fs.closeSync;
+    t.mock.method(fs, 'openSync', (...args) => {
+      const fd = originalOpen(...args); descriptors.add(fd); return fd;
+    });
+    t.mock.method(fs, 'closeSync', fd => {
+      try { return originalClose(fd); } finally { descriptors.delete(fd); }
+    });
+    if (outcome === 'success') assert.deepEqual(scanTarball(archive).findings, []);
+    else assert.throws(() => scanTarball(archive), /size budget/);
+    assert.equal(descriptors.size, 0);
+  });
+}
