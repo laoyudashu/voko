@@ -45,3 +45,11 @@ CodeBuddy/OpenCode 的故障类型此前出现过，本轮再次失败。Cline�
 artifacts/production-remediation-loopback-20260905/browser-sent-complete.json、browser-matrix.json 保存完整候选标记和逐项时间；三端 *-logs.json 保存当前启动窗口摘要；windows-codebuddy-initialize-diagnostic.json、windows-opencode-initialize-diagnostic.json、windows-hermes-auth.json 保存原生诊断。脱敏具体失败位于 artifacts/production-remediation-startup-20260905/windows-current-windows-failures.json。
 
 execution.json 已将当前矩阵更新为 42/50，旧候选结果及锁屏期间的部分验收保存在历史。运行时代码候选仍为 dcc7f7b。
+
+## 23:37 UTC：Hermes 超时后确实完成了模型回复
+
+只读检查当前 Windows Hermes state.db，并使用本轮唯一网页标记定位原生 user 消息 id=156。紧接着的 assistant 消息 id=157 属于同一原生会话，之间没有另一条 user 消息；文本严格匹配“7加8等于15。”，finish_reason=stop。仅输出标记匹配、长度、时间和答案匹配布尔值，没有导出其他用户正文或模型推理。
+
+时间链：网页于 23:21:26.188 UTC 发送；VOKO 于 23:23:31 报请求超时；原生 user 消息于 23:23:49.988 持久化，assistant 于 23:24:04.172 持久化。正确答案在 VOKO 超时约 33 秒后才保存。因此该条不是“模型没有回答”，而是超时后完成的答案没有通过原请求交付到网页。原生 user 持久化前的等待原因尚未确定，不能直接归因为模型推理慢、全局队列或网络问题。
+
+这条新证据将下一步聚焦到原生 API 的请求等待阶段及严格按请求关联的结果恢复。不得为了交付答案而重发原始模型请求，也不能抓取任意最后一条历史回复。当前网页验收仍未通过；尚未实施结果恢复。证据：artifacts/production-remediation-startup-20260905/windows-hermes-current-session.json、windows-hermes-current-timing.json。

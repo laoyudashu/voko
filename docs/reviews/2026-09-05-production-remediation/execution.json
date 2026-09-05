@@ -7472,7 +7472,21 @@
         "modelsHTTP": 200
       },
       "hermesBusinessTurn": "outcome_unknown",
-      "unknownTurnReplayed": false
+      "unknownTurnReplayed": false,
+      "hermesLateReply": {
+        "observedAt": "2026-09-05T23:37:15.838Z",
+        "nativeUserMessageId": 156,
+        "nativeAssistantMessageId": 157,
+        "nativeUserAt": "2026-09-05T23:23:49.988Z",
+        "nativeAssistantAt": "2026-09-05T23:24:04.172Z",
+        "vokoTimeoutAt": "2026-09-05T23:23:31Z",
+        "currentMarkerMatched": true,
+        "exactMathAnswer": true,
+        "finishReason": "stop",
+        "deliveredToBrowser": false,
+        "prePersistenceWaitRootCause": "unresolved",
+        "replayed": false
+      }
     }
   },
   "currentMatrix": {
