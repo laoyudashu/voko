@@ -47,6 +47,16 @@ function deliveryError(message: string, outcome: 'not_delivered' | 'outcome_unkn
   return error;
 }
 
+function startupDiagnostic(error: any): string {
+  const code = error?.cause?.code || error?.code;
+  if (['ENOENT', 'EACCES', 'EADDRINUSE', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'].includes(code)) return code;
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'REQUEST_TIMEOUT';
+  if (Number.isInteger(error?.httpStatus) && error.httpStatus >= 100 && error.httpStatus <= 599) return `HTTP_${error.httpStatus}`;
+  if (error?.message === 'WorkBuddy health check failed') return 'HEALTH_CHECK_FAILED';
+  if (error?.message === 'WorkBuddy HTTP contract is incomplete') return 'HTTP_CONTRACT_INCOMPLETE';
+  return 'CHECK_FAILED';
+}
+
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -312,25 +322,44 @@ class WorkBuddyHttpProvider extends PushProvider {
       }) as ChildProcess;
       this._server = child;
       child.stderr?.resume();
-      child.once('exit', () => {
+      let startupFailure: Error | null = null;
+      child.once('error', error => {
+        startupFailure = deliveryError(`WorkBuddy HTTP service could not start (${startupDiagnostic(error)})`,
+          'not_delivered', 'WORKBUDDY_SPAWN_FAILED', { stage: 'startup' });
+      });
+      child.once('exit', (code, signal) => {
+        startupFailure = deliveryError(`WorkBuddy HTTP service exited with code ${code} signal ${signal || 'none'}`,
+          'not_delivered', 'WORKBUDDY_PROCESS_EXITED', { stage: 'startup' });
         if (this._server !== child) return;
         this._server = null;
         this._port = 0;
         this.notifyAvailability({ backendType: 'workbuddy', mode: 'http', available: false, reason: 'serve-exit' });
       });
       const deadline = Date.now() + this._startupTimeoutMs;
+      let lastReadiness = 'CHECK_NOT_COMPLETED';
       while (Date.now() < deadline) {
-        if (child.exitCode !== null) throw deliveryError(`WorkBuddy HTTP service exited with code ${child.exitCode}`, 'not_delivered');
+        if (startupFailure) throw startupFailure;
+        if (child.exitCode !== null || child.signalCode) throw deliveryError(
+          `WorkBuddy HTTP service exited with code ${child.exitCode} signal ${child.signalCode || 'none'}`,
+          'not_delivered', 'WORKBUDDY_PROCESS_EXITED', { stage: 'startup' });
         try {
           await this._validateRuntime();
+          if (startupFailure) throw startupFailure;
+          if (this._server !== child) throw deliveryError('WorkBuddy HTTP service stopped before readiness',
+            'not_delivered', 'WORKBUDDY_STARTUP_STOPPED', { stage: 'startup' });
           this.notifyAvailability({ backendType: 'workbuddy', mode: 'http', available: true, reason: 'serve-ready' });
           return;
-        } catch {}
+        } catch (error) {
+          if ((error as any).deliveryOutcome) throw error;
+          lastReadiness = startupDiagnostic(error);
+        }
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-      this._disposeServer('startup-timeout');
-      throw deliveryError('WorkBuddy HTTP service did not become ready', 'not_delivered');
+      if (startupFailure) throw startupFailure;
+      throw deliveryError(`WorkBuddy HTTP service did not become ready (last check: ${lastReadiness})`,
+        'not_delivered', 'WORKBUDDY_STARTUP_TIMEOUT', { stage: 'startup' });
     })().catch(error => {
+      this._disposeServer('startup-failed');
       if (!(error as any).deliveryOutcome) (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     }).finally(() => { this._serverPromise = null; });
