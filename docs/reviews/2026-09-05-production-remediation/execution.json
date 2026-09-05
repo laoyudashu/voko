@@ -17,15 +17,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:34.130Z",
+        "verifiedAt": "2026-09-05T23:23:11.497Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_ZEROCLAW",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-f8e250d4-1ccb-4bec-acf6-38c1b4e58ea6",
@@ -138,15 +139,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:23.829Z",
+        "verifiedAt": "2026-09-05T23:26:54.054Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_HERMES",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-d3bf631c-c42d-4362-85ba-c9c2e21190fe",
@@ -258,15 +260,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:27.134Z",
+        "verifiedAt": "2026-09-05T23:23:04.942Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_CLAUDE_CODE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-37b96bb1-8d92-4654-b562-bb0cd4dd886a",
@@ -378,15 +381,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:37.431Z",
+        "verifiedAt": "2026-09-05T23:23:14.762Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_GITHUB_COPILOT",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-f9863ca5-baa7-40af-b168-4f5b4e07e6b8",
@@ -495,15 +499,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:40.775Z",
+        "verifiedAt": "2026-09-05T23:23:17.942Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_QWEN_CODE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-442cd0f0-5ef3-405e-87df-84c24602094a",
@@ -615,15 +620,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:11.657Z",
+        "verifiedAt": "2026-09-05T23:23:46.878Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_GOOSE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-7cb2cb4e-9894-425d-8006-0ce8c45f5b52",
@@ -735,15 +741,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:15.000Z",
+        "verifiedAt": "2026-09-05T23:23:50.076Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_OPENCODE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-2a982a71-3aea-44f8-a61a-ed68ea0c5b1a",
@@ -855,15 +862,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:15.879Z",
+        "verifiedAt": "2026-09-05T23:26:54.536Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_KIRO",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-a38cbeab-27da-452b-b3e1-42e5beaa71a3",
@@ -975,15 +983,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:16.624Z",
+        "verifiedAt": "2026-09-05T23:26:55.014Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_AIDER",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-71ba618a-bedb-4964-9863-2b3d0221150c",
@@ -1091,15 +1100,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:17.536Z",
+        "verifiedAt": "2026-09-05T23:26:55.521Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_GROK",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-5dd2e178-b3ba-44e1-a601-4795cb3eae18",
@@ -1211,15 +1221,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:03:19.146Z",
+        "verifiedAt": "2026-09-05T23:23:52.215Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_REASONIX",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-271616a6-7740-4a12-b181-2db51a46ebaa",
@@ -1331,15 +1342,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:04:08.831Z",
+        "verifiedAt": "2026-09-05T23:26:56.032Z",
         "marker": "VOKO_UI_DCC7F7B_R1____",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-d1232a6d-f8fe-401c-be6c-bdc10f3aa3d9",
@@ -1447,15 +1459,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:04:09.931Z",
+        "verifiedAt": "2026-09-05T23:26:56.749Z",
         "marker": "VOKO_UI_DCC7F7B_R1_tjyu_qwen_office_o9hPdJ",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-c8c6e679-af5a-4747-ad21-391d75c9cfbf",
@@ -1578,15 +1591,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:02:30.736Z",
+        "verifiedAt": "2026-09-05T23:23:08.186Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_CODEX",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-375bf6ba-4282-4f97-82b5-31dc90e49679",
@@ -1694,15 +1708,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:04:13.809Z",
+        "verifiedAt": "2026-09-05T23:23:56.632Z",
         "marker": "VOKO_UI_DCC7F7B_R1_tjyu_qwen_office_pBp2ts",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-ca3c98e0-7571-4952-8036-89a79e2ae22a",
@@ -1810,15 +1825,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:04:17.362Z",
+        "verifiedAt": "2026-09-05T23:23:59.974Z",
         "marker": "VOKO_UI_DCC7F7B_R1_AUTO_REG_MAC_20260828",
-        "status": "sent",
+        "answerCorrect": false,
+        "result": "automatic_delivery_disabled",
         "providerTurns": [
           {
             "turn": "e2ee-bcecb1c9-d4e3-4557-9026-310623c5e991",
@@ -1937,15 +1953,16 @@
       "issues": [
         "网页明确提示 Agent 尚未启用自动回复；ProviderTurn=AUTOMATIC_DELIVERY_DISABLED"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:04:20.985Z",
+        "verifiedAt": "2026-09-05T23:24:03.244Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_MAC_DUMATE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-7ec3d04a-c463-4966-8421-d6aa80ddd352",
@@ -2068,15 +2085,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:33.959Z",
+        "verifiedAt": "2026-09-05T23:26:52.805Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_HERMES",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-521e8180-2f8c-428a-a76a-56ad767ef224",
@@ -2189,15 +2207,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:35.127Z",
+        "verifiedAt": "2026-09-05T23:26:53.449Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_CLAUDE_CODE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-ef59ec60-c872-428e-b963-6a94c8122ca4",
@@ -2305,15 +2324,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:39.220Z",
+        "verifiedAt": "2026-09-05T23:22:51.420Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_CODEX",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-0995ec58-fd9f-4b3b-92ce-4d4c77553e8d",
@@ -2421,15 +2441,16 @@
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
       ],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:42.941Z",
+        "verifiedAt": "2026-09-05T23:22:54.669Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_GITHUB_COPILOT",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-cd9e06e8-5422-4f73-a857-925f3f01cace",
@@ -2543,15 +2564,16 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:46.647Z",
+        "verifiedAt": "2026-09-05T23:22:57.837Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_QWEN_CODE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-e82d745f-9764-483a-b8c9-f232e1cfc888",
@@ -2657,15 +2679,16 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "sent_awaiting_ui_verification",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "sent_awaiting_ui_verification",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
         "sentAt": "2026-09-05T17:01:50.353Z",
+        "verifiedAt": "2026-09-05T23:23:01.155Z",
         "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_GOOSE",
-        "status": "sent",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-5839e2de-d58a-4464-b130-7bbf9d21f4fa",
@@ -2775,11 +2798,12 @@
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T17:04:24.694Z",
+        "verifiedAt": "2026-09-05T23:24:06.394Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_OPENCODE",
         "answerCorrect": true,
         "result": "reply_visible",
-        "sentAt": "2026-09-05T17:04:24.694Z",
-        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_OPENCODE",
-        "status": "sent",
         "providerTurns": [
           {
             "turn": "e2ee-37027d00-709d-4602-8703-91a26086915b",
@@ -2789,9 +2813,7 @@
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
-        ],
-        "visibleReply": "15",
-        "verifiedBy": "Actual current-candidate conversation AX state on original Chrome tab after recovering tab state; marker followed by Agent reply."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -2887,12 +2909,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:20:49.009Z",
+        "verifiedAt": "2026-09-05T23:24:21.924Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_AIDER",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-04296dc1-2e83-463a-b85d-9f49780e0dda",
+            "agent": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
+            "messages": "1",
+            "provider": "aider-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -2988,12 +3024,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:20:52.346Z",
+        "verifiedAt": "2026-09-05T23:24:25.133Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_GROK",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-efc08cb5-6f41-4317-b81f-a2cd6d7b732d",
+            "agent": "b7522169-e48f-4f10-87b1-27941fd48ae4",
+            "messages": "1",
+            "provider": "grok-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3089,12 +3139,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:20:55.752Z",
+        "verifiedAt": "2026-09-05T23:24:28.424Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_REASONIX",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-f2075227-dfe3-4e50-9ec8-1d04a923610a",
+            "agent": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
+            "messages": "1",
+            "provider": "reasonix-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3190,12 +3254,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:02.541Z",
+        "verifiedAt": "2026-09-05T23:26:57.358Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_LINUX_HERMES_HUMAN",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-9b723ff4-18d8-4699-aca4-bebc82bb02d8",
+            "agent": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
+            "messages": "1",
+            "provider": "hermes-http",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3291,12 +3369,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:05.897Z",
+        "verifiedAt": "2026-09-05T23:24:32.223Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_AUTO_REG_LINUX_20260828",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-3b348a2a-0792-4da2-b216-c44f4f8fe1f9",
+            "agent": "0c20465f-7c09-4990-b896-176e794f089e",
+            "messages": "1",
+            "provider": "zeroclaw-ws",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3399,7 +3491,7 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "outcome_unknown",
       "nativeReadinessEvidence": {
         "checkedAt": "2026-09-05T07:49:56Z",
         "selectedProfileHealthStatus": 200,
@@ -3409,8 +3501,23 @@
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:26.188Z",
+        "verifiedAt": "2026-09-05T23:29:45.203Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_HERMES",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "outcome_unknown",
+        "providerTurns": [
+          {
+            "turn": "e2ee-97754d85-830d-4442-9323-33fafeeef74d",
+            "agent": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
+            "messages": "1",
+            "provider": "hermes-http",
+            "outcome": "outcome_unknown",
+            "providerOutcome": "unknown",
+            "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3506,12 +3613,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:26.851Z",
+        "verifiedAt": "2026-09-05T23:24:48.525Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_CLAUDE_CODE",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-ac7480e6-9bc3-4bd6-a03a-a75bed2e5b38",
+            "agent": "467ee38f-98ca-4270-9c18-97edf2e30435",
+            "messages": "1",
+            "provider": "claude-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3607,12 +3728,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:30.250Z",
+        "verifiedAt": "2026-09-05T23:24:51.733Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_CODEX",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-d290a1b6-13f7-45ac-9398-98914d800548",
+            "agent": "3e8e403d-921d-4e51-85d1-0a35ce359812",
+            "messages": "1",
+            "provider": "codex-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3708,12 +3843,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:33.706Z",
+        "verifiedAt": "2026-09-05T23:24:54.862Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_GITHUB_COPILOT",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-3167db61-d971-40b7-8b92-c064a7827809",
+            "agent": "c50bb49f-1f72-40c9-81e7-14374436aeec",
+            "messages": "1",
+            "provider": "github-copilot-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3829,12 +3978,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:09.292Z",
+        "verifiedAt": "2026-09-05T23:24:35.491Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_CODEBUDDY",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "provider_failed",
+        "providerTurns": [
+          {
+            "turn": "e2ee-b6e6cb75-e8fa-4584-925e-24d1dfa62a51",
+            "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+            "messages": "1",
+            "provider": "codebuddy-acp",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -3962,12 +4126,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:48.054Z",
+        "verifiedAt": "2026-09-05T23:24:58.010Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_QWEN_CODE",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-b7a6381c-7709-4e35-b91a-0a67d3f490c7",
+            "agent": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
+            "messages": "1",
+            "provider": "qwen-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4063,12 +4241,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:51.451Z",
+        "verifiedAt": "2026-09-05T23:27:22.491Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_GOOSE",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-55aa910f-7823-4541-ab14-775f37e23887",
+            "agent": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
+            "messages": "1",
+            "provider": "goose-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4164,12 +4356,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:22.132Z",
+        "verifiedAt": "2026-09-05T23:24:38.637Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_OPENCODE",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "provider_failed",
+        "providerTurns": [
+          {
+            "turn": "e2ee-935de9f3-3ea3-4510-b608-2426b6113359",
+            "agent": "befdeb16-56d7-4b90-84c7-eb0526e42956",
+            "messages": "1",
+            "provider": "opencode-attach",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4285,12 +4492,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:54.795Z",
+        "verifiedAt": "2026-09-05T23:25:52.842Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_AIDER",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-c9adbdc6-c2de-46d5-9781-adab4660d7c7",
+            "agent": "6ae1db46-e988-440a-b3f7-339ff8941d14",
+            "messages": "1",
+            "provider": "aider-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4390,12 +4611,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:58.152Z",
+        "verifiedAt": "2026-09-05T23:25:56.021Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_PI",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-1482835b-3e25-4ac0-8dba-254a9c13e7c1",
+            "agent": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
+            "messages": "1",
+            "provider": "pi-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4491,12 +4726,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:01.527Z",
+        "verifiedAt": "2026-09-05T23:27:25.706Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_GROK",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-675a720b-d12a-4b16-96b2-b63735791bef",
+            "agent": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
+            "messages": "1",
+            "provider": "grok-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4592,12 +4841,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:04.816Z",
+        "verifiedAt": "2026-09-05T23:25:59.849Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_REASONIX",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-4916b496-82de-4b97-8370-d6ba93084105",
+            "agent": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
+            "messages": "1",
+            "provider": "reasonix-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4693,12 +4956,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:16.697Z",
+        "verifiedAt": "2026-09-05T23:27:29.366Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_ZEROCLAW",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-9df4ecef-9a7e-49ca-bda5-5c8621169156",
+            "agent": "2587ee04-633f-4ce9-b259-e29732a90d6f",
+            "messages": "1",
+            "provider": "zeroclaw-ws",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4794,12 +5071,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:17.345Z",
+        "verifiedAt": "2026-09-05T23:27:30.312Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-b6bb5c5b-73b5-4643-899a-26b7973308ac",
+            "agent": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
+            "messages": "1",
+            "provider": "zeroclaw-ws",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -4895,12 +5186,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:20.666Z",
+        "verifiedAt": "2026-09-05T23:27:33.661Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_394591614_workbuddy_n3WNrD",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-46b2a1ae-71a2-4f40-b090-9af946a5dd6d",
+            "agent": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
+            "messages": "1",
+            "provider": "workbuddy-http",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -5027,12 +5332,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:21.337Z",
+        "verifiedAt": "2026-09-05T23:27:36.866Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_AUTO_REG_WINDOWS_20260828",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "automatic_delivery_disabled",
+        "providerTurns": [
+          {
+            "turn": "e2ee-d6fbe0f0-2432-4383-9a6c-fea11439ce22",
+            "agent": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
+            "messages": "1",
+            "provider": "none",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -5132,12 +5452,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:21:25.443Z",
+        "verifiedAt": "2026-09-05T23:26:57.854Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_CLINE",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-e7f7f67a-533d-4643-b505-8aed4eb26a23",
+            "agent": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
+            "messages": "1",
+            "provider": "cline-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ],
+        "formatWarning": "Correct result preceded by unnecessary explanation about the dialogue test and not using tools."
       },
       "candidateEvidenceHistory": [
         {
@@ -5253,12 +5588,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:24.689Z",
+        "verifiedAt": "2026-09-05T23:27:40.061Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_OPENHANDS",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "automatic_delivery_disabled",
+        "providerTurns": [
+          {
+            "turn": "e2ee-c22ca59d-a068-40e9-8857-b2fae8fb1d22",
+            "agent": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
+            "messages": "1",
+            "provider": "none",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -5358,12 +5708,26 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
-        "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:25.748Z",
+        "verifiedAt": "2026-09-05T23:29:41.384Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_CURSOR",
+        "answerCorrect": true,
+        "result": "reply_visible",
+        "providerTurns": [
+          {
+            "turn": "e2ee-9fd32586-5922-45c0-9168-6d43b44e18e8",
+            "agent": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
+            "messages": "1",
+            "provider": "cursor-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -5461,12 +5825,27 @@
       "issues": [
         "原生 --version 成功，status 在用户目录和 binary 目录均以 3221225477 退出；Windows ARM64使用x64程序，官方CLI文档暂不支持Windows ARM64；唯一崩溃原因未证实。需兼容运行环境或厂商修复，不能计为通过。"
       ],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:26.408Z",
+        "verifiedAt": "2026-09-05T23:26:17.466Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_QWEN_OFFICE",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "automatic_delivery_disabled",
+        "providerTurns": [
+          {
+            "turn": "e2ee-04f25f98-122d-478c-9670-beffb1673e48",
+            "agent": "c06eabd6-570e-41fa-914d-79e08951dbe1",
+            "messages": "1",
+            "provider": "none",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -5566,12 +5945,27 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending_first_attempt",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
         "testedCommit": "dcc7f7b",
         "browser": "macOS Chrome",
+        "verifiedBy": "Actual conversation DOM after current candidate marker; cached processing views revisited after history synchronization.",
+        "sentAt": "2026-09-05T23:22:29.808Z",
+        "verifiedAt": "2026-09-05T23:29:44.610Z",
+        "marker": "VOKO_UI_DCC7F7B_R1_TEST_WINDOWS_DUMATE",
         "answerCorrect": false,
-        "result": "pending_first_attempt"
+        "result": "provider_failed",
+        "providerTurns": [
+          {
+            "turn": "e2ee-fa5b7f80-a2b9-4b05-93a1-b96177c80a1a",
+            "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+            "messages": "1",
+            "provider": "dumate-http",
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "DUMATE_DELIVERY_FAILED"
+          }
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -7036,16 +7430,12 @@
     "total": 50
   },
   "uiPrerequisite": {
-    "status": "waiting_for_mac_unlock",
-    "evidence": "Native CUA explicitly reported Mac locked and automatic unlock failed after Chrome debugger timeouts.",
-    "request": "User asked to unlock Mac manually; pending.",
+    "status": "resolved",
+    "evidence": "CUA native Chrome and original VOKO tab became operable; remaining 26 messages sent and all 50 current-candidate conversations inspected.",
     "tabId": "725461223",
-    "browserIdAfterReconnect": "1",
-    "nextAction": "Reacquire original Chrome VOKO tab, verify the 24 current markers, then send remaining 26 once.",
-    "notAttempted": [
-      "Remaining five Linux identities and all 21 Windows identities"
-    ],
-    "report": "loopback-isolation-remediation.md"
+    "browserId": "1",
+    "note": "No bypass of lock screen; original tab and identity retained.",
+    "firstResumedSendAt": "2026-09-05T23:20:49.009Z"
   },
   "blockerAudit": {
     "checkedAt": "2026-09-05T07:55:33.520840+00:00",
@@ -7061,188 +7451,55 @@
   },
   "resumedAt": "2026-09-05T12:11:25.506206+00:00",
   "logReview": {
-    "checkedAt": "2026-09-05T16:45:06.026Z",
-    "windowStart": "2026-09-05T16:07:10.558Z",
-    "candidate": "9b9baff",
-    "scope": "Current voko-im.log on all three hosts; native WorkBuddy session history/replay read-only; no new full browser matrix",
-    "hosts": [
-      {
-        "host": "macos",
-        "state": "ready",
-        "im": 17,
-        "agents": 17,
-        "issues": [],
-        "fatalMatches": [],
-        "turns": []
+    "report": "dcc7f7b-complete-browser-regression.md",
+    "candidate": "dcc7f7b",
+    "browserCheckedAt": "2026-09-05T23:29:45.203Z",
+    "verifiedReplies": 42,
+    "failures": 8,
+    "workbuddy": {
+      "currentBusinessOutcome": "delivered",
+      "currentProviderOutcome": "generated",
+      "loopbackMisroutingObserved": false,
+      "intermittentNativeEmptyReplyRootCause": "unresolved"
+    },
+    "windowsDiagnostics": {
+      "codebuddyInitializeMs": 8530,
+      "opencodeInitializeMs": 5438,
+      "diagnosticTimeoutMs": 45000,
+      "productionConnectTimeoutChanged": false,
+      "hermesCurrentDatabaseCredential": {
+        "healthHTTP": 200,
+        "modelsHTTP": 200
       },
-      {
-        "host": "linux",
-        "state": "ready",
-        "im": 12,
-        "agents": 12,
-        "issues": [
-          {
-            "at": "2026-09-05T16:23:52.000Z",
-            "level": "WRN",
-            "component": "E2EE",
-            "classes": [
-              "directory_timeout"
-            ],
-            "codes": [
-              "E2EE_V2_DIRECTORY_TIMEOUT"
-            ]
-          }
-        ],
-        "fatalMatches": [],
-        "turns": []
-      },
-      {
-        "host": "windows",
-        "state": "ready",
-        "im": 21,
-        "agents": 21,
-        "issues": [
-          {
-            "at": "2026-09-05T16:08:28.000Z",
-            "level": "WRN",
-            "component": "QwenOfficeReadiness",
-            "classes": [
-              "qwen_readiness",
-              "native_access_violation"
-            ],
-            "codes": []
-          },
-          {
-            "at": "2026-09-05T16:19:35.000Z",
-            "level": "WRN",
-            "component": "Dispatcher",
-            "classes": [],
-            "codes": []
-          },
-          {
-            "at": "2026-09-05T16:19:35.000Z",
-            "level": "WRN",
-            "component": "Dispatcher",
-            "classes": [],
-            "codes": []
-          },
-          {
-            "at": "2026-09-05T16:19:35.000Z",
-            "level": "WRN",
-            "component": "E2EE",
-            "classes": [
-              "directory_access_denied"
-            ],
-            "codes": [
-              "PEER_NOT_FOUND"
-            ]
-          },
-          {
-            "at": "2026-09-05T16:19:35.000Z",
-            "level": "ERR",
-            "component": "Agent回复",
-            "classes": [
-              "directory_access_denied"
-            ],
-            "codes": [
-              "PEER_NOT_FOUND"
-            ]
-          },
-          {
-            "at": "2026-09-05T16:22:58.000Z",
-            "level": "ERR",
-            "component": "Dispatcher",
-            "classes": [],
-            "codes": []
-          },
-          {
-            "at": "2026-09-05T16:22:58.000Z",
-            "level": "WRN",
-            "component": "E2EE",
-            "classes": [],
-            "codes": [
-              "WORKBUDDY_NEW_EMPTY_REPLY"
-            ]
-          },
-          {
-            "at": "2026-09-05T16:22:58.000Z",
-            "level": "WRN",
-            "component": "E2EE",
-            "classes": [],
-            "codes": [
-              "WORKBUDDY_NEW_EMPTY_REPLY"
-            ]
-          }
-        ],
-        "fatalMatches": [],
-        "turns": [
-          {
-            "at": "2026-09-05T16:22:58.000Z",
-            "provider": "workbuddy-http",
-            "outcome": "outcome_unknown",
-            "providerOutcome": "unknown",
-            "errorCode": "WORKBUDDY_NEW_EMPTY_REPLY"
-          }
-        ]
-      }
-    ],
-    "findings": [
-      {
-        "id": "workbuddy-new-empty-reply",
-        "confidence": "proven_observation_root_cause_unresolved",
-        "code": "WORKBUDDY_NEW_EMPTY_REPLY",
-        "outcome": "outcome_unknown",
-        "nativeSessionHasCurrentMarker": true,
-        "nativeAgentMessageChunks": 0,
-        "automaticReplay": false
-      },
-      {
-        "id": "workbuddy-loopback-im-routing",
-        "confidence": "proven",
-        "evidence": "16:19:35 UTC voko-loopback routing warnings and PEER_NOT_FOUND; runLoopbackTest -> push -> agent.reply -> normal dispatcher reply listener",
-        "fixProposal": "Keep loopback reply capture local to verification and suppress business reply/lifecycle delivery; test concurrent normal turns remain unaffected. Do not disable E2EE recipient validation."
-      },
-      {
-        "id": "qwen-native-crash",
-        "confidence": "recurrence",
-        "nativeExitCode": 3221225477
-      },
-      {
-        "id": "directory-timeout",
-        "confidence": "recurrence",
-        "host": "linux",
-        "count": 1
-      }
-    ],
-    "report": "log-review-1645-utc.md"
+      "hermesBusinessTurn": "outcome_unknown",
+      "unknownTurnReplayed": false
+    }
   },
   "currentMatrix": {
     "candidate": "dcc7f7b",
-    "attempted": 24,
-    "correctVisibleReplies": 1,
-    "notPassed": 0,
-    "pendingFirstAttempt": 26,
-    "pendingVerification": 23,
+    "attempted": 50,
+    "correctVisibleReplies": 42,
+    "notPassed": 8,
+    "pendingFirstAttempt": 0,
+    "pendingVerification": 0,
     "retryMessages": 0,
     "allComplete": false,
+    "checkedAt": "2026-09-05T23:29:45.203Z",
     "byHost": {
       "macos": {
-        "correctVisibleReplies": 0,
-        "total": 17,
-        "attempted": 17
+        "correctVisibleReplies": 16,
+        "total": 17
       },
       "linux": {
-        "correctVisibleReplies": 1,
-        "total": 12,
-        "attempted": 7
+        "correctVisibleReplies": 12,
+        "total": 12
       },
       "windows": {
-        "correctVisibleReplies": 0,
-        "total": 21,
-        "attempted": 0
+        "correctVisibleReplies": 14,
+        "total": 21
       }
     },
-    "scope": "All original 50 agents. Only current-candidate visible answers count. Mac locked during run; previous 44/50 is history."
+    "scope": "All original 50 identities tested on current candidate. Correct answers do not imply strict formatting or sustained reliability."
   },
   "browserMatrixHistory": [
     {
@@ -7370,6 +7627,34 @@
         }
       },
       "scope": "All original 50 agents; correct visible replies do not prove strict formatting compliance or sustained reliability."
+    },
+    {
+      "candidate": "dcc7f7b",
+      "attempted": 24,
+      "correctVisibleReplies": 1,
+      "notPassed": 0,
+      "pendingFirstAttempt": 26,
+      "pendingVerification": 23,
+      "retryMessages": 0,
+      "allComplete": false,
+      "byHost": {
+        "macos": {
+          "correctVisibleReplies": 0,
+          "total": 17,
+          "attempted": 17
+        },
+        "linux": {
+          "correctVisibleReplies": 1,
+          "total": 12,
+          "attempted": 7
+        },
+        "windows": {
+          "correctVisibleReplies": 0,
+          "total": 21,
+          "attempted": 0
+        }
+      },
+      "scope": "All original 50 agents. Only current-candidate visible answers count. Mac locked during run; previous 44/50 is history."
     }
   ],
   "latestCandidate": {
@@ -7734,6 +8019,162 @@
         "outcome": "not_delivered"
       },
       "newPackageRegressionConfirmed": false
+    },
+    {
+      "checkedAt": "2026-09-05T16:45:06.026Z",
+      "windowStart": "2026-09-05T16:07:10.558Z",
+      "candidate": "9b9baff",
+      "scope": "Current voko-im.log on all three hosts; native WorkBuddy session history/replay read-only; no new full browser matrix",
+      "hosts": [
+        {
+          "host": "macos",
+          "state": "ready",
+          "im": 17,
+          "agents": 17,
+          "issues": [],
+          "fatalMatches": [],
+          "turns": []
+        },
+        {
+          "host": "linux",
+          "state": "ready",
+          "im": 12,
+          "agents": 12,
+          "issues": [
+            {
+              "at": "2026-09-05T16:23:52.000Z",
+              "level": "WRN",
+              "component": "E2EE",
+              "classes": [
+                "directory_timeout"
+              ],
+              "codes": [
+                "E2EE_V2_DIRECTORY_TIMEOUT"
+              ]
+            }
+          ],
+          "fatalMatches": [],
+          "turns": []
+        },
+        {
+          "host": "windows",
+          "state": "ready",
+          "im": 21,
+          "agents": 21,
+          "issues": [
+            {
+              "at": "2026-09-05T16:08:28.000Z",
+              "level": "WRN",
+              "component": "QwenOfficeReadiness",
+              "classes": [
+                "qwen_readiness",
+                "native_access_violation"
+              ],
+              "codes": []
+            },
+            {
+              "at": "2026-09-05T16:19:35.000Z",
+              "level": "WRN",
+              "component": "Dispatcher",
+              "classes": [],
+              "codes": []
+            },
+            {
+              "at": "2026-09-05T16:19:35.000Z",
+              "level": "WRN",
+              "component": "Dispatcher",
+              "classes": [],
+              "codes": []
+            },
+            {
+              "at": "2026-09-05T16:19:35.000Z",
+              "level": "WRN",
+              "component": "E2EE",
+              "classes": [
+                "directory_access_denied"
+              ],
+              "codes": [
+                "PEER_NOT_FOUND"
+              ]
+            },
+            {
+              "at": "2026-09-05T16:19:35.000Z",
+              "level": "ERR",
+              "component": "Agent回复",
+              "classes": [
+                "directory_access_denied"
+              ],
+              "codes": [
+                "PEER_NOT_FOUND"
+              ]
+            },
+            {
+              "at": "2026-09-05T16:22:58.000Z",
+              "level": "ERR",
+              "component": "Dispatcher",
+              "classes": [],
+              "codes": []
+            },
+            {
+              "at": "2026-09-05T16:22:58.000Z",
+              "level": "WRN",
+              "component": "E2EE",
+              "classes": [],
+              "codes": [
+                "WORKBUDDY_NEW_EMPTY_REPLY"
+              ]
+            },
+            {
+              "at": "2026-09-05T16:22:58.000Z",
+              "level": "WRN",
+              "component": "E2EE",
+              "classes": [],
+              "codes": [
+                "WORKBUDDY_NEW_EMPTY_REPLY"
+              ]
+            }
+          ],
+          "fatalMatches": [],
+          "turns": [
+            {
+              "at": "2026-09-05T16:22:58.000Z",
+              "provider": "workbuddy-http",
+              "outcome": "outcome_unknown",
+              "providerOutcome": "unknown",
+              "errorCode": "WORKBUDDY_NEW_EMPTY_REPLY"
+            }
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "id": "workbuddy-new-empty-reply",
+          "confidence": "proven_observation_root_cause_unresolved",
+          "code": "WORKBUDDY_NEW_EMPTY_REPLY",
+          "outcome": "outcome_unknown",
+          "nativeSessionHasCurrentMarker": true,
+          "nativeAgentMessageChunks": 0,
+          "automaticReplay": false
+        },
+        {
+          "id": "workbuddy-loopback-im-routing",
+          "confidence": "proven",
+          "evidence": "16:19:35 UTC voko-loopback routing warnings and PEER_NOT_FOUND; runLoopbackTest -> push -> agent.reply -> normal dispatcher reply listener",
+          "fixProposal": "Keep loopback reply capture local to verification and suppress business reply/lifecycle delivery; test concurrent normal turns remain unaffected. Do not disable E2EE recipient validation."
+        },
+        {
+          "id": "qwen-native-crash",
+          "confidence": "recurrence",
+          "nativeExitCode": 3221225477
+        },
+        {
+          "id": "directory-timeout",
+          "confidence": "recurrence",
+          "host": "linux",
+          "count": 1
+        }
+      ],
+      "report": "log-review-1645-utc.md"
     }
   ],
   "configurationRemediation": [
