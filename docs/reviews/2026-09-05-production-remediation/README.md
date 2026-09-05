@@ -95,3 +95,11 @@ Mac/Linux Copilot 的可见回复明确拒绝将嵌入的 security context 当�
 部分会话首次切回时仍显示“处理中”，再次进入并完成后台历史同步后正确回复出现。此现象仍需区分同步延迟与前端交互问题，不能依据第一次 DOM 快照断言消息丢失。本轮曾出现页面自动聚焦输入框与连续搜索竞争，已清理工具误填的搜索词草稿，未发送该草稿；后续操作需逐步核验搜索框和会话标题。
 
 Windows CodeBuddy/OpenCode/Cline 日志均在 ACP initialize 连接等待 15000ms 后失败，未记录本次 session/prompt 调用，却由 Dispatcher 记为 outcome_unknown，阻止后备通道判断。代码复核确认 _ensureAgent 抛错位于现有 session/new 的 not_delivered 分类之外。新增 3 项边界测试，原实现 1 失败、2 通过；最小修复仅给未提交当前请求的连接失败补上 not_delivered，保留显式不确定结果，并验证 session/prompt 发出后的断连仍 outcome_unknown、仅调用一次。构建及关联路由/安全策略 62 项测试通过，完整 release:gate:code 门禁通过（1553 项通过、2 项既有平台跳过、0 失败），覆盖率基线、类型检查、构建、i18n 和源码包扫描通过。原始请求未重放，生产仍运行 0f4ada3。
+
+## Windows Copilot 安装发现修复与 ACP 原生诊断
+
+实时文件探针确认 Windows 的 %APPDATA%\npm 没有 @github/copilot，但当前 Node 所在的 Local\Programs\nodejs\node_modules 有 npm-loader.js。原解析器仅检查前者，导致已安装的 Copilot 被判不可用。修复继续优先既有 Roaming 安装，同时检查当前 Node 目录和标准 Local Node 目录；仍通过当前 Node 直接执行明确的 loader 文件，不启动 shell，不改变工具权限参数。
+
+4 项路径测试原实现 2 失败/2 通过，修复后全部通过；构建和相关 Provider/权限策略测试 81 项通过。完整 release:gate:code 门禁通过：1557 项通过、2 项既有平台跳过、0 失败。Windows 原生运行新解析函数找到正确 loader，--version 退出 0、版本 1.0.80。版本探针不代表登录或完整对话通过。
+
+使用独立进程对现有 Windows OpenCode、CodeBuddy、Cline 做 initialize-only 诊断，没有创建业务 session/prompt 或发送生产 IM：三者握手均成功，耗时分别约 13.9、11.1、11.4 秒。诊断允许最长 45 秒，但观察值均小于 15 秒；本修复未改变运行时 15 秒上限。先前业务矩阵的超时仍真实存在，当前证据只能说明不是永久无法启动，尚不能把唯一原因定为负载或首次启动耗时。

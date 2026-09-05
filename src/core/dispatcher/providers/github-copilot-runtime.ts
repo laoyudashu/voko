@@ -21,10 +21,13 @@ function resolveGitHubCopilotRuntime() {
     return { command: 'copilot', prefixArgs: [] };
   }
 
-  const npmRoot = process.env.APPDATA && copilotPath.join(process.env.APPDATA, 'npm');
-  const candidates = [
-    npmRoot && copilotPath.join(npmRoot, 'node_modules', '@github', 'copilot', 'npm-loader.js'),
+  const roots = [
+    process.env.APPDATA && copilotPath.join(process.env.APPDATA, 'npm'),
+    copilotPath.dirname(process.execPath),
+    process.env.LOCALAPPDATA && copilotPath.join(process.env.LOCALAPPDATA, 'Programs', 'nodejs'),
   ].filter(Boolean);
+  const candidates = [...new Set(roots)].map((root) =>
+    copilotPath.join(root, 'node_modules', '@github', 'copilot', 'npm-loader.js'));
   const loader = candidates.find((candidate) => copilotFs.existsSync(candidate));
   return loader
     ? { command: process.execPath, prefixArgs: [loader] }
