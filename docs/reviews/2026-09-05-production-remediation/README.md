@@ -151,3 +151,7 @@ OpenHands 启动失败的根因已定位并修复：其 pyvenv.cfg 的 home 指�
 另保留通道级失败：Cline ACP 本轮是 Authentication required，随后 cline-cli 回复成功；Copilot ACP 连接超时后 github-copilot-cli 成功；ZeroClaw WS 失败后既有 ACP 路径成功；Cursor 出现 ACP connection closed 后最终有正确回复。网页正确不表示每一条底层通道均已修复。Windows Aider 的答案后仍有额外 session. 文本，按答案正确计数但格式问题未解决。Mac 的 DuMate 和千问办公 o9hPdJ 在此次重启后重新完成回环验证并成功回复，没有把上一进程的验证结果当作持久凭证。
 
 证据：artifacts/production-remediation-openhands-20260905/ 保存候选包、备份清单、三端实际摘要、安装包安全测试、回环结果、完整日志摘要及脱敏失败详情。execution.json 已保存全部 50 项新候选结果；目标保持 active，整体优化尚未完成。
+
+## 15:13 UTC 日志增量复核
+
+三端仍为原 PID、同一候选、50/50 IM 连接。上轮网页矩阵结束后的约 39 分钟内，Mac 无新增告警，Linux 新增 3 次目录超时，Windows 千问办公新增 5 次原生退出 3221225477 告警。没有新业务 ProviderTurn，当前网页验收仍是 43/50；没有确认新包引入新的错误类型。OpenHands 进一步定位为本地模型 Agent 配置缺失；CodeBuddy/WorkBuddy 独立启动可以成功，但不能据此宣称生产间歇性故障已解决。详见 [15:13 UTC 日志复核](log-review-1513-utc.md)。

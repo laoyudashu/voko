@@ -4593,63 +4593,121 @@
   },
   "resumedAt": "2026-09-05T12:11:25.506206+00:00",
   "logReview": {
-    "report": "README.md#f5370c3-deployment",
+    "collectedAt": "2026-09-05T15:13:16.231Z",
+    "since": "2026-09-05T14:34:00Z",
+    "report": "log-review-1513-utc.md",
     "candidate": "f5370c3",
     "hosts": {
       "macos": {
-        "lineCount": 157,
-        "lastTimestampHostLocal": "2026-09-05 07:35:35",
-        "issues": {
-          "A2A Bridge:": 1,
-          "unclassified:": 1,
-          "ZEROCLAW ACP WS:302266f1-471c-4ec9-882d-38e004ae7350:": 1,
-          "GITHUB COPILOT ACP:b204bc80-8428-43af-8f25-e5f0971dabf9:": 1,
-          "OPENCODE ACP:94df593d-04bd-4b17-a0f7-35868b0f3dc4:": 1,
-          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 2
-        }
+        "lineCount": 39,
+        "lastAt": "2026-09-05T15:12:35.000Z",
+        "warningCount": 0,
+        "errorCount": 0,
+        "issues": []
       },
       "linux": {
-        "lineCount": 129,
-        "lastTimestampHostLocal": "2026-09-05 22:35:00",
-        "issues": {
-          "unclassified:": 1,
-          "GITHUB COPILOT ACP:a26a8919-87a8-4219-a0b3-4fd0cbc9beab:": 1,
-          "OPENCODE ACP:1617642d-e70c-4fc7-b845-96e74f1d1ba4:": 1,
-          "ZEROCLAW ACP WS:0c20465f-7c09-4990-b896-176e794f089e:": 1
-        }
+        "lineCount": 43,
+        "lastAt": "2026-09-05T15:13:01.000Z",
+        "warningCount": 3,
+        "errorCount": 0,
+        "issues": [
+          {
+            "at": "2026-09-05T14:39:11.000Z",
+            "level": "WRN",
+            "component": "E2EE",
+            "classes": [
+              "directory_timeout"
+            ],
+            "codes": [
+              "E2EE_V2_DIRECTORY_TIMEOUT"
+            ]
+          },
+          {
+            "at": "2026-09-05T14:42:10.000Z",
+            "level": "WRN",
+            "component": "E2EE",
+            "classes": [
+              "directory_timeout"
+            ],
+            "codes": [
+              "E2EE_V2_DIRECTORY_TIMEOUT"
+            ]
+          },
+          {
+            "at": "2026-09-05T14:44:10.000Z",
+            "level": "WRN",
+            "component": "E2EE",
+            "classes": [
+              "directory_timeout"
+            ],
+            "codes": [
+              "E2EE_V2_DIRECTORY_TIMEOUT"
+            ]
+          }
+        ]
       },
       "windows": {
-        "lineCount": 244,
-        "lastTimestampHostLocal": "2026-09-05 07:34:55",
-        "issues": {
-          "unclassified:": 2,
-          "QwenOfficeReadiness:": 2,
-          "HermesApiClient:": 1,
-          "CODEBUDDY ACP:": 1,
-          "Dispatcher:": 8,
-          "CODEBUDDY ACP:9792d8e8-4eec-44b8-a7a6-47aa48e95003:": 1,
-          "E2EE:E2EE_V2_PROVIDER_DELIVERY_FAILED": 2,
-          "OPENCODE ACP:befdeb16-56d7-4b90-84c7-eb0526e42956:": 1,
-          "CLINE ACP:7479bc1e-81ab-47cf-97ac-5ae8b663cfd3:": 1,
-          "CLINE ACP:": 1,
-          "GITHUB COPILOT ACP:": 1,
-          "GITHUB COPILOT ACP:c50bb49f-1f72-40c9-81e7-14374436aeec:": 1,
-          "ZEROCLAW ACP WS:": 2,
-          "A2A Bridge:": 2,
-          "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 9,
-          "AccessSync:": 1,
-          "ZEROCLAW ACP:2587ee04-633f-4ce9-b259-e29732a90d6f:": 1,
-          "ZEROCLAW ACP:8d98df63-487f-49b4-bf35-5704d1b32dbc:": 1,
-          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 4,
-          "E2EE:DUMATE_DELIVERY_FAILED": 2,
-          "E2EE:WORKBUDDY_DELIVERY_FAILED": 1,
-          "CURSOR ACP:3d8f3890-8bcc-48fb-88b6-9d83f25e3977:": 3,
-          "CURSOR ACP:": 1
-        }
+        "lineCount": 48,
+        "lastAt": "2026-09-05T15:13:00.000Z",
+        "warningCount": 5,
+        "errorCount": 0,
+        "issues": [
+          {
+            "at": "2026-09-05T14:36:54.000Z",
+            "level": "WRN",
+            "component": "QwenOfficeReadiness",
+            "classes": [
+              "qwen_readiness",
+              "native_access_violation"
+            ],
+            "codes": []
+          },
+          {
+            "at": "2026-09-05T14:55:57.000Z",
+            "level": "WRN",
+            "component": "QwenOfficeReadiness",
+            "classes": [
+              "qwen_readiness",
+              "native_access_violation"
+            ],
+            "codes": []
+          },
+          {
+            "at": "2026-09-05T15:02:58.000Z",
+            "level": "WRN",
+            "component": "QwenOfficeReadiness",
+            "classes": [
+              "qwen_readiness",
+              "native_access_violation"
+            ],
+            "codes": []
+          },
+          {
+            "at": "2026-09-05T15:07:58.000Z",
+            "level": "WRN",
+            "component": "QwenOfficeReadiness",
+            "classes": [
+              "qwen_readiness",
+              "native_access_violation"
+            ],
+            "codes": []
+          },
+          {
+            "at": "2026-09-05T15:12:58.000Z",
+            "level": "WRN",
+            "component": "QwenOfficeReadiness",
+            "classes": [
+              "qwen_readiness",
+              "native_access_violation"
+            ],
+            "codes": []
+          }
+        ]
       }
     },
     "currentCandidateBrowserRepliesVerified": 43,
     "remainingBrowserAgents": 7,
+    "newBusinessTurns": 0,
     "newPackageRegressionConfirmed": false
   },
   "currentMatrix": {
@@ -4876,6 +4934,66 @@
       "newFinding": "Windows DuMate native serve and --version exit 3221225477; --version reproduced outside VOKO.",
       "currentCandidateBrowserRepliesVerified": 45,
       "remainingBrowserAgents": 5
+    },
+    {
+      "report": "README.md#f5370c3-deployment",
+      "candidate": "f5370c3",
+      "hosts": {
+        "macos": {
+          "lineCount": 157,
+          "lastTimestampHostLocal": "2026-09-05 07:35:35",
+          "issues": {
+            "A2A Bridge:": 1,
+            "unclassified:": 1,
+            "ZEROCLAW ACP WS:302266f1-471c-4ec9-882d-38e004ae7350:": 1,
+            "GITHUB COPILOT ACP:b204bc80-8428-43af-8f25-e5f0971dabf9:": 1,
+            "OPENCODE ACP:94df593d-04bd-4b17-a0f7-35868b0f3dc4:": 1,
+            "E2EE:AUTOMATIC_DELIVERY_DISABLED": 2
+          }
+        },
+        "linux": {
+          "lineCount": 129,
+          "lastTimestampHostLocal": "2026-09-05 22:35:00",
+          "issues": {
+            "unclassified:": 1,
+            "GITHUB COPILOT ACP:a26a8919-87a8-4219-a0b3-4fd0cbc9beab:": 1,
+            "OPENCODE ACP:1617642d-e70c-4fc7-b845-96e74f1d1ba4:": 1,
+            "ZEROCLAW ACP WS:0c20465f-7c09-4990-b896-176e794f089e:": 1
+          }
+        },
+        "windows": {
+          "lineCount": 244,
+          "lastTimestampHostLocal": "2026-09-05 07:34:55",
+          "issues": {
+            "unclassified:": 2,
+            "QwenOfficeReadiness:": 2,
+            "HermesApiClient:": 1,
+            "CODEBUDDY ACP:": 1,
+            "Dispatcher:": 8,
+            "CODEBUDDY ACP:9792d8e8-4eec-44b8-a7a6-47aa48e95003:": 1,
+            "E2EE:E2EE_V2_PROVIDER_DELIVERY_FAILED": 2,
+            "OPENCODE ACP:befdeb16-56d7-4b90-84c7-eb0526e42956:": 1,
+            "CLINE ACP:7479bc1e-81ab-47cf-97ac-5ae8b663cfd3:": 1,
+            "CLINE ACP:": 1,
+            "GITHUB COPILOT ACP:": 1,
+            "GITHUB COPILOT ACP:c50bb49f-1f72-40c9-81e7-14374436aeec:": 1,
+            "ZEROCLAW ACP WS:": 2,
+            "A2A Bridge:": 2,
+            "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 9,
+            "AccessSync:": 1,
+            "ZEROCLAW ACP:2587ee04-633f-4ce9-b259-e29732a90d6f:": 1,
+            "ZEROCLAW ACP:8d98df63-487f-49b4-bf35-5704d1b32dbc:": 1,
+            "E2EE:AUTOMATIC_DELIVERY_DISABLED": 4,
+            "E2EE:DUMATE_DELIVERY_FAILED": 2,
+            "E2EE:WORKBUDDY_DELIVERY_FAILED": 1,
+            "CURSOR ACP:3d8f3890-8bcc-48fb-88b6-9d83f25e3977:": 3,
+            "CURSOR ACP:": 1
+          }
+        }
+      },
+      "currentCandidateBrowserRepliesVerified": 43,
+      "remainingBrowserAgents": 7,
+      "newPackageRegressionConfirmed": false
     }
   ],
   "configurationRemediation": [
