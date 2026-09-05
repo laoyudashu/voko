@@ -19,17 +19,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:05.420Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_ZEROCLAW",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_ZEROCLAW",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-1a7d3d90-099e-4c33-be0e-d28b3c2848ca",
+            "turn": "e2ee-2247cde8-d27a-48ee-a031-3e745ddc05dc",
             "agent": "302266f1-471c-4ec9-882d-38e004ae7350",
             "messages": "1",
             "provider": "zeroclaw-ws",
@@ -58,6 +61,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:05.420Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_ZEROCLAW",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-1a7d3d90-099e-4c33-be0e-d28b3c2848ca",
+              "agent": "302266f1-471c-4ec9-882d-38e004ae7350",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -78,17 +101,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:08.628Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_HERMES",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_HERMES",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-9a50c3b0-b827-4c21-98ea-82e6165308d5",
+            "turn": "e2ee-43fa8bec-caf1-4b3a-9bf4-c63e8c676d4f",
             "agent": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
             "messages": "1",
             "provider": "hermes-http",
@@ -117,6 +143,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:08.628Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_HERMES",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-9a50c3b0-b827-4c21-98ea-82e6165308d5",
+              "agent": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -136,17 +182,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:11.803Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_CLAUDE_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_CLAUDE_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-d16b9d0e-7183-478d-bcdc-5be93467d154",
+            "turn": "e2ee-6b9628c9-44e7-4ada-be7c-dc073a22f8e4",
             "agent": "bce42fe5-53e4-4ab1-887c-270230b116ae",
             "messages": "1",
             "provider": "claude-cli",
@@ -175,6 +224,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:11.803Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_CLAUDE_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-d16b9d0e-7183-478d-bcdc-5be93467d154",
+              "agent": "bce42fe5-53e4-4ab1-887c-270230b116ae",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -194,17 +263,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:14.936Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GITHUB_COPILOT",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_GITHUB_COPILOT",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-35156ce3-1371-44fa-b605-fa08208a07c8",
+            "turn": "e2ee-0fb3a282-40ce-437e-a55d-ac6ae0dd538c",
             "agent": "b204bc80-8428-43af-8f25-e5f0971dabf9",
             "messages": "1",
             "provider": "github-copilot-acp",
@@ -233,6 +305,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:14.936Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GITHUB_COPILOT",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-35156ce3-1371-44fa-b605-fa08208a07c8",
+              "agent": "b204bc80-8428-43af-8f25-e5f0971dabf9",
+              "messages": "1",
+              "provider": "github-copilot-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -248,17 +340,20 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:18.042Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_QWEN_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_QWEN_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3809189f-03b4-4046-89ea-2db4db634888",
+            "turn": "e2ee-1158c495-3678-4054-93f7-12c1ecded5da",
             "agent": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
             "messages": "1",
             "provider": "qwen-cli",
@@ -287,6 +382,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:18.042Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_QWEN_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3809189f-03b4-4046-89ea-2db4db634888",
+              "agent": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -306,17 +421,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:21:21.144Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GOOSE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_GOOSE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-11b8113b-3cee-4998-a533-87ec05013394",
+            "turn": "e2ee-f5d09fd2-5655-40f7-b205-cbf54afe3a05",
             "agent": "b07f8c68-dbab-4def-bdc0-381cac55f110",
             "messages": "1",
             "provider": "goose-cli",
@@ -345,6 +463,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:21:21.144Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GOOSE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-11b8113b-3cee-4998-a533-87ec05013394",
+              "agent": "b07f8c68-dbab-4def-bdc0-381cac55f110",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -364,17 +502,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:22:18.262Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_OPENCODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_OPENCODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-6bfe641d-5446-47a5-afae-dd4e1ef7295b",
+            "turn": "e2ee-7cfbf463-f849-49ff-a0a9-2a7c7bfe448d",
             "agent": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
             "messages": "1",
             "provider": "opencode-acp",
@@ -403,6 +544,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:22:18.262Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_OPENCODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-6bfe641d-5446-47a5-afae-dd4e1ef7295b",
+              "agent": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
+              "messages": "1",
+              "provider": "opencode-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -422,17 +583,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:02.052Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_KIRO",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_KIRO",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-d894750d-58ef-4196-abef-0e92be24c481",
+            "turn": "e2ee-9309fc5d-c40b-48c9-beb7-6994adf3343a",
             "agent": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
             "messages": "1",
             "provider": "kiro-cli",
@@ -461,6 +625,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:02.052Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_KIRO",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-d894750d-58ef-4196-abef-0e92be24c481",
+              "agent": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
+              "messages": "1",
+              "provider": "kiro-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -480,17 +664,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:02.506Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_AIDER",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_AIDER",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-32cce107-ba57-462c-8ce9-60d5868e45e1",
+            "turn": "e2ee-24cdb8c4-8b8f-4bef-be29-116fdb021223",
             "agent": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
             "messages": "1",
             "provider": "aider-cli",
@@ -519,6 +706,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:02.506Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_AIDER",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-32cce107-ba57-462c-8ce9-60d5868e45e1",
+              "agent": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -534,17 +741,20 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:22:19.799Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GROK",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_GROK",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-7d49e044-4368-4132-88e6-90f01277e52e",
+            "turn": "e2ee-721687c6-bba2-4f5b-979c-9cf88a4a036b",
             "agent": "bee1a79c-320e-4612-aaae-61fde6312b7c",
             "messages": "1",
             "provider": "grok-cli",
@@ -573,6 +783,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:22:19.799Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_GROK",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-7d49e044-4368-4132-88e6-90f01277e52e",
+              "agent": "bee1a79c-320e-4612-aaae-61fde6312b7c",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -592,17 +822,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:02.972Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_REASONIX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_REASONIX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-2b56187b-9542-46e4-9299-87bdfa8d85b0",
+            "turn": "e2ee-2be4fb4d-e3b0-40d1-8aeb-f6eb31524d6a",
             "agent": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
             "messages": "1",
             "provider": "reasonix-cli",
@@ -631,6 +864,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:02.972Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_REASONIX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-2b56187b-9542-46e4-9299-87bdfa8d85b0",
+              "agent": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -650,17 +903,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:21.347Z",
-        "marker": "VOKO_UI_E58A0D2_R1____",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1____",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-98d96e50-f4eb-4cb5-ae1d-38282f2b4ddf",
+            "turn": "e2ee-63d2d966-7319-4480-9d71-37ce5ebf93fa",
             "agent": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
             "messages": "1",
             "provider": "workbuddy-http",
@@ -689,6 +945,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:21.347Z",
+          "marker": "VOKO_UI_E58A0D2_R1____",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-98d96e50-f4eb-4cb5-ae1d-38282f2b4ddf",
+              "agent": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
+              "messages": "1",
+              "provider": "workbuddy-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -704,34 +980,27 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:39:14.559Z",
-        "marker": "VOKO_UI_E58A0D2_R2_tjyu_qwen_office_o9hPdJ",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_tjyu_qwen_office_o9hPdJ",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3c82e5c9-29e0-465d-b931-cfd34bc3136c",
-            "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          },
-          {
-            "turn": "e2ee-89a491d4-772f-43d3-8bac-0519a59ebdec",
+            "turn": "e2ee-8df3c10a-a58a-46cc-9598-612ceb6a7847",
             "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
             "messages": "1",
             "provider": "qwen-office-cli",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
-        ],
-        "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -754,6 +1023,36 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:39:14.559Z",
+          "marker": "VOKO_UI_E58A0D2_R2_tjyu_qwen_office_o9hPdJ",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3c82e5c9-29e0-465d-b931-cfd34bc3136c",
+              "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            },
+            {
+              "turn": "e2ee-89a491d4-772f-43d3-8bac-0519a59ebdec",
+              "agent": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
+              "messages": "1",
+              "provider": "qwen-office-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
         }
       ]
     },
@@ -773,17 +1072,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:23:03.481Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_CODEX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_CODEX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-7d8e5580-3e33-4b49-949b-4c409c0ca55b",
+            "turn": "e2ee-9fe0c730-a526-4ee1-a7dd-9929c9673f82",
             "agent": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
             "messages": "1",
             "provider": "codex-cli",
@@ -812,6 +1114,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:23:03.481Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_MAC_CODEX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-7d8e5580-3e33-4b49-949b-4c409c0ca55b",
+              "agent": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -827,17 +1149,20 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:23:06.649Z",
-        "marker": "VOKO_UI_E58A0D2_R1_tjyu_qwen_office_pBp2ts",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_tjyu_qwen_office_pBp2ts",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-0eb149d3-8291-407b-bb4f-60b54c7b00ef",
+            "turn": "e2ee-87108b1d-1eee-4ed9-9922-a2d01be60028",
             "agent": "c46ee329-1409-4672-af13-4755d7f470cc",
             "messages": "1",
             "provider": "qwen-office-cli",
@@ -866,6 +1191,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:23:06.649Z",
+          "marker": "VOKO_UI_E58A0D2_R1_tjyu_qwen_office_pBp2ts",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0eb149d3-8291-407b-bb4f-60b54c7b00ef",
+              "agent": "c46ee329-1409-4672-af13-4755d7f470cc",
+              "messages": "1",
+              "provider": "qwen-office-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -881,17 +1226,20 @@
       ],
       "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:23:09.858Z",
-        "marker": "VOKO_UI_E58A0D2_R1_AUTO_REG_MAC_20260828",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_AUTO_REG_MAC_20260828",
+        "question": "7 + 8 = ?",
         "answerCorrect": false,
         "result": "automatic_delivery_disabled",
         "providerTurns": [
           {
-            "turn": "e2ee-2835d8ae-3187-4d3a-af11-766d71c3a4d5",
+            "turn": "e2ee-47f3af59-30a7-4101-ab0c-6201933d2149",
             "agent": "8baabfb1-aed0-4d60-98ca-d86da042e501",
             "messages": "1",
             "provider": "none",
@@ -922,6 +1270,27 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:23:09.858Z",
+          "marker": "VOKO_UI_E58A0D2_R1_AUTO_REG_MAC_20260828",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-2835d8ae-3187-4d3a-af11-766d71c3a4d5",
+              "agent": "8baabfb1-aed0-4d60-98ca-d86da042e501",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
         }
       ]
     },
@@ -943,34 +1312,27 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:28.923Z",
-        "marker": "VOKO_UI_E58A0D2_R2_TEST_MAC_DUMATE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_MAC_DUMATE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-b99f3bd3-ac47-4f68-886b-14a332514028",
-            "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          },
-          {
-            "turn": "e2ee-f0b8428f-ee03-422d-89b8-f4c90c517334",
+            "turn": "e2ee-8f3880a5-16f3-4e18-96fd-649be09dc1b6",
             "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
             "messages": "1",
             "provider": "dumate-http",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
-        ],
-        "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -993,6 +1355,36 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:28.923Z",
+          "marker": "VOKO_UI_E58A0D2_R2_TEST_MAC_DUMATE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b99f3bd3-ac47-4f68-886b-14a332514028",
+              "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            },
+            {
+              "turn": "e2ee-f0b8428f-ee03-422d-89b8-f4c90c517334",
+              "agent": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
+              "messages": "1",
+              "provider": "dumate-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
         }
       ]
     },
@@ -1012,17 +1404,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:00.658Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_HERMES",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_HERMES",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-bba30435-1f88-4887-a0ba-39dbc593c003",
+            "turn": "e2ee-d5615d15-af40-471b-b549-1beb38508214",
             "agent": "7542cd12-0458-4124-890f-4d499c835cb3",
             "messages": "1",
             "provider": "hermes-http",
@@ -1051,6 +1446,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:00.658Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_HERMES",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-bba30435-1f88-4887-a0ba-39dbc593c003",
+              "agent": "7542cd12-0458-4124-890f-4d499c835cb3",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1071,17 +1486,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:01.153Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_CLAUDE_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_CLAUDE_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-e556e82a-b741-4919-9ebf-7fd7f2d1141a",
+            "turn": "e2ee-58411d12-7b17-40bb-9257-5b7e357d15f6",
             "agent": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
             "messages": "1",
             "provider": "claude-cli",
@@ -1110,6 +1528,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:01.153Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_CLAUDE_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-e556e82a-b741-4919-9ebf-7fd7f2d1141a",
+              "agent": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1125,17 +1563,20 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:19:37.874Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_CODEX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_CODEX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-182eb619-1ed1-431f-b876-fa656a10ff86",
+            "turn": "e2ee-f5f974df-f995-424a-b482-dfb92b6886de",
             "agent": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
             "messages": "1",
             "provider": "codex-cli",
@@ -1164,6 +1605,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:19:37.874Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_CODEX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-182eb619-1ed1-431f-b876-fa656a10ff86",
+              "agent": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1179,25 +1640,27 @@
       ],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:19:41.015Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GITHUB_COPILOT",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_GITHUB_COPILOT",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-4715d0e7-1047-43c1-b984-89cb758736cb",
+            "turn": "e2ee-57ded22f-8446-4539-b7a2-5820b0d4519c",
             "agent": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
             "messages": "1",
             "provider": "github-copilot-acp",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
-        ],
-        "formatIssue": "Correct answer followed by a longer explanation; one-sentence formatting not satisfied."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -1219,6 +1682,27 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:19:41.015Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GITHUB_COPILOT",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-4715d0e7-1047-43c1-b984-89cb758736cb",
+              "agent": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
+              "messages": "1",
+              "provider": "github-copilot-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "formatIssue": "Correct answer followed by a longer explanation; one-sentence formatting not satisfied."
         }
       ]
     },
@@ -1239,17 +1723,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:19:44.187Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_QWEN_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_QWEN_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-c0a059b9-0fd7-48e9-8ac5-2f1eca4d85f9",
+            "turn": "e2ee-d4d6fb80-0f1a-429d-a524-02bbd91de16f",
             "agent": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
             "messages": "1",
             "provider": "qwen-cli",
@@ -1278,6 +1765,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:19:44.187Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_QWEN_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c0a059b9-0fd7-48e9-8ac5-2f1eca4d85f9",
+              "agent": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1291,17 +1798,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:19:47.354Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GOOSE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_GOOSE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-b8684903-b85d-4944-b1e1-25983aef29bd",
+            "turn": "e2ee-e42b4038-e4c9-4f8c-bab4-9191e404e872",
             "agent": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
             "messages": "1",
             "provider": "goose-cli",
@@ -1330,6 +1840,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:19:47.354Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GOOSE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b8684903-b85d-4944-b1e1-25983aef29bd",
+              "agent": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1343,17 +1873,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:20:31.250Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_OPENCODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_OPENCODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3fce0f61-d35f-44f6-8dc6-21a36f4fa555",
+            "turn": "e2ee-e329f5b8-9595-4ae0-bbe3-79ab29614e5e",
             "agent": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
             "messages": "1",
             "provider": "opencode-acp",
@@ -1382,6 +1915,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:20:31.250Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_OPENCODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3fce0f61-d35f-44f6-8dc6-21a36f4fa555",
+              "agent": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
+              "messages": "1",
+              "provider": "opencode-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1395,17 +1948,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:01.610Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_AIDER",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_AIDER",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-02b438b9-5b88-47f2-997b-23f99a08bee1",
+            "turn": "e2ee-1abede56-3e91-49b6-b8d1-70abe5f31c45",
             "agent": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
             "messages": "1",
             "provider": "aider-cli",
@@ -1434,6 +1990,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:01.610Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_AIDER",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-02b438b9-5b88-47f2-997b-23f99a08bee1",
+              "agent": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1447,17 +2023,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:20:34.941Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GROK",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_GROK",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3f4419a4-c1b2-4af3-830e-11c2860e1a50",
+            "turn": "e2ee-cc5dee14-b5f0-4de1-b4ca-b12e713923ad",
             "agent": "b7522169-e48f-4f10-87b1-27941fd48ae4",
             "messages": "1",
             "provider": "grok-cli",
@@ -1486,6 +2065,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:20:34.941Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_GROK",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3f4419a4-c1b2-4af3-830e-11c2860e1a50",
+              "agent": "b7522169-e48f-4f10-87b1-27941fd48ae4",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1499,17 +2098,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:20:38.146Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_REASONIX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_REASONIX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-0fd8ba26-7311-4881-b444-0b2d2e5d7f24",
+            "turn": "e2ee-95e0f472-7f33-4696-bf50-60513cb6822a",
             "agent": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
             "messages": "1",
             "provider": "reasonix-cli",
@@ -1538,6 +2140,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:20:38.146Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_REASONIX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0fd8ba26-7311-4881-b444-0b2d2e5d7f24",
+              "agent": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1551,17 +2173,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:20:41.321Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_HERMES_HUMAN",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_HERMES_HUMAN",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-cd63edc7-42c8-4db5-9207-8e6007a4ef40",
+            "turn": "e2ee-2d639c54-9ab2-46e7-a71d-8eeb40971d84",
             "agent": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
             "messages": "1",
             "provider": "hermes-http",
@@ -1590,6 +2215,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:20:41.321Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_HERMES_HUMAN",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-cd63edc7-42c8-4db5-9207-8e6007a4ef40",
+              "agent": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1603,17 +2248,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:20:44.466Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_ZEROCLAW",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_LINUX_ZEROCLAW",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-fcebdd1e-8afe-4688-bd4a-9bd0dca889eb",
+            "turn": "e2ee-fd680466-a1e2-4e10-87ce-80ec3be90d22",
             "agent": "0c20465f-7c09-4990-b896-176e794f089e",
             "messages": "1",
             "provider": "zeroclaw-ws",
@@ -1622,7 +2270,7 @@
           }
         ],
         "displayName": "AUTO-REG-LINUX-20260828",
-        "identityVerifiedBy": "Current Linux list_agents IM UID agent_cc612a3bef4fef7a"
+        "imUid": "agent_cc612a3bef4fef7a"
       },
       "candidateEvidenceHistory": [
         {
@@ -1647,6 +2295,28 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:20:44.466Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_LINUX_ZEROCLAW",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-fcebdd1e-8afe-4688-bd4a-9bd0dca889eb",
+              "agent": "0c20465f-7c09-4990-b896-176e794f089e",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "displayName": "AUTO-REG-LINUX-20260828",
+          "identityVerifiedBy": "Current Linux list_agents IM UID agent_cc612a3bef4fef7a"
         }
       ]
     },
@@ -1666,17 +2336,20 @@
         "note": "401来自其他旧候选配置，不等于当前profile整体认证失败；网页回归仍未完成"
       },
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:23:16.294Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_HERMES",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_HERMES",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-8dce5e00-a22c-4a4a-8a59-334fbc2df528",
+            "turn": "e2ee-8320b6bc-9686-4a83-b511-5bd6d60fa56e",
             "agent": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
             "messages": "1",
             "provider": "hermes-http",
@@ -1705,6 +2378,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:23:16.294Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_HERMES",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-8dce5e00-a22c-4a4a-8a59-334fbc2df528",
+              "agent": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
+              "messages": "1",
+              "provider": "hermes-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1718,17 +2411,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:28.491Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CLAUDE_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_CLAUDE_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-de8c041b-d607-4fe8-826d-31b2456e0892",
+            "turn": "e2ee-7c32d1ec-8c2c-40ad-8be9-c3fd06452100",
             "agent": "467ee38f-98ca-4270-9c18-97edf2e30435",
             "messages": "1",
             "provider": "claude-cli",
@@ -1757,6 +2453,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:28.491Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CLAUDE_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-de8c041b-d607-4fe8-826d-31b2456e0892",
+              "agent": "467ee38f-98ca-4270-9c18-97edf2e30435",
+              "messages": "1",
+              "provider": "claude-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1770,17 +2486,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:31.746Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CODEX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_CODEX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-509ec9b4-02ba-4103-a769-3ed1ec1a0dd8",
+            "turn": "e2ee-33814989-1c36-4e2d-9795-e749599cf2ce",
             "agent": "3e8e403d-921d-4e51-85d1-0a35ce359812",
             "messages": "1",
             "provider": "codex-cli",
@@ -1809,6 +2528,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:31.746Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CODEX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-509ec9b4-02ba-4103-a769-3ed1ec1a0dd8",
+              "agent": "3e8e403d-921d-4e51-85d1-0a35ce359812",
+              "messages": "1",
+              "provider": "codex-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1822,20 +2561,23 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:39:17.685Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GITHUB_COPILOT",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_GITHUB_COPILOT",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3fb03b0a-b9de-4835-8782-1d2e65f90d4a",
+            "turn": "e2ee-477551ce-fa27-4fcc-9888-8a860f70cadb",
             "agent": "c50bb49f-1f72-40c9-81e7-14374436aeec",
             "messages": "1",
-            "provider": "github-copilot-acp",
+            "provider": "github-copilot-cli",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
@@ -1881,6 +2623,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:39:17.685Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GITHUB_COPILOT",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3fb03b0a-b9de-4835-8782-1d2e65f90d4a",
+              "agent": "c50bb49f-1f72-40c9-81e7-14374436aeec",
+              "messages": "1",
+              "provider": "github-copilot-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -1892,36 +2654,30 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:32.047Z",
-        "marker": "VOKO_UI_E58A0D2_R2_TEST_WINDOWS_CODEBUDDY",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_CODEBUDDY",
+        "question": "7 + 8 = ?",
+        "answerCorrect": false,
+        "result": "provider_failed",
         "providerTurns": [
           {
-            "turn": "e2ee-9c8dbe5c-3e46-4fb2-8fcd-81c52082e313",
+            "turn": "e2ee-799ce684-9023-4cda-8d30-cb2597ca7ed8",
             "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
             "messages": "1",
             "provider": "codebuddy-acp",
             "outcome": "not_delivered",
             "providerOutcome": "rejected",
             "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
-          },
-          {
-            "turn": "e2ee-4b43ee59-9dda-4a9f-ba5d-25352bdee42e",
-            "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
-            "messages": "1",
-            "provider": "codebuddy-acp",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
           }
-        ],
-        "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -1964,6 +2720,36 @@
               "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:32.047Z",
+          "marker": "VOKO_UI_E58A0D2_R2_TEST_WINDOWS_CODEBUDDY",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-9c8dbe5c-3e46-4fb2-8fcd-81c52082e313",
+              "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+              "messages": "1",
+              "provider": "codebuddy-acp",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "E2EE_V2_PROVIDER_DELIVERY_FAILED"
+            },
+            {
+              "turn": "e2ee-4b43ee59-9dda-4a9f-ba5d-25352bdee42e",
+              "agent": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+              "messages": "1",
+              "provider": "codebuddy-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "retryContext": "New benign R2 message after confirmed R1 not_delivered; no replay of an unknown outcome."
         }
       ]
     },
@@ -1977,17 +2763,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:34.987Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_QWEN_CODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_QWEN_CODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-0df496c2-d2b0-4175-a425-996b7bc1f99d",
+            "turn": "e2ee-d4bd46ac-5c57-4128-af05-3b6600fd8922",
             "agent": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
             "messages": "1",
             "provider": "qwen-cli",
@@ -2016,6 +2805,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:34.987Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_QWEN_CODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-0df496c2-d2b0-4175-a425-996b7bc1f99d",
+              "agent": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
+              "messages": "1",
+              "provider": "qwen-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2029,17 +2838,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:38.192Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GOOSE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_GOOSE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-ec5934ff-a920-4060-878f-a4db0812a123",
+            "turn": "e2ee-f61257c0-3078-4e4d-8668-f79192498dea",
             "agent": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
             "messages": "1",
             "provider": "goose-cli",
@@ -2068,6 +2880,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:38.192Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GOOSE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-ec5934ff-a920-4060-878f-a4db0812a123",
+              "agent": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
+              "messages": "1",
+              "provider": "goose-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2081,20 +2913,23 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:39:20.816Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_OPENCODE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_OPENCODE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-a9ce7ece-346e-4548-9cf4-028d3ecf4f0b",
+            "turn": "e2ee-eaad96cc-3739-4bc1-ab34-ecd785928983",
             "agent": "befdeb16-56d7-4b90-84c7-eb0526e42956",
             "messages": "1",
-            "provider": "opencode-attach",
+            "provider": "opencode-acp",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
@@ -2140,6 +2975,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:39:20.816Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_OPENCODE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-a9ce7ece-346e-4548-9cf4-028d3ecf4f0b",
+              "agent": "befdeb16-56d7-4b90-84c7-eb0526e42956",
+              "messages": "1",
+              "provider": "opencode-attach",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2153,17 +3008,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:41.396Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_AIDER",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_AIDER",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-c85b1866-cdde-4242-a2c1-1db360d6dc7d",
+            "turn": "e2ee-4e7594e8-14e5-4a77-b0d1-e347e113e824",
             "agent": "6ae1db46-e988-440a-b3f7-339ff8941d14",
             "messages": "1",
             "provider": "aider-cli",
@@ -2171,7 +3029,7 @@
             "providerOutcome": "generated"
           }
         ],
-        "formatIssue": "Correct answer followed by an extra session. line; one-sentence formatting not satisfied."
+        "formatIssue": "Correct answer followed by an extra session. line."
       },
       "candidateEvidenceHistory": [
         {
@@ -2193,6 +3051,27 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:41.396Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_AIDER",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c85b1866-cdde-4242-a2c1-1db360d6dc7d",
+              "agent": "6ae1db46-e988-440a-b3f7-339ff8941d14",
+              "messages": "1",
+              "provider": "aider-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "formatIssue": "Correct answer followed by an extra session. line; one-sentence formatting not satisfied."
         }
       ]
     },
@@ -2206,17 +3085,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:24:44.667Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_PI",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_PI",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-4c4d4dea-a319-411e-9203-218dde750934",
+            "turn": "e2ee-6354ac82-bc2d-410b-8975-eaf26642ef28",
             "agent": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
             "messages": "1",
             "provider": "pi-cli",
@@ -2245,6 +3127,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:24:44.667Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_PI",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-4c4d4dea-a319-411e-9203-218dde750934",
+              "agent": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
+              "messages": "1",
+              "provider": "pi-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2258,17 +3160,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:25:07.557Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GROK",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_GROK",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-d9b1d483-9a62-4763-895f-cb5c52b17417",
+            "turn": "e2ee-66c77c4c-ef0c-4d75-a2d6-8e44be615d75",
             "agent": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
             "messages": "1",
             "provider": "grok-cli",
@@ -2297,6 +3202,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:25:07.557Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_GROK",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-d9b1d483-9a62-4763-895f-cb5c52b17417",
+              "agent": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
+              "messages": "1",
+              "provider": "grok-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2310,17 +3235,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:25:10.745Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_REASONIX",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_REASONIX",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-608ddc86-7a1a-4ec3-a55c-d072896cee0a",
+            "turn": "e2ee-c9d7a20f-08e0-4782-8336-adf8abff17a5",
             "agent": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
             "messages": "1",
             "provider": "reasonix-cli",
@@ -2349,6 +3277,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:25:10.745Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_REASONIX",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-608ddc86-7a1a-4ec3-a55c-d072896cee0a",
+              "agent": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
+              "messages": "1",
+              "provider": "reasonix-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2362,20 +3310,23 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:21.796Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_ZEROCLAW",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_ZEROCLAW",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-7759b3b4-588e-4ffb-89a2-47be23f3bdce",
+            "turn": "e2ee-3ac1784d-276e-4e6b-8b2e-119ba0cbf562",
             "agent": "2587ee04-633f-4ce9-b259-e29732a90d6f",
             "messages": "1",
-            "provider": "zeroclaw-ws",
+            "provider": "zeroclaw-acp",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
@@ -2401,6 +3352,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:21.796Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_ZEROCLAW",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-7759b3b4-588e-4ffb-89a2-47be23f3bdce",
+              "agent": "2587ee04-633f-4ce9-b259-e29732a90d6f",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2414,20 +3385,23 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:22.220Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-3f39c7c4-30c2-4d1e-95c6-f89a644ef796",
+            "turn": "e2ee-aa0f7703-fca9-4abf-b5fe-cead3197fb1d",
             "agent": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
             "messages": "1",
-            "provider": "zeroclaw-ws",
+            "provider": "zeroclaw-acp",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
@@ -2453,6 +3427,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:22.220Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_ZEROCLAW_HUMAN",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-3f39c7c4-30c2-4d1e-95c6-f89a644ef796",
+              "agent": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
+              "messages": "1",
+              "provider": "zeroclaw-ws",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2464,24 +3458,28 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:25:14.967Z",
-        "marker": "VOKO_UI_E58A0D2_R1_394591614_workbuddy_n3WNrD",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_394591614_workbuddy_n3WNrD",
+        "question": "7 + 8 = ?",
+        "answerCorrect": false,
+        "result": "provider_failed",
         "providerTurns": [
           {
-            "turn": "e2ee-a17c765e-a328-4b0f-9949-ee187293a94d",
+            "turn": "e2ee-7b3047c0-f247-42b8-85df-680f7709ece5",
             "agent": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
             "messages": "1",
             "provider": "workbuddy-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "WORKBUDDY_DELIVERY_FAILED"
           }
         ]
       },
@@ -2506,6 +3504,26 @@
               "errorCode": "WORKBUDDY_DELIVERY_FAILED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:25:14.967Z",
+          "marker": "VOKO_UI_E58A0D2_R1_394591614_workbuddy_n3WNrD",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-a17c765e-a328-4b0f-9949-ee187293a94d",
+              "agent": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
+              "messages": "1",
+              "provider": "workbuddy-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2519,17 +3537,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:25:18.171Z",
-        "marker": "VOKO_UI_E58A0D2_R1_AUTO_REG_WINDOWS_20260828",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_AUTO_REG_WINDOWS_20260828",
+        "question": "7 + 8 = ?",
         "answerCorrect": false,
         "result": "automatic_delivery_disabled",
         "providerTurns": [
           {
-            "turn": "e2ee-082ceb7b-6c48-4eea-a3f1-852afef59868",
+            "turn": "e2ee-9c0549ac-9f76-430f-ac3e-b201896f7855",
             "agent": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
             "messages": "1",
             "provider": "none",
@@ -2560,6 +3581,27 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:25:18.171Z",
+          "marker": "VOKO_UI_E58A0D2_R1_AUTO_REG_WINDOWS_20260828",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-082ceb7b-6c48-4eea-a3f1-852afef59868",
+              "agent": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
         }
       ]
     },
@@ -2573,17 +3615,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:39:23.958Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CLINE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_CLINE",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-34126b92-98f0-4d39-bc2c-dda4c3357a9c",
+            "turn": "e2ee-dfe34e75-9581-4c4c-a671-ca9ed5187648",
             "agent": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
             "messages": "1",
             "provider": "cline-cli",
@@ -2632,6 +3677,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:39:23.958Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CLINE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-34126b92-98f0-4d39-bc2c-dda4c3357a9c",
+              "agent": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
+              "messages": "1",
+              "provider": "cline-cli",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2645,17 +3710,20 @@
       "issues": [],
       "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:31:25.336Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_OPENHANDS",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_OPENHANDS",
+        "question": "7 + 8 = ?",
         "answerCorrect": false,
         "result": "automatic_delivery_disabled",
         "providerTurns": [
           {
-            "turn": "e2ee-b9a61e4a-7721-4cd0-94d1-7fc6ec200b57",
+            "turn": "e2ee-e509d810-7c46-483c-9248-3f6c6b8d25ef",
             "agent": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
             "messages": "1",
             "provider": "none",
@@ -2686,6 +3754,27 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:31:25.336Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_OPENHANDS",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-b9a61e4a-7721-4cd0-94d1-7fc6ec200b57",
+              "agent": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
         }
       ]
     },
@@ -2699,20 +3788,23 @@
       "issues": [],
       "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:26:45.824Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CURSOR",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_CURSOR",
+        "question": "7 + 8 = ?",
         "answerCorrect": true,
         "result": "reply_visible",
         "providerTurns": [
           {
-            "turn": "e2ee-2bd634bb-b5bc-4a8b-9c2c-967187595892",
+            "turn": "e2ee-c1861313-b029-441f-a3dd-7ac70123ea69",
             "agent": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
             "messages": "1",
-            "provider": "cursor-acp",
+            "provider": "cursor-cli",
             "outcome": "delivered",
             "providerOutcome": "generated"
           }
@@ -2738,6 +3830,26 @@
               "providerOutcome": "generated"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:26:45.824Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_CURSOR",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-2bd634bb-b5bc-4a8b-9c2c-967187595892",
+              "agent": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
+              "messages": "1",
+              "provider": "cursor-acp",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ]
         }
       ]
     },
@@ -2753,17 +3865,20 @@
       ],
       "currentCandidateBrowserRegression": "automatic_delivery_disabled",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:26:48.955Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_QWEN_OFFICE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_QWEN_OFFICE",
+        "question": "7 + 8 = ?",
         "answerCorrect": false,
         "result": "automatic_delivery_disabled",
         "providerTurns": [
           {
-            "turn": "e2ee-d352f0c5-62c7-4ed2-a6e6-a757ebd13d37",
+            "turn": "e2ee-a5c1e4e5-1ab6-4810-89ac-af638e9b4b89",
             "agent": "c06eabd6-570e-41fa-914d-79e08951dbe1",
             "messages": "1",
             "provider": "none",
@@ -2794,6 +3909,27 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:26:48.955Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_QWEN_OFFICE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-d352f0c5-62c7-4ed2-a6e6-a757ebd13d37",
+              "agent": "c06eabd6-570e-41fa-914d-79e08951dbe1",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
         }
       ]
     },
@@ -2805,36 +3941,30 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateBrowserRegression": "provider_failed",
       "currentCandidateEvidence": {
-        "testedCommit": "e58a0d2",
+        "testedCommit": "f5370c3",
         "browser": "macOS Chrome",
-        "verifiedBy": "Actual webpage DOM after new R2 marker",
-        "verifiedAt": "2026-09-05T13:53:31.313Z",
-        "marker": "VOKO_UI_E58A0D2_R2_TEST_WINDOWS_DUMATE",
-        "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
-        "answerCorrect": true,
-        "result": "reply_visible",
+        "verifiedBy": "Actual conversation DOM after the new candidate marker; pending cached views were revisited.",
+        "verificationWindowUTC": {
+          "from": "2026-09-05T14:24:27.133Z",
+          "to": "2026-09-05T14:33:38.441Z"
+        },
+        "marker": "VOKO_UI_F5370C3_R1_TEST_WINDOWS_DUMATE",
+        "question": "7 + 8 = ?",
+        "answerCorrect": false,
+        "result": "provider_failed",
         "providerTurns": [
           {
-            "turn": "e2ee-c3614958-87f3-4a8b-b645-b5e6bcadc09a",
-            "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
-            "messages": "1",
-            "provider": "none",
-            "outcome": "not_delivered",
-            "providerOutcome": "rejected",
-            "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
-          },
-          {
-            "turn": "e2ee-a61f16ad-96a2-4f99-b4fd-92e8551763a1",
+            "turn": "e2ee-a7a428ac-8dbd-4e2d-9601-e407ced71ad6",
             "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
             "messages": "1",
             "provider": "dumate-http",
-            "outcome": "delivered",
-            "providerOutcome": "generated"
+            "outcome": "not_delivered",
+            "providerOutcome": "rejected",
+            "errorCode": "DUMATE_DELIVERY_FAILED"
           }
-        ],
-        "remainingIssue": "Native startup has intermittently exited 3221225477; current loopback and reply succeeded without a binary replacement or timeout change."
+        ]
       },
       "candidateEvidenceHistory": [
         {
@@ -2878,6 +4008,36 @@
               "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
             }
           ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "Actual webpage DOM after new R2 marker",
+          "verifiedAt": "2026-09-05T13:53:31.313Z",
+          "marker": "VOKO_UI_E58A0D2_R2_TEST_WINDOWS_DUMATE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": true,
+          "result": "reply_visible",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c3614958-87f3-4a8b-b645-b5e6bcadc09a",
+              "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            },
+            {
+              "turn": "e2ee-a61f16ad-96a2-4f99-b4fd-92e8551763a1",
+              "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+              "messages": "1",
+              "provider": "dumate-http",
+              "outcome": "delivered",
+              "providerOutcome": "generated"
+            }
+          ],
+          "remainingIssue": "Native startup has intermittently exited 3221225477; current loopback and reply succeeded without a binary replacement or timeout change."
         }
       ]
     }
@@ -2978,37 +4138,440 @@
         "skip": 0,
         "fail": 0
       }
-    }
-  ],
-  "latestDeployment": [
-    {
-      "runtimeState": "ready",
-      "pid": 51666,
-      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
-      "buildMismatch": false,
-      "host": "macos",
-      "imConnected": 17,
-      "total": 17
     },
-    {
-      "runtimeState": "ready",
-      "pid": 243244,
-      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
-      "buildMismatch": false,
-      "host": "linux",
-      "imConnected": 12,
-      "total": 12
-    },
-    {
-      "runtimeState": "ready",
-      "pid": 11836,
-      "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
-      "buildMismatch": false,
-      "host": "windows",
-      "imConnected": 21,
-      "total": 21
-    }
+    [
+      {
+        "runtimeState": "ready",
+        "pid": 51666,
+        "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+        "buildMismatch": false,
+        "host": "macos",
+        "imConnected": 17,
+        "total": 17
+      },
+      {
+        "runtimeState": "ready",
+        "pid": 243244,
+        "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+        "buildMismatch": false,
+        "host": "linux",
+        "imConnected": 12,
+        "total": 12
+      },
+      {
+        "runtimeState": "ready",
+        "pid": 11836,
+        "runtimeBuildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
+        "buildMismatch": false,
+        "host": "windows",
+        "imConnected": 21,
+        "total": 21
+      }
+    ]
   ],
+  "latestDeployment": {
+    "candidate": "f5370c3",
+    "sha256": "88fb759e443a2fe4172ff20d48af61e14b31622ea40f28d79c91ac92ffa55636",
+    "buildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+    "hosts": {
+      "macos": {
+        "runtimeState": "ready",
+        "version": "0.5.2",
+        "pid": 77689,
+        "port": 3100,
+        "buildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "runtimeBuildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "buildMismatch": false,
+        "dbPath": "/Users/laoyu/Library/Application Support/voko/voko.db",
+        "schemaVersion": 9,
+        "instanceId": "c3f3d64d-8dfb-4d78-a318-14ec9403f716",
+        "startedAt": 1788617728084,
+        "agents": [
+          {
+            "agentId": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
+            "agentName": "TEST-MAC-CODEX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "302266f1-471c-4ec9-882d-38e004ae7350",
+            "agentName": "TEST-MAC-ZEROCLAW",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp_ws"
+          },
+          {
+            "agentId": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
+            "agentName": "TEST-MAC-HERMES",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "http"
+          },
+          {
+            "agentId": "bce42fe5-53e4-4ab1-887c-270230b116ae",
+            "agentName": "TEST-MAC-CLAUDE-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "b204bc80-8428-43af-8f25-e5f0971dabf9",
+            "agentName": "TEST-MAC-GITHUB-COPILOT",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
+            "agentName": "TEST-MAC-QWEN-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "b07f8c68-dbab-4def-bdc0-381cac55f110",
+            "agentName": "TEST-MAC-GOOSE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
+            "agentName": "TEST-MAC-OPENCODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
+            "agentName": "TEST-MAC-KIRO",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
+            "agentName": "TEST-MAC-AIDER",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "bee1a79c-320e-4612-aaae-61fde6312b7c",
+            "agentName": "TEST-MAC-GROK",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
+            "agentName": "TEST-MAC-REASONIX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
+            "agentName": "陈老师",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
+            "agentName": "tjyu的qwen-office-o9hPdJ",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "c46ee329-1409-4672-af13-4755d7f470cc",
+            "agentName": "tjyu的qwen-office-pBp2ts",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "8baabfb1-aed0-4d60-98ca-d86da042e501",
+            "agentName": "AUTO-REG-MAC-20260828",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
+            "agentName": "TEST-MAC-DUMATE",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          }
+        ]
+      },
+      "linux": {
+        "runtimeState": "ready",
+        "version": "0.5.2",
+        "pid": 247940,
+        "port": 3100,
+        "buildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "runtimeBuildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "buildMismatch": false,
+        "dbPath": "/home/tjyu/.config/voko/voko.db",
+        "schemaVersion": 9,
+        "instanceId": "bad85b4b-f1ab-4d33-94be-53965ae6b246",
+        "startedAt": 1788617746468,
+        "agents": [
+          {
+            "agentId": "7542cd12-0458-4124-890f-4d499c835cb3",
+            "agentName": "TEST-LINUX-HERMES",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "http"
+          },
+          {
+            "agentId": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
+            "agentName": "TEST-LINUX-CLAUDE-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
+            "agentName": "TEST-LINUX-CODEX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
+            "agentName": "TEST-LINUX-GITHUB-COPILOT",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
+            "agentName": "TEST-LINUX-QWEN-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
+            "agentName": "TEST-LINUX-GOOSE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
+            "agentName": "TEST-LINUX-OPENCODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
+            "agentName": "TEST-LINUX-AIDER",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "b7522169-e48f-4f10-87b1-27941fd48ae4",
+            "agentName": "TEST-LINUX-GROK",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
+            "agentName": "TEST-LINUX-REASONIX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
+            "agentName": "TEST-LINUX-HERMES-HUMAN",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "http"
+          },
+          {
+            "agentId": "0c20465f-7c09-4990-b896-176e794f089e",
+            "agentName": "TEST-LINUX-ZEROCLAW",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp_ws"
+          }
+        ]
+      },
+      "windows": {
+        "runtimeState": "ready",
+        "version": "0.5.2",
+        "pid": 15072,
+        "port": 3100,
+        "buildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "runtimeBuildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+        "buildMismatch": false,
+        "dbPath": "C:\\Users\\laoyu\\AppData\\Roaming\\voko\\voko.db",
+        "schemaVersion": 9,
+        "instanceId": "5a3d0bd2-32e8-4c3e-89ee-121a8b33f7f6",
+        "startedAt": 1788617835235,
+        "agents": [
+          {
+            "agentId": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
+            "agentName": "TEST-WINDOWS-HERMES",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "http"
+          },
+          {
+            "agentId": "467ee38f-98ca-4270-9c18-97edf2e30435",
+            "agentName": "TEST-WINDOWS-CLAUDE-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "3e8e403d-921d-4e51-85d1-0a35ce359812",
+            "agentName": "TEST-WINDOWS-CODEX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "c50bb49f-1f72-40c9-81e7-14374436aeec",
+            "agentName": "TEST-WINDOWS-GITHUB-COPILOT",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+            "agentName": "TEST-WINDOWS-CODEBUDDY",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
+            "agentName": "TEST-WINDOWS-QWEN-CODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
+            "agentName": "TEST-WINDOWS-GOOSE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "befdeb16-56d7-4b90-84c7-eb0526e42956",
+            "agentName": "TEST-WINDOWS-OPENCODE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "6ae1db46-e988-440a-b3f7-339ff8941d14",
+            "agentName": "TEST-WINDOWS-AIDER",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
+            "agentName": "TEST-WINDOWS-PI",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
+            "agentName": "TEST-WINDOWS-GROK",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
+            "agentName": "TEST-WINDOWS-REASONIX",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "cli"
+          },
+          {
+            "agentId": "2587ee04-633f-4ce9-b259-e29732a90d6f",
+            "agentName": "TEST-WINDOWS-ZEROCLAW",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp_ws"
+          },
+          {
+            "agentId": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
+            "agentName": "TEST-WINDOWS-ZEROCLAW-HUMAN",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp_ws"
+          },
+          {
+            "agentId": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
+            "agentName": "394591614的workbuddy-n3WNrD",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
+            "agentName": "AUTO-REG-WINDOWS-20260828",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
+            "agentName": "TEST-WINDOWS-CLINE",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
+            "agentName": "TEST-WINDOWS-OPENHANDS",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
+            "agentName": "TEST-WINDOWS-CURSOR",
+            "imConnected": true,
+            "automaticDeliveryReady": true,
+            "activeAutomaticMode": "acp"
+          },
+          {
+            "agentId": "c06eabd6-570e-41fa-914d-79e08951dbe1",
+            "agentName": "TEST-WINDOWS-QWEN-OFFICE",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          },
+          {
+            "agentId": "1259d36c-946b-4bfb-b6ef-190987101732",
+            "agentName": "TEST-WINDOWS-DUMATE",
+            "imConnected": true,
+            "automaticDeliveryReady": false,
+            "activeAutomaticMode": null
+          }
+        ]
+      }
+    },
+    "artifactDirectory": "artifacts/production-remediation-openhands-20260905"
+  },
   "inventoryRecheck": {
     "time": "2026-09-05T07:53:15.365351+00:00",
     "added": 0,
@@ -3030,75 +4593,75 @@
   },
   "resumedAt": "2026-09-05T12:11:25.506206+00:00",
   "logReview": {
-    "collectedAt": "2026-09-05T13:39:00Z",
-    "window": "Since each current runtime start, through approximately 13:38 UTC; issue timeline collected again around 13:41 UTC.",
-    "report": "log-review-1340-utc.md",
+    "report": "README.md#f5370c3-deployment",
+    "candidate": "f5370c3",
     "hosts": {
       "macos": {
-        "lineCount": 188,
-        "counts": {
+        "lineCount": 157,
+        "lastTimestampHostLocal": "2026-09-05 07:35:35",
+        "issues": {
           "A2A Bridge:": 1,
           "unclassified:": 1,
           "ZEROCLAW ACP WS:302266f1-471c-4ec9-882d-38e004ae7350:": 1,
           "GITHUB COPILOT ACP:b204bc80-8428-43af-8f25-e5f0971dabf9:": 1,
           "OPENCODE ACP:94df593d-04bd-4b17-a0f7-35868b0f3dc4:": 1,
-          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 6
-        },
-        "lastTimestampHostLocal": "2026-09-05 06:38:44"
+          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 2
+        }
       },
       "linux": {
-        "lineCount": 154,
-        "counts": {
+        "lineCount": 129,
+        "lastTimestampHostLocal": "2026-09-05 22:35:00",
+        "issues": {
           "unclassified:": 1,
-          "A2A Bridge:": 4,
-          "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 1,
-          "AgentEmailApi:": 1,
           "GITHUB COPILOT ACP:a26a8919-87a8-4219-a0b3-4fd0cbc9beab:": 1,
           "OPENCODE ACP:1617642d-e70c-4fc7-b845-96e74f1d1ba4:": 1,
           "ZEROCLAW ACP WS:0c20465f-7c09-4990-b896-176e794f089e:": 1
-        },
-        "lastTimestampHostLocal": "2026-09-05 21:38:15"
+        }
       },
       "windows": {
-        "lineCount": 242,
-        "counts": {
-          "unclassified:": 1,
+        "lineCount": 244,
+        "lastTimestampHostLocal": "2026-09-05 07:34:55",
+        "issues": {
+          "unclassified:": 2,
           "QwenOfficeReadiness:": 2,
-          "A2A Bridge:": 2,
           "HermesApiClient:": 1,
           "CODEBUDDY ACP:": 1,
-          "Dispatcher:": 3,
-          "GITHUB COPILOT ACP:c50bb49f-1f72-40c9-81e7-14374436aeec:": 1,
-          "CODEBUDDY ACP:9792d8e8-4eec-44b8-a7a6-47aa48e95003:": 2,
-          "OPENCODE ACP:": 1,
-          "CLINE ACP:": 1,
+          "Dispatcher:": 8,
+          "CODEBUDDY ACP:9792d8e8-4eec-44b8-a7a6-47aa48e95003:": 1,
           "E2EE:E2EE_V2_PROVIDER_DELIVERY_FAILED": 2,
           "OPENCODE ACP:befdeb16-56d7-4b90-84c7-eb0526e42956:": 1,
           "CLINE ACP:7479bc1e-81ab-47cf-97ac-5ae8b663cfd3:": 1,
-          "E2EE:PEER_NOT_FOUND": 2,
-          "ZEROCLAW ACP WS:2587ee04-633f-4ce9-b259-e29732a90d6f:": 1,
-          "ZEROCLAW ACP WS:8d98df63-487f-49b4-bf35-5704d1b32dbc:": 1,
-          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 8,
-          "CURSOR ACP:3d8f3890-8bcc-48fb-88b6-9d83f25e3977:": 1,
-          "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 1
-        },
-        "lastTimestampHostLocal": "2026-09-05 06:38:39"
+          "CLINE ACP:": 1,
+          "GITHUB COPILOT ACP:": 1,
+          "GITHUB COPILOT ACP:c50bb49f-1f72-40c9-81e7-14374436aeec:": 1,
+          "ZEROCLAW ACP WS:": 2,
+          "A2A Bridge:": 2,
+          "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 9,
+          "AccessSync:": 1,
+          "ZEROCLAW ACP:2587ee04-633f-4ce9-b259-e29732a90d6f:": 1,
+          "ZEROCLAW ACP:8d98df63-487f-49b4-bf35-5704d1b32dbc:": 1,
+          "E2EE:AUTOMATIC_DELIVERY_DISABLED": 4,
+          "E2EE:DUMATE_DELIVERY_FAILED": 2,
+          "E2EE:WORKBUDDY_DELIVERY_FAILED": 1,
+          "CURSOR ACP:3d8f3890-8bcc-48fb-88b6-9d83f25e3977:": 3,
+          "CURSOR ACP:": 1
+        }
       }
     },
-    "newPackageRegressionConfirmed": false,
-    "newFinding": "Windows DuMate native serve and --version exit 3221225477; --version reproduced outside VOKO.",
-    "currentCandidateBrowserRepliesVerified": 45,
-    "remainingBrowserAgents": 5
+    "currentCandidateBrowserRepliesVerified": 43,
+    "remainingBrowserAgents": 7,
+    "newPackageRegressionConfirmed": false
   },
   "currentMatrix": {
-    "candidate": "e58a0d2",
+    "candidate": "f5370c3",
     "attempted": 50,
-    "correctVisibleReplies": 46,
-    "notPassed": 4,
+    "correctVisibleReplies": 43,
+    "notPassed": 7,
     "pendingFirstAttempt": 0,
-    "retryMessages": 4,
+    "pendingVerification": 0,
+    "retryMessages": 0,
     "allComplete": false,
-    "checkedAt": "2026-09-05T13:53:31.313Z",
+    "checkedAt": "2026-09-05T14:33:38.441Z",
     "byHost": {
       "macos": {
         "correctVisibleReplies": 16,
@@ -3109,11 +4672,11 @@
         "total": 12
       },
       "windows": {
-        "correctVisibleReplies": 18,
+        "correctVisibleReplies": 15,
         "total": 21
       }
     },
-    "scope": "All 50 original registered agents; answer correctness and page visibility only, not long-term reliability or strict formatting compliance."
+    "scope": "All original 50 agents; correct visible replies do not prove strict formatting compliance or sustained reliability."
   },
   "browserMatrixHistory": [
     {
@@ -3164,28 +4727,64 @@
         }
       },
       "scope": "All 50 original registered agents; answer correctness and page visibility only, not long-term reliability or strict formatting compliance."
+    },
+    {
+      "candidate": "e58a0d2",
+      "attempted": 50,
+      "correctVisibleReplies": 46,
+      "notPassed": 4,
+      "pendingFirstAttempt": 0,
+      "retryMessages": 4,
+      "allComplete": false,
+      "checkedAt": "2026-09-05T13:53:31.313Z",
+      "byHost": {
+        "macos": {
+          "correctVisibleReplies": 16,
+          "total": 17
+        },
+        "linux": {
+          "correctVisibleReplies": 12,
+          "total": 12
+        },
+        "windows": {
+          "correctVisibleReplies": 18,
+          "total": 21
+        }
+      },
+      "scope": "All 50 original registered agents; answer correctness and page visibility only, not long-term reliability or strict formatting compliance."
     }
   ],
   "latestCandidate": {
-    "commit": "e58a0d2",
-    "sha256": "fd3d7b2049ef955b31951abce0e726fe3f507775fc9efd155c6c7f51d74745b6",
-    "buildDigest": "14b0f0340628718fc02d1da2ded402a229217e2e27bb753191a10e5278d4e732",
-    "packageVersion": "0.5.2",
-    "registryPublished": false,
+    "commit": "f5370c3",
+    "scope": "Fail closed when the OpenHands CLI safety hook is missing or cannot disable SDK tools.",
+    "deployment": "installed_three_hosts",
     "tests": {
+      "focused": {
+        "passed": 63,
+        "failed": 0
+      },
+      "windowsStagedNative": {
+        "passed": 8,
+        "failed": 0
+      },
       "gate": {
-        "passed": 1557,
+        "passed": 1565,
         "skipped": 2,
         "failed": 0
-      },
-      "windowsNative": {
-        "passed": 7,
-        "failed": 0
-      },
-      "tarballSecretScan": {
-        "textFiles": 320,
-        "findings": 0
       }
+    },
+    "sha256": "88fb759e443a2fe4172ff20d48af61e14b31622ea40f28d79c91ac92ffa55636",
+    "tarballSecretScan": {
+      "textFiles": 320,
+      "findings": 0
+    },
+    "buildDigest": "61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89",
+    "packageVersion": "0.5.2",
+    "registryPublished": false,
+    "installedNativeTests": {
+      "macos": 8,
+      "linux": 8,
+      "windows": 8
     }
   },
   "logReviewHistory": [
@@ -3216,6 +4815,67 @@
       "newPackageRegressionConfirmed": false,
       "currentCandidateBrowserRepliesVerified": 3,
       "remainingBrowserAgents": 47
+    },
+    {
+      "collectedAt": "2026-09-05T13:39:00Z",
+      "window": "Since each current runtime start, through approximately 13:38 UTC; issue timeline collected again around 13:41 UTC.",
+      "report": "log-review-1340-utc.md",
+      "hosts": {
+        "macos": {
+          "lineCount": 188,
+          "counts": {
+            "A2A Bridge:": 1,
+            "unclassified:": 1,
+            "ZEROCLAW ACP WS:302266f1-471c-4ec9-882d-38e004ae7350:": 1,
+            "GITHUB COPILOT ACP:b204bc80-8428-43af-8f25-e5f0971dabf9:": 1,
+            "OPENCODE ACP:94df593d-04bd-4b17-a0f7-35868b0f3dc4:": 1,
+            "E2EE:AUTOMATIC_DELIVERY_DISABLED": 6
+          },
+          "lastTimestampHostLocal": "2026-09-05 06:38:44"
+        },
+        "linux": {
+          "lineCount": 154,
+          "counts": {
+            "unclassified:": 1,
+            "A2A Bridge:": 4,
+            "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 1,
+            "AgentEmailApi:": 1,
+            "GITHUB COPILOT ACP:a26a8919-87a8-4219-a0b3-4fd0cbc9beab:": 1,
+            "OPENCODE ACP:1617642d-e70c-4fc7-b845-96e74f1d1ba4:": 1,
+            "ZEROCLAW ACP WS:0c20465f-7c09-4990-b896-176e794f089e:": 1
+          },
+          "lastTimestampHostLocal": "2026-09-05 21:38:15"
+        },
+        "windows": {
+          "lineCount": 242,
+          "counts": {
+            "unclassified:": 1,
+            "QwenOfficeReadiness:": 2,
+            "A2A Bridge:": 2,
+            "HermesApiClient:": 1,
+            "CODEBUDDY ACP:": 1,
+            "Dispatcher:": 3,
+            "GITHUB COPILOT ACP:c50bb49f-1f72-40c9-81e7-14374436aeec:": 1,
+            "CODEBUDDY ACP:9792d8e8-4eec-44b8-a7a6-47aa48e95003:": 2,
+            "OPENCODE ACP:": 1,
+            "CLINE ACP:": 1,
+            "E2EE:E2EE_V2_PROVIDER_DELIVERY_FAILED": 2,
+            "OPENCODE ACP:befdeb16-56d7-4b90-84c7-eb0526e42956:": 1,
+            "CLINE ACP:7479bc1e-81ab-47cf-97ac-5ae8b663cfd3:": 1,
+            "E2EE:PEER_NOT_FOUND": 2,
+            "ZEROCLAW ACP WS:2587ee04-633f-4ce9-b259-e29732a90d6f:": 1,
+            "ZEROCLAW ACP WS:8d98df63-487f-49b4-bf35-5704d1b32dbc:": 1,
+            "E2EE:AUTOMATIC_DELIVERY_DISABLED": 8,
+            "CURSOR ACP:3d8f3890-8bcc-48fb-88b6-9d83f25e3977:": 1,
+            "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 1
+          },
+          "lastTimestampHostLocal": "2026-09-05 06:38:39"
+        }
+      },
+      "newPackageRegressionConfirmed": false,
+      "newFinding": "Windows DuMate native serve and --version exit 3221225477; --version reproduced outside VOKO.",
+      "currentCandidateBrowserRepliesVerified": 45,
+      "remainingBrowserAgents": 5
     }
   ],
   "configurationRemediation": [
@@ -3266,30 +4926,5 @@
       "verification": "Python 3.12.14 and OpenHands CLI 1.16.0 exit 0; diagnostic ACP initialize completed in 39655ms.",
       "scope": "No package upgrade, no Catalog activation, no business session/prompt during ACP initialize-only diagnostic."
     }
-  ],
-  "nextCandidate": {
-    "commit": "f5370c3",
-    "scope": "Fail closed when the OpenHands CLI safety hook is missing or cannot disable SDK tools.",
-    "deployment": "pending",
-    "tests": {
-      "focused": {
-        "passed": 63,
-        "failed": 0
-      },
-      "windowsStagedNative": {
-        "passed": 8,
-        "failed": 0
-      },
-      "gate": {
-        "passed": 1565,
-        "skipped": 2,
-        "failed": 0
-      }
-    },
-    "sha256": "88fb759e443a2fe4172ff20d48af61e14b31622ea40f28d79c91ac92ffa55636",
-    "tarballSecretScan": {
-      "textFiles": 320,
-      "findings": 0
-    }
-  }
+  ]
 }

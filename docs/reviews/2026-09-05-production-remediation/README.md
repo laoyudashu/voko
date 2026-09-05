@@ -137,3 +137,17 @@ OpenHands 启动失败的根因已定位并修复：其 pyvenv.cfg 的 home 指�
 新增 8 项测试实际启动 Python，验证失败前不能执行业务 main、私密异常文本不泄露、正常工具结构保留、原对象未变和 ACP 启动不载入 CLI-only 钩子。63 项相关测试通过；Windows 原生 8 项通过（使用隔离暂存的新模块及实际 Python 3.12.14，未改生产安装包）。完整 release:gate:code 通过：1565 项通过、2 项既有跳过、0 失败；类型检查、构建、i18n、覆盖率基线及源码包扫描通过。生产仍是 e58a0d2，OpenHands Catalog 仍为 Pull-only。本修复不声称已启用 OpenHands Push 或提供完整原生工具执行隔离。
 
 证据目录：artifacts/production-remediation-acp-20260905/，包括 native-controls、cwd-controls、DuMate re-verification、Qwen recheck、OpenHands Python repair/version/initialize 和 Windows safety-staged-tests。剩余 4 个未取得正确网页回复的 Agent 仍保留：两个 AUTO-REG、Windows OpenHands、Windows千问办公；间歇性故障和其他问题继续追踪。
+
+<a id="f5370c3-deployment"></a>
+
+## f5370c3 部署与全量网页回归
+
+安全修复提交 f5370c3 已打包为同一份本地 @voko/lite 0.5.2 候选并备份、部署到三端，没有发布 npm registry。tarball SHA-256：88fb759e443a2fe4172ff20d48af61e14b31622ea40f28d79c91ac92ffa55636；三端实际构建摘要：61a922d2641a6a2e7d915ffb3a4d16df7dfd1e0b5507b625509fb363a20ffa89。Mac PID 77689、Linux PID 247940、Windows PID 15072 均 READY，IM 分别 17/17、12/12、21/21。Windows stop/start 交接时一次查询为 stopped，后续同一次计划任务启动成功，未重复重启。实际包扫描 320 个文本文件无发现，安装包上的 8 项新增安全测试在三端分别全部通过。
+
+14:18–14:27 UTC，通过 macOS Chrome 向全部 50 个 IM 身份发送新候选 R1 标记消息；14:24–14:33 UTC 逐项核对，首次显示处理中的会话再次进入后复核。当前候选 43/50 显示正确答案：Mac 16/17、Linux 12/12、Windows 15/21。每个正确回复均有该候选运行窗口内相应 generated/delivered 记录；日志没有代替网页检查。本候选没有发送 R2 重试，旧候选的 46/50 保存在历史中，不能沿用为新包成功数。
+
+本轮 7 个未通过：两个 AUTO-REG 自动回复未启用；Windows OpenHands 当前仍只有 Pull；Windows 千问办公仍未通过真实回环；Windows CodeBuddy、WorkBuddy、DuMate 返回当前无法处理。CodeBuddy 仍为 initialize 15000ms 超时且 not_delivered，本轮 CodeBuddy、OpenCode、Cline 的首次消息刻意分开发送，故“仅因为这三个 ACP 同时启动”不能充分解释它。WorkBuddy 日志明确 HTTP service did not become ready；DuMate 在重新验证以及实际消息中再次退出 3221225477，之前恢复不能当作崩溃已根治。
+
+另保留通道级失败：Cline ACP 本轮是 Authentication required，随后 cline-cli 回复成功；Copilot ACP 连接超时后 github-copilot-cli 成功；ZeroClaw WS 失败后既有 ACP 路径成功；Cursor 出现 ACP connection closed 后最终有正确回复。网页正确不表示每一条底层通道均已修复。Windows Aider 的答案后仍有额外 session. 文本，按答案正确计数但格式问题未解决。Mac 的 DuMate 和千问办公 o9hPdJ 在此次重启后重新完成回环验证并成功回复，没有把上一进程的验证结果当作持久凭证。
+
+证据：artifacts/production-remediation-openhands-20260905/ 保存候选包、备份清单、三端实际摘要、安装包安全测试、回环结果、完整日志摘要及脱敏失败详情。execution.json 已保存全部 50 项新候选结果；目标保持 active，整体优化尚未完成。
