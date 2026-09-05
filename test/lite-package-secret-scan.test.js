@@ -280,3 +280,15 @@ for (const outcome of ['success', 'budget failure']) {
     assert.equal(descriptors.size, 0);
   });
 }
+
+test('non-regular archive FIFO is rejected without waiting for a writer', t => {
+  if (process.platform === 'win32' || !fs.constants.O_NONBLOCK) return t.skip('POSIX nonblocking FIFO fixture');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-archive-fifo-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fifo = path.join(root, 'archive.tgz');
+  execFileSync('mkfifo', [fifo]);
+  const result = spawnSync(process.execPath, [scanner, '--tarball', fifo], { encoding: 'utf8', timeout: 1500 });
+  assert.equal(result.error, undefined, 'scanner must reject the FIFO without hanging');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /file type/);
+});

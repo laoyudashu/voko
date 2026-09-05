@@ -78,7 +78,8 @@ function archiveText(bytes) {
 
 // Inspect and read the same opened object; path replacement cannot redirect the read.
 function readBoundedRegularFile(file, maxBytes) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)
+    | (fs.constants.O_NONBLOCK || 0));
   try {
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) throw new Error('Unsafe release archive file type');
