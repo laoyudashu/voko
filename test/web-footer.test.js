@@ -18,7 +18,8 @@ test('shared web footer renders runtime status and global actions', () => {
     'common.footer.copyright': '© VOKO · All rights reserved',
     'web.bug_report.link': '错误上报',
   };
-  const html = renderSystemFooter(db, (key) => labels[key] || key, 'zh');
+  const html = renderSystemFooter(db, (key, vars) => String(labels[key] || key)
+    .replace('{version}', vars?.version || ''), 'zh');
 
   assert.match(html, /data-voko-system-footer/);
   assert.match(html, /class="info-bar" data-voko-system-footer style="display:block;width:100%/);
@@ -43,7 +44,7 @@ test('shared web footer renders runtime status and global actions', () => {
   assert.match(html, /data-voko-language-switcher/);
 });
 
-test('shared web footer shows a compact manual update hint without the latest version', () => {
+test('shared web footer shows the latest version in its manual update hint', () => {
   const runtime = { port: 3100, pid: 48264, agents: [{ imConnected: true }] };
   const update = { updateAvailable: true, latestVersion: nextVersion };
   const db = { prepare: (sql) => ({ get: () => sql.includes("type='runtime'") ? { data: JSON.stringify(runtime) } : { data: JSON.stringify(update) } }) };
@@ -53,7 +54,7 @@ test('shared web footer shows a compact manual update hint without the latest ve
     'common.footer.status': '运行状态',
     'common.footer.status_ok': '正常',
     'common.footer.copyright': '© VOKO · All rights reserved',
-    'common.footer.update_available': '有更新',
+    'common.footer.update_available': '有更新：V{version}',
     'common.footer.update_title': '更新 VOKO',
     'common.footer.update_instruction': '请在终端运行以下命令。升级完成后，重新启动 VOKO 即可使用新版本。',
     'common.footer.copy_command': '复制',
@@ -61,15 +62,16 @@ test('shared web footer shows a compact manual update hint without the latest ve
     'common.btn.close': '关闭',
     'web.bug_report.link': '错误上报',
   };
-  const html = renderSystemFooter(db, (key) => labels[key] || key, 'zh');
+  const html = renderSystemFooter(db, (key, vars) => String(labels[key] || key)
+    .replace('{version}', vars?.version || ''), 'zh');
 
   assert.match(html, /data-voko-update-hint/);
-  assert.match(html, />有更新<\/button>/);
+  assert.match(html, new RegExp(`>有更新：V${nextVersion.replace(/\\./g, '\\\\.')}<\\/button>`));
   assert.match(html, /id="voko-update-dialog"/);
   assert.match(html, /id="voko-update-command"[\s\S]*voko update/);
   assert.match(html, /class="voko-copy-button"[\s\S]*data-voko-copy-value="voko update"/);
   assert.match(html, /升级完成后/);
-  assert.ok(!html.includes(nextVersion));
+  assert.ok(html.includes(nextVersion));
   assert.match(html, brandLink);
 });
 

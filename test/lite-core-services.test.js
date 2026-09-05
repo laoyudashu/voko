@@ -15,7 +15,7 @@ const { searchCapabilitiesByUserToken } = require('../build/core/search-capabili
 const { registerCapabilitiesForAgent } = require('../build/core/register-capabilities');
 const { createAgentRegistration } = require('../build/core/agent-registration');
 const { createScheduler, createWatchdog } = require('../build/core/scheduler');
-const autoUpdater = require('../build/core/auto-updater');
+const { compareVersions } = require('../build/core/version');
 const { syncOfflineMessages } = require('../build/core/offline-sync');
 const { createDeliver, createSecureDeliverProxy, createSendMessage } = require('../build/core/send-message');
 const { processPendingPaymentOrder, startPaymentPolling } = require('../build/core/payment');
@@ -1151,15 +1151,10 @@ test('Lite watchdog emits a timeout once and removes the expired session', async
   assert.equal(watchdog.getStatus().sessions.length, 0);
 });
 
-test('Lite auto-updater compares versions and verifies sha512 integrity deterministically', () => {
-  assert.equal(autoUpdater.compareVersions('0.3.7', '0.3.6'), 1);
-  assert.equal(autoUpdater.compareVersions('0.3.7', '0.3.7.0'), 0);
-  assert.equal(autoUpdater.compareVersions('0.3.7', '0.4.0'), -1);
-  const payload = Buffer.from('voko-lite-tarball');
-  const digest = require('node:crypto').createHash('sha512').update(payload).digest('base64');
-  assert.equal(autoUpdater.verifyIntegrity(payload, `sha512-${digest}`), true);
-  assert.equal(autoUpdater.verifyIntegrity(payload, 'sha512-invalid'), false);
-  assert.equal(autoUpdater.verifyIntegrity(payload, ''), false);
+test('Lite version comparison remains deterministic', () => {
+  assert.equal(compareVersions('0.3.7', '0.3.6'), 1);
+  assert.equal(compareVersions('0.3.7', '0.3.7.0'), 0);
+  assert.equal(compareVersions('0.3.7', '0.4.0'), -1);
 });
 
 test('Lite offline sync decodes, persists and forwards a pulled message', async (t) => {

@@ -120,7 +120,7 @@ const {
 // ── Lite 模块 ──
 const { createContext } = require('./context');
 const cli = require('./cli');
-const { compareVersions } = require('./core/auto-updater');
+const { compareVersions } = require('./core/version');
 
 // ── MCP 模块 ──
 const { createMcpServer, getToolList } = require('./mcp/server');

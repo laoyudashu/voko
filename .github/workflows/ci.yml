@@ -106,6 +106,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # npm 10 still calls the retiring quick-audit endpoint, which can reject a
+      # valid lockfile as an "Invalid package tree". Pin the audited npm client.
+      - run: npm install --global npm@11.19.0
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run sbom > sbom.cdx.json

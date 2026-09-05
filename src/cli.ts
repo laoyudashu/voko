@@ -13,7 +13,7 @@ const { createMcpServer, getToolList } = require('./mcp/server');
 const { processPendingPaymentOrder } = require('./core/payment');
 const ENDPOINTS = require('./endpoints.json');
 const pkg = require('../package.json');
-const { compareVersions } = require('./core/auto-updater');
+const { compareVersions } = require('./core/version');
 const { t } = require('./core/i18n');
 const { runWithProviderCaller, detectProviderCaller } = require('./core/registration-caller-context');
 const { detectCurrentAgentType } = require('./core/registration-orchestrator');
@@ -22,7 +22,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 /**
- * 检查 OSS 最新版本（统一从 OSS manifest 读取）
+ * 从 npm 官方 registry 检查最新版本。
  */
 async function checkVersion(options: { notify?: boolean } = {}) {
   try {
