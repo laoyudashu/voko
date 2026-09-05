@@ -17,7 +17,7 @@ async function request(body, handlers = {}) {
   return { status, response, calls };
 }
 
-for (const id of [0, '', 1, 'request']) {
+for (const id of [0, '', 1, 'request', Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER]) {
   test(`JSON-RPC preserves valid request id ${JSON.stringify(id)}`, async () => {
     for (const method of ['initialize', 'tools/list', 'tools/call']) {
       const result = await request({ jsonrpc: '2.0', method, id, params: {} });
@@ -40,7 +40,7 @@ test('missing id is a notification even for initialize and never invokes tools',
   }
 });
 
-for (const id of [null, 0.5, { value: 1 }, [], true]) {
+for (const id of [null, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.MIN_SAFE_INTEGER - 1, 1e100, { value: 1 }, [], true]) {
   test(`invalid MCP request id ${JSON.stringify(id)} is rejected before execution`, async () => {
     for (const method of ['initialize', 'tools/list', 'tools/call']) {
       const result = await request({ jsonrpc: '2.0', method, id });
