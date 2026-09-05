@@ -89,3 +89,29 @@ for (const endpoint of ['/ws', '/voko/events/ws']) {
     assert.equal((await client.closed)[0], 4001);
   });
 }
+
+test('intervention page reconnects after transport loss and stops after authorization failure', async t => {
+  const express = require('express');
+  const vm = require('node:vm');
+  const { createWebRouter } = require('../build/web');
+  const db = initDatabase(':memory:', { silent: true });
+  const app = express(); app.use(createWebRouter({}, db));
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); db.close(); });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/interventions`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1]).find(value => value.includes('owner-intervention:email-reply') && value.includes('new WebSocket'));
+  assert.ok(script);
+  const sockets = [], timers = [];
+  vm.runInNewContext(script, {
+    WebSocket: class { constructor() { sockets.push(this); } },
+    location: { host: '127.0.0.1', reload() {} },
+    setTimeout: callback => timers.push(callback),
+  });
+  assert.equal(sockets.length, 1);
+  sockets[0].onclose({ code: 1006 }); assert.equal(timers.length, 1);
+  timers.shift()(); assert.equal(sockets.length, 2);
+  sockets[1].onclose({ code: 4001 }); assert.equal(timers.length, 0);
+});

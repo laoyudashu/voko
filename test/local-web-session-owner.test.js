@@ -77,3 +77,13 @@ test('real Web cookie routes reject the other owner after switch, with no instan
   assert.equal((await mutate(b)).status, 200);
   assert.equal(calls, 1);
 });
+
+test('explicit selected-owner mismatch cannot authorize a fallback token owner', t => {
+  const db = initDatabase(':memory:', { silent: true }); t.after(() => db.close());
+  saveUserAccessToken(db, 'a@example.test', 'synthetic-a');
+  const sessions = createLocalWebSessionStore(db), a = sessions.create('a@example.test');
+  db.prepare("UPDATE config SET data=? WHERE type='current_user_email'").run(JSON.stringify('b@example.test'));
+  assert.equal(sessions.resolveRequest(request(a)), null);
+  db.prepare("UPDATE config SET data=? WHERE type='current_user_email'").run('{malformed');
+  assert.equal(sessions.resolveRequest(request(a)), null);
+});

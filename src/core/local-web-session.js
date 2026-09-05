@@ -58,7 +58,14 @@ function createLocalWebSessionStore(db, options = {}) {
     // A staged login may create the next owner's cookie before activation.
     // Reject inactive identities without deleting their staged sessions.
     let currentOwner = '';
-    try { currentOwner = String(require('./database').getCurrentUserEmail(db) || '').trim().toLowerCase(); } catch (_) {}
+    try {
+      currentOwner = String(require('./database').getCurrentUserEmail(db) || '').trim().toLowerCase();
+      const selected = db.prepare("SELECT data FROM config WHERE type='current_user_email'").get();
+      if (selected?.data) {
+        const email = JSON.parse(selected.data);
+        if (typeof email !== 'string' || email.trim().toLowerCase() !== currentOwner) return null;
+      }
+    } catch (_) { return null; }
     if (!currentOwner || row.owner_email !== currentOwner) return null;
     db.prepare('UPDATE local_web_sessions SET last_used_at=? WHERE token_hash=?').run(timestamp, digest(token));
     return { ownerEmail: row.owner_email, csrfHash: row.csrf_hash, tokenHash: digest(token), createdAt: Number(row.created_at) };

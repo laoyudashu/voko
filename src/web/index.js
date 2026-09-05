@@ -2815,7 +2815,7 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
         +pagination
         +'<a href="/">← '+L('common.btn.home')+'</a>';
       res.send(renderPage(req,T('web.interventions.title'),body,{nav:'<a href="/">'+L('common.nav.home')+'</a> › '+L('web.interventions.breadcrumb'),
-footer:'<script>(function(){try{var ws=new WebSocket("ws://"+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event==="owner-intervention:email-reply"||d.event==="owner-intervention:new")setTimeout(function(){location.reload()},800)}catch(_){}};ws.onclose=function(event){if(event.code!==4001)setTimeout(arguments.callee,3000)}}catch(_){}})();</script>'}))
+footer:'<script>(function connect(){try{var ws=new WebSocket("ws://"+location.host+"/ws");ws.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.event==="owner-intervention:email-reply"||d.event==="owner-intervention:new")setTimeout(function(){location.reload()},800)}catch(_){}};ws.onclose=function(event){if(event.code!==4001)setTimeout(connect,3000)}}catch(_){}})();</script>'}))
     }catch(e){next(e)}
   });
 
