@@ -2265,66 +2265,60 @@ function createToolHandlers(cx: McpContext) {
       const filter = p.filter || 'unreplied';
       const chatType = p.channelType || 'all'; // direct | group | all
       const keyword = p.keyword || '';
-      let whereClause = `WHERE agent_id=?`;
+      let whereClause = `WHERE c.agent_id=?`;
       const whereParams: unknown[] = [p.agentId];
-      if (chatType === 'direct') { whereClause += ` AND channel_type=1`; }
-      else if (chatType === 'group') { whereClause += ` AND channel_type=2`; }
-      if (keyword) { const kw='%'+keyword+'%'; whereClause += ` AND (name LIKE ? OR user_uid LIKE ?)`; whereParams.push(kw, kw); }
-      // 总数
-      const countRow = cx.query(`SELECT COUNT(*) as cnt FROM conversations ${whereClause}`, whereParams);
-      const total = countRow[0]?.cnt || 0;
-      // 数据
-      const dataParams = [...whereParams, limit, offset];
-      const rows = cx.query<ConversationDbRow>(`SELECT * FROM conversations ${whereClause} ORDER BY last_timestamp DESC LIMIT ? OFFSET ?`, dataParams);
+      if (chatType === 'direct') { whereClause += ` AND c.channel_type=1`; }
+      else if (chatType === 'group') { whereClause += ` AND c.channel_type=2`; }
+      if (keyword) { const kw='%'+keyword+'%'; whereClause += ` AND (c.name LIKE ? OR c.user_uid LIKE ?)`; whereParams.push(kw, kw); }
+      // Filter, count and page the same visible-message relation. The existing
+      // timestamp/rowid tie-break and group mention semantics remain unchanged.
+      const visibleMessageWhere = `m.channel_id=c.channel_id AND m.agent_id=c.agent_id AND m.is_me IN (0,1)
+        AND (m.content_type IS NULL OR m.content_type<10) AND m.id NOT LIKE 'e2ee-status-%'`;
+      const summaries = `WITH summaries AS (
+        SELECT c.*, latest.content AS visible_content, latest.timestamp AS visible_timestamp,
+          latest.is_me AS visible_is_me, latest.content_type AS visible_content_type,
+          CASE WHEN c.channel_type IS NOT 2 AND latest.is_me=0 THEN 1 ELSE 0 END AS needs_reply
+        FROM conversations c LEFT JOIN messages latest ON latest.rowid=(
+          SELECT m.rowid FROM messages m WHERE ${visibleMessageWhere}
+          ORDER BY m.timestamp DESC,m.rowid DESC LIMIT 1
+        ) ${whereClause}
+      )`;
+      const replyFilter = filter === 'all' ? '' : 'WHERE c.needs_reply=1';
+      const countRow = cx.query(`${summaries} SELECT COUNT(*) as cnt FROM summaries c ${replyFilter}`, whereParams);
+      const rows = cx.query<ConversationDbRow & DynamicRow>(`${summaries}
+        SELECT c.*, CASE WHEN c.needs_reply=1 THEN (
+          SELECT COUNT(*) FROM messages pending
+          WHERE pending.channel_id=c.channel_id AND pending.agent_id=c.agent_id AND pending.is_me=0
+            AND pending.timestamp > COALESCE((
+              SELECT m.timestamp FROM messages m WHERE ${visibleMessageWhere} AND m.is_me=1
+              ORDER BY m.timestamp DESC,m.rowid DESC LIMIT 1
+            ),0)
+        ) ELSE 0 END AS pending_count
+        FROM summaries c ${replyFilter} ORDER BY c.last_timestamp DESC LIMIT ? OFFSET ?`, [...whereParams, limit, offset]);
       return {
         success: true,
-        total,
-        conversations: rows.map((r) => {
-          const isGroup = r.channel_type === 2;
-          // 群聊按 @触发，不显示"待回复"红点
-          if (isGroup) {
-            return {
-              channelId: r.channel_id,
-              name: r.name,
-              lastMessage: r.last_message,
-              lastTimestamp: r.last_timestamp,
-              unreadCount: r.unread_count || 0,
-              needsReply: false,
-              channelType: 2,
-            };
-          }
-          // Conversation.last_message may still point at a historical control
-          // message. Derive the summary from the latest user-visible message
-          // so legacy Turn statuses cannot keep polluting the Agent homepage.
-          const visibleMessageWhere = `channel_id=? AND agent_id=? AND is_me IN (0,1)
-            AND (content_type IS NULL OR content_type<10) AND id NOT LIKE 'e2ee-status-%'`;
-          const lastMsg = cx.query(`SELECT content,timestamp,is_me,content_type FROM messages
-            WHERE ${visibleMessageWhere} ORDER BY timestamp DESC,rowid DESC LIMIT 1`, [r.channel_id, p.agentId]);
-          const lastIsMeRow = lastMsg?.[0]?.is_me;
-          const lastCtRow = lastMsg?.[0]?.content_type || 1;
-          // needsReply：最后一条是真实访客消息（is_me=0 且非拦截/系统）
-          const needsReply = lastIsMeRow === 0 && lastCtRow !== 11;
-          // 计算未回复的访客消息数：最后一条 agent 回复之后，还有多少条访客消息
-          let unreadCount = 0;
-          if (needsReply) {
-            const lastAgentReply = cx.query(`SELECT timestamp FROM messages WHERE ${visibleMessageWhere}
-              AND is_me=1 ORDER BY timestamp DESC,rowid DESC LIMIT 1`, [r.channel_id, p.agentId]);
-            const since = lastAgentReply?.[0]?.timestamp || 0;
-            unreadCount = cx.query(`SELECT COUNT(*) as cnt FROM messages WHERE channel_id=? AND agent_id=? AND is_me=0 AND timestamp > ?`, [r.channel_id, p.agentId, since])[0]?.cnt || 0;
-          }
-          return {
-            channelId: r.channel_id,
-            name: r.name,
-            lastMessage: lastMsg?.[0]?.content || '',
-            lastTimestamp: lastMsg?.[0]?.timestamp || r.last_timestamp,
-            unreadCount,
-            needsReply,
-            lastContentType: lastMsg?.[0]?.content_type || 1,
-            lastIsMe: lastMsg?.[0]?.is_me,
-            channelType: 1,
-          };
-        })
-        .filter((c?: any) => filter === 'all' || c.needsReply),
+        total: countRow[0]?.cnt || 0,
+        conversations: rows.map((r) => r.channel_type === 2 ? {
+          channelId: r.channel_id,
+          name: r.name,
+          lastMessage: r.last_message,
+          lastTimestamp: r.last_timestamp,
+          unreadCount: r.unread_count || 0,
+          needsReply: false,
+          channelType: 2,
+        } : {
+          channelId: r.channel_id,
+          name: r.name,
+          lastMessage: r.visible_content || '',
+          lastTimestamp: r.visible_timestamp || r.last_timestamp,
+          // Preserve the existing timestamp-only count, including intercepted
+          // visitor rows after the last visible Agent reply.
+          unreadCount: r.pending_count || 0,
+          needsReply: r.needs_reply === 1,
+          lastContentType: r.visible_content_type || 1,
+          lastIsMe: r.visible_is_me ?? undefined,
+          channelType: 1,
+        }),
       };
     },
 
