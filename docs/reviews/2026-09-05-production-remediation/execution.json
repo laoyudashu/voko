@@ -1,6 +1,6 @@
 {
   "objective": "修复问题，提交，然后在 macOS 网页端逐个测试三端全部 Agent，发现问题自动修复并回归，直至全部完成",
-  "status": "active",
+  "status": "blocked",
   "inventorySource": "三端已部署实例 list_agents，需在最终验收前再次核对增删",
   "agents": [
     {
@@ -751,5 +751,16 @@
     "removed": 0,
     "total": 50
   },
-  "uiPrerequisite": "Mac remains locked on this goal continuation; native app tool confirmed automatic unlock failure. User unlock request remains pending. All 50 current-candidate browser regressions remain pending."
+  "uiPrerequisite": "Mac remains locked on this goal continuation; native app tool confirmed automatic unlock failure. User unlock request remains pending. All 50 current-candidate browser regressions remain pending.",
+  "blockerAudit": {
+    "checkedAt": "2026-09-05T07:55:33.520840+00:00",
+    "primary": "Mac remains locked; native CUA app access explicitly reports automatic unlock failure. Manual unlock required for the requested macOS web conversations.",
+    "consecutiveGoalTurnsObserved": 3,
+    "scopePreserved": "All 50 current-candidate browser regressions remain pending; prior replies and backend checks do not substitute for full acceptance.",
+    "otherPendingInputs": [
+      "Actual Providers for AUTO-REG-MAC-20260828 and AUTO-REG-WINDOWS-20260828",
+      "Compatible Windows environment or vendor resolution for the Qwen Office native status failure"
+    ],
+    "goalToolStatus": "blocked"
+  }
 }
