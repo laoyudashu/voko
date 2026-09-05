@@ -8,8 +8,13 @@
       "agentId": "302266f1-471c-4ec9-882d-38e004ae7350",
       "agentName": "TEST-MAC-ZEROCLAW",
       "backendType": "zeroclaw",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_ZEROCLAW_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -17,8 +22,14 @@
       "agentId": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
       "agentName": "TEST-MAC-HERMES",
       "backendType": "hermes",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "reply_visible",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_MAC_HERMES_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05",
+        "reply": "2加3等于5。"
+      },
       "issues": []
     },
     {
@@ -26,8 +37,13 @@
       "agentId": "bce42fe5-53e4-4ab1-887c-270230b116ae",
       "agentName": "TEST-MAC-CLAUDE-CODE",
       "backendType": "claude-code",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_CLAUDE_CODE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -35,8 +51,13 @@
       "agentId": "b204bc80-8428-43af-8f25-e5f0971dabf9",
       "agentName": "TEST-MAC-GITHUB-COPILOT",
       "backendType": "github-copilot",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_GITHUB_COPILOT_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -44,17 +65,24 @@
       "agentId": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
       "agentName": "TEST-MAC-QWEN-CODE",
       "backendType": "qwen-code",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "macos",
       "agentId": "b07f8c68-dbab-4def-bdc0-381cac55f110",
       "agentName": "TEST-MAC-GOOSE",
       "backendType": "goose",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_GOOSE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -62,8 +90,13 @@
       "agentId": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
       "agentName": "TEST-MAC-OPENCODE",
       "backendType": "opencode",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_OPENCODE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -71,8 +104,13 @@
       "agentId": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
       "agentName": "TEST-MAC-KIRO",
       "backendType": "kiro",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_KIRO_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -80,8 +118,13 @@
       "agentId": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
       "agentName": "TEST-MAC-AIDER",
       "backendType": "aider",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_AIDER_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -89,17 +132,24 @@
       "agentId": "bee1a79c-320e-4612-aaae-61fde6312b7c",
       "agentName": "TEST-MAC-GROK",
       "backendType": "grok",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "macos",
       "agentId": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
       "agentName": "TEST-MAC-REASONIX",
       "backendType": "reasonix",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_REASONIX_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -107,8 +157,13 @@
       "agentId": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
       "agentName": "陈老师",
       "backendType": "workbuddy",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_____20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -116,17 +171,24 @@
       "agentId": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
       "agentName": "tjyu的qwen-office-o9hPdJ",
       "backendType": "qwen-office",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "macos",
       "agentId": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
       "agentName": "TEST-MAC-CODEX",
       "backendType": "codex",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_CODEX_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -134,35 +196,51 @@
       "agentId": "c46ee329-1409-4672-af13-4755d7f470cc",
       "agentName": "tjyu的qwen-office-pBp2ts",
       "backendType": "qwen-office",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "macos",
       "agentId": "8baabfb1-aed0-4d60-98ca-d86da042e501",
       "agentName": "AUTO-REG-MAC-20260828",
       "backendType": "others",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "macos",
       "agentId": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
       "agentName": "TEST-MAC-DUMATE",
       "backendType": "dumate",
-      "browserTest": "pending",
-      "evidence": null,
-      "issues": []
+      "browserTest": "blocked_configuration",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_MAC_DUMATE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
+      "issues": [
+        "网页明确提示 Agent 尚未启用自动回复；ProviderTurn=AUTOMATIC_DELIVERY_DISABLED"
+      ]
     },
     {
       "host": "linux",
       "agentId": "7542cd12-0458-4124-890f-4d499c835cb3",
       "agentName": "TEST-LINUX-HERMES",
       "backendType": "hermes",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "sent_awaiting_ui_verification",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_LINUX_HERMES_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05"
+      },
       "issues": []
     },
     {
@@ -170,8 +248,14 @@
       "agentId": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
       "agentName": "TEST-LINUX-CLAUDE-CODE",
       "backendType": "claude-code",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "reply_visible",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_LINUX_CLAUDE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05",
+        "reply": "2加3等于5。"
+      },
       "issues": []
     },
     {
@@ -179,26 +263,36 @@
       "agentId": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
       "agentName": "TEST-LINUX-CODEX",
       "backendType": "codex",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "linux",
       "agentId": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
       "agentName": "TEST-LINUX-GITHUB-COPILOT",
       "backendType": "github-copilot",
-      "browserTest": "pending",
+      "browserTest": "initialization_pending_recheck",
       "evidence": null,
-      "issues": []
+      "issues": [
+        "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
+      ]
     },
     {
       "host": "linux",
       "agentId": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
       "agentName": "TEST-LINUX-QWEN-CODE",
       "backendType": "qwen-code",
-      "browserTest": "pending",
-      "evidence": null,
+      "browserTest": "reply_visible",
+      "evidence": {
+        "marker": "VOKO_UI_FA45ECB_TEST_LINUX_QWEN_CODE_20260905",
+        "question": "请用一句中文回答：2加3等于多少？",
+        "browser": "macOS Chrome",
+        "date": "2026-09-05",
+        "reply": "2加3等于5。"
+      },
       "issues": []
     },
     {
@@ -481,5 +575,17 @@
     "passed": 1537,
     "skipped": 2,
     "failed": 0
+  },
+  "candidate": {
+    "commit": "fa45ecb",
+    "version": "0.5.2",
+    "tarballSha256": "6ba3e9973001013cb0275985609f80c8bb55a7b546e6668f38545edbcf4d6da3",
+    "buildDigest": "d7e84cd1325d0c24b451d9617fa9e531eca64da3a65b4fa87ede7901832168c0",
+    "deployedHosts": [
+      "macos",
+      "linux",
+      "windows"
+    ],
+    "publishedToNpmRegistry": false
   }
 }

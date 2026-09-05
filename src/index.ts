@@ -3559,7 +3559,10 @@ async function main() {
         agents: running && Array.isArray(currentRuntime.agents) ? currentRuntime.agents : [],
       }, null, 2));
     } catch (e: any) {
-      console.error(JSON.stringify({ success: false, error: e.message }));
+      console.error(JSON.stringify({ success: false, error: e.message,
+        ...(e.code === 'PROCESS_INSPECTION_FAILED'
+          ? { code: e.code, state: 'unknown', runtimeState: 'unknown', running: null } : {}),
+      }));
       process.exit(1);
     } finally {
       try { if (db?.open) db.close(); } catch (_: any) {}
