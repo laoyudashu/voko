@@ -123,3 +123,17 @@ Windows CodeBuddy/OpenCode/Cline 日志均在 ACP initialize 连接等待 15000m
 2026-09-05 13:39 UTC 完成 e58a0d2 当前候选的全部 50 个网页会话复核：45 个显示正确答案（Mac 16/17、Linux 12/12、Windows 17/21），5 个未通过。Mac DuMate 与千问办公 o9hPdJ 完成回环验证及投递模式修正后，新的 R2 网页消息成功；Windows CodeBuddy 新 R2 消息也成功，但其间歇性初始化超时根因尚未确认。完整逐项状态已更新 execution.json，旧失败保留为历史。
 
 本轮新增定位 Windows DuMate 原生启动崩溃：业务回环 serve 和绕过 VOKO 的直接 --version 均以 3221225477 退出。Windows 千问办公原生故障、OpenHands 当前 Pull-only 边界、两个 backend=others 的真实 Provider 待确认仍未解决。Aider 额外 session. 文本、Copilot 超出一句话和日志等级噪声也单独记录，未把“答案正确”扩大为全面验收通过。详见 [最新日志与问题复核](log-review-1340-utc.md)。目标继续 active。
+
+## Windows 原生故障对照与 OpenHands 安全钩子修复
+
+本轮对照推翻了“Windows DuMate 持续无法启动”的假设：保留失败样本后，原生 --version 在程序目录、临时目录均退出 0；实际回环验证也成功。配置从 Pull 改为 HTTP/Pull 后，13:53:31 UTC 的新 R2 网页消息显示“7加8等于15。”，当前 e58a0d2 矩阵增加到 46/50（Windows 18/21）。没有替换原生程序或增加超时，故只确认本次恢复，不声称间歇性崩溃已根治。
+
+Windows 千问办公同样出现交替结果：用户目录 status 退出 0 且 logged_in=true，随后程序目录 status 再次退出 3221225477；刷新通道可短暂认证成功，但再次 verify_delivery_channel 的前置 status 失败，尚未取得实际回环成功。不能将其归类为从不兼容或稳定可用，也没有重复发送未知结果的业务请求。
+
+OpenHands 启动失败的根因已定位并修复：其 pyvenv.cfg 的 home 指向不存在的 cpython-3.12 别名，而本机实际安装的是相同 version_info=3.12.14 的完整版本目录。先备份后仅修正 home，未更新包版本。Python 3.12.14 和 OpenHands CLI 1.16.0 均退出 0；使用已安装适配器做独立 initialize-only 检测，在约 39.7 秒后建立 ACP 连接，未创建业务 session/prompt。诊断允许 45 秒，生产 15 秒连接预算没有更改；此证据不能当作当前生产通道验收。
+
+继续审查确认旧 OpenHands CLI 安全钩子有失败后继续执行的缺陷：SDK 导入/接口异常被忽略，未知工具对象被保留，且必需的钩子文件缺失时仍可构造 CLI。最小复现原代码 5 失败/2 通过，补充缺失文件用例也先失败。修复在缺少钩子时拒绝构造 CLI；钩子无法加载、工具注册表未知或执行器未成功清除时，输出固定代码 VOKO_OPENHANDS_CLI_SAFETY_UNAVAILABLE 并终止 Python。普通 Exception 会被 Python sitecustomize 启动逻辑忽略，因此使用 SystemExit；初始化失败时也清空工具并终止。正常路径保持工具名称和 schema，仅清除 executor，不改变 ACP 的 CLI-only 开关边界。
+
+新增 8 项测试实际启动 Python，验证失败前不能执行业务 main、私密异常文本不泄露、正常工具结构保留、原对象未变和 ACP 启动不载入 CLI-only 钩子。63 项相关测试通过；Windows 原生 8 项通过（使用隔离暂存的新模块及实际 Python 3.12.14，未改生产安装包）。完整 release:gate:code 通过：1565 项通过、2 项既有跳过、0 失败；类型检查、构建、i18n、覆盖率基线及源码包扫描通过。生产仍是 e58a0d2，OpenHands Catalog 仍为 Pull-only。本修复不声称已启用 OpenHands Push 或提供完整原生工具执行隔离。
+
+证据目录：artifacts/production-remediation-acp-20260905/，包括 native-controls、cwd-controls、DuMate re-verification、Qwen recheck、OpenHands Python repair/version/initialize 和 Windows safety-staged-tests。剩余 4 个未取得正确网页回复的 Agent 仍保留：两个 AUTO-REG、Windows OpenHands、Windows千问办公；间歇性故障和其他问题继续追踪。

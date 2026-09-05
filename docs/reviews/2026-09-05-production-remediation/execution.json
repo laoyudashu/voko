@@ -2805,16 +2805,16 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "automatic_delivery_disabled",
+      "currentCandidateBrowserRegression": "reply_visible",
       "currentCandidateEvidence": {
         "testedCommit": "e58a0d2",
         "browser": "macOS Chrome",
-        "verifiedBy": "actual conversation DOM after test marker",
-        "verifiedAt": "2026-09-05T13:26:52.106Z",
-        "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_DUMATE",
+        "verifiedBy": "Actual webpage DOM after new R2 marker",
+        "verifiedAt": "2026-09-05T13:53:31.313Z",
+        "marker": "VOKO_UI_E58A0D2_R2_TEST_WINDOWS_DUMATE",
         "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
-        "answerCorrect": false,
-        "result": "automatic_delivery_disabled",
+        "answerCorrect": true,
+        "result": "reply_visible",
         "providerTurns": [
           {
             "turn": "e2ee-c3614958-87f3-4a8b-b645-b5e6bcadc09a",
@@ -2824,8 +2824,17 @@
             "outcome": "not_delivered",
             "providerOutcome": "rejected",
             "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+          },
+          {
+            "turn": "e2ee-a61f16ad-96a2-4f99-b4fd-92e8551763a1",
+            "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+            "messages": "1",
+            "provider": "dumate-http",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
           }
-        ]
+        ],
+        "remainingIssue": "Native startup has intermittently exited 3221225477; current loopback and reply succeeded without a binary replacement or timeout change."
       },
       "candidateEvidenceHistory": [
         {
@@ -2840,6 +2849,27 @@
           "providerTurns": [
             {
               "turn": "e2ee-b33250d5-db54-4c0e-b848-5f9e7ade28e2",
+              "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
+              "messages": "1",
+              "provider": "none",
+              "outcome": "not_delivered",
+              "providerOutcome": "rejected",
+              "errorCode": "AUTOMATIC_DELIVERY_DISABLED"
+            }
+          ]
+        },
+        {
+          "testedCommit": "e58a0d2",
+          "browser": "macOS Chrome",
+          "verifiedBy": "actual conversation DOM after test marker",
+          "verifiedAt": "2026-09-05T13:26:52.106Z",
+          "marker": "VOKO_UI_E58A0D2_R1_TEST_WINDOWS_DUMATE",
+          "question": "本轮只进行对话，请用一句中文回答：7加8等于多少？",
+          "answerCorrect": false,
+          "result": "automatic_delivery_disabled",
+          "providerTurns": [
+            {
+              "turn": "e2ee-c3614958-87f3-4a8b-b645-b5e6bcadc09a",
               "agent": "1259d36c-946b-4bfb-b6ef-190987101732",
               "messages": "1",
               "provider": "none",
@@ -3063,12 +3093,12 @@
   "currentMatrix": {
     "candidate": "e58a0d2",
     "attempted": 50,
-    "correctVisibleReplies": 45,
-    "notPassed": 5,
+    "correctVisibleReplies": 46,
+    "notPassed": 4,
     "pendingFirstAttempt": 0,
-    "retryMessages": 3,
+    "retryMessages": 4,
     "allComplete": false,
-    "checkedAt": "2026-09-05T13:39:23.958Z",
+    "checkedAt": "2026-09-05T13:53:31.313Z",
     "byHost": {
       "macos": {
         "correctVisibleReplies": 16,
@@ -3079,7 +3109,7 @@
         "total": 12
       },
       "windows": {
-        "correctVisibleReplies": 17,
+        "correctVisibleReplies": 18,
         "total": 21
       }
     },
@@ -3109,6 +3139,31 @@
       "pendingFirstAttempt": 46,
       "allComplete": false,
       "checkedAt": "2026-09-05T13:07:13.475Z"
+    },
+    {
+      "candidate": "e58a0d2",
+      "attempted": 50,
+      "correctVisibleReplies": 45,
+      "notPassed": 5,
+      "pendingFirstAttempt": 0,
+      "retryMessages": 3,
+      "allComplete": false,
+      "checkedAt": "2026-09-05T13:39:23.958Z",
+      "byHost": {
+        "macos": {
+          "correctVisibleReplies": 16,
+          "total": 17
+        },
+        "linux": {
+          "correctVisibleReplies": 12,
+          "total": 12
+        },
+        "windows": {
+          "correctVisibleReplies": 17,
+          "total": 21
+        }
+      },
+      "scope": "All 50 original registered agents; answer correctness and page visibility only, not long-term reliability or strict formatting compliance."
     }
   ],
   "latestCandidate": {
@@ -3189,6 +3244,52 @@
       ],
       "verification": "Provider loopback challenge matched, then persisted via update_agent_profile, then R2 actual webpage answer visible.",
       "verificationPersistence": "Loopback verification is runtime state; restart persistence not verified."
+    },
+    {
+      "host": "windows",
+      "agentName": "TEST-WINDOWS-DUMATE",
+      "before": [
+        "pull"
+      ],
+      "after": [
+        "http",
+        "pull"
+      ],
+      "verification": "DUMATE_LOOPBACK_VERIFIED followed by a correct actual R2 webpage answer.",
+      "remainingIssue": "Intermittent native startup crash remains unproven as resolved."
+    },
+    {
+      "host": "windows",
+      "provider": "openhands",
+      "change": "pyvenv.cfg home now points to the installed cpython-3.12.14-windows-x86_64-none interpreter instead of the missing unversioned alias.",
+      "backupEvidence": "artifacts/production-remediation-acp-20260905/windows-openhands-python-repair.json",
+      "verification": "Python 3.12.14 and OpenHands CLI 1.16.0 exit 0; diagnostic ACP initialize completed in 39655ms.",
+      "scope": "No package upgrade, no Catalog activation, no business session/prompt during ACP initialize-only diagnostic."
     }
-  ]
+  ],
+  "nextCandidate": {
+    "commit": "f5370c3",
+    "scope": "Fail closed when the OpenHands CLI safety hook is missing or cannot disable SDK tools.",
+    "deployment": "pending",
+    "tests": {
+      "focused": {
+        "passed": 63,
+        "failed": 0
+      },
+      "windowsStagedNative": {
+        "passed": 8,
+        "failed": 0
+      },
+      "gate": {
+        "passed": 1565,
+        "skipped": 2,
+        "failed": 0
+      }
+    },
+    "sha256": "88fb759e443a2fe4172ff20d48af61e14b31622ea40f28d79c91ac92ffa55636",
+    "tarballSecretScan": {
+      "textFiles": 320,
+      "findings": 0
+    }
+  }
 }
