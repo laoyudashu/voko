@@ -410,7 +410,13 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending"
+      "currentCandidateBrowserRegression": "pending",
+      "nativeReadinessEvidence": {
+        "checkedAt": "2026-09-05T07:49:56Z",
+        "selectedProfileHealthStatus": 200,
+        "selectedProfileModelsStatus": 200,
+        "note": "401来自其他旧候选配置，不等于当前profile整体认证失败；网页回归仍未完成"
+      }
     },
     {
       "host": "windows",
@@ -599,7 +605,9 @@
       "backendType": "qwen-office",
       "browserTest": "pending",
       "evidence": null,
-      "issues": [],
+      "issues": [
+        "原生 --version 成功，status 在用户目录和 binary 目录均以 3221225477 退出；Windows ARM64使用x64程序，官方CLI文档暂不支持Windows ARM64；唯一崩溃原因未证实。需兼容运行环境或厂商修复，不能计为通过。"
+      ],
       "currentCandidateBrowserRegression": "pending"
     },
     {
@@ -642,25 +650,37 @@
     "failed": 0
   },
   "candidate": {
-    "commit": "bddb0e1",
+    "commit": "0f4ada3",
+    "securityFixCommit": "734bd17",
     "version": "0.5.2",
-    "tarballSha256": "50330958df125f04d6b80d3fe17529b95b2d14f8b426b52dc78e818a59811167",
-    "buildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c",
+    "tarballSha256": "21740c804c30f910213e09eb817a2dcd182345afd101be169dc8a3829dd33e04",
+    "buildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c",
     "deployedHosts": [
       "macos",
       "linux",
       "windows"
     ],
     "publishedToNpmRegistry": false,
-    "codeGate": {
-      "pass": 1548,
+    "securityFixCodeGate": {
+      "pass": 1550,
       "skip": 2,
       "fail": 0
     },
-    "windowsNativeFailureTests": {
-      "pass": 11,
+    "finalDiagnosticOnlyChangeTests": {
+      "pass": 20,
       "skip": 0,
       "fail": 0
+    },
+    "windowsNativePolicyTests": {
+      "pass": 2,
+      "skip": 0,
+      "fail": 0
+    },
+    "windowsLiveDirectoryCheck": {
+      "result": "PEER_NOT_FOUND",
+      "rawCalls": 0,
+      "seals": 0,
+      "productionImSendAttempted": false
     }
   },
   "deploymentHistory": [
@@ -675,39 +695,61 @@
         "windows"
       ],
       "publishedToNpmRegistry": false
+    },
+    {
+      "commit": "bddb0e1",
+      "version": "0.5.2",
+      "tarballSha256": "50330958df125f04d6b80d3fe17529b95b2d14f8b426b52dc78e818a59811167",
+      "buildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c",
+      "deployedHosts": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "publishedToNpmRegistry": false,
+      "codeGate": {
+        "pass": 1548,
+        "skip": 2,
+        "fail": 0
+      },
+      "windowsNativeFailureTests": {
+        "pass": 11,
+        "skip": 0,
+        "fail": 0
+      }
     }
   ],
   "latestDeployment": [
     {
       "host": "macos",
-      "pid": 69054,
+      "pid": 88753,
       "runtimeState": "ready",
       "imConnected": 17,
       "total": 17,
-      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
     },
     {
       "host": "linux",
-      "pid": 230670,
+      "pid": 232247,
       "runtimeState": "ready",
       "imConnected": 12,
       "total": 12,
-      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
     },
     {
       "host": "windows",
-      "pid": 3676,
+      "pid": 7744,
       "runtimeState": "ready",
       "imConnected": 21,
       "total": 21,
-      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+      "runtimeBuildDigest": "00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c"
     }
   ],
   "inventoryRecheck": {
-    "time": "2026-09-05T07:29:40.677953+00:00",
+    "time": "2026-09-05T07:53:15.365351+00:00",
     "added": 0,
     "removed": 0,
     "total": 50
   },
-  "uiPrerequisite": "Mac locked; native app tool reported automatic unlock failure. User manual unlock requested. Goal remains active; no full browser acceptance claimed."
+  "uiPrerequisite": "Mac remains locked on this goal continuation; native app tool confirmed automatic unlock failure. User unlock request remains pending. All 50 current-candidate browser regressions remain pending."
 }

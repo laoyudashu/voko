@@ -61,3 +61,13 @@ Windows 千问办公原生矩阵：--version 退出 0；status 在用户目录�
 第三批安全修复的完整 release:gate:code 门禁通过：1550 项通过、2 项既有平台跳过、0 失败；覆盖率基线、类型检查、构建、i18n 与源码包扫描均通过。
 
 随后单独修正 Qwen Office 超时诊断文案：实际 STATUS_TIMEOUT_MS 为 10000，但默认 detail 硬编码成 5000ms。改为引用实际常量，并增加输出断言。仅诊断文案变化，没有延长超时或改变 readiness；构建和相关 Provider 20 项测试通过。上述完整门禁对应安全修复，最终诊断文案另由该定向测试验证。
+
+## 第三批部署与验收边界
+
+安全修复 734bd17 与诊断文案修复 0f4ada3 已一起打包、备份并部署到三端；tarball SHA-256 为 `21740c804c30f910213e09eb817a2dcd182345afd101be169dc8a3829dd33e04`，三端实际构建摘要均为 `00e769d96ee4b6c4e9f0f62d93a501f1f46dbed077ddfa82efe05f1ba4fb314c`。Mac PID 88753、Linux PID 232247、Windows PID 7744 均 READY，分别 17/17、12/12、21/21 IM 连接。注册清单无增删。
+
+Windows 安装包上的两项新增策略测试通过；结合真实目录接口，在隔离数据库中使用安装包路由器验证 prepare/deliver 均返回拒绝，rawCalls=0、seals=0，未尝试生产 IM 发送。此证据证明明确目录拒绝后的安全边界，不能代替成功对话测试。07:49:56 UTC 再查当前 Hermes profile，health/models 仍均为 200。
+
+本次启动后仍有短暂 A2A/邮件查询网络告警，Mac A2A 设备注册提示无符合发布条件的 Agent；未据此改变可见性。Mac 在本轮继续被原生工具确认锁定，故未进行新的网页操作；未将之前可见回复替代本候选包的全量网页验收。已询问是否有兼容的 x64 Windows 主机供千问办公验证，尚无答复。此前两个 backend=others 的实际 Provider 也待用户说明。目标保持 active，不能宣称全量完成。
+
+部署与 Windows 验证记录：artifacts/production-remediation-policy-20260905/。
