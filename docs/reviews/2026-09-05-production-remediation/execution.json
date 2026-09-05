@@ -1,6 +1,6 @@
 {
   "objective": "修复问题，提交，然后在 macOS 网页端逐个测试三端全部 Agent，发现问题自动修复并回归，直至全部完成",
-  "status": "blocked",
+  "status": "active",
   "inventorySource": "三端已部署实例 list_agents，需在最终验收前再次核对增删",
   "agents": [
     {
@@ -330,7 +330,25 @@
         "testedCommit": "fa45ecb"
       },
       "issues": [],
-      "currentCandidateBrowserRegression": "pending"
+      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateEvidence": {
+        "testedCommit": "0f4ada3",
+        "browser": "macOS Chrome",
+        "verifiedAt": "2026-09-05T12:22:40.615Z",
+        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_QWEN_CODE",
+        "question": "7加8等于多少？",
+        "reply": "15。",
+        "providerTurns": [
+          {
+            "turn": "e2ee-bf8ce6ec-d44f-4060-8ac5-60503602a006",
+            "agent": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
+            "messages": "1",
+            "provider": "qwen-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
+      }
     },
     {
       "host": "linux",
@@ -340,7 +358,25 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending"
+      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateEvidence": {
+        "testedCommit": "0f4ada3",
+        "browser": "macOS Chrome",
+        "verifiedAt": "2026-09-05T12:22:40.615Z",
+        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_GOOSE",
+        "question": "7加8等于多少？",
+        "reply": "7加8等于15。",
+        "providerTurns": [
+          {
+            "turn": "e2ee-60fd6c9b-92f7-4dbd-b7ab-847c4d7a6911",
+            "agent": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
+            "messages": "1",
+            "provider": "goose-cli",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
+      }
     },
     {
       "host": "linux",
@@ -350,7 +386,25 @@
       "browserTest": "pending",
       "evidence": null,
       "issues": [],
-      "currentCandidateBrowserRegression": "pending"
+      "currentCandidateBrowserRegression": "reply_visible",
+      "currentCandidateEvidence": {
+        "testedCommit": "0f4ada3",
+        "browser": "macOS Chrome",
+        "verifiedAt": "2026-09-05T12:22:40.615Z",
+        "marker": "VOKO_UI_0F4ADA3_R1_TEST_LINUX_OPENCODE",
+        "question": "7加8等于多少？",
+        "reply": "15",
+        "providerTurns": [
+          {
+            "turn": "e2ee-54debf68-264e-49a4-94f2-7a578fa0dd87",
+            "agent": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
+            "messages": "1",
+            "provider": "opencode-acp",
+            "outcome": "delivered",
+            "providerOutcome": "generated"
+          }
+        ]
+      }
     },
     {
       "host": "linux",
@@ -751,7 +805,7 @@
     "removed": 0,
     "total": 50
   },
-  "uiPrerequisite": "Mac remains locked on this goal continuation; native app tool confirmed automatic unlock failure. User unlock request remains pending. All 50 current-candidate browser regressions remain pending.",
+  "uiPrerequisite": "Resolved: Mac unlocked and webpage input recovered. Three current-candidate conversations verified with visible replies.",
   "blockerAudit": {
     "checkedAt": "2026-09-05T07:55:33.520840+00:00",
     "primary": "Mac remains locked; native CUA app access explicitly reports automatic unlock failure. Manual unlock required for the requested macOS web conversations.",
@@ -761,6 +815,36 @@
       "Actual Providers for AUTO-REG-MAC-20260828 and AUTO-REG-WINDOWS-20260828",
       "Compatible Windows environment or vendor resolution for the Qwen Office native status failure"
     ],
-    "goalToolStatus": "blocked"
+    "goalToolStatus": "active",
+    "resolvedAt": "2026-09-05T12:22:40.615Z"
+  },
+  "resumedAt": "2026-09-05T12:11:25.506206+00:00",
+  "logReview": {
+    "collectedAt": "2026-09-05T12:21:10.957Z",
+    "windowMinutes": 60,
+    "report": "log-review-1221-utc.md",
+    "hosts": {
+      "macos": {
+        "lineCount": 60,
+        "counts": {}
+      },
+      "linux": {
+        "lineCount": 65,
+        "counts": {
+          "E2EE:E2EE_V2_DIRECTORY_TIMEOUT": 3,
+          "A2A Bridge:": 2
+        }
+      },
+      "windows": {
+        "lineCount": 87,
+        "counts": {
+          "QwenOfficeReadiness:": 10,
+          "E2EE:PEER_NOT_FOUND": 7
+        }
+      }
+    },
+    "newPackageRegressionConfirmed": false,
+    "currentCandidateBrowserRepliesVerified": 3,
+    "remainingBrowserAgents": 47
   }
 }
