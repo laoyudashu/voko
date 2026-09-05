@@ -987,6 +987,22 @@ function createToolHandlers(cx: McpContext) {
       ? null
       : '当前登录用户无权访问该 Agent';
   }
+  function _removeAccessListEntry(p: McpToolParams, listType: 'whitelist' | 'blacklist') {
+    const entry = cx.query<{ agent_id: string; list_type: string; owner_email?: string | null }>(
+      `SELECT acl.agent_id,acl.list_type,a.owner_email FROM agent_access_lists acl
+       LEFT JOIN agents a ON a.agent_id=acl.agent_id WHERE acl.id=? LIMIT 1`, [p.id],
+    )[0];
+    if (!entry) return { success: true };
+    const owner = String(entry.owner_email || '').trim().toLowerCase();
+    if (!owner || owner !== _currentOwnerEmail()) {
+      return { success: false, error: '当前登录用户无权访问该 Agent', code: 'AGENT_OWNER_MISMATCH' };
+    }
+    if (entry.list_type !== listType || (p.agentId && p.agentId !== entry.agent_id)) {
+      return { success: false, error: 'Access-list entry does not match the requested scope', code: 'ACCESS_LIST_SCOPE_MISMATCH' };
+    }
+    const ac = require('../core/access-control-api');
+    return ac.removeEntry(cx.db, p.id, { agentId: entry.agent_id, listType });
+  }
   function _listOwnedAgents(options: { keyword?: string; limit?: number; offset?: number } = {}) {
     const currentOwner = _currentOwnerEmail();
     const conditions = [currentOwner ? 'owner_email=?' : "(owner_email IS NULL OR TRIM(owner_email)='')"];
@@ -3507,7 +3523,7 @@ function createToolHandlers(cx: McpContext) {
     async manage_whitelist(p: McpToolParams = {}) {
       const ac = require('../core/access-control-api');
       if (p.action === 'remove') {
-        if (p.id) return ac.removeEntry(cx.db, p.id);
+        if (p.id) return _removeAccessListEntry(p, 'whitelist');
         if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
         return ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'whitelist');
       }
@@ -3526,7 +3542,7 @@ function createToolHandlers(cx: McpContext) {
     async manage_blacklist(p: McpToolParams = {}) {
       const ac = require('../core/access-control-api');
       if (p.action === 'remove') {
-        if (p.id) return ac.removeEntry(cx.db, p.id);
+        if (p.id) return _removeAccessListEntry(p, 'blacklist');
         if (!p.agentId || !p.visitorId) return { success: false, error: 'remove 需要 id 或 agentId+visitorId' };
         const __wasBlk = ac.isBlacklisted(cx.db, p.agentId, p.visitorId);
         const r = ac.removeEntryByVisitor(cx.db, p.agentId, p.visitorId, 'blacklist');

@@ -96,13 +96,22 @@ function removeEntryByVisitor(db, agentId, visitorId, listType) {
 /**
  * 删除黑白名单条目
  */
-function removeEntry(db, id) {
+function removeEntry(db, id, { agentId, listType } = {}) {
+  if (!agentId || !['whitelist', 'blacklist'].includes(listType)) {
+    return { success: false, error: 'Access-list removal requires an Agent and list type' };
+  }
   try {
     db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare(`UPDATE agent_access_lists SET manual_managed=0, updated_at=?
-        WHERE id=? AND server_managed=1`).run(Date.now(), id);
-      db.prepare(`DELETE FROM agent_access_lists WHERE id=? AND server_managed=0`).run(id);
+        WHERE id=? AND agent_id=? AND list_type=? AND server_managed=1`)
+        .run(Date.now(), id, agentId, listType);
+      db.prepare(`UPDATE agent_access_lists SET auto_trust_disabled=1, manual_managed=0, updated_at=?
+        WHERE id=? AND agent_id=? AND list_type=? AND source='same_owner_default'`)
+        .run(Date.now(), id, agentId, listType);
+      db.prepare(`DELETE FROM agent_access_lists
+        WHERE id=? AND agent_id=? AND list_type=? AND server_managed=0 AND source!='same_owner_default'`)
+        .run(id, agentId, listType);
       db.exec('COMMIT');
     } catch (error) {
       try { db.exec('ROLLBACK'); } catch (_) {}
@@ -152,7 +161,7 @@ function autoApproveIfFriendRequest(db, sendSystemMessage, intervention, ownerRe
   if (!intervention || !intervention.id || !intervention.id.startsWith('private_req_')) return false;
   if (!ownerReply || typeof ownerReply !== 'string') return false;
   const trimmed = ownerReply.trim();
-  const isApproved = /同意|通过|好的|ok/i.test(trimmed);
+  const isApproved = ['同意', '通过', '好的', 'ok'].includes(trimmed.toLowerCase());
   if (!isApproved) return false;
 
   const { agentId, visitorId } = intervention;

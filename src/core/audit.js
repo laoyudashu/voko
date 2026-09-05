@@ -53,9 +53,12 @@ function deterministicSignals(message, direction) {
   if (direction === 'outbound') {
     for (const item of SECRET_PATTERNS) {
       item.re.lastIndex = 0;
-      const match = item.re.exec(raw);
-      if (match && !looksLikePlaceholder(match[0])) {
-        return { verdict: 'deny', action: 'hard_deny', source: 'validator', reasonCode: item.code, category: 'credential_exposure' };
+      let match;
+      while ((match = item.re.exec(raw))) {
+        if (!looksLikePlaceholder(match[0])) {
+          return { verdict: 'deny', action: 'hard_deny', source: 'validator', reasonCode: item.code, category: 'credential_exposure' };
+        }
+        if (match[0].length === 0) item.re.lastIndex++;
       }
     }
     const idCandidates = raw.match(/\b\d{17}[\dXx]\b/g) || [];
@@ -108,6 +111,12 @@ function safeRuleMatch(rule, raw, normalized) {
 
 function checkAuditRules(message, direction, db) {
   const raw = typeof message === 'string' ? message : String(message || '');
+  // Reject oversized input before normalization or custom regex evaluation.
+  // This bounds input size only; short backtracking regexes remain a separate concern.
+  if (Buffer.byteLength(raw, 'utf8') > 128 * 1024) {
+    const signal = deterministicSignals(raw, direction);
+    return { ...signal, matchedRule: null, matchedKeyword: signal.reasonCode };
+  }
   const empty = { verdict: 'allow', action: null, source: 'fallback', reasonCode: 'empty', matchedRule: null, matchedKeyword: null };
   if (!raw.trim()) return empty;
   const normalized = normalizeAuditText(raw);
