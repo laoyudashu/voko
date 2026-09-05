@@ -148,6 +148,19 @@ function serializeCapabilityResponse(content: unknown, requestId: string): strin
   });
 }
 
+interface PendingTerminalReceipt {
+  agentId: string;
+  peerUid: string;
+  turnId: string;
+  requested: string[];
+  sourceMessageIds: string[];
+  send: () => Promise<unknown>;
+  attempts: number;
+  nextAttemptAt: number;
+  expiresAt: number;
+  busy: boolean;
+}
+
 class MessageHandler extends EventEmitter {
   private readonly db: DatabaseLike;
   private readonly inboundTurns: InboundTurnCoalescer<PushPayload & { messageId: string; timestamp: number }, void>;
@@ -156,6 +169,9 @@ class MessageHandler extends EventEmitter {
   private readonly receiptSourceAliases = new Map<string, string>();
   private readonly deferredReplyReceipts = new Map<string, { peerUid:string;sourceMessageIds:string[];turnId:string }>();
   private receiptSequence = 0;
+  private readonly pendingTerminalReceipts = new Map<string, PendingTerminalReceipt>();
+  private turnReceiptsClosed = false;
+  private retryingTurnReceipts = false;
 
   /**
    * @param {object} db - better-sqlite3 实例
@@ -286,7 +302,7 @@ class MessageHandler extends EventEmitter {
   private async _sendTurnReceipt(agentId: string, peerUid: string, sourceMessageIds: string[], turnId: string,
     state: MessageExecutionState, phase: MessageExecutionPhase, reasonCode?: string | null,
     replyMessageId?: string | null): Promise<void> {
-    if (!this._deliver || !sourceMessageIds.length) return;
+    if (this.turnReceiptsClosed || !this._deliver || !sourceMessageIds.length) return;
     const requested = [...new Set(sourceMessageIds.map((id) =>
       this.receiptSourceAliases.get(this._receiptKey(agentId, id)) || id))]
       .filter((id) => this.receiptRequests.get(this._receiptKey(agentId, id))?.peerUid === peerUid);
@@ -298,21 +314,90 @@ class MessageHandler extends EventEmitter {
     const receipt = { version: 1 as const, sourceMessageIds: requested.slice(0, 10), turnId,
       sequence, state, phase, reasonCode: normalizedReasonCode, occurredAt: Date.now(),
       replyMessageId: replyMessageId || null };
-    const result = await this._deliver(agentId, peerUid, '', 'text', 1, null,
-      `receipt-${agentId}-${sequence}-${Date.now()}`,
-      { _voko: { protocolVersion: 1, turnReceipt: receipt,
-        turnId, turnStatus: state === 'WORKING' ? 'processing'
-          : state === 'AUTH_REQUIRED' ? 'login_expired'
-            : state === 'DELIVERY_UNKNOWN' ? 'outcome_unknown'
-              : state === 'COMPLETED' ? 'completed' : 'failed',
-        ...(normalizedReasonCode ? { turnStatusCode: normalizedReasonCode } : {}) } });
-    if (result?.success === false) console.warn(`[TurnReceipt] delivery failed agent=${agentId} peer=${peerUid} turn=${turnId}`);
+    const messageId = `receipt-${agentId}-${sequence}-${Date.now()}`;
+    const metadata = { _voko: { protocolVersion: 1, turnReceipt: receipt,
+      turnId, turnStatus: state === 'WORKING' ? 'processing'
+        : state === 'AUTH_REQUIRED' ? 'login_expired'
+          : state === 'DELIVERY_UNKNOWN' ? 'outcome_unknown'
+            : state === 'COMPLETED' ? 'completed' : 'failed',
+      ...(normalizedReasonCode ? { turnStatusCode: normalizedReasonCode } : {}) } };
+    const send = () => this._deliver!(agentId, peerUid, '', 'text', 1, null, messageId, metadata);
     const terminal = state === 'FAILED' || state === 'AUTH_REQUIRED' || state === 'DELIVERY_UNKNOWN'
       || (state === 'COMPLETED' && phase === 'reply');
-    if (terminal) {
-      for (const id of requested) this.receiptRequests.delete(this._receiptKey(agentId, id));
-      for (const sourceId of sourceMessageIds) this.receiptSourceAliases.delete(this._receiptKey(agentId, sourceId));
+    if (!terminal) {
+      try {
+        const result = await send();
+        if (result?.success === false) this._logReceiptFailure(agentId, peerUid, turnId, result);
+      } catch (error: unknown) { this._logReceiptFailure(agentId, peerUid, turnId, error); }
+      return;
     }
+    const key = `${agentId}\0${peerUid}\0${turnId}`;
+    if (!this.pendingTerminalReceipts.has(key) && this.pendingTerminalReceipts.size >= 1000) {
+      const oldest = this.pendingTerminalReceipts.entries().next().value!;
+      this._finishPendingReceipt(oldest[0], oldest[1]);
+      console.warn('[TurnReceipt] retry context expired code=RECEIPT_RETRY_CAPACITY');
+    }
+    const pending: PendingTerminalReceipt = { agentId, peerUid, turnId, requested,
+      sourceMessageIds: [...sourceMessageIds], send, attempts: 0, nextAttemptAt: Date.now(),
+      expiresAt: Date.now() + 10 * 60_000, busy: false };
+    this.pendingTerminalReceipts.set(key, pending);
+    await this._attemptPendingReceipt(key, pending);
+  }
+
+  private _logReceiptFailure(agentId: string, peerUid: string, turnId: string, result: unknown): void {
+    const raw = result as { code?: unknown; error?: unknown } | null;
+    const code = String(raw?.code || raw?.error || 'RECEIPT_DELIVERY_FAILED');
+    const safeCode = /^[A-Z][A-Z0-9_]{0,127}$/.test(code) ? code : 'RECEIPT_DELIVERY_FAILED';
+    console.warn(`[TurnReceipt] delivery failed agent=${agentId} peer=${peerUid} turn=${turnId} code=${safeCode}`);
+  }
+
+  private _finishPendingReceipt(key: string, pending: PendingTerminalReceipt): void {
+    if (this.pendingTerminalReceipts.get(key) !== pending) return;
+    this.pendingTerminalReceipts.delete(key);
+    for (const id of pending.requested) this.receiptRequests.delete(this._receiptKey(pending.agentId, id));
+    for (const id of pending.sourceMessageIds) this.receiptSourceAliases.delete(this._receiptKey(pending.agentId, id));
+  }
+
+  private async _attemptPendingReceipt(key: string, pending: PendingTerminalReceipt): Promise<void> {
+    if (this.turnReceiptsClosed || pending.busy || this.pendingTerminalReceipts.get(key) !== pending) return;
+    pending.busy = true;
+    pending.attempts += 1;
+    try {
+      const result = await pending.send() as { success?: boolean } | undefined;
+      if (result?.success === true) this._finishPendingReceipt(key, pending);
+      else this._logReceiptFailure(pending.agentId, pending.peerUid, pending.turnId, result);
+    } catch (error: unknown) {
+      this._logReceiptFailure(pending.agentId, pending.peerUid, pending.turnId, error);
+    } finally {
+      pending.busy = false;
+      pending.nextAttemptAt = Date.now() + 30_000;
+    }
+  }
+
+  /** Retry only the immutable receipt; never invoke the Provider or replay the source. */
+  async retryPendingTurnReceipts(now = Date.now()): Promise<void> {
+    if (this.turnReceiptsClosed || this.retryingTurnReceipts) return;
+    this.retryingTurnReceipts = true;
+    try {
+      const due: Array<Promise<void>> = [];
+      for (const [key, pending] of this.pendingTerminalReceipts) {
+        if (pending.busy) continue;
+        if (pending.expiresAt <= now || pending.attempts >= 5) {
+          this._finishPendingReceipt(key, pending);
+          console.warn(`[TurnReceipt] retry context expired agent=${pending.agentId} turn=${pending.turnId} code=RECEIPT_RETRY_EXHAUSTED`);
+        } else if (pending.nextAttemptAt <= now && due.length < 4) {
+          due.push(this._attemptPendingReceipt(key, pending));
+        }
+      }
+      await Promise.all(due);
+    } finally { this.retryingTurnReceipts = false; }
+  }
+
+  closeTurnReceipts(): void {
+    this.turnReceiptsClosed = true;
+    this.pendingTerminalReceipts.clear();
+    this.receiptRequests.clear();
+    this.receiptSourceAliases.clear();
   }
 
   _resolveInboundConversation(agentId: string, visitorId: string, channelId: string,

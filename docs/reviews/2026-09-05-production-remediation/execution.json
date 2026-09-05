@@ -1,0 +1,485 @@
+{
+  "objective": "修复问题，提交，然后在 macOS 网页端逐个测试三端全部 Agent，发现问题自动修复并回归，直至全部完成",
+  "status": "active",
+  "inventorySource": "三端已部署实例 list_agents，需在最终验收前再次核对增删",
+  "agents": [
+    {
+      "host": "macos",
+      "agentId": "302266f1-471c-4ec9-882d-38e004ae7350",
+      "agentName": "TEST-MAC-ZEROCLAW",
+      "backendType": "zeroclaw",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "a677bc31-9e07-4255-bf9a-8e277f6e95f0",
+      "agentName": "TEST-MAC-HERMES",
+      "backendType": "hermes",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "bce42fe5-53e4-4ab1-887c-270230b116ae",
+      "agentName": "TEST-MAC-CLAUDE-CODE",
+      "backendType": "claude-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "b204bc80-8428-43af-8f25-e5f0971dabf9",
+      "agentName": "TEST-MAC-GITHUB-COPILOT",
+      "backendType": "github-copilot",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "8e2e054c-1dd2-4963-9308-a8fc16dd2329",
+      "agentName": "TEST-MAC-QWEN-CODE",
+      "backendType": "qwen-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "b07f8c68-dbab-4def-bdc0-381cac55f110",
+      "agentName": "TEST-MAC-GOOSE",
+      "backendType": "goose",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "94df593d-04bd-4b17-a0f7-35868b0f3dc4",
+      "agentName": "TEST-MAC-OPENCODE",
+      "backendType": "opencode",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "ad5b8e27-21b2-457c-9534-0af7b79e726f",
+      "agentName": "TEST-MAC-KIRO",
+      "backendType": "kiro",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "6e74b20c-41f0-42fd-8245-50eee1e4930b",
+      "agentName": "TEST-MAC-AIDER",
+      "backendType": "aider",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "bee1a79c-320e-4612-aaae-61fde6312b7c",
+      "agentName": "TEST-MAC-GROK",
+      "backendType": "grok",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "9a0b27fc-627d-4c11-b043-2bbd03607e6e",
+      "agentName": "TEST-MAC-REASONIX",
+      "backendType": "reasonix",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "cc63d1ad-d0a6-4c6f-9734-335968ef6016",
+      "agentName": "陈老师",
+      "backendType": "workbuddy",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "79729df6-f6ca-4961-a9dd-250cb5f39e2d",
+      "agentName": "tjyu的qwen-office-o9hPdJ",
+      "backendType": "qwen-office",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "d7721990-3f77-40f9-bb30-5b4796c7b8cc",
+      "agentName": "TEST-MAC-CODEX",
+      "backendType": "codex",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "c46ee329-1409-4672-af13-4755d7f470cc",
+      "agentName": "tjyu的qwen-office-pBp2ts",
+      "backendType": "qwen-office",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "8baabfb1-aed0-4d60-98ca-d86da042e501",
+      "agentName": "AUTO-REG-MAC-20260828",
+      "backendType": "others",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "macos",
+      "agentId": "bf54a277-0e14-47c3-bcc4-e3a3fc8c1b3a",
+      "agentName": "TEST-MAC-DUMATE",
+      "backendType": "dumate",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "7542cd12-0458-4124-890f-4d499c835cb3",
+      "agentName": "TEST-LINUX-HERMES",
+      "backendType": "hermes",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "a30973d3-d469-401b-8153-5e2c6f4d7fa8",
+      "agentName": "TEST-LINUX-CLAUDE-CODE",
+      "backendType": "claude-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "d7207be5-34cc-48f1-b700-2e3b6073ebcb",
+      "agentName": "TEST-LINUX-CODEX",
+      "backendType": "codex",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "a26a8919-87a8-4219-a0b3-4fd0cbc9beab",
+      "agentName": "TEST-LINUX-GITHUB-COPILOT",
+      "backendType": "github-copilot",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "e7aaf535-8c60-43a5-8092-5950ea1e906f",
+      "agentName": "TEST-LINUX-QWEN-CODE",
+      "backendType": "qwen-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "ec82dee0-5394-478b-83cf-6be7a66c7f20",
+      "agentName": "TEST-LINUX-GOOSE",
+      "backendType": "goose",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "1617642d-e70c-4fc7-b845-96e74f1d1ba4",
+      "agentName": "TEST-LINUX-OPENCODE",
+      "backendType": "opencode",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "9e4ac111-de81-4fef-8d40-8409ebe3394c",
+      "agentName": "TEST-LINUX-AIDER",
+      "backendType": "aider",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "b7522169-e48f-4f10-87b1-27941fd48ae4",
+      "agentName": "TEST-LINUX-GROK",
+      "backendType": "grok",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "d9c3d2ea-c9b4-47f3-89bf-942e6f5e76ed",
+      "agentName": "TEST-LINUX-REASONIX",
+      "backendType": "reasonix",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "f61e49bb-1b42-4201-aa41-da2afb653d1c",
+      "agentName": "TEST-LINUX-HERMES-HUMAN",
+      "backendType": "hermes",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "linux",
+      "agentId": "0c20465f-7c09-4990-b896-176e794f089e",
+      "agentName": "TEST-LINUX-ZEROCLAW",
+      "backendType": "zeroclaw",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "8a3bd144-8e3f-4b9f-bf2f-aa7ba46caff8",
+      "agentName": "TEST-WINDOWS-HERMES",
+      "backendType": "hermes",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "467ee38f-98ca-4270-9c18-97edf2e30435",
+      "agentName": "TEST-WINDOWS-CLAUDE-CODE",
+      "backendType": "claude-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "3e8e403d-921d-4e51-85d1-0a35ce359812",
+      "agentName": "TEST-WINDOWS-CODEX",
+      "backendType": "codex",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "c50bb49f-1f72-40c9-81e7-14374436aeec",
+      "agentName": "TEST-WINDOWS-GITHUB-COPILOT",
+      "backendType": "github-copilot",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "9792d8e8-4eec-44b8-a7a6-47aa48e95003",
+      "agentName": "TEST-WINDOWS-CODEBUDDY",
+      "backendType": "codebuddy",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "6ee9c4d2-83a0-4b1c-a966-ea6e3c6e2c72",
+      "agentName": "TEST-WINDOWS-QWEN-CODE",
+      "backendType": "qwen-code",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "4d5b7506-2a31-49da-800c-3fee1474d4bb",
+      "agentName": "TEST-WINDOWS-GOOSE",
+      "backendType": "goose",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "befdeb16-56d7-4b90-84c7-eb0526e42956",
+      "agentName": "TEST-WINDOWS-OPENCODE",
+      "backendType": "opencode",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "6ae1db46-e988-440a-b3f7-339ff8941d14",
+      "agentName": "TEST-WINDOWS-AIDER",
+      "backendType": "aider",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "cff4941d-8445-4dad-922c-7c1fc7d8c001",
+      "agentName": "TEST-WINDOWS-PI",
+      "backendType": "pi",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "fc39acd3-22ce-4696-827b-b1e3fd34e499",
+      "agentName": "TEST-WINDOWS-GROK",
+      "backendType": "grok",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "12b9d91c-402d-45ba-9619-5f67f6542fe1",
+      "agentName": "TEST-WINDOWS-REASONIX",
+      "backendType": "reasonix",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "2587ee04-633f-4ce9-b259-e29732a90d6f",
+      "agentName": "TEST-WINDOWS-ZEROCLAW",
+      "backendType": "zeroclaw",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "8d98df63-487f-49b4-bf35-5704d1b32dbc",
+      "agentName": "TEST-WINDOWS-ZEROCLAW-HUMAN",
+      "backendType": "zeroclaw",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "5cb30061-48fc-4729-abc9-b79bed3c10eb",
+      "agentName": "394591614的workbuddy-n3WNrD",
+      "backendType": "workbuddy",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "97b52654-1935-4f4c-accc-b1650f4a6ffd",
+      "agentName": "AUTO-REG-WINDOWS-20260828",
+      "backendType": "others",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "7479bc1e-81ab-47cf-97ac-5ae8b663cfd3",
+      "agentName": "TEST-WINDOWS-CLINE",
+      "backendType": "cline",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "7685f34f-52d9-4769-8a9f-b52e0b42bb0c",
+      "agentName": "TEST-WINDOWS-OPENHANDS",
+      "backendType": "openhands",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "3d8f3890-8bcc-48fb-88b6-9d83f25e3977",
+      "agentName": "TEST-WINDOWS-CURSOR",
+      "backendType": "cursor",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "c06eabd6-570e-41fa-914d-79e08951dbe1",
+      "agentName": "TEST-WINDOWS-QWEN-OFFICE",
+      "backendType": "qwen-office",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    },
+    {
+      "host": "windows",
+      "agentId": "1259d36c-946b-4bfb-b6ef-190987101732",
+      "agentName": "TEST-WINDOWS-DUMATE",
+      "backendType": "dumate",
+      "browserTest": "pending",
+      "evidence": null,
+      "issues": []
+    }
+  ],
+  "steps": [
+    {
+      "id": "receipt-recovery",
+      "status": "implemented_unit_verified_pending_production"
+    },
+    {
+      "id": "provider-native-readiness",
+      "status": "pending"
+    },
+    {
+      "id": "directory-and-e2ee-recovery",
+      "status": "pending"
+    },
+    {
+      "id": "logging-severity",
+      "status": "pending"
+    },
+    {
+      "id": "browser-all-agents",
+      "status": "pending"
+    }
+  ],
+  "validation": {
+    "releaseGate": "pass",
+    "passed": 1537,
+    "skipped": 2,
+    "failed": 0
+  }
+}

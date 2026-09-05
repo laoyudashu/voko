@@ -2014,8 +2014,14 @@ async function startMcpServer(args?: any, core?: any) {
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
     });
     messageHandler?.setDispatcher(dispatcher);
-    await taskManager.start('inbound-turn-coalescer', () => async () => {
-      await messageHandler?.flushInboundTurns?.();
+    await taskManager.start('inbound-turn-coalescer', () => {
+      const receiptTimer = setInterval(() => void messageHandler?.retryPendingTurnReceipts?.(), 30_000);
+      receiptTimer.unref?.();
+      return async () => {
+        clearInterval(receiptTimer);
+        messageHandler?.closeTurnReceipts?.();
+        await messageHandler?.flushInboundTurns?.();
+      };
     });
   } catch (e: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
