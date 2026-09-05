@@ -1,0 +1,496 @@
+{
+  "schemaVersion": 1,
+  "planId": "voko-lite-review-2026-09-04-v1",
+  "status": "in_progress",
+  "baselineCommit": "a6e8f35d93940dfd021e443ab332060062aab181",
+  "approval": {
+    "required": true,
+    "approved": true,
+    "scope": "Local isolated code changes, tests, independent diff review, documentation, and focused local commits only.",
+    "message": "同意实施此计划。稳扎稳打，每一步都做好，同时做好单元测试。直至整个优化完成。",
+    "recordedAt": "2026-09-05T04:11:39.022317+00:00"
+  },
+  "executor": "Current Codex task, resumed after explicit approval; this manifest does not start a background scheduler.",
+  "documents": {
+    "intake": "00-intake.md",
+    "primary": "01-primary-review.md",
+    "adversarial": "02-adversarial-review.md",
+    "plan": "03-optimization-plan.md",
+    "validation": "04-validation-and-boundaries.md"
+  },
+  "phases": [
+    {
+      "id": "S0",
+      "dependsOn": [],
+      "title": "Isolated baseline and Node 22 validation environment",
+      "status": "done",
+      "verification": {
+        "command": "npm run release:gate:code",
+        "node": "22.23.2",
+        "npm": "11.19.0",
+        "exitCode": 0,
+        "passed": 1377,
+        "skipped": 2,
+        "failed": 0,
+        "log": "/tmp/voko-optimization-evidence-20260904/baseline-gate.log"
+      }
+    },
+    {
+      "id": "S1",
+      "dependsOn": [
+        "S0"
+      ],
+      "title": "Local authorization, path, credential and protocol fixes",
+      "issues": [
+        "R01",
+        "R03",
+        "R04",
+        "R09",
+        "R16"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S2",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Owner sessions and authenticated sensitive WebSocket streams",
+      "issues": [
+        "R02",
+        "R11"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S3",
+      "dependsOn": [
+        "S0"
+      ],
+      "title": "Database failure propagation, retry gaps, then offline pagination",
+      "issues": [
+        "R06",
+        "R05",
+        "R07"
+      ],
+      "issueOrder": [
+        "R06",
+        "R05",
+        "R07"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S4",
+      "dependsOn": [
+        "S2",
+        "S3"
+      ],
+      "title": "Provider retry evidence, attachment lifetime and actual Dispatcher stop contract",
+      "issues": [
+        "R12",
+        "R10",
+        "R13"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S5",
+      "dependsOn": [
+        "S1",
+        "S3"
+      ],
+      "title": "Correct conversation pagination and measured performance observations",
+      "issues": [
+        "R17",
+        "R15",
+        "R14"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S6",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Independent A2A item isolation and exact package scan coverage",
+      "issues": [
+        "R19",
+        "R18"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S7",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Partial audit size-bound mitigation; full regex isolation remains deferred",
+      "issues": [
+        "R08"
+      ],
+      "status": "reviewed"
+    },
+    {
+      "id": "S8",
+      "dependsOn": [
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7"
+      ],
+      "title": "Integrated gates, adversarial diff review and delivery",
+      "status": "validating"
+    }
+  ],
+  "issues": [
+    {
+      "id": "R01",
+      "historicalId": "H08",
+      "mode": "full_fix",
+      "title": "Explicit friend-request approval",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "access-control-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R02",
+      "historicalId": "H09",
+      "mode": "full_fix",
+      "title": "Invalidate other old-owner sessions while preserving pre-created new-owner session",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "local-web-session-owner.test.js;local-web-auth.spec.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "5db04d0",
+        "56fc2b2"
+      ]
+    },
+    {
+      "id": "R03",
+      "historicalId": "H10",
+      "mode": "full_fix",
+      "title": "Authorize the actual ACL record and list type",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "access-control-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R04",
+      "historicalId": "H11",
+      "mode": "conditional_hardening",
+      "title": "Reject dot paths and guard recursive deletion containment",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "a2a-attachment-workspace.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R05",
+      "historicalId": "H12",
+      "mode": "full_fix",
+      "title": "Retry known transient offline gaps without assuming dense sequence numbers",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R06",
+      "historicalId": "H13",
+      "mode": "scoped_fix",
+      "title": "Prevent normal collected Provider forwarding after DB rollback; do not claim all side effects transactional",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R07",
+      "historicalId": "H16",
+      "mode": "full_fix",
+      "title": "Bounded offline pagination and continuation",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R08",
+      "historicalId": "H14",
+      "mode": "partial_mitigation",
+      "title": "Move size check before regex; 501-byte regex risk remains open",
+      "status": "partial",
+      "evidence": [],
+      "verification": [
+        "audit-rule-boundaries.test.js"
+      ],
+      "reviewDecision": "size_bound_partial_only_full_regex_fix_deferred",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R09",
+      "historicalId": "H15",
+      "mode": "full_fix",
+      "title": "Inspect all credential-format matches",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "audit-rule-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R10",
+      "historicalId": "H01",
+      "mode": "full_fix",
+      "title": "Bind staged attachment cleanup to actual turn lifecycle",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "openclaw-attachment-lifetime.test.js"
+      ],
+      "reviewDecision": "independent_final_diff_review_passed_41_behavior_tests",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R11",
+      "historicalId": "H02",
+      "mode": "policy_change",
+      "title": "Authenticate both sensitive WS streams; preserve health/static availability",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "local-websocket-auth.test.js;local-web-auth.spec.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "5db04d0",
+        "56fc2b2"
+      ]
+    },
+    {
+      "id": "R12",
+      "historicalId": "H03",
+      "mode": "full_fix",
+      "title": "Use execution-stage evidence for retry eligibility",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "provider-cli-execution-evidence.test.js"
+      ],
+      "reviewDecision": "independent_final_diff_review_passed_41_behavior_tests",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R13",
+      "historicalId": "H04",
+      "mode": "verify_then_fix",
+      "title": "Reproduce actual Dispatcher stop/admission gap; exclude unproven general backpressure",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "dispatcher-stop-contract.test.js"
+      ],
+      "reviewDecision": "independent_final_diff_review_passed_41_behavior_tests",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R14",
+      "historicalId": "H05",
+      "mode": "measurement_only",
+      "title": "Synthetic attachment/event-loop/RSS baseline; no automatic IO/crypto rewrite",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "07-query-and-performance.md",
+        "evidence/voko-r14-attachment-benchmark.cjs"
+      ],
+      "reviewDecision": "measure_only_no_default_product_change"
+    },
+    {
+      "id": "R15",
+      "historicalId": "H06",
+      "mode": "co_resolve_with_R17",
+      "title": "Measure query count and plan; no new cache/counter subsystem",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [],
+      "reviewDecision": "independent_review_passed_4_tests_and_144_differential_cases",
+      "commits": [
+        "5d7790a"
+      ]
+    },
+    {
+      "id": "R16",
+      "historicalId": "H07",
+      "mode": "full_fix",
+      "title": "JSON-RPC id zero handling; no SDK transport replacement",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [
+        "mcp-http-id.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8",
+        "7294212",
+        "74a43f4"
+      ]
+    },
+    {
+      "id": "R17",
+      "historicalId": null,
+      "mode": "full_fix",
+      "title": "Filter unreplied before count and pagination",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [],
+      "reviewDecision": "independent_review_passed_4_tests_and_144_differential_cases",
+      "commits": [
+        "5d7790a"
+      ]
+    },
+    {
+      "id": "R18",
+      "historicalId": null,
+      "mode": "full_fix",
+      "title": "Scan exact package artifact contents without asserting existing leak",
+      "status": "reviewed",
+      "evidence": [],
+      "verification": [],
+      "reviewDecision": "independent_final_diff_review_passed_16_behavior_tests",
+      "commits": [
+        "9b27e5a",
+        "e7bdeda"
+      ]
+    },
+    {
+      "id": "R19",
+      "historicalId": null,
+      "mode": "verify_then_fix",
+      "title": "Prove trusted task independence and fail-closed same-task ordering before isolated handling; otherwise defer design",
+      "status": "deferred_design",
+      "evidence": [],
+      "verification": [],
+      "reviewDecision": "conditional_verification_gate_no_existing_predecessor_guard"
+    }
+  ],
+  "rules": {
+    "stepStates": [
+      "pending",
+      "reproducing",
+      "confirmed",
+      "fixing",
+      "validating",
+      "reviewed",
+      "done",
+      "partial",
+      "deferred_design",
+      "rejected",
+      "blocked"
+    ],
+    "secrets": "Synthetic fixtures only; never report credential values.",
+    "tests": "Real production modules with isolated dependencies; source probes are not replacement regression tests.",
+    "requiredBeforeDone": [
+      "Failure reproduced or direct behavior evidence accepted",
+      "Minimal fix or explicitly scoped mitigation",
+      "Targeted regression passed",
+      "Independent diff review passed",
+      "Required integrated gates accounted for"
+    ],
+    "forbidden": [
+      "production_data_mutation",
+      "production_service_restart",
+      "cross_repository_changes",
+      "public_vulnerability_disclosure",
+      "push",
+      "merge",
+      "tag",
+      "release",
+      "npm_publish",
+      "deployment",
+      "scheduled_background_execution"
+    ],
+    "needsAdditionalApproval": [
+      "new_dependency",
+      "public_protocol_change",
+      "historical_data_replay_or_cleanup",
+      "data_migration",
+      "new_persistent_outbox_or_task_framework",
+      "remote_real_account_operations",
+      "full_regex_architecture_change"
+    ]
+  },
+  "remainingKnownRiskAfterDefaultPlan": [
+    "R08 short-input pathological regular expressions remain unresolved by size check",
+    "R14 hot-path IO performance needs measured decision",
+    "R13 aggregate backpressure remains unproven/design work",
+    "Windows/Linux/real Provider and cloud exploitability require separately available validation",
+    "R19 invalid-item isolation remains deferred if trusted independence cannot be established without a new ordering model"
+  ],
+  "completion": {
+    "defaultScopeComplete": false,
+    "allKnownIssuesResolved": false,
+    "crossPlatformVerified": false,
+    "productionVerified": false
+  },
+  "reviewStatus": "all_final_product_diffs_independently_reviewed_pending_integrated_gate",
+  "planDocumentSha256": "2a1bf91eca573d01949186576e2d90ba9f16013e210841e1d3be39b13e9fc877",
+  "executionWorktree": "/Users/laoyu/Documents/ChatGPT/open_voko-optimization-20260904",
+  "executionBranch": "codex/voko-review-optimizations-20260904"
+}

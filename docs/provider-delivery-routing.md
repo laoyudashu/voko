@@ -118,6 +118,14 @@ VOKO 会在同一 `Agent + 发送者 + 频道 + Conversation` 内短暂收集连
 
 每条原始消息仍独立落库、审核、解密和确认。主人介入、授权、支付及确认类消息不会并入普通连续对话。合并只减少 Provider 调用次数，不改变 Pull、E2EE、幂等或单条消息审计语义。
 
+### 4.2 停止与未确认执行
+
+停止 Dispatcher 后不再接收新自动执行，尚未提交的排队和延迟任务会结束为失败；已提交但未确认完成的任务保持 `outcome_unknown`。等待停止有时间上限，超时不等于外部 Agent 已取消执行。
+
+同一运行时重新启动后，仍有旧未决轮次的会话会报告 `PROVIDER_PREVIOUS_OUTCOME_UNKNOWN`，避免把新任务卡在旧 Promise 后或重复执行。匹配旧轮次的成功 final 可解除该阻挡，但不会重新投递旧回复；不确定或错误回报不能当作完成证明。
+
+OpenClaw WebSocket 的 accepted 回执只说明传输已接受。附件仅在明确关联的轮次完成后清理；只有 session/run 标识而无法精确关联的 legacy 回复，其附件保留至现有 24 小时过期清理。会话元数据达到上限且全为未决时，新会话返回 `PROVIDER_SESSION_CAPACITY`，不静默丢弃旧未决记录。
+
 ## 5. 路由缓存和健康事件刷新
 
 VOKO 不会在每条消息上重新启动 Provider 或执行完整网络探测，而是使用 Dispatcher 路由缓存：
