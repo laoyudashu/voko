@@ -117,3 +117,9 @@ Windows CodeBuddy/OpenCode/Cline 日志均在 ACP initialize 连接等待 15000m
 另外，macOS Copilot 在旧候选下对不含测试编号的普通问题“9加6等于多少？”仍拒答，排除仅由测试标记触发这一解释。其历史会话与 Windows 新建可用会话表现不同，不能直接归因为所有 Copilot 均不支持外部问答；没有清除会话、放宽工具权限或变更身份来强行通过。
 
 第四批原始证据：artifacts/production-remediation-acp-20260905/。网页自动化旧帮助函数曾保留旧候选标记，发现后未将去重的旧消息视为新测，改用显式标记参数与搜索框/输入框事后校验再实际发送。
+
+## 第四批全量网页复核与新增原生故障
+
+2026-09-05 13:39 UTC 完成 e58a0d2 当前候选的全部 50 个网页会话复核：45 个显示正确答案（Mac 16/17、Linux 12/12、Windows 17/21），5 个未通过。Mac DuMate 与千问办公 o9hPdJ 完成回环验证及投递模式修正后，新的 R2 网页消息成功；Windows CodeBuddy 新 R2 消息也成功，但其间歇性初始化超时根因尚未确认。完整逐项状态已更新 execution.json，旧失败保留为历史。
+
+本轮新增定位 Windows DuMate 原生启动崩溃：业务回环 serve 和绕过 VOKO 的直接 --version 均以 3221225477 退出。Windows 千问办公原生故障、OpenHands 当前 Pull-only 边界、两个 backend=others 的真实 Provider 待确认仍未解决。Aider 额外 session. 文本、Copilot 超出一句话和日志等级噪声也单独记录，未把“答案正确”扩大为全面验收通过。详见 [最新日志与问题复核](log-review-1340-utc.md)。目标继续 active。
