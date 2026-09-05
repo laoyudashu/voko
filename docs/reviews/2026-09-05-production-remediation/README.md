@@ -35,3 +35,13 @@
 新增故障注入测试覆盖超时、非零退出、无效 JSON 下的进程检查、退出确认、终止和旧锁保留，以及批量 worker 查询；保留成功空查询与有效身份的对照。原实现 6 项失败/2 项通过；修复后扩展为 11 项全部通过。进程生命周期组合 19 项通过、1 项平台跳过（与新增测试有重叠，不相加）。完整 release:gate:code 门禁通过：1548 项通过、2 项既有平台跳过、0 失败；类型检查、构建、i18n、覆盖率基线和源码敏感信息扫描均通过。
 
 原始证据位于忽略目录 `artifacts/production-remediation-20260905/`；其中保存主机备份清单、当前状态、日志摘要、安装结果和候选 tarball。逐项进度在本目录 `execution.json`，状态保持 active。
+
+## 第二批部署与 Windows 原生验证
+
+`bddb0e1` 已部署到三端。tarball SHA-256：`50330958df125f04d6b80d3fe17529b95b2d14f8b426b52dc78e818a59811167`；三端实际构建摘要：`af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c`。最新状态 Mac PID 69054、Linux PID 230670、Windows PID 3676，均 READY，分别 17/17、12/12、21/21 IM 连接。注册清单重新对比无增删，共 50 个 Agent。
+
+在 Windows 原生 Node 上，安装包的 11 项故障注入测试全部通过。另通过实际 `voko status --json` 进程注入 CIM 超时，验证退出码 1、PROCESS_INSPECTION_FAILED、runtimeState=unknown、running=null；故障调用前后运行实例 owner 文件摘要一致。测试仅运行只读 status，未对实际服务注入故障或修改锁。
+
+第二次启动后的日志复核：Mac 的 A2A 警告是当前无符合发布条件的 Agent，属于目录发布条件；不能据此认定通信故障，也不应自动修改可见性。Linux 当前窗口只有启动横幅造成的空 ERR。Windows 00:27:53 仍有 Hermes models 401，须通过后续真实任务区分默认探针和实际 profile 的认证状态；00:29:29 千问办公再次记录 status_failed、exitCode=3221225477，原生异常退出仍可复现。新窗口仅几分钟，不能代替长期稳定性或全 Agent 对话验收。
+
+此轮第二批证据在 `artifacts/production-remediation-process-20260905/`。前述 15 次网页发送、3 次可见回复属于第一批提交 fa45ecb；第二批提交的全量网页回归仍 pending。Mac 锁定阻碍网页操作，已请求用户手动解锁，未尝试绕过设备锁或索取密码。

@@ -13,9 +13,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_ZEROCLAW_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -28,9 +30,11 @@
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
         "date": "2026-09-05",
-        "reply": "2加3等于5。"
+        "reply": "2加3等于5。",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -42,9 +46,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_CLAUDE_CODE_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -56,9 +62,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_GITHUB_COPILOT_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -69,7 +77,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -81,9 +90,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_GOOSE_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -95,9 +106,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_OPENCODE_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -109,9 +122,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_KIRO_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -123,9 +138,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_AIDER_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -136,7 +153,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -148,9 +166,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_REASONIX_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -162,9 +182,11 @@
         "marker": "VOKO_UI_FA45ECB_____20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -175,7 +197,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -187,9 +210,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_CODEX_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -200,7 +225,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -211,7 +237,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "macos",
@@ -223,11 +250,13 @@
         "marker": "VOKO_UI_FA45ECB_TEST_MAC_DUMATE_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
       "issues": [
         "网页明确提示 Agent 尚未启用自动回复；ProviderTurn=AUTOMATIC_DELIVERY_DISABLED"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -239,9 +268,11 @@
         "marker": "VOKO_UI_FA45ECB_TEST_LINUX_HERMES_20260905",
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
-        "date": "2026-09-05"
+        "date": "2026-09-05",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -254,9 +285,11 @@
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
         "date": "2026-09-05",
-        "reply": "2加3等于5。"
+        "reply": "2加3等于5。",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -267,7 +300,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -278,7 +312,8 @@
       "evidence": null,
       "issues": [
         "首次打开时输入尚未就绪，不能据此认定加密失败；待稳定后复查"
-      ]
+      ],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -291,9 +326,11 @@
         "question": "请用一句中文回答：2加3等于多少？",
         "browser": "macOS Chrome",
         "date": "2026-09-05",
-        "reply": "2加3等于5。"
+        "reply": "2加3等于5。",
+        "testedCommit": "fa45ecb"
       },
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -302,7 +339,8 @@
       "backendType": "goose",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -311,7 +349,8 @@
       "backendType": "opencode",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -320,7 +359,8 @@
       "backendType": "aider",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -329,7 +369,8 @@
       "backendType": "grok",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -338,7 +379,8 @@
       "backendType": "reasonix",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -347,7 +389,8 @@
       "backendType": "hermes",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "linux",
@@ -356,7 +399,8 @@
       "backendType": "zeroclaw",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -365,7 +409,8 @@
       "backendType": "hermes",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -374,7 +419,8 @@
       "backendType": "claude-code",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -383,7 +429,8 @@
       "backendType": "codex",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -392,7 +439,8 @@
       "backendType": "github-copilot",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -401,7 +449,8 @@
       "backendType": "codebuddy",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -410,7 +459,8 @@
       "backendType": "qwen-code",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -419,7 +469,8 @@
       "backendType": "goose",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -428,7 +479,8 @@
       "backendType": "opencode",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -437,7 +489,8 @@
       "backendType": "aider",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -446,7 +499,8 @@
       "backendType": "pi",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -455,7 +509,8 @@
       "backendType": "grok",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -464,7 +519,8 @@
       "backendType": "reasonix",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -473,7 +529,8 @@
       "backendType": "zeroclaw",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -482,7 +539,8 @@
       "backendType": "zeroclaw",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -491,7 +549,8 @@
       "backendType": "workbuddy",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -500,7 +559,8 @@
       "backendType": "others",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -509,7 +569,8 @@
       "backendType": "cline",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -518,7 +579,8 @@
       "backendType": "openhands",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -527,7 +589,8 @@
       "backendType": "cursor",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -536,7 +599,8 @@
       "backendType": "qwen-office",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     },
     {
       "host": "windows",
@@ -545,7 +609,8 @@
       "backendType": "dumate",
       "browserTest": "pending",
       "evidence": null,
-      "issues": []
+      "issues": [],
+      "currentCandidateBrowserRegression": "pending"
     }
   ],
   "steps": [
@@ -577,15 +642,72 @@
     "failed": 0
   },
   "candidate": {
-    "commit": "fa45ecb",
+    "commit": "bddb0e1",
     "version": "0.5.2",
-    "tarballSha256": "6ba3e9973001013cb0275985609f80c8bb55a7b546e6668f38545edbcf4d6da3",
-    "buildDigest": "d7e84cd1325d0c24b451d9617fa9e531eca64da3a65b4fa87ede7901832168c0",
+    "tarballSha256": "50330958df125f04d6b80d3fe17529b95b2d14f8b426b52dc78e818a59811167",
+    "buildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c",
     "deployedHosts": [
       "macos",
       "linux",
       "windows"
     ],
-    "publishedToNpmRegistry": false
-  }
+    "publishedToNpmRegistry": false,
+    "codeGate": {
+      "pass": 1548,
+      "skip": 2,
+      "fail": 0
+    },
+    "windowsNativeFailureTests": {
+      "pass": 11,
+      "skip": 0,
+      "fail": 0
+    }
+  },
+  "deploymentHistory": [
+    {
+      "commit": "fa45ecb",
+      "version": "0.5.2",
+      "tarballSha256": "6ba3e9973001013cb0275985609f80c8bb55a7b546e6668f38545edbcf4d6da3",
+      "buildDigest": "d7e84cd1325d0c24b451d9617fa9e531eca64da3a65b4fa87ede7901832168c0",
+      "deployedHosts": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "publishedToNpmRegistry": false
+    }
+  ],
+  "latestDeployment": [
+    {
+      "host": "macos",
+      "pid": 69054,
+      "runtimeState": "ready",
+      "imConnected": 17,
+      "total": 17,
+      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+    },
+    {
+      "host": "linux",
+      "pid": 230670,
+      "runtimeState": "ready",
+      "imConnected": 12,
+      "total": 12,
+      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+    },
+    {
+      "host": "windows",
+      "pid": 3676,
+      "runtimeState": "ready",
+      "imConnected": 21,
+      "total": 21,
+      "runtimeBuildDigest": "af21bdb17e752a94239ddb73f63e6b7b5f06391a0b0fcf1b39daa47b76cf5c6c"
+    }
+  ],
+  "inventoryRecheck": {
+    "time": "2026-09-05T07:29:40.677953+00:00",
+    "added": 0,
+    "removed": 0,
+    "total": 50
+  },
+  "uiPrerequisite": "Mac locked; native app tool reported automatic unlock failure. User manual unlock requested. Goal remains active; no full browser acceptance claimed."
 }
