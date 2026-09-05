@@ -70,17 +70,6 @@ test('WS unknown send and disconnect retain files until bounded expiry', async t
   assert.equal(fs.existsSync(sends[0].path), false);
 });
 
-test('ambiguous late session finals retain both turns rather than removing newer attachments', async t => {
-  const { provider, payload, sends } = fixture(t);
-  await provider.push(payload);
-  // Exercise the same release callback used by the active-turn timeout, without waiting 130 seconds.
-  provider._activeAgentTurns.get(payload.agentId).release();
-  await provider.push({ ...payload, messageId: 'newer-turn' });
-  provider._emitAgentReplyFromSession(sends[1].session, 'late session-only final', { turnId: 'newer-turn' });
-  assert.equal(fs.existsSync(sends[0].path), true);
-  assert.equal(fs.existsSync(sends[1].path), true);
-});
-
 test('the existing staging-age sweep reclaims retained files after runtime restart', async t => {
   const { provider, payload, sends } = fixture(t);
   await provider.push(payload);
@@ -100,4 +89,29 @@ test('WS subscription failure before chat submission cleans immediately', async 
   };
   await assert.rejects(provider.push(payload), /subscription rejection/);
   assert.equal(fs.existsSync(sends[0].path), false);
+});
+
+for (const disconnected of [false, true]) for (const oldHasFiles of [true, false]) for (const explicit of [true, false]) test(`real chat final preserves newer attachments after an unknown turn (disconnect=${disconnected}, oldFiles=${oldHasFiles}, explicit=${explicit})`, async t => {
+  const { provider, payload } = fixture(t);
+  delete provider.sendToSession;
+  provider._supportsSessionSubscribe = () => false;
+  const requests = []; provider.send = request => { requests.push(request); };
+  const replies = []; provider.on('agent.reply', reply => replies.push(reply));
+  await provider.push({ ...payload, messageId: 'old-empty', attachments: oldHasFiles ? payload.attachments : [] });
+  provider._activeAgentTurns.get(payload.agentId).release();
+  if (disconnected) { provider.disconnect(); provider.connected = true; }
+  await provider.push({ ...payload, messageId: 'new-files' });
+  const sent = requests.filter(request => request.method === 'chat.send').at(-1);
+  const stagedPath = JSON.parse(sent.params.message).content.match(/local_path=([^\n]+)/)[1];
+  const sessionKey = sent.params.sessionKey;
+  provider._handleChatEvent({ payload: { state: 'final', sessionKey,
+    ...(explicit ? { turnId: 'old-empty' } : {}), runId: 'old-run',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'old final' }] } } });
+  assert.equal(fs.existsSync(stagedPath), true);
+  assert.equal(provider._activeAgentTurns.get(payload.agentId)?.turnId, 'new-files');
+  if (explicit) assert.equal(replies.at(-1)?.turnId, 'old-empty');
+  else assert.deepEqual(replies, []);
+  provider._handleChatEvent({ payload: { state: 'final', sessionKey, turnId: 'new-files',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'new final' }] } } });
+  assert.equal(fs.existsSync(stagedPath), false);
 });

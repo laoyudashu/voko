@@ -74,3 +74,14 @@ test('generic catch preserves unknown even when a post-run hook reports ENOENT',
   } });
   await assert.rejects(provider.push(payload), error => error.deliveryOutcome === 'outcome_unknown');
 });
+
+test('a protocol error after a real successful process exit retains unknown execution evidence', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-parser-evidence-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const marker = path.join(root, 'executed');
+  const provider = new CliAdapter({ name: 'synthetic-parser', cmd: process.execPath, cwd: root,
+    matchType: 'grok', parser: 'openhands-jsonl', timeout: 5000,
+    args: ['-e', "require('fs').writeFileSync(process.argv[1],'executed');console.log(JSON.stringify({kind:'ConversationErrorEvent',code:'SyntheticError'}))", marker] });
+  await assert.rejects(provider.push(payload), error => error.deliveryOutcome === 'outcome_unknown');
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'executed');
+});

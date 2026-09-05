@@ -44,6 +44,7 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
   private readonly _startServer: boolean;
   private _server: any = null;
   private _ready = false;
+  private _lifecycleGeneration = 0;
   private readonly _active = new Map<string, string>();
 
   constructor(options: Record<string, unknown> = {}) {
@@ -104,12 +105,15 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
   }
 
   async start(): Promise<void> {
+    const generation = this._lifecycleGeneration;
     try {
       await this._rpc('agentPreset.list', {});
+      if (generation !== this._lifecycleGeneration) return;
       this._ready = true;
       this.notifyAvailability({ backendType: 'deepseek-harness', mode: 'http', available: true });
       return;
     } catch {}
+    if (generation !== this._lifecycleGeneration) return;
     const runtime = resolveDeepSeekHarnessRuntime();
     if (!this._startServer || !runtime.command) {
       this._ready = false;
@@ -120,6 +124,7 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
       cwd: os.tmpdir(), env: process.env, stdio: 'ignore', windowsHide: true,
     });
     this._server.once('exit', () => {
+      if (generation !== this._lifecycleGeneration) return;
       this._server = null;
       if (this._ready) {
         this._ready = false;
@@ -127,14 +132,16 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
       }
     });
     const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && generation === this._lifecycleGeneration) {
       try {
         await this._rpc('agentPreset.list', {}, 1500);
+        if (generation !== this._lifecycleGeneration) return;
         this._ready = true;
         this.notifyAvailability({ backendType: 'deepseek-harness', mode: 'http', available: true });
         return;
       } catch { await new Promise(resolve => setTimeout(resolve, 250)); }
     }
+    if (generation !== this._lifecycleGeneration) return;
     this._server?.kill();
     this._server = null;
     this._ready = false;
@@ -267,6 +274,7 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
   }
 
   async stop(): Promise<void> {
+    this._lifecycleGeneration++;
     this._ready = false;
     this._active.clear();
     if (this._server) {

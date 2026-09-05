@@ -275,6 +275,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   let stopPromise: Promise<void> | null = null;
   const delayedAdmissions = new Map<ReturnType<typeof setTimeout>, () => void>();
   const submittedIsolatedTurns = new Set<string>();
+  const unresolvedStoppedTurns = new Map<string, string>(); // turn key → ordinary conversation key
   function stoppedError(submitted = false): Error {
     return Object.assign(new Error('Dispatcher stopped'), { code: 'DISPATCHER_STOPPED',
       deliveryOutcome: submitted ? 'outcome_unknown' : 'not_delivered' });
@@ -286,11 +287,11 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     try { return Promise.resolve(onTurnStatus?.(status)).then(() => undefined).catch(() => undefined); }
     catch (_) { return Promise.resolve(); }
   }
-  function unsentStatus(agentId: string, payload: PushPayload): void {
+  function unsentStatus(agentId: string, payload: PushPayload, code = 'DISPATCHER_STOPPED'): void {
     void publishStatus({ agentId, visitorId: payload.fromUid,
       channelId: payload.channelId || payload.fromUid, channelType: payload.channelType === 2 ? 2 : 1,
       turnId: payload.turnId || payload.messageId, sourceMessageId: payload.messageId,
-      sourceMessageIds: payload.sourceMessageIds, status: 'failed', code: 'DISPATCHER_STOPPED' });
+      sourceMessageIds: payload.sourceMessageIds, status: 'failed', code });
   }
   function awaitSubmission<T>(submission: Promise<T>, reply: Promise<ProviderReply>): Promise<T> {
     // A stop/error reply must release an isolated caller even when a Provider
@@ -622,8 +623,12 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     if (!onAgentReply || attachedReplyProviders.has(p) || typeof p.on !== 'function') return;
     attachedReplyProviders.add(p);
     p.on('agent.reply', (reply: ProviderReply) => {
-          if (stopping) return;
           const replyTurnKey = reply.turnId ? `${reply.agentId || ''}::${reply.turnId}` : null;
+          if (replyTurnKey && reply.done !== false && unresolvedStoppedTurns.delete(replyTurnKey)) {
+            _retireIsolatedTurn(replyTurnKey);
+            return; // Resolve the old uncertainty without delivering its retired result.
+          }
+          if (stopping) return;
           const retired = replyTurnKey ? _retiredIsolatedTurn(replyTurnKey) : null;
           if (replyTurnKey && retired) {
             const delayMs = Math.max(0, Date.now() - retired.retiredAt);
@@ -1486,6 +1491,9 @@ Convergence obligations:
     const channelId = payload.channelId || payload.fromUid;
     const channelType = payload.channelType === 2 ? 2 : 1;
     const key = `${agentId}::${channelType}::${channelId}`;
+    if ([...unresolvedStoppedTurns.values()].includes(key)) {
+      unsentStatus(agentId, payload, 'PROVIDER_PREVIOUS_OUTCOME_UNKNOWN'); return;
+    }
     const previous = _conversationRoutes.get(key);
     const startedAt = Date.now();
     const statusContext = { agentId, visitorId: payload.fromUid, channelId, channelType,
@@ -2255,11 +2263,15 @@ Convergence obligations:
   }
 
   async function start() {
+    const generation = lifecycleGeneration;
     if (stopPromise) await stopPromise;
+    if (generation !== lifecycleGeneration) return;
     stopping = false; stopPromise = null;
     try { await providerSecurity?.recoverApplying(); }
     catch (e) { console.error('[Dispatcher] Provider 原生权限恢复失败:', errorMessage(e)); }
+    if (stopping || generation !== lifecycleGeneration) return;
     try { await runtimeRegistry.startAll(); } catch (e) { console.error('[Dispatcher] provider.start 失败:', errorMessage(e)); }
+    if (stopping || generation !== lifecycleGeneration) return;
     try {
       const rows = db.prepare('SELECT agent_id FROM agents').all() as Array<{ agent_id?: string }>;
       for (const row of rows) {
@@ -2290,12 +2302,16 @@ Convergence obligations:
   function stop(options: { timeoutMs?: number } = {}): Promise<void> {
     if (stopPromise) return stopPromise;
     stopping = true; lifecycleGeneration += 1;
+    const priorRoutes = [..._conversationRoutes.values()];
+    _conversationRoutes.clear(); // Never make a new lifecycle wait on an abandoned submission promise.
     for (const [timer, cancelled] of delayedAdmissions) { clearTimeout(timer); cancelled(); }
     delayedAdmissions.clear();
     const statuses = [..._ordinaryTurnDeadlines.entries()].map(([key, pending]) => {
       if (pending.timer) clearTimeout(pending.timer);
       _retireIsolatedTurn(key);
       if (pending.submitted) {
+        const context = pending.statusContext;
+        unresolvedStoppedTurns.set(key, `${context.agentId}::${context.channelType === 2 ? 2 : 1}::${context.channelId || context.visitorId}`);
         try { providerSecurity?.markTurn(String(pending.statusContext.turnId || ''), 'OUTCOME_UNKNOWN', String(pending.statusContext.agentId || '')); }
         catch (_) {}
       }
@@ -2318,7 +2334,7 @@ Convergence obligations:
     const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(0, Math.min(30000, options.timeoutMs!)) : 5000;
     stopPromise = (async () => {
       let timer: ReturnType<typeof setTimeout>;
-      const work = Promise.allSettled([...statuses, ..._conversationRoutes.values(), runtimeRegistry.stopAll()]);
+      const work = Promise.allSettled([...statuses, ...priorRoutes, runtimeRegistry.stopAll()]);
       try { await Promise.race([work, new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); })]); }
       finally { clearTimeout(timer!); }
     })();

@@ -441,7 +441,7 @@ class CliAdapter extends PushProvider {
         }
       } else if (parser.error) {
         error = new Error(parser.error);
-        (error as any).deliveryOutcome = 'rejected';
+        (error as any).deliveryOutcome = 'outcome_unknown';
       } else if (this._requireOutput && !fullContent.trim()) {
         error = new Error(`${this._name} produced no reply`);
         (error as any).deliveryOutcome = 'outcome_unknown';

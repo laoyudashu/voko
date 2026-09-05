@@ -12,6 +12,7 @@ interface RuntimeProvider {
 
 export class ProviderRuntimeRegistry extends EventEmitter {
   private started = false;
+  private lifecycleGeneration = 0;
   private readonly availabilityListeners = new Map<RuntimeProvider, (event: any) => void>();
   private readonly eventGenerations = new Map<string, number>();
 
@@ -72,7 +73,9 @@ export class ProviderRuntimeRegistry extends EventEmitter {
   async startAll(): Promise<void> {
     if (this.started) return;
     this.started = true;
+    const generation = this.lifecycleGeneration;
     for (const [id, provider] of Object.entries(this.providers)) {
+      if (!this.started || generation !== this.lifecycleGeneration) return;
       this.attach(id, provider);
       try { await provider.start?.(); }
       catch (error) { this.emit('providerError', { providerId: id, operation: 'start', error }); }
@@ -95,6 +98,7 @@ export class ProviderRuntimeRegistry extends EventEmitter {
 
   async stopAll(): Promise<void> {
     this.started = false;
+    this.lifecycleGeneration += 1;
     await Promise.all(Object.entries(this.providers).map(async ([id, provider]) => {
       this.detach(provider);
       try { await provider.stop?.(); }

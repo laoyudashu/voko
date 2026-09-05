@@ -303,13 +303,16 @@ class OpenClawWsProvider {
     };
   }
 
-  _replyIdentity(msg: ProtocolMessage, sessionKey: string): { turnId?: string; replyId?: string } {
+  _replyIdentity(msg: ProtocolMessage, sessionKey: string): { turnId?: string; replyId?: string; ambiguous?: boolean } {
     const payload = msg?.payload || {};
     const innerMsg = payload.message || {};
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
-    // 优先使用发送侧绑定的原始入站 messageId；后端 runId 可能因工具调用分段而变化。
-    const turnId = tracked?.turnId || payload.turnId || payload.runId || payload.requestId;
+    // An explicit turn id must never be overwritten by the newest session turn.
+    // A backend runId can change at tool boundaries and is not an inbound turn id.
+    if (!payload.turnId && tracked?.pendingTurnIds?.size > 1) return { ambiguous: true };
+    const pendingTurnId = tracked?.pendingTurnIds?.size === 1 ? [...tracked.pendingTurnIds][0] : undefined;
+    const turnId = payload.turnId || pendingTurnId || tracked?.turnId || payload.runId || payload.requestId;
     const replyId = innerMsg.id || innerMsg.messageId || payload.replyId || payload.messageId || payload.runId || turnId;
     return {
       ...(turnId ? { turnId: String(turnId) } : {}),
@@ -320,11 +323,13 @@ class OpenClawWsProvider {
   _emitAgentReplyFromSession(
     sessionKey: string,
     text: string,
-    identity: { turnId?: string; replyId?: string } = {},
+    identity: { turnId?: string; replyId?: string; ambiguous?: boolean } = {},
   ): void {
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const { agentId, visitorId } = this._parseAgentSessionKey(resolvedKey);
-    if (!text.trim()) return;
+    if (!text.trim() || identity.ambiguous) return;
+    const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
+    if (identity.turnId) tracked?.pendingTurnIds?.delete(identity.turnId);
     if (agentId) this._releaseAgentTurn(agentId, identity.turnId);
     const dedupKey = (resolvedKey || '') + ':' + text.substring(0, 100);
     const lastTime = this._processedMsgs.get(dedupKey);
@@ -369,13 +374,9 @@ class OpenClawWsProvider {
     // An uncorrelated reply cannot prove which turn has finished reading files.
     if (turnId) {
       const attachment = [...this._turnAttachments.values()].find((item: any) => item.agentId === agentId && item.turnId === turnId);
-      // After an unknown turn, a legacy session-only final may refer to either
-      // invocation. Prefer bounded retention over deleting the newer turn's files.
-      const ambiguous = attachment && [...this._turnAttachments.values()].some((other: any) =>
-        other !== attachment && other.sessionKey === attachment.sessionKey);
-      if (!ambiguous) attachment?.cleanup();
+      attachment?.cleanup();
     }
-    if (active && (!turnId || active.turnId === turnId)) active.release();
+    if (active && turnId && active.turnId === turnId) active.release();
   }
 
   _retainTurnAttachments(agentId: string, turnId: string, sessionKey: string, staged: any): () => void {
@@ -411,6 +412,7 @@ class OpenClawWsProvider {
     const sessionKey = this._resolveSessionKey(payload.sessionKey || '');
     const text = this._extractAssistantText(innerMsg.content || []);
     const identity = this._replyIdentity(msg, sessionKey);
+    if (identity.ambiguous) return;
     const legacyReply = this._legacyReplyTimers.get(sessionKey);
     if (legacyReply && this._isSameLogicalReply(legacyReply.text, text)) {
       clearTimeout(legacyReply.timer);
@@ -423,7 +425,7 @@ class OpenClawWsProvider {
   _scheduleLegacyAgentReply(
     sessionKey: string,
     text: string,
-    identity: { turnId?: string; replyId?: string } = {},
+    identity: { turnId?: string; replyId?: string; ambiguous?: boolean } = {},
   ): void {
     const resolvedKey = this._resolveSessionKey(sessionKey);
     const chatFinal = this._chatFinalSessions.get(resolvedKey);
@@ -488,7 +490,7 @@ class OpenClawWsProvider {
    * @returns {Promise<boolean>} gateway 是否已就绪
    */
   async _ensureGatewayRunning(): Promise<boolean> {
-    const { spawn } = require('child_process');
+    if (this._stopped) return false;
 
     // 已连上就不需要操作
     if (this.connected) return true;
@@ -520,9 +522,13 @@ class OpenClawWsProvider {
   }
 
   async _waitForGatewayReady(): Promise<boolean> {
+    const generation = this._lifecycleGeneration;
     const deadline = Date.now() + this.gatewayStartupTimeoutMs;
     while (Date.now() < deadline) {
-      if (await this._probeGateway()) {
+      if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      const healthy = await this._probeGateway();
+      if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      if (healthy) {
         this.reconnectAttempts = 0;
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
@@ -540,10 +546,13 @@ class OpenClawWsProvider {
   async _startGatewayAndWait(): Promise<boolean> {
     const { spawn } = require('child_process');
     this._gatewayStarting = true;
+    const generation = this._lifecycleGeneration;
 
     try {
       // 先检查 gateway 是否已在运行
-      if (await this._probeGateway()) {
+      const healthy = await this._probeGateway();
+      if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      if (healthy) {
         console.log(`[OpenClaw WS] Gateway 已在运行 (port=${this.gatewayPort})`);
         this.reconnectAttempts = 0;
         return true;
@@ -1111,7 +1120,7 @@ class OpenClawWsProvider {
     for (const reply of this._legacyReplyTimers.values()) clearTimeout(reply.timer);
     this._legacyReplyTimers.clear();
     this._chatFinalSessions.clear();
-    this._sessionTurns.clear();
+    // Keep unconfirmed turn identities across disconnects; late finals can still arrive.
     for (const active of this._activeAgentTurns.values()) active.release();
     this._activeAgentTurns.clear(); this._agentTurnTails.clear();
     this._replyProtocol = null;
@@ -1435,14 +1444,14 @@ class OpenClawWsProvider {
       visitorId = agentMatch[2];
     }
     const turnId = String(extraData?.turnId || extraData?.messageId || this.generateId());
-    this._sessionTurns.set(this._resolveSessionKey(sessionKey).toLowerCase(), {
-      turnId,
-      timestamp: Date.now(),
-    });
+    const turnKey = this._resolveSessionKey(sessionKey).toLowerCase();
+    const pendingTurnIds = this._sessionTurns.get(turnKey)?.pendingTurnIds || new Set<string>();
+    pendingTurnIds.add(turnId);
+    this._sessionTurns.set(turnKey, { turnId, pendingTurnIds, timestamp: Date.now() });
     if (this._sessionTurns.size > 1000) {
       const cutoff = Date.now() - 10 * 60 * 1000;
       for (const [key, tracked] of this._sessionTurns) {
-        if (tracked.timestamp < cutoff) this._sessionTurns.delete(key);
+        if (tracked.timestamp < cutoff && !tracked.pendingTurnIds?.size) this._sessionTurns.delete(key);
       }
     }
     // 构造结构化 JSON（去掉 untrusted 标记）
@@ -1476,6 +1485,7 @@ class OpenClawWsProvider {
    */
   destroy(): void {
     this._stopped = true;
+    this.enabled = false;
     this._lifecycleGeneration += 1;
     console.log('[OpenClaw WS] 正在释放资源...');
     this.stopConfigWatcher();
@@ -1659,8 +1669,10 @@ class OpenClawWsProvider {
   /** 建立连接：确保 gateway 运行 + setEnabled 开启 WS（幂等）。 */
   async start() {
     this._stopped = false;
+    const generation = this._lifecycleGeneration;
     try {
       const running = await this._ensureGatewayRunning();
+      if (this._stopped || generation !== this._lifecycleGeneration) return;
       if (!running) console.warn('[OpenClaw WS] provider.start: Gateway 启动失败');
       this.setEnabled(true);
     } catch (e) { console.error('[OpenClaw WS] provider.start 失败:', errorMessage(e)); }
