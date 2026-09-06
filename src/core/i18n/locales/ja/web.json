@@ -346,7 +346,7 @@
   "web.agent.blacklist.block_btn": "拉黑",
   "web.agent.blacklist.ph.visitor": "访客UID",
   "web.agent.blacklist.reason_opt": "原因（可选）",
-  "web.agent.access.title": "访问模式",
+  "web.agent.access.title": "訪問者アクセス",
   "web.agent.access.current": "当前",
   "web.agent.access.private_desc": "🔒 ホワイトリストのユーザーのみアクセス可能",
   "web.agent.access.public_desc": "🌐 すべての訪問者がアクセス可能",
@@ -883,5 +883,15 @@
   "web.owner_chat.message_unavailable": "メッセージ内容を表示できません",
   "web.owner_chat.not_found_title": "オーナー会話が見つかりません",
   "web.owner_chat.not_found": "このオーナー会話は存在しないか、現在の Agent に属していません。",
-  "web.owner_chat.back": "オーナー会話に戻る"
+  "web.owner_chat.back": "オーナー会話に戻る",
+  "web.agent.qr.title": "訪問者用QRコード",
+  "web.agent.qr.hint": "スキャンしてこのAgentの訪問者リンクを開きます。",
+  "web.agent.qr.download": "QRコードをダウンロード（PNG）",
+  "web.agent.qr.no_link": "まずホームページで訪問者リンクを生成してください。",
+  "web.agent.op.security": "訪問者権限",
+  "web.agent.op.access": "訪問者範囲",
+  "web.agent.op.visibility": "公開範囲",
+  "web.agent.op.interventions": "人による介入",
+  "web.agent.op.allowlist": "許可リスト",
+  "web.agent.op.blocklist": "拒否リスト"
 }
