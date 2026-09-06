@@ -4,7 +4,7 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
-## 0.5.3 - Release preparation
+## 0.5.3 - 2026-09-06
 
 - Added version-aware OpenClaw CLI/configuration handling and authenticated Gateway version/protocol discovery. Serialized calls sharing a state directory and recovered a migration-requested Gateway restart once within the existing startup deadline.
 - Added Codex CLI contract and native sandbox checks tied to the actual runtime, including consistent first/resumed-turn permissions and actionable failure diagnostics. Unverified controls remain unavailable; version numbers alone do not grant permissions.
