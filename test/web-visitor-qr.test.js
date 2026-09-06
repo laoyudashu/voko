@@ -31,7 +31,7 @@ test('visitor QR uses the exact saved link and provides the same PNG for preview
   assert.match(home, /href="\/agents\/agent-qr\/visitor-qr"[^>]*data-role="visitor-qr"/);
   assert.doesNotMatch(home, /data-role="toggle-acc"/);
   const detail = await (await fetch(base+'/agents/agent-qr')).text();
-  assert.match(detail, /href="\/agents\/agent-qr\/access-mode" class="op-card"[^>]*>访客访问 · 仅白名单<\/a>/);
+  assert.match(detail, /href="\/agents\/agent-qr\/access-mode" title="仅白名单" class="op-card"[^>]*>访客范围<\/a>/);
   const response = await fetch(base+'/agents/agent-qr/visitor-qr');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');

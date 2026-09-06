@@ -1057,5 +1057,11 @@
   "web.agent.qr.title": "Visitor QR code",
   "web.agent.qr.hint": "Scan to open this Agent’s visitor link.",
   "web.agent.qr.download": "Download QR code (PNG)",
-  "web.agent.qr.no_link": "Generate a visitor link on the home page first."
+  "web.agent.qr.no_link": "Generate a visitor link on the home page first.",
+  "web.agent.op.security": "Visitor permissions",
+  "web.agent.op.access": "Visitor access",
+  "web.agent.op.visibility": "Discoverability",
+  "web.agent.op.interventions": "Interventions",
+  "web.agent.op.allowlist": "Allowlist",
+  "web.agent.op.blocklist": "Blocklist"
 }

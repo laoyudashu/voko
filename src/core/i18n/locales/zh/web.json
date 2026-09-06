@@ -1057,5 +1057,11 @@
   "web.agent.qr.title": "访客二维码",
   "web.agent.qr.hint": "扫码打开此 Agent 的访客链接。",
   "web.agent.qr.download": "下载二维码 PNG",
-  "web.agent.qr.no_link": "请先在首页生成访客链接。"
+  "web.agent.qr.no_link": "请先在首页生成访客链接。",
+  "web.agent.op.security": "访客权限",
+  "web.agent.op.access": "访客范围",
+  "web.agent.op.visibility": "展示范围",
+  "web.agent.op.interventions": "人工介入",
+  "web.agent.op.allowlist": "白名单",
+  "web.agent.op.blocklist": "黑名单"
 }

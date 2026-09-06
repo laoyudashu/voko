@@ -887,5 +887,11 @@
   "web.agent.qr.title": "訪問者用QRコード",
   "web.agent.qr.hint": "スキャンしてこのAgentの訪問者リンクを開きます。",
   "web.agent.qr.download": "QRコードをダウンロード（PNG）",
-  "web.agent.qr.no_link": "まずホームページで訪問者リンクを生成してください。"
+  "web.agent.qr.no_link": "まずホームページで訪問者リンクを生成してください。",
+  "web.agent.op.security": "訪問者権限",
+  "web.agent.op.access": "訪問者範囲",
+  "web.agent.op.visibility": "公開範囲",
+  "web.agent.op.interventions": "人による介入",
+  "web.agent.op.allowlist": "許可リスト",
+  "web.agent.op.blocklist": "拒否リスト"
 }
