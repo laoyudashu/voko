@@ -75,9 +75,26 @@ test('artifact scan accepts CRLF tar listings without skipping secret members', 
   t.mock.method(cp, 'execFileSync', (cmd, args, options) => {
     const result = original(cmd, args, options);
     return cmd === 'tar' && args.some(arg => ['-tf', '-tvf'].includes(arg))
-      ? result.replace(/\r?\n/g, '\r\n') : result;
+      ? Buffer.from(result.toString('utf8').replace(/\r?\n/g, '\r\n')) : result;
   });
   assert.deepEqual(scanTarball(archive).findings, [{ rule: 'literal-secret', file: 'README.md', line: 1 }]);
+});
+
+test('artifact listing with invalid UTF-8 is rejected before extraction', t => {
+  const { archive } = packedFixture(t, { 'README.md': 'test' });
+  const cp = require('node:child_process');
+  const original = cp.execFileSync;
+  let extraction = false;
+  t.mock.method(cp, 'execFileSync', (cmd, args, options) => {
+    if (args.includes('-xf')) { extraction = true; throw new Error('Unexpected extraction'); }
+    if (args.includes('-tf')) {
+      const bytes = Buffer.concat([Buffer.from('package/\npackage/ca'), Buffer.from([0xff]), Buffer.from('.txt\n')]);
+      return options.encoding === 'utf8' ? bytes.toString('utf8') : bytes;
+    }
+    return original(cmd, args, options);
+  });
+  assert.throws(() => scanTarball(archive), /archive.*encoding/i);
+  assert.equal(extraction, false);
 });
 
 test('artifact bytes are authoritative and unpackaged workspace fixtures are ignored', t => {
@@ -207,6 +224,7 @@ test('additional filesystem case folding cannot turn a secret member into a clea
       // Windows bsdtar may not preserve this raw UTF-8 ustar name. Refusing
       // the unreadable member is fail-closed, never a successful clean scan.
       assert.equal(process.platform, 'win32');
+      if (/archive.*encoding/i.test(error.message)) return;
       assert.equal(error.code, 'ENOENT');
       assert.equal(path.basename(error.path), 'stra\u00dfe.txt');
       return;
