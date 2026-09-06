@@ -120,7 +120,14 @@ describe('voko mcp stdio 桥接', () => {
     const db = tmpDb();
     let currentIdentity = null;
     for (let attempt = 0; attempt < 3 && !currentIdentity; attempt++) {
-      currentIdentity = lifecycle.inspectProcess(process.pid);
+      try { currentIdentity = lifecycle.inspectProcess(process.pid); }
+      catch (error) {
+        if (process.platform !== 'win32' || error.code !== 'PROCESS_INSPECTION_FAILED' || attempt === 2) {
+          await new Promise((resolve) => server.close(resolve));
+          cleanup(db);
+          throw error;
+        }
+      }
       if (!currentIdentity) await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!currentIdentity && process.platform === 'win32') {
