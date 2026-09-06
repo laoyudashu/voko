@@ -366,6 +366,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
           { code: 'PROVIDER_CAPABILITY_PROBE_TIMEOUT', deliveryOutcome: 'not_delivered' });
         providerSecurity.recordCapabilityEvent?.(agentId, providerId, 'CAPABILITY_PROBE_STARTED', {});
         provider.refreshRuntime?.();
+        if (typeof provider.refreshSecurityControlEvidence === 'function') await provider.refreshSecurityControlEvidence(agentId, { force });
         if (typeof provider.refreshDeliveryReadiness === 'function') await provider.refreshDeliveryReadiness();
         return snapshotFromProvider(provider, providerId, agentId);
       })();
@@ -456,7 +457,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   }
 
   function _createTurnDeadline(input: {
-    scope: 'E2EE_V2' | 'A2A' | 'OWNER'; turnId: string; sinkKey: string; taskId: string;
+    agentId: string; scope: 'E2EE_V2' | 'A2A' | 'OWNER'; turnId: string; sinkKey: string; taskId: string;
     explicitTimeoutMs?: number; reject: (error: Error) => void;
   }) {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -479,6 +480,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
         timer = setTimeout(() => {
           expired = true;
           const selected = active!;
+          providerSecurity?.markTurn(input.turnId, 'OUTCOME_UNKNOWN', input.agentId);
           _retireIsolatedTurn(input.sinkKey, { timedOut: true, providerId: selected.providerId,
             taskId: input.taskId, waitMs: selected.waitMs });
           const actualWaitMs = Date.now() - selected.startedAt;
@@ -585,7 +587,8 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
       if (event.turnId) {
         const state = event.type === 'accepted' ? 'ACCEPTED'
           : event.type === 'completed' ? 'COMPLETED'
-            : event.type === 'failed' ? 'FAILED' : null;
+            : event.type === 'failed' ? 'FAILED'
+              : event.type === 'status' && (event.payload as any)?.state === 'outcome_unknown' ? 'OUTCOME_UNKNOWN' : null;
         if (state) providerSecurity?.markTurn(event.turnId, state, event.agentId);
       }
     });
@@ -1541,6 +1544,7 @@ Convergence obligations:
         const timer = setTimeout(() => {
           if (!_ordinaryTurnDeadlines.has(turnKey)) return;
           _ordinaryTurnDeadlines.delete(turnKey);
+          providerSecurity?.markTurn(statusContext.turnId, 'OUTCOME_UNKNOWN', agentId);
           void Promise.resolve(onTurnStatus?.({ ...statusContext, status: 'outcome_unknown',
             code: 'PROVIDER_OUTCOME_UNKNOWN' })).catch(() => undefined);
         }, waitMs);
@@ -1747,6 +1751,14 @@ Convergence obligations:
             content: appendProviderSecurityPrompt(baseProviderPayload.content, securityLease),
             providerBinding: selectedBinding,
             providerSecurityPolicy: securityLease,
+            assertSubmissionCurrent: () => {
+              assertAccepting(generation);
+              if (isolated && _retiredIsolatedTurn(`${agentId}::${String(baseProviderPayload.turnId || '')}`)) {
+                throw Object.assign(new Error('Provider turn expired before submission'), {
+                  code: 'PROVIDER_TURN_EXPIRED', deliveryOutcome: 'not_delivered',
+                });
+              }
+            },
           };
           payloadByProvider.set(candidate.target, providerPayload);
           if (securityLease) providerSecurity?.markTurn(securityLease.turnId, 'SUBMITTING', agentId);
@@ -1761,7 +1773,7 @@ Convergence obligations:
           if (stopping || generation !== lifecycleGeneration) return;
           const selectedRoute = routeByProvider.get(candidate.target)!;
           const providerPayload = payloadByProvider.get(candidate.target);
-          if (providerPayload?.providerSecurityPolicy?.turnId) {
+          if (providerPayload?.providerSecurityPolicy?.turnId && deliveryReceipt?.executionState !== 'pending') {
             providerSecurity?.markTurn(providerPayload.providerSecurityPolicy.turnId, 'COMPLETED', agentId);
           }
           if (!isolated && providerPayload && deliveryReceipt?.nativeSessionId) {
@@ -1843,7 +1855,7 @@ Convergence obligations:
         error.deliveryOutcome=String((reply as any).deliveryOutcome||'rejected');rejectReply(error);return; }
       resolveReply(reply);
     });
-    const deadline = _createTurnDeadline({ scope: 'OWNER', turnId, sinkKey, taskId: options.taskId,
+    const deadline = _createTurnDeadline({ agentId: options.agentId, scope: 'OWNER', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const route = _ownerRouteEntry(options.agentId);
@@ -1908,7 +1920,7 @@ Convergence obligations:
       }
       resolveReply(reply);
     });
-    const deadline = _createTurnDeadline({ scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
+    const deadline = _createTurnDeadline({ agentId: options.agentId, scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     try {
       const delivery = await awaitSubmission(_doRoute(options.agentId, {
@@ -1992,7 +2004,7 @@ Convergence obligations:
       }
       resolveReply(reply);
     });
-    const deadline = _createTurnDeadline({ scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
+    const deadline = _createTurnDeadline({ agentId: options.agentId, scope: 'E2EE_V2', turnId, sinkKey, taskId: options.taskId,
       explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
     const startedAt = Date.now();
     let selectedProviderId = 'none';

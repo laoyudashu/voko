@@ -54,9 +54,9 @@ function checkGateway(backend, databaseAPI) {
     return {
       backend, mode: 'ws', hasToken, connected,
       ready: hasToken && connected,
-      detail: !hasToken
+      detail: st.configurationError || (!hasToken
         ? 'openclaw.json 未配置 gateway.auth.token'
-        : (connected ? 'WebSocket 长连接已就绪' : '已配置 token，Gateway 未运行'),
+        : (connected ? 'WebSocket 长连接已就绪' : '已配置 token，Gateway 未运行')),
     };
   }
   if (backend === 'hermes') {
@@ -80,34 +80,39 @@ function checkGateway(backend, databaseAPI) {
 // ════════════════════════════════════════
 //  OpenClaw 配置
 // ════════════════════════════════════════
-const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+const { openClawPaths } = require('./dispatcher/openclaw-command');
 
 async function setupOpenclawGateway(log) {
   const o = global.__openclawHandler;
   if (!o) throw new Error('OpenClaw 处理器未初始化');
 
-  // 1. 读现有配置
-  let config = {};
-  try { config = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf-8')); } catch (_) { config = {}; }
-  config.gateway = config.gateway || {};
-  config.gateway.auth = config.gateway.auth || {};
-
-  // 2. 已有 token 跳过生成；否则备份 + 生成写入
-  if (config.gateway.auth.token) {
-    log('✓ openclaw.json 已有 token，跳过生成');
-  } else {
-    const bak = OPENCLAW_CONFIG_PATH + '.bak';
-    try {
-      fs.copyFileSync(OPENCLAW_CONFIG_PATH, bak, fs.constants.COPYFILE_EXCL);
-      log('✓ 已备份 openclaw.json → openclaw.json.bak');
-    } catch (e) {
-      if (e.code !== 'EEXIST' && e.code !== 'ENOENT') log(`⚠ 备份失败: ${e.message}`);
-    }
-    const token = `voko_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
-    config.gateway.auth.token = token;
-    fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
-    log('✓ 已生成 gateway.auth.token 并写入 openclaw.json');
+  const configPath = openClawPaths(process.env, os.homedir()).configPath;
+  let config;
+  try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw new Error('OPENCLAW_CONFIG_UNREADABLE: 配置无法解析，未修改');
+    config = {};
   }
+  if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error('OPENCLAW_CONFIG_INVALID');
+  const gateway = config.gateway || {};
+  const auth = gateway.auth || {};
+  if (typeof gateway !== 'object' || Array.isArray(gateway) || typeof auth !== 'object' || Array.isArray(auth)) {
+    throw new Error('OPENCLAW_CONFIG_INVALID');
+  }
+  if (gateway.mode && gateway.mode !== 'local') throw new Error('OPENCLAW_REMOTE_SETUP_UNSUPPORTED: 请使用现有远程配置');
+  if ((auth.mode && auth.mode !== 'token') || auth.password || (auth.token && typeof auth.token !== 'string')) {
+    throw new Error('OPENCLAW_AUTH_SETUP_UNSUPPORTED: 自动配置仅支持本地 Token 认证，未修改现有认证');
+  }
+  // This entry point is the user's explicit local Gateway setup action.
+  if (gateway.mode !== 'local' || !auth.token) {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    try { fs.copyFileSync(configPath, configPath + '.bak.' + crypto.randomBytes(6).toString('hex'), fs.constants.COPYFILE_EXCL); }
+    catch (error) { if (error.code !== 'ENOENT') throw new Error('OPENCLAW_CONFIG_BACKUP_FAILED'); }
+    config.gateway = { ...gateway, mode: 'local', auth: { ...auth, token: auth.token || crypto.randomBytes(32).toString('hex') } };
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    log('✓ 已配置本地 Gateway；已有 Token 保持不变');
+  } else log('✓ 已有本地 Token 配置');
+  if (typeof o.loadConfig === 'function') o.loadConfig();
 
   // 3. configWatcher 每 5s 检测 mtime；主动等其重载（最多 8s）
   log('⏳ 等待 OpenClaw 处理器自动重载配置（~5s）...');

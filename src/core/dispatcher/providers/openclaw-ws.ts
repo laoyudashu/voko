@@ -9,6 +9,7 @@ const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments, STAGING_MAX_AGE_MS } = require('../provider-attachments');
 const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
+const { openClawPaths } = require('../openclaw-command');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -73,6 +74,9 @@ class OpenClawWsProvider {
     // WebSocket 连接
     this.ws = null;
     this.sessionId = null;
+    this._connectRequestId = null;
+    this._gatewayVersion = null;
+    this._chatRequests = new Map();
     this._protocolVer = 4; // 默认 v4（老网关）；网关 mismatch 时降级 v3（OpenClaw 2026.3.x）
     this._gatewayMethods = [];
     this._gatewayEvents = [];
@@ -104,11 +108,7 @@ class OpenClawWsProvider {
     this.maxLogSize = 200;
 
     // 配置文件监控
-    this.configPath = path.join(
-      os.homedir(),
-      '.openclaw',
-      'openclaw.json'
-    );
+    this.configPath = openClawPaths(process.env, os.homedir()).configPath;
     this.configWatcher = null;
     this.lastConfigMtime = 0;
 
@@ -138,6 +138,30 @@ class OpenClawWsProvider {
     this.startConfigWatcher();
   }
 
+  _resolveRuntime(agentId = ''): any {
+    return { available: this.connected, fingerprint: crypto.createHash('sha256').update(JSON.stringify([
+      'openclaw-ws', this.gatewayUrl, this.configPath, this.getInstanceId(agentId),
+      this.connected ? this._gatewayVersion : null, this.connected ? this._protocolVer : null,
+      this.connected ? this._gatewayMethods : [], this.connected ? this._gatewayEvents : [],
+    ])).digest('hex') };
+  }
+
+  getSecurityControlEvidence(): any {
+    return { frameworkVersion: this.connected ? this._gatewayVersion : null,
+      runtimeVersion: this.connected ? this._gatewayVersion : null,
+      protocolVersion: this.connected ? this._protocolVer : null, nodeVersion: process.version,
+      versionSource: 'authenticated_gateway', nativePermissions: 'unsupported',
+      callCompatibility: this.connected ? 'protocol_compatible' : 'unverified' };
+  }
+
+  _emitTurnState(agentId: string, turnId: string, state: string, sessionKey?: string): void {
+    if (!agentId || !turnId) return;
+    this.emit('provider.event', { eventId: `openclaw-ws:${agentId}:${turnId}:${state}`,
+      type: state === 'outcome_unknown' ? 'status' : state, providerId: 'openclaw-ws',
+      agentId, turnId, nativeSessionId: sessionKey, occurredAt: Date.now(),
+      terminal: state === 'completed' || state === 'failed', payload: { state } });
+  }
+
   /**
    * 加载 OpenClaw 配置文件
    */
@@ -148,7 +172,11 @@ class OpenClawWsProvider {
         this.lastConfigMtime = fs.statSync(this.configPath).mtimeMs;
 
         const newPort = config.gateway?.port || 18789;
-        const newToken = config.gateway?.auth?.token || null;
+        const auth = config.gateway?.auth || {};
+        this.configurationError = config.gateway?.mode && config.gateway.mode !== 'local' ? 'OPENCLAW_REMOTE_SETUP_UNSUPPORTED'
+          : (auth.mode && auth.mode !== 'token') || auth.password || (auth.token && typeof auth.token !== 'string')
+            ? 'OPENCLAW_AUTH_SETUP_UNSUPPORTED' : null;
+        const newToken = this.configurationError ? null : auth.token || null;
         const newUrl = `ws://127.0.0.1:${newPort}`;
 
         // 检测配置变化
@@ -181,11 +209,17 @@ class OpenClawWsProvider {
 
         return true;
       } else {
-        console.warn('[OpenClaw WS] 配置文件不存在:', this.configPath);
+        this.configurationError = 'OPENCLAW_CONFIG_NOT_FOUND';
+        this.authToken = null;
+        if (this.connected || this.connecting) this.disconnect();
+        console.warn('[OpenClaw WS] 配置文件不存在');
         return false;
       }
     } catch (err) {
-      console.error('[OpenClaw WS] 加载配置失败:', errorMessage(err));
+      this.configurationError = 'OPENCLAW_CONFIG_UNREADABLE';
+      this.authToken = null;
+      if (this.connected || this.connecting) this.disconnect();
+      console.error('[OpenClaw WS] 配置无法读取或解析');
       return false;
     }
   }
@@ -261,6 +295,9 @@ class OpenClawWsProvider {
       reconnectDelay: this.reconnectDelay,
       maxReconnectDelay: this.maxReconnectDelay,
       logs: this.logs.slice(),
+      configurationError: this.configurationError || null,
+      frameworkVersion: this.connected ? this._gatewayVersion : null,
+      protocolVersion: this.connected ? this._protocolVer : null,
       hasToken: !!this.authToken
     };
   }
@@ -310,13 +347,14 @@ class OpenClawWsProvider {
     const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
     // An explicit turn id must never be overwritten by the newest session turn.
     // A backend runId can change at tool boundaries and is not an inbound turn id.
+    if (!payload.turnId && payload.runId && tracked?.runId && payload.runId !== tracked.runId) return { ambiguous: true };
     if (!payload.turnId && tracked?.uncertain) return { ambiguous: true };
     const turnId = payload.turnId || tracked?.turnId || payload.runId || payload.requestId;
     const replyId = innerMsg.id || innerMsg.messageId || payload.replyId || payload.messageId || payload.runId || turnId;
     return {
       ...(turnId ? { turnId: String(turnId) } : {}),
       ...(replyId ? { replyId: String(replyId) } : {}),
-      correlated: !!payload.turnId,
+      correlated: !!payload.turnId || !!(payload.runId && tracked?.runId === payload.runId),
     };
   }
 
@@ -338,8 +376,12 @@ class OpenClawWsProvider {
     if (this._processedMsgs.size > 1000) this._processedMsgs.delete(this._processedMsgs.keys().next().value);
     const tracked = this._sessionTurns.get(resolvedKey.toLowerCase());
     if (identity.turnId && tracked?.turnId === identity.turnId) tracked.pending = false;
+    const active = agentId && this._activeAgentTurns.get(agentId);
+    const completes = !!(active && identity.turnId && active.turnId === identity.turnId);
     if (agentId) this._releaseAgentTurn(agentId, identity.turnId, identity.correlated !== false);
     console.log(`[OpenClaw WS] ✅ 收到完整回复 visitorId=${visitorId}`);
+    // Record execution completion before an isolated reply retires its delivery context.
+    if (completes) this._emitTurnState(agentId!, identity.turnId!, 'completed', resolvedKey);
     this.emit('agent.reply', { agentId, visitorId, content: text, sessionKey: resolvedKey, ...identity });
   }
 
@@ -368,7 +410,7 @@ class OpenClawWsProvider {
       if (this._agentTurnTails.get(agentId) === done) this._agentTurnTails.delete(agentId);
       resolveDone();
     };
-    timeout = setTimeout(release, 130_000); timeout.unref?.();
+    timeout = setTimeout(() => { this._emitTurnState(agentId, turnId, 'outcome_unknown'); release(); }, 130_000); timeout.unref?.();
     this._activeAgentTurns.set(agentId, { turnId, release });
     return release;
   }
@@ -410,6 +452,21 @@ class OpenClawWsProvider {
 
   _handleChatEvent(msg: ProtocolMessage): void {
     const payload = msg.payload || {};
+    if (payload.state === 'error' || payload.state === 'aborted') {
+      const sessionKey = this._resolveSessionKey(payload.sessionKey || '');
+      const identity = this._replyIdentity(msg, sessionKey);
+      const { agentId } = this._parseAgentSessionKey(sessionKey);
+      if (!identity.ambiguous && identity.turnId && agentId
+        && this._activeAgentTurns.get(agentId)?.turnId === identity.turnId) {
+        this._emitTurnState(agentId, identity.turnId, 'failed', sessionKey);
+        const tracked = this._sessionTurns.get(sessionKey.toLowerCase());
+        if (tracked?.turnId === identity.turnId) tracked.pending = false;
+        this._releaseAgentTurn(agentId, identity.turnId, identity.correlated !== false);
+        this.emit('delivery.error', { agentId, turnId: identity.turnId,
+          kind: 'execution_failed', error: new Error('OpenClaw run ' + payload.state) });
+      }
+      return;
+    }
     if (payload.state !== 'final') return;
     const innerMsg = payload.message;
     if (!innerMsg || innerMsg.role !== 'assistant') return;
@@ -463,29 +520,29 @@ class OpenClawWsProvider {
       if (require('fs').existsSync(entryPoint)) {
         const nodePath = path.join(npmDir, 'node.exe');
         if (require('fs').existsSync(nodePath)) {
-          return { cmd: nodePath, args: [entryPoint, 'gateway', 'run', '--force'], shell: false };
+          return { cmd: nodePath, args: [entryPoint, 'gateway', 'run'], shell: false };
         }
         // npm 目录下没有 node.exe，用系统 PATH 中的 node
-        return { cmd: 'node', args: [entryPoint, 'gateway', 'run', '--force'], shell: false };
+        return { cmd: 'node', args: [entryPoint, 'gateway', 'run'], shell: false };
       }
       // 兜底：走 .cmd 文件
       const cmdPath = path.join(npmDir, 'openclaw.cmd');
-      if (require('fs').existsSync(cmdPath)) return { cmd: cmdPath, args: ['gateway', 'run', '--force'], shell: true };
+      if (require('fs').existsSync(cmdPath)) return { cmd: cmdPath, args: ['gateway', 'run'], shell: true };
       try {
         const result = require('child_process').execSync('where openclaw', { encoding: 'utf8', timeout: 5000, shell: true, windowsHide: true });
         const resolved = selectWindowsOpenclawCommand(result);
-        if (resolved) return { ...resolved, args: ['gateway', 'run', '--force'] };
+        if (resolved) return { ...resolved, args: ['gateway', 'run'] };
       } catch {}
     } else {
       // macOS/Linux
       try {
         const result = require('child_process').execSync('which openclaw', { encoding: 'utf8', timeout: 5000 });
-        if (result.trim()) return { cmd: result.trim(), args: ['gateway', 'run', '--force'], shell: false };
+        if (result.trim()) return { cmd: result.trim(), args: ['gateway', 'run'], shell: false };
       } catch {}
     }
     // 终极兜底
     const isWin = process.platform === 'win32';
-    return { cmd: isWin ? 'openclaw.cmd' : 'openclaw', args: ['gateway', 'run', '--force'], shell: isWin };
+    return { cmd: isWin ? 'openclaw.cmd' : 'openclaw', args: ['gateway', 'run'], shell: isWin };
   }
 
   /**
@@ -494,7 +551,7 @@ class OpenClawWsProvider {
    * @returns {Promise<boolean>} gateway 是否已就绪
    */
   async _ensureGatewayRunning(): Promise<boolean> {
-    if (this._stopped) return false;
+    if (this._stopped || this.configurationError) return false;
 
     // 已连上就不需要操作
     if (this.connected) return true;
@@ -751,6 +808,7 @@ class OpenClawWsProvider {
       }, 30000);
 
       try {
+        this._connectRequestId = null;
         socket = new WebSocket(this.gatewayUrl);
         this.ws = socket;
       } catch (err) {
@@ -808,6 +866,8 @@ class OpenClawWsProvider {
             Date.now() + this.gatewayStartupTimeoutMs,
           );
         }
+        this._markUnconfirmedTurns();
+        this._connectRequestId = null;
         this.connected = false;
         this._notifyAvailability(false, `socket-close:${code}`);
         this.connecting = false;
@@ -842,9 +902,13 @@ class OpenClawWsProvider {
       console.log('[OpenClaw WS] 🔐 收到认证挑战');
 
       try {
+        if (this.connected || this._connectRequestId) return;
+        const signedAtMs = msg.payload.ts;
+        if (!Number.isSafeInteger(signedAtMs) || signedAtMs <= 0) { this.ws?.close(); return; }
+        const socket = this.ws;
+        const requestId = this.generateId();
+        this._connectRequestId = requestId;
         this.device = await this.createDeviceIdentity();
-
-        const signedAtMs = Date.now();
         const payload = this.buildAuthPayload({
           deviceId: this.device.deviceId,
           clientId: 'cli',
@@ -858,9 +922,10 @@ class OpenClawWsProvider {
 
         const signature = await this.signPayload(this.device.privateKey, payload);
 
+        if (this.ws !== socket || this._connectRequestId !== requestId) return;
         this.send({
           type: 'req',
-          id: this.generateId(),
+          id: this._connectRequestId,
           method: 'connect',
           params: {
             minProtocol: this._protocolVer,
@@ -868,7 +933,7 @@ class OpenClawWsProvider {
             client: {
               id: 'cli',
               version: '1.0.0',
-              platform: 'windows',
+              platform: process.platform,
               mode: 'cli'
             },
             role: 'operator',
@@ -891,9 +956,15 @@ class OpenClawWsProvider {
       }
     }
 
-    // 处理 connect 认证响应：连接后首个 res.ok 即认证成功（!this.connected 门控，
-    // 老网关 ack 与 2026.3.x 的 hello-ok 都认；连上后 subscribe/chat 的 res.ok 不再误触发）
-    if (msg.type === 'res' && msg.ok && !this.connected) {
+    // A successful response belongs to authentication only when it answers our connect request.
+    if (msg.type === 'res' && msg.ok && !this.connected && this._connectRequestId && msg.id === this._connectRequestId) {
+      if (msg.payload?.type !== 'hello-ok' || msg.payload.protocol !== this._protocolVer
+        || (msg.payload.features?.methods !== undefined && !Array.isArray(msg.payload.features.methods))
+        || (msg.payload.features?.events !== undefined && !Array.isArray(msg.payload.features.events))) {
+        this.ws?.close(); return;
+      }
+      this._connectRequestId = null;
+      this._gatewayVersion = typeof msg.payload.server?.version === 'string' ? msg.payload.server.version : null;
       const wasConnected = this.connected; // 记录重连前状态
       const hadSubscribed = this.subscribedSessions.size;
       const wasReconnecting = this.reconnectAttempts > 0; // 是否在重连中
@@ -901,8 +972,6 @@ class OpenClawWsProvider {
       this.addLog('✅ 认证成功');
       this.connected = true;
       this.connecting = false;
-      this.emit('connected');
-      this._notifyAvailability(true, 'authenticated');
       this._gatewayMethods = msg.payload?.features?.methods || [];
       this._gatewayEvents = msg.payload?.features?.events || [];
       const gatewayEvents = this._gatewayEvents.map((event: unknown) => String(event).toLowerCase());
@@ -914,6 +983,8 @@ class OpenClawWsProvider {
       this.sessionId = sessionDefaults?.mainSessionKey || 'agent:main:main';
       this.reconnectAttempts = 0; // 重置重连计数
       this._gatewayWarmupUntil = 0;
+      this.emit('connected');
+      this._notifyAvailability(true, 'authenticated');
 
       console.log(`[OpenClaw WS] 认证完成 protocol=${this._protocolVer} subscribe=${this._supportsSessionSubscribe()} replyEvent=${this._replyProtocol || 'auto'} pending=${this.pendingSubscriptions.size}`);
 
@@ -934,7 +1005,7 @@ class OpenClawWsProvider {
     }
 
     // 处理认证失败
-    if (msg.type === 'res' && !msg.ok && msg.error) {
+    if (msg.type === 'res' && !msg.ok && msg.error && this._connectRequestId && msg.id === this._connectRequestId) {
       console.error('[OpenClaw WS] ❌ 认证失败:', msg.error.message);
       this.addLog(`❌ 认证失败: ${msg.error.message}`);
 
@@ -957,6 +1028,25 @@ class OpenClawWsProvider {
         } else {
           console.error('[OpenClaw WS] v3 也不匹配，停止重试');
           this.addLog('❌ 协议版本不兼容');
+        }
+      }
+    }
+
+    const chatRequest = msg.type === 'res' && this._chatRequests.get(msg.id);
+    if (chatRequest) {
+      this._chatRequests.delete(msg.id);
+      const tracked = this._sessionTurns.get(chatRequest.sessionKey.toLowerCase());
+      if (tracked?.turnId === chatRequest.turnId) {
+        const { agentId } = this._parseAgentSessionKey(chatRequest.sessionKey);
+        if (msg.ok && typeof msg.payload?.runId === 'string') {
+          tracked.runId = msg.payload.runId;
+          this._emitTurnState(agentId!, tracked.turnId, 'accepted', chatRequest.sessionKey);
+        } else if (!msg.ok) {
+          this._emitTurnState(agentId!, tracked.turnId, 'failed', chatRequest.sessionKey);
+          tracked.pending = false;
+          this._releaseAgentTurn(agentId!, tracked.turnId);
+          this.emit('delivery.error', { agentId, turnId: tracked.turnId,
+            kind: 'execution_failed', error: new Error('OpenClaw chat.send rejected') });
         }
       }
     }
@@ -1096,7 +1186,14 @@ class OpenClawWsProvider {
   /**
    * 断开连接
    */
+  _markUnconfirmedTurns(): void {
+    for (const [agentId, active] of this._activeAgentTurns) this._emitTurnState(agentId, active.turnId, 'outcome_unknown');
+    this._chatRequests.clear();
+  }
+
   disconnect(): void {
+    this._markUnconfirmedTurns();
+    this._connectRequestId = null;
     const wasAvailable = this.connected || this.connecting;
     // 取消重连定时器
     if (this.reconnectTimer) {
@@ -1441,6 +1538,7 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null = null,
     sendTimestamp?: number,
   ): void {
+    extraData?.assertSubmissionCurrent?.();
     // 格式: agent:{agentId}:{visitorId}
     let visitorId = null;
     const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
@@ -1478,9 +1576,12 @@ class OpenClawWsProvider {
     });
     this.debugLog(`📤 发送 chat.send visitorId=${visitorId} t=${sendTimestamp}`);
 
+    const requestId = this.generateId();
+    if (this._chatRequests.size >= 1000) this._chatRequests.delete(this._chatRequests.keys().next().value);
+    this._chatRequests.set(requestId, { sessionKey, turnId });
     this.send({
       type: 'req',
-      id: this.generateId(),
+      id: requestId,
       method: 'chat.send',
       params: {
         sessionKey: sessionKey,
@@ -1707,6 +1808,7 @@ class OpenClawWsProvider {
     const releaseTurn = await this._acquireAgentTurn(agentId, providerTurnId);
     try {
     this._assertAccepting(generation);
+    payload.assertSubmissionCurrent?.();
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId
@@ -1733,8 +1835,8 @@ class OpenClawWsProvider {
       const prompt = appendProviderAttachmentBoundary(
         buildConversationDeliveryPrompt(this.db, effectivePayload, canResumeBinding), effectivePayload);
       sending = true;
-      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp });
-      return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId:providerTurnId, timestamp, assertSubmissionCurrent: payload.assertSubmissionCurrent });
+      return { executionState: 'pending', nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
         deliveryMode: 'websocket', adapterType: 'openclaw-ws',
         attachmentDelivery: { transportDelivered: staged.attachments.length > 0,
           attachmentAccessed: null, contentUnderstood: null,
@@ -1764,7 +1866,7 @@ class OpenClawWsProvider {
       : buildOpenClawSessionKey(targetAgentId, agentId, visitorId);
     this._vokoAgentBySession.set(sessionKey.toLowerCase(), agentId);
     await this.sendToSession(sessionKey, content, { turnId: metadata?.turnId });
-    return { nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
+    return { executionState: 'pending', nativeSessionId: sessionKey, providerInstanceId: targetAgentId,
       deliveryMode: 'websocket', adapterType: 'openclaw-ws' };
   }
 

@@ -1,0 +1,146 @@
+{
+  "capturedAt": "2026-09-05 America/Los_Angeles",
+  "notice": "Real isolated CLI help and Gateway connect probes. Independent HOME/state/config/ports and no model credentials. Wire frames redact nonce/id and retain only relevant features; no token/deviceToken is included. No chat task or IM message was sent. Old package dependencies installed with --ignore-scripts --omit=dev.",
+  "probes": [
+    {
+      "version": "2026.6.1",
+      "platform": "darwin",
+      "arch": "arm64",
+      "nodeVersion": "v26.7.0",
+      "cliHelpExitCode": 0,
+      "cliHelpSha256": "fc473d945fa14f63cf19c6de4c18bc7718ff365d4f9eb83e46800f4a8505e7d5",
+      "gatewayHealthy": true,
+      "gatewayAuthenticated": true,
+      "gatewayVersion": "2026.6.1",
+      "protocol": 4,
+      "modelReply": "not_tested",
+      "imDelivery": "not_tested",
+      "wire": [
+        {
+          "type": "event",
+          "event": "connect.challenge",
+          "payload": {
+            "nonce": "redacted",
+            "ts": 1788654837374
+          }
+        },
+        {
+          "type": "res",
+          "id": "redacted",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "server": {
+              "version": "2026.6.1"
+            },
+            "features": {
+              "methods": [
+                "sessions.messages.subscribe",
+                "chat.send"
+              ],
+              "events": [
+                "chat",
+                "session.message"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "version": "2026.7.1-2",
+      "platform": "darwin",
+      "arch": "arm64",
+      "nodeVersion": "v26.7.0",
+      "cliHelpExitCode": 0,
+      "cliHelpSha256": "b436caaa7b5712b3f596a4f7cd8c3f0f327edee2d240323cf7c7a532b09fc1f8",
+      "gatewayHealthy": true,
+      "gatewayAuthenticated": true,
+      "gatewayVersion": "2026.7.1-2",
+      "protocol": 4,
+      "modelReply": "not_tested",
+      "imDelivery": "not_tested",
+      "wire": [
+        {
+          "type": "event",
+          "event": "connect.challenge",
+          "payload": {
+            "nonce": "redacted",
+            "ts": 1788654840647
+          }
+        },
+        {
+          "type": "res",
+          "id": "redacted",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "server": {
+              "version": "2026.7.1-2"
+            },
+            "features": {
+              "methods": [
+                "sessions.messages.subscribe",
+                "chat.send"
+              ],
+              "events": [
+                "chat",
+                "session.message"
+              ],
+              "capabilities": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "version": "2026.9.2",
+      "platform": "darwin",
+      "arch": "arm64",
+      "nodeVersion": "v26.7.0",
+      "cliHelpExitCode": 0,
+      "cliHelpSha256": "4934e0ec462d41c9c40feb347b1be20c59d290ad7b685bbf7c5314fd7088e773",
+      "gatewayHealthy": true,
+      "gatewayAuthenticated": true,
+      "gatewayVersion": "2026.9.2",
+      "protocol": 4,
+      "modelReply": "not_tested",
+      "imDelivery": "not_tested",
+      "wire": [
+        {
+          "type": "event",
+          "event": "connect.challenge",
+          "payload": {
+            "nonce": "redacted",
+            "ts": 1788654841396
+          }
+        },
+        {
+          "type": "res",
+          "id": "redacted",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "server": {
+              "version": "2026.9.2"
+            },
+            "features": {
+              "methods": [
+                "sessions.messages.subscribe",
+                "chat.send"
+              ],
+              "events": [
+                "chat",
+                "session.message"
+              ],
+              "capabilities": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

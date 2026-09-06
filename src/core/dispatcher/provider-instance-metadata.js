@@ -1,3 +1,4 @@
+const { openClawAgentEntries } = require('./openclaw-config');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -59,7 +60,7 @@ function openClawMetadata(instanceId, home) {
   const root = path.join(home, '.openclaw');
   try {
     const config = JSON.parse(readText(path.join(root, 'openclaw.json')) || '{}');
-    const item = (config.agents?.list || []).find((agent) => String(agent.id) === String(instanceId));
+    const item = openClawAgentEntries(config).find((agent) => String(agent.id) === String(instanceId));
     const workspace = item?.workspace || (instanceId === 'main' ? path.join(root, 'workspace') : '');
     if (!workspace) return {};
     return identityMetadata(readText(path.join(path.resolve(workspace), 'IDENTITY.md')));

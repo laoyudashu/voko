@@ -310,7 +310,9 @@ test('OpenClaw and Hermes reject a failed CLI process with correlated delivery e
     },
   };
   const payload = { agentId: 'voko-agent', fromUid: 'visitor', content: 'hello', messageId: 'message' };
-  await assert.rejects(new OpenClawCliProvider({ db }).push(payload), /OpenClaw exited with code 7/);
+  const openclaw = new OpenClawCliProvider({ db });
+  openclaw._ensureLocalContract = async () => {}; // Isolate a post-start failure from the read-only CLI probe.
+  await assert.rejects(openclaw.push(payload), /OpenClaw exited with code 7/);
   const errors = [];
   const hermes = new HermesCliProvider({
     db,

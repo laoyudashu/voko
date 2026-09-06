@@ -339,10 +339,11 @@ describe('Lite OpenClaw WS provider', () => {
     provider.on('agent.reply', (reply) => replies.push(reply));
     provider.on('session.message', (event) => internalSessionEvents.push(event));
     const connectionTimer = setTimeout(() => {}, 1000);
+    provider._connectRequestId = 'connect-fixture';
     await provider.handleMessage({
-      type: 'res',
+      type: 'res', id: 'connect-fixture',
       ok: true,
-      payload: {
+      payload: { type: 'hello-ok',
         protocol: 4,
         features: { methods: ['chat.send'], events: ['session.message', 'chat'] },
       },
@@ -390,10 +391,12 @@ describe('Lite OpenClaw WS provider', () => {
     const replies = [];
     provider.on('agent.reply', (reply) => replies.push(reply));
     const connectionTimer = setTimeout(() => {}, 1000);
+    provider._connectRequestId = 'connect-fixture';
+    provider._protocolVer = 3;
     await provider.handleMessage({
-      type: 'res',
+      type: 'res', id: 'connect-fixture',
       ok: true,
-      payload: {
+      payload: { type: 'hello-ok',
         protocol: 3,
         features: { methods: ['sessions.messages.subscribe'], events: ['session.message'] },
       },

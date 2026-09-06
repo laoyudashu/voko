@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { getProviderSecurityControls } from './provider-security-policy';
 
-export const PROVIDER_CAPABILITY_ADAPTER_REVISION = 1;
+export const PROVIDER_CAPABILITY_ADAPTER_REVISION = 2;
 export const PROVIDER_CAPABILITY_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type ProviderCapabilityEvidenceState = 'verified' | 'static_compatible' | 'stale_verified'
@@ -15,6 +15,10 @@ export interface ProviderCapabilitySnapshot {
   arch: string;
   frameworkVersion: string | null;
   runtimeVersion: string | null;
+  nodeVersion?: string | null;
+  versionSource?: string | null;
+  callCompatibility?: string | null;
+  securityVerification?: string | null;
   runtimeFingerprint: string;
   protocolVersion: string | null;
   matchedRuleId: string | null;
@@ -53,7 +57,6 @@ export function isDynamicCapabilityTransport(transportId: string): boolean {
 const VERIFIED_RUNTIME_RULES: Record<string, Partial<Record<NodeJS.Platform, string[]>>> = {
   'hermes-cli': { darwin: ['0.20.2'] },
   'claude-cli': { darwin: ['2.1.234'] },
-  'codex-cli': { darwin: ['0.151.0-alpha.7.1'] },
   'qwen-cli': { darwin: ['0.21.13'] },
   'goose-cli': { darwin: ['1.46.0'] },
   'opencode-cli': { darwin: ['1.18.18'] },
@@ -128,7 +131,7 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   let evidence: any = null;
   try { evidence = provider?.getSecurityControlEvidence?.(agentId) || null; } catch (_) {}
   if (!evidence) evidence = {};
-  if (!evidence.runtimeVersion || !evidence.frameworkVersion) {
+  if (transportId !== 'codex-cli' && (!evidence.runtimeVersion || !evidence.frameworkVersion)) {
     try {
       const version = provider?.getProviderVersion?.() || null;
       if (!evidence.runtimeVersion && version?.version) evidence.runtimeVersion = version.version;
@@ -148,6 +151,10 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
   const explicitControlEvidence = evidence?.controlEvidence && typeof evidence.controlEvidence === 'object'
     ? evidence.controlEvidence : {};
   const verifiedNativeControls = new Set(VERIFIED_NATIVE_CONTROLS[transportId] || []);
+  const codexContractVerified = transportId === 'codex-cli'
+    && evidence.callCompatibility === 'parameters_checked' && Boolean(explicitControlEvidence.sandboxMode);
+  const codexProbeFailed = transportId === 'codex-cli' && evidence.securityVerification
+    && evidence.securityVerification !== 'CODEX_RUNTIME_NOT_PROBED' && !codexContractVerified;
   const supportedControls: ProviderCapabilitySnapshot['supportedControls'] = Object.fromEntries(definitions
     .filter(item => item.enforcement !== 'unsupported'
       && (item.enforcement === 'voko_enforced'
@@ -160,16 +167,24 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
         ? 'protocol_verified' as const : 'static_documented' as const,
   }]));
   const evidenceState: ProviderCapabilityEvidenceState = identity.available
-    ? readinessVerified ? 'verified' : versionRuleMatched ? 'static_compatible' : 'unknown' : 'failed';
+    ? codexProbeFailed ? 'failed' : readinessVerified ? 'verified'
+      : versionRuleMatched || codexContractVerified ? 'static_compatible' : 'unknown' : 'failed';
   const matchedRuleId = versionRuleMatched && runtimeVersion
-    ? `${transportId}-${process.platform}-${runtimeVersion}-r${PROVIDER_CAPABILITY_ADAPTER_REVISION}` : null;
+    ? `${transportId}-${process.platform}-${runtimeVersion}-r${PROVIDER_CAPABILITY_ADAPTER_REVISION}`
+    : codexContractVerified ? `codex-cli-sandbox-canary-v1-${process.platform}` : null;
   const base = {
     providerFamily: FAMILY[transportId] || transportId, transportId, platform: process.platform, arch: process.arch,
     frameworkVersion, runtimeVersion, runtimeFingerprint: identity.fingerprint,
-    protocolVersion: null, matchedRuleId, adapterRevision: PROVIDER_CAPABILITY_ADAPTER_REVISION,
+    ...(transportId.startsWith('openclaw-') || transportId === 'codex-cli' ? {
+      nodeVersion: evidence.nodeVersion || null, versionSource: evidence.versionSource || null,
+      callCompatibility: evidence.callCompatibility || 'unverified',
+    } : {}),
+    ...(transportId === 'codex-cli' ? { securityVerification: evidence.securityVerification || 'CODEX_RUNTIME_NOT_PROBED' } : {}),
+    protocolVersion: evidence.protocolVersion ? String(evidence.protocolVersion) : null, matchedRuleId, adapterRevision: PROVIDER_CAPABILITY_ADAPTER_REVISION,
     evidenceState, supportedControls, observedAt: now, expiresAt: now + PROVIDER_CAPABILITY_TTL_MS,
   };
-  return { ...base, capabilityDigest: digest(base) };
+  const { observedAt, expiresAt, ...semantic } = base;
+  return { ...base, capabilityDigest: digest(semantic) };
 }
 
 export interface RedactedInvocationSegment {
@@ -216,7 +231,7 @@ export function redactedInvocation(transportId: string, config: Record<string, s
     { text: config.browser === 'enabled' ? '--chrome' : '--no-chrome', risk: config.browser === 'enabled' ? 'high' : 'low', sourceControl: 'browser', enforcement: 'provider_enforced' },
   ];
   if (transportId === 'codex-cli') return [
-    { text: 'codex exec --sandbox', risk: 'low' },
+    { text: 'codex --ask-for-approval never exec --sandbox', risk: 'low' },
     { text: config.sandboxMode === 'workspace_write' ? 'workspace-write' : 'read-only', risk: config.sandboxMode === 'workspace_write' ? 'high' : 'medium', sourceControl: 'sandboxMode', enforcement: 'provider_enforced' },
   ];
   if (transportId === 'goose-cli') return [{ text: 'goose run', risk: 'low' },
