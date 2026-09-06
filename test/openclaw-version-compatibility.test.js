@@ -76,6 +76,46 @@ test('OpenClaw package update changes the observed identity without a model call
   assert.deepEqual(Object.keys(two.supportedControls), ['additionalPrompt']);
 });
 
+test('OpenClaw manifest identity and contents use the same opened file during replacement', t => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'voko-oc-manifest-race-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const entry = path.join(root, 'openclaw.mjs');
+  const manifest = path.join(root, 'package.json');
+  fs.writeFileSync(entry, '');
+  fs.writeFileSync(manifest, JSON.stringify({ name: 'openclaw', version: '2026.7.1-2' }));
+  let replaced = false;
+  let manifestFd;
+  const replace = () => {
+    if (replaced) return;
+    replaced = true;
+    fs.unlinkSync(manifest);
+    fs.writeFileSync(manifest, JSON.stringify({ name: 'openclaw', version: '2026.9.2' }));
+  };
+  const command = load('core/dispatcher/openclaw-command.js', { fs: { ...fs,
+    openSync(file, ...args) {
+      const fd = fs.openSync(file, ...args);
+      if (file === manifest) manifestFd = fd;
+      return fd;
+    },
+    statSync(file, ...args) {
+      const stat = fs.statSync(file, ...args);
+      if (file === manifest) replace();
+      return stat;
+    },
+    fstatSync(fd, ...args) {
+      const stat = fs.fstatSync(fd, ...args);
+      if (fd === manifestFd) replace();
+      return stat;
+    },
+  } });
+  const first = command.inspectOpenClawRuntime({ executable: entry });
+  assert.equal(replaced, true);
+  assert.equal(first.frameworkVersion, '2026.7.1-2');
+  const next = command.inspectOpenClawRuntime({ executable: entry });
+  assert.equal(next.frameworkVersion, '2026.9.2');
+  assert.notEqual(first.fingerprint, next.fingerprint);
+});
+
 for (const stdout of ['', JSON.stringify({ payloads: [{ text: 'error output' }] })]) {
   test('failed OpenClaw steer never emits a successful reply: ' + !!stdout, async () => {
     const p = cliFixture(async () => ({ code: 1, stdout, stderr: '' }));
@@ -128,10 +168,16 @@ test('WS ignores unrelated success and uses challenge timestamp for authenticati
 });
 
 test('WS does not sign a malformed challenge timestamp', async t => {
-  const p = wsFixture(t); let sent = 0;
-  p.send = () => sent++; p.createDeviceIdentity = async () => ({}); p.signPayload = async () => 'signature';
-  await p.handleMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n', ts: 'invalid' } }, () => {}, null);
-  assert.equal(sent, 0);
+  for (const ts of ['invalid', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const p = wsFixture(t); let sent = 0; let signed = 0; let closed = 0;
+    p.ws = { close() { closed++; } };
+    p.send = () => sent++; p.createDeviceIdentity = async () => ({});
+    p.signPayload = async () => { signed++; return 'signature'; };
+    await p.handleMessage({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n', ts } }, () => {}, null);
+    assert.equal(sent, 0); assert.equal(signed, 0); assert.equal(closed, 1);
+    assert.equal(p.connected, false);
+    p.ws = null;
+  }
 });
 
 test('local Gateway setup adds local mode while preserving an existing token', async t => {

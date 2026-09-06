@@ -1,120 +1,71 @@
 # VOKO 发布流程
 
-本流程适用于向 GitHub 推送代码，以及发布 GitHub Release 和 npm `@voko/lite`。任何门禁失败都必须停止，不采用“先发布、再修复”。当前保持人工发布，不启用自动 CD。
+代码和版本通过 PR 进入 GitHub `main`。发布由人工触发 GitHub Actions 的 **Publish npm**，通过受保护环境审批后使用 npm Trusted Publisher/OIDC 发布。普通 push/PR 不触发 CD，不从开发机直接发布 npm。
 
-## 1. 首次准备本地安全工具
+工作流以 [.github/workflows/release-npm.yml](.github/workflows/release-npm.yml) 为准；逐项核对 [发布清单](RELEASE_CHECKLIST.md)。任何发布门禁失败都应先解决，不能跳过检查发布。
 
-以下工具必须可从 `PATH` 调用：
+## 1. 准备版本 PR
 
-- [Gitleaks](https://github.com/gitleaks/gitleaks)：扫描完整 Git 历史中的凭据。
-- [CodeQL CLI](https://github.com/github/codeql-cli-binaries/releases)：建立 JavaScript/TypeScript 数据库并运行官方 `javascript-security-extended.qls` 查询集。
+从准备发布的代码建立 `codex/` 分支，更新 `package.json`、`package-lock.json` 顶层及根包版本、中英文 README、`CHANGELOG.md` 和 `docs/releases/X.Y.Z.md`。尚未发布时明确标为发布准备，不声称 npm 已可安装该版本。
 
-确认安装：
+在版本分支执行：
 
-```powershell
-gitleaks version
-codeql version
-```
-
-CodeQL 数据库与 SARIF 分别写入 `.codeql-db/` 和 `.codeql-results/`，两者均已被 Git 忽略。本地与 GitHub 共用 `.github/codeql-config.yml`，排除构建产物、依赖、缓存和测试代码。`security:codeql` 遇到 security severity 不低于 7.0 的 high/critical 结果时失败，并打印规则、文件和行号。
-
-## 2. 推送 GitHub 前检查
-
-先完成代码审查并提交预期改动，确认位于 `main`，然后执行唯一入口：
-
-```powershell
+```sh
 npm ci
-npm run github:preflight
+npm run release:gate
+npm run test:e2e
+npm run security:local
+npm pack --dry-run
 ```
 
-`github:preflight` 会依次检查：
+`release:gate` 包含类型检查、构建、国际化检查、完整测试与覆盖率门槛、包密钥扫描和生产依赖审计。`security:local` 需要 PATH 中的 Gitleaks 和 CodeQL CLI，扫描完整 Git 历史及 JavaScript/TypeScript extended 安全查询；报告保存在被忽略的 `.codeql-db/` 和 `.codeql-results/`。
 
-1. 工作区干净且当前分支为 `main`；
-2. 定向回归测试、国际化键一致性和 npm 包敏感信息扫描；
-3. 生产依赖中不存在 high/critical npm audit 告警；
-4. Gitleaks 完整历史扫描；
-5. 本地 CodeQL extended 安全查询；
-6. `npm pack --dry-run` 的发布包清单和构建过程。
+提交并推送该分支，创建目标为 `main` 的 PR。等待三系统 Node 22、Chromium E2E、Rust E2EE、security/SBOM、dependency review 和 CodeQL 检查。不要直接推送 GitHub main。
 
-门禁通过后才可推送：
+`github:preflight` / `release:preflight` 的状态检查要求 `main`，不能作为版本分支入口，也不应为了运行它们跳过 PR 流程。
 
-```powershell
-git push github main
-```
+## 2. 合并后的发布前检查
 
-推送后仍须等待 GitHub 上的 CI、Gitleaks、CodeQL 和依赖检查全部通过。本地检查是第一道门禁，GitHub Actions 是最终门禁；任一失败都不得创建 Release 或发布 npm。
+PR 审查并合并后，等待 main 的 Node 22/24 三系统和完整浏览器矩阵等检查。同步本地 main，确认工作区干净、HEAD 与 `github/main` 一致，再执行：
 
-## 3. 准备版本发布
-
-1. 使用 SemVer 更新 `package.json` 与 `package-lock.json`，例如 `0.4.2`。
-2. 更新 Release notes 或变更记录。
-3. 提交版本改动，并按第 2 节完成推送及 GitHub 检查。
-4. 在干净的 `main` 上执行：
-
-```powershell
+```sh
 npm ci
 npm run release:preflight
 ```
 
-`release:preflight` 包含全部 GitHub 推送前门禁，并额外验证：
+此入口额外确认版本字段一致、GitHub main 同步，以及本地 tag 和 npm 版本未占用。不要复用已发布版本。
 
-- `package.json` 与 `package-lock.json` 版本完全一致；
-- 版本号符合 SemVer；
-- 对应本地 Git Tag 尚不存在；
-- 对应 npm 版本尚未发布，因为 npm 版本不可覆盖。
+## 3. 人工触发受保护发布
 
-## 4. 人工发布 npm 与 GitHub Release
+1. 确认 `@voko/lite` 将本仓库的 `release-npm.yml` 配置为 npm Trusted Publisher，`npm-production` 环境的审批设置正确。
+2. 从 main 启动 **Publish npm**，输入与源码完全一致的版本，例如 `0.5.3`。稳定版必须设置 `prerelease=false`，该输入默认是 true。
+3. `prepare` 在 Node 24 上运行 release gate、Chromium E2E，打包并扫描确切 tarball，上传不可变 artifact。
+4. 审查产物和检查结果后审批 `npm-production`。发布 job 使用短期 OIDC 身份，以 `--access public --provenance` 发布同一 tarball，不需要长期 npm Token。
+5. npm 版本回读成功后，后置 job 才在本次 workflow 的确切 SHA 创建 `vX.Y.Z` 和 GitHub Release。不要提前创建同名 tag/Release，工作流拒绝覆盖。
 
-确认 npm 使用官方 Registry，Token 只通过本机环境变量和用户级 `.npmrc` 安全引用提供：
+注意：当前 `prerelease` 输入仅控制 GitHub Release 标记；npm 发布命令未设置 `--tag next`，不能将此开关视为 npm 预发布渠道。本流程用于稳定版本；若要发布 SemVer 预发布包，应先独立调整和验证 dist-tag 流程。
 
-```powershell
-npm whoami --registry=https://registry.npmjs.org/
-npm publish --access public --registry=https://registry.npmjs.org/
-```
+升级发现、安装和发布验证均使用官方 npm registry，不再同步 OSS manifest，也不需要 OSS 发布凭据。不要使用已移除的 `release:publish:update-source` 命令。
 
-npm 发布成功后，使用仅存在于本机环境变量中的 `OSS_ACCESS_KEY_ID` 和 `OSS_ACCESS_KEY_SECRET` 同步 `voko update` 的下载包与 manifest：
+## 4. 发布后验证
 
-```powershell
-npm run release:publish:update-source
-```
+在已发布源码 checkout 拉取 tag 后运行：
 
-更新源同步成功后，创建与 `package.json` 完全一致的 GitHub Tag 和 Release：
-
-```powershell
-gh release create vX.Y.Z --repo laoyudashu/voko --target main --title "VOKO vX.Y.Z" --generate-notes
-```
-
-使用 GitHub 的 **Publish npm** workflow 时，上述 Tag/Release 会在 npm
-发布成功后由后置 job 自动创建，并固定到本次 workflow 的 `main` 提交；若
-Tag 或 Release 已存在，workflow 会失败且不会覆盖已有发布。手动命令仅作为
-故障恢复或历史版本补建入口。
-
-预发布版本使用 SemVer 后缀（如 `0.5.0-rc.1`）、npm dist-tag（如 `--tag next`）和 `gh release create --prerelease`，不得覆盖正式版的 `latest`。
-
-## 5. 发布后验证
-
-拉取最新 Tag 后运行：
-
-```powershell
+```sh
 git fetch github --tags
 npm run release:verify
-npm view @voko/lite@X.Y.Z version license repository.url --json --registry=https://registry.npmjs.org/
+npm view @voko/lite@0.5.3 version license repository.url --json --registry=https://registry.npmjs.org/
 ```
 
-最终核对以下内容完全一致：
+版本示例应替换为本次发布版本。核对 package/lock、npm 版本与 provenance、tag 目标 SHA、GitHub Release 及 `voko update` 发现结果。记录 Actions、npm、Release 链接、SHA、发布时间和门禁结果。
 
-- `package.json` 和 `package-lock.json` 版本；
-- npm 已发布版本；
-- `voko update` 使用的 OSS manifest 与 tarball；
-- `vX.Y.Z` Git Tag；
-- GitHub Release 标题、目标提交及说明。
+工作流生成 GitHub Release 正文；将审核过的版本说明、已知限制和验证链接补入正文，并通过文档 PR 更新源码内的发布状态与日期。
 
-记录 GitHub Release URL、npm 版本、提交 SHA、发布时间及门禁结果。发布后发现问题时必须修复并递增版本，不能覆盖或复用已发布版本。
+若 npm 发布成功而后置 tag/Release 步骤失败，先核对 registry 和原 workflow SHA，再只恢复缺失的后置步骤；不要重新发布同一个 npm 版本或将 tag 指向后来移动的 main。
 
-## 6. 凭据与产物边界
+## 5. 凭据与产物边界
 
-- 禁止把 Token 放进命令参数、源码、日志或聊天记录；`.npmrc` 只能引用环境变量。
-- 发布包不得包含数据库、私钥、Token、日志、真实测试数据或临时目录。
-- `.codeql-db/`、`.codeql-results/`、SBOM 和扫描报告均为本地产物，除非专门审查，否则不提交。
-- OSS 发布凭据只允许使用环境变量提供，不得从本地运行数据库复制到发布脚本。
-- GitHub Secret Scanning、Push Protection、Dependabot、CodeQL 和分支保护必须保持启用。
+- 不把凭据放入源码、命令参数、日志或聊天；不从运行数据库复制发布凭据。
+- 发布包不得包含数据库、私钥、Token、用户日志或临时测试目录。
+- 本地 CodeQL 数据库、SARIF 和临时产物不提交；工作流生成的 SBOM 按其 artifact 流程保留。
+- 保持分支保护、CodeQL、依赖审查及仓库可用的 secret scanning/push protection 设置；这些管理设置不能仅凭测试通过推定已配置。

@@ -102,18 +102,23 @@ function inspectOpenClawRuntime(runtime: any, instanceId = '', env = process.env
     let dir = path.dirname(real);
     for (let i = 0; i < 3; i++, dir = path.dirname(dir)) {
       const manifest = path.join(dir, 'package.json');
+      let fd: number | undefined;
       try {
-        const stat = fs.statSync(manifest);
-        const stamp = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+        fd = fs.openSync(manifest, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile()) continue;
+        const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
         let cached = manifestCache.get(manifest);
         if (!cached || cached.stamp !== stamp) {
-          const data = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+          const data = JSON.parse(fs.readFileSync(fd, 'utf8'));
           cached = { stamp, version: data.name === 'openclaw' && typeof data.version === 'string' ? data.version : null };
           if (manifestCache.size >= 32) manifestCache.delete(manifestCache.keys().next().value!);
           manifestCache.set(manifest, cached);
         }
         if (cached.version) { version = cached.version; identities.push(`${manifest}:${stamp}:${version}`); break; }
-      } catch (_) {}
+      } catch (_) {} finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
     }
   }
   const paths = openClawPaths(env);
