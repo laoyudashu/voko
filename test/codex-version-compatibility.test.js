@@ -28,9 +28,14 @@ function runner({ version = '0.153.4', legacy = false, failure = '', calls = [] 
     if (args.includes('--help')) return { code: 0, stdout: legacy ? 'Commands: macos linux windows' : 'Usage: codex sandbox [OPTIONS] [COMMAND]...' };
     if (failure === 'timeout') return { code: null, stdout: '' };
     const writable = args.some(arg => arg === 'sandbox_mode="workspace-write"');
-    const [read, inside, outside] = args.slice(-3);
+    const nativeWindows = args.includes('voko-probe.cmd');
+    const mode = writable ? 'workspace-write' : 'read-only';
+    const [read, inside, outside] = nativeWindows
+      ? [path.join(cwd, '..', 'outside', 'read-canary'), path.join(cwd, mode), path.join(cwd, '..', 'outside', mode)]
+      : args.slice(-3);
     if (writable || failure === 'write-escape') fs.writeFileSync(inside, 'voko-canary');
     if (failure === 'outside-escape') fs.writeFileSync(outside, 'voko-canary');
+    if (nativeWindows) return { code: 0, stdout: fs.readFileSync(read, 'utf8') };
     return { code: 0, stdout: JSON.stringify({ read: fs.readFileSync(read, 'utf8'),
       inside: writable || failure === 'write-escape' ? 'allowed' : 'EPERM',
       outside: failure === 'outside-escape' ? 'allowed' : 'EPERM' }) };
@@ -194,4 +199,15 @@ test('Codex probe cannot publish evidence for a replaced runtime', async t => {
   await provider.refreshSecurityControlEvidence();
   assert.equal(provider.getSecurityControlEvidence().runtimeVersion, null);
   assert.deepEqual(provider.getSecurityControlEvidence().controlEvidence, {});
+});
+
+
+test('Windows Codex canary uses a fixed cmd script and independently detects write escape', async () => {
+  for (const failure of ['', 'write-escape', 'outside-escape']) {
+    const calls = [];
+    const result = await command.probeCodexCompatibility(available, runner({ failure, calls }), 'win32');
+    assert.equal(result.sandboxVerified, !failure);
+    const probes = calls.filter(args => args.includes('--'));
+    assert.ok(probes.every(args => args.includes('voko-probe.cmd') && !args.includes('-e')));
+  }
 });

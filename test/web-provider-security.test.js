@@ -174,8 +174,16 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(codexHtml, /CLI 参数与本机沙箱检查通过/);
   assert.match(codexHtml, /只读仍允许执行命令/);
   assert.doesNotMatch(codexHtml, /网络访问/);
+  providerSecurity.storeCapability('agent-14', 'codex-cli', {
+    runtimeVersion: '0.148.0', runtimeFingerprint: 'failed-codex', capabilityDigest: 'failed',
+    evidenceState: 'failed', supportedControls: {}, observedAt: Date.now(), expiresAt: Date.now() + 60000,
+    securityVerification: 'CODEX_SANDBOX_INITIALIZATION_FAILED',
+    securityDiagnostic: { stage: 'sandbox:read-only', exitCode: 1, timedOut: false, message: 'bwrap: denied <probe>' },
+  });
   const unverifiedCodexHtml = await (await fetch(`${origin}/agents/agent-14/security`, { headers: auth })).text();
   assert.match(unverifiedCodexHtml, /请重新检测/);
+  assert.match(unverifiedCodexHtml, /bwrap: denied &lt;probe&gt;/);
+  assert.doesNotMatch(unverifiedCodexHtml, /bwrap: denied <probe>/);
   assert.doesNotMatch(unverifiedCodexHtml, /name="sandboxMode"/);
 
   const goosePage = await fetch(`${origin}/agents/agent-3/security`, { headers: auth });

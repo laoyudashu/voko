@@ -14,6 +14,8 @@
 - WS 按协议/功能协商，保留 v4→v3 mismatch 降级及 chat/session.message 路径。挑战时间必须为正的安全整数；关联 connect ID、hello 类型和协商协议后才认证。任意成功响应、畸形挑战均不能认证。
 - WS push 的 `executionState: pending` 表示已提交；关联 chat 回执可以标记 ACCEPTED，关联 final 才标记 COMPLETED。错误/中止标记 FAILED，断线/截止时间记录 OUTCOME_UNKNOWN。重复或冲突的 runId 不结束另一回合。结果未知不触发自动重投；晚到消息仍遵守现有会话与投递保护。
 - 本地 Gateway 自动配置只在用户发起该配置流程时补 `gateway.mode=local`，保留已有字符串 Token。写前备份；无法解析配置时停止，不覆盖为新配置。远程模式、password、SecretRef 等认证明确报不支持此自动配置路径。自动拉起不使用 `--force` 抢占端口。
+- Gateway 冷启动捕获有界 stderr，状态中的 `startupFailure` 提供退出码和脱敏摘要；进程在 ready 前退出会及时结束等待。仅当 VOKO 自己启动的进程明确报告插件迁移收敛后要求重启时，自动重启一次，两次尝试共用原有 90 秒启动预算；并发调用共用该启动过程。重复迁移失败、缺少必需凭据或配置错误直接失败，不无限重试。存活但缓慢启动的进程沿用已有等待机制，不额外启动第二个进程。停止 Provider 会取消恢复。
+
 
 ## 版本与环境矩阵
 
@@ -25,9 +27,10 @@
 | 2026.7.1-2 | 隔离安装依赖，真实 `agent --help` 通过 | 隔离真实认证通过，v4 | 本轮未测 | 未接入 |
 | 2026.9.2 | 当前安装，隔离 HOME 的真实 `agent --help` 通过 | 隔离真实认证通过，v4 | 本轮未测 | 未接入 |
 | 未知/预发布 | 只读参数检查通过后允许兼容调用 | 已知协议成功协商后允许兼容调用 | 不继承已验收标记 | 不继承原生权限证据 |
-| Ubuntu / Windows | 探测受阻：Ubuntu SSH 公钥认证拒绝；Windows VM 运行中，但当前 Parallels 版本不支持 guest exec。跨平台路径/Windows shim 仅有自动测试 | 本轮未测 | 本轮未测 | 未接入 |
+| Ubuntu 2026.7.1-2 | SSH 已连通；CLI 参数通过 | 缺少测试入口的 DeepSeek 凭据，启动被拒绝 | 凭据阻塞 | 未接入 |
+| Windows 2026.7.1-2 | SSH 已连通；CLI 参数通过 | v4 认证通过 | CLI/WS 真实首轮和原生会话恢复通过；附件/IM 未测 | 未接入 |
 
-所有真实探测均使用 Node v26.7.0。旧包独立安装在临时目录，禁用 npm 安装脚本；不替换当前全局安装。依赖不是上游发布时的 lockfile 快照，故不能外推完整旧环境。此前 Windows 2026.6.1 的记录是历史证据，不算本轮复测。协议 v3 保留既有合成回归，不声称三个 v4 锚点证明所有 v3 发行版。
+最初 macOS 版本锚点探测使用 Node v26.7.0；后续三系统真机测试的 macOS/Ubuntu 为 v26.7.0，Windows 为 v22.23.2。旧包独立安装在临时目录，禁用 npm 安装脚本；不替换当前全局安装。依赖不是上游发布时的 lockfile 快照，故不能外推完整旧环境。此前 Windows 2026.6.1 的记录是历史证据，不算本轮复测。协议 v3 保留既有合成回归，不声称三个 v4 锚点证明所有 v3 发行版。
 
 状态目录选择遵循 `OPENCLAW_HOME`、`OPENCLAW_STATE_DIR`、`OPENCLAW_CONFIG_PATH` 和默认/旧 `.clawdbot` 目录；本批没有新增 CLI `--profile` 选择器。使用特殊 profile 时，应向 VOKO 显式传入实际状态目录与配置路径。
 
@@ -37,7 +40,7 @@
 - OpenClaw 专项与 Web 页面追加回归通过，覆盖未知/预发布、包/链接变化、摘要、队列取消/超时、失败 steer、握手关联、chat 终态、重复/错误事件、断线、配置保护与无效权限不展示。
 - 三个版本分别启动临时 loopback Gateway，用本次修改后的 VOKO WS Provider 完成真实挑战签名/认证。均取得对应发行版本、协议 v4、`chat.send` 与 `sessions.messages.subscribe`。CLI 9.2 与 Gateway 6.1/7.1-2 的版本识别保持独立。
 - 脱敏实测记录在 `test/fixtures/openclaw-compatibility/runtime-probes.json`；只保存相关字段和帮助输出摘要，没有认证秘密、访客内容或完整配置。测试 Gateway 已停止，临时认证配置已清理。主人 Gateway/全局安装未改动。
-- 真实模型两轮、附件访问、IM 回执、Ubuntu/Windows 本轮实机、原生权限 canary 均未验证；不计入上述成功结果。
+- 最初版本锚点探测未调用模型。后续三系统真机测试中，macOS 2026.9.2、Windows 2026.7.1-2 的 CLI/WS 真实模型两轮与原生会话恢复通过；Ubuntu 2026.7.1-2 因测试入口凭据缺失被阻塞。附件访问、IM 回执和原生权限 canary 仍未验证。
 
 ## 访客安全与权限：B 线调查裁决
 

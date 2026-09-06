@@ -5,18 +5,21 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import type { ResolvedRuntime } from '../runtime/agent-runtime-resolver';
 import { withRuntimePath } from '../runtime/agent-runtime-resolver';
+const { sanitizeCliDiagnostic } = require('../adapters/cli-spawner');
 
 export interface CodexCompatibility {
   runtimeVersion: string | null;
   callCompatibility: 'unverified' | 'parameters_checked' | 'unsupported';
   sandboxVerified: boolean;
   reason: string;
+  diagnostic?: { stage: string; exitCode: number | null; message: string; timedOut: boolean };
 }
 
 // Include the native payload behind npm's JS launcher, not just Node/the shim.
 export function inspectCodexRuntime(runtime: ResolvedRuntime): ResolvedRuntime {
   const files = new Set<string>([process.execPath, runtime.executable, runtime.canonicalPath, ...runtime.argvPrefix]
     .filter((file): file is string => Boolean(file)));
+  if (process.platform === 'win32') files.add(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'));
   if (runtime.canonicalPath) files.add(path.join(path.dirname(runtime.canonicalPath), 'codex-code-mode-host'));
   for (const file of [...files]) {
     let dir = path.dirname(file);
@@ -47,7 +50,8 @@ export function inspectCodexRuntime(runtime: ResolvedRuntime): ResolvedRuntime {
     .update(JSON.stringify([runtime.available, runtime.fingerprint, stamps, process.platform, process.arch])).digest('hex') };
 }
 
-export type CodexProbeRunner = (args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<{ code: number | null; stdout: string }>;
+export interface CodexProbeOutput { code: number | null; stdout: string; stderr?: string; timedOut?: boolean }
+export type CodexProbeRunner = (args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<CodexProbeOutput>;
 
 export function codexProbeRunner(runtime: ResolvedRuntime): CodexProbeRunner {
   return (args, cwd, env) => new Promise(resolve => {
@@ -55,8 +59,9 @@ export function codexProbeRunner(runtime: ResolvedRuntime): CodexProbeRunner {
     const child = execFile(runtime.executable, [...runtime.argvPrefix, ...args], {
       cwd, env: withRuntimePath(env, runtime), timeout: 3500, killSignal: 'SIGKILL',
       maxBuffer: 256 * 1024, encoding: 'utf8', windowsHide: true,
-    }, (error, stdout) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : null) : 0,
-      stdout: String(stdout || '') }));
+    }, (error, stdout, stderr) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : null) : 0,
+      stdout: String(stdout || ''), stderr: sanitizeCliDiagnostic(stderr || error?.message),
+      timedOut: !!error?.killed && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
     child.stdin?.end();
   });
 }
@@ -66,6 +71,16 @@ export function codexContractSupported(root: string, exec: string, resume: strin
     .every(flag => root.includes(flag))
     && ['--json', '--sandbox', '--skip-git-repo-check'].every(flag => exec.includes(flag))
     && ['--json', '--skip-git-repo-check', '[SESSION_ID]'].every(flag => resume.includes(flag));
+}
+
+function probeFailure(result: CodexCompatibility, output: CodexProbeOutput, stage: string, reason: string): CodexCompatibility {
+  if (output.timedOut) reason = 'CODEX_PROBE_TIMEOUT';
+  else if (stage.startsWith('sandbox:') && output.code !== 0) {
+    reason = /\bbwrap:|landlock|failed to (?:initialize|create).*sandbox/i.test(output.stderr || '')
+      ? 'CODEX_SANDBOX_INITIALIZATION_FAILED' : 'CODEX_PROBE_EXECUTION_FAILED';
+  }
+  return { ...result, reason, diagnostic: { stage, exitCode: output.code,
+    message: sanitizeCliDiagnostic(output.stderr), timedOut: !!output.timedOut } };
 }
 
 /** No model, credentials, user configuration, or visitor task is used by this probe. */
@@ -94,7 +109,10 @@ export async function probeCodexCompatibility(runtime: ResolvedRuntime,
     const resume = await run(['--sandbox', 'read-only', '--ask-for-approval', 'never', 'exec', 'resume', '--help'], work, env);
     if ([root, first, resume].some(item => item.code !== 0)
       || !codexContractSupported(root.stdout, first.stdout, resume.stdout)) {
-      return { ...result, callCompatibility: 'unsupported', reason: 'CODEX_CLI_CONTRACT_UNVERIFIED' };
+      const failed = [root, first, resume].find(item => item.code !== 0) || resume;
+      return probeFailure({ ...result, callCompatibility: 'unsupported' }, failed,
+        root.code !== 0 ? 'help' : first.code !== 0 ? 'exec-help' : resume.code !== 0 ? 'resume-help' : 'cli-contract',
+        'CODEX_CLI_CONTRACT_UNVERIFIED');
     }
     result.callCompatibility = 'parameters_checked';
     // A newly downloaded macOS binary can exceed the first-launch time budget.
@@ -104,7 +122,7 @@ export async function probeCodexCompatibility(runtime: ResolvedRuntime,
       if (retry.code === 0) result.runtimeVersion = /^codex-cli\s+(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)\s*$/m.exec(retry.stdout)?.[1] || null;
     }
     const sandbox = await run(['sandbox', '--help'], work, env);
-    if (sandbox.code !== 0) return { ...result, reason: 'CODEX_SANDBOX_PROBE_UNAVAILABLE' };
+    if (sandbox.code !== 0) return probeFailure(result, sandbox, 'sandbox-help', 'CODEX_SANDBOX_PROBE_UNAVAILABLE');
     const subcommand = platform === 'darwin' ? 'macos' : platform === 'linux' ? 'linux' : 'windows';
     const sandboxArgs = /Usage:\s+codex sandbox \[OPTIONS\] \[COMMAND\]\.\.\./.test(sandbox.stdout)
       ? ['sandbox'] : new RegExp(`\\b${subcommand}\\b`).test(sandbox.stdout) ? ['sandbox', subcommand] : null;
@@ -114,16 +132,33 @@ export async function probeCodexCompatibility(runtime: ResolvedRuntime,
     const program = `const fs=require('fs');const [read,inside,outside]=process.argv.slice(1);const write=p=>{try{fs.writeFileSync(p,'voko-canary');return 'allowed'}catch(e){return e.code}};console.log(JSON.stringify({read:fs.readFileSync(read,'utf8'),inside:write(inside),outside:write(outside)}));`;
     for (const mode of ['read-only', 'workspace-write']) {
       const insideFile = path.join(work, mode), outsideFile = path.join(outside, mode);
-      const check = await run([...sandboxArgs, '-c', `sandbox_mode="${mode}"`, '--', process.execPath, '-e', program,
-        source, insideFile, outsideFile], work, env);
+      let command = [process.execPath, '-e', program, source, insideFile, outsideFile];
+      if (platform === 'win32') {
+        // Windows restricted tokens may fail to initialize Node/PowerShell (0xC0000142).
+        // cmd is an OS-native canary. No user text or absolute paths enter its script.
+        fs.writeFileSync(path.join(work, 'voko-probe.cmd'), `@echo off\r\ntype ..\\outside\\read-canary\r\n` +
+          `echo voko-canary>${mode}\r\necho voko-canary>..\\outside\\${mode}\r\nexit /b 0\r\n`);
+        command = [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'cmd.exe'),
+          '/d', '/c', 'voko-probe.cmd'];
+      }
+      const check = await run([...sandboxArgs, '-c', `sandbox_mode="${mode}"`, '--', ...command], work, env);
       let observed: any = null;
-      try { observed = JSON.parse(check.stdout.trim()); } catch (_) {}
+      if (platform === 'win32' && check.code === 0 && check.stdout.trim() === 'voko-canary') {
+        const written = (file: string) => fs.existsSync(file) && fs.readFileSync(file, 'utf8').trim() === 'voko-canary';
+        observed = { read: 'voko-canary', inside: written(insideFile) ? 'allowed' : 'EACCES',
+          outside: written(outsideFile) ? 'allowed' : 'EACCES' };
+      } else {
+        try { observed = JSON.parse(check.stdout.trim()); } catch (_) {}
+      }
       const denied = (value: unknown) => value === 'EPERM' || value === 'EACCES';
       if (check.code !== 0 || observed?.read !== 'voko-canary' || !denied(observed?.outside)
         || fs.existsSync(outsideFile) || (mode === 'read-only'
           ? !denied(observed?.inside) || fs.existsSync(insideFile)
           : observed?.inside !== 'allowed' || !fs.existsSync(insideFile))) {
-        return { ...result, reason: 'CODEX_SANDBOX_CANARY_FAILED' };
+        return probeFailure(result, check.code === 0 ? { ...check, stderr: mode === 'workspace-write'
+          && observed?.inside !== 'allowed' ? 'Workspace write was not verified; sandbox control remains unavailable.'
+          : 'Sandbox file boundary did not match the requested mode; sandbox control remains unavailable.' } : check,
+          `sandbox:${mode}`, 'CODEX_SANDBOX_CANARY_FAILED');
       }
     }
     return { ...result, sandboxVerified: true, reason: 'CODEX_SANDBOX_CANARY_VERIFIED' };

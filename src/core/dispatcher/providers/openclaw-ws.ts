@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { sanitizeCliDiagnostic } = require('../../adapters/cli-spawner');
 const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments, STAGING_MAX_AGE_MS } = require('../provider-attachments');
@@ -92,6 +93,8 @@ class OpenClawWsProvider {
     // Gateway 启动互斥锁（防止重复启动）
     this._gatewayStarting = false;
     this._gatewayStartPromise = null;
+    this._gatewayStartupAttempt = null;
+    this.startupFailure = null;
     this.gatewayStartupTimeoutMs = 90000;
     this.gatewayProbeIntervalMs = 1000;
     this._gatewayWarmupUntil = 0;
@@ -296,6 +299,7 @@ class OpenClawWsProvider {
       maxReconnectDelay: this.maxReconnectDelay,
       logs: this.logs.slice(),
       configurationError: this.configurationError || null,
+      startupFailure: this.startupFailure,
       frameworkVersion: this.connected ? this._gatewayVersion : null,
       protocolVersion: this.connected ? this._protocolVer : null,
       hasToken: !!this.authToken
@@ -582,11 +586,11 @@ class OpenClawWsProvider {
     });
   }
 
-  async _waitForGatewayReady(): Promise<boolean> {
+  async _waitForGatewayReady(deadline = Date.now() + this.gatewayStartupTimeoutMs): Promise<boolean> {
     const generation = this._lifecycleGeneration;
-    const deadline = Date.now() + this.gatewayStartupTimeoutMs;
     while (Date.now() < deadline) {
       if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      if (this._gatewayStartupAttempt?.closed) return false;
       const healthy = await this._probeGateway();
       if (this._stopped || generation !== this._lifecycleGeneration) return false;
       if (healthy) {
@@ -615,43 +619,80 @@ class OpenClawWsProvider {
       if (this._stopped || generation !== this._lifecycleGeneration) return false;
       if (healthy) {
         console.log(`[OpenClaw WS] Gateway 已在运行 (port=${this.gatewayPort})`);
+        this.startupFailure = null;
         this.reconnectAttempts = 0;
         return true;
       }
 
-      const childAlive = this._gatewayChild
-        && this._gatewayChild.exitCode === null
-        && !this._gatewayChild.killed;
-      if (childAlive) {
-        console.log(`[OpenClaw WS] Gateway 进程仍在启动，继续等待 (pid=${this._gatewayChild.pid})...`);
-      } else {
-        console.log(`[OpenClaw WS] Gateway 未运行，尝试启动 (port=${this.gatewayPort})...`);
-        this._gatewayWarmupUntil = Date.now() + this.gatewayStartupTimeoutMs;
-        const { cmd, args, shell } = this._resolveOpenclawCmd();
-        try {
-          const child = spawn(cmd, args, {
-            stdio: 'ignore',
-            detached: process.platform !== 'win32',
-            windowsHide: true,
-            shell,
-          });
-          child.unref();
-          this._gatewayChild = child;  // 记录，供 stop() 清理，避免 detached gateway 泄漏
-          child.on('error', (err: Error) => {
-            console.error('[OpenClaw WS] 无法启动 openclaw 进程:', err.message);
-          });
-          child.on('exit', () => {
-            if (this._gatewayChild === child) this._gatewayChild = null;
-          });
-        } catch (err) {
-          console.error('[OpenClaw WS] 无法启动 openclaw 进程:', errorMessage(err));
-          return false;
+      this.startupFailure = null;
+      // Retry only our own process after this explicit, pre-readiness migration exit.
+      // Both attempts share the existing cold-start budget; never restart a live child.
+      const deadline = Date.now() + this.gatewayStartupTimeoutMs;
+      for (let retry = 0; retry < 2; retry++) {
+        if (this._stopped || generation !== this._lifecycleGeneration) return false;
+        const childAlive = this._gatewayChild
+          && this._gatewayChild.exitCode === null && !this._gatewayChild.killed;
+        if (!childAlive) {
+          this._gatewayWarmupUntil = deadline;
+          const attempt = { closed: false, stderr: '', exitCode: null as number | null,
+            migrationRestart: false, stopCapture: () => {} };
+          this._gatewayStartupAttempt = attempt;
+          const { cmd, args, shell } = this._resolveOpenclawCmd();
+          try {
+            const child = spawn(cmd, args, {
+              stdio: ['ignore', 'ignore', 'pipe'],
+              detached: process.platform !== 'win32', windowsHide: true, shell,
+            });
+            child.unref();
+            child.stderr?.unref?.();
+            this._gatewayChild = child;
+            const capture = (chunk: Buffer) => {
+              attempt.stderr = (attempt.stderr + chunk.toString('utf8')).slice(-8192);
+              if (attempt.stderr.includes('OpenClaw plugin migration inputs changed during startup convergence;')
+                && attempt.stderr.includes('Restart OpenClaw so state migrations run against the final config and plugin inventory.')) {
+                attempt.migrationRestart = true;
+              }
+            };
+            child.stderr?.on('data', capture);
+            attempt.stopCapture = () => { child.stderr?.removeListener('data', capture); child.stderr?.resume(); };
+            child.on('error', (err: Error) => {
+              attempt.stderr = sanitizeCliDiagnostic(err.message);
+              attempt.closed = true;
+            });
+            // close follows drained stderr, including a final migration diagnostic.
+            child.on('close', (code: number | null) => {
+              attempt.exitCode = code;
+              attempt.closed = true;
+              if (this._gatewayChild === child) this._gatewayChild = null;
+            });
+          } catch (err) {
+            attempt.closed = true;
+            attempt.stderr = sanitizeCliDiagnostic(errorMessage(err));
+          }
         }
+        const ready = await this._waitForGatewayReady(deadline);
+        if (this._stopped || generation !== this._lifecycleGeneration) return false;
+        if (ready) {
+          this.startupFailure = null;
+          this._gatewayStartupAttempt?.stopCapture();
+          if (this._gatewayStartupAttempt) this._gatewayStartupAttempt.stderr = '';
+          return true;
+        }
+        const attempt = this._gatewayStartupAttempt;
+        if (retry === 0 && Date.now() < deadline && attempt?.closed && attempt.exitCode !== null && attempt.exitCode !== 0
+          && attempt.migrationRestart
+          && !/required secrets are unavailable|invalid config|configuration invalid/i.test(attempt.stderr)) {
+          this.addLog('OpenClaw migration completed; restarting Gateway once.');
+          continue;
+        }
+        this._gatewayWarmupUntil = 0;
+        this.startupFailure = { code: attempt?.closed ? 'OPENCLAW_GATEWAY_STARTUP_FAILED' : 'OPENCLAW_GATEWAY_STARTUP_TIMEOUT',
+          exitCode: attempt?.exitCode ?? null, message: sanitizeCliDiagnostic(attempt?.stderr)
+            || (attempt?.closed ? 'Gateway exited before becoming ready' : 'Gateway startup timed out') };
+        this.addLog(`${this.startupFailure.code}: ${this.startupFailure.message}`);
+        return false;
       }
-
-      const ready = await this._waitForGatewayReady();
-      if (!ready) console.error(`[OpenClaw WS] Gateway 启动超时 (${this.gatewayStartupTimeoutMs}ms)`);
-      return ready;
+      return false;
     } finally {
       this._gatewayStarting = false;
     }
@@ -1749,7 +1790,8 @@ class OpenClawWsProvider {
       if (this.connected) return;
       await new Promise(resolve => setTimeout(resolve, this.gatewayProbeIntervalMs));
     }
-    const error = new Error('OpenClaw WebSocket did not become ready within the cold-start budget');
+    const error = new Error(this.startupFailure?.message || 'OpenClaw WebSocket did not become ready within the cold-start budget');
+    (error as any).code = this.startupFailure?.code;
     (error as any).deliveryOutcome = 'not_delivered';
     throw error;
   }
@@ -1785,7 +1827,7 @@ class OpenClawWsProvider {
     try {
       const running = await this._ensureGatewayRunning();
       if (this._stopped || generation !== this._lifecycleGeneration) return;
-      if (!running) console.warn('[OpenClaw WS] provider.start: Gateway 启动失败');
+      if (!running) { console.warn('[OpenClaw WS] provider.start: Gateway 启动失败'); return; }
       this.setEnabled(true);
     } catch (e) { console.error('[OpenClaw WS] provider.start 失败:', errorMessage(e)); }
   }

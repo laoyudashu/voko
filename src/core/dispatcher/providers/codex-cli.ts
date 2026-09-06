@@ -71,6 +71,7 @@ class CodexCliProvider extends CliAdapter {
       versionSource: 'resolved_cli', nodeVersion: runtime.runtimeKind === 'node-script' ? process.version : null,
       callCompatibility: current?.callCompatibility || 'unverified',
       securityVerification: current?.reason || 'CODEX_RUNTIME_NOT_PROBED',
+      securityDiagnostic: current?.diagnostic || null,
       controlEvidence: current?.sandboxVerified ? { sandboxMode: { testKind: 'isolated_sandbox_canary' } } : {} };
   }
 
@@ -103,7 +104,7 @@ class CodexCliProvider extends CliAdapter {
       await this.refreshSecurityControlEvidence();
       evidence = this.getSecurityControlEvidence();
     }
-    if (!evidence.controlEvidence.sandboxMode) throw Object.assign(new Error(evidence.securityVerification),
+    if (!evidence.controlEvidence.sandboxMode) throw Object.assign(new Error([evidence.securityVerification, evidence.securityDiagnostic?.message].filter(Boolean).join(': ')),
       { code: evidence.securityVerification, deliveryOutcome: 'not_delivered' });
     const expected = payload.providerSecurityPolicy?.runtimeFingerprint;
     if (expected && expected !== snapshotFromProvider(this, 'codex-cli', payload.agentId).runtimeFingerprint) {

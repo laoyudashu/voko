@@ -19,6 +19,7 @@ export interface ProviderCapabilitySnapshot {
   versionSource?: string | null;
   callCompatibility?: string | null;
   securityVerification?: string | null;
+  securityDiagnostic?: { stage: string; exitCode: number | null; message: string; timedOut: boolean } | null;
   runtimeFingerprint: string;
   protocolVersion: string | null;
   matchedRuleId: string | null;
@@ -179,11 +180,12 @@ export function snapshotFromProvider(provider: any, transportId: string, agentId
       nodeVersion: evidence.nodeVersion || null, versionSource: evidence.versionSource || null,
       callCompatibility: evidence.callCompatibility || 'unverified',
     } : {}),
-    ...(transportId === 'codex-cli' ? { securityVerification: evidence.securityVerification || 'CODEX_RUNTIME_NOT_PROBED' } : {}),
+    ...(transportId === 'codex-cli' ? { securityVerification: evidence.securityVerification || 'CODEX_RUNTIME_NOT_PROBED',
+      securityDiagnostic: evidence.securityDiagnostic || null } : {}),
     protocolVersion: evidence.protocolVersion ? String(evidence.protocolVersion) : null, matchedRuleId, adapterRevision: PROVIDER_CAPABILITY_ADAPTER_REVISION,
     evidenceState, supportedControls, observedAt: now, expiresAt: now + PROVIDER_CAPABILITY_TTL_MS,
   };
-  const { observedAt, expiresAt, ...semantic } = base;
+  const { observedAt, expiresAt, securityDiagnostic, ...semantic } = base;
   return { ...base, capabilityDigest: digest(semantic) };
 }
 
