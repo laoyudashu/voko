@@ -1,0 +1,35 @@
+# Independent S4 review: initial14903c3
+
+Read exact source diff and R12/R10 tests. Independently loaded exact changed source from git using /tmp/voko-s4-commit-loader.cjs and ran the two new R12/R10 test files:10/10 passed, /tmp/voko-s4-independent-initial-tests.log. Additional adversarial tests found two uncovered cases; no source edits made by reviewer.
+
+1. R10 blocking late-final correlation defect. The ambiguity check tracks retained attachments, not all unresolved turns. A first turn without attachments can time out/release, a second turn on the same session can carry attachments, and a late first-turn final passes through _replyIdentity, which prefers the current tracked second turn over even an explicit old payload.turnId. Because only the second turn has an attachment record, it looks unambiguous and its file is deleted while still needed; its active turn is also released. Exact source probe uses real sendToSession/sendChatSend/_handleChatEvent, mocks only final WS send and runtime config setup, and creates/deletes only isolated temporary files. Result: before=true, afterLatePreviousFinal=false, newerTurnStillActive=false. Evidence /tmp/voko-s4-attachment-adversarial.cjs and .log. Recommended separate unresolved-session history/correlation from attachment records, rejecting mismatched final as proof of current completion. No new general queue needed.
+
+2. R12 result-classification gap. Generic CliAdapter still sets rejected for parser.error after a process exits0. A real synthetic Node process first writes a marker, then emits an OpenHands ConversationErrorEvent and exits0; the adapter reports rejected despite proven execution. Current DeliveryExecutor does not fallback on rejected, so this is inaccurate terminal evidence rather than the original automatic double-execution risk. It nevertheless violates the approved post-launch unknown contract. Evidence /tmp/voko-s4-parser-adversarial.cjs and .log. Recommended preserve diagnostic and set outcome_unknown for this post-launch parser failure, with a focused real-child-process regression; no parser redesign.
+
+R12 inspected positive boundaries: missing executable errors receive not_delivered only with pre-spawn evidence; nonzero exits are always unknown regardless auth/policy/ENOENT text; generic custom classifier override and OpenHands session-not-found override removed; managed-session retry still requires not_delivered; generic/OpenClaw catch no longer promote text-only ENOENT to safe retry. Existing tests confirm real executed markers do not trigger backup and genuine pre-spawn failure does.
+
+Status: initial14903c3 is not ready for final acceptance until the two findings are fixed and rechecked. Provider implementation agent owns follow-up; R13 lifecycle follow-up is concurrently being prepared by that agent and has not yet been reviewed in this report.
+
+## Follow-up b932b9a
+
+The original R10 unresolved-turn/explicit-id defect is addressed by pendingTurnIds independent of attachments, preserved through disconnect. The original R12 exit0 parser.error classification is now outcome_unknown. Exact-source independent tests for attachment lifetime, CLI evidence, and dispatcher stop contract passed36/36: /tmp/voko-s4-independent-b932-tests.log. This is not sufficient for approval: two further focused probes fail.
+
+3. R10 completed-final replay still releases a later active turn. Complete A normally through real _handleChatEvent using runId and message.id (no explicit inbound turnId), then submit B with an attachment, then replay the identical A final. A has been removed from pendingTurnIds, so _replyIdentity attributes it to B. _emitAgentReplyFromSession deletes B pending identity and releases/cleans its attachment before existing text dedup returns. Result before=true, afterLatePreviousFinal=false, newerTurnStillActive=false. Evidence /tmp/voko-s4-duplicate-final-adversarial.cjs and .log. Match exact already-confirmed reply/run identity before current-turn fallback; do not use body equality across turns because distinct legitimate replies may share text.
+
+4. R13 registry.restart can restart after stopAll. Capture an in-progress restart paused in its first provider.stop, call stopAll, then resolve the old restart stop. restart proceeds to provider.start without the lifecycle generation check already introduced in startAll. Actual registry controlled-promise probe observes one start after global stop; evidence /tmp/voko-s4-registry-restart-adversarial.cjs and .log. This is a directly exported restartProvider API race; no present static src caller was found, so a production trigger is not asserted. Reuse lifecycle generation checks around awaits, not an additional manager.
+
+Status: b932b9a still needs the two follow-up fixes; initial fixed cases have independent green evidence. No product files changed by this reviewer.
+
+## Final independent acceptance: 6e733e6048dd0547f29515be78d98b5d97002479
+
+Read the final source/test diff. Independent exact-source run of provider-cli-execution-evidence, openclaw-attachment-lifetime, and dispatcher-stop-contract passed41/41 with zero skips/failures: /tmp/voko-s4-independent-final-tests.log. Replayed original focused probes using the final commit source:
+
+- /tmp/voko-s4-duplicate-final-final.log: before=true, afterLatePreviousFinal=true, newerTurnStillActive=true. Exact reply identity dedup now happens before any release; a distinct new reply with the same body remains covered by a real-entry regression.
+- /tmp/voko-s4-registry-restart-final.log: initialStarts=1, startsAfterGlobalStop=0. Existing lifecycle generation is checked after awaited stop and before each restart entry.
+- /tmp/voko-s4-parser-final.log: sideEffectExists=true, outcome=outcome_unknown. Executed process protocol errors do not claim safe pre-execution rejection.
+
+The final R10 implementation simplifies unresolved history to constant pending/uncertain state per session and caps tracked sessions at1000; it reclaims unambiguous completed entries or rejects a new session before chat.send if none can be reclaimed. Reply dedup is capped at1000. Explicit turn identity is required to clean attachments on an actual final; a legacy session-only final can preserve existing delivery compatibility but retains attachments to their bounded lifetime. A session that has overlapped unresolved turns remains conservatively ambiguous for session-only finals. This intentionally favors retention over early deletion, with no new persistence framework or dependency.
+
+The dispatcher also rejects error/outcome_unknown retired finals as evidence of old execution completion, preserving the stop/restart same-conversation guard. The new regression exercises both variants.
+
+Conclusion: no remaining blocking finding within approved S4 scope. This review is local synthetic behavior/source evidence, not live gateway/Provider verification. It does not claim exact legacy turn correlation, durable outbox/replay, or known completion of outcome_unknown executions. Reviewer made no product changes, ran no full gate, and performed no production operation.

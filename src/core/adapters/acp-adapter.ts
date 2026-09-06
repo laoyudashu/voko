@@ -587,7 +587,16 @@ class AcpAdapter extends PushProvider {
   async _pushViaAcp(payload: PushPayload): Promise<ProviderDeliveryReceipt> {
     const { agentId, fromUid, content } = payload;
     const turnId = String(payload.turnId || payload.messageId || `acp-${Date.now()}`);
-    const state = await this._ensureAgent(agentId);
+    let state: AcpAgentState;
+    try {
+      state = await this._ensureAgent(agentId);
+    } catch (err) {
+      // This turn has not reached session/prompt. A failed connection must not
+      // be confused with losing the result of an already submitted request.
+      const failure = err instanceof Error ? err : new Error(String(err));
+      if (!(failure as any).deliveryOutcome) (failure as any).deliveryOutcome = 'not_delivered';
+      throw failure;
+    }
 
     let session: AcpSession;
     try {

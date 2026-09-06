@@ -55,7 +55,9 @@ function startServer(handlers, db, options = {}) {
     },
   }));
   return new Promise((resolve, reject) => {
-    const server = app.listen(0, () => {
+    // Match fetch's IPv4 host; macOS can bind an IPv6 listener to a port
+    // already used by a different IPv4 service.
+    const server = app.listen(0, '127.0.0.1', () => {
       server.off('error', reject);
       let closed = false;
       resolve({

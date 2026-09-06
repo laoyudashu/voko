@@ -8,6 +8,7 @@ commands are redirected; the OpenHands process itself keeps its ACP stdin.
 
 import os
 import subprocess
+import sys
 
 
 _original_run = subprocess.run
@@ -30,6 +31,13 @@ def _run(*popenargs, **kwargs):
 subprocess.run = _run
 
 
+def _safety_unavailable():
+    # Python ignores ordinary exceptions raised while importing sitecustomize.
+    # SystemExit stops startup, before the CLI can run with enabled executors.
+    sys.stderr.write("VOKO_OPENHANDS_CLI_SAFETY_UNAVAILABLE\n")
+    raise SystemExit(78) from None
+
+
 def _install_cli_safety_hooks():
     """Keep persisted tool names while disabling every executor in CLI mode.
 
@@ -45,21 +53,32 @@ def _install_cli_safety_hooks():
         import openhands.sdk.agent.base as agent_base
 
         original_initialize = agent_base.AgentBase._initialize
+        if not callable(original_initialize):
+            _safety_unavailable()
 
         def safe_initialize(self, state):
-            result = original_initialize(self, state)
-            tools = getattr(self, "_tools", None)
-            if isinstance(tools, dict):
-                self._tools = {
-                    name: tool.model_copy(update={"executor": None})
-                    if hasattr(tool, "model_copy") else tool
-                    for name, tool in tools.items()
-                }
+            try:
+                result = original_initialize(self, state)
+                tools = getattr(self, "_tools", None)
+                if not isinstance(tools, dict):
+                    raise TypeError("Unsupported tool registry")
+                disabled = {}
+                for name, tool in tools.items():
+                    disabled_tool = tool.model_copy(update={"executor": None})
+                    if disabled_tool.executor is not None:
+                        raise TypeError("Tool executor was not disabled")
+                    disabled[name] = disabled_tool
+                self._tools = disabled
+            except Exception:
+                try:
+                    self._tools = {}
+                finally:
+                    _safety_unavailable()
             return result
 
         agent_base.AgentBase._initialize = safe_initialize
     except Exception:
-        pass
+        _safety_unavailable()
 
 
 _install_cli_safety_hooks()

@@ -69,8 +69,13 @@ class A2AAttachmentWorkspace {
   private readonly root: string;
   constructor(root = path.join(resolveA2ADataDirectory(), 'a2a-attachments')) { this.root = path.resolve(root); }
   private directory(taskId: string): string {
-    if (!ID.test(taskId)) throw new Error('A2A_ATTACHMENT_TASK_INVALID');
-    return path.join(this.root, taskId);
+    if (!ID.test(taskId) || taskId === '.' || taskId === '..') throw new Error('A2A_ATTACHMENT_TASK_INVALID');
+    const directory = path.resolve(this.root, taskId);
+    const relative = path.relative(this.root, directory);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('A2A_ATTACHMENT_TASK_INVALID');
+    }
+    return directory;
   }
   async prepare(taskId: string, refs: string[], client: A2AMailboxClient, safety?: AttachmentSafety): Promise<{
     inputs: PreparedAttachment[]; outputDirectory: string; prompt: (content: string) => string; cleanup: () => Promise<void> }> {

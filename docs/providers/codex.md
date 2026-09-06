@@ -18,7 +18,7 @@ codex doctor
 codex login status
 ```
 
-当前本机实测 Codex CLI 0.145.0（Windows npm 安装）。如果未登录，使用 Codex 自身的登录流程：
+历史 Windows 实测版本为 Codex CLI 0.145.0；当前各版本验证结果见[专项矩阵](codex-compatibility.md)。如果未登录，使用 Codex 自身的登录流程：
 
 ```bash
 codex login
@@ -53,18 +53,20 @@ VOKO → Codex 的 CLI 投递不要求在 Codex 中额外配置 VOKO MCP。只�
 VOKO 使用 Codex 的非交互 JSON 流模式，等价于：
 
 ```bash
-codex exec --json --sandbox read-only --skip-git-repo-check -
+codex --ask-for-approval never exec --json --sandbox read-only --skip-git-repo-check -
 ```
 
 后续消息使用 Codex 返回的原生 thread ID 恢复：
 
 ```text
-codex --sandbox read-only exec resume <thread-id> --json --skip-git-repo-check -
+codex --sandbox read-only --ask-for-approval never exec resume <thread-id> --json --skip-git-repo-check -
 ```
 
-VOKO 不使用 `--dangerously-bypass-approvals-and-sandbox`，也不会让访客消息直接执行 shell、网络请求、写文件或修改项目。不要为了“让 Codex 回复更快”手动替换成危险参数。
+VOKO 默认使用只读沙箱，并固定 `--ask-for-approval never`。只读模式仍允许执行命令和广泛读取宿主机文件，不能视为禁止 Shell 或文件读取隔离。通过“访客安全与权限”选择 `workspace-write` 后，允许写入工作区；Codex 原生配置可能还允许临时目录等位置。VOKO 没有接入独立网络开关，也不使用 `--dangerously-bypass-approvals-and-sandbox`。
 
-VOKO 默认从临时工作目录启动 Codex，不要求当前目录是 Git 仓库，也不会把 VOKO 的访客消息写入你的项目文件。
+VOKO 默认从临时工作目录启动 Codex，不要求当前目录是 Git 仓库。
+
+版本兼容不再依赖单一版本白名单：“重新检测”检查当前实际 CLI 的首次调用、恢复参数及原生沙箱。在隔离目录验证只读拒绝写入、工作区允许写入、工作区外测试文件拒绝写入；通过后才开放沙箱选项。新旧版本使用相同判定标准，缺少参数或沙箱检查失败时不提交访客任务。详见[Codex 版本与权限验证矩阵](codex-compatibility.md)。
 
 ## 4. 会话和恢复
 
@@ -112,7 +114,7 @@ codex mcp list
 
 ## 7. 本机验证边界
 
-当前已在 Windows Codex CLI 0.145.0 上使用临时 VOKO 数据库完成真实验证：
+历史记录：Windows Codex CLI 0.145.0 曾使用临时 VOKO 数据库完成以下验证；这不是本次版本兼容改动的 Windows 复验：
 
 - `codex exec --json` 首次投递和 JSONL 回复解析；
 - 返回的原生 thread ID 保存到 VOKO 绑定；

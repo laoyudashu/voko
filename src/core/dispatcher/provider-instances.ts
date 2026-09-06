@@ -1,3 +1,4 @@
+const { openClawAgentEntries } = require('./openclaw-config');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -95,7 +96,7 @@ export function openClawInstances(
   try {
     const root = path.join(home, '.openclaw');
     const config = JSON.parse(fs.readFileSync(path.join(root, 'openclaw.json'), 'utf8'));
-    const configured = Array.isArray(config.agents?.list) ? config.agents.list : [];
+    const configured = openClawAgentEntries(config);
     if (configured.length) return cleanInstances(configured, 'openclaw_config');
     const hasImplicitMain = fs.existsSync(path.join(root, 'workspace')) || fs.existsSync(path.join(root, 'agents', 'main'));
     return hasImplicitMain ? cleanInstances([{ id: 'main', name: 'main', isDefault: true }], 'openclaw_default') : [];

@@ -47,6 +47,16 @@ function deliveryError(message: string, outcome: 'not_delivered' | 'outcome_unkn
   return error;
 }
 
+function startupDiagnostic(error: any): string {
+  const code = error?.cause?.code || error?.code;
+  if (['ENOENT', 'EACCES', 'EADDRINUSE', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'].includes(code)) return code;
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'REQUEST_TIMEOUT';
+  if (Number.isInteger(error?.httpStatus) && error.httpStatus >= 100 && error.httpStatus <= 599) return `HTTP_${error.httpStatus}`;
+  if (error?.message === 'WorkBuddy health check failed') return 'HEALTH_CHECK_FAILED';
+  if (error?.message === 'WorkBuddy HTTP contract is incomplete') return 'HTTP_CONTRACT_INCOMPLETE';
+  return 'CHECK_FAILED';
+}
+
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -312,25 +322,44 @@ class WorkBuddyHttpProvider extends PushProvider {
       }) as ChildProcess;
       this._server = child;
       child.stderr?.resume();
-      child.once('exit', () => {
+      let startupFailure: Error | null = null;
+      child.once('error', error => {
+        startupFailure = deliveryError(`WorkBuddy HTTP service could not start (${startupDiagnostic(error)})`,
+          'not_delivered', 'WORKBUDDY_SPAWN_FAILED', { stage: 'startup' });
+      });
+      child.once('exit', (code, signal) => {
+        startupFailure = deliveryError(`WorkBuddy HTTP service exited with code ${code} signal ${signal || 'none'}`,
+          'not_delivered', 'WORKBUDDY_PROCESS_EXITED', { stage: 'startup' });
         if (this._server !== child) return;
         this._server = null;
         this._port = 0;
         this.notifyAvailability({ backendType: 'workbuddy', mode: 'http', available: false, reason: 'serve-exit' });
       });
       const deadline = Date.now() + this._startupTimeoutMs;
+      let lastReadiness = 'CHECK_NOT_COMPLETED';
       while (Date.now() < deadline) {
-        if (child.exitCode !== null) throw deliveryError(`WorkBuddy HTTP service exited with code ${child.exitCode}`, 'not_delivered');
+        if (startupFailure) throw startupFailure;
+        if (child.exitCode !== null || child.signalCode) throw deliveryError(
+          `WorkBuddy HTTP service exited with code ${child.exitCode} signal ${child.signalCode || 'none'}`,
+          'not_delivered', 'WORKBUDDY_PROCESS_EXITED', { stage: 'startup' });
         try {
           await this._validateRuntime();
+          if (startupFailure) throw startupFailure;
+          if (this._server !== child) throw deliveryError('WorkBuddy HTTP service stopped before readiness',
+            'not_delivered', 'WORKBUDDY_STARTUP_STOPPED', { stage: 'startup' });
           this.notifyAvailability({ backendType: 'workbuddy', mode: 'http', available: true, reason: 'serve-ready' });
           return;
-        } catch {}
+        } catch (error) {
+          if ((error as any).deliveryOutcome) throw error;
+          lastReadiness = startupDiagnostic(error);
+        }
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-      this._disposeServer('startup-timeout');
-      throw deliveryError('WorkBuddy HTTP service did not become ready', 'not_delivered');
+      if (startupFailure) throw startupFailure;
+      throw deliveryError(`WorkBuddy HTTP service did not become ready (last check: ${lastReadiness})`,
+        'not_delivered', 'WORKBUDDY_STARTUP_TIMEOUT', { stage: 'startup' });
     })().catch(error => {
+      this._disposeServer('startup-failed');
       if (!(error as any).deliveryOutcome) (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     }).finally(() => { this._serverPromise = null; });
@@ -517,7 +546,8 @@ class WorkBuddyHttpProvider extends PushProvider {
     } catch {}
   }
 
-  async _pushAcpSession(payload: PushPayload, turnId: string, existingSessionId = ''): Promise<unknown> {
+  async _pushAcpSession(payload: PushPayload, turnId: string, existingSessionId = '',
+    localReply?: (reply: string) => void): Promise<unknown> {
     const scope = this._scope(payload);
     const sessionOperation: 'new' | 'resume' = existingSessionId ? 'resume' : 'new';
     let nativeSessionId = existingSessionId;
@@ -556,12 +586,13 @@ class WorkBuddyHttpProvider extends PushProvider {
       }
       let reply = '';
       let stopReason = '';
-      this._activeAcp.set(turnId, { connectionId, sessionId: nativeSessionId, state: this._currentState() });
+      if (!localReply) this._activeAcp.set(turnId, { connectionId, sessionId: nativeSessionId, state: this._currentState() });
       promptStarted = true;
       stage = 'prompt';
-      this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
+      if (!localReply) this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
         turnId, nativeSessionId, terminal: false });
-      const prompt = buildConversationDeliveryPrompt(this._db, deliveryPayload, true, this._contextWindow);
+      const prompt = localReply ? deliveryPayload.content
+        : buildConversationDeliveryPrompt(this._db, deliveryPayload, true, this._contextWindow);
       const result = await this._acpRequest(connectionId, 'session/prompt', {
         sessionId: nativeSessionId, prompt: buildAcpAttachmentPrompt(prompt, deliveryPayload, {
           imageSupported: promptCapabilities.image === true,
@@ -593,7 +624,8 @@ class WorkBuddyHttpProvider extends PushProvider {
         sessionOperation === 'resume' ? 'WorkBuddy resumed the session but returned no reply' : 'WorkBuddy created a session but returned no reply',
         'outcome_unknown', sessionOperation === 'resume' ? 'WORKBUDDY_RESUMED_EMPTY_REPLY' : 'WORKBUDDY_NEW_EMPTY_REPLY',
         { stage, sessionOperation });
-      this.emit('agent.reply', { agentId: payload.agentId, visitorId: payload.fromUid, content: reply, done: true,
+      if (localReply) localReply(reply);
+      else this.emit('agent.reply', { agentId: payload.agentId, visitorId: payload.fromUid, content: reply, done: true,
         sessionKey: `workbuddy:${scope.conversationId}`, turnId, replyId: turnId });
       const attachmentMode = !payload.attachments?.length ? 'none'
         : promptCapabilities.embeddedContext === true ? 'embedded_resource'
@@ -601,7 +633,7 @@ class WorkBuddyHttpProvider extends PushProvider {
             ? 'image' : staged ? 'staged_path' : 'resource_link';
       const attachmentDelivery = { transportDelivered: true, attachmentAccessed: null, contentUnderstood: null,
         mode: attachmentMode };
-      this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
+      if (!localReply) this.notifyProviderEvent({ type: 'completed', agentId: payload.agentId, messageId: payload.messageId,
         turnId, nativeSessionId, terminal: true, payload: { attachmentDelivery } });
       return { nativeSessionId, providerInstanceId: this._currentState().instanceId, deliveryMode: 'http', adapterType: ADAPTER_TYPE,
         attachmentDelivery };
@@ -612,7 +644,7 @@ class WorkBuddyHttpProvider extends PushProvider {
         : sessionOperation === 'resume' ? 'WorkBuddy could not restore the exact session' : 'WorkBuddy could not create a new session',
       promptStarted ? 'outcome_unknown' : 'not_delivered', 'WORKBUDDY_ACP_STAGE_FAILED', { stage, sessionOperation });
     } finally {
-      this._activeAcp.delete(turnId);
+      if (!localReply) this._activeAcp.delete(turnId);
       staged?.cleanup();
       if (connectionId) await this._disconnectAcp(connectionId);
     }
@@ -686,22 +718,24 @@ class WorkBuddyHttpProvider extends PushProvider {
     const challenge = String(options.challenge || '');
     if (!/^voko-[a-f0-9]{24}$/.test(challenge)) return { ok: false, status: 'failed', code: 'LOOPBACK_CHALLENGE_INVALID' };
     let reply = '';
-    const handler = (event: any) => { if (event?.turnId === challenge) reply = String(event.content || ''); };
-    this.on('agent.reply', handler);
-    try {
-      const receipt = await this.push({ agentId: _agentId || 'workbuddy-loopback', fromUid: 'voko-loopback',
-        content: `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`,
-        rawContent: challenge, channelId: `loopback-${challenge}`, channelType: 1,
-        messageId: challenge, turnId: challenge, timestamp: Date.now() });
-      const matched = reply.trim() === challenge;
-      if (matched) {
-        this._authenticationVerified = true;
-        this._verification.set(_agentId, { status: 'loopback_verified', verifiedAt: Date.now() });
-      } else this._verification.set(_agentId, { status: 'failed', detail: 'WorkBuddy returned an unexpected loopback reply' });
-      return { ok: matched, status: matched ? 'loopback_verified' : 'failed', challengeMatched: matched,
-        loopbackSessionId: (receipt as any)?.nativeSessionId || null,
-        detail: matched ? 'WorkBuddy HTTP loopback verified' : 'WorkBuddy returned an unexpected loopback reply' };
-    } finally { this.off('agent.reply', handler); }
+    const payload: PushPayload = { agentId: _agentId || 'workbuddy-loopback', fromUid: 'voko-loopback',
+      content: `VOKO local loopback test. Do not use tools. Reply with exactly: ${challenge}`,
+      rawContent: challenge, channelId: `loopback-${challenge}`, channelType: 1,
+      messageId: challenge, turnId: challenge, timestamp: Date.now() };
+    // Reuse the bound runtime and ACP protocol, but keep verification out of
+    // business reply events, lifecycle tracking, and last-delivery evidence.
+    const receipt = await this._stateContext.run(this._stateFor(payload), async () => {
+      await this._ensureServer();
+      return this._pushAcpSession(payload, challenge, '', value => { reply = value; });
+    });
+    const matched = reply.trim() === challenge;
+    if (matched) {
+      this._authenticationVerified = true;
+      this._verification.set(_agentId, { status: 'loopback_verified', verifiedAt: Date.now() });
+    } else this._verification.set(_agentId, { status: 'failed', detail: 'WorkBuddy returned an unexpected loopback reply' });
+    return { ok: matched, status: matched ? 'loopback_verified' : 'failed', challengeMatched: matched,
+      loopbackSessionId: (receipt as any)?.nativeSessionId || null,
+      detail: matched ? 'WorkBuddy HTTP loopback verified' : 'WorkBuddy returned an unexpected loopback reply' };
   }
 
   async cleanupLoopbackSession(_agentId: string, sessionId?: string): Promise<Record<string, unknown>> {

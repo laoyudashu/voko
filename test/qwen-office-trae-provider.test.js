@@ -65,6 +65,8 @@ test('QwenWork readiness separates executable discovery from CLI authentication'
 test('QwenWork status diagnostics distinguish timeout, invalid output, login and command failure', () => {
   const classify = qwenCommand.classifyQwenOfficeStatusResult;
   assert.equal(classify({ status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' } }).reason, 'status_timeout');
+  assert.equal(classify({ status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT' } }).detail,
+    'status command exceeded 10000ms');
   assert.equal(classify({ status: 0, stdout: 'not-json', stderr: '' }).reason, 'status_invalid_output');
   assert.equal(classify({ status: 1, stdout: '', stderr: 'failed' }).reason, 'status_failed');
   assert.equal(classify({ status: 0, stdout: '{"logged_in":false}', stderr: '' }).reason, 'cli_not_logged_in');

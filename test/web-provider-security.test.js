@@ -23,6 +23,8 @@ test('Provider security page and API expose only controls supported by the Agent
     INSERT INTO agents VALUES('agent-9','OpenCode助手','opencode',NULL);
     INSERT INTO agents VALUES('agent-10','Grok助手','grok',NULL);
     INSERT INTO agents VALUES('agent-11','Aider助手','aider',NULL);
+    INSERT INTO agents VALUES('agent-13','OpenClaw助手','openclaw',NULL);
+    INSERT INTO agents VALUES('agent-14','未验证Codex','codex',NULL);
     ALTER TABLE agents ADD COLUMN backend_instance_id TEXT;
     INSERT INTO agents(agent_id,agent_name,backend_type,owner_email,backend_instance_id)
       VALUES('agent-12','Zero助手','zeroclaw',NULL,'ds');
@@ -47,8 +49,14 @@ test('Provider security page and API expose only controls supported by the Agent
     ['agent-11','aider-cli',['additionalPrompt']],
     ['agent-12','zeroclaw-cli',['additionalPrompt']],
   ]) providerSecurity.storeCapability(agentId, transportId, {
+    ...(transportId === 'codex-cli' ? { runtimeVersion: '0.153.4', securityVerification: 'CODEX_SANDBOX_CANARY_VERIFIED' } : {}),
     runtimeFingerprint: `${transportId}-test`, capabilityDigest: `${transportId}-capability`, evidenceState: 'static_compatible',
     supportedControls: Object.fromEntries(ids.map(id => [id,{ values: [] }])), observedAt: Date.now(), expiresAt: Date.now()+10000,
+  });
+  providerSecurity.storeCapability('agent-13', 'openclaw-ws', {
+    frameworkVersion: '2099.1.1-beta.1', runtimeVersion: '2099.1.1-beta.1', protocolVersion: '4', nodeVersion: 'v26.7.0',
+    callCompatibility: 'protocol_compatible', runtimeFingerprint: 'gateway-fixture', capabilityDigest: 'gateway-capability', evidenceState: 'unknown',
+    supportedControls: { additionalPrompt: { values: [] } }, observedAt: Date.now(), expiresAt: Date.now()+10000,
   });
   const dispatcher = {
     providerSecurity,
@@ -62,7 +70,7 @@ test('Provider security page and API expose only controls supported by the Agent
         : [{ text: `${transportId} <访客消息>`, risk: 'low', changed: false }],
     inspectProviderSecurity(agentId, requestedTransport) {
       const backend = db.prepare('SELECT backend_type FROM agents WHERE agent_id=?').get(agentId).backend_type;
-      const mapping = backend === 'workbuddy' ? ['workbuddy-http', 'http']
+      const mapping = backend === 'openclaw' ? ['openclaw-ws', 'websocket'] : backend === 'workbuddy' ? ['workbuddy-http', 'http']
         : backend === 'codex' ? ['codex-cli', 'cli']
           : backend === 'hermes' ? ['hermes-cli', 'cli']
             : backend === 'qwen-office' ? ['qwen-office-cli', 'cli']
@@ -90,6 +98,8 @@ test('Provider security page and API expose only controls supported by the Agent
   const webSessions = createLocalWebSessionStore(db);
   const handlers = {
     list_agents: async () => ({ agents: [
+      { agentId: 'agent-13', agentName: 'OpenClaw助手', backendType: 'openclaw' },
+      { agentId: 'agent-14', agentName: '未验证Codex', backendType: 'codex' },
       { agentId: 'agent-1', agentName: '陈老师', backendType: 'workbuddy' },
       { agentId: 'agent-2', agentName: 'A诊', backendType: 'codex' },
       { agentId: 'agent-3', agentName: 'Goose助手', backendType: 'goose' },
@@ -116,6 +126,13 @@ test('Provider security page and API expose only controls supported by the Agent
   const origin = `http://127.0.0.1:${server.address().port}`;
   const auth = { 'X-VOKO-Token': 'local-test-token', Accept: 'application/json' };
 
+  const openclawPage = await fetch(`${origin}/agents/agent-13/security`, { headers: auth });
+  const openclawHtml = await openclawPage.text();
+  assert.equal(openclawPage.status, 200);
+  assert.match(openclawHtml, /2099.1.1-beta.1/);
+  assert.match(openclawHtml, /协议兼容/);
+  assert.match(openclawHtml, /原生权限尚未接入验证/);
+  assert.doesNotMatch(openclawHtml, /name="(?:shell|sandboxMode|browser|network)"/);
   const page = await fetch(`${origin}/agents/agent-1/security`, { headers: auth });
   const html = await page.text();
   assert.equal(page.status, 200, html);
@@ -153,7 +170,21 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(codexHtml, /name="sandboxMode"/);
   assert.match(codexHtml, /宿主机广泛只读/);
   assert.match(codexHtml, /允许写工作区/);
+  assert.match(codexHtml, /id="codex-compatibility"/);
+  assert.match(codexHtml, /CLI 参数与本机沙箱检查通过/);
+  assert.match(codexHtml, /只读仍允许执行命令/);
   assert.doesNotMatch(codexHtml, /网络访问/);
+  providerSecurity.storeCapability('agent-14', 'codex-cli', {
+    runtimeVersion: '0.148.0', runtimeFingerprint: 'failed-codex', capabilityDigest: 'failed',
+    evidenceState: 'failed', supportedControls: {}, observedAt: Date.now(), expiresAt: Date.now() + 60000,
+    securityVerification: 'CODEX_SANDBOX_INITIALIZATION_FAILED',
+    securityDiagnostic: { stage: 'sandbox:read-only', exitCode: 1, timedOut: false, message: 'bwrap: denied <probe>' },
+  });
+  const unverifiedCodexHtml = await (await fetch(`${origin}/agents/agent-14/security`, { headers: auth })).text();
+  assert.match(unverifiedCodexHtml, /请重新检测/);
+  assert.match(unverifiedCodexHtml, /bwrap: denied &lt;probe&gt;/);
+  assert.doesNotMatch(unverifiedCodexHtml, /bwrap: denied <probe>/);
+  assert.doesNotMatch(unverifiedCodexHtml, /name="sandboxMode"/);
 
   const goosePage = await fetch(`${origin}/agents/agent-3/security`, { headers: auth });
   const gooseHtml = await goosePage.text();
@@ -285,6 +316,8 @@ test('Provider security page and API expose only controls supported by the Agent
     body: JSON.stringify({ transportId: 'workbuddy-http', config: { dataFileAccess: 'read' } }),
   });
   const stalePreflight = await stalePreflightResponse.json();
+  db.exec('CREATE TABLE IF NOT EXISTS config (type TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
+  require('../build/core/database').saveUserAccessToken(db, 'owner@example.com', 'synthetic-owner-token');
   const session = webSessions.create('owner@example.com');
   db.prepare('UPDATE local_web_sessions SET created_at=? WHERE token_hash=?')
     .run(Date.now()-10*60*1000,webSessions.digest(session.token));

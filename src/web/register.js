@@ -1,3 +1,4 @@
+const { openClawAgentEntries } = require('../core/dispatcher/openclaw-config');
 /**
  * register.js — 登录 & 添加 Agent
  *
@@ -1033,7 +1034,7 @@ function createRegisterRouter(handlers, db, options = {}) {
       const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
       if (!fs.existsSync(configPath)) return res.json({ success: true, data: [] });
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      const agents = (config.agents?.list || []).map(a => ({
+      const agents = openClawAgentEntries(config).map(a => ({
         id: a.id,
         name: a.name || a.id,
         workspace: a.workspace,
@@ -1221,7 +1222,7 @@ function createRegisterRouter(handlers, db, options = {}) {
       const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
       if (!fs.existsSync(configPath)) return [];
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return (config.agents?.list || []).map(a => ({ id: a.id, name: a.name || a.id, model: a.model || '' }));
+      return openClawAgentEntries(config).map(a => ({ id: a.id, name: a.name || a.id, model: a.model || '' }));
     } catch (_) { return []; }
   }
 

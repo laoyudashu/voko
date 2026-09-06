@@ -5,6 +5,8 @@ import type { ProviderSecurityTurnLease } from '../provider-security-policy';
 export type ProviderDeliveryOutcome = 'delivered' | 'not_delivered' | 'outcome_unknown' | 'rejected';
 
 export interface ProviderDeliveryReceipt {
+  /** Async submission receipts stay pending until a correlated lifecycle event. */
+  executionState?: 'pending' | 'completed';
   nativeSessionId?: string | null;
   providerInstanceId?: string | null;
   deliveryMode?: string;
@@ -43,6 +45,8 @@ export interface AgentMeta {
 }
 
 export interface PushPayload {
+  /** Internal dispatcher guard for Providers that wait before actual submission. */
+  assertSubmissionCurrent?: () => void;
   agentId: string;
   fromUid: string;
   senderUid?: string;

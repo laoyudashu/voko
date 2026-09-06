@@ -53,21 +53,9 @@ function sanitizeCliDiagnostic(value: unknown): string {
   return `${sanitized.slice(0, 180)} ... ${sanitized.slice(-215)}`;
 }
 
-/**
- * Classify a non-zero CLI exit without treating every process failure as a
- * provider rejection. A command that never reached the model is safe to
- * retry through an explicitly configured backup; after a write or an
- * unrecognised failure the outcome must remain unknown.
- */
-function classifyCliFailure(result: Pick<RunCliResult, 'stdout' | 'stderr'>): 'not_delivered' | 'rejected' | 'outcome_unknown' {
-  const stderr = String(result.stderr || '');
-  const detail = `${stderr}\n${String(result.stdout || '')}`;
-  if (/gateway\s+(?:closed|failed|unavailable|not running)|connection refused|econnrefused|failed to resolve secrets|authentication\s+(?:required|failed|error)|\b(?:401|403)\s+(?:unauthorized|forbidden)?|unauthorized|not (?:logged|signed) in|login required|invalid (?:api[- ]?key|token)|api[- ]?key (?:is )?(?:invalid|missing|expired)|command not found|enoent/i.test(detail)) {
-    return 'not_delivered';
-  }
-  if (/request rejected|provider rejected|safety policy|unsafe request|approval required|not allowed by policy/i.test(stderr)) {
-    return 'rejected';
-  }
+/** A completed process may already have performed external actions. Diagnostic
+ * text (including auth/session/command errors) is not pre-acceptance evidence. */
+function classifyCliFailure(_result: Pick<RunCliResult, 'stdout' | 'stderr'>): 'outcome_unknown' {
   return 'outcome_unknown';
 }
 
@@ -188,7 +176,15 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
     };
 
     // .js/.exe 等直接 spawn；无扩展名的命令名交给系统 PATH
-    child = spawn(cmd, args, spawnOpts);
+    try {
+      child = spawn(cmd, args, spawnOpts);
+    } catch (error) {
+      // No ChildProcess was created; invocation never reached the executable.
+      Object.assign(error as object, { deliveryOutcome: 'not_delivered', cliExecutionStarted: false });
+      reject(error); return;
+    }
+    let executionStarted = child.pid !== undefined;
+    child.once('spawn', () => { executionStarted = true; });
 
     if (useStdin) {
       child.stdin!.on('error', () => {}); // EPIPE 等忽略
@@ -257,6 +253,8 @@ function runCli(opts: RunCliOptions = {} as RunCliOptions): Promise<RunCliResult
       clearTimeout(timer);
       settled = true;
       log(`[${tag}] spawn error: ${err.message}`);
+      Object.assign(err, { deliveryOutcome: executionStarted ? 'outcome_unknown' : 'not_delivered',
+        cliExecutionStarted: executionStarted });
       reject(err);
     });
 

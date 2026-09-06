@@ -336,6 +336,11 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
       result: context.providerVersion ? 'known' : 'unknown' }
     : null;
   instance.getProviderVersion = () => {
+    if (definition.id === 'codex-cli' && context.providerVersion === undefined) {
+      const evidence = instance.getSecurityControlEvidence();
+      return { version: evidence.runtimeVersion, source: evidence.versionSource,
+        result: evidence.runtimeVersion ? 'known' : 'unknown' };
+    }
     if (versionProbe) return { ...versionProbe };
     // QwenWork exposes its runtime version through the documented status JSON.
     // Its bundled Windows CLI does not provide a reliable `--version` process:

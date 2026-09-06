@@ -173,7 +173,7 @@ function readJson<T>(filePath: string): T | null {
 
 function inspectWindowsProcess(pid: number): ProcessIdentity | null {
   const script = [
-    `$p=Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue;`,
+    `$p=Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction Stop;`,
     'if($p){',
     '$o=[ordered]@{pid=[int]$p.ProcessId;parentPid=[int]$p.ParentProcessId;',
     'creationId=($p.CreationDate.ToUniversalTime().Ticks.ToString());',
@@ -186,7 +186,10 @@ function inspectWindowsProcess(pid: number): ProcessIdentity | null {
     timeout: 5000,
     windowsHide: true,
   });
-  if (result.status !== 0 || !String(result.stdout || '').trim()) return null;
+  // Query failure is not evidence of process exit. In particular, callers
+  // must not reclaim a live instance lock when CIM times out under load.
+  if (result.error || result.status !== 0) throw processInspectionError();
+  if (!String(result.stdout || '').trim()) return null;
   try {
     const value = JSON.parse(String(result.stdout).trim());
     return {
@@ -197,8 +200,13 @@ function inspectWindowsProcess(pid: number): ProcessIdentity | null {
       commandLine: String(value.commandLine || ''),
     };
   } catch {
-    return null;
+    throw processInspectionError();
   }
+}
+
+function processInspectionError(): Error & { code: string } {
+  // Do not expose process command lines or raw PowerShell diagnostics.
+  return Object.assign(new Error('PROCESS_INSPECTION_FAILED'), { code: 'PROCESS_INSPECTION_FAILED' });
 }
 
 function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
@@ -207,7 +215,7 @@ function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
   if (validPids.length === 0) return identities;
   const filter = validPids.map((pid) => `ProcessId=${pid}`).join(' OR ');
   const script = [
-    `$ps=Get-CimInstance Win32_Process -Filter "${filter}" -ErrorAction SilentlyContinue;`,
+    `$ps=Get-CimInstance Win32_Process -Filter "${filter}" -ErrorAction Stop;`,
     '$out=@($ps|ForEach-Object{[ordered]@{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;',
     'creationId=($_.CreationDate.ToUniversalTime().Ticks.ToString());',
     'executablePath=[string]$_.ExecutablePath;commandLine=[string]$_.CommandLine}});',
@@ -218,7 +226,8 @@ function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
     timeout: 5000,
     windowsHide: true,
   });
-  if (result.status !== 0 || !String(result.stdout || '').trim()) return identities;
+  if (result.error || result.status !== 0) throw processInspectionError();
+  if (!String(result.stdout || '').trim()) return identities;
   try {
     const parsed = JSON.parse(String(result.stdout).trim());
     const values = Array.isArray(parsed) ? parsed : [parsed];
@@ -232,7 +241,9 @@ function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
       };
       if (identity.pid > 0) identities.set(identity.pid, identity);
     }
-  } catch {}
+  } catch {
+    throw processInspectionError();
+  }
   return identities;
 }
 

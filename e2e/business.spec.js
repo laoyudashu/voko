@@ -94,6 +94,22 @@ test('single chat sends and receives text through the real worker and Mock Provi
   expect(state.deliveryStatus.activeAutomaticMode).toBe('mock');
 });
 
+test('directory authentication refusal blocks a browser send without plaintext IM delivery', async ({ page, request }) => {
+  const channelId = 'e2e-directory-denied';
+  await page.goto(`/agents/e2e-agent/c/${channelId}`);
+  await page.locator('#c').fill('must not reach IM after directory refusal');
+  const imState = async () => {
+    const response = await request.get(`${manifest().services.api}/__test__/im/state`);
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  const before = await imState();
+  await page.locator('form[action="/messages/send"] button[type="submit"]').click();
+  await expect(page.locator('body')).toContainText('E2EE_V2_DIRECTORY_HTTP_401');
+  const after = await imState();
+  expect(after.stats.sends).toBe(before.stats.sends);
+});
+
 test('group chat renders text, supports @all, and enforces mention permission', async ({ page, request }) => {
   const groupUrl = '/agents/e2e-agent/g/e2e-group';
   await page.goto(groupUrl);

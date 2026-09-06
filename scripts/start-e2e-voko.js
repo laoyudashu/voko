@@ -109,6 +109,14 @@ async function main() {
     console.error = originalError;
   }
 
+  // Override the child process's module cache only; never rewrite the build or
+  // allow an isolated browser test to contact the production API directory.
+  const endpointPreload = path.join(tempDir, 'endpoints.cjs');
+  fs.writeFileSync(endpointPreload,
+    `require(${JSON.stringify(path.join(root, 'build', 'endpoints.json'))}).api.baseUrl = ${JSON.stringify(services.apiBaseUrl)};\n`,
+    { mode: 0o600 });
+  // `start` spawns the daemon again, so carry the preload through its environment.
+  env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require ${JSON.stringify(endpointPreload)}`.trim();
   const child = spawn(process.execPath, [
     path.join(root, 'build', 'index.js'), 'start', `--db=${dbPath}`, `--port=${port}`,
     '--no-open', '--noAutoUpdate',

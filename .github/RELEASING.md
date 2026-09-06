@@ -14,9 +14,12 @@ VOKO uses pull requests for code and version changes. Do not commit directly to
 ## npm release
 
 1. Create a pull request that updates `package.json` and `package-lock.json` to
-   the intended version.
+   the intended version, update the changelog and bilingual README, and add
+   versioned notes under `docs/releases/`. Follow [the checklist](../RELEASE_CHECKLIST.md).
 2. Wait for the pull request checks and merge it into `main`.
-3. Run the **Publish npm** workflow from `main` and enter the exact version.
+3. Wait for the full `main` checks, then run the **Publish npm** workflow from
+   `main` and enter the exact version. Set `prerelease=false` for a stable release;
+   the workflow defaults to a prerelease.
 4. Approve the protected `npm-production` environment after reviewing the
    prepared tarball and successful release gate.
 5. The workflow verifies the published package, then creates the matching

@@ -4,6 +4,8 @@ Agent通过MCP收发消息时，先阅读[消息与精确Conversation接口契�
 
 [统一注册与投递路由规则](../provider-delivery-routing.md) · [文档索引](../README.md) · [Provider 指南索引](README.md) · [兼容性矩阵](../provider-compatibility.md) · [MCP 客户端配置](../mcp-client-setup.md)
 
+[版本兼容、访客权限证据与本轮验证边界](openclaw-compatibility.md)
+
 本文说明 **VOKO 调用 OpenClaw** 时的安装、实例选择、WebSocket/CLI 投递和排障。OpenClaw 作为 MCP 客户端调用 VOKO 时，请看本文的 MCP 小节；这和 VOKO 向 OpenClaw 推送访客消息是两个方向。
 
 > **Agent 快速选择**：Agent 自主注册优先使用 `voko_manage_agent_registration` MCP；需要主人输入验证码或批准 Gateway 配置时使用 Web/交互式注册。接收消息优先选择 `WebSocket → CLI → Pull`；Gateway 尚未稳定时先选择 `CLI → Pull`。
@@ -39,11 +41,11 @@ openclaw config get gateway.mode
 http://127.0.0.1:<gateway.port>/health
 ```
 
-Gateway 未运行时，VOKO 的 WebSocket Provider 可能会尝试启动它；为了注册过程更顺畅，建议先让 `openclaw doctor --lint` 通过并确认 Gateway health 正常。
+本地 Token 模式下，Gateway 未运行时，VOKO 的 WebSocket Provider 可能会尝试启动它；自动启动不会强制抢占端口。远程/password/SecretRef 不属于当前自动配置路径；为了注册过程更顺畅，建议先让 `openclaw doctor --lint` 通过并确认 Gateway health 正常。
 
 ## 2. 注册时选择正确的实例
 
-OpenClaw 的实例对应 `openclaw.json` 中 `agents.list[].id`，例如 `main`、`gym`、`lawyer`。它是工作区/Agent 选择，不是访客会话 ID。
+OpenClaw 的实例对应配置中的 Agent ID（旧版 `agents.list[].id`，新版配置可能使用 `agents.entries` 的键；以该版本实际配置为准），例如 `main`、`gym`、`lawyer`。它是工作区/Agent 选择，不是访客会话 ID。
 
 在 VOKO 注册页面中：
 
@@ -94,7 +96,7 @@ agent:<openclaw-agent-id>:<visitor-id>
 
 ## 4. WebSocket、CLI 降级和 Pull
 
-通用通道顺序、降级次数、结果分类和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。OpenClaw 的差异是：WebSocket 使用 Gateway profile/session，CLI 使用 Runtime Resolver 解析的 `openclaw agent --local --json`；两者不能把 VOKO Agent ID、workspace 名或最近 session 当成实例证据。查看当前状态：
+通用通道顺序、降级次数、结果分类和 Pull 规则以 [Transport 行为矩阵](../provider-transport-matrix.md) 为准。OpenClaw 的差异是：WebSocket 使用 Gateway profile/session，CLI 使用 Runtime Resolver 解析的 `openclaw agent --local --json`；CLI 共享状态目录的调用会串行执行；新版 OpenClaw 仍可能因主人 Gateway 持有跨进程状态锁而拒绝本地调用，VOKO 不会停止它。两者不能把 VOKO Agent ID、workspace 名或最近 session 当成实例证据。查看当前状态：
 
 ```bash
 voko status --json

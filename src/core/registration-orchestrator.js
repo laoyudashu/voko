@@ -1,3 +1,4 @@
+const { openClawAgentEntries } = require('./dispatcher/openclaw-config');
 /**
  * Shared Agent registration orchestration for Web, local HTTP, MCP and CLI.
  *
@@ -368,7 +369,7 @@ function detectCurrentAgentInstance(providerType) {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const cwd = path.resolve(process.cwd());
       const normalizedCwd = process.platform === 'win32' ? cwd.toLowerCase() : cwd;
-      for (const agent of config.agents?.list || []) {
+      for (const agent of openClawAgentEntries(config)) {
         const workspace = agent.workspace
           ? path.resolve(agent.workspace)
           : path.join(os.homedir(), '.openclaw', 'workspace');

@@ -88,3 +88,13 @@ test('DeepSeek Harness discovery maps installed agent preset directories to stab
   fs.mkdirSync(path.join(root, '.agent-presets', 'broken'), { recursive: true });
   assert.deepEqual(deepSeekHarnessInstances(root).map(item => item.id), ['standard', 'visitor-safe']);
 });
+
+test('OpenClaw config discovery reads agents.entries while retaining legacy agents.list', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-openclaw-entries-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const root = path.join(home, '.openclaw'); fs.mkdirSync(root);
+  for (const agents of [{ list: [{ id: 'audit', name: 'Audit' }] }, { entries: { audit: { name: 'Audit' } } }]) {
+    fs.writeFileSync(path.join(root, 'openclaw.json'), JSON.stringify({ agents }));
+    assert.deepEqual(openClawInstances(home, '[]').map(x => ({ id: x.id, name: x.name })), [{ id: 'audit', name: 'Audit' }]);
+  }
+});

@@ -1,3 +1,4 @@
+const { openClawAgentEntries } = require('./dispatcher/openclaw-config');
 /**
  * agent-files.js — agent workspace 文件读写
  *
@@ -54,7 +55,7 @@ function resolveContainedFile(workspacePath, filename, forWrite = false) {
 /** 解析 agent workspace 绝对路径（找不到返回 null）。 */
 function resolveWorkspace(agentId) {
   const config = readOpenclawConfig();
-  const agent = (config.agents?.list || []).find(a => a.id === agentId);
+  const agent = openClawAgentEntries(config).find(a => a.id === agentId);
   if (!agent || !agent.workspace) return null;
   return expandPath(agent.workspace);
 }

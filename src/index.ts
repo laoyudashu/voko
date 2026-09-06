@@ -93,7 +93,6 @@ const { assertSecureEndpoint } = require('./core/url-security');
 const {
   isAllowedLocalHost,
   isAllowedLocalOrigin,
-  isAllowedLocalWebSocketOrigin,
   requiresLocalToken,
   isAllowedBridgeConfigType,
   setLocalSecurityHeaders,
@@ -1605,14 +1604,9 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
   // ── WebSocket 服务器（事件推送） ──
   const WebSocket = require('ws');
   let _wss: any = null;
-  const _eventWsClients = new Set<any>();
+  let messageWs: any = null;
   function broadcast(event?: any, data?: any) {
-    const msg = JSON.stringify({ event, data });
-    for (const client of _eventWsClients) {
-      if (client.readyState === WebSocket.OPEN) {
-        try { client.send(msg); } catch (_: any) {}
-      }
-    }
+    messageWs?.broadcast({ event, data });
   }
   // 将 broadcast 挂在全局，供其他模块调用
   (global as any).__liteBroadcast = broadcast;
@@ -1669,45 +1663,30 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
         __webSocketServer = _wss;
         _wss.on('connection', (ws?: any, req?: any) => {
           const requestPath = String(req.url || '').split('?', 1)[0];
-          if (requestPath === '/ws') {
-            if (!isAllowedLocalWebSocketOrigin(req.headers.origin, req.headers.host)) {
-              ws.close(4001, 'Unauthorized');
-              return;
-            }
-            _eventWsClients.add(ws);
-            const remove = () => _eventWsClients.delete(ws);
-            ws.on('close', remove);
-            ws.on('error', remove);
-            return;
-          }
-          if (requestPath !== '/voko/events/ws') {
+          if (requestPath !== '/ws' && requestPath !== '/voko/events/ws') {
             ws.close(4004, 'Unknown WebSocket endpoint');
           }
         });
         // Console 实时 WS — 依附在已有 _wss 上，按路径 /voko/events/ws 路由
-        const { createLiveEventsWs } = require('./web/live-events-ws');
-        const consoleWs = createLiveEventsWs(_wss, runtimeState, taskManager);
+        const { createLiveEventsWs, createMessageEventsWs } = require('./web/live-events-ws');
+        const wsAuth = { authToken: webRouterOptions.localAuthToken, webSessions: webRouterOptions.webSessions };
+        messageWs = createMessageEventsWs(_wss, wsAuth);
+        const consoleWs = createLiveEventsWs(_wss, runtimeState, taskManager, wsAuth);
         __consoleLiveEvents = consoleWs;
         taskManager?.subscribe?.((tasks: object[]) => {
-          const message = JSON.stringify({ type: 'tasks', data: tasks });
-          for (const ws of consoleWs.clients) {
-            try { ws.send(message); } catch {}
-          }
+          consoleWs.broadcast({ type: 'tasks', data: tasks });
         });
         // RuntimeState 变更时广播到 WS 客户端
         if (runtimeState) {
           const { getHistory } = require('./core/lite-events');
           const { query } = require('./core/audit-log');
           runtimeState.subscribe((agents?: any) => {
-            const msg = JSON.stringify({ type: 'snapshot', data: {
+            consoleWs.broadcast({ type: 'snapshot', data: {
               agents, summary: runtimeState.summary(),
               tasks: taskManager?.snapshot?.() || [],
               recentEvents: getHistory(null, null, 100),
               recentAudit: query({ limit: 50 }),
             }});
-            for (const ws of consoleWs.clients) {
-              try { ws.send(msg); } catch {}
-            }
           });
         }
         // 默认打开本地管理页面；自动化和无界面环境可传 --no-open。
@@ -2035,8 +2014,14 @@ async function startMcpServer(args?: any, core?: any) {
       onOwnerInterventionNew: () => { const bus = require('./core/lite-bus'); bus.emit('owner-intervention:new'); },
     });
     messageHandler?.setDispatcher(dispatcher);
-    await taskManager.start('inbound-turn-coalescer', () => async () => {
-      await messageHandler?.flushInboundTurns?.();
+    await taskManager.start('inbound-turn-coalescer', () => {
+      const receiptTimer = setInterval(() => void messageHandler?.retryPendingTurnReceipts?.(), 30_000);
+      receiptTimer.unref?.();
+      return async () => {
+        clearInterval(receiptTimer);
+        messageHandler?.closeTurnReceipts?.();
+        await messageHandler?.flushInboundTurns?.();
+      };
     });
   } catch (e: any) {
     console.error('[Lite] 创建 MessageHandler 失败:', e.message);
@@ -3574,7 +3559,10 @@ async function main() {
         agents: running && Array.isArray(currentRuntime.agents) ? currentRuntime.agents : [],
       }, null, 2));
     } catch (e: any) {
-      console.error(JSON.stringify({ success: false, error: e.message }));
+      console.error(JSON.stringify({ success: false, error: e.message,
+        ...(e.code === 'PROCESS_INSPECTION_FAILED'
+          ? { code: e.code, state: 'unknown', runtimeState: 'unknown', running: null } : {}),
+      }));
       process.exit(1);
     } finally {
       try { if (db?.open) db.close(); } catch (_: any) {}

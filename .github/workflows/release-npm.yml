@@ -67,6 +67,8 @@ jobs:
           }
           fs.writeFileSync('release-tarball.txt', result[0].filename);
           NODE
+      - name: Scan the exact release artifact for secrets
+        run: node scripts/scan-package-secrets.js --tarball "$(cat release-tarball.txt)"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: npm-release-${{ inputs.version }}

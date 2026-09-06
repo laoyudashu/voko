@@ -167,6 +167,40 @@ test('never-encrypted unsupported and transient peers use plaintext without bein
   }
 });
 
+test('explicit Directory identity and access refusals never fall back to plaintext on first contact',async()=>{
+  for(const [code,status] of [['PEER_NOT_FOUND',404],['E2EE_KEY_NOT_FOUND',404],
+    ['AGENT_NOT_FOUND',404],['UNAUTHORIZED',401],['FORBIDDEN',403]]){
+    const f=fixture({directoryError:Object.assign(new Error('refused'),{code,status})});
+    try{
+      const prepared=await f.router.prepare('gym','guest-im');
+      assert.equal(prepared.success,false,code);
+      assert.equal(prepared.error,code);
+      const message=await f.router.deliver('gym','guest-im','private content','text',1,null,'policy-refusal');
+      assert.equal(message.success,false,code);
+      assert.equal(message.error,code);
+      assert.equal(message.securityReason,'recipient_policy_error');
+      assert.equal(f.counts().rawCalls,0);
+      assert.equal(f.encrypted.length,0);
+      assert.equal(f.store.conversation('gym','guest-im','routing-1'),null);
+    }finally{f.close();}
+  }
+});
+
+test('a new local route cannot bypass a peer refusal that already locked an older secure conversation',async()=>{
+  const f=fixture({directoryError:Object.assign(new Error('refused'),{code:'PEER_NOT_FOUND',status:404})});
+  try{
+    f.store.saveConversation({localAgentId:'gym',channelId:'guest-im',routingConversationId:'old-route',
+      wireConversationKey:'old-wire',protocolConversationId:'old-protocol',peerScopeId:'peer-scope',
+      peerKind:'guest',mode:'e2ee_active',recipientRevision:'revision-0'});
+    f.store.lockConversation('gym','guest-im','old-route','PEER_NOT_FOUND');
+    const result=await f.router.deliver('gym','guest-im','private content','text',1,null,'new-route-message');
+    assert.equal(result.success,false);
+    assert.equal(result.error,'PEER_NOT_FOUND');
+    assert.equal(f.counts().rawCalls,0);
+    assert.equal(f.store.conversation('gym','guest-im','old-route').mode,'locked');
+  }finally{f.close();}
+});
+
 test('capability discovery failures log a stable code without target ids or error details',async()=>{
   const f=fixture({directoryError:Object.assign(new Error('token=/secret user=/Users/private'),{code:'ETIMEDOUT'})});
   const warnings=[];const originalWarn=console.warn;

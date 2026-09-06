@@ -9,7 +9,8 @@ test('OpenClaw falls back to a terminal session.message when advertised chat eve
   const replies = [];
   provider.on('agent.reply', (reply) => replies.push(reply));
   const connectionTimer = setTimeout(() => {}, 1000);
-  await provider.handleMessage({ type: 'res', ok: true, payload: {
+  provider._connectRequestId = 'connect-fixture';
+  await provider.handleMessage({ type: 'res', id: 'connect-fixture', ok: true, payload: { type: 'hello-ok',
     protocol: 4, features: { methods: ['chat.send'], events: ['session.message', 'chat'] },
   } }, () => {}, connectionTimer);
   await provider.handleMessage({ type: 'event', event: 'session.message', payload: {

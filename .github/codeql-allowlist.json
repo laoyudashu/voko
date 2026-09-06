@@ -1,6 +1,7 @@
 {
   "version": 1,
   "entries": [
+    { "ruleId": "js/user-controlled-bypass", "file": "src/core/dispatcher/providers/openclaw-ws.ts", "fingerprint": "6d75afc55e1adcb:1@41", "reason": "该条件拒绝非正数或非安全整数的远端挑战时间戳并关闭连接，不授予权限；认证仍要求匹配 connect 请求 ID、hello-ok 类型和协议。openclaw-version-compatibility.test.js 覆盖无效时间戳拒签及无关成功响应不认证。" },
     { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "8eb241f43aa7869b:1@18", "reason": "候选路径先经 realpath 工作区边界校验，写入目标还会拒绝现存符号链接；此条对应受控 lstat。" },
     { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "8eb241f43aa7869b:1@45", "reason": "与同一受控 lstat 的第二条数据流重复，路径已限定在 realpath 工作区内。" },
     { "ruleId": "js/path-injection", "file": "src/core/agent-files.js", "fingerprint": "b4d802bcb2eb135:1@23", "reason": "读取前对候选文件执行 realpath，并验证真实目标仍位于 Agent 工作区。" },

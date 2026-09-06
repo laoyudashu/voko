@@ -4,6 +4,14 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+## 0.5.3 - Release preparation
+
+- Added version-aware OpenClaw CLI/configuration handling and authenticated Gateway version/protocol discovery. Serialized calls sharing a state directory and recovered a migration-requested Gateway restart once within the existing startup deadline.
+- Added Codex CLI contract and native sandbox checks tied to the actual runtime, including consistent first/resumed-turn permissions and actionable failure diagnostics. Unverified controls remain unavailable; version numbers alone do not grant permissions.
+- Hardened local Web session/event authorization, MCP input boundaries, and encrypted delivery after directory-access refusal.
+- Fixed offline synchronization continuation and gap handling, terminal receipt retries, and Provider shutdown/late-result resource lifetimes without retrying execution of uncertain outcome.
+- Fixed ACP failure classification, WorkBuddy startup and loopback isolation, OpenHands safety-hook failure handling, Windows Copilot discovery/process ownership, and Aider reply footer filtering.
+- Hardened scanning of the exact npm artifact against path aliases, oversized entries, and special files. See [release notes](docs/releases/0.5.3.md) for compatibility limits and release status.
 - Unified update discovery, installation, and release verification on the official npm registry. Removed the unused OSS staged-update implementation and its separate release manifest, and made the local Web UI show the exact available version before users run `voko update`.
 
 ## 0.5.2 - 2026-09-03

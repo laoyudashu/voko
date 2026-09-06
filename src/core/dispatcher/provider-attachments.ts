@@ -7,7 +7,7 @@ import type { PushPayload } from './types';
 
 const ACP_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const TEXT_RESOURCE_TYPES = new Set(['application/json', 'application/xml', 'application/yaml',
   'application/x-yaml', 'application/javascript', 'application/sql']);
 const EXTENSION_MEDIA_TYPES: Record<string, string> = {

@@ -617,7 +617,11 @@ function migrateSchema8ProviderRouting(db: DatabaseSync, previousVersion: number
 let _dbWriteQueue: Promise<unknown> = Promise.resolve();
 
 function enqueueDbWrite(fn: DbWrite) {
-  _dbWriteQueue = _dbWriteQueue.then(fn, fn).catch((error: unknown) => console.error('[DB队列]', error));
+  const job = _dbWriteQueue.then(fn);
+  // Keep a handled tail for legacy fire-and-forget callers and subsequent jobs,
+  // while callers awaiting this specific job still observe its failure.
+  _dbWriteQueue = job.catch((error: unknown) => console.error('[DB队列]', error));
+  return job;
 }
 
 /** 返回当前队列 Promise，可用于等待队列清空 */

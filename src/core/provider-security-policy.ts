@@ -812,8 +812,12 @@ export class ProviderSecurityPolicyService {
     const current = this.effective(agentId, transportId);
     const previous = current.capabilityEvidence;
     const sameFingerprint = previous?.verified?.runtimeFingerprint === snapshot.runtimeFingerprint;
+    // A completed Codex canary failure invalidates earlier evidence, even when
+    // the binary is unchanged (e.g. the host sandbox backend stopped working).
+    const codexProbeFailed = transportId === 'codex-cli' && snapshot.evidenceState === 'failed'
+      && snapshot.securityVerification && snapshot.securityVerification !== 'CODEX_RUNTIME_NOT_PROBED';
     const verified = ['verified','static_compatible'].includes(String(snapshot.evidenceState))
-      ? snapshot : previous?.verified || null;
+      ? snapshot : codexProbeFailed ? null : previous?.verified || null;
     const observed = verified && verified.runtimeFingerprint !== snapshot.runtimeFingerprint
       && !['verified','static_compatible'].includes(String(snapshot.evidenceState))
       ? { ...snapshot, evidenceState: 'changed_unverified' } : snapshot;

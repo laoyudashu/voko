@@ -1,0 +1,302 @@
+{
+  "notice": "Schema-derived fixtures, not recorded Gateway traffic or real model replies. Synthetic ids, times, features subsets and text. Fixed package sources establish the wire fields. Runtime evidence is recorded separately in docs/providers/openclaw-compatibility.md.",
+  "versions": [
+    {
+      "version": "2026.6.1",
+      "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.1.tgz",
+      "integrity": "sha512-rGSwhIo8N37cQQ5puG8vmWZESE8q/ych5VFpzOQNcf49TF/rvCYyxiNAyot11qbUZF5wfLh8bsvofapnOEh0BQ==",
+      "evidenceKind": "fixed_package_source",
+      "sources": [
+        {
+          "path": "dist/server-ws-runtime-B0jvh7oW.js",
+          "sha256": "91678c6bcbf5449027cd8663d7d75d78e506ebf289ef90dd1757fd9615c84601",
+          "evidence": "event: \"connect.challenge\""
+        },
+        {
+          "path": "dist/message-handler-Du1uvc4A.js",
+          "sha256": "decbb1cb11a844c3dba0e2c93dc403155c40a02c7693911184ec8c20228cdc3f",
+          "evidence": "type: \"hello-ok\""
+        },
+        {
+          "path": "dist/chat-bmAEPJsF.js",
+          "sha256": "956b1ba71e4202bf759b962214fa231677e978747914d70186ff5480faa8e8ac",
+          "evidence": "const clientRunId = p.idempotencyKey"
+        },
+        {
+          "path": "docs/tools/multi-agent-sandbox-tools.md",
+          "sha256": "8d11af55e30996a89e665b258604108a93f4c4271fbe4edfd1caf54864e40f01",
+          "evidence": "sandbox"
+        },
+        {
+          "path": "docs/cli/agent.md",
+          "sha256": "a141d5fc605790fbe4cbbc0761d05fc4764de2281823c1b62af564295e75d6fa",
+          "evidence": "--local"
+        }
+      ],
+      "challenge": {
+        "type": "event",
+        "event": "connect.challenge",
+        "payload": {
+          "nonce": "fixture-nonce",
+          "ts": 1788654000000
+        }
+      },
+      "hello": {
+        "type": "res",
+        "id": "connect-fixture",
+        "ok": true,
+        "payload": {
+          "type": "hello-ok",
+          "protocol": 4,
+          "server": {
+            "version": "2026.6.1",
+            "connId": "fixture-connection"
+          },
+          "features": {
+            "methods": [
+              "chat.send",
+              "sessions.messages.subscribe"
+            ],
+            "events": [
+              "chat",
+              "session.message"
+            ]
+          }
+        }
+      },
+      "chatAccepted": {
+        "type": "res",
+        "id": "chat-fixture",
+        "ok": true,
+        "payload": {
+          "runId": "turn-fixture",
+          "status": "started"
+        }
+      },
+      "chatFinal": {
+        "type": "event",
+        "event": "chat",
+        "payload": {
+          "runId": "turn-fixture",
+          "sessionKey": "agent:main:voko-agent:a:visitor:v",
+          "seq": 1,
+          "state": "final",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture reply"
+              }
+            ]
+          }
+        }
+      },
+      "cliRequiredFlags": [
+        "--agent",
+        "--session-key",
+        "--message",
+        "--local",
+        "--json"
+      ]
+    },
+    {
+      "version": "2026.7.1-2",
+      "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1-2.tgz",
+      "integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+      "evidenceKind": "fixed_package_source",
+      "sources": [
+        {
+          "path": "dist/server-ws-runtime-CXYLcFG-.js",
+          "sha256": "7e25246256edf8fe2c5a47f86da396051a435158b2a5798f4be4f16a1a206ea4",
+          "evidence": "event: \"connect.challenge\""
+        },
+        {
+          "path": "dist/message-handler-CzwI6JjW.js",
+          "sha256": "ce8653d5e612bb6b3ec28eb57b9762303de4ca3eeee8b41397d76e77604ef121",
+          "evidence": "type: \"hello-ok\""
+        },
+        {
+          "path": "dist/chat-pg-BxhF6.js",
+          "sha256": "b3aca501642b577873fa94ae76d0ffcd903bbc469f8194b8bda98b2d64b77176",
+          "evidence": "const clientRunId = p.idempotencyKey"
+        },
+        {
+          "path": "docs/tools/multi-agent-sandbox-tools.md",
+          "sha256": "fada3672a0a7ce6eac2a8bffee8329afcd893d97e33d8e9842cb12079397efa6",
+          "evidence": "sandbox"
+        },
+        {
+          "path": "docs/cli/agent.md",
+          "sha256": "2e137c037a2fa58ac6534adbf1603218fc695e4c61e6c3118ce2c4ec6f1f2143",
+          "evidence": "--local"
+        }
+      ],
+      "challenge": {
+        "type": "event",
+        "event": "connect.challenge",
+        "payload": {
+          "nonce": "fixture-nonce",
+          "ts": 1788654000000
+        }
+      },
+      "hello": {
+        "type": "res",
+        "id": "connect-fixture",
+        "ok": true,
+        "payload": {
+          "type": "hello-ok",
+          "protocol": 4,
+          "server": {
+            "version": "2026.7.1-2",
+            "connId": "fixture-connection"
+          },
+          "features": {
+            "methods": [
+              "chat.send",
+              "sessions.messages.subscribe"
+            ],
+            "events": [
+              "chat",
+              "session.message"
+            ]
+          }
+        }
+      },
+      "chatAccepted": {
+        "type": "res",
+        "id": "chat-fixture",
+        "ok": true,
+        "payload": {
+          "runId": "turn-fixture",
+          "status": "started"
+        }
+      },
+      "chatFinal": {
+        "type": "event",
+        "event": "chat",
+        "payload": {
+          "runId": "turn-fixture",
+          "sessionKey": "agent:main:voko-agent:a:visitor:v",
+          "seq": 1,
+          "state": "final",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture reply"
+              }
+            ]
+          }
+        }
+      },
+      "cliRequiredFlags": [
+        "--agent",
+        "--session-key",
+        "--message",
+        "--local",
+        "--json"
+      ]
+    },
+    {
+      "version": "2026.9.2",
+      "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+      "integrity": "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
+      "evidenceKind": "fixed_package_source",
+      "sources": [
+        {
+          "path": "dist/server-ws-runtime-CF5d6UbO.js",
+          "sha256": "a959dbe31b20ff69e217267bbd69711e01d789619d15222e3e4b5de017340c3d",
+          "evidence": "event: \"connect.challenge\""
+        },
+        {
+          "path": "dist/message-handler-BVsRq2bA.js",
+          "sha256": "ee021ec502014753aba3a93753ba5d5dcb4ec23c2e58fba9be36fbcf98001095",
+          "evidence": "type: \"hello-ok\""
+        },
+        {
+          "path": "dist/chat-send-handler-Dpw17Gmy.js",
+          "sha256": "f96ff1b628408d1549c331ff54745bf4ebf842bd2356c21676aad4862968737f",
+          "evidence": "const clientRunId = p.idempotencyKey"
+        },
+        {
+          "path": "docs/tools/multi-agent-sandbox-tools.md",
+          "sha256": "08ee2fb5fa023821510af865cbe42009effa549283a4038cb8157e1d595c6007",
+          "evidence": "sandbox"
+        },
+        {
+          "path": "docs/cli/agent.md",
+          "sha256": "64dd3b85c8f6e08933b0d5c47f889dcc9d867ce15c03925608bf3f0048d012db",
+          "evidence": "--local"
+        }
+      ],
+      "challenge": {
+        "type": "event",
+        "event": "connect.challenge",
+        "payload": {
+          "nonce": "fixture-nonce",
+          "ts": 1788654000000
+        }
+      },
+      "hello": {
+        "type": "res",
+        "id": "connect-fixture",
+        "ok": true,
+        "payload": {
+          "type": "hello-ok",
+          "protocol": 4,
+          "server": {
+            "version": "2026.9.2",
+            "connId": "fixture-connection"
+          },
+          "features": {
+            "methods": [
+              "chat.send",
+              "sessions.messages.subscribe"
+            ],
+            "events": [
+              "chat",
+              "session.message"
+            ]
+          }
+        }
+      },
+      "chatAccepted": {
+        "type": "res",
+        "id": "chat-fixture",
+        "ok": true,
+        "payload": {
+          "runId": "turn-fixture",
+          "status": "started"
+        }
+      },
+      "chatFinal": {
+        "type": "event",
+        "event": "chat",
+        "payload": {
+          "runId": "turn-fixture",
+          "sessionKey": "agent:main:voko-agent:a:visitor:v",
+          "seq": 1,
+          "state": "final",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture reply"
+              }
+            ]
+          }
+        }
+      },
+      "cliRequiredFlags": [
+        "--agent",
+        "--session-key",
+        "--message",
+        "--local",
+        "--json"
+      ]
+    }
+  ]
+}

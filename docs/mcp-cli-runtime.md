@@ -291,6 +291,10 @@ Set `VOKO_DB_PATH` or pass `--db PATH` to use an explicit database path. Treat d
 
 The local Web and HTTP endpoints bind to the active runtime port. Port `3100` is the default only; use `voko status --json` and its top-level `port` value instead of assuming a fixed port. Keep loopback traffic out of a system HTTP proxy where applicable; VOKO preserves existing `NO_PROXY` entries and adds `127.0.0.1`, `localhost`, and `::1` for the runtime and child processes.
 
+Sensitive local WebSocket streams (`/ws` and `/voko/events/ws`) require a current-owner Web session or the runtime instance credential. Browsers use the HttpOnly session cookie created by local sign-in; native clients send `X-VOKO-Token` or `Authorization: Bearer` in the handshake. Tokens in the URL do not authorize either stream. Both credential paths retain local Host and Origin checks.
+
+Changing the active owner revokes other owners' Web sessions while preserving a session prepared for the new owner. Logout, expiry, and owner changes also invalidate established event subscriptions: authorization is checked before broadcasts and on heartbeats. Close code `4001` stops browser reconnect attempts; sign in again and reopen the page to resume. The anonymous health endpoint remains available, and local runtime startup does not require cloud sign-in.
+
 ## Platform notes
 
 Windows, Ubuntu Linux, and macOS are supported by the package's local path and process handling. Ubuntu is the verified Linux target. Other Linux distributions and CPU architectures can work when they provide Node.js 22 and the standard local process tools, but should be validated with the Provider you intend to use.

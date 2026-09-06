@@ -43,6 +43,7 @@ interface ParserContext {
   _aiderSawRepoMap?: boolean;
   _aiderReplyStarted?: boolean;
   _aiderThinking?: boolean;
+  _aiderWrappedSessionCost?: boolean;
   _zeroclawReplyStarted?: boolean;
   _clineStreamed?: boolean;
   _clineFinalEmitted?: boolean;
@@ -469,6 +470,9 @@ function zeroclawInteractiveParser(line: string, ctx: ParserContext) {
 function aiderOutputParser(line: string, ctx: ParserContext) {
   if (ctx._aiderPreamble === undefined) ctx._aiderPreamble = true;
   const trimmed = line.trim();
+  const wrappedSessionCost = ctx._aiderWrappedSessionCost;
+  ctx._aiderWrappedSessionCost = false;
+  if (wrappedSessionCost && /^session\.$/i.test(trimmed)) return;
 
   if (ctx._aiderPreamble) {
     if (/^Repo-map:/i.test(trimmed)) ctx._aiderSawRepoMap = true;
@@ -486,7 +490,13 @@ function aiderOutputParser(line: string, ctx: ParserContext) {
     return;
   }
   if (ctx._aiderThinking || /^-+$/.test(trimmed)) return;
-  if (/^(Tokens:|Cost:)/i.test(trimmed) || /^\$[\d.]+\s+session\.$/i.test(trimmed)) return;
+  if (/^(Tokens:|Cost:)/i.test(trimmed)) {
+    // Rich can wrap the final "session." label after the amount. Only consume
+    // that immediate continuation, never an ordinary answer containing it.
+    ctx._aiderWrappedSessionCost = /\$\d+(?:\.\d+)?$/.test(trimmed);
+    return;
+  }
+  if (/^\$[\d.]+\s+session\.$/i.test(trimmed)) return;
   if (!trimmed && !ctx._aiderReplyStarted) return;
   ctx._aiderReplyStarted = true;
   ctx.onText(line + '\n');

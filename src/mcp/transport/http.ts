@@ -39,6 +39,15 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
         id: null,
       });
     }
+    // MCP request ids are strings or integers; a missing id is a notification.
+    const hasId = Object.prototype.hasOwnProperty.call(msg, 'id');
+    if (hasId && typeof msg.id !== 'string'
+      && !(typeof msg.id === 'number' && Number.isSafeInteger(msg.id))) {
+      return res.status(400).json({
+        jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request: invalid id' }, id: null,
+      });
+    }
+    if (!hasId) return res.status(202).end();
 
     // ── initialize ──
     if (msg.method === 'initialize') {
@@ -72,11 +81,6 @@ function createHttpTransport(mcpServer?: any, options: any = {}) {
           },
         },
       });
-    }
-
-    // ── notifications（无 id，不需要回复） ──
-    if (!msg.id) {
-      return res.status(202).end();
     }
 
     // ── tools/list ──

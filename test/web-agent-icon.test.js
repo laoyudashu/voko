@@ -196,6 +196,8 @@ test('browser session can restart Agent runtime without exposing the instance to
   const db = new DatabaseSync(path.join(dir, 'voko.db'));
   db.exec('CREATE TABLE agents (agent_id TEXT, owner_email TEXT)');
   const sessions = createLocalWebSessionStore(db);
+  db.exec('CREATE TABLE IF NOT EXISTS config (type TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)');
+  require('../build/core/database').saveUserAccessToken(db, 'owner@example.com', 'synthetic-owner-token');
   const session = sessions.create('owner@example.com');
   let restarted = 0;
   const app = express();

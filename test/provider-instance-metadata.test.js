@@ -53,3 +53,13 @@ describe('provider instance metadata', () => {
     });
   });
 });
+
+it('OpenClaw entries metadata uses the keyed Agent workspace', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-openclaw-entry-meta-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const root = path.join(home, '.openclaw'); const workspace = path.join(home, 'audit');
+  fs.mkdirSync(root); fs.mkdirSync(workspace);
+  fs.writeFileSync(path.join(workspace, 'IDENTITY.md'), '**Name:** Entry Audit\n');
+  fs.writeFileSync(path.join(root, 'openclaw.json'), JSON.stringify({ agents: { entries: { audit: { workspace } } } }));
+  assert.equal(readProviderInstanceMetadata('openclaw', 'audit', { home }).name, 'Entry Audit');
+});

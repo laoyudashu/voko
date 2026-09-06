@@ -1,0 +1,659 @@
+{
+  "schemaVersion": 1,
+  "planId": "voko-lite-review-2026-09-04-v1",
+  "status": "done",
+  "baselineCommit": "a6e8f35d93940dfd021e443ab332060062aab181",
+  "approval": {
+    "required": true,
+    "approved": true,
+    "scope": "Local isolated code changes, tests, independent diff review, documentation, and focused local commits only.",
+    "message": "同意实施此计划。稳扎稳打，每一步都做好，同时做好单元测试。直至整个优化完成。",
+    "recordedAt": "2026-09-05T04:11:39.022317+00:00"
+  },
+  "executor": "Current Codex task, resumed after explicit approval; this manifest does not start a background scheduler.",
+  "documents": {
+    "intake": "00-intake.md",
+    "primary": "01-primary-review.md",
+    "adversarial": "02-adversarial-review.md",
+    "plan": "03-optimization-plan.md",
+    "validation": "04-validation-and-boundaries.md"
+  },
+  "phases": [
+    {
+      "id": "S0",
+      "dependsOn": [],
+      "title": "Isolated baseline and Node 22 validation environment",
+      "status": "done",
+      "verification": {
+        "command": "npm run release:gate:code",
+        "node": "22.23.2",
+        "npm": "11.19.0",
+        "exitCode": 0,
+        "passed": 1377,
+        "skipped": 2,
+        "failed": 0,
+        "log": "/tmp/voko-optimization-evidence-20260904/baseline-gate.log"
+      }
+    },
+    {
+      "id": "S1",
+      "dependsOn": [
+        "S0"
+      ],
+      "title": "Local authorization, path, credential and protocol fixes",
+      "issues": [
+        "R01",
+        "R03",
+        "R04",
+        "R09",
+        "R16"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "S2",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Owner sessions and authenticated sensitive WebSocket streams",
+      "issues": [
+        "R02",
+        "R11"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "S3",
+      "dependsOn": [
+        "S0"
+      ],
+      "title": "Database failure propagation, retry gaps, then offline pagination",
+      "issues": [
+        "R06",
+        "R05",
+        "R07"
+      ],
+      "issueOrder": [
+        "R06",
+        "R05",
+        "R07"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "S4",
+      "dependsOn": [
+        "S2",
+        "S3"
+      ],
+      "title": "Provider retry evidence, attachment lifetime and actual Dispatcher stop contract",
+      "issues": [
+        "R12",
+        "R10",
+        "R13"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "S5",
+      "dependsOn": [
+        "S1",
+        "S3"
+      ],
+      "title": "Correct conversation pagination and measured performance observations",
+      "issues": [
+        "R17",
+        "R15",
+        "R14"
+      ],
+      "status": "done"
+    },
+    {
+      "id": "S6",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Independent A2A item isolation and exact package scan coverage",
+      "issues": [
+        "R19",
+        "R18"
+      ],
+      "status": "done",
+      "scopeResult": "R18 fixed; R19 verification gate completed and design deferred as approved."
+    },
+    {
+      "id": "S7",
+      "dependsOn": [
+        "S1"
+      ],
+      "title": "Partial audit size-bound mitigation; full regex isolation remains deferred",
+      "issues": [
+        "R08"
+      ],
+      "status": "done",
+      "scopeResult": "Approved partial R08 mitigation completed; short-regex risk remains."
+    },
+    {
+      "id": "S8",
+      "dependsOn": [
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7"
+      ],
+      "title": "Integrated gates, adversarial diff review and delivery",
+      "status": "done",
+      "scopeResult": "Local validation complete; unavailable cross-platform and real-account coverage explicitly recorded."
+    }
+  ],
+  "issues": [
+    {
+      "id": "R01",
+      "historicalId": "H08",
+      "mode": "full_fix",
+      "title": "Explicit friend-request approval",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "access-control-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R02",
+      "historicalId": "H09",
+      "mode": "full_fix",
+      "title": "Invalidate other old-owner sessions while preserving pre-created new-owner session",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "local-web-session-owner.test.js;local-web-auth.spec.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "5db04d0",
+        "56fc2b2"
+      ]
+    },
+    {
+      "id": "R03",
+      "historicalId": "H10",
+      "mode": "full_fix",
+      "title": "Authorize the actual ACL record and list type",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "access-control-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R04",
+      "historicalId": "H11",
+      "mode": "conditional_hardening",
+      "title": "Reject dot paths and guard recursive deletion containment",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "a2a-attachment-workspace.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R05",
+      "historicalId": "H12",
+      "mode": "full_fix",
+      "title": "Retry known transient offline gaps without assuming dense sequence numbers",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R06",
+      "historicalId": "H13",
+      "mode": "scoped_fix",
+      "title": "Prevent normal collected Provider forwarding after DB rollback; do not claim all side effects transactional",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R07",
+      "historicalId": "H16",
+      "mode": "full_fix",
+      "title": "Bounded offline pagination and continuation",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "offline-sync-reliability.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "ae1dd0f"
+      ]
+    },
+    {
+      "id": "R08",
+      "historicalId": "H14",
+      "mode": "partial_mitigation",
+      "title": "Move size check before regex; 501-byte regex risk remains open",
+      "status": "partial",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "audit-rule-boundaries.test.js"
+      ],
+      "reviewDecision": "size_bound_partial_only_full_regex_fix_deferred",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R09",
+      "historicalId": "H15",
+      "mode": "full_fix",
+      "title": "Inspect all credential-format matches",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "audit-rule-boundaries.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8"
+      ]
+    },
+    {
+      "id": "R10",
+      "historicalId": "H01",
+      "mode": "full_fix",
+      "title": "Bind staged attachment cleanup to actual turn lifecycle",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "openclaw-attachment-lifetime.test.js"
+      ],
+      "reviewDecision": "independent_final_review_passed_41_tests_and_counterexamples",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R11",
+      "historicalId": "H02",
+      "mode": "policy_change",
+      "title": "Authenticate both sensitive WS streams; preserve health/static availability",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "local-websocket-auth.test.js;local-web-auth.spec.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "5db04d0",
+        "56fc2b2"
+      ]
+    },
+    {
+      "id": "R12",
+      "historicalId": "H03",
+      "mode": "full_fix",
+      "title": "Use execution-stage evidence for retry eligibility",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "provider-cli-execution-evidence.test.js"
+      ],
+      "reviewDecision": "independent_final_review_passed_41_tests_and_counterexamples",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R13",
+      "historicalId": "H04",
+      "mode": "verify_then_fix",
+      "title": "Reproduce actual Dispatcher stop/admission gap; exclude unproven general backpressure",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "dispatcher-stop-contract.test.js"
+      ],
+      "reviewDecision": "independent_final_review_passed_41_tests_and_counterexamples",
+      "commits": [
+        "a764fa0",
+        "8e87d4b",
+        "15b2f48"
+      ]
+    },
+    {
+      "id": "R14",
+      "historicalId": "H05",
+      "mode": "measurement_only",
+      "title": "Synthetic attachment/event-loop/RSS baseline; no automatic IO/crypto rewrite",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "07-query-and-performance.md",
+        "evidence/voko-r14-attachment-benchmark.cjs"
+      ],
+      "reviewDecision": "measure_only_no_default_product_change"
+    },
+    {
+      "id": "R15",
+      "historicalId": "H06",
+      "mode": "co_resolve_with_R17",
+      "title": "Measure query count and plan; no new cache/counter subsystem",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "test/list-conversations-query.test.js",
+        "11-query-independent-review.md"
+      ],
+      "reviewDecision": "independent_review_passed_4_tests_and_144_differential_cases",
+      "commits": [
+        "5d7790a"
+      ]
+    },
+    {
+      "id": "R16",
+      "historicalId": "H07",
+      "mode": "full_fix",
+      "title": "JSON-RPC id zero handling; no SDK transport replacement",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "mcp-http-id.test.js"
+      ],
+      "reviewDecision": "accepted_with_scope_in_final_plan",
+      "commits": [
+        "79fa7b8",
+        "7294212",
+        "74a43f4"
+      ]
+    },
+    {
+      "id": "R17",
+      "historicalId": null,
+      "mode": "full_fix",
+      "title": "Filter unreplied before count and pagination",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "test/list-conversations-query.test.js",
+        "11-query-independent-review.md"
+      ],
+      "reviewDecision": "independent_review_passed_4_tests_and_144_differential_cases",
+      "commits": [
+        "5d7790a"
+      ]
+    },
+    {
+      "id": "R18",
+      "historicalId": null,
+      "mode": "full_fix",
+      "title": "Scan exact package artifact contents without asserting existing leak",
+      "status": "done",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "test/lite-package-secret-scan.test.js",
+        "12-artifact-independent-review.md"
+      ],
+      "reviewDecision": "independent_final_review_passed_26_tests_plus_3_extra_boundaries_and_codeql_recheck",
+      "commits": [
+        "9b27e5a",
+        "e7bdeda",
+        "2cdcbf6",
+        "f12146c"
+      ]
+    },
+    {
+      "id": "R19",
+      "historicalId": null,
+      "mode": "verify_then_fix",
+      "title": "Prove trusted task independence and fail-closed same-task ordering before isolated handling; otherwise defer design",
+      "status": "deferred_design",
+      "evidence": [
+        "05-execution-log.md",
+        "13-implementation-result.md",
+        "evidence/final-verification.json"
+      ],
+      "verification": [
+        "evidence/voko-s6-r19-boundary-probe.cjs",
+        "09-artifact-and-a2a.md"
+      ],
+      "reviewDecision": "conditional_verification_gate_no_existing_predecessor_guard"
+    }
+  ],
+  "rules": {
+    "stepStates": [
+      "pending",
+      "reproducing",
+      "confirmed",
+      "fixing",
+      "validating",
+      "reviewed",
+      "done",
+      "partial",
+      "deferred_design",
+      "rejected",
+      "blocked"
+    ],
+    "secrets": "Synthetic fixtures only; never report credential values.",
+    "tests": "Real production modules with isolated dependencies; source probes are not replacement regression tests.",
+    "requiredBeforeDone": [
+      "Failure reproduced or direct behavior evidence accepted",
+      "Minimal fix or explicitly scoped mitigation",
+      "Targeted regression passed",
+      "Independent diff review passed",
+      "Required integrated gates accounted for"
+    ],
+    "forbidden": [
+      "production_data_mutation",
+      "production_service_restart",
+      "cross_repository_changes",
+      "public_vulnerability_disclosure",
+      "push",
+      "merge",
+      "tag",
+      "release",
+      "npm_publish",
+      "deployment",
+      "scheduled_background_execution"
+    ],
+    "needsAdditionalApproval": [
+      "new_dependency",
+      "public_protocol_change",
+      "historical_data_replay_or_cleanup",
+      "data_migration",
+      "new_persistent_outbox_or_task_framework",
+      "remote_real_account_operations",
+      "full_regex_architecture_change"
+    ]
+  },
+  "remainingKnownRiskAfterDefaultPlan": [
+    "R08 short-input pathological regular expressions remain unresolved by size check",
+    "R14 hot-path IO performance needs measured decision",
+    "R13 aggregate backpressure remains unproven/design work",
+    "Windows/Linux/real Provider and cloud exploitability require separately available validation",
+    "R19 invalid-item isolation remains deferred if trusted independence cannot be established without a new ordering model"
+  ],
+  "completion": {
+    "defaultScopeComplete": true,
+    "allKnownIssuesResolved": false,
+    "crossPlatformVerified": false,
+    "productionVerified": false
+  },
+  "reviewStatus": "final_product_diffs_independently_reviewed_and_local_gates_passed",
+  "planDocumentSha256": "2a1bf91eca573d01949186576e2d90ba9f16013e210841e1d3be39b13e9fc877",
+  "executionWorktree": "/Users/laoyu/Documents/ChatGPT/open_voko-optimization-20260904",
+  "executionBranch": "codex/voko-review-optimizations-20260904",
+  "completedAt": "2026-09-05T05:12:49.727604+00:00",
+  "verification": {
+    "verifiedProductCommit": "f12146c38b23ce5f85fa53aa233485b5ce5b703a",
+    "node": "22.23.2",
+    "npm": "11.19.0",
+    "platform": "macOS arm64",
+    "codeGate": {
+      "command": "npm run release:gate:code",
+      "exitCode": 0,
+      "passed": 1530,
+      "failed": 0,
+      "skipped": 2,
+      "log": "/tmp/voko-optimization-evidence-20260904/final-code-gate.log"
+    },
+    "e2e": {
+      "command": "npx playwright test (using the freshly built final runtime)",
+      "passed": 38,
+      "failed": 0,
+      "browser": "Chromium",
+      "runtimeCommit": "15b2f48",
+      "note": "Later changes affect only the packaging scanner, its tests and review documentation.",
+      "log": "/tmp/voko-optimization-evidence-20260904/final-e2e.log"
+    },
+    "codeql": {
+      "exitCode": 0,
+      "unallowlistedHighCritical": 0,
+      "existingHighAllowlistMatches": 15,
+      "totalResults": 53,
+      "allowlistModified": false,
+      "jsTsFiles": 313,
+      "actionsFiles": 3,
+      "log": "/tmp/voko-optimization-evidence-20260904/final-codeql.log"
+    },
+    "gitleaks": {
+      "exitCode": 0,
+      "findings": 0,
+      "log": "/tmp/voko-optimization-evidence-20260904/final-gitleaks.log"
+    },
+    "npmAudit": {
+      "exitCode": 0,
+      "vulnerabilities": 0,
+      "scope": "omit=dev; high threshold",
+      "log": "/tmp/voko-optimization-evidence-20260904/npm-audit.log"
+    },
+    "package": {
+      "schemaVersion": 9,
+      "fileCount": 324,
+      "textFilesScanned": 320,
+      "dryRunMatchesArtifactFiles": true,
+      "sha256": "6f53716a96ebe01f62a1bb24604b43858778edda308c4298a9dfaf4d260123af",
+      "bytes": 3740503,
+      "path": "/tmp/voko-optimization-evidence-20260904/voko-lite-0.5.2.tgz",
+      "log": "/tmp/voko-optimization-evidence-20260904/final-artifact-scan.log"
+    },
+    "coverage": {
+      "dispatcher": 68.33,
+      "message-and-cursors": 70.26,
+      "im-sdk-and-hub": 58.42,
+      "providers": 64.37,
+      "web": 50.41
+    },
+    "notVerified": [
+      "Windows",
+      "Linux/GNU tar",
+      "Node24 matrix",
+      "Firefox/WebKit",
+      "real Provider accounts",
+      "production/cloud integration"
+    ]
+  }
+}

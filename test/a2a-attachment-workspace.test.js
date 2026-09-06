@@ -32,3 +32,17 @@ test('attachment declared MIME must match its bytes',async t=>{
   await assert.rejects(()=>new A2AAttachmentWorkspace(root).prepare('task-mime',['extatt_abcdefghijklmnop'],client),/CONTENT_TYPE_MISMATCH/);
   assert.equal(fs.existsSync(path.join(root,'task-mime')),false);
 });
+
+for (const taskId of ['.', '..', '', '../outside', '..\\outside', '%2e%2e', '/outside', 'C:\\outside']) {
+  test(`invalid task directory never reaches recursive deletion: ${JSON.stringify(taskId)}`, async t => {
+    const root = path.join(os.tmpdir(), 'voko-never-created-path-boundary', 'attachments');
+    const removed = [];
+    t.mock.method(fs.promises, 'rm', async directory => {
+      removed.push(directory);
+      throw new Error('UNEXPECTED_RECURSIVE_DELETE');
+    });
+    await assert.rejects(() => new A2AAttachmentWorkspace(root).prepare(taskId, ['extatt_abcdefghijklmnop'], {}),
+      /A2A_ATTACHMENT_TASK_INVALID/);
+    assert.deepEqual(removed, []);
+  });
+}

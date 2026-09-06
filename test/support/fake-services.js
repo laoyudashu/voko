@@ -384,6 +384,18 @@ async function startSeparateFakeServices(options = {}) {
     // The control plane is only exposed by the in-process fake API used by E2E.
     // It never exists on the VOKO production server.
     if (handleFaultControl(req, res, body, faults)) return;
+    if (req.url === '/api/external/v1/e2ee/recipients/resolve' && req.method === 'POST') {
+      const input = parseJsonBody(body) || {};
+      if (req.headers.authorization !== 'Bearer e2e-local-token' || input.targetImUid === 'e2e-directory-denied') {
+        return json(res, 401, { success: false, error: { code: 'E2EE_V2_DIRECTORY_HTTP_401' } });
+      }
+      // This suite exercises legacy IM peers. An explicit directory decision
+      // permits plaintext; authentication failure must never stand in for it.
+      return json(res, 200, { success: true, data: {
+        peerKind: 'guest', peerScopeId: String(input.targetImUid), capability: 'unsupported',
+        protocolConversationId: null, revision: 'e2e-legacy-1', expiresAt: Date.now() + 60_000, recipients: [],
+      } });
+    }
     if (req.url === '/__test__/im/state' && req.method === 'GET') {
       const imEvents = events.filter((event) => event.target === 'im');
       return json(res, 200, {
