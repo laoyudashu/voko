@@ -37,9 +37,21 @@ test('a real CLI that already wrote a file cannot retry based on auth or missing
   }
 });
 
-test('a genuine missing executable carries pre-spawn evidence and permits configured backup', async () => {
+test('a missing command permits backup only when no wrapper process started', async () => {
   const { result, backupCalls } = await withBackup(() => runCli({
     cmd: path.join(os.tmpdir(), 'voko-never-existing-executable-evidence'), logOutput: false,
+  }));
+  // cross-spawn on Windows starts cmd.exe and only later synthesizes ENOENT.
+  // That is not pre-spawn evidence and must retain the conservative outcome.
+  assert.equal(result.outcome, process.platform === 'win32' ? 'outcome_unknown' : 'delivered');
+  assert.equal(backupCalls, process.platform === 'win32' ? 0 : 1);
+});
+
+test('a genuine pre-spawn cwd failure permits the configured backup on every platform', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-cli-no-cwd-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { result, backupCalls } = await withBackup(() => runCli({
+    cmd: process.execPath, args: ['-e', 'process.exit(0)'], cwd: path.join(root, 'missing'), logOutput: false,
   }));
   assert.equal(result.outcome, 'delivered');
   assert.equal(backupCalls, 1);

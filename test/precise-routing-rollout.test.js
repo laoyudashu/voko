@@ -45,8 +45,6 @@ function enableGroupExact(db, providerFamilies = ['codex']) {
     .run('feature:precise_group_reply_routing_v1', policy, Date.now());
 }
 
-async function settle() { await new Promise((resolve) => setTimeout(resolve, 25)); }
-
 async function waitFor(predicate, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -62,7 +60,7 @@ test('precise routing injects a strict native session only for allowlisted priva
   const dispatcher = createDispatcher({ db, providers: { 'codex-cli': provider('codex-cli', calls) } });
   dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-1', channelId: 'peer-1', channelType: 1,
     contentType: 1, content: 'reply', messageId: 'm1', replyRouteContext: candidate('codex') });
-  await settle();
+  assert.equal(await waitFor(() => calls.length === 1), true, 'expected Provider invocation');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].binding.strictSessionRoute, true);
   assert.equal(calls[0].binding.nativeSessionId, 'native-session-1');
@@ -77,7 +75,7 @@ test('precise routing leaves group and non-allowlisted providers on the compatib
     contentType: 1, content: 'group', messageId: 'm2', replyRouteContext: candidate('codex') });
   dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-1', channelId: 'peer-1', channelType: 1,
     contentType: 1, content: 'goose', messageId: 'm3', replyRouteContext: candidate('goose') });
-  await settle();
+  assert.equal(await waitFor(() => calls.length === 2), true, 'expected both Provider invocations');
   assert.equal(calls.length, 2);
   assert.equal(calls.every((call) => call.binding == null), true);
   assert.equal(dispatcher.getRoutingStats()['precise_rejected:codex'], 1);
@@ -92,7 +90,7 @@ test('group exact routing is enabled only by the dedicated group policy', async 
   dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'group:peer-1', senderUid: 'peer-1',
     channelId: 'peer-1', channelType: 2, contentType: 1, content: 'group', messageId: 'm-group',
     replyRouteContext: candidate('codex') });
-  await settle();
+  assert.equal(await waitFor(() => calls.length === 1), true, 'expected Provider invocation');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].binding.strictSessionRoute, true);
   assert.equal(calls[0].binding.nativeSessionId, 'native-session-1');
@@ -124,7 +122,7 @@ test('an incompatible provider instance is not invoked and precise delivery fall
   const route = { ...candidate('opencode'), providerInstanceKey: 'required-instance' };
   dispatcher.dispatch('agent-1', { agentId: 'agent-1', fromUid: 'peer-1', channelId: 'peer-1', channelType: 1,
     contentType: 1, content: 'reply', messageId: 'm5', replyRouteContext: route });
-  await settle();
+  assert.equal(await waitFor(() => dispatcher.getRoutingStats().precise_fallback_pull === 1), true);
   assert.deepEqual(calls, []);
   assert.equal(dispatcher.getRoutingStats().precise_fallback_pull, 1);
 });

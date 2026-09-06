@@ -42,7 +42,16 @@ for (const [name, output, reason] of [
 function gateway(t, scenario) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-gateway-recovery-'));
   const marker = path.join(dir, 'attempt'), ready = path.join(dir, 'ready');
-  const provider = new OpenClaw(null, null);
+  const configPath = path.join(dir, 'openclaw.json');
+  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local' } }));
+  const previous = process.env.OPENCLAW_CONFIG_PATH;
+  process.env.OPENCLAW_CONFIG_PATH = configPath;
+  let provider;
+  try { provider = new OpenClaw(null, null); }
+  finally {
+    if (previous === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
+    else process.env.OPENCLAW_CONFIG_PATH = previous;
+  }
   provider.gatewayStartupTimeoutMs = 4000;
   provider.gatewayProbeIntervalMs = 10;
   const migration = 'OpenClaw plugin migration inputs changed during startup convergence; refusing to report the gateway ready. Restart OpenClaw so state migrations run against the final config and plugin inventory.';

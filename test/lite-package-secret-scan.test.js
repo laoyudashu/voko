@@ -68,6 +68,18 @@ test('release artifact scan covers built code, README and text without a recogni
   assert.equal(JSON.stringify(result).includes('synthetic-release-value'), false);
 });
 
+test('artifact scan accepts CRLF tar listings without skipping secret members', t => {
+  const { archive } = packedFixture(t, { 'README.md': "const password = 'synthetic-crlf-value';\n" });
+  const cp = require('node:child_process');
+  const original = cp.execFileSync;
+  t.mock.method(cp, 'execFileSync', (cmd, args, options) => {
+    const result = original(cmd, args, options);
+    return cmd === 'tar' && args.some(arg => ['-tf', '-tvf'].includes(arg))
+      ? result.replace(/\r?\n/g, '\r\n') : result;
+  });
+  assert.deepEqual(scanTarball(archive).findings, [{ rule: 'literal-secret', file: 'README.md', line: 1 }]);
+});
+
 test('artifact bytes are authoritative and unpackaged workspace fixtures are ignored', t => {
   const { root, archive } = packedFixture(t, { 'build/main.js': 'module.exports = true;\n' });
   fs.mkdirSync(path.join(root, 'test'));

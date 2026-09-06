@@ -1,6 +1,9 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const OpenClawWsProvider = require('../build/core/dispatcher/providers/openclaw-ws');
 const {
   buildOpenClawSessionKey,
@@ -9,14 +12,27 @@ const {
 
 const providers = [];
 
-function createProvider() {
-  const provider = new OpenClawWsProvider(null, null);
-  providers.push(provider);
-  return provider;
+function createProvider(database = null) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-ws-config-'));
+  const configPath = path.join(dir, 'openclaw.json');
+  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local' } }));
+  const previous = process.env.OPENCLAW_CONFIG_PATH;
+  process.env.OPENCLAW_CONFIG_PATH = configPath;
+  try {
+    const provider = new OpenClawWsProvider(database, null);
+    providers.push({ provider, dir });
+    return provider;
+  } finally {
+    if (previous === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
+    else process.env.OPENCLAW_CONFIG_PATH = previous;
+  }
 }
 
 afterEach(() => {
-  for (const provider of providers.splice(0)) provider.destroy();
+  for (const { provider, dir } of providers.splice(0)) {
+    provider.destroy();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe('Lite OpenClaw WS provider', () => {
@@ -169,10 +185,9 @@ describe('Lite OpenClaw WS provider', () => {
   });
 
   it('does not reuse a binding from a different OpenClaw instance', async () => {
-    const provider = new OpenClawWsProvider({
+    const provider = createProvider({
       prepare: () => ({ get: () => ({ backend_instance_id: 'instance-new' }) }),
-    }, null);
-    providers.push(provider);
+    });
     provider.connected = true;
     let sessionKey = '';
     provider.sendToSession = async (key) => { sessionKey = key; };

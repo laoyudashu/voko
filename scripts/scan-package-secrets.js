@@ -121,8 +121,8 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
         env: { ...process.env, TAR_OPTIONS: '' }, stdio: ['ignore', 'pipe', 'pipe'] }); }
       catch (_) { throw new Error('Unable to inspect or extract release archive with tar'); }
     };
-    const names = tar(['-tf', snapshot]).trimEnd().split('\n').filter(Boolean);
-    const details = tar(['--numeric-owner', '-tvf', snapshot]).trimEnd().split('\n').filter(Boolean);
+    const names = tar(['-tf', snapshot]).trimEnd().split(/\r?\n/).filter(Boolean);
+    const details = tar(['--numeric-owner', '-tvf', snapshot]).trimEnd().split(/\r?\n/).filter(Boolean);
     if (!names.length || names.length > maxMembers || details.length !== names.length) throw new Error('Invalid release archive member count');
     const seen = new Set();
     const regularNames = [];
