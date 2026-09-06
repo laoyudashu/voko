@@ -200,7 +200,19 @@ test('additional filesystem case folding cannot turn a secret member into a clea
   fs.writeFileSync(path.join(root, 'stra\u00dfe.txt'), 'filesystem probe');
   const aliases = fs.existsSync(path.join(root, 'strasse.txt'));
   if (aliases) assert.throws(() => scanTarball(archive), /Aliased release archive/);
-  else assert.equal(scanTarball(archive).findings.length, 1);
+  else {
+    let result;
+    try { result = scanTarball(archive); }
+    catch (error) {
+      // Windows bsdtar may not preserve this raw UTF-8 ustar name. Refusing
+      // the unreadable member is fail-closed, never a successful clean scan.
+      assert.equal(process.platform, 'win32');
+      assert.equal(error.code, 'ENOENT');
+      assert.equal(path.basename(error.path), 'stra\u00dfe.txt');
+      return;
+    }
+    assert.equal(result.findings.length, 1);
+  }
 });
 
 // Mutate real temporary files immediately after the scanner inspects them.
@@ -230,7 +242,7 @@ for (const target of ['archive', 'member']) {
   test(`artifact scan reads the inspected ${target} even if its pathname is replaced`, t => {
     const { archive } = packedFixture(t, { 'entry.txt': "const password = 'synthetic-descriptor-secret';\n" });
     const wasMutated = afterInspection(t,
-      file => target === 'archive' ? file === archive : file.endsWith('/contents/package/entry.txt'),
+      file => target === 'archive' ? file === archive : file.endsWith(path.join('contents', 'package', 'entry.txt')),
       file => { fs.renameSync(file, file + '.original'); fs.writeFileSync(file, 'safe replacement'); });
     const result = scanTarball(archive);
     wasMutated();
@@ -241,7 +253,7 @@ for (const target of ['archive', 'member']) {
     const { archive } = packedFixture(t, { 'entry.txt': 'safe initial file' });
     const budget = target === 'archive' ? 64 * 1024 * 1024 : 16 * 1024;
     const wasMutated = afterInspection(t,
-      file => target === 'archive' ? file === archive : file.endsWith('/contents/package/entry.txt'),
+      file => target === 'archive' ? file === archive : file.endsWith(path.join('contents', 'package', 'entry.txt')),
       file => fs.truncateSync(file, budget + 1));
     assert.throws(() => scanTarball(archive, { maxExpandedBytes: 16 * 1024 }), /size budget/i);
     wasMutated();
