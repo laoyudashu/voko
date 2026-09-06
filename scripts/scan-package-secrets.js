@@ -116,16 +116,18 @@ function scanTarball(archivePath, { maxMembers = 10000, maxExpandedBytes = 256 *
   try {
     const snapshot = path.join(temporary, 'artifact.tar');
     fs.writeFileSync(snapshot, expanded, { mode: 0o600 });
-    const tar = (args) => {
+    const tar = (args, strictNames = false) => {
       let output;
       try { output = childProcess.execFileSync('tar', args, { encoding: 'buffer', timeout: 30000, maxBuffer: 4 * 1024 * 1024,
         env: { ...process.env, TAR_OPTIONS: '' }, stdio: ['ignore', 'pipe', 'pipe'] }); }
       catch (_) { throw new Error('Unable to inspect or extract release archive with tar'); }
-      // Never normalize or inspect names after lossy decoding of a system code page.
+      // Verbose metadata can contain localized dates; only the separate name
+      // listing is authoritative for paths and must be decoded without loss.
+      if (!strictNames) return output.toString('utf8');
       try { return new TextDecoder('utf-8', { fatal: true }).decode(output); }
       catch (_) { throw new Error('Invalid release archive listing encoding'); }
     };
-    const names = tar(['-tf', snapshot]).trimEnd().split(/\r?\n/).filter(Boolean);
+    const names = tar(['-tf', snapshot], true).trimEnd().split(/\r?\n/).filter(Boolean);
     const details = tar(['--numeric-owner', '-tvf', snapshot]).trimEnd().split(/\r?\n/).filter(Boolean);
     if (!names.length || names.length > maxMembers || details.length !== names.length) throw new Error('Invalid release archive member count');
     const seen = new Set();
