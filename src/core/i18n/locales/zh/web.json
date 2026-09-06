@@ -362,7 +362,7 @@
   "web.agent.blacklist.block_btn": "拉黑",
   "web.agent.blacklist.ph.visitor": "访客UID",
   "web.agent.blacklist.reason_opt": "原因（可选）",
-  "web.agent.access.title": "访问模式",
+  "web.agent.access.title": "访客访问",
   "web.agent.access.current": "当前",
   "web.agent.access.private_desc": "🔒 仅白名单用户可访问",
   "web.agent.access.public_desc": "🌐 所有访客均可访问",
@@ -1053,5 +1053,9 @@
   "web.trusted_remote.codex_native_help": "VOKO 只传递原始输入；工具、沙箱、网络和审批完全使用 Codex 原生配置。",
   "web.trusted_remote.codex_saved": "已保存",
   "web.trusted_remote.security": "安全说明",
-  "web.trusted_remote.security_text": "登录必须验证主人邮箱。设备会话最长 30 天，闲置 7 天后失效；断开设备后，该设备将立即无法访问全部主人 Agent。远程可信入口只用于主人和 Agent 的独立可信对话，不进入群聊，也不承担审批功能。"
+  "web.trusted_remote.security_text": "登录必须验证主人邮箱。设备会话最长 30 天，闲置 7 天后失效；断开设备后，该设备将立即无法访问全部主人 Agent。远程可信入口只用于主人和 Agent 的独立可信对话，不进入群聊，也不承担审批功能。",
+  "web.agent.qr.title": "访客二维码",
+  "web.agent.qr.hint": "扫码打开此 Agent 的访客链接。",
+  "web.agent.qr.download": "下载二维码 PNG",
+  "web.agent.qr.no_link": "请先在首页生成访客链接。"
 }

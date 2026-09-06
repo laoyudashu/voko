@@ -139,10 +139,8 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.doesNotMatch(html, /data-role="external-integration-action"/);
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'web', 'index.js'), 'utf8');
   assert.match(source, /M9 4v5M15 4v5M7 9h10v3a5 5 0 0 1-10 0V9ZM12 17v3/);
-  assert.match(source, /visitorValue\+accessModeButton\+visitorAction/);
+  assert.match(source, /visitorValue\+qrButton\+visitorAction/);
   assert.doesNotMatch(source, /var actionHtml=.*data-role="toggle-acc"/);
-  assert.match(source, /s\.className="btn btn-sm btn-outline home-mode-toggle home-access-mode "/);
-  assert.match(source, /style="margin:1px!important;padding:1px 6px!important;min-width:auto!important;min-height:auto!important;font-size:11px!important;line-height:1\.4!important;border-width:2px" data-role="toggle-acc"/);
   assert.doesNotMatch(html, /data-role="gen-owner-link"/);
   assert.doesNotMatch(html, /data-owner-agent/);
   assert.match(html, /href="\/trusted-remote"/);

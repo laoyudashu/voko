@@ -362,7 +362,7 @@
   "web.agent.blacklist.block_btn": "Block",
   "web.agent.blacklist.ph.visitor": "Visitor UID",
   "web.agent.blacklist.reason_opt": "Reason (optional)",
-  "web.agent.access.title": "Access Mode",
+  "web.agent.access.title": "Visitor access",
   "web.agent.access.current": "Current",
   "web.agent.access.private_desc": "🔒 Whitelisted users only",
   "web.agent.access.public_desc": "🌐 All visitors",
@@ -1053,5 +1053,9 @@
   "web.trusted_remote.codex_native_help": "VOKO passes raw input only. Tools, sandboxing, networking, and approvals remain controlled by native Codex settings.",
   "web.trusted_remote.codex_saved": "Saved",
   "web.trusted_remote.security": "Security notes",
-  "web.trusted_remote.security_text": "Login requires owner email verification. A device session lasts up to 30 days and expires after 7 idle days. Disconnecting a device immediately removes access to all owner Agents. The trusted remote entry is only for private owner-Agent conversations, not group chat or approvals."
+  "web.trusted_remote.security_text": "Login requires owner email verification. A device session lasts up to 30 days and expires after 7 idle days. Disconnecting a device immediately removes access to all owner Agents. The trusted remote entry is only for private owner-Agent conversations, not group chat or approvals.",
+  "web.agent.qr.title": "Visitor QR code",
+  "web.agent.qr.hint": "Scan to open this Agent’s visitor link.",
+  "web.agent.qr.download": "Download QR code (PNG)",
+  "web.agent.qr.no_link": "Generate a visitor link on the home page first."
 }
