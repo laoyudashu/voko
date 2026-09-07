@@ -77,8 +77,12 @@ for (const endpoint of ['/ws', '/voko/events/ws']) {
     const badHost = await f.connect({ host: 'evil.example', authorization: 'Bearer synthetic-instance' });
     assert.equal((await badHost.closed)[0], 4001);
     const bearer = await f.connect({ authorization: 'Bearer synthetic-instance' });
-    const receipt = once(bearer.ws, 'message'); f.stream.broadcast({ type: 'authorized' });
-    assert.equal(JSON.parse((await receipt)[0]).type, 'authorized');
+    if (endpoint === '/ws') {
+      assert.equal((await bearer.closed)[0], 4001, 'MCP credentials cannot subscribe to owner raw message events');
+    } else {
+      const receipt = once(bearer.ws, 'message'); f.stream.broadcast({ type: 'authorized' });
+      assert.equal(JSON.parse((await receipt)[0]).type, 'authorized');
+    }
     const session = f.sessions.create('owner@example.test');
     const req = { headers: { cookie: `voko_session=${session.token}` } };
     const client = await f.connect(req.headers);
@@ -114,4 +118,35 @@ test('intervention page reconnects after transport loss and stops after authoriz
   sockets[0].onclose({ code: 1006 }); assert.equal(timers.length, 1);
   timers.shift()(); assert.equal(sockets.length, 2);
   sockets[1].onclose({ code: 4001 }); assert.equal(timers.length, 0);
+});
+
+test('console subsequent runtime snapshots redact raw events for instance credentials',async t=>{
+  const f=await fixture(t);
+  const token=await f.connect({'x-voko-token':'synthetic-instance'});
+  const session=f.sessions.create('owner@example.test');
+  const owner=await f.connect({cookie:`voko_session=${session.token}`});
+  const tokenMessage=once(token.ws,'message'),ownerMessage=once(owner.ws,'message');
+  f.stream.broadcast({type:'snapshot',data:{agents:[],recentEvents:[{content:'REJECTED_EVENT'}],recentAudit:[{content:'REJECTED_AUDIT'}]}});
+  const filtered=JSON.parse((await tokenMessage)[0]);
+  assert.deepEqual(filtered.data.recentEvents,[]);assert.deepEqual(filtered.data.recentAudit,[]);
+  assert.match(String((await ownerMessage)[0]),/REJECTED_AUDIT/);
+});
+
+test('intervention originals require a verified owner Web session',async t=>{
+  const express=require('express');
+  const {createWebRouter}=require('../build/web');
+  const db=initDatabase(':memory:',{silent:true});
+  saveUserAccessToken(db,'owner@example.test','synthetic-owner');
+  const sessions=createLocalWebSessionStore(db);
+  db.prepare("INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,agent_name,owner_email,created_at,updated_at) VALUES('a','a','a-uid','test','','A','owner@example.test',1,1)").run();
+  db.prepare("INSERT INTO owner_interventions(id,agent_id,visitor_id,session_key,problem,ask_time,created_at,updated_at) VALUES('i','a','v','s','REJECTED_RAW_CANARY',1,1,1)").run();
+  const app=express();app.use(createWebRouter({list_agents:async()=>({agents:[]})},db,{webSessions:sessions,localAuthToken:'synthetic-instance'}));
+  const server=app.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(async()=>{await new Promise(r=>server.close(r));db.close();});
+  const url=`http://127.0.0.1:${server.address().port}/interventions`;
+  for(const headers of [{},{'x-voko-token':'synthetic-instance'}]) {
+    assert.ok(!(await (await fetch(url,{headers})).text()).includes('REJECTED_RAW_CANARY'));
+  }
+  const owner=sessions.create('owner@example.test');
+  assert.match(await (await fetch(url,{headers:{cookie:`voko_session=${owner.token}`}})).text(),/REJECTED_RAW_CANARY/);
 });

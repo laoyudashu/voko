@@ -307,9 +307,10 @@ class DuMateHttpProvider extends PushProvider {
       ...(!binding ? [{ type: 'plugin', name: instanceId }] : []),
       { type: 'text', text: prompt },
     ];
+    const previousAssistantId = (await this._latestAssistant(state, sessionId).catch(() => ({ id: '', reply: '' }))).id;
+    await payload.assertSubmissionCurrent?.();
     this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
       turnId: payload.turnId || payload.messageId, nativeSessionId: sessionId, providerInstanceId: instanceId, terminal: false });
-    const previousAssistantId = (await this._latestAssistant(state, sessionId).catch(() => ({ id: '', reply: '' }))).id;
     await this._json(state, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
       method: 'POST', body: JSON.stringify({ model: { providerID: 'qianfan-multimodal', modelID: 'model-mm' }, agent: 'build', parts }),
     }, 15_000);

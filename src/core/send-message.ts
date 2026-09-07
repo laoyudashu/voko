@@ -154,9 +154,9 @@ function persistAgentMessage(
   let inserted = true;
   try {
     db.prepare(`
-      INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(msgId, uid, channelId, content, channelId, channelType || 1, agentId, timestamp, 1, 'pending', null, null, 0, 0, 0, contentType, mentions ? JSON.stringify(mentions) : null);
+      INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention, admission_received_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(msgId, uid, channelId, content, channelId, channelType || 1, agentId, timestamp, 1, 'pending', null, null, 0, 0, 0, contentType, mentions ? JSON.stringify(mentions) : null, now);
   } catch (e: unknown) {
     const message = errorMessage(e);
     if (!message.includes('UNIQUE constraint')) {

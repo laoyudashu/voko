@@ -675,7 +675,9 @@ export class ProviderSecurityPolicyService {
       promptInstructions: policy.promptInstructions,
       capabilityDigest: policy.capabilityDigest, runtimeFingerprint: policy.runtimeFingerprint,
       capabilityEvidence: policy.capabilityEvidence,
-      assurance: controls.some(item => item.editable) ? 'provider_enforced' : 'fixed_or_unverified',
+      // Editable VOKO prompts/session controls are not native permission enforcement.
+      assurance: controls.some(item => item.editable && item.enforcement === 'provider_enforced')
+        ? 'provider_enforced' : 'fixed_or_unverified',
       appliesTo: ['visitor_direct', 'visitor_group', 'external_push'],
       excluded: ['owner', 'a2a', 'pull'],
     };
@@ -1235,5 +1237,5 @@ export class ProviderSecurityPolicyService {
 
 export function appendProviderSecurityPrompt(content: string, policy?: EffectiveProviderSecurityPolicy | null): string {
   if (!policy?.promptInstructions.length) return content;
-  return `${content}\n\n[Voko 当前访客权限（仅作模型侧纵深防御，实际权限由 Provider 参数强制）]\n${policy.promptInstructions.map(item => `- ${item}`).join('\n')}`;
+  return `${content}\n\n[Voko 当前访客权限（仅作模型侧纵深防御；本提示语不代表 Provider 已强制执行权限限制）]\n${policy.promptInstructions.map(item => `- ${item}`).join('\n')}`;
 }

@@ -227,6 +227,7 @@ class DeepSeekHarnessHttpProvider extends PushProvider {
 
     const prompt = buildConversationDeliveryPrompt(this._db, payload, hasBinding, this._contextWindow);
     let accepted: any;
+    await payload.assertSubmissionCurrent?.();
     try {
       accepted = await this._rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text: prompt }] });
     } catch (error: any) {

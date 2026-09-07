@@ -9,8 +9,8 @@ function fixture(t) {
   db.prepare("INSERT OR REPLACE INTO config(type,data,updated_at) VALUES('current_user_email',?,0)")
     .run(JSON.stringify('owner@example.test'));
   for (const [id, owner] of [['a', 'owner@example.test'], ['b', 'other@example.test']]) {
-    db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,owner_email,created_at,updated_at)
-      VALUES(?,?,?,'synthetic','',?,0,0)`).run(id, id, 'uid-' + id, owner);
+    db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,owner_email,created_at,updated_at,publish_status,access_mode)
+      VALUES(?,?,?,'synthetic','',?,0,0,'published','public')`).run(id, id, 'uid-' + id, owner);
   }
   const queries = [];
   const handlers = createToolHandlers({ db,
@@ -23,8 +23,10 @@ function fixture(t) {
   };
   let counter = 0;
   const message = (channel, { timestamp = 1, isMe = 0, type = 1, content = 'visible', agentId = 'a', id, channelType = 1 } = {}) => {
+    id = id || 'synthetic-' + ++counter;
     db.prepare(`INSERT INTO messages(id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type)
-      VALUES(?,?,?,?,?,?,?,?,?,'received',?)`).run(id || 'synthetic-' + ++counter, channel, 'uid-' + agentId, content, channel, channelType, agentId, timestamp, isMe, type);
+      VALUES(?,?,?,?,?,?,?,?,?,'received',?)`).run(id, channel, 'uid-' + agentId, content, channel, channelType, agentId, timestamp, isMe, type);
+    require('../build/core/message-admission').finishAdmission(db,agentId,id,'allowed','ALLOWED');
   };
   return { db, handlers, queries, conversation, message };
 }
@@ -54,9 +56,10 @@ test('keyword and channel filters share the same relation for count and items, w
   const direct = await f.handlers.list_conversations({ agentId: 'a', keyword: 'match', channelType: 'direct' });
   assert.equal(direct.total, 1); assert.equal(direct.conversations[0].name, 'match direct');
   assert.equal(direct.conversations[0].needsReply, true);
+  // Without a verified current group snapshot, summaries must not disclose content.
   const group = await f.handlers.list_conversations({ agentId: 'a', keyword: 'match', channelType: 'group', filter: 'all' });
   assert.equal(group.total, 1);
-  assert.deepEqual(group.conversations, [{ channelId: 'group', name: 'match group', lastMessage: 'stored summary',
+  assert.deepEqual(group.conversations, [{ channelId: 'group', name: 'match group', lastMessage: '',
     lastTimestamp: 2, unreadCount: 7, needsReply: false, channelType: 2 }]);
   const groupPending = await f.handlers.list_conversations({ agentId: 'a', channelType: 'group' });
   assert.equal(groupPending.total, 0); assert.deepEqual(groupPending.conversations, []);

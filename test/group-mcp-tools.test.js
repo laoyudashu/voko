@@ -44,6 +44,14 @@ function setup(options = {}) {
   db.prepare('INSERT INTO config (type, data, updated_at) VALUES (?, ?, ?)')
     .run('user_access_token', JSON.stringify(tokenMap), now);
 
+  // These are positive routing/read fixtures with explicit pre-approved content.
+  // Real admission, rejection and legacy behavior are tested via MessageHandler
+  // in message-admission.test.js; do not infer permission from arbitrary inserts.
+  db.exec(`CREATE TEMP TRIGGER seed_approved_message AFTER INSERT ON messages BEGIN
+    INSERT INTO agent_message_admissions(agent_id,message_id,state,reason,created_at,updated_at)
+    SELECT agent_id,NEW.id,'allowed','ALLOWED',1,1 FROM agents
+    WHERE NEW.channel_type=2 OR agent_id=NEW.agent_id;
+  END`);
   // 访客 + 群聊消息
   db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run('m1', 'visitor1', 'imuidA', '单聊消息', 'visitor1', 1, 'agentA', now, 0, 'received', 1, null);
@@ -332,8 +340,8 @@ await test('fetch_new_messages 群聊 onlyReplies 按查询 Agent 的 fromUid �
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1,2,JSON.stringify({uids:['imuidB']}));
     db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1,3,JSON.stringify({uids:['imuidA']}));
-    const a = handlers._queryMessages('agentA','room1',0,true,20,2);
-    const b = handlers._queryMessages('agentB','room1',0,true,20,2);
+    const a = (await handlers._queryMessages('agentA','room1',0,true,20,2)).rows;
+    const b = (await handlers._queryMessages('agentB','room1',0,true,20,2)).rows;
     assert.deepStrictEqual(a.map(m=>m.id).sort(),['m-pull-peer','m2'].sort());
     assert.deepStrictEqual(b.map(m=>m.id).sort(),['m-pull-self']);
   } finally { cleanup(); }

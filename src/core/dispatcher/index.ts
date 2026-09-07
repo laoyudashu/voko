@@ -138,6 +138,7 @@ interface IsolatedExecutionOptions {
   peerUid?: string;
   a2aDisposition?: PushPayload['a2aDisposition'];
   ownerInterventionCreated?: Promise<void>;
+  assertSubmissionCurrent?: PushPayload['assertSubmissionCurrent'];
 }
 
 interface AgentMetaRow extends AgentMeta {
@@ -1752,14 +1753,20 @@ Convergence obligations:
             providerBinding: selectedBinding,
             providerSecurityPolicy: securityLease,
             assertSubmissionCurrent: () => {
-              assertAccepting(generation);
-              if (isolated && _retiredIsolatedTurn(`${agentId}::${String(baseProviderPayload.turnId || '')}`)) {
+              const admission = baseProviderPayload.assertSubmissionCurrent?.();
+              const assertLifecycle = () => {
+                assertAccepting(generation);
+                if (isolated && _retiredIsolatedTurn(`${agentId}::${String(baseProviderPayload.turnId || '')}`)) {
                 throw Object.assign(new Error('Provider turn expired before submission'), {
                   code: 'PROVIDER_TURN_EXPIRED', deliveryOutcome: 'not_delivered',
                 });
-              }
+                }
+              };
+              return admission ? Promise.resolve(admission).then(assertLifecycle) : assertLifecycle();
             },
           };
+          const submissionCheck = providerPayload.assertSubmissionCurrent();
+          if (submissionCheck) await submissionCheck;
           payloadByProvider.set(candidate.target, providerPayload);
           if (securityLease) providerSecurity?.markTurn(securityLease.turnId, 'SUBMITTING', agentId);
           const turnKey = `${agentId}::${String(providerPayload.turnId || '')}`;
@@ -1963,6 +1970,7 @@ Convergence obligations:
       messageId: options.taskId, content: options.content, rawContent: options.content,
       sourceMessageIds: Array.isArray(options.sourceMessageIds) ? options.sourceMessageIds : undefined,
       executionScope: 'e2ee', sourceType, protocolContextId: options.contextId,
+      assertSubmissionCurrent: options.assertSubmissionCurrent,
       a2aDisposition: options.a2aDisposition,
     };
     const prepared = sourceType === 'agent_peer'

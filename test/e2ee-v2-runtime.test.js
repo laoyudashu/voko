@@ -59,7 +59,7 @@ test('directory client preserves a stable public business error code',async()=>{
   });
 });
 
-function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
+function fixture({assertInboundAllowed,failFirstDelivery=false,reviewOutbound,peerKind='guest',providerAcceptedCalls=1,
   deliverSecureReply,handleTurnReceipt,providerReply,providerError,directoryErrorOnce=false,keyRegistrationErrorOnce=false,inboundDisposition=true}={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'voko-e2ee-v2-'));
   const databasePath=path.join(directory,'e2ee.db');
@@ -97,7 +97,7 @@ function fixture({failFirstDelivery=false,reviewOutbound,peerKind='guest',provid
     },
   };
   const persisted={inbound:[],outbound:[],delivered:[]};
-  const runtime=new E2eeV2Runtime({store,directory:directoryClient,agents:()=>[agent],keySyncRetryDelayMs:0,
+  const runtime=new E2eeV2Runtime({assertInboundAllowed,store,directory:directoryClient,agents:()=>[agent],keySyncRetryDelayMs:0,
     dispatcher:{async executeE2ee(input){providerCalls+=1;sessionScopes.push(input.sessionScopeId);dispatcherInputs.push(input);
       if(providerError)throw providerError;
       for(let index=0;index<providerAcceptedCalls;index+=1)input.onProviderAccepted();
@@ -415,7 +415,8 @@ test('two devices of the same visitor and protocol conversation reuse one Provid
 });
 
 test('Agent peer projection uses a receiver-scoped local id while preserving the business id',async()=>{
-  const f=fixture({peerKind:'agent'});
+  const checked=[];
+  const f=fixture({peerKind:'agent',assertInboundAllowed:async(agent,ids)=>checked.push({agent,ids})});
   try{
     const envelope=await f.createEnvelope('shared-business-message','agent peer');
     const result=await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',
@@ -424,6 +425,9 @@ test('Agent peer projection uses a receiver-scoped local id while preserving the
     assert.match(f.persisted.inbound[0].messageId,/^e2ee-peer-/);
     assert.equal(f.persisted.inbound[0].projectedMessageId,f.persisted.inbound[0].messageId);
     assert.equal(f.persisted.inbound[0].clientMsgNo,'shared-business-message');
+    await f.dispatcherInputs[0].assertSubmissionCurrent();
+    assert.ok(checked.length>=2);
+    for(const check of checked) assert.deepEqual(check,{agent:'gym',ids:[f.persisted.inbound[0].messageId]});
     assert.equal(f.persisted.inbound[0].routeContext,null);
     assert.equal(f.persisted.inbound[0].e2eeStrictRoute,false);
     assert.equal(f.persisted.inbound[0].e2eeAgentPeer,true);
@@ -555,5 +559,33 @@ test('legacy encrypted Agent control messages complete without Provider executio
     assert.equal(f.store.receipt('legacy-agent-control').state,'completed');
     assert.equal(f.counts().providerCalls,0);
     assert.equal(f.persisted.inbound.length,0);
+  }finally{f.close();}
+});
+
+test('E2EE admission failure prevents Provider submission after plaintext persistence',async()=>{
+  const checked=[];
+  const f=fixture({assertInboundAllowed:async(agent,ids)=>{checked.push({agent,ids});throw Object.assign(new Error('denied'),{code:'MESSAGE_ADMISSION_REJECTED'});}});
+  try{
+    const envelope=await f.createEnvelope('admission-denied','blocked');
+    await f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',channelType:1,contentType:13,ack(){}});
+    assert.equal(f.persisted.inbound.length,1);
+    assert.deepEqual(checked,[{agent:'gym',ids:[f.persisted.inbound[0].messageId]}]);
+    assert.equal(f.counts().providerCalls,0);
+  }finally{f.close();}
+});
+
+test('coalesced E2EE final guard rechecks every local source ID',async()=>{
+  const checked=[];let deny=false;
+  const f=fixture({assertInboundAllowed:async(agent,ids)=>{checked.push(ids);if(deny)throw new Error('revoked');}});
+  try{
+    const one=await f.createEnvelope('batch-first','one');
+    const two=await f.createEnvelope('batch-second','two');
+    const handle=envelope=>f.runtime.handle('gym',{content:JSON.stringify(envelope),fromUid:'guest-im-1',channelType:1,contentType:13,ack(){}});
+    await Promise.all([handle(one),handle(two)]);
+    assert.equal(f.dispatcherInputs.length,1);
+    await f.dispatcherInputs[0].assertSubmissionCurrent();
+    assert.deepEqual(checked.at(-1),f.persisted.inbound.map(row=>row.messageId));
+    assert.equal(checked.at(-1).length,2);
+    deny=true;await assert.rejects(f.dispatcherInputs[0].assertSubmissionCurrent(),/revoked/);
   }finally{f.close();}
 });

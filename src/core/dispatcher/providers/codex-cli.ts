@@ -111,7 +111,7 @@ class CodexCliProvider extends CliAdapter {
       throw Object.assign(new Error('Codex runtime changed after policy resolution'),
         { code: 'PROVIDER_CAPABILITY_CONFLICT', deliveryOutcome: 'not_delivered' });
     }
-    payload.assertSubmissionCurrent?.();
+    await payload.assertSubmissionCurrent?.();
     return super.push(payload);
   }
 }

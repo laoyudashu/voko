@@ -46,7 +46,8 @@ export interface AgentMeta {
 
 export interface PushPayload {
   /** Internal dispatcher guard for Providers that wait before actual submission. */
-  assertSubmissionCurrent?: () => void;
+  assertSubmissionCurrent?: () => void | Promise<void>;
+  registerContextMessage?: (messageId: string) => void;
   agentId: string;
   fromUid: string;
   senderUid?: string;

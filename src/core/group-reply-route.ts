@@ -24,13 +24,13 @@ export class GroupMembershipSnapshotCache {
   constructor(private readonly load: SnapshotLoader, private readonly ttlMs = 10_000) {}
 
   async get(agentId: string, channelId: string): Promise<GroupSnapshot> {
-    const key = String(channelId);
+    const key = `${agentId}\0${channelId}`;
     const cached = this.values.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const active = this.pending.get(key);
     if (active) return active;
     const request = this.load(agentId, channelId).then((value) => {
-      this.values.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+      if (this.pending.get(key) === request) this.values.set(key, { value, expiresAt: Date.now() + this.ttlMs });
       return value;
     }).finally(() => {
       if (this.pending.get(key) === request) this.pending.delete(key);
@@ -39,7 +39,10 @@ export class GroupMembershipSnapshotCache {
     return request;
   }
 
-  invalidate(channelId: string): void { this.values.delete(String(channelId)); }
+  invalidate(channelId: string): void {
+    for (const key of this.values.keys()) if (key.endsWith(`\0${channelId}`)) this.values.delete(key);
+    for (const key of this.pending.keys()) if (key.endsWith(`\0${channelId}`)) this.pending.delete(key);
+  }
 }
 
 export class GroupReplyRouteResolver {
@@ -51,6 +54,37 @@ export class GroupReplyRouteResolver {
     private readonly memberships: GroupMembershipSnapshotCache | null,
   ) {}
 
+  invalidate(channelId: string): void { this.memberships?.invalidate(channelId); }
+
+  async qualify(input: { agentId: string; channelId: string; fromUid: string; mentionAll?: boolean }): Promise<{ state: 'valid' } | { state: 'invalid'; reason: string }> {
+    if (!this.memberships) return { state: 'invalid', reason: 'membership_unavailable' };
+
+    let snapshot: GroupSnapshot;
+    try {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        snapshot = await Promise.race([this.memberships.get(input.agentId, input.channelId),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('membership timeout')), 5000); })]);
+      } finally { if (timer) clearTimeout(timer); }
+    }
+    catch (_) { return { state: 'invalid', reason: 'membership_unavailable' }; }
+    if (!snapshot || snapshot.status === 'dissolved' || snapshot.dissolved_at || snapshot.dissolvedAt) {
+      return { state: 'invalid', reason: 'group_inactive' };
+    }
+    const members = Array.isArray(snapshot.members) ? snapshot.members : [];
+    const sender = members.find((member) => String(member.uid || '') === input.fromUid);
+    if (!sender) return { state: 'invalid', reason: 'sender_not_member' };
+    const agent = this.db.prepare('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1')
+      .get(input.agentId) as { imUid?: string } | undefined;
+    if (!agent?.imUid || !members.some((member) => String(member.uid || '') === agent.imUid)) {
+      return { state: 'invalid', reason: 'agent_not_member' };
+    }
+    if (input.mentionAll && !['owner', 'admin'].includes(String(sender.role || '').toLowerCase())) {
+      return { state: 'invalid', reason: 'mention_all_forbidden' };
+    }
+    return { state: 'valid' };
+  }
+
   async resolve(input: {
     replyToRouteId?: string | null;
     agentId: string;
@@ -58,6 +92,8 @@ export class GroupReplyRouteResolver {
     fromUid: string;
     mentionAll?: boolean;
   }): Promise<GroupRouteResolution> {
+    const qualified = await this.qualify(input);
+    if (qualified.state === 'invalid') return qualified;
     let conversation: RoutingConversation | null = null;
     let source: 'reply' | 'unique' = 'reply';
     if (!input.replyToRouteId) {
@@ -88,25 +124,6 @@ export class GroupReplyRouteResolver {
       }
       if (inspected.state !== 'valid') return inspected;
       conversation = inspected.conversation;
-    }
-    if (!this.memberships) return { state: 'invalid', reason: 'membership_unavailable' };
-
-    let snapshot: GroupSnapshot;
-    try { snapshot = await this.memberships.get(input.agentId, input.channelId); }
-    catch (_) { return { state: 'invalid', reason: 'membership_unavailable' }; }
-    if (!snapshot || snapshot.status === 'dissolved' || snapshot.dissolved_at || snapshot.dissolvedAt) {
-      return { state: 'invalid', reason: 'group_inactive' };
-    }
-    const members = Array.isArray(snapshot.members) ? snapshot.members : [];
-    const sender = members.find((member) => String(member.uid || '') === input.fromUid);
-    if (!sender) return { state: 'invalid', reason: 'sender_not_member' };
-    const agent = this.db.prepare('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1')
-      .get(input.agentId) as { imUid?: string } | undefined;
-    if (!agent?.imUid || !members.some((member) => String(member.uid || '') === agent.imUid)) {
-      return { state: 'invalid', reason: 'agent_not_member' };
-    }
-    if (input.mentionAll && !['owner', 'admin'].includes(String(sender.role || '').toLowerCase())) {
-      return { state: 'invalid', reason: 'mention_all_forbidden' };
     }
     return { state: 'valid', conversation: conversation!, source };
   }

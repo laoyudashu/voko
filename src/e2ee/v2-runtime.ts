@@ -39,6 +39,7 @@ type RuntimeOptions={
   agents:()=>E2eeV2AgentDescriptor[];
   dispatcher:{executeE2ee(input:any):Promise<{reply:any;receipt?:unknown;providerId?:string}>};
   persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType?:number)=>boolean|'intercepted';
+  assertInboundAllowed?:(agentId:string,messageIds:string[])=>Promise<void>;
   persistOutbound:(agentId:string,channelId:string,plaintext:string,messageId:string,sourceMessageId:string)=>unknown;
   handleTurnReceipt?:(agentId:string,peerUid:string,receipt:unknown)=>boolean;
   deliverSecureReply?:(input:{agentId:string;channelId:string;content:string;messageId:string;
@@ -61,6 +62,7 @@ type ResolvedSender={bundle:E2eeV2PublicBundle;peerScopeId:string;peerKind:'gues
 interface E2eeProviderTurnItem extends InboundTurnItem {
   scopeKey:string;
   executeInput:any;
+  admissionMessageId:string;
   markProviderAccepted:()=>void;
   emitTurnStatus?:(status:string,turnId:string,code?:string,sourceMessageIds?:string[],replyMessageId?:string)=>Promise<void>;
 }
@@ -154,6 +156,9 @@ export class E2eeV2Runtime {
     try{
       const result=await this.options.dispatcher.executeE2ee({...last.executeInput,
         taskId:last.messageId,turnId:batch.turnId,sourceMessageIds:batch.sourceMessageIds,
+        assertSubmissionCurrent:async()=>{
+          await this.options.assertInboundAllowed?.(last.executeInput.agentId,batch.items.map(item=>item.admissionMessageId));
+        },
         content:merged.content,attachments:merged.attachments,
         messageSegments:merged.messageSegments,
         ownerInterventionCreated:interventionSignals.length?Promise.race(interventionSignals):undefined,
@@ -381,6 +386,7 @@ export class E2eeV2Runtime {
         return{handled:true,accepted:true,code:'inbound_intercepted'};
       }
       if(!projected)throw new Error('E2EE_V2_INBOUND_REJECTED');
+      await this.options.assertInboundAllowed?.(agent.localAgentId,[localMessageId]);
       const releaseInterventionContext=registerActiveOwnerInterventionContext({agentId:agent.localAgentId,
         channelId:envelope.channelId,protocolConversationId:envelope.conversationId,
         sessionScopeId:scope,sourceMessageId:envelope.messageId,visitorId:sender.peerScopeId});
@@ -391,6 +397,7 @@ export class E2eeV2Runtime {
       let turnItem:E2eeProviderTurnItem|null=null;
       try{
         const executeInput={agentId:agent.localAgentId,content:prepared.providerContent,
+          assertSubmissionCurrent:()=>this.options.assertInboundAllowed?.(agent.localAgentId,[localMessageId]),
           taskId:envelope.messageId,contextId:envelope.conversationId,sessionScopeId:scope,
           ownerInterventionCreated:activeInterventionContext.status==='resolved'
             ?activeInterventionContext.context.interventionCreated:undefined,
@@ -399,7 +406,7 @@ export class E2eeV2Runtime {
         // Ratchet opening, validation, audit and persistence remain serialized. Provider waiting does not:
         // releasing here lets subsequent messages in the same secure session join this short-lived Turn.
         release();release=()=>{};
-        turnItem={messageId:envelope.messageId,
+        turnItem={messageId:envelope.messageId,admissionMessageId:localMessageId,
           content:prepared.providerContent,timestamp:Number(message?.timestamp||Math.floor(envelope.createdAtMs/1000)),
           attachments:prepared.attachments,scopeKey:`${scope}\0${routeScope}`,executeInput,
           emitTurnStatus:async(status,turnId,code,sourceMessageIds=[envelope.messageId],replyMessageId)=>{

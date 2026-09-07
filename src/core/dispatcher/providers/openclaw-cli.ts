@@ -118,7 +118,7 @@ class OpenClawCliProvider extends PushProvider {
   async push(payload: PushPayload): Promise<unknown> {
     const paths = openClawPaths();
     const release = await acquireOpenClawState(paths.stateDir, this._queueAbort.signal);
-    try { payload.assertSubmissionCurrent?.(); return await this._pushLocal(payload, paths); } finally { release(); }
+    try { await payload.assertSubmissionCurrent?.(); return await this._pushLocal(payload, paths); } finally { release(); }
   }
 
   async _pushLocal(payload: PushPayload, paths: { stateDir: string; configPath: string }): Promise<unknown> {
@@ -164,7 +164,7 @@ class OpenClawCliProvider extends PushProvider {
 
     try {
       await this._ensureLocalContract(runtime, paths);
-      payload.assertSubmissionCurrent?.();
+      await payload.assertSubmissionCurrent?.();
       if (this._queueAbort.signal.aborted) throw Object.assign(new Error('OPENCLAW_LOCAL_QUEUE_CANCELLED'), { deliveryOutcome: 'not_delivered' });
       const result = await runCli({
         cmd: spawnOptions.cmd,

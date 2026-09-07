@@ -627,6 +627,7 @@ class AcpAdapter extends PushProvider {
       const promptText = needsRecovery
         ? this._wrapVisitorPrompt(content, payload)
         : this._wrapVisitorPrompt(content);
+      await deliveryPayload.assertSubmissionCurrent?.();
       const promptPromise = session.prompt(buildAcpAttachmentPrompt(promptText, deliveryPayload,
         { imageSupported: state.imagePromptSupported, embeddedContextSupported: state.embeddedContextSupported }));
       promptPromise.catch((err: unknown) =>

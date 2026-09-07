@@ -1,3 +1,4 @@
+import { messageReadState, readableMessageSql, type AdmissionMessage } from '../message-admission';
 /**
  * cli-adapter.js — 通用 CLI stdout PushProvider
  *
@@ -289,8 +290,12 @@ class CliAdapter extends PushProvider {
     if (!nativeSessionId && this._contextWindow > 0 && this._db) {
       try {
         contextMsgs = (this._db.prepare(
-          `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
-        ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
+          `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2 AND content_type!=11 AND ${readableMessageSql()} ORDER BY timestamp DESC LIMIT ?`
+        ).all(fromUid, agentId, agentId, this._contextWindow) as (ContextMessage & AdmissionMessage)[]).filter(row => {
+          if (messageReadState(this._db!, agentId, row) !== 'readable') return false;
+          effectivePayload.registerContextMessage?.(row.id);
+          return row.id !== payload.messageId;
+        }).reverse();
       } catch (_) {}
     }
 
@@ -377,6 +382,7 @@ class CliAdapter extends PushProvider {
 
     const runStartedAt = Date.now();
     try {
+      await effectivePayload.assertSubmissionCurrent?.();
       const result = await runCli({
         cmd,
         args,

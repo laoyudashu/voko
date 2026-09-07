@@ -1,4 +1,5 @@
 import type { DatabaseLike } from '../../types/database';
+import { messageReadState, readableMessageSql, type AdmissionMessage } from '../message-admission';
 import type { PushPayload } from './types';
 
 interface ConversationRow {
@@ -42,13 +43,13 @@ export function buildConversationRecoveryPrompt(
   let rows: ConversationRow[] = [];
   try {
     rows = (db.prepare(`
-      SELECT id, content, is_me
+      SELECT *
       FROM messages
       WHERE channel_id=? AND agent_id=? AND channel_type!=2
-        AND (content_type IS NULL OR content_type!=11)
+        AND (content_type IS NULL OR content_type!=11) AND ${readableMessageSql()}
       ORDER BY timestamp DESC
       LIMIT ?
-    `).all(payload.fromUid, payload.agentId, contextWindow + 1) as ConversationRow[]).reverse();
+    `).all(payload.fromUid, payload.agentId, payload.agentId, contextWindow + 1) as (ConversationRow & AdmissionMessage)[]).filter(row => messageReadState(db, payload.agentId, row) === 'readable').reverse();
   } catch (_) {
     return deliveryContent;
   }
@@ -74,6 +75,7 @@ export function buildConversationRecoveryPrompt(
   for (const row of rows) {
     const line = `${row.is_me ? 'Agent' : 'Visitor'}: ${quoteHistory(row.content)}`;
     if (used + line.length > MAX_CONTEXT_CHARS) continue;
+    if (row.id) payload.registerContextMessage?.(row.id);
     history.push(line);
     used += line.length;
   }

@@ -18,11 +18,11 @@ function database() {
   return { db, dbPath, close() { db.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test('schema 9 retains additive provider routing tables and a private HMAC key', () => {
+test('schema 10 retains additive provider routing tables and a private HMAC key', () => {
   const fixture = database();
   try {
-    assert.equal(SCHEMA_VERSION, 9);
-    assert.equal(fixture.db.prepare('PRAGMA user_version').get().user_version, 9);
+    assert.equal(SCHEMA_VERSION, 10);
+    assert.equal(fixture.db.prepare('PRAGMA user_version').get().user_version, 10);
     for (const name of ['provider_agent_identity_bindings', 'provider_routing_conversations', 'provider_message_routes']) {
       assert.ok(fixture.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
     }
@@ -31,7 +31,7 @@ test('schema 9 retains additive provider routing tables and a private HMAC key',
   } finally { fixture.close(); }
 });
 
-test('v7 upgrade is backed up and schema 9 migration is idempotent', () => {
+test('v7 upgrade is backed up and schema 10 migration is idempotent', () => {
   const fixture = database();
   const dbPath = fixture.dbPath;
   fixture.db.exec('PRAGMA user_version=7');
@@ -39,8 +39,8 @@ test('v7 upgrade is backed up and schema 9 migration is idempotent', () => {
   fixture.db.close();
   const upgraded = initDatabase(dbPath, { silent: true });
   try {
-    assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 9);
-    assert.ok(fs.existsSync(`${dbPath}.pre-schema-v9.bak`));
+    assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 10);
+    assert.ok(fs.existsSync(`${dbPath}.pre-schema-v10.bak`));
     upgraded.close();
     const reopened = initDatabase(dbPath, { silent: true });
     assert.equal(reopened.prepare("SELECT COUNT(*) AS c FROM config WHERE type='provider_session_hmac_key_v1'").get().c, 1);

@@ -104,6 +104,7 @@ interface ContextDependencies {
   sendMessage?: SendMessage;
   enqueueOwnerIntervention?: (record: UnknownRecord) => unknown;
   outboundMessageResults?: OutboundMessageResultStore;
+  prepareGroupHistory?: (agentId: string, channelId: string) => Promise<void>;
 }
 
 interface AgentOperationParams extends UnknownRecord {
@@ -139,6 +140,7 @@ function createContext({
   sendMessage: passedSendMessage,
   enqueueOwnerIntervention,
   outboundMessageResults,
+  prepareGroupHistory,
 }: ContextDependencies) {
   // 统一 IM 投递：优先用 initCore 注入的，未传则自建（CLI 等独立调用兼容）
   const wukongimSender = passedSender || agentManager;
@@ -186,6 +188,7 @@ function createContext({
     getEnabledChannel: () => databaseAPI.getEnabledChannel?.() || null,
     enqueueOwnerIntervention,
     outboundMessageResults,
+    prepareGroupHistory,
 
     // ── 消息 ──
     sendMessage: (...args: unknown[]) => {

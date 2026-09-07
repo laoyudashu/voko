@@ -249,6 +249,7 @@ class OpenCodeAttachProvider extends PushProvider {
       },
     });
     try {
+    await payload.assertSubmissionCurrent?.();
     const result = await runCli({
       cmd: this._cmd,
       args,

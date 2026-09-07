@@ -587,12 +587,13 @@ class WorkBuddyHttpProvider extends PushProvider {
       let reply = '';
       let stopReason = '';
       if (!localReply) this._activeAcp.set(turnId, { connectionId, sessionId: nativeSessionId, state: this._currentState() });
+      const prompt = localReply ? deliveryPayload.content
+        : buildConversationDeliveryPrompt(this._db, deliveryPayload, true, this._contextWindow);
+      await deliveryPayload.assertSubmissionCurrent?.();
       promptStarted = true;
       stage = 'prompt';
       if (!localReply) this.notifyProviderEvent({ type: 'accepted', agentId: payload.agentId, messageId: payload.messageId,
         turnId, nativeSessionId, terminal: false });
-      const prompt = localReply ? deliveryPayload.content
-        : buildConversationDeliveryPrompt(this._db, deliveryPayload, true, this._contextWindow);
       const result = await this._acpRequest(connectionId, 'session/prompt', {
         sessionId: nativeSessionId, prompt: buildAcpAttachmentPrompt(prompt, deliveryPayload, {
           imageSupported: promptCapabilities.image === true,

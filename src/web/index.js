@@ -998,6 +998,13 @@ function createWebRouter(handlers, db, opts={}){
     next();
   });
 
+  // Only a real Web session grants raw owner history. Missing caller metadata
+  // and the CLI/MCP instance token deliberately do not grant this capability.
+  R.use((req,res,next)=>{
+    if(opts.webSessions?.resolveRequest(req)) return require('../core/owner-history-context').withOwnerHistory(next);
+    next();
+  });
+
   function webAuthorizationUi(req){
     if(['/login','/bug-report'].includes(String(req.path||'')))return'';
     const T=req.t,L=k=>esc(T(k));
@@ -2788,7 +2795,10 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       let rowsHtml='<tr><td colspan="5" class="meta" style="text-align:center">'+L('web.interventions.empty')+'</td></tr>';
       let total=0,totalPages=0;
 
-      if(db){
+      if(!require('../core/owner-history-context').isOwnerHistory()) {
+        rowsHtml='<tr><td colspan="5"><a href="/login">'+L('web.reauth.required')+'</a></td></tr>';
+      }
+      if(db&&require('../core/owner-history-context').isOwnerHistory()){
         // 构造搜索条件
         let where='1=1';const params=[];
         if(keyword){

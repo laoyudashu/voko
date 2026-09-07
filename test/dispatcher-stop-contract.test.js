@@ -20,16 +20,23 @@ function fixture(overrides = {}) {
   return { dispatcher, provider, calls, statuses, replies, payload };
 }
 
-test('stop closes admission and distinguishes an active turn from its queued successor', async () => {
+test('stop closes admission and distinguishes an active turn from its queued successor', async t => {
   const active = deferred();
   const f = fixture();
   f.provider.push = async payload => { f.calls.push(payload.messageId); await active.promise; };
-  const ingress = { dispatcher: f.dispatcher, _notifyUI() {} };
-  const returned = MessageHandler.prototype._dispatchInboundTurn.call(ingress, {
+  const db = require('../build/core/database').initDatabase(':memory:', { silent: true });
+  t.after(() => db.close());
+  db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,created_at,updated_at)
+    VALUES('agent','agent','agent_local','test','','published','public',1,1)`).run();
+  db.prepare(`INSERT INTO messages(id,agent_id,from_uid,to_uid,channel_id,channel_type,content,timestamp,is_me,status)
+    VALUES('active','agent','visitor','agent_local','visitor',1,'synthetic',1,0,'received')`).run();
+  require('../build/core/message-admission').finishAdmission(db,'agent','active','allowed','ALLOWED');
+  const ingress = { db, dispatcher: f.dispatcher, _notifyUI() {} };
+  const returned = await MessageHandler.prototype._dispatchInboundTurn.call(ingress, {
     turnId: 'active', items: [{ ...f.payload('active'), timestamp: Date.now() }],
     sourceMessageIds: ['active'], firstReceivedAt: Date.now(),
   });
-  assert.equal(returned, undefined, 'production MessageHandler callback owns no Provider promise');
+  assert.equal(returned, undefined, 'ingress waits for admission but does not wait for the active Provider promise');
   f.dispatcher.dispatch('agent', f.payload('queued'));
   await tick();
   const stop = f.dispatcher.stop({ timeoutMs: 20 });

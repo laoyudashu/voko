@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
-const { ProviderSecurityPolicyService, applyProviderSecurityArgs } = require('../build/core/provider-security-policy');
+const { ProviderSecurityPolicyService, applyProviderSecurityArgs, appendProviderSecurityPrompt } = require('../build/core/provider-security-policy');
 const { initDatabase } = require('../build/core/database');
 const { createDispatcher } = require('../build/core/dispatcher');
 
@@ -37,6 +37,7 @@ test('provider security definitions are Provider-specific and preserve current d
   const { service } = fixture();
   const policy = service.inspect('agent-1');
   assert.equal(policy.transportId, 'workbuddy-http');
+  assert.equal(policy.assurance, 'provider_enforced');
   assert.equal(policy.config.dataFileAccess, 'none');
   const dataFileControl = policy.controls.find(item => item.id === 'dataFileAccess');
   assert.equal(dataFileControl.values.find(item => item.value === 'read').risk, 'high');
@@ -68,6 +69,7 @@ test('office Provider transports expose only controls backed by their real invoc
   const dumate = fixture('dumate').service.inspect('agent-1', 'dumate-http');
   assert.deepEqual(dumate.controls.filter(item => item.editable).map(item => item.id),
     ['sessionPersistence', 'additionalPrompt']);
+  assert.equal(dumate.assurance, 'fixed_or_unverified');
 });
 
 test('unverified dynamic Provider hides native parameters but keeps VOKO safety prompt editable', () => {
@@ -75,17 +77,22 @@ test('unverified dynamic Provider hides native parameters but keeps VOKO safety 
   db.prepare('DELETE FROM provider_security_policies WHERE agent_id=?').run('agent-1');
   const policy = service.inspect('agent-1', 'qwen-office-cli');
   assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
+  assert.equal(policy.assurance, 'fixed_or_unverified');
 });
 
 test('Providers without verified native flags still lease the editable VOKO visitor prompt', () => {
   const { service } = fixture('opencode');
   const policy = service.inspect('agent-1', 'opencode-cli');
   assert.equal(policy.supported, true);
+  assert.equal(policy.assurance, 'fixed_or_unverified');
   assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
   assert.match(policy.config.additionalPrompt, /VOKO.*访客消息/);
   const lease = service.acquireTurnLease({ agentId: 'agent-1', messageId: 'visitor-turn-1', channelType: 1 }, 'opencode-cli');
   assert.equal(lease.transportId, 'opencode-cli');
   assert.match(lease.promptInstructions.join('\n'), /访客消息/);
+  const prompt = appendProviderSecurityPrompt('visitor input', lease);
+  assert.match(prompt, /本提示语不代表 Provider 已强制执行权限限制/);
+  assert.doesNotMatch(prompt, /实际权限由 Provider 参数强制/);
 });
 
 test('scoped Provider policy keeps one Agent policy and independent transport policies', () => {

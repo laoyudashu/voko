@@ -18,6 +18,7 @@ function createFixture(overrides = {}) {
   const notified = [];
   const systemMessages = [];
   const handler = new MessageHandler(db, {
+    getGroupInfo: async () => ({ status:'active',members:[{uid:'visitor-1',role:'member'},{uid:'agent-uid',role:'member'}] }),
     dispatcher: {
       dispatch(agentId, payload) {
         dispatched.push({ agentId, payload });
@@ -453,7 +454,7 @@ describe('Lite Messenger contract smoke', () => {
     }
   });
 
-  it('returns a stable offline-forward payload without dispatching, including legacy group routing', () => {
+  it('returns a stable offline-forward payload without dispatching, including legacy group routing', async () => {
     const fixture = createFixture();
     try {
       const direct = fixture.handler.handleAgentMessage('agent-1', inbound({
@@ -485,11 +486,12 @@ describe('Lite Messenger contract smoke', () => {
       assert.deepEqual(group.mention, { uids: ['agent-uid'] });
       assert.equal(fixture.dispatched.length, 0);
     } finally {
+      await fixture.handler.flushInboundTurns();
       fixture.db.close();
     }
   });
 
-  it('hard-denies inbound content while soft-deny still forwards, with auditable records', async () => {
+  it('quarantines hard and unreviewed soft inbound denials, with auditable records', async () => {
     const interventions = [];
     const systemMessages = [];
     let action = 'hard_deny';
@@ -535,8 +537,8 @@ describe('Lite Messenger contract smoke', () => {
         clientMsgNo: 'audit-soft-client-1',
       }));
       await fixture.handler.flushInboundTurns();
-      assert.equal(fixture.dispatched.length, 1);
-      assert.equal(fixture.dispatched[0].payload.messageId, 'audit-soft-1');
+      assert.equal(fixture.dispatched.length, 0);
+      assert.equal(fixture.db.prepare("SELECT state FROM agent_message_admissions WHERE message_id='audit-soft-1'").get().state, 'denied');
       assert.equal(interventions.length, 4);
     } finally {
       fixture.db.close();
