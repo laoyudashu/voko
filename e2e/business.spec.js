@@ -240,7 +240,24 @@ test('provider failure leaves the message available for Pull and recovery restor
   const firstMessageSeq = 50 + runOffset;
   const response = await request.post('/__test__/provider', { data: { available: false } });
   expect(response.ok()).toBeTruthy();
+  const { DatabaseSync } = require('node:sqlite');
+  const { createLocalWebSessionStore } = require('../build/core/local-web-session');
+  const sessionDb = new DatabaseSync(manifest().dbPath);
+  sessionDb.exec('PRAGMA busy_timeout=5000');
+  let session;
+  try { session = createLocalWebSessionStore(sessionDb).create('e2e-owner@example.test'); }
+  finally { sessionDb.close(); }
+  await page.context().addCookies([{ name: 'voko_session', value: session.token,
+    url: new URL(testInfo.project.use.baseURL).origin, httpOnly: true, sameSite: 'Strict' }]);
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.__testSockets = [];
+    window.WebSocket = class extends NativeWebSocket {
+      constructor(...args) { super(...args); window.__testSockets.push(this); }
+    };
+  });
   await page.goto(`/agents/e2e-agent/c/${channelId}`);
+  await expect.poll(() => page.evaluate(() => window.__testSockets.some(socket => socket.url.endsWith('/ws') && socket.readyState === WebSocket.OPEN))).toBe(true);
   await inject(request, {
     toUid: 'e2e-im-uid',
     fromUid: 'e2e-visitor',

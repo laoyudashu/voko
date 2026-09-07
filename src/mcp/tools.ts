@@ -1,3 +1,6 @@
+import { readableMessageSql, messageReadState, parseMention } from '../core/message-admission';
+import { isOwnerHistory } from '../core/owner-history-context';
+import { GroupMembershipSnapshotCache, GroupReplyRouteResolver } from '../core/group-reply-route';
 export {};
 
 /**
@@ -929,14 +932,42 @@ function createToolHandlers(cx: McpContext) {
   function _publicClientId(clientId?: string): string | null {
     return clientId?.startsWith('session:') ? 'session-scoped' : clientId || null;
   }
+  const groupMemberships = new GroupMembershipSnapshotCache((agentId, channelId) => groupClient.getInfo(cx, { agentId, channelId }));
+  const groupQualifications = new GroupReplyRouteResolver(cx.db, new MessageRouteStore(cx.db), groupMemberships);
+  const historyPredicate = (alias = 'messages', agentExpression = '?') =>
+    isOwnerHistory() ? `(${agentExpression} IS NOT NULL)` : readableMessageSql(alias, agentExpression);
+  async function qualifyGroupRows(agentId: string, rows: MessageDbRow[], triggering: boolean): Promise<MessageDbRow[]> {
+    if (!triggering && isOwnerHistory()) return rows;
+    const result: MessageDbRow[] = [];
+    for (const row of rows) {
+      if (row.channel_type !== 2) { result.push(row); continue; }
+      const qualified = await groupQualifications.qualify({ agentId, channelId: row.channel_id,
+        fromUid: row.from_uid, mentionAll: triggering && parseMention(row.mention)?.all === true });
+      if (qualified.state === 'valid') result.push(row);
+      else if (qualified.reason === 'membership_unavailable') throw Object.assign(new Error('Group membership unavailable'), { code: 'GROUP_MEMBERSHIP_UNAVAILABLE' });
+    }
+    // Membership retrieval awaits trusted server data; lists may have changed while waiting.
+    return result.filter(row => messageReadState(cx.db, agentId, row,
+      triggering && !(row.channel_type !== 2 && row.is_me === 1) ? 'trigger' : 'context') === 'readable');
+  }
+  async function visibleIntervention(row: InterventionDbRow): Promise<InterventionDbRow> {
+    if (isOwnerHistory()) return row;
+    let readable = !row.source_message_id && !/^(audit_|private_req_)/.test(row.id);
+    if (row.source_message_id) {
+      const source = cx.db.prepare('SELECT * FROM messages WHERE id=?').get<MessageDbRow>(row.source_message_id);
+      if (source && messageReadState(cx.db, row.agent_id, source) === 'readable') {
+        try { readable = (await qualifyGroupRows(row.agent_id, [source], false)).length > 0; } catch (_) { readable = false; }
+      }
+    }
+    return readable ? row : { ...row, problem: '[Message withheld by admission policy]', agent_suggestion: null };
+  }
   function _filterPullRowsForCaller(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
-    if (!agentId || rows.length === 0) return rows;
+    if (!agentId || rows.length === 0) return [];
     const self = cx.query<{ imUid?: string }>('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1', [agentId])[0]?.imUid;
     rows = rows.filter((row) => {
       if (Number(row.channel_type) !== 2) return true;
-      let mention: { all?: boolean; uids?: string[] } | null = null;
-      try { mention = typeof row.mention === 'string' ? JSON.parse(row.mention) : (row.mention as any); } catch (_) {}
-      if (!mention?.all && (!self || !Array.isArray(mention?.uids) || !mention.uids.includes(self))) return false;
+      const mention = parseMention(row.mention);
+      if (!mention || (!mention.all && (!self || !Array.isArray(mention?.uids) || !mention.uids.includes(self)))) return false;
       const invalid = cx.query<{ status?: string }>(`SELECT status FROM provider_message_routes
         WHERE message_id=? AND agent_id=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1`,
       [row.id, agentId])[0];
@@ -2025,6 +2056,10 @@ function createToolHandlers(cx: McpContext) {
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         routeMetadata,
       );
+      if (channelType === 1 && result?.success === false) {
+        cx.outboundMessageResults?.recordSendFailure(String(p.agentId), outboundMessageId,
+          result.code || result.error, result.outcomeUnknown === true);
+      }
       if (outboundRouteId) {
         try {
           if (result?.success !== false) messageRoutes.setStatus(outboundRouteId, 'active');
@@ -2085,8 +2120,16 @@ function createToolHandlers(cx: McpContext) {
         'SELECT id,to_uid,status,is_me FROM messages WHERE id=? AND agent_id=? LIMIT 1', [p.messageId, p.agentId],
       )[0];
       if (!message || Number(message.is_me) !== 1) return { success: false, code: 'MESSAGE_RESULT_NOT_FOUND', error: 'Message not found' };
-      const tracked = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
-      const transportState = message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
+      const observed = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
+      // Persisted transport failures remain terminal after the in-memory receipt
+      // store is lost on restart. Do not replace a confirmed receiver outcome.
+      const localFailure = (!observed || observed.state === 'UNCONFIRMED')
+        && ['failed', 'unknown'].includes(message.status);
+      const tracked = localFailure ? { ...observed, state: message.status === 'unknown' ? 'DELIVERY_UNKNOWN' : 'FAILED',
+        phase: null, turnId: null, replyMessageId: null, updatedAt: observed?.updatedAt || null,
+        reasonCode: message.status === 'unknown' ? 'MESSAGE_DELIVERY_UNKNOWN' : 'MESSAGE_SEND_FAILED' } : observed;
+      const transportState = message.status === 'unknown' ? 'UNKNOWN'
+        : message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
       const reply = tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
         : tracked && ['FAILED','AUTH_REQUIRED'].includes(tracked.state)
           ? { state: 'FAILED', messageId: null, reasonCode: tracked.reasonCode }
@@ -2105,6 +2148,7 @@ function createToolHandlers(cx: McpContext) {
     // ─── 9. 聊天历史 ───
 
     async get_chat_history(p: McpToolParams = {}) {
+      if (!p.agentId) return { success: false, code: 'AGENT_ID_REQUIRED' };
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
       const limit = Math.min(p.limit || 20, 200);
@@ -2126,9 +2170,10 @@ function createToolHandlers(cx: McpContext) {
       }
 
       if (channelType === 2) {
+        if (!isOwnerHistory()) await cx.prepareGroupHistory?.(p.agentId, channelId);
         // 群聊：共享消息表按 message id 只存一份；兼容历史重复数据，仍先去重再分页
-        let gsql = `SELECT messages.* FROM messages WHERE channel_id=? AND channel_type=2`;
-        const gparams: unknown[] = [channelId];
+        let gsql = `SELECT messages.* FROM messages WHERE channel_id=? AND channel_type=2 AND ${historyPredicate()}`;
+        const gparams: unknown[] = [channelId, p.agentId];
         if (requestedConversation) {
           gsql += ` AND EXISTS (SELECT 1 FROM provider_message_routes pmr
             WHERE pmr.message_id=messages.id AND pmr.agent_id=? AND pmr.conversation_id=?)`;
@@ -2138,7 +2183,7 @@ function createToolHandlers(cx: McpContext) {
         gsql += ascending
           ? ` ORDER BY timestamp ASC, message_seq ASC, id ASC`
           : ` ORDER BY timestamp DESC, message_seq DESC, id DESC`;
-        const all = cx.query<MessageDbRow>(gsql, gparams);
+        const all = await qualifyGroupRows(p.agentId, cx.query<MessageDbRow>(gsql, gparams), false);
         const seen = new Set();
         const dedup = [];
         for (const r of all) {
@@ -2157,8 +2202,8 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 单聊：保留 agent_id 过滤，排除群聊消息防 channel_id 碰撞串数据
-      let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2`;
-      const params: unknown[] = [channelId, p.agentId];
+      let sql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2 AND ${historyPredicate()}`;
+      const params: unknown[] = [channelId, p.agentId, p.agentId];
       if (requestedConversation) {
         sql += ` AND EXISTS (SELECT 1 FROM provider_message_routes pmr
           WHERE pmr.message_id=messages.id AND pmr.agent_id=? AND pmr.conversation_id=?)`;
@@ -2204,9 +2249,9 @@ function createToolHandlers(cx: McpContext) {
       }
 
       // 最近对话（可配置条数、可翻页）
-      const recentSql = `SELECT content, timestamp, is_me FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
+      const recentSql = `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2 AND content_type!=11 AND ${historyPredicate()} ORDER BY timestamp DESC LIMIT ? OFFSET ?`;
       const recentMulti = msgLimit + 1; // 多取 1 条用来算 hasMore
-      const recentParams = [visitorId, agentId, recentMulti, msgOffset];
+      const recentParams = [visitorId, agentId, agentId, recentMulti, msgOffset];
       const recentRows = cx.query<MessageDbRow>(recentSql, recentParams);
       const hasMore = recentRows.length > msgLimit;
       if (hasMore) recentRows.pop();
@@ -2217,8 +2262,12 @@ function createToolHandlers(cx: McpContext) {
       }));
 
       // 入站审核统计（只算访客触发的拦截，按 agent 隔离）
-      const auditSql = `SELECT is_me, content, timestamp FROM messages WHERE from_uid=? AND agent_id=? AND content_type=11 ORDER BY timestamp DESC LIMIT 50`;
-      const auditParams = [visitorId, agentId];
+      const auditSql = `SELECT is_me,content,timestamp FROM messages WHERE from_uid=? AND agent_id=? AND content_type=11
+        UNION ALL SELECT 0 AS is_me,json_object('action',a.audit_action,'keyword',a.audit_keyword) AS content,m.timestamp
+        FROM agent_message_admissions a JOIN messages m ON m.id=a.message_id
+        WHERE m.from_uid=? AND a.agent_id=? AND m.channel_type=2 AND a.audit_action IS NOT NULL
+        ORDER BY timestamp DESC LIMIT 50`;
+      const auditParams = [visitorId, agentId, visitorId, agentId];
       const auditRows = cx.query(auditSql, auditParams);
       let audit = { totalHits: 0, hardDenyCount: 0, softDenyCount: 0, lastHitAt: null, lastKeyword: null };
       for (const r of auditRows) {
@@ -2272,10 +2321,11 @@ function createToolHandlers(cx: McpContext) {
       if (keyword) { const kw='%'+keyword+'%'; whereClause += ` AND (c.name LIKE ? OR c.user_uid LIKE ?)`; whereParams.push(kw, kw); }
       // Filter, count and page the same visible-message relation. The existing
       // timestamp/rowid tie-break and group mention semantics remain unchanged.
-      const visibleMessageWhere = `m.channel_id=c.channel_id AND m.agent_id=c.agent_id AND m.is_me IN (0,1)
+      const visibleMessageWhere = `m.channel_id=c.channel_id AND m.channel_type=c.channel_type AND (m.channel_type=2 OR m.agent_id=c.agent_id) AND m.is_me IN (0,1)
+        AND ${historyPredicate('m', 'c.agent_id')}
         AND (m.content_type IS NULL OR m.content_type<10) AND m.id NOT LIKE 'e2ee-status-%'`;
       const summaries = `WITH summaries AS (
-        SELECT c.*, latest.content AS visible_content, latest.timestamp AS visible_timestamp,
+        SELECT c.*, latest.id AS visible_id, latest.from_uid AS visible_sender, latest.content AS visible_content, latest.timestamp AS visible_timestamp,
           latest.is_me AS visible_is_me, latest.content_type AS visible_content_type,
           CASE WHEN c.channel_type IS NOT 2 AND latest.is_me=0 THEN 1 ELSE 0 END AS needs_reply
         FROM conversations c LEFT JOIN messages latest ON latest.rowid=(
@@ -2295,13 +2345,27 @@ function createToolHandlers(cx: McpContext) {
             ),0)
         ) ELSE 0 END AS pending_count
         FROM summaries c ${replyFilter} ORDER BY c.last_timestamp DESC LIMIT ? OFFSET ?`, [...whereParams, limit, offset]);
+      if (!isOwnerHistory()) {
+        for (const row of rows) {
+          if (row.channel_type !== 2 || !row.visible_id) continue;
+          const message = cx.db.prepare('SELECT * FROM messages WHERE id=?').get<MessageDbRow>(row.visible_id);
+          try {
+            if (!message || !(await qualifyGroupRows(String(p.agentId || ''), [message], false)).length) row.visible_content = '';
+          } catch (_) { row.visible_content = ''; }
+        }
+      }
+      if (!isOwnerHistory()) for (const row of rows) {
+        if (!row.visible_id) continue;
+        const message = cx.db.prepare('SELECT * FROM messages WHERE id=?').get<MessageDbRow>(row.visible_id);
+        if (!message || messageReadState(cx.db, String(p.agentId || ''), message) !== 'readable') row.visible_content = '';
+      }
       return {
         success: true,
         total: countRow[0]?.cnt || 0,
         conversations: rows.map((r) => r.channel_type === 2 ? {
           channelId: r.channel_id,
           name: r.name,
-          lastMessage: r.last_message,
+          lastMessage: r.visible_content || '',
           lastTimestamp: r.last_timestamp,
           unreadCount: r.unread_count || 0,
           needsReply: false,
@@ -2654,8 +2718,9 @@ function createToolHandlers(cx: McpContext) {
         AND expire_time IS NOT NULL AND expire_time<=?`, [now, now, p.agentId, now]);
       // 按 id 查单条
       if (p.id) {
-        const r = cx.query(`SELECT * FROM owner_interventions
+        const stored = cx.query<InterventionDbRow>(`SELECT * FROM owner_interventions
           WHERE id=? AND agent_id=? AND status NOT IN ('expired','resolved','cancelled')`, [p.id, p.agentId])[0];
+        const r = stored ? await visibleIntervention(stored) : null;
         return {
           success: true,
           interventions: r ? [{
@@ -2705,10 +2770,10 @@ function createToolHandlers(cx: McpContext) {
       }
       params.push(multi, automaticCursor ? 0 : offset);
 
-      const rows = cx.query<InterventionDbRow>(
+      const rows = await Promise.all(cx.query<InterventionDbRow>(
         `SELECT * FROM owner_interventions WHERE ${conditions.join(' AND ')} ORDER BY ask_time ${automaticCursor ? 'ASC, id ASC' : 'DESC'} LIMIT ? OFFSET ?`,
         params
-      );
+      ).map(visibleIntervention));
 
       const hasMore = rows.length > limit;
       if (hasMore) rows.pop();
@@ -3329,42 +3394,22 @@ function createToolHandlers(cx: McpContext) {
           });
         }
 
-        if (blockTimeout > 0) {
-          const prev = this._fetchBlocks.get(key);
-          if (prev) prev.aborted = true;
-          const ctrl = { aborted: false };
-          this._fetchBlocks.set(key, ctrl);
-          try {
-            const rows = await this._pollSingleChannel(
-              p.agentId, targetChannelId, seq, limit, onlyReplies, blockTimeout, ctrl, targetChannelType
-            );
-            const hasMore = rows.length > limit;
-            if (hasMore) rows.pop();
-            // 分页时只推进到本页最后一条，避免把尚未返回的消息跳过；没有下一页时
-            // 再按全量 maxSeq 推进，以免 onlyReplies 过滤掉自己发送的消息后反复扫描。
-            const cursorSeq = hasMore
-              ? Number(rows.at(-1)?.message_seq || seq)
-              : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
-            if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
-            const filtered = this._a2aPreparePull(p.agentId, rows);
-            return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: _publicClientId(clientId) });
-          } finally {
-            if (this._fetchBlocks.get(key) === ctrl) this._fetchBlocks.delete(key);
-          }
+        const prev = this._fetchBlocks.get(key);
+        if (prev) prev.aborted = true;
+        const ctrl = { aborted: false };
+        if (blockTimeout > 0) this._fetchBlocks.set(key, ctrl);
+        try {
+          const page = blockTimeout > 0
+            ? await this._pollSingleChannel(p.agentId, targetChannelId, seq, limit, onlyReplies, blockTimeout, ctrl, targetChannelType)
+            : await this._queryMessages(p.agentId, targetChannelId, seq, onlyReplies, limit, targetChannelType);
+          const rows = page.rows.slice(0, limit);
+          const cursorSeq = page.cursor;
+          if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
+          return fmtPullResult(this._a2aPreparePull(p.agentId, rows), page.hasMore, {
+            _agentId: p.agentId, cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: _publicClientId(clientId) });
+        } finally {
+          if (this._fetchBlocks.get(key) === ctrl) this._fetchBlocks.delete(key);
         }
-
-        const rows = this._queryMessages(
-          p.agentId, targetChannelId, seq, onlyReplies, limit, targetChannelType
-        );
-        const hasMore = rows.length > limit;
-        if (hasMore) rows.pop();
-        // 有下一页时保留未返回消息的序号；最后一页才跳过已过滤的自发消息。
-        const cursorSeq = hasMore
-          ? Number(rows.at(-1)?.message_seq || seq)
-          : this._maxSeqAll(p.agentId, targetChannelId, targetChannelType);
-        if (cursorSeq > seq) this._setChannelCursor(p.agentId, targetChannelId, cursorSeq, targetChannelType, clientId);
-        const filtered = this._a2aPreparePull(p.agentId, rows);
-        return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursor: cursorSeq, nextMessageSeq: cursorSeq, clientId: _publicClientId(clientId) });
       }
 
       // ─── 全量模式（不指定 visitorId）：按 channel 分别维护游标 ───
@@ -3382,6 +3427,7 @@ function createToolHandlers(cx: McpContext) {
 
       const allRows: MessageDbRow[] = [];
       const cursorByChannel: Record<string, number> = {};
+      const pages: Array<{ channelId: string; chType: number; seq: number; page: { rows: MessageDbRow[]; cursor: number; hasMore: boolean } }> = [];
       for (const ch of channels) {
         const channelId = ch.channel_id;
         const isGroup = ch.channel_type === 2;
@@ -3405,20 +3451,24 @@ function createToolHandlers(cx: McpContext) {
           cursorByChannel[`${chType}:${channelId}`] = channelMaxSeq;
           continue;
         }
-        const rows = this._queryMessages(p.agentId, channelId, seq, onlyReplies, limit, chType);
-        allRows.push(...rows);
-        // 游标推进基于全量 maxSeq（解耦 onlyReplies）
-        const channelMaxSeq = this._maxSeqAll(p.agentId, channelId, chType);
-        if (channelMaxSeq > 0) this._setChannelCursor(p.agentId, channelId, channelMaxSeq, chType, clientId);
-        cursorByChannel[`${chType}:${channelId}`] = channelMaxSeq;
+        const page = await this._queryMessages(p.agentId, channelId, seq, onlyReplies, limit, chType);
+        allRows.push(...page.rows);
+        pages.push({ channelId, chType, seq, page });
       }
 
       // 合并后按 message_seq 升序，保证分页稳定
       allRows.sort((a, b) => (a.message_seq || 0) - (b.message_seq || 0));
 
-      const hasMore = allRows.length > limit;
-      if (hasMore) allRows.length = limit;
+      const hasMore = allRows.length > limit || pages.some(p => p.page.hasMore);
+      if (allRows.length > limit) allRows.length = limit;
 
+      const emitted = new Set(allRows.map(row => row.id));
+      for (const { channelId, chType, seq, page } of pages) {
+        const withheld = page.rows.find(row => !emitted.has(row.id));
+        const cursor = Math.max(seq, withheld ? Math.min(page.cursor, Number(withheld.message_seq) - 1) : page.cursor);
+        if (cursor > seq) this._setChannelCursor(p.agentId, channelId, cursor, chType, clientId);
+        cursorByChannel[`${chType}:${channelId}`] = cursor;
+      }
       const filtered = this._a2aPreparePull(p.agentId, allRows);
       return fmtPullResult(filtered, hasMore, { _agentId: p.agentId, cursorByChannel, clientId: _publicClientId(clientId) });
     },
@@ -3455,36 +3505,40 @@ function createToolHandlers(cx: McpContext) {
       } catch (_: unknown) { return 0; }
     },
 
-    _queryMessages(
-      agentId: string | undefined,
-      channelId: string,
-      seq: number,
-      onlyReplies: boolean,
-      limit: number,
-      channelType: number = 1,
-    ): MessageDbRow[] {
-      // 群聊（channel_type=2）一条消息多 agent 共享，不按 agent_id 过滤
-      let sql, params;
-      if (channelType === 2) {
-        sql = `SELECT * FROM messages WHERE channel_id=? AND channel_type=2 AND message_seq > ?`;
-        params = [channelId, seq];
-      } else {
-        sql = `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND channel_type!=2 AND message_seq > ?`;
-        params = [agentId, channelId, seq];
+    async _queryMessages(agentId: string | undefined, channelId: string, seq: number,
+      onlyReplies: boolean, limit: number, channelType = 1): Promise<{ rows: MessageDbRow[]; cursor: number; hasMore: boolean }> {
+      if (!agentId) return { rows: [], cursor: seq, hasMore: false };
+      const rows: MessageDbRow[] = [];
+      let cursor = seq;
+      // Scan bounded pages, filtering before the response limit. A real pending
+      // trigger is a barrier; unmentioned group history never becomes one.
+      for (;;) {
+        const raw = cx.query<MessageDbRow>(channelType === 2
+          ? `SELECT * FROM messages WHERE channel_id=? AND channel_type=2 AND message_seq>? ORDER BY message_seq ASC LIMIT 200`
+          : `SELECT * FROM messages WHERE agent_id=? AND channel_id=? AND channel_type!=2 AND message_seq>? ORDER BY message_seq ASC LIMIT 200`,
+        channelType === 2 ? [channelId, cursor] : [agentId, channelId, cursor]);
+        if (!raw.length) return { rows, cursor, hasMore: false };
+        for (const row of raw) {
+          const state = messageReadState(cx.db, agentId, row, 'trigger');
+          if (state === 'pending') return { rows, cursor, hasMore: true };
+          const own = row.channel_type !== 2 && row.is_me === 1;
+          const readable = state === 'readable' || (!onlyReplies && own && messageReadState(cx.db, agentId, row) === 'readable');
+          const qualified = readable ? await qualifyGroupRows(agentId, [row], true) : [];
+          const selected = qualified.length ? _filterPullRowsForCaller(agentId, qualified) : [];
+          if (selected.length) {
+            rows.push(...selected);
+            if (rows.length > limit) return { rows, cursor, hasMore: true };
+          }
+          cursor = Number(row.message_seq);
+        }
+        if (raw.length < 200) return { rows, cursor, hasMore: false };
       }
-      if (onlyReplies) {
-        if (channelType === 2) {
-          sql += ` AND from_uid!=COALESCE((SELECT imUid FROM agents WHERE agent_id=? LIMIT 1),'')`;
-          params.push(agentId);
-        } else sql += ` AND is_me!=1`;
-      }
-      sql += ` ORDER BY message_seq ASC LIMIT ?`;
-      params.push(limit + 1);
-      return _filterPullRowsForCaller(agentId, cx.query<MessageDbRow>(sql, params));
     },
 
     /** push 不可用时，pull 复用 dispatcher 的 A2A 身份识别、STATE、收敛和熔断治理。 */
     _a2aPreparePull(agentId: string | undefined, rows: MessageDbRow[]): MessageDbRow[] {
+      rows = agentId ? rows.filter(row => messageReadState(cx.db, agentId, row,
+        row.channel_type !== 2 && row.is_me === 1 ? 'context' : 'trigger') === 'readable') : [];
       const dispatcher = (global as typeof globalThis & { __dispatcher?: PullDispatcher }).__dispatcher;
       if (!dispatcher?.prepareForPull || !rows.length) return rows;
       return rows
@@ -3501,15 +3555,14 @@ function createToolHandlers(cx: McpContext) {
       timeoutSec: number,
       ctrl: PollController,
       channelType: number = 1,
-    ): Promise<MessageDbRow[]> {
+    ): Promise<{ rows: MessageDbRow[]; cursor: number; hasMore: boolean }> {
       const start = Date.now();
       while (!ctrl.aborted) {
-        const rows = this._queryMessages(agentId, channelId, seq, onlyReplies, limit, channelType);
-        if (rows.length > 0) return rows;
-        if (Date.now() - start >= timeoutSec * 1000) return [];
+        const page = await this._queryMessages(agentId, channelId, seq, onlyReplies, limit, channelType);
+        if (page.rows.length > 0 || Date.now() - start >= timeoutSec * 1000) return page;
         await new Promise<void>((resolve) => setTimeout(resolve, 1000));
       }
-      return [];
+      return { rows: [], cursor: seq, hasMore: false };
     },
 
     // ─── 18. 白名单管理 ───
@@ -3686,26 +3739,17 @@ function createToolHandlers(cx: McpContext) {
         const limit = Math.min(p.limit || 20, 100);
         const offset = Math.max(0, Number(p.offset) || 0);
         // 先按 client_msg_no / message_seq 去重，再分页；多取一条用于判断是否还有更早历史。
-        const raw = cx.query<GroupHistoryRow>(
-          `WITH ranked AS (
-             SELECT id, from_uid, content, timestamp, content_type, message_seq, client_msg_no, mention,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY COALESCE(client_msg_no, CASE WHEN message_seq IS NOT NULL THEN 'seq:' || message_seq ELSE id END)
-                      ORDER BY timestamp DESC, rowid DESC
-                    ) AS rn
-             FROM messages WHERE channel_id=? AND channel_type=2
-           )
-           SELECT id, from_uid, content, timestamp, content_type, message_seq, client_msg_no, mention
-           FROM ranked WHERE rn=1 ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
-          [p.channelId, limit + 1, offset]
-        );
-        const hasMore = raw.length > limit;
-        const rows = raw.slice(0, limit);
+        const page = await this.get_chat_history({ agentId: p.agentId, channelId: p.channelId,
+          channelType: 2, limit, offset });
+        if (!page.success) return page;
+        const hasMore = page.hasMore;
+        const rows = (page.messages || []).map((m: any) => ({ from_uid: m.fromUid, content: m.content,
+          timestamp: m.timestamp, content_type: m.contentType, mention: m.mention ? JSON.stringify(m.mention) : null }));
         const nameMap = new Map(members.map((member: { uid: string; nickname?: string | null }) => [
           member.uid,
           member.nickname || member.uid,
         ]));
-        const messages = rows.reverse().map((r) => ({
+        const messages = rows.reverse().map((r: any) => ({
           fromUid: r.from_uid,
           senderName: nameMap.get(r.from_uid) || r.from_uid,
           content: r.content,

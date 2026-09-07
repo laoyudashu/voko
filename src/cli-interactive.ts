@@ -191,8 +191,7 @@ async function runInteractiveRegistration(core: any, options: InteractiveOptions
     }
     state = await manage({ action: 'select_delivery', registrationId: state.registrationId, deliveryModes: selectedModes });
     if (!state?.success) throw new Error(state?.error || 'Unable to select delivery modes');
-    const accessMode = await askYesNo(prompt, t('cli.interactive.allow_public'), false) ? 'public' : 'private';
-    state = await manage({ action: 'complete', registrationId: state.registrationId, accessMode });
+    state = await manage({ action: 'complete', registrationId: state.registrationId });
     if (!state?.success) throw new Error(state?.error || 'Agent registration failed');
     write(output, `Agent registered: ${state.result?.agentName || agentName} (${state.result?.agentId || ''})`);
     return state;

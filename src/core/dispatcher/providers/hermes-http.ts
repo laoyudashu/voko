@@ -554,6 +554,7 @@ class HermesHttpProvider extends PushProvider {
     }
 
     try {
+      await extraData?.assertSubmissionCurrent?.();
       const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
@@ -573,7 +574,8 @@ class HermesHttpProvider extends PushProvider {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            await extraData?.assertSubmissionCurrent?.();
+      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -588,7 +590,8 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            await extraData?.assertSubmissionCurrent?.();
+      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -801,7 +804,7 @@ class HermesHttpProvider extends PushProvider {
     const prompt = appendProviderAttachmentBoundary(
       buildConversationDeliveryPrompt(this.db, effectivePayload, canResumeBinding), effectivePayload);
     try {
-      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp });
+      await this.sendToSession(sessionKey, prompt, { senderUid, channelId, channelType, contentType, messageId, turnId, timestamp, assertSubmissionCurrent: payload.assertSubmissionCurrent });
       return { nativeSessionId: sessionKey, providerInstanceId: profileId,
         deliveryMode: 'http', adapterType: 'hermes-http',
         attachmentDelivery: { transportDelivered: staged.attachments.length > 0,

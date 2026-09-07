@@ -104,14 +104,14 @@ class CodexCliProvider extends CliAdapter {
       await this.refreshSecurityControlEvidence();
       evidence = this.getSecurityControlEvidence();
     }
-    if (!evidence.controlEvidence.sandboxMode) throw Object.assign(new Error([evidence.securityVerification, evidence.securityDiagnostic?.message].filter(Boolean).join(': ')),
+    if (payload.providerSecurityPolicy?.config?.sandboxMode !== 'native' && !evidence.controlEvidence.sandboxMode) throw Object.assign(new Error([evidence.securityVerification, evidence.securityDiagnostic?.message].filter(Boolean).join(': ')),
       { code: evidence.securityVerification, deliveryOutcome: 'not_delivered' });
     const expected = payload.providerSecurityPolicy?.runtimeFingerprint;
     if (expected && expected !== snapshotFromProvider(this, 'codex-cli', payload.agentId).runtimeFingerprint) {
       throw Object.assign(new Error('Codex runtime changed after policy resolution'),
         { code: 'PROVIDER_CAPABILITY_CONFLICT', deliveryOutcome: 'not_delivered' });
     }
-    payload.assertSubmissionCurrent?.();
+    await payload.assertSubmissionCurrent?.();
     return super.push(payload);
   }
 }

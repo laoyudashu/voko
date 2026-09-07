@@ -12,34 +12,19 @@ const HermesHttpProvider = require('../build/core/dispatcher/providers/hermes-ht
 const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
 
 function conversationDb() {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`
-    CREATE TABLE messages (
-      id TEXT PRIMARY KEY,
-      channel_id TEXT NOT NULL,
-      channel_type INTEGER NOT NULL,
-      content TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      is_me INTEGER NOT NULL,
-      content_type INTEGER NOT NULL,
-      agent_id TEXT NOT NULL
-    );
-    CREATE TABLE agents (
-      agent_id TEXT PRIMARY KEY,
-      backend_type TEXT NOT NULL,
-      backend_instance_id TEXT
-    );
-    INSERT INTO agents VALUES ('agent-a', 'hermes', 'hermes-profile');
-  `);
+  const db = require('../build/core/database').initDatabase(':memory:', { silent: true });
+  db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,backend_type,backend_instance_id,created_at,updated_at)
+    VALUES ('agent-a','agent-a','agent-uid','test','','published','public','hermes','hermes-profile',1,1)`).run();
   return db;
 }
 
 function insert(db, id, visitorId, agentId, content, isMe, timestamp) {
   db.prepare(`
     INSERT INTO messages
-      (id, channel_id, channel_type, content, timestamp, is_me, content_type, agent_id)
-    VALUES (?, ?, 1, ?, ?, ?, 1, ?)
-  `).run(id, visitorId, content, timestamp, isMe, agentId);
+      (id, channel_id, channel_type, content, timestamp, is_me, content_type, agent_id,from_uid,to_uid,status)
+    VALUES (?, ?, 1, ?, ?, ?, 1, ?,?,'agent-uid','received')
+  `).run(id, visitorId, content, timestamp, isMe, agentId,isMe ? 'agent-uid' : visitorId);
+  require('../build/core/message-admission').finishAdmission(db,agentId,id,'allowed','ALLOWED');
 }
 
 test('provider recovery prompt restores only the current agent and visitor history', () => {

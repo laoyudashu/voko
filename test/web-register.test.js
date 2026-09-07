@@ -278,8 +278,8 @@ describe('Web POST /agent/add 注册流程', () => {
     assert.match(html, /id="copy-agent-registration"/);
     assert.doesNotMatch(html, /ut_test_token/);
     assert.match(html, /消息接收方式/);
-    assert.match(html, /访问与发现/);
-    assert.match(html, /白名单审核/);
+    assert.doesNotMatch(html, /访问与发现|name="wf-access"|selectedAccessMode/);
+    assert.doesNotMatch(html, /白名单审核/);
     assert.match(html, /for="wf-desc">描述（选填）<\/label>/);
     assert.match(html, /for="wf-tags">标签（选填）<\/label>/);
     assert.match(html, />图标（选填）<\/label>/);

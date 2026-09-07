@@ -17,7 +17,7 @@ function createAuthenticatedEventStream(wss, path, options = {}, onConnect) {
   const clients = new Set();
   const requests = new WeakMap();
   function authorized(ws) {
-    if (authorizeConsoleRequest(requests.get(ws), options.authToken, options.webSessions)) return true;
+    if (authorizeConsoleRequest(requests.get(ws), options.ownerOnly ? undefined : options.authToken, options.webSessions)) return true;
     clients.delete(ws);
     try { ws.close(4001, 'Unauthorized'); } catch (_) {}
     return false;
@@ -29,7 +29,7 @@ function createAuthenticatedEventStream(wss, path, options = {}, onConnect) {
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
     ws.on('error', () => clients.delete(ws));
-    if (onConnect) onConnect(ws);
+    if (onConnect) onConnect(ws, req);
     ws.on('message', raw => {
       if (!authorized(ws)) return;
       try { if (JSON.parse(raw).type === 'ping') ws.send(JSON.stringify({ type: 'pong' })); } catch (_) {}
@@ -43,9 +43,8 @@ function createAuthenticatedEventStream(wss, path, options = {}, onConnect) {
   }, 30000);
   heartbeatInterval.unref?.();
   function broadcast(data) {
-    const message = JSON.stringify(data);
     for (const ws of clients) {
-      if (authorized(ws) && ws.readyState === 1) { try { ws.send(message); } catch (_) {} }
+      if (authorized(ws) && ws.readyState === 1) { try { ws.send(JSON.stringify(options.filterOutput ? options.filterOutput(data, requests.get(ws)) : data)); } catch (_) {} }
     }
   }
   function close() {
@@ -60,17 +59,24 @@ function createAuthenticatedEventStream(wss, path, options = {}, onConnect) {
 }
 
 function createMessageEventsWs(wss, options) {
-  return createAuthenticatedEventStream(wss, '/ws', options);
+  // Message and intervention events contain original bodies, including rejected content.
+  return createAuthenticatedEventStream(wss, '/ws', { ...options, ownerOnly: true });
 }
 
 function createLiveEventsWs(wss, runtimeState, taskManager, options) {
-  return createAuthenticatedEventStream(wss, '/voko/events/ws', options, ws => {
+  return createAuthenticatedEventStream(wss, '/voko/events/ws', { ...options,
+    filterOutput(data, req) {
+      if (data.type !== 'snapshot' || options.webSessions?.resolveRequest(req)) return data;
+      return { ...data, data: { ...data.data, recentEvents: [], recentAudit: [] } };
+    },
+  }, (ws, req) => {
     if (!runtimeState) return;
     try {
       ws.send(JSON.stringify({ type: 'snapshot', data: {
         agents: runtimeState.getAll(), summary: runtimeState.summary(),
         tasks: taskManager?.snapshot?.() || [],
-        recentEvents: getHistory(null, null, 100), recentAudit: query({ limit: 50 }),
+        recentEvents: options.webSessions?.resolveRequest(req) ? getHistory(null, null, 100) : [],
+        recentAudit: options.webSessions?.resolveRequest(req) ? query({ limit: 50 }) : [],
       }}));
     } catch (_) {}
   });

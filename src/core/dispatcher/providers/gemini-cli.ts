@@ -19,7 +19,6 @@
 const os = require('os');
 const { execFileSync } = require('child_process');
 const { CliAdapter } = require('../../adapters/cli-adapter');
-const { evaluateProviderSandbox } = require('../../provider-sandbox');
 import type { CliProviderOptions } from '../../adapters/cli-adapter';
 
 let sandboxAvailable: boolean | null = null;
@@ -39,14 +38,12 @@ function isGeminiSandboxAvailable(): boolean {
 
 class GeminiCliProvider extends CliAdapter {
   constructor(options: CliProviderOptions = {}) {
-    const sandbox = evaluateProviderSandbox({ db: options.db, providerFamily: 'gemini',
-      transportId: 'gemini-cli', policyId: 'gemini-container' });
-    const strictApproval = sandbox.rolloutMode === 'enforce' && sandbox.rolloutSelected === true;
     super({
       name: 'GEMINI CLI',
       cmd: 'gemini',
       // prompt 经命令行参数传入（--prompt），与 Paperclip 一致
-      args: ['--output-format', 'stream-json', '--approval-mode', strictApproval ? 'plan' : 'yolo', '--skip-trust', '--prompt', '{prompt}'],
+      args: ['--output-format', 'stream-json', '--approval-mode', 'plan', '--skip-trust', '--prompt', '{prompt}'],
+      adapterType: 'gemini-cli',
       parser: 'gemini-stream-json',
       matchType: 'gemini',
       priority: 1,
@@ -59,7 +56,12 @@ class GeminiCliProvider extends CliAdapter {
   }
 
   isAvailable(agentId: string): boolean {
-    return super.isAvailable(agentId) && isGeminiSandboxAvailable();
+    let native = false;
+    try {
+      const row = this._db?.prepare("SELECT config_json FROM provider_security_policies WHERE agent_id=? AND transport_id='gemini-cli'").get(agentId) as any;
+      native = row?.config_json && JSON.parse(row.config_json).executionMode === 'native';
+    } catch (_) {}
+    return super.isAvailable(agentId) && (native || isGeminiSandboxAvailable());
   }
 }
 

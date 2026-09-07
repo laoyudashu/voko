@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
-const { ProviderSecurityPolicyService, applyProviderSecurityArgs } = require('../build/core/provider-security-policy');
+const { ProviderSecurityPolicyService, applyProviderSecurityArgs, appendProviderSecurityPrompt } = require('../build/core/provider-security-policy');
 const { initDatabase } = require('../build/core/database');
 const { createDispatcher } = require('../build/core/dispatcher');
 
@@ -37,6 +37,7 @@ test('provider security definitions are Provider-specific and preserve current d
   const { service } = fixture();
   const policy = service.inspect('agent-1');
   assert.equal(policy.transportId, 'workbuddy-http');
+  assert.equal(policy.assurance, 'provider_enforced');
   assert.equal(policy.config.dataFileAccess, 'none');
   const dataFileControl = policy.controls.find(item => item.id === 'dataFileAccess');
   assert.equal(dataFileControl.values.find(item => item.value === 'read').risk, 'high');
@@ -46,7 +47,7 @@ test('provider security definitions are Provider-specific and preserve current d
   assert.equal(policy.controls.find(item => item.id === 'shell'), undefined);
 });
 
-test('legacy WorkBuddy write and bypass policy is read safely without re-enabling it', () => {
+test('legacy WorkBuddy explicit write and bypass choices are preserved', () => {
   const { db, service } = fixture();
   const now = Date.now();
   db.prepare(`INSERT OR REPLACE INTO provider_security_policies
@@ -56,8 +57,8 @@ test('legacy WorkBuddy write and bypass policy is read safely without re-enablin
     mcpProfile: 'isolated', additionalPrompt: '',
   }), 'old', 'old', now, now);
   const policy = service.inspect('agent-1');
-  assert.equal(policy.config.dataFileAccess, 'read');
-  assert.equal(policy.config.permissionMode, 'dontAsk');
+  assert.equal(policy.config.dataFileAccess, 'read_write');
+  assert.equal(policy.config.permissionMode, 'bypassPermissions');
 });
 
 test('office Provider transports expose only controls backed by their real invocation path', () => {
@@ -68,6 +69,7 @@ test('office Provider transports expose only controls backed by their real invoc
   const dumate = fixture('dumate').service.inspect('agent-1', 'dumate-http');
   assert.deepEqual(dumate.controls.filter(item => item.editable).map(item => item.id),
     ['sessionPersistence', 'additionalPrompt']);
+  assert.equal(dumate.assurance, 'fixed_or_unverified');
 });
 
 test('unverified dynamic Provider hides native parameters but keeps VOKO safety prompt editable', () => {
@@ -75,17 +77,22 @@ test('unverified dynamic Provider hides native parameters but keeps VOKO safety 
   db.prepare('DELETE FROM provider_security_policies WHERE agent_id=?').run('agent-1');
   const policy = service.inspect('agent-1', 'qwen-office-cli');
   assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
+  assert.equal(policy.assurance, 'fixed_or_unverified');
 });
 
 test('Providers without verified native flags still lease the editable VOKO visitor prompt', () => {
   const { service } = fixture('opencode');
   const policy = service.inspect('agent-1', 'opencode-cli');
   assert.equal(policy.supported, true);
+  assert.equal(policy.assurance, 'fixed_or_unverified');
   assert.deepEqual(policy.controls.map(item => item.id), ['additionalPrompt']);
   assert.match(policy.config.additionalPrompt, /VOKO.*访客消息/);
   const lease = service.acquireTurnLease({ agentId: 'agent-1', messageId: 'visitor-turn-1', channelType: 1 }, 'opencode-cli');
   assert.equal(lease.transportId, 'opencode-cli');
   assert.match(lease.promptInstructions.join('\n'), /访客消息/);
+  const prompt = appendProviderSecurityPrompt('visitor input', lease);
+  assert.match(prompt, /本提示语不代表 Provider 已强制执行权限限制/);
+  assert.doesNotMatch(prompt, /实际权限由 Provider 参数强制/);
 });
 
 test('scoped Provider policy keeps one Agent policy and independent transport policies', () => {
@@ -228,7 +235,7 @@ test('CLI permissions map the latest leased policy to real Provider argv', () =>
   const payload = (transportId, config) => ({ providerSecurityPolicy: { transportId, config } });
   assert.deepEqual(applyProviderSecurityArgs(['--tools=', '--no-chrome'], payload('claude-cli', {
     toolAccess: 'read_only', browser: 'enabled',
-  })), ['--tools=Read,Grep,Glob', '--chrome']);
+  })), ['--tools=Read,Grep,Glob', '--chrome', '--permission-mode', 'plan', '--bare', '--safe-mode', '--strict-mcp-config', '--disable-slash-commands']);
   assert.deepEqual(applyProviderSecurityArgs(['exec', '--sandbox', 'read-only', '-'], payload('codex-cli', {
     sandboxMode: 'workspace_write',
   })), ['exec', '--sandbox', 'workspace-write', '-']);
@@ -245,6 +252,64 @@ test('permission expansions require typed confirmation for CLI Providers', () =>
   const expansion = service.preflight('agent-1', 'codex-cli', { sandboxMode: 'workspace_write' });
   assert.deepEqual(expansion.risks, ['ENABLES_WORKSPACE_WRITE']);
   assert.equal(expansion.requiresTypedConfirmation, true);
+});
+
+test('native flags follow explicit choices in both directions without mutating the template', () => {
+  for (const [transportId, template, config, expected] of [
+    ['goose-cli', ['run', '--no-profile'], { extensionProfile: 'default' }, ['run']],
+    ['opencode-cli', ['run', '--pure', '--auto'], { pluginMode: 'default', approvalMode: 'required' }, ['run']],
+    ['opencode-cli', ['run', '--pure'], { pluginMode: 'default', approvalMode: 'auto' }, ['run', '--auto']],
+  ]) {
+    const original = [...template];
+    const payload = { providerSecurityPolicy: { transportId, config } };
+    assert.deepEqual(applyProviderSecurityArgs(template, payload), expected);
+    assert.deepEqual(template, original);
+    assert.deepEqual(applyProviderSecurityArgs(expected, payload), expected);
+  }
+});
+
+test('defaults fill missing settings while saved relaxed choices survive reload and capability refresh', () => {
+  for (const [backend, transport, defaults, relaxed] of [
+    ['hermes', 'hermes-cli', { toolProfile: 'safe', safeMode: 'enabled', approvalMode: 'required', acceptHooks: 'disabled' },
+      { toolProfile: 'default', safeMode: 'disabled', approvalMode: 'bypass', acceptHooks: 'enabled' }],
+    ['goose', 'goose-cli', { extensionProfile: 'disabled' }, { extensionProfile: 'default' }],
+    ['opencode', 'opencode-cli', { pluginMode: 'isolated', approvalMode: 'required' }, { pluginMode: 'default', approvalMode: 'auto' }],
+    ['codex', 'codex-cli', { sandboxMode: 'read_only' }, { sandboxMode: 'workspace_write' }],
+  ]) {
+    const { db, service } = fixture(backend);
+    try {
+      const initial = service.effective('agent-1', transport);
+      for (const [key, value] of Object.entries(defaults)) assert.equal(initial.config[key], value);
+      const preflight = service.preflight('agent-1', transport, relaxed);
+      service.commit('agent-1', preflight.preflightToken, '陈老师');
+      const reloaded = new ProviderSecurityPolicyService(db);
+      reloaded.storeCapability('agent-1', transport, {
+        runtimeFingerprint: 'new-version', capabilityDigest: 'unknown-version', evidenceState: 'unknown',
+        supportedControls: {}, observedAt: Date.now(), expiresAt: Date.now() + 10000,
+      });
+      const partial = reloaded.preflight('agent-1', transport, { additionalPrompt: '' });
+      reloaded.commit('agent-1', partial.preflightToken, '陈老师');
+      const lease = reloaded.acquireTurnLease({ agentId: 'agent-1', channelType: 1, messageId: 'relaxed' }, transport);
+      for (const [key, value] of Object.entries(relaxed)) assert.equal(lease.config[key], value);
+      assert.equal(lease.config.additionalPrompt, '');
+    } finally { db.close(); }
+  }
+});
+
+test('current control evidence replaces earlier mappings without changing user configuration', () => {
+  const { db, service } = fixture();
+  try {
+    const before = service.effective('agent-1', 'workbuddy-http');
+    service.storeCapability('agent-1', 'workbuddy-http', {
+      runtimeFingerprint: 'workbuddy-http-test', capabilityDigest: 'latest-unknown', evidenceState: 'unknown',
+      supportedControls: { additionalPrompt: { values: [] } }, observedAt: Date.now(), expiresAt: Date.now() + 10000,
+    });
+    const inspected = service.inspect('agent-1', 'workbuddy-http');
+    assert.deepEqual(inspected.controls.map(item => item.id), ['additionalPrompt']);
+    assert.deepEqual(Object.keys(inspected.controlEvidence.transport), ['additionalPrompt']);
+    assert.deepEqual(inspected.config, before.config);
+    assert.equal(inspected.revision, before.revision);
+  } finally { db.close(); }
 });
 
 test('capability evidence persists without changing policy revision and protects preflight commit', () => {

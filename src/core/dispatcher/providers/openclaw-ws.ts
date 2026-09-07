@@ -1531,12 +1531,12 @@ class OpenClawWsProvider {
         throw error;
       }
       this.subscribedSessions.add(sessionKey);
-      this.sendChatSend(sessionKey, message, extraData, now);
+      await this.sendChatSend(sessionKey, message, extraData, now);
       return;
     }
     if (!this.subscribedSessions.has(sessionKey)) await this._subscribeSession(sessionKey);
     this._assertAccepting(generation);
-    this.sendChatSend(sessionKey, message, extraData, Date.now());
+    await this.sendChatSend(sessionKey, message, extraData, Date.now());
   }
 
   _subscribeSession(sessionKey: string): Promise<void> {
@@ -1573,13 +1573,13 @@ class OpenClawWsProvider {
   /**
    * 发送 chat.send 消息（结构化 JSON 格式）
    */
-  sendChatSend(
+  async sendChatSend(
     sessionKey: string,
     message: string,
     extraData: Partial<PushPayload> | null = null,
     sendTimestamp?: number,
-  ): void {
-    extraData?.assertSubmissionCurrent?.();
+  ): Promise<void> {
+    await extraData?.assertSubmissionCurrent?.();
     // 格式: agent:{agentId}:{visitorId}
     let visitorId = null;
     const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
@@ -1850,7 +1850,7 @@ class OpenClawWsProvider {
     const releaseTurn = await this._acquireAgentTurn(agentId, providerTurnId);
     try {
     this._assertAccepting(generation);
-    payload.assertSubmissionCurrent?.();
+    await payload.assertSubmissionCurrent?.();
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId

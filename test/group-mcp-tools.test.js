@@ -22,6 +22,7 @@ const { MessageRouteStore, RoutingConversationStore } = require('../build/core/p
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
 const { OutboundMessageResultStore } = require('../build/core/outbound-message-result-store');
+const { createSendMessage } = require('../build/core/send-message');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -44,6 +45,14 @@ function setup(options = {}) {
   db.prepare('INSERT INTO config (type, data, updated_at) VALUES (?, ?, ?)')
     .run('user_access_token', JSON.stringify(tokenMap), now);
 
+  // These are positive routing/read fixtures with explicit pre-approved content.
+  // Real admission, rejection and legacy behavior are tested via MessageHandler
+  // in message-admission.test.js; do not infer permission from arbitrary inserts.
+  db.exec(`CREATE TEMP TRIGGER seed_approved_message AFTER INSERT ON messages BEGIN
+    INSERT INTO agent_message_admissions(agent_id,message_id,state,reason,created_at,updated_at)
+    SELECT agent_id,NEW.id,'allowed','ALLOWED',1,1 FROM agents
+    WHERE NEW.channel_type=2 OR agent_id=NEW.agent_id;
+  END`);
   // 访客 + 群聊消息
   db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run('m1', 'visitor1', 'imuidA', '单聊消息', 'visitor1', 1, 'agentA', now, 0, 'received', 1, null);
@@ -85,7 +94,7 @@ function setup(options = {}) {
     db,
     query: (sql, params = []) => { try { return db.prepare(sql).all(...params); } catch (_) { return []; } },
     exec: (sql, params = []) => { try { db.prepare(sql).run(...params); } catch (_) {} },
-    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
+    sendMessage: options.sendResult ? createSendMessage({ db, deliver: async () => options.sendResult }) : async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
       sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata });
       return { success: true };
     },
@@ -159,6 +168,34 @@ await test('send_message requests an in-memory result receipt and exposes it thr
     assert.strictEqual(status.transport.state, 'DELIVERED');
     assert.strictEqual(status.execution.state, 'UNCONFIRMED');
     assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
+  } finally { cleanup(); }
+});
+for (const outcomeUnknown of [false, true]) await test(`send failure closes waiting and retains outcome uncertainty (${outcomeUnknown})`, async () => {
+  const reason = outcomeUnknown ? 'SENDACK_TIMEOUT' : 'PEER_NOT_FOUND';
+  const { handlers, db, outboundMessageResults, cleanup } = setup({ sendResult: {
+    success: false, error: reason, outcomeUnknown, securityMode: 'e2ee', securityReason: 'directory_resolution_failed',
+  } });
+  try {
+    const sent = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'failed send', channelType: 1 });
+    assert.strictEqual(sent.success, false);
+    assert.strictEqual(sent.securityMode, 'e2ee');
+    assert.strictEqual(sent.outcomeUnknown, outcomeUnknown);
+    const result = await handlers.get_message_result({ agentId: 'agentA', messageId: sent.messageId });
+    assert.strictEqual(result.transport.state, outcomeUnknown ? 'UNKNOWN' : 'FAILED');
+    assert.strictEqual(result.execution.state, outcomeUnknown ? 'DELIVERY_UNKNOWN' : 'FAILED');
+    assert.strictEqual(result.execution.reasonCode, reason);
+    assert.strictEqual(result.execution.phase, null);
+    assert.strictEqual(result.reply.state, outcomeUnknown ? 'UNKNOWN' : 'FAILED');
+    assert.strictEqual(db.prepare('SELECT status FROM messages WHERE id=?').get(sent.messageId).status,
+      outcomeUnknown ? 'unknown' : 'failed');
+    // Simulate a runtime restart losing in-memory receipt details.
+    const originalGet = outboundMessageResults.get;
+    outboundMessageResults.get = () => null;
+    const recovered = await handlers.get_message_result({ agentId: 'agentA', messageId: sent.messageId });
+    outboundMessageResults.get = originalGet;
+    assert.strictEqual(recovered.execution.state, result.execution.state);
+    assert.strictEqual(recovered.reply.state, result.reply.state);
+    assert.strictEqual(recovered.execution.reasonCode, outcomeUnknown ? 'MESSAGE_DELIVERY_UNKNOWN' : 'MESSAGE_SEND_FAILED');
   } finally { cleanup(); }
 });
 await test('get_message_result closes reply state when Provider finishes without a reply', async () => {
@@ -332,8 +369,8 @@ await test('fetch_new_messages 群聊 onlyReplies 按查询 Agent 的 fromUid �
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-self','imuidA','room1','A 发言','room1',2,'agentB',Date.now()+2,0,'received',1,2,JSON.stringify({uids:['imuidB']}));
     db.prepare(`INSERT INTO messages (id,from_uid,to_uid,content,channel_id,channel_type,agent_id,timestamp,is_me,status,content_type,message_seq,mention)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('m-pull-peer','imuidB','room1','B 发言','room1',2,'agentA',Date.now()+3,1,'sent',1,3,JSON.stringify({uids:['imuidA']}));
-    const a = handlers._queryMessages('agentA','room1',0,true,20,2);
-    const b = handlers._queryMessages('agentB','room1',0,true,20,2);
+    const a = (await handlers._queryMessages('agentA','room1',0,true,20,2)).rows;
+    const b = (await handlers._queryMessages('agentB','room1',0,true,20,2)).rows;
     assert.deepStrictEqual(a.map(m=>m.id).sort(),['m-pull-peer','m2'].sort());
     assert.deepStrictEqual(b.map(m=>m.id).sort(),['m-pull-self']);
   } finally { cleanup(); }

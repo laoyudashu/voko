@@ -240,7 +240,7 @@ function isChannelConfig(value: unknown): value is ChannelConfig {
 // Schema 7 is the current shared Lite/Desktop marker.  The v7 database has
 // the same tables and columns already handled by Lite; keeping the marker in
 // sync prevents a newer Desktop-created database from being rejected by Lite.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 function readSchemaVersion(db: DatabaseSync): number {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -1703,6 +1703,19 @@ function initDatabase(dbPath: string, options: InitDatabaseOptions = {}) {
       throw e;
     }
     console.log(`Initialized ${BANK_HEAD_OFFICES.length} bank head offices`);
+  }
+
+  db.exec(`CREATE TABLE IF NOT EXISTS agent_message_admissions (
+    agent_id TEXT NOT NULL, message_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','allowed','denied')),
+    reason TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    audit_action TEXT, audit_keyword TEXT,
+    PRIMARY KEY(agent_id,message_id)
+  )`);
+  // Mark locally received post-upgrade rows, without guessing old permission.
+  // Unlike rowid, this boundary survives deletion/reuse of message rows.
+  if (!db.prepare('PRAGMA table_info(messages)').all().some((column: any) => column.name === 'admission_received_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN admission_received_at INTEGER');
   }
 
   if (schemaVersion < 7) migrateGoosePushDeliveryModes(db);

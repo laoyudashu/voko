@@ -4,6 +4,14 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+## 0.5.4 - 2026-09-07
+
+- Apply visitor admission consistently across Push, Pull, history recovery and group mentions, preserving explicit access settings and blacklist/unpublished restrictions.
+- Map supported native Provider permissions and safe defaults to the actual transport, version and operating system without overriding explicit user choices.
+- Preserve terminal send failures and unknown delivery outcomes in MCP/CLI message results, including after restart; uncertain execution is never automatically replayed.
+- Move visitor sharing controls to Agent details, add QR downloads and explicit link access choices, and simplify registration prompts.
+- See [release notes](docs/releases/0.5.4.md) for compatibility limits, the separate AgentDID directory fix and persistent historical E2EE locks.
+
 ## 0.5.3 - 2026-09-06
 
 - Added version-aware OpenClaw CLI/configuration handling and authenticated Gateway version/protocol discovery. Serialized calls sharing a state directory and recovered a migration-requested Gateway restart once within the existing startup deadline.

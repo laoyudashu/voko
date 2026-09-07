@@ -231,6 +231,7 @@ class HermesCliProvider extends PushProvider {
       if (policy?.safeMode !== 'disabled') args.push('--safe-mode');
       if (policy?.approvalMode === 'bypass') args.push('--yolo');
       if (policy?.acceptHooks === 'enabled') args.push('--accept-hooks');
+      await payload.assertSubmissionCurrent?.();
       const result = await this._runCli({
         cmd: this._command,
         args,

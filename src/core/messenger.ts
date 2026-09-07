@@ -14,6 +14,8 @@ const { parseA2AState, stripStateBlock, extractA2AVisibleReply } = require('./di
 const { MessageRouteStore, RoutingConversationStore, isRoutingFeatureEnabled, normalizeProviderFamily } = require('./provider-routing');
 const { GroupMembershipSnapshotCache, GroupReplyRouteResolver } = require('./group-reply-route');
 const { reservedVisitorPrefix } = require('./visitor-id-policy');
+import { beginAdmission, finishAdmission, getAdmission, currentAccessDenial, parseMention, messageReadState, assertMessagesReadable } from './message-admission';
+import type { AdmissionMessage } from './message-admission';
 import type { DatabaseLike } from '../types/database';
 import type { RoutingConversation } from './provider-routing';
 import type { PushPayload } from './dispatcher/types';
@@ -84,7 +86,9 @@ interface PricingRow {
 interface CountRow { c: number }
 interface StoredMessageAgentRow { agent_id: string }
 interface GroupNameRow { name: string | null }
-interface GroupContextRow {
+interface GroupContextRow extends AdmissionMessage {
+  to_uid: string;
+  admission_received_at: number | null;
   id: string;
   from_uid: string;
   content: string;
@@ -168,6 +172,7 @@ class MessageHandler extends EventEmitter {
   private readonly receiptRequests = new Map<string, { peerUid: string }>();
   private readonly receiptSourceAliases = new Map<string, string>();
   private readonly deferredReplyReceipts = new Map<string, { peerUid:string;sourceMessageIds:string[];turnId:string }>();
+  private readonly admissionChecks = new Map<string, Promise<boolean>>();
   private receiptSequence = 0;
   private readonly pendingTerminalReceipts = new Map<string, PendingTerminalReceipt>();
   private turnReceiptsClosed = false;
@@ -199,7 +204,7 @@ class MessageHandler extends EventEmitter {
     this.hermesHandler = options.hermesHandler || null;
     this.openclawHandler = options.openclawHandler || null;
     this.dispatcher = options.dispatcher || null;
-    this.ac = options.ac || null;
+    this.ac = options.ac || require('./access-control-api');
     this._sendSystemMessage = options.sendSystemMessage || (() => {});
     this._deliver = options.deliver || null;  // 统一 VokoIMSDK Hub 投递器
     this._checkAuditRules = options.checkAuditRules || (() => ({ action: 'allow' }));
@@ -238,15 +243,38 @@ class MessageHandler extends EventEmitter {
     });
   }
 
-  private _dispatchInboundTurn(batch: InboundTurnBatch<PushPayload & { messageId: string; timestamp: number }>): void {
+  private async _dispatchInboundTurn(batch: InboundTurnBatch<PushPayload & { messageId: string; timestamp: number }>): Promise<void> {
     if (!this.dispatcher || !batch.items.length) return;
     const startedAt = Date.now();
     const last = batch.items[batch.items.length - 1];
+    assertMessagesReadable(this.db, last.agentId, batch.sourceMessageIds, 'trigger');
+    const contextIds = new Set<string>();
+    if (last.channelType === 2) await this._admitGroupHistory(last.agentId, last.channelId!, last.timestamp);
     const merged = buildMergedTurn(batch);
     const payload: PushPayload = {
       ...last,
-      content: merged.content,
+      content: last.channelType === 2
+        ? this._buildGroupMentionPrompt(last.agentId, last.channelId!, last.fromUid, merged.content, last.messageId, last.timestamp, contextIds)
+        : merged.content,
       rawContent: merged.content,
+      registerContextMessage: (id: string) => { contextIds.add(id); },
+      assertSubmissionCurrent: async () => {
+        assertMessagesReadable(this.db, last.agentId, batch.sourceMessageIds, 'trigger');
+        assertMessagesReadable(this.db, last.agentId, contextIds);
+        if (last.channelType === 2) {
+          for (const id of new Set([...batch.sourceMessageIds, ...contextIds])) {
+            const row = this.db.prepare('SELECT * FROM messages WHERE id=?').get<AdmissionMessage>(id)!;
+            const result = await this._groupRouteResolver.qualify({ agentId: last.agentId,
+              channelId: last.channelId!, fromUid: row.from_uid,
+              mentionAll: batch.sourceMessageIds.includes(id) && parseMention(row.mention)?.all === true });
+            if (result.state === 'invalid') throw Object.assign(new Error(result.reason), {
+              code: 'MESSAGE_ADMISSION_REJECTED', deliveryOutcome: 'rejected',
+            });
+          }
+          assertMessagesReadable(this.db, last.agentId, batch.sourceMessageIds, 'trigger');
+          assertMessagesReadable(this.db, last.agentId, contextIds);
+        }
+      },
       attachments: merged.attachments,
       messageSegments: merged.messageSegments,
       messageId: last.messageId,
@@ -258,10 +286,83 @@ class MessageHandler extends EventEmitter {
       agentId: last.agentId, channelId: last.channelId, channelType: last.channelType || 1,
       turnId: batch.turnId, sourceMessageIds: batch.sourceMessageIds, status: 'processing',
     });
+    await payload.assertSubmissionCurrent?.();
     this.dispatcher.dispatch(last.agentId, payload);
   }
 
-  async flushInboundTurns(): Promise<void> { await this.inboundTurns.flushAll(); }
+  async flushInboundTurns(): Promise<void> {
+    while (this.admissionChecks.size) await Promise.all(this.admissionChecks.values());
+    await this.inboundTurns.flushAll();
+  }
+
+  async assertInboundAllowed(agentId: string, messageIds: string[]): Promise<void> {
+    await Promise.all(messageIds.map(id => this.admissionChecks.get(`${agentId}\0${id}`)));
+    assertMessagesReadable(this.db, agentId, messageIds, 'trigger');
+  }
+
+  async prepareGroupHistory(agentId: string, channelId: string): Promise<void> {
+    const latest = this.db.prepare('SELECT MAX(timestamp) AS timestamp FROM messages WHERE channel_id=? AND channel_type=2')
+      .get<{ timestamp: number | null }>(channelId);
+    if (latest?.timestamp != null) await this._admitGroupHistory(agentId, channelId, latest.timestamp);
+  }
+
+  private _admitMessage(agentId: string, data: InboundMessage, allowedReason = 'ALLOWED'): boolean | Promise<boolean> {
+    const key = `${agentId}\0${data.messageId}`;
+    const active = this.admissionChecks.get(key);
+    if (active) return active;
+    const previous = getAdmission(this.db, agentId, data.messageId);
+    if (previous && previous.state !== 'pending') return previous.state === 'allowed';
+    if (!previous && !this.db.prepare('SELECT admission_received_at FROM messages WHERE id=?')
+      .get<{ admission_received_at: number | null }>(data.messageId)?.admission_received_at) return false;
+    const finish = (allowed: boolean, reason: string) => {
+      finishAdmission(this.db, agentId, data.messageId, allowed ? 'allowed' : 'denied', reason);
+      return allowed;
+    };
+    const denial = currentAccessDenial(this.db, agentId, data.fromUid, data.channelType || 1);
+    if (denial && !(denial === 'AGENT_UNPUBLISHED' && allowedReason === 'agent_unpublished')) return finish(false, denial);
+    beginAdmission(this.db, agentId, data.messageId);
+    const audit = (result: AuditResult): boolean => {
+      if (result.action === 'hard_deny' || result.action === 'soft_deny' || result.verdict === 'deny' || result.verdict === 'uncertain') {
+        finish(false, 'AUDIT_DENIED');
+        this._triggerAuditIntervention(agentId, data.fromUid, data.content, result, data.timestamp, data.messageId,
+          { channelId: data.channelId, channelType: data.channelType || 1, senderUid: data.fromUid });
+        return false;
+      }
+      return finish(true, allowedReason);
+    };
+    let deterministic: AuditResult;
+    try { deterministic = this._checkAuditRules(data.content, 'inbound'); }
+    catch (_) { return finish(false, 'ADMISSION_CHECK_FAILED'); }
+    const needsModel = !!this._classifyAuditDecision
+      && (deterministic.verdict === 'uncertain' || deterministic.action === 'soft_deny');
+    // Direct, deterministic admission remains synchronous for offline transaction callers.
+    if (data.channelType !== 2 && !needsModel) return audit(deterministic);
+    const check = (async () => {
+      if (data.channelType === 2) {
+        const mention = parseMention(data.mention);
+        if (!mention) return finish(false, 'MENTION_INVALID');
+        const qualification = await this._groupRouteResolver.qualify({ agentId, channelId: data.channelId,
+          fromUid: data.fromUid, mentionAll: mention.all });
+        if (qualification.state === 'invalid') return finish(false, qualification.reason);
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = needsModel ? await Promise.race([
+          Promise.resolve().then(() => this._classifyAuditDecision!(data.content, 'inbound', deterministic)),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('admission timeout')), 15_000); }),
+        ]) : deterministic;
+        return audit(result);
+      } finally { if (timer) clearTimeout(timer); }
+    })().catch(() => finish(false, 'ADMISSION_CHECK_FAILED')).finally(() => this.admissionChecks.delete(key));
+    this.admissionChecks.set(key, check);
+    return check;
+  }
+
+  private _startAdmission(agentId: string, data: InboundMessage, allowedReason = 'ALLOWED'): void {
+    const result = this._admitMessage(agentId, data, allowedReason);
+    if (result instanceof Promise) void result.catch(error => console.error('[Admission] persistence failed:', errorMessage(error)));
+  }
+
 
   getOutboundMessageResults(): OutboundMessageResultStore { return this.outboundMessageResults; }
 
@@ -610,6 +711,11 @@ class MessageHandler extends EventEmitter {
       messageSeq, clientMsgNo, noPersist, redDot, syncOnce, mention } = data;
     const markIntercepted = (reason: string) => {
       data._vokoInboundIntercepted = reason;
+      if (getAdmission(this.db, agentId, messageId)) {
+        if (['ACCESS_BLACKLIST_DENIED', 'ACCESS_WHITELIST_DENIED', 'audit_hard_deny'].includes(reason)) {
+          finishAdmission(this.db, agentId, messageId, 'denied', reason);
+        } else this._startAdmission(agentId, data, reason);
+      }
       const prefix = [agentId, fromUid, channelType || 1, channelId || '']
         .map(value => String(value).replaceAll('\0', '')).join('\0') + '\0';
       void this.inboundTurns.flushWhere(scopeKey => scopeKey.startsWith(prefix));
@@ -701,14 +807,18 @@ class MessageHandler extends EventEmitter {
         return;
       }
     }
+    this.db.exec('SAVEPOINT inbound_admission');
     try {
-
       const stmt = this.db.prepare(`
-        INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention, admission_received_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      stmt.run(messageId, fromUid, toUid, typeof content === 'string' ? content : String(content), channelId, channelType || 1, agentId, timestamp, isMe, 'received', messageSeq ?? null, clientMsgNo ?? null, noPersist ?? 0, redDot ?? 0, syncOnce ?? 0, data.contentType || 1, data.mention ? JSON.stringify(data.mention) : null);
+      stmt.run(messageId, fromUid, toUid, typeof content === 'string' ? content : String(content), channelId, channelType || 1, agentId, timestamp, isMe, 'received', messageSeq ?? null, clientMsgNo ?? null, noPersist ?? 0, redDot ?? 0, syncOnce ?? 0, data.contentType || 1, data.mention ? JSON.stringify(data.mention) : null, Date.now());
+      beginAdmission(this.db, agentId, messageId);
+      this.db.exec('RELEASE inbound_admission');
     } catch (error: unknown) {
+      this.db.exec('ROLLBACK TO inbound_admission');
+      this.db.exec('RELEASE inbound_admission');
       if (errorMessage(error).includes("UNIQUE constraint")) {
         return;
       }
@@ -761,12 +871,14 @@ class MessageHandler extends EventEmitter {
         String(data.e2eeProtocolConversationId || ''))
       : this._resolveInboundConversation(agentId, fromUid, channelId, channelType || 1, messageId, data._voko || null);
     if (data.e2eeAgentPeer && !inboundConversationId) {
+      finishAdmission(this.db, agentId, messageId, 'denied', 'E2EE_ROUTE_UNRESOLVED');
       console.warn(`[E2EE] Agent peer Conversation 无法绑定 agent=${agentId} code=E2EE_V2_AGENT_CONTEXT_UNRESOLVED`);
       return;
     }
     if (data.e2eeStrictRoute && data._voko
         && (data._voko.replyToRouteId || data._voko.conversationKey || data._voko.canonicalConversationKey)
         && !inboundConversationId) {
+      finishAdmission(this.db, agentId, messageId, 'denied', 'E2EE_ROUTE_UNRESOLVED');
       console.warn(`[E2EE] 精确 Route Context 无法验证 agent=${agentId} code=E2EE_V2_ROUTE_CONTEXT_UNRESOLVED`);
       return;
     }
@@ -855,7 +967,13 @@ class MessageHandler extends EventEmitter {
 
     // 入站消息审核
     if (this._checkAuditRules) {
-      const auditResult = this._checkAuditRules(typeof content === 'string' ? content : String(content), 'inbound');
+      let auditResult: AuditResult;
+      try { auditResult = this._checkAuditRules(typeof content === 'string' ? content : String(content), 'inbound'); }
+      catch (_) {
+        finishAdmission(this.db, agentId, messageId, 'denied', 'ADMISSION_CHECK_FAILED');
+        data._vokoInboundIntercepted = 'ADMISSION_CHECK_FAILED';
+        return;
+      }
       if (auditResult.action === 'hard_deny') {
         const matchedRule = auditResult.matchedRule || {};
         if (matchedRule.prompt_key) {
@@ -872,7 +990,7 @@ class MessageHandler extends EventEmitter {
       }
       if (auditResult.action === 'soft_deny') {
         logEvent('audit.hit', { level: 'warn', agentId, visitorId: fromUid, messageId, data: { ruleId: auditResult.matchedKeyword, direction: 'inbound', action: auditResult.action } });
-        if (!this._classifyAuditDecision) this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId);
+
       }
     }
 
@@ -887,6 +1005,8 @@ class MessageHandler extends EventEmitter {
 
     // 消息是 agent 自己的回复回流，不再次转发
     if (isMe === 1) return;
+
+    this._startAdmission(agentId, data);
 
     // skipForward 模式：不直接转发，返回转发载荷供调用方（离线同步）收集后合并转发。
     // 被审核/黑名单/计费等拦截的消息已在上方各 return 点退出（返回 undefined）。
@@ -947,21 +1067,28 @@ class MessageHandler extends EventEmitter {
     // 落库用纯文本
     const dbContent = tipText || (typeof content === 'string' ? content : String(content));
 
-    // 落库 messages（channel_type=2；多 agent 收到同一消息时 UNIQUE 跳过）
+    if (getAdmission(this.db, agentId, messageId)) return;
+    this.db.exec('SAVEPOINT inbound_admission');
     try {
-      this.db.prepare(`INSERT INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(messageId, fromUid, toUid, dbContent, channelId, 2, agentId, timestamp, isMe, 'received', data.messageSeq ?? null, data.clientMsgNo ?? null, data.noPersist ?? 0, data.redDot ?? 0, data.syncOnce ?? 0, isTip ? CONTENT_TYPE_GROUP_TIP : (data.contentType || 1), mention ? JSON.stringify(mention) : null);
-      console.log(`[群聊存储] ✅ agentId=${agentId} channelId=${channelId} isMe=${isMe} isTip=${isTip} contentType=${isTip?CONTENT_TYPE_GROUP_TIP:(data.contentType||1)}`);
-    } catch (error: unknown) {
-      if (errorMessage(error).includes('UNIQUE constraint')) {
-        const stored = this.db.prepare('SELECT agent_id FROM messages WHERE id=?').get<StoredMessageAgentRow>(messageId);
-        console.log(`[群聊存储] ⏭️ UNIQUE跳过落库 agentId=${agentId} channelId=${channelId} messageId=${messageId}`);
-        // 同一 worker 的重复投递应整体跳过；不同 agent worker 仍需各自更新会话并处理 @。
-        if (!stored || stored.agent_id === agentId) return;
-      } else {
-        console.error('[群聊消息存储] 失败:', errorMessage(error));
-        throw error;
+      this.db.prepare(`INSERT OR IGNORE INTO messages (id, from_uid, to_uid, content, channel_id, channel_type, agent_id, timestamp, is_me, status, message_seq, client_msg_no, no_persist, red_dot, sync_once, content_type, mention, admission_received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(messageId, fromUid, toUid, dbContent, channelId, 2, agentId, timestamp, isMe, 'received', data.messageSeq ?? null, data.clientMsgNo ?? null, data.noPersist ?? 0, data.redDot ?? 0, data.syncOnce ?? 0, isTip ? CONTENT_TYPE_GROUP_TIP : (data.contentType || 1), mention ? JSON.stringify(mention) : null, Date.now());
+      const stored = this.db.prepare('SELECT from_uid,channel_id,channel_type,content,mention,admission_received_at FROM messages WHERE id=?').get<GroupContextRow>(messageId);
+      if (!stored || stored.from_uid !== fromUid || stored.channel_id !== channelId || stored.channel_type !== 2
+          || stored.content !== dbContent || stored.mention !== (mention ? JSON.stringify(mention) : null)) {
+        throw new Error('Group message identity conflict');
       }
+      if (!stored.admission_received_at) {
+        data._vokoInboundIntercepted = 'LEGACY_MESSAGE_ADMISSION_REQUIRED';
+        this.db.exec('RELEASE inbound_admission');
+        return;
+      }
+      const parsed = parseMention(mention);
+      if (!isMe && !isTip && !isInvitation && (!parsed || parsed.all || parsed.uids.includes(selfImUid))) beginAdmission(this.db, agentId, messageId);
+      this.db.exec('RELEASE inbound_admission');
+    } catch (error) {
+      this.db.exec('ROLLBACK TO inbound_admission');
+      this.db.exec('RELEASE inbound_admission');
+      throw error;
     }
 
     // 落库 conversations（user_uid = 本 agent imUid，channel_id = roomId，channel_type=2）
@@ -984,7 +1111,8 @@ class MessageHandler extends EventEmitter {
 
     // UI 通知（带 mention，供渲染进程识别邀请/高亮 @）
     console.log('[群聊通知] agent=' + agentId + ' roomId=' + channelId + ' textLength=' + dbContent.length);
-    const mentioned = !!(mention?.all || (mention?.uids && selfImUid && mention.uids.includes(selfImUid)));
+    const parsedMention = parseMention(mention);
+    const mentioned = !!(parsedMention && (parsedMention.all || parsedMention.uids.includes(selfImUid)));
 
     this._notifyUI('agent-wukongim:message', {
       agentId, fromUid, toUid, channelId, channelType: 2,
@@ -997,22 +1125,32 @@ class MessageHandler extends EventEmitter {
     }
 
     // 邀请消息 / 系统 tip / 自己的回流：不触发 LLM
+    if (isTip) this._groupRouteResolver.invalidate(channelId);
     if (isInvitation || isTip || isMe === 1) return;
+    const denial = currentAccessDenial(this.db, agentId, fromUid, 2);
+    if (denial === 'AGENT_UNPUBLISHED') {
+      if (mentioned) this._startAdmission(agentId, { ...data, channelType: 2 }, 'agent_unpublished');
+      return;
+    }
+    if (denial || !parsedMention) {
+      finishAdmission(this.db, agentId, messageId, 'denied', denial || 'MENTION_INVALID');
+      return;
+    }
 
     // @判定：mention.all 或 mention.uids 含本 agent imUid
 
-    if (!mentioned) return; // 未被 @：仅落库，不触发
-
-    // 入站审核（群聊保留敏感词检查）
-    if (this._checkAuditRules) {
-      const auditResult = this._checkAuditRules(typeof content === 'string' ? content : String(content), 'inbound');
-      if (auditResult.action === 'hard_deny' || auditResult.action === 'soft_deny') {
-        if (auditResult.action === 'hard_deny' || !this._classifyAuditDecision) this._triggerAuditIntervention(agentId, fromUid, typeof content === 'string' ? content : String(content), auditResult, timestamp, messageId, {
-          channelId, channelType: 2, senderUid: fromUid,
-        });
-      }
-      if (auditResult.action === 'hard_deny') return;
+    if (!mentioned) {
+      try {
+        const result = this._checkAuditRules(content, 'inbound');
+        if (result.action === 'hard_deny' || (result.action === 'soft_deny' && !this._classifyAuditDecision)) {
+          finishAdmission(this.db, agentId, messageId, 'denied', 'AUDIT_DENIED');
+          this._triggerAuditIntervention(agentId, fromUid, content, result, timestamp, messageId,
+            { channelId, channelType: 2, senderUid: fromUid });
+        }
+      } catch (_) { finishAdmission(this.db, agentId, messageId, 'denied', 'ADMISSION_CHECK_FAILED'); }
+      return;
     }
+    this._startAdmission(agentId, { ...data, channelType: 2 });
 
     if (skipForward) {
       return { agentId, fromUid, content, channelId, channelType: 2, contentType: data.contentType || 1, messageId, timestamp, mention, _voko: data._voko };
@@ -1067,15 +1205,20 @@ class MessageHandler extends EventEmitter {
     messageId: string,
     context: MessageContext = {},
   ): void {
+    finishAdmission(this.db, agentId, messageId, 'denied', 'AUDIT_DENIED');
     const now = Date.now();
     const oiId = `audit_${now}_${Math.random().toString(36).substr(2, 6)}`;
     const backendRow = this.db.prepare(`SELECT backend_type FROM agents WHERE agent_id = ?`).get<BackendRow>(agentId);
     const prefix = backendRow?.backend_type === 'hermes' ? 'hermes' : 'agent';
     const targetChannelType = Number(context.channelType) === 2 ? 2 : 1;
+    if (targetChannelType === 2) {
+      this.db.prepare(`UPDATE agent_message_admissions SET audit_action=?,audit_keyword=? WHERE agent_id=? AND message_id=?`)
+        .run(auditResult.action, auditResult.matchedKeyword || null, agentId, messageId);
+    }
     const targetChannelId = context.channelId || visitorId;
     const sourceSenderUid = context.senderUid || visitorId;
     const sessionTarget = targetChannelType === 2 ? `group:${targetChannelId}` : targetChannelId;
-    const actionLabel = auditResult.action === 'hard_deny' ? '系统已拒绝，自动回复提示语。' : '已转发给 Agent，请关注。';
+    const actionLabel = auditResult.action === 'hard_deny' ? '系统已拒绝，自动回复提示语。' : '已暂停转发，等待主人审核。';
     if (this.databaseAPI) {
       const saved = this.databaseAPI.saveOwnerIntervention({
         id: oiId, visitorId, sessionKey: `${prefix}:${agentId}:${sessionTarget}`,
@@ -1098,7 +1241,8 @@ class MessageHandler extends EventEmitter {
       sourceSenderUid, targetChannelId, targetChannelType,
       sourceMessageId: messageId || null,
     });
-    this.insertBlockedMessage(agentId, visitorId, content, auditResult.matchedKeyword, auditResult.action, 'inbound', visitorId, timestamp, messageId, context);
+    if (targetChannelType !== 2) this.insertBlockedMessage(agentId, visitorId, content, auditResult.matchedKeyword, auditResult.action, 'inbound', visitorId, timestamp, messageId, context);
+    else this._notifyUI('agent-message:admission', { agentId, messageId, channelId: targetChannelId, state: 'denied', reason: 'AUDIT_DENIED' });
     this._onOwnerInterventionNew();
   }
 
@@ -1176,41 +1320,24 @@ class MessageHandler extends EventEmitter {
     routeMetadata: InboundMessage['_voko'] = null,
     modelReviewed = false,
   ): void {
-    if (!this.dispatcher) {
-      console.error(`[转发] dispatcher 未初始化，agent=${agentId} 消息留库等 pull`);
-      return;
-    }
-    const inboundConversationId = this._resolveInboundConversation(
-      agentId, fromUid, channelId, Number(channelType) === 2 ? 2 : 1, messageId, routeMetadata,
-    );
-    const inboundSystemRoute = inboundConversationId ? { conversationId: inboundConversationId } : undefined;
-    if (!modelReviewed && this._classifyAuditDecision) {
-      const deterministic = this._checkAuditRules(content, 'inbound');
-      if (deterministic.verdict === 'uncertain' || deterministic.action === 'soft_deny') {
-        void this._classifyAuditDecision(content, 'inbound', deterministic).then((reviewed: AuditResult) => {
-          if (reviewed.action === 'hard_deny' || reviewed.action === 'soft_deny') {
-            this._triggerAuditIntervention(agentId, fromUid, content, reviewed, timestamp, messageId,
-              { channelId, channelType: channelType || 1, senderUid: fromUid });
-            if (reviewed.action === 'hard_deny' && channelType !== 2) {
-              this._sendSystemMessage(agentId, fromUid, 'audit.default.sensitive_keyword',
-                { keyword: reviewed.matchedKeyword || reviewed.reasonCode || 'security policy' }, timestamp, inboundSystemRoute);
-            }
-            return;
-          }
-          this.forwardToAgent(agentId, fromUid, content, channelId, channelType, contentType,
-            messageId, timestamp, mention, routeMetadata, true);
-        }).catch(() => {
-          this._triggerAuditIntervention(agentId, fromUid, content, deterministic, timestamp, messageId,
-            { channelId, channelType: channelType || 1, senderUid: fromUid });
+    if (!modelReviewed) {
+      const admitted = this._admitMessage(agentId, { fromUid, toUid: channelId, content, channelId,
+        channelType: channelType || 1, contentType, messageId, timestamp, mention });
+      if (admitted instanceof Promise) {
+        void admitted.then(allowed => { if (allowed) this.forwardToAgent(agentId, fromUid, content, channelId,
+          channelType, contentType, messageId, timestamp, mention, routeMetadata, true); }).catch(error => {
+          console.error('[Admission] forwarding failed:', errorMessage(error));
         });
         return;
       }
+      if (!admitted) return;
     }
+    const stored = this.db.prepare('SELECT * FROM messages WHERE id=?').get<AdmissionMessage>(messageId);
+    if (!stored || messageReadState(this.db, agentId, stored, 'trigger') !== 'readable') return;
+    if (!this.dispatcher) return;
     // 统一交 dispatcher 决策：连接就绪则 push，否则留库等 agent 通过 voko_fetch_new_messages pull
     const isGroup = channelType === 2;
-    const agentContent = isGroup
-      ? this._buildGroupMentionPrompt(channelId, fromUid, content, messageId, timestamp)
-      : content;
+    const agentContent = content;
     let replyRouteContext: {
       conversationId: string;
       providerFamily: string;
@@ -1372,12 +1499,26 @@ class MessageHandler extends EventEmitter {
   // Agent 回复处理
   // ==========================================
 
+  private async _admitGroupHistory(agentId: string, channelId: string, timestamp: number): Promise<void> {
+    const rows = this.db.prepare(`SELECT * FROM messages WHERE channel_id=? AND channel_type=2
+      AND timestamp<=? AND admission_received_at IS NOT NULL AND content_type NOT IN (11,12) ORDER BY timestamp DESC,rowid DESC LIMIT ?`)
+      .all<GroupContextRow>(channelId, timestamp, GROUP_CONTEXT_LIMIT * 3);
+    await Promise.all(rows.map(async row => {
+      if (getAdmission(this.db, agentId, row.id)) return;
+      await this._admitMessage(agentId, { fromUid: row.from_uid, toUid: row.to_uid,
+        channelId, channelType: 2, content: row.content, messageId: row.id, timestamp: row.timestamp,
+        mention: parseMention(row.mention) });
+    }));
+  }
+
   _buildGroupMentionPrompt(
+    agentId: string,
     channelId: string,
     senderUid: string,
     content: string,
     messageId: string,
     timestamp: number,
+    contextIds: Set<string> = new Set(),
   ): string {
     let groupName = channelId;
     try {
@@ -1389,15 +1530,16 @@ class MessageHandler extends EventEmitter {
     const rows: GroupContextRow[] = [];
     try {
       const raw = this.db.prepare(
-        'SELECT id, from_uid, content, timestamp, content_type, message_seq, client_msg_no ' +
+        'SELECT * ' +
         'FROM messages WHERE channel_id=? AND channel_type=2 AND id!=? AND content_type NOT IN (11,12) ' +
         'AND (? IS NULL OR timestamp<=?) ORDER BY timestamp DESC, rowid DESC LIMIT ?'
       ).all<GroupContextRow>(channelId, messageId || '', timestamp ?? null, timestamp ?? null, GROUP_CONTEXT_LIMIT * 3);
       const seen = new Set<string>();
       for (const row of raw) {
+        if (messageReadState(this.db, agentId, row as GroupContextRow & AdmissionMessage) !== 'readable') continue;
         const key = row.client_msg_no || (row.message_seq != null ? 'seq:' + row.message_seq : row.id);
         if (seen.has(key)) continue;
-        seen.add(key); rows.push(row);
+        seen.add(key); rows.push(row); contextIds.add(row.id);
         if (rows.length >= GROUP_CONTEXT_LIMIT) break;
       }
       rows.reverse();

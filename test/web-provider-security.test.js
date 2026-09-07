@@ -40,8 +40,8 @@ test('Provider security page and API expose only controls supported by the Agent
     ['agent-4','hermes-cli',['toolProfile','safeMode','approvalMode','acceptHooks','additionalPrompt']],
     ['agent-5','qwen-office-cli',['sessionPersistence','permissionMode','toolAccess','mcpProfile','additionalPrompt']],
     ['agent-6','dumate-http',['sessionPersistence','additionalPrompt','isolatedDataRoot','loopbackOnly']],
-    ['agent-7','claude-cli',['toolAccess','browser','shellWrite','additionalPrompt']],
-    ['agent-8','qwen-cli',['tools','additionalPrompt']],
+    ['agent-7','claude-cli',['toolAccess','browser','permissionMode','customizations','additionalPrompt']],
+    ['agent-8','qwen-cli',['executionMode','additionalPrompt']],
     ['agent-9','opencode-cli',['pluginMode','approvalMode','additionalPrompt']],
     ['agent-9','opencode-acp',['pluginMode','permissionCallback','additionalPrompt']],
     ['agent-9','opencode-attach',['loopbackServer','additionalPrompt']],
@@ -143,7 +143,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(html, /运行时版本/);
   assert.match(html, /HTTP/);
   assert.match(html, /name="dataFileAccess"/);
-  assert.match(html, /宿主机文件读取/);
+  assert.match(html, /宿主机工具范围/);
   assert.match(html, /路径不隔离/);
   assert.match(html, /data-risk="medium"/);
   assert.match(html, /data-risk="high"/);
@@ -185,6 +185,19 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(unverifiedCodexHtml, /bwrap: denied &lt;probe&gt;/);
   assert.doesNotMatch(unverifiedCodexHtml, /bwrap: denied <probe>/);
   assert.doesNotMatch(unverifiedCodexHtml, /name="sandboxMode"/);
+  providerSecurity.storeCapability('agent-14', 'codex-cli', {
+    runtimeFingerprint: 'failed-native-choice', capabilityDigest: 'failed-native-choice', evidenceState: 'failed',
+    securityVerification: 'CODEX_SANDBOX_CANARY_FAILED', supportedControls: {
+      sandboxMode: { values: ['native'], enforcement: 'voko_enforced', boundary: 'not_enforced' },
+      additionalPrompt: { values: [], enforcement: 'voko_enforced' },
+    }, observedAt: Date.now(), expiresAt: Date.now() + 10000,
+  });
+  const nativeChoiceHtml = await (await fetch(`${origin}/agents/agent-14/security`, { headers: auth })).text();
+  const nativeSelect = nativeChoiceHtml.match(/<select name="sandboxMode"[\s\S]*?<\/select>/)?.[0] || '';
+  assert.match(nativeSelect, /value="read_only" selected disabled/);
+  assert.match(nativeSelect, /value="native"/);
+  assert.doesNotMatch(nativeSelect, /value="native"[^>]* selected/);
+  assert.equal(providerSecurity.effective('agent-14', 'codex-cli').config.sandboxMode, 'read_only');
 
   const goosePage = await fetch(`${origin}/agents/agent-3/security`, { headers: auth });
   const gooseHtml = await goosePage.text();
@@ -255,8 +268,8 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.equal((dumateHtml.match(/name="additionalPrompt"/g) || []).length, 1);
 
   const frameworkExpectations = [
-    ['agent-7', ['toolAccess','browser','additionalPrompt'], ['shellWrite']],
-    ['agent-8', ['additionalPrompt'], ['tools']],
+    ['agent-7', ['toolAccess','browser','permissionMode','customizations','additionalPrompt'], []],
+    ['agent-8', ['executionMode','additionalPrompt'], []],
     ['agent-10', ['additionalPrompt'], []],
     ['agent-11', ['additionalPrompt'], []],
   ];

@@ -11,7 +11,7 @@ class DeepSeekHarnessCliProvider extends CliAdapter {
     super({
       name: 'DeepSeek Harness CLI',
       cmd: runtime.command || process.execPath,
-      args: [...runtime.argsPrefix, '--profile', profile, '{prompt}'],
+      args: ['--profile', profile, '{prompt}'],
       parser: 'raw',
       matchType: 'deepseek-harness',
       adapterType: 'deepseek-harness-cli',
@@ -22,7 +22,8 @@ class DeepSeekHarnessCliProvider extends CliAdapter {
       contextWindow: Number(options.contextWindow || 20),
       db: options.db as any,
       cwd: String(options.cwd || os.tmpdir()),
-      runtimeRequest: null as any,
+      runtimeRequest: { providerId: 'deepseek-harness-cli', mode: 'cli', candidates: runtime.argsPrefix[0]
+        ? [{ kind: 'explicit', path: runtime.argsPrefix[0], interpreter: 'node' }] : [] },
       sessionPersistence: 'dispatcher',
     });
     if (!runtime.command) (this as any)._available = false;

@@ -153,17 +153,17 @@ test('a session-only final can finish a single turn but cannot prove its attachm
 
 test('unknown session metadata is bounded and rejects new sessions before submission at capacity', async t => {
   const { provider } = fixture(t); let sends = 0; provider.send = () => { sends++; };
-  for (let i = 0; i < 1000; i++) provider.sendChatSend(`agent:synthetic:visitor-${i}`, 'synthetic', { turnId: `turn-${i}` });
-  assert.throws(() => provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' }),
+  for (let i = 0; i < 1000; i++) await provider.sendChatSend(`agent:synthetic:visitor-${i}`, 'synthetic', { turnId: `turn-${i}` });
+  await assert.rejects(() => provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' }),
     error => error.code === 'PROVIDER_SESSION_CAPACITY' && error.deliveryOutcome === 'not_delivered');
   assert.equal(sends, 1000);
   assert.equal(provider._sessionTurns.size, 1000);
   // Existing unknown sessions retain their state and cannot misattribute old finals.
-  provider.sendChatSend('agent:synthetic:visitor-0', 'synthetic', { turnId: 'new-turn' });
+  await provider.sendChatSend('agent:synthetic:visitor-0', 'synthetic', { turnId: 'new-turn' });
   assert.equal(provider._replyIdentity({ payload: {} }, 'agent:synthetic:visitor-0').ambiguous, true);
   assert.equal(sends, 1001);
   provider._handleChatEvent({ payload: { state: 'final', sessionKey: 'agent:synthetic:visitor-1', turnId: 'turn-1',
     message: { role: 'assistant', content: [{ type: 'text', text: 'completed' }] } } });
-  provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' });
+  await provider.sendChatSend('agent:synthetic:overflow', 'synthetic', { turnId: 'overflow' });
   assert.equal(sends, 1002, 'a confirmed, unambiguous completed session makes room for a new one');
 });

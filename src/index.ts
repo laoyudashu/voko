@@ -2055,6 +2055,7 @@ async function startMcpServer(args?: any, core?: any) {
             imUid:String(row.imUid||'')}]:[];
         });
       e2eeRuntime = new E2eeV2Runtime({store,directory,agents,dispatcher,
+        assertInboundAllowed:(agentId:string,messageIds:string[])=>messageHandler.assertInboundAllowed(agentId,messageIds),
         persistInbound:(agentId:string,message:any,plaintext:string,messageId:string,contentType=1)=>{
           if(!messageHandler)return false;
           const inbound = {...message,content:plaintext,contentType,messageId,clientMsgNo:messageId};
@@ -2413,6 +2414,7 @@ async function startMcpServer(args?: any, core?: any) {
     sendMessage,
     enqueueOwnerIntervention: (record?: any) => ownerInterventionNotifier?.enqueue(record),
     outboundMessageResults: messageHandler?.getOutboundMessageResults?.(),
+    prepareGroupHistory: messageHandler ? (agentId: string, channelId: string) => messageHandler.prepareGroupHistory(agentId, channelId) : undefined,
   });
   (cx as any).secureOutboundRouter = secureOutboundRouter;
   (cx as any).a2aMailboxClient = a2aMailboxClient;
@@ -3702,6 +3704,7 @@ async function main() {
 
   // ── 需要初始化 core 的命令 ──
   const core = initCore(args, { silent });
+  if (willServe && __instanceLock) require('./core/message-admission').recoverInterruptedAdmissions(core.db);
 
   // voko --tools：输出所有工具的 JSON Schema（机器可读，供 MCP 客户端/agent 发现能力）
   if (args.tools) {

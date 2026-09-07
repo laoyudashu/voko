@@ -151,7 +151,7 @@ test('Kiro unattended delivery does not pre-authorize any tool category', () => 
   assert.ok(provider._args.includes('--no-interactive'));
   assert.equal(provider._parserName, 'kiro-output');
   assert.match(provider._args.join(' '), /--wrap never/);
-  assert.doesNotMatch(provider._args.join(' '), /--trust-tools(?:=|\s|$)/);
+  assert.ok(provider._args.includes('--trust-tools='));
   assert.doesNotMatch(provider._args.join(' '), /trust-all-tools|write|shell|read|grep/);
 });
 

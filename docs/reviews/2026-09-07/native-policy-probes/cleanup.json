@@ -1,0 +1,56 @@
+{
+  "macos": [
+    {
+      "root": "/Users/laoyu/.voko-policy-regression-CWuTC7",
+      "removed": true
+    },
+    {
+      "root": "/Users/laoyu/.voko-policy-regression-HISvLg",
+      "removed": true
+    },
+    {
+      "root": "/Users/laoyu/.voko-policy-regression-QpqIqX",
+      "removed": true
+    },
+    {
+      "root": "/Users/laoyu/.voko-policy-run-0YTYho",
+      "removed": true
+    }
+  ],
+  "linux": [
+    {
+      "root": "/home/tjyu/.voko-policy-regression-f5hvOH",
+      "removed": true
+    },
+    {
+      "root": "/home/tjyu/.voko-policy-regression-if7OJf",
+      "removed": true
+    },
+    {
+      "root": "/home/tjyu/.voko-policy-regression-wfkC6v",
+      "removed": true
+    },
+    {
+      "root": "/home/tjyu/.voko-policy-run-jgnYla",
+      "removed": true
+    }
+  ],
+  "windows": [
+    {
+      "root": "C:\\Users\\laoyu\\.voko-policy-regression-jt6GMu",
+      "removed": true
+    },
+    {
+      "root": "C:\\Users\\laoyu\\.voko-policy-regression-qEArfG",
+      "removed": true
+    },
+    {
+      "root": "C:\\Users\\laoyu\\.voko-policy-regression-sbvKKA",
+      "removed": true
+    },
+    {
+      "root": "C:\\Users\\laoyu\\.voko-policy-run-YS3Om6",
+      "removed": true
+    }
+  ]
+}

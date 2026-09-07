@@ -76,7 +76,7 @@ class OpenCodeCliProvider extends CliAdapter {
   async push(payload: PushPayload): Promise<void> {
     return super.push({
       ...payload,
-      content: buildOpenCodeVisitorContent(payload.agentId, payload.fromUid, payload.content),
+      content: buildOpenCodeVisitorContent(payload.agentId, payload.fromUid, payload.content, payload.providerSecurityPolicy?.config.executionMode === 'native'),
     });
   }
 }

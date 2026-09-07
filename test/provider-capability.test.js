@@ -42,7 +42,7 @@ test('shared invocation planner covers native and prompt-only Provider transport
   assert.equal(redactedInvocation('claude-cli', { toolAccess: 'read_only', browser: 'disabled' })
     .some(item => /--tools Read,Grep,Glob/.test(item.text) && item.sourceControl === 'toolAccess'), true);
   assert.equal(redactedInvocation('codex-cli', { sandboxMode: 'workspace_write' })
-    .some(item => item.text === 'workspace-write' && item.risk === 'high'), true);
+    .some(item => item.text === '--sandbox workspace-write' && item.risk === 'high'), true);
   assert.equal(redactedInvocation('goose-cli', { extensionProfile: 'disabled' })
     .some(item => item.sourceControl === 'extensionProfile'), true);
   assert.equal(redactedInvocation('grok-cli', { additionalPrompt: 'visitor' })
@@ -75,8 +75,24 @@ test('runtime identity and version probing preserve the Agent scope', () => {
   assert.deepEqual(calls, ['agent-bound']);
   assert.equal(snapshot.runtimeVersion, '0.20.2');
   assert.equal(snapshot.frameworkVersion, '0.20.2');
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
     assert.equal(snapshot.evidenceState, 'static_compatible');
     assert.equal(snapshot.supportedControls.approvalMode.enforcement, 'provider_enforced');
+  }
+});
+
+test('native mappings do not transfer from CLI to HTTP or ACP, or to unknown versions', () => {
+  for (const [version, transport] of [
+    ['0.20.2', 'hermes-http'], ['1.46.0', 'goose-acp'],
+    ['999.0.0', 'hermes-cli'], ['999.0.0', 'goose-cli'],
+  ]) {
+    const snapshot = snapshotFromProvider({
+      isAvailable: () => true,
+      getProviderVersion: () => ({ version, source: 'command' }),
+      getDeliveryReadiness: () => ({ verificationStatus: 'loopback_verified' }),
+    }, transport, 'agent-1');
+    assert.equal(Object.values(snapshot.supportedControls)
+      .some(control => control.enforcement === 'provider_enforced'), false);
+    assert.equal(snapshot.matchedRuleId, null);
   }
 });

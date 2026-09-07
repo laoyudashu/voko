@@ -1,3 +1,4 @@
+import { messageReadState, readableMessageSql, type AdmissionMessage } from '../message-admission';
 /**
  * cli-adapter.js — 通用 CLI stdout PushProvider
  *
@@ -33,7 +34,7 @@ const { appendProviderAttachmentBoundary, stageProviderAttachments,
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
-import { applyProviderSecurityArgs } from '../provider-security-policy';
+import { applyProviderSecurityArgs, providerSecurityEnv } from '../provider-security-policy';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -289,13 +290,18 @@ class CliAdapter extends PushProvider {
     if (!nativeSessionId && this._contextWindow > 0 && this._db) {
       try {
         contextMsgs = (this._db.prepare(
-          `SELECT content, is_me, timestamp FROM messages WHERE channel_id=? AND agent_id=? AND content_type!=11 ORDER BY timestamp DESC LIMIT ?`
-        ).all(fromUid, agentId, this._contextWindow) as ContextMessage[]).reverse();
+          `SELECT * FROM messages WHERE channel_id=? AND agent_id=? AND channel_type!=2 AND content_type!=11 AND ${readableMessageSql()} ORDER BY timestamp DESC LIMIT ?`
+        ).all(fromUid, agentId, agentId, this._contextWindow) as (ContextMessage & AdmissionMessage)[]).filter(row => {
+          if (messageReadState(this._db!, agentId, row) !== 'readable') return false;
+          effectivePayload.registerContextMessage?.(row.id);
+          return row.id !== payload.messageId;
+        }).reverse();
       } catch (_) {}
     }
 
     const contextPrompt = (payload as any).__ownerRaw === true ? content : _buildContextPrompt(agentId, fromUid, content, contextMsgs);
-    const prompt = this._promptTemplate
+    const useNativePolicy = effectivePayload.providerSecurityPolicy?.config.executionMode === 'native';
+    const prompt = this._promptTemplate && !useNativePolicy
       ? this._promptTemplate.replace('{prompt}', () => contextPrompt)
       : contextPrompt;
 
@@ -377,6 +383,7 @@ class CliAdapter extends PushProvider {
 
     const runStartedAt = Date.now();
     try {
+      await effectivePayload.assertSubmissionCurrent?.();
       const result = await runCli({
         cmd,
         args,
@@ -385,7 +392,7 @@ class CliAdapter extends PushProvider {
         tag: this._name,
         timeout: this._timeout,
         env: withRuntimePath({
-          ...this._env,
+          ...providerSecurityEnv(this._env, this._adapterType, effectivePayload.providerSecurityPolicy?.config),
           ...(nativeSessionId ? {
             VOKO_CALLER_PROVIDER: this._bindingProviderType,
             VOKO_CALLER_INSTANCE: binding?.providerInstanceId || '',

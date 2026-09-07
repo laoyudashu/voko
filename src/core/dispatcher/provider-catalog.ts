@@ -335,13 +335,40 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
       observedAt: context.providerVersionObservedAt || new Date().toISOString(),
       result: context.providerVersion ? 'known' : 'unknown' }
     : null;
+  let versionRuntimeIdentity = '';
   instance.getProviderVersion = () => {
+    if (definition.id === 'deepseek-harness-cli' && context.providerVersion === undefined) {
+      // The launcher is Node; its --version is not the installed DSH version.
+      const runtime = require('./deepseek-harness-command').resolveDeepSeekHarnessRuntime();
+      let version: string | null = null;
+      try {
+        const manifest = JSON.parse(require('node:fs').readFileSync(runtime.versionFile, 'utf8'));
+        if (manifest.name === '@deepseek-ai/dsh') version = String(manifest.version || '').trim() || null;
+      } catch (_) {}
+      return { version, source: 'resolved_package_manifest', result: version ? 'known' : 'unknown' };
+    }
     if (definition.id === 'codex-cli' && context.providerVersion === undefined) {
       const evidence = instance.getSecurityControlEvidence();
       return { version: evidence.runtimeVersion, source: evidence.versionSource,
         result: evidence.runtimeVersion ? 'known' : 'unknown' };
     }
-    if (versionProbe) return { ...versionProbe };
+    if (versionProbe && context.providerVersion !== undefined) return { ...versionProbe };
+    let resolvedRuntime: any = null;
+    try { resolvedRuntime = instance._resolveRuntime?.() || null; } catch (_) {}
+    if (!resolvedRuntime && ['cursor-cli', 'github-copilot-cli'].includes(definition.id)) {
+      const legacy = definition.id === 'cursor-cli' ? require('./cursor-command').resolveCursorRuntime() : instance._runtime;
+      if (legacy?.command) resolvedRuntime = { available: true, executable: legacy.command, argvPrefix: legacy.prefixArgs || [] };
+    }
+    const runtimeIdentity = JSON.stringify([resolvedRuntime?.fingerprint || '',
+      resolvedRuntime?.executable || instance._command || instance._cmd || instance._binPath || '',
+      ...(resolvedRuntime?.argvPrefix || [])].map(value => {
+        try {
+          const stat = require('node:fs').statSync(value);
+          return [value, stat.size, stat.mtimeMs];
+        } catch (_) { return value; }
+      }));
+    if (versionProbe && versionRuntimeIdentity === runtimeIdentity) return { ...versionProbe };
+    versionRuntimeIdentity = runtimeIdentity;
     // QwenWork exposes its runtime version through the documented status JSON.
     // Its bundled Windows CLI does not provide a reliable `--version` process:
     // probing it can hold the CLI lock long enough for the following readiness
@@ -358,7 +385,7 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
     let command = context.versionProbeCommand || getProviderVersionCommand(definition.id);
     let args: string[]|undefined;
     try {
-      const runtime = typeof instance._resolveRuntime === 'function' ? instance._resolveRuntime() : null;
+      const runtime = resolvedRuntime;
       if (runtime?.available && runtime.executable) { command=runtime.executable;args=[...(runtime.argvPrefix||[]),'--version']; }
       else {
         const resolved = String(instance._command || instance._cmd || instance._binPath || '').trim();
@@ -376,13 +403,27 @@ export function instantiateProviderTransport(definition: ProviderTransportDefini
   instance.getSandboxStatus = (agentId?: string) => {
     const { evaluateProviderSandbox } = require('../provider-sandbox');
     const version = instance.getProviderVersion();
-    return evaluateProviderSandbox({ db: context.db as any, providerFamily: family,
+    const status = evaluateProviderSandbox({ db: context.db as any, providerFamily: family,
       transportId: definition.id, policyId: definition.sandboxPolicyId,
       providerVersion: version.version, providerVersionSource: version.source,
       providerVersionObservedAt: version.observedAt, providerVersionProbe: version,
       providerVersionVerified: context.providerVersionVerified === true,
       runtimeAvailable: definition.sandboxPolicyId === 'gemini-container'
         ? !!instance.isAvailable?.(agentId || '') : null });
+    let config: Record<string, string> = {};
+    try {
+      const row = (context.db as any)?.prepare('SELECT config_json FROM provider_security_policies WHERE agent_id=? AND transport_id=?')
+        .get(agentId || '', definition.id) as any;
+      if (row?.config_json) config = JSON.parse(row.config_json);
+    } catch (_) {}
+    const expanded = getProviderSecurityControls(definition.id).some(control =>
+      control.values?.some(value => value.value === config[control.id] && value.risk === 'high'));
+    if (!expanded) return status;
+    // The catalog profile describes default restrictions. A user-selected
+    // expansion must not continue advertising that baseline as enforced.
+    return { ...status, effective: false, support: 'unknown', status: 'user_configured', coverage: 'unknown',
+      dimensions: Object.fromEntries(Object.keys((status.dimensions || {}) as object).map(key => [key, 'unknown'])),
+      degradedReason: null, policySource: 'owner_configuration' };
   };
   return instance;
 }

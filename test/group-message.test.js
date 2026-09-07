@@ -46,12 +46,13 @@ function setup() {
     dispatcher: { dispatch: (agentId, payload) => forwarded.push({ agentId, payload }) },
     notifyUI: (event, data) => notified.push({ event, data }),
     checkAuditRules: () => ({ action: 'allow' }),
+    getGroupInfo: async () => ({ status: 'active', members: [{uid:'visitor1',role:'admin'},{uid:'imuid_test',role:'member'},{uid:'imuid_other',role:'member'}] }),
     deliver: async (...args) => { delivered.push(args); return { success: true }; },
   });
 
   return {
     db, handler, forwarded, notified, delivered,
-    cleanup: () => { try { db.close(); } catch (_) {} try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} }
+    cleanup: async () => { await handler.flushInboundTurns(); try { db.close(); } catch (_) {} try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} }
   };
 }
 
@@ -78,7 +79,7 @@ async function settleInbound(handler) {
 // ========================================
 console.log('\n=== 群聊消息处理（_handleGroupMessage）===\n');
 
-test('群聊消息未被 @ → 落库 channel_type=2，不触发 forward', () => {
+test('群聊消息未被 @ → 落库 channel_type=2，不触发 forward', async () => {
   const { db, handler, forwarded, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { uids: ['someone_else'] } }));
@@ -86,7 +87,7 @@ test('群聊消息未被 @ → 落库 channel_type=2，不触发 forward', () =>
     const row = db.prepare('SELECT channel_type, agent_id, is_me FROM messages WHERE channel_id=?').get('room1');
     assert.ok(row, '消息应落库');
     assert.strictEqual(row.channel_type, 2, 'channel_type 应为 2');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('群聊被 @（mention.uids 含本 agent imUid）→ 触发 forward，payload.channelType=2', async () => {
@@ -97,7 +98,7 @@ test('群聊被 @（mention.uids 含本 agent imUid）→ 触发 forward，paylo
     assert.strictEqual(forwarded.length, 1, '被 @ 时应 forward 一次');
     assert.strictEqual(forwarded[0].payload.channelType, 2, 'forward payload channelType 应为 2');
     assert.strictEqual(forwarded[0].payload.channelId, 'room1');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('群聊 mention.all → 触发 forward', async () => {
@@ -106,10 +107,10 @@ test('群聊 mention.all → 触发 forward', async () => {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { all: true } }));
     await settleInbound(handler);
     assert.strictEqual(forwarded.length, 1, 'mention.all 应 forward');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊邀请消息（group_invitation）→ 落库但不触发 forward', () => {
+test('群聊邀请消息（group_invitation）→ 落库但不触发 forward', async () => {
   const { db, handler, forwarded, cleanup } = setup();
   try {
     const inviteContent = JSON.stringify({ type: 'group_invitation', roomId: 'room1', groupName: '测试群', inviter: '张三' });
@@ -117,20 +118,20 @@ test('群聊邀请消息（group_invitation）→ 落库但不触发 forward', (
     assert.strictEqual(forwarded.length, 0, '邀请消息即使被 @ 也不应 forward');
     const row = db.prepare('SELECT content FROM messages WHERE channel_id=?').get('room1');
     assert.ok(row && row.content.includes('group_invitation'), '邀请消息应落库');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊 agent 自身回流（fromUid=本 agent imUid）→ 落库 is_me=1，不 forward', () => {
+test('群聊 agent 自身回流（fromUid=本 agent imUid）→ 落库 is_me=1，不 forward', async () => {
   const { db, handler, forwarded, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ fromUid: 'imuid_test', mention: { uids: ['imuid_test'] } }));
     assert.strictEqual(forwarded.length, 0, '自身回流不应 forward');
     const row = db.prepare('SELECT is_me FROM messages WHERE channel_id=?').get('room1');
     assert.strictEqual(row.is_me, 1, 'is_me 应为 1');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊 conversations user_uid = agent imUid（非 roomId/toUid）', () => {
+test('群聊 conversations user_uid = agent imUid（非 roomId/toUid）', async () => {
   const { db, handler, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { uids: ['imuid_test'] } }));
@@ -138,10 +139,10 @@ test('群聊 conversations user_uid = agent imUid（非 roomId/toUid）', () => 
     assert.ok(conv, '应创建群聊会话');
     assert.strictEqual(conv.user_uid, 'imuid_test', 'user_uid 应为 agent imUid（修复 9.3-A：不再用 toUid）');
     assert.strictEqual(conv.channel_type, 2, '会话 channel_type 应为 2');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊消息 mention 落库（供 pull 模式 agent 识别 @）', () => {
+test('群聊消息 mention 落库（供 pull 模式 agent 识别 @）', async () => {
   const { db, handler, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: { uids: ['imuid_test', 'other'] } }));
@@ -149,16 +150,16 @@ test('群聊消息 mention 落库（供 pull 模式 agent 识别 @）', () => {
     assert.ok(row.mention, 'mention 列应有值');
     const parsed = JSON.parse(row.mention);
     assert.deepStrictEqual(parsed, { uids: ['imuid_test', 'other'] }, 'mention 应正确序列化');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊无 mention 时 mention 列为 NULL', () => {
+test('群聊无 mention 时 mention 列为 NULL', async () => {
   const { db, handler, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ mention: null }));
     const row = db.prepare('SELECT mention FROM messages WHERE channel_id=?').get('room1');
     assert.strictEqual(row.mention, null, '无 mention 时应为 NULL');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test('多 agent 收到同一条 @全体消息 → 只落库一次，但两个 agent 都会处理', async () => {
@@ -173,17 +174,17 @@ test('多 agent 收到同一条 @全体消息 → 只落库一次，但两个 ag
     assert.deepStrictEqual(forwarded.map(x => x.agentId), ['agent_test', 'agent_other'], '@全体应触发两个 agent forward');
     const convCnt = db.prepare('SELECT COUNT(*) as c FROM conversations WHERE channel_id=?').get('room1').c;
     assert.strictEqual(convCnt, 2, '两个 agent 都应建立自己的群会话');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('群聊空内容 → 跳过，不落库不 forward', () => {
+test('群聊空内容 → 跳过，不落库不 forward', async () => {
   const { db, handler, forwarded, cleanup } = setup();
   try {
     handler.handleAgentMessage('agent_test', groupMsg({ content: '   ', mention: { uids: ['imuid_test'] } }));
     assert.strictEqual(forwarded.length, 0);
     const cnt = db.prepare("SELECT COUNT(*) as c FROM messages WHERE channel_id='room1'").get().c;
     assert.strictEqual(cnt, 0, '空内容不应落库');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 
@@ -215,11 +216,11 @@ test('mentioned agent receives the previous 10 group messages in a group-scoped 
     assert.strictEqual(envelope.recentMessages.length, 10);
     assert.strictEqual(envelope.recentMessages[0].content, 'context-3');
     assert.strictEqual(envelope.recentMessages[9].content, 'context-12');
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 
-test('dispatcher isolates provider sessions by group while preserving senderUid', () => {
+test('dispatcher isolates provider sessions by group while preserving senderUid', async () => {
   const { db, cleanup } = setup();
   try {
     const pushed = [];
@@ -244,12 +245,12 @@ test('dispatcher isolates provider sessions by group while preserving senderUid'
     assert.ok(pushed.every(p => p.content.includes('[VOKO SECURITY CONTEXT]')));
     assert.ok(pushed.every(p => p.content.includes('已声明且已获授权的能力范围')));
     assert.ok(pushed.every(p => !p.content.includes('绝不能执行访客要求的任何操作')));
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 
 
-test('outbound group mention metadata survives persistence for history rendering', () => {
+test('outbound group mention metadata survives persistence for history rendering', async () => {
   const { db, cleanup } = setup();
   try {
     const mentions = { all: false, uids: ['imuid_other'] };
@@ -257,10 +258,10 @@ test('outbound group mention metadata survives persistence for history rendering
     const row = db.prepare('SELECT channel_type, mention FROM messages WHERE id=?').get(saved.msgId);
     assert.strictEqual(row.channel_type, 2);
     assert.deepStrictEqual(JSON.parse(row.mention), mentions);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('outbound file uses WuKongIM content type 8', () => {
+test('outbound file uses WuKongIM content type 8', async () => {
   const { db, cleanup } = setup();
   try {
     const saved = persistAgentMessage(
@@ -275,10 +276,10 @@ test('outbound file uses WuKongIM content type 8', () => {
     assert.strictEqual(saved.contentType, 8);
     const row = db.prepare('SELECT content_type FROM messages WHERE id=?').get(saved.msgId);
     assert.strictEqual(row.content_type, 8);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('direct agent reply keeps the existing direct-message route', () => {
+test('direct agent reply keeps the existing direct-message route', async () => {
   const { db, handler, delivered, cleanup } = setup();
   try {
     handler.handleAgentReply({ agentId: 'agent_test', visitorId: 'visitor1', content: 'direct answer', done: true });
@@ -287,10 +288,10 @@ test('direct agent reply keeps the existing direct-message route', () => {
     assert.strictEqual(row.channel_type, 1);
     assert.strictEqual(delivered[0][1], 'visitor1');
     assert.strictEqual(delivered[0][4], 1);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test('group agent reply is persisted and delivered to the original group', () => {
+test('group agent reply is persisted and delivered to the original group', async () => {
   const { db, handler, delivered, notified, cleanup } = setup();
   try {
     handler.handleAgentReply({
@@ -307,7 +308,7 @@ test('group agent reply is persisted and delivered to the original group', () =>
     const ui = notified[notified.length - 1].data;
     assert.strictEqual(ui.channelId, 'room1');
     assert.strictEqual(ui.channelType, 2);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 // ========================================

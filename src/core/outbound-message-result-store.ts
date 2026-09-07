@@ -72,6 +72,18 @@ export class OutboundMessageResultStore {
     this.prune(agentId);
   }
 
+  recordSendFailure(agentId: string, sourceMessageId: string, reason: unknown, outcomeUnknown = false): void {
+    const key = this.key(agentId, sourceMessageId);
+    const current = this.entries.get(key);
+    // A receiver receipt may race the local transport result; keep that evidence.
+    if (!current || current.state !== 'UNCONFIRMED' || current.replyMessageId) return;
+    const candidate = String(reason || '');
+    const reasonCode = /^[A-Z][A-Z0-9_:-]{0,127}$/.test(candidate) ? candidate
+      : outcomeUnknown ? 'MESSAGE_DELIVERY_UNKNOWN' : 'MESSAGE_SEND_FAILED';
+    this.entries.set(key, { ...current, state: outcomeUnknown ? 'DELIVERY_UNKNOWN' : 'FAILED',
+      phase: null, reasonCode, updatedAt: Date.now() });
+  }
+
   apply(agentId: string, peerUid: string, receipt: TurnReceipt): number {
     let changed = 0;
     for (const sourceMessageId of receipt.sourceMessageIds) {

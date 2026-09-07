@@ -211,3 +211,16 @@ test('Windows Codex canary uses a fixed cmd script and independently detects wri
     assert.ok(probes.every(args => args.includes('voko-probe.cmd') && !args.includes('-e')));
   }
 });
+
+test('explicit native sandbox policy does not require the VOKO read-only canary to pass', async t => {
+  const { CodexCliProvider } = require('../build/core/dispatcher/providers/codex-cli');
+  const { CliAdapter } = require('../build/core/adapters/cli-adapter');
+  const provider = new CodexCliProvider();
+  t.mock.method(provider, 'getSecurityControlEvidence', () => ({ securityVerification: 'CODEX_SANDBOX_INITIALIZATION_FAILED', controlEvidence: {} }));
+  let submitted = 0;
+  t.mock.method(CliAdapter.prototype, 'push', async () => { submitted++; });
+  await provider.push({ agentId: 'agent', messageId: 'native', providerSecurityPolicy: { config: { sandboxMode: 'native' } } });
+  assert.equal(submitted, 1);
+  await assert.rejects(provider.push({ agentId: 'agent', messageId: 'restricted', providerSecurityPolicy: { config: { sandboxMode: 'read_only' } } }), /CODEX_SANDBOX_INITIALIZATION_FAILED/);
+  assert.equal(submitted, 1);
+});

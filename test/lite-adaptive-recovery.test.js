@@ -9,27 +9,12 @@ const { AcpAdapter } = require('../build/core/adapters/acp-adapter');
 const { GooseAcpProvider } = require('../build/core/dispatcher/providers/goose-acp');
 
 function dbWithHistory() {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`
-    CREATE TABLE messages (
-      id TEXT PRIMARY KEY,
-      channel_id TEXT NOT NULL,
-      channel_type INTEGER NOT NULL,
-      content TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      is_me INTEGER NOT NULL,
-      content_type INTEGER NOT NULL,
-      agent_id TEXT NOT NULL
-    );
-    CREATE TABLE agents (
-      agent_id TEXT PRIMARY KEY,
-      backend_type TEXT NOT NULL,
-      backend_instance_id TEXT
-    );
-    INSERT INTO messages VALUES
-      ('m1', 'visitor-a', 1, 'remembered fact', 1, 0, 1, 'agent-a');
-    INSERT INTO agents VALUES ('agent-a', 'hermes', 'hermes-profile');
-  `);
+  const db = require('../build/core/database').initDatabase(':memory:', { silent: true });
+  db.prepare(`INSERT INTO agents(id,agent_id,imUid,imToken,im_server_url,publish_status,access_mode,backend_type,backend_instance_id,created_at,updated_at)
+    VALUES ('agent-a','agent-a','agent-uid','test','','published','public','hermes','hermes-profile',1,1)`).run();
+  db.prepare(`INSERT INTO messages(id,channel_id,channel_type,content,timestamp,is_me,content_type,agent_id,from_uid,to_uid,status)
+    VALUES('m1','visitor-a',1,'remembered fact',1,0,1,'agent-a','visitor-a','agent-uid','received')`).run();
+  require('../build/core/message-admission').finishAdmission(db,'agent-a','m1','allowed','ALLOWED');
   return db;
 }
 

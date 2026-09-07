@@ -34,3 +34,25 @@ test('allows a later confirmed reply to resolve delivery unknown', () => {
   assert.equal(store.apply('agent-1', 'agent-peer', receipt({ sequence: 2, state: 'COMPLETED', phase: 'reply', replyMessageId: 'reply-1' })), 1);
   assert.equal(store.get('agent-1', 'message-1').replyMessageId, 'reply-1');
 });
+
+test('local send failure keeps its reason and cannot override an earlier receiver receipt', () => {
+  const store = new OutboundMessageResultStore();
+  store.register('agent-1', 'message-1', 'agent-peer');
+  store.recordSendFailure('agent-1', 'message-1', 'PEER_NOT_FOUND');
+  assert.equal(store.get('agent-1', 'message-1').state, 'FAILED');
+  assert.equal(store.get('agent-1', 'message-1').reasonCode, 'PEER_NOT_FOUND');
+  assert.equal(store.get('agent-1', 'message-1').phase, null);
+  store.register('agent-1', 'message-2', 'agent-peer');
+  store.apply('agent-1', 'agent-peer', receipt({ sourceMessageIds: ['message-2'], state: 'COMPLETED', phase: 'reply' }));
+  store.recordSendFailure('agent-1', 'message-2', 'SENDACK_TIMEOUT', true);
+  assert.equal(store.get('agent-1', 'message-2').state, 'COMPLETED');
+});
+
+test('an uncertain local send accepts later receiver confirmation without replaying', () => {
+  const store = new OutboundMessageResultStore();
+  store.register('agent-1', 'message-1', 'agent-peer');
+  store.recordSendFailure('agent-1', 'message-1', 'unsafe free text with secrets', true);
+  assert.equal(store.get('agent-1', 'message-1').reasonCode, 'MESSAGE_DELIVERY_UNKNOWN');
+  assert.equal(store.apply('agent-1', 'agent-peer', receipt({ state: 'COMPLETED', phase: 'reply' })), 1);
+  assert.equal(store.get('agent-1', 'message-1').state, 'COMPLETED');
+});
