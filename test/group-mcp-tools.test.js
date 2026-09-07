@@ -22,6 +22,7 @@ const { MessageRouteStore, RoutingConversationStore } = require('../build/core/p
 const { runWithProviderCaller } = require('../build/core/registration-caller-context');
 const { registerActiveOwnerInterventionContext } = require('../build/core/owner-intervention-active-context');
 const { OutboundMessageResultStore } = require('../build/core/outbound-message-result-store');
+const { createSendMessage } = require('../build/core/send-message');
 
 // ========================================
 // 夹具：建库 + 插数据 + mock fetch + mock sendMessage
@@ -93,7 +94,7 @@ function setup(options = {}) {
     db,
     query: (sql, params = []) => { try { return db.prepare(sql).all(...params); } catch (_) { return []; } },
     exec: (sql, params = []) => { try { db.prepare(sql).run(...params); } catch (_) {} },
-    sendMessage: async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
+    sendMessage: options.sendResult ? createSendMessage({ db, deliver: async () => options.sendResult }) : async (agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata) => {
       sentMessages.push({ agentId, toUid, content, fromUid, messageType, channelType, mentions, requestedMessageId, metadata });
       return { success: true };
     },
@@ -167,6 +168,34 @@ await test('send_message requests an in-memory result receipt and exposes it thr
     assert.strictEqual(status.transport.state, 'DELIVERED');
     assert.strictEqual(status.execution.state, 'UNCONFIRMED');
     assert.strictEqual(status.execution.reasonCode, 'NO_RECEIPT_RECEIVED');
+  } finally { cleanup(); }
+});
+for (const outcomeUnknown of [false, true]) await test(`send failure closes waiting and retains outcome uncertainty (${outcomeUnknown})`, async () => {
+  const reason = outcomeUnknown ? 'SENDACK_TIMEOUT' : 'PEER_NOT_FOUND';
+  const { handlers, db, outboundMessageResults, cleanup } = setup({ sendResult: {
+    success: false, error: reason, outcomeUnknown, securityMode: 'e2ee', securityReason: 'directory_resolution_failed',
+  } });
+  try {
+    const sent = await handlers.send_message({ agentId: 'agentA', toUid: 'imuidB', content: 'failed send', channelType: 1 });
+    assert.strictEqual(sent.success, false);
+    assert.strictEqual(sent.securityMode, 'e2ee');
+    assert.strictEqual(sent.outcomeUnknown, outcomeUnknown);
+    const result = await handlers.get_message_result({ agentId: 'agentA', messageId: sent.messageId });
+    assert.strictEqual(result.transport.state, outcomeUnknown ? 'UNKNOWN' : 'FAILED');
+    assert.strictEqual(result.execution.state, outcomeUnknown ? 'DELIVERY_UNKNOWN' : 'FAILED');
+    assert.strictEqual(result.execution.reasonCode, reason);
+    assert.strictEqual(result.execution.phase, null);
+    assert.strictEqual(result.reply.state, outcomeUnknown ? 'UNKNOWN' : 'FAILED');
+    assert.strictEqual(db.prepare('SELECT status FROM messages WHERE id=?').get(sent.messageId).status,
+      outcomeUnknown ? 'unknown' : 'failed');
+    // Simulate a runtime restart losing in-memory receipt details.
+    const originalGet = outboundMessageResults.get;
+    outboundMessageResults.get = () => null;
+    const recovered = await handlers.get_message_result({ agentId: 'agentA', messageId: sent.messageId });
+    outboundMessageResults.get = originalGet;
+    assert.strictEqual(recovered.execution.state, result.execution.state);
+    assert.strictEqual(recovered.reply.state, result.reply.state);
+    assert.strictEqual(recovered.execution.reasonCode, outcomeUnknown ? 'MESSAGE_DELIVERY_UNKNOWN' : 'MESSAGE_SEND_FAILED');
   } finally { cleanup(); }
 });
 await test('get_message_result closes reply state when Provider finishes without a reply', async () => {

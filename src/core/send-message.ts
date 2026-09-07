@@ -260,8 +260,12 @@ function createSendMessage({ db, deliver, databaseAPI, enqueueIntervention }: {
     });
 
     if (!sendResult.success) {
-      try { db.prepare(`UPDATE messages SET status='failed' WHERE id=?`).run(msgId); } catch (_) {}
-      return { success: false, error: sendResult.error, messageId: msgId, serverMessageId: sendResult.serverMessageId };
+      const outcomeUnknown = sendResult.outcomeUnknown === true;
+      try { db.prepare('UPDATE messages SET status=? WHERE id=?').run(outcomeUnknown ? 'unknown' : 'failed', msgId); } catch (_) {}
+      return { success: false, error: sendResult.error, code: sendResult.code,
+        messageId: msgId, serverMessageId: sendResult.serverMessageId, outcomeUnknown,
+        securityMode: sendResult.securityMode, securityReason: sendResult.securityReason,
+        deliveryState: sendResult.deliveryState };
     }
 
     try {

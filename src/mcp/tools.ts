@@ -2056,6 +2056,10 @@ function createToolHandlers(cx: McpContext) {
         p.agentId, p.toUid, content, fromUid, messageType, channelType, mentions, outboundMessageId,
         routeMetadata,
       );
+      if (channelType === 1 && result?.success === false) {
+        cx.outboundMessageResults?.recordSendFailure(String(p.agentId), outboundMessageId,
+          result.code || result.error, result.outcomeUnknown === true);
+      }
       if (outboundRouteId) {
         try {
           if (result?.success !== false) messageRoutes.setStatus(outboundRouteId, 'active');
@@ -2116,8 +2120,16 @@ function createToolHandlers(cx: McpContext) {
         'SELECT id,to_uid,status,is_me FROM messages WHERE id=? AND agent_id=? LIMIT 1', [p.messageId, p.agentId],
       )[0];
       if (!message || Number(message.is_me) !== 1) return { success: false, code: 'MESSAGE_RESULT_NOT_FOUND', error: 'Message not found' };
-      const tracked = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
-      const transportState = message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
+      const observed = cx.outboundMessageResults?.get(String(p.agentId), String(p.messageId));
+      // Persisted transport failures remain terminal after the in-memory receipt
+      // store is lost on restart. Do not replace a confirmed receiver outcome.
+      const localFailure = (!observed || observed.state === 'UNCONFIRMED')
+        && ['failed', 'unknown'].includes(message.status);
+      const tracked = localFailure ? { ...observed, state: message.status === 'unknown' ? 'DELIVERY_UNKNOWN' : 'FAILED',
+        phase: null, turnId: null, replyMessageId: null, updatedAt: observed?.updatedAt || null,
+        reasonCode: message.status === 'unknown' ? 'MESSAGE_DELIVERY_UNKNOWN' : 'MESSAGE_SEND_FAILED' } : observed;
+      const transportState = message.status === 'unknown' ? 'UNKNOWN'
+        : message.status === 'sent' ? 'DELIVERED' : message.status === 'failed' ? 'FAILED' : 'QUEUED';
       const reply = tracked?.replyMessageId ? { state: 'DELIVERED', messageId: tracked.replyMessageId }
         : tracked && ['FAILED','AUTH_REQUIRED'].includes(tracked.state)
           ? { state: 'FAILED', messageId: null, reasonCode: tracked.reasonCode }
