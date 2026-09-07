@@ -145,7 +145,23 @@ for (const transportId of ['github-copilot-acp', 'codebuddy-acp', 'traecli-acp',
     db.prepare(`INSERT INTO agents(id,agent_id,agent_name,imUid,imToken,im_server_url,backend_type,created_at,updated_at)
       VALUES('row','agent','Policy Test','uid','test','',?,1,1)`).run(definition.family);
     const service = new ProviderSecurityPolicyService(db);
-    const provider = instantiateProviderTransport(definition, { db, providerVersion: 'fixture', getProviderConfig: () => ({ cwd: root }) });
+    // Windows discovery requires an installed loader; use a fixture instead of
+    // inheriting whichever Copilot installation exists on the developer host.
+    const previousAppData = process.env.APPDATA;
+    let provider;
+    try {
+      if (transportId === 'github-copilot-acp' && process.platform === 'win32') {
+        const appData = path.join(root, 'Roaming');
+        const loader = path.join(appData, 'npm', 'node_modules', '@github', 'copilot', 'npm-loader.js');
+        fs.mkdirSync(path.dirname(loader), { recursive: true });
+        fs.writeFileSync(loader, '/* synthetic Copilot discovery fixture */');
+        process.env.APPDATA = appData;
+      }
+      provider = instantiateProviderTransport(definition, { db, providerVersion: 'fixture', getProviderConfig: () => ({ cwd: root }) });
+    } finally {
+      if (previousAppData === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = previousAppData;
+    }
     t.after(async () => { await provider.stop(); db.close(); fs.rmSync(root, { recursive: true, force: true }); });
     const argsForAgent = provider.options.argsForAgent;
     const template = [...provider._cliArgs];
