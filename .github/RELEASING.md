@@ -36,3 +36,20 @@ No long-lived npm token is required in GitHub secrets.
 The release job uses a separate `contents: write` permission only after the
 npm publish job succeeds. The npm production environment approval remains the
 manual approval point; the GitHub tag/release creation itself is automated.
+
+## Registry availability and recovery
+
+npm scans new versions before making them installable. A successful upload can
+therefore precede public registry availability by several minutes. The separate
+`verify-registry` job waits up to 20 minutes, verifies the official tarball's
+SHA-512 and compares it with the prepared artifact. GitHub Release creation
+depends on this verification.
+
+If verification times out after upload succeeds, rerun only failed jobs after
+checking npm availability. Do not dispatch a new publication or repeat the
+successful upload. For a historical run that combined upload and verification
+in one job, verify the published artifact against the saved preparation artifact
+and create the missing tag/Release at the original workflow SHA without rerunning
+that job.
+
+See [npm's publish-time scanning announcement](https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/).
