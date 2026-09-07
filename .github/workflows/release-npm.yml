@@ -96,24 +96,25 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Publish the verified tarball
         run: npm publish "$(cat release-tarball.txt)" --access public --provenance
-      - name: Verify registry version
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
-        run: |
-          for attempt in 1 2 3 4 5; do
-            published="$(npm view @voko/lite version --registry=https://registry.npmjs.org 2>/dev/null || true)"
-            if [ "$published" = "$EXPECTED_VERSION" ]; then
-              echo "Verified @voko/lite@$EXPECTED_VERSION"
-              exit 0
-            fi
-            sleep $((attempt * 3))
-          done
-          echo "npm registry did not report @voko/lite@$EXPECTED_VERSION after publication" >&2
-          exit 1
+
+  verify-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: npm-release-${{ inputs.version }}
+      - name: Wait for registry availability and verify the exact artifact
+        run: node scripts/wait-published-release.js npm-pack.json
 
   github-release:
-    needs: publish
-    if: needs.publish.result == 'success'
+    needs: verify-registry
+    if: needs.verify-registry.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
