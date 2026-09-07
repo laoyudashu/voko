@@ -2056,7 +2056,7 @@ conversationTabs+pendingHint+'<div style="display:flex;align-items:center;justif
       // rule as MCP on the Web route instead of trusting browser payloads.
       if(Number(channelType)===2&&mentions&&mentions.all===true){
         try{
-          const group=await handlers.get_group_context({agentId,toUid,limit:1,offset:0});
+          const group=await handlers.get_group_context({agentId,channelId:toUid,limit:1,offset:0});
           if(group&&group.success===false)throw new Error(group.error||req.t('common.action.failed'));
           const myUid=db.prepare('SELECT imUid FROM agents WHERE agent_id=? LIMIT 1').get(agentId)?.imUid;
           const me=(group?.members||[]).find(m=>String(m.uid)===String(myUid));

@@ -34,6 +34,7 @@ test('anonymous browser retains health access but cannot subscribe to either sen
 test('real browser cookie streams receive events and close after session revocation', async ({ browser, baseURL, request }) => {
   const info = manifest();
   const db = new DatabaseSync(info.dbPath);
+  db.exec("PRAGMA busy_timeout=5000");
   const sessions = createLocalWebSessionStore(db);
   const session = sessions.create('e2e-owner@example.test');
   const context = await browser.newContext({ extraHTTPHeaders: {} });

@@ -106,7 +106,7 @@ test('real IM 1006 disconnect reconnects one Agent without disturbing a shared H
   expect(finalState.imStatus.connected).toBe(true);
 });
 
-test('real SENDACK loss fails exactly one outbound message and the next send recovers', async ({ request }, testInfo) => {
+test('real SENDACK loss keeps exactly one unknown outbound message and a new send succeeds', async ({ request }, testInfo) => {
   test.setTimeout(35_000);
   const suffix = `-${testInfo.retry}`;
   const channelId = `e2e-sendack-loss${suffix}`;
@@ -124,7 +124,11 @@ test('real SENDACK loss fails exactly one outbound message and the next send rec
   expect(lost.success).toBe(false);
   await expect.poll(() => readMessages(channelId).filter(row => row.content === lostContent), { timeout: 5_000 }).toHaveLength(1);
   const failed = readMessages(channelId).find(row => row.content === lostContent);
-  expect(failed.status).toBe('failed');
+  expect(failed.status).toBe('unknown');
+  expect(lost.outcomeUnknown).toBe(true);
+  const outcome = await callMcp(request, 'voko_get_message_result', { agentId: 'e2e-agent', messageId: lost.messageId }, 1510 + testInfo.retry * 10);
+  expect(outcome.transport.state).toBe('UNKNOWN');
+  expect(outcome.execution.state).toBe('DELIVERY_UNKNOWN');
 
   const afterLoss = await imState(request);
   expect(afterLoss.stats.sendAckLost).toBe(beforeFault.stats.sendAckLost + 1);
@@ -182,7 +186,7 @@ test('concurrent sends interleaved with one Agent disconnect stay isolated and n
   const firstRows = messages.slice(0, 2).flatMap(({ agentId, toUid, content }) => readMessages(toUid, agentId).filter(row => row.content === content));
   const secondRows = messages.slice(2).flatMap(({ agentId, toUid, content }) => readMessages(toUid, agentId).filter(row => row.content === content));
   expect(firstRows).toHaveLength(2);
-  expect(firstRows.map(row => row.status)).toEqual(results.slice(0, 2).map(result => result.success ? 'sent' : 'failed'));
+  expect(firstRows.map(row => row.status)).toEqual(results.slice(0, 2).map(result => result.success ? 'sent' : result.outcomeUnknown ? 'unknown' : 'failed'));
   expect(secondRows).toHaveLength(2);
   expect(secondRows.every(row => row.status === 'sent' && row.client_msg_no)).toBe(true);
   expect(new Set([...firstRows, ...secondRows].map(row => row.id)).size).toBe(messages.length);
