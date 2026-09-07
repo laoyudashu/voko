@@ -75,7 +75,7 @@ test('modular rollout defaults to Goose and supports config and environment over
   assert.equal(getProviderModularRollout(db, { VOKO_PROVIDER_MODULAR_DISPATCH: 'disabled' }).mode, 'disabled');
 });
 
-test('office Provider defaults persist the first session and resume the next queued visitor turn', async (t) => {
+test('office Provider defaults persist the first session and resume the next queued visitor turn', { timeout: 10_000 }, async (t) => {
   for (const family of ['workbuddy', 'qwen-office', 'dumate']) {
     const db = fixture(t);
     const now = Date.now();
@@ -84,6 +84,8 @@ test('office Provider defaults persist the first session and resume the next que
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(`row-${family}`, `agent-${family}`, `im-${family}`, 'token', 'http://im',
       'published', family, '["http","cli","pull"]', 'private', now, now);
     const received = [];
+    let submitted;
+    const secondSubmission = new Promise(resolve => { submitted = resolve; });
     const transportId = family === 'workbuddy' ? 'workbuddy-http'
       : family === 'qwen-office' ? 'qwen-office-cli' : 'dumate-http';
     const deliveryMode = family === 'qwen-office' ? 'cli' : 'http';
@@ -91,6 +93,7 @@ test('office Provider defaults persist the first session and resume the next que
       priority: 10, match: (_agentId, meta) => meta.backend_type === family, isAvailable: () => true,
       push: async payload => {
         received.push(payload.providerBinding?.nativeSessionId || null);
+        if (received.length === 2) submitted();
         return { nativeSessionId: `session-${family}`, providerInstanceId: `instance-${family}`,
           deliveryMode, adapterType: transportId };
       },
@@ -100,7 +103,7 @@ test('office Provider defaults persist the first session and resume the next que
       channelType: 1, content: 'hello' };
     dispatcher.dispatch(base.agentId, { ...base, messageId: `first-${family}`, turnId: `first-${family}` });
     dispatcher.dispatch(base.agentId, { ...base, messageId: `second-${family}`, turnId: `second-${family}` });
-    await new Promise(resolve => setTimeout(resolve, 60));
+    await secondSubmission;
     assert.deepEqual(received, [null, `session-${family}`], family);
   }
 });

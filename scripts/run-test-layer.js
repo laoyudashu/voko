@@ -9,7 +9,9 @@ const testLogDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'voko-t
 process.on('exit', () => fs.rmSync(testLogDir, { recursive: true, force: true }));
 const testDir = path.join(root, 'test');
 const matrix = JSON.parse(fs.readFileSync(path.join(testDir, 'test-matrix.json'), 'utf8'));
-const inProcessTests = new Set(['lite-core-services.test.js']);
+// Run the log-heavy offline suite without Node's child-result serialization.
+// This avoids nodejs/node#64061 while retaining every assertion and coverage.
+const inProcessTests = new Set(['lite-core-services.test.js', 'offline-sync-reliability.test.js']);
 const buildMutatingTests = new Set(['lite-build-atomic.test.js']);
 const processSensitiveTests = new Set([
   'dynamic-port.test.js',
@@ -20,7 +22,8 @@ const testConcurrency = Math.max(1, Number(process.env.VOKO_TEST_CONCURRENCY) ||
 // Unix CI runners can retain deliberately spawned lifecycle-test children after
 // the assertions have completed. Keep the assertions and exit status intact,
 // but let the runner terminate instead of waiting indefinitely on those handles.
-const forceExit = process.env.CI === 'true' ? ['--test-force-exit'] : [];
+// Windows libuv can abort during forced teardown after tests have passed.
+const forceExit = process.env.CI === 'true' && process.platform !== 'win32' ? ['--test-force-exit'] : [];
 const layer = process.argv[2] || 'all';
 const allFiles = fs.readdirSync(testDir).filter((name) => name.endsWith('.test.js')).sort();
 const unit = new Set(matrix.unit);
@@ -46,12 +49,12 @@ const buildMutating = selected.filter((name) => buildMutatingTests.has(name));
 const processSensitive = selected.filter((name) => processSensitiveTests.has(name));
 const isolated = selected.filter((name) => !inProcessTests.has(name) && !buildMutatingTests.has(name) && !processSensitiveTests.has(name));
 if (buildMutating.length) {
-  run(['--test', ...forceExit, '--test-concurrency=1', ...buildMutating.map((name) => path.join('test', name))]);
+  run(['--test', '--test-concurrency=1', ...buildMutating.map((name) => path.join('test', name))]);
 }
 if (processSensitive.length) {
   run(['--test', ...forceExit, '--test-concurrency=1', ...processSensitive.map((name) => path.join('test', name))]);
 }
-if (isolated.length) run(['--test', ...forceExit, `--test-concurrency=${testConcurrency}`, ...isolated.map((name) => path.join('test', name))]);
+if (isolated.length) run(['--test', `--test-concurrency=${testConcurrency}`, ...isolated.map((name) => path.join('test', name))]);
 for (const name of selected.filter((file) => inProcessTests.has(file))) {
-  run(['--test', ...forceExit, '--experimental-test-isolation=none', path.join('test', name)]);
+  run(['--test', '--experimental-test-isolation=none', path.join('test', name)]);
 }

@@ -338,7 +338,7 @@ test('cross-adapter routing never reuses an incompatible managed binding', async
   assert.equal(db.prepare('SELECT status FROM provider_conversation_bindings WHERE id=?').get(binding.id).status, 'stale');
 });
 
-test('provider compatibility hook permits a verified native session across adapters', async (t) => {
+test('provider compatibility hook permits a verified native session across adapters', { timeout: 10_000 }, async (t) => {
   const { db, store } = fixture(t);
   const now = Date.now();
   db.prepare(`INSERT INTO agents
@@ -352,13 +352,18 @@ test('provider compatibility hook permits a verified native session across adapt
     nativeSessionId: '20260806_1', deliveryMode: 'acp', adapterType: 'goose-acp', expectedVersion: 0,
   });
   const received = [];
+  let submitted;
+  const submission = new Promise(resolve => { submitted = resolve; });
   const dispatcher = createDispatcher({
     db,
     providers: {
       'goose-cli': {
         priority: 1, match: () => true, isAvailable: () => true,
         acceptsBinding: (binding) => binding.providerType === 'goose' && binding.adapterType === 'goose-acp',
-        push: async (payload) => received.push(payload.providerBinding?.nativeSessionId || null),
+        push: async (payload) => {
+          received.push(payload.providerBinding?.nativeSessionId || null);
+          submitted();
+        },
       },
     },
   });
@@ -366,7 +371,7 @@ test('provider compatibility hook permits a verified native session across adapt
     agentId: 'agent-goose', fromUid: 'visitor-1', channelId: 'visitor-1', channelType: 1,
     content: 'hello', messageId: 'message-goose',
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await submission;
   assert.deepEqual(received, ['20260806_1']);
   assert.equal(store.getActive('agent-goose', 'visitor-1', 1).status, 'active');
 });
