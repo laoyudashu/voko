@@ -98,8 +98,8 @@ test('WorkBuddy prefers an installed CLI and starts a text-only local service', 
     agentId: 'expert-a', dataFile: '/safe/data.json', dataFileAccess: 'read_write',
     permissionMode: 'bypassPermissions', sessionPersistence: 'ephemeral', mcpProfile: 'user',
   });
-  assert.equal(permissive[permissive.indexOf('--permission-mode') + 1], 'dontAsk');
-  assert.equal(permissive[permissive.indexOf('--tools') + 1], '');
+  assert.equal(permissive[permissive.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  assert.equal(permissive[permissive.indexOf('--tools') + 1], 'Read,Write,Edit');
   assert.equal(permissive.includes('--no-session-persistence'), true);
   assert.equal(permissive.includes('--strict-mcp-config'), false);
 });

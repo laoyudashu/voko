@@ -1742,7 +1742,11 @@ Convergence obligations:
           }
           // 第一阶段仅让已迁移的 transport 进入异步能力门禁。未迁移 Provider
           // 必须保持原来的同步调用时序，避免仅仅多一个 microtask 就改变路由/回包竞态。
-          if (hasNativeCapabilityControls(selectedRoute.providerId)) {
+          const configuredPolicy = hasNativeCapabilityControls(selectedRoute.providerId)
+            ? providerSecurity?.effective(agentId, selectedRoute.providerId) : null;
+          const usesNativePolicy = configuredPolicy?.config.executionMode === 'native'
+            || configuredPolicy?.config.sandboxMode === 'native';
+          if (hasNativeCapabilityControls(selectedRoute.providerId) && !usesNativePolicy) {
             await ensureProviderCapability(agentId, selectedRoute.providerId, 3000);
           }
           assertAccepting(generation);

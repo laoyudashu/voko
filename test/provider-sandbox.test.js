@@ -192,11 +192,11 @@ test('instantiated transports expose the Catalog sandbox policy without changing
   assert.equal(provider.priority, 1);
 });
 
-test('Gemini strict approval is Provider-whitelisted and default invocation remains compatible', () => {
+test('Gemini defaults to plan regardless of legacy rollout and supports explicit native policy', () => {
   const { GeminiCliProvider } = require('../build/core/dispatcher/providers/gemini-cli');
   const compatible = new GeminiCliProvider({ db: dbWith(null) });
   assert.deepEqual(compatible._args.slice(compatible._args.indexOf('--approval-mode'),
-    compatible._args.indexOf('--approval-mode') + 2), ['--approval-mode', 'yolo']);
+    compatible._args.indexOf('--approval-mode') + 2), ['--approval-mode', 'plan']);
 
   const enforced = new GeminiCliProvider({ db: dbWith({ enabled: true, mode: 'enforce',
     providerFamilies: ['gemini'], transportIds: ['gemini-cli'], platforms: [process.platform] }) });
@@ -206,7 +206,11 @@ test('Gemini strict approval is Provider-whitelisted and default invocation rema
   const otherTransport = new GeminiCliProvider({ db: dbWith({ enabled: true, mode: 'enforce',
     providerFamilies: ['gemini'], transportIds: ['codex-cli'], platforms: [process.platform] }) });
   assert.deepEqual(otherTransport._args.slice(otherTransport._args.indexOf('--approval-mode'),
-    otherTransport._args.indexOf('--approval-mode') + 2), ['--approval-mode', 'yolo']);
+    otherTransport._args.indexOf('--approval-mode') + 2), ['--approval-mode', 'plan']);
+  const { applyProviderSecurityArgs } = require('../build/core/provider-security-policy');
+  const native = applyProviderSecurityArgs(compatible._args, { providerSecurityPolicy: { transportId: 'gemini-cli', config: { executionMode: 'native' } } });
+  assert.equal(native.includes('--approval-mode'), false);
+  assert.equal(native.includes('yolo'), false);
 });
 
 test('Provider preflight reports the effective sandbox profile as additive diagnostics', async () => {

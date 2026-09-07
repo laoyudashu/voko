@@ -846,7 +846,19 @@ class AcpAdapter extends PushProvider {
       const cliPath = this._cliPath as string;
       const isNodeScript = !runtime && cliPath.endsWith('.js');
       const cmd = runtime?.executable || (isNodeScript ? process.execPath : cliPath);
-      const configuredArgs = this.options.argsForAgent?.(agentId) || this._cliArgs;
+      let configuredArgs = this.options.argsForAgent?.(agentId) || this._cliArgs;
+      // Persistent transports read the saved policy on startup; commits restart
+      // this Agent runtime before subsequent visitor turns use the new flags.
+      const { applyProviderSecurityArgs, providerSecurityEnv } = require('../provider-security-policy');
+      let config: Record<string, string> = {};
+      try {
+        const row = this._db?.prepare('SELECT config_json FROM provider_security_policies WHERE agent_id=? AND transport_id=?')
+          .get(agentId, this._adapterType) as any;
+        if (row?.config_json) config = JSON.parse(row.config_json);
+      } catch (_) {}
+      configuredArgs = applyProviderSecurityArgs(configuredArgs, {
+        providerSecurityPolicy: { transportId: this._adapterType, config },
+      });
       const cmdArgs = runtime ? [...runtime.argvPrefix, ...configuredArgs] : (isNodeScript ? [cliPath, ...configuredArgs] : [...configuredArgs]);
       console.log(`[${this._logPrefix}:${agentId}] Spawning ACP runtime: ${path.basename(cmd)}`);
       const child = spawn(cmd, cmdArgs, {
@@ -856,7 +868,7 @@ class AcpAdapter extends PushProvider {
         cwd: this._cwd,
         env: withRuntimePath({
           ...process.env,
-          ...this.options.env,
+          ...providerSecurityEnv(this.options.env, this._adapterType, config),
           // A3: 注入 agent 回调环境变量（agent 可通过 HTTP 回调 voko）
           VOKO_API_URL: this.options.env?.VOKO_API_URL || process.env.VOKO_API_URL || '',
         }, runtime),

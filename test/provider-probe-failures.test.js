@@ -115,7 +115,8 @@ test('Codex diagnostic reaches the capability snapshot without enabling controls
   await provider.refreshSecurityControlEvidence();
   const snapshot = snapshotFromProvider(provider, 'codex-cli', 'agent');
   assert.deepEqual(snapshot.securityDiagnostic, diagnostic);
-  assert.equal(snapshot.supportedControls.sandboxMode, undefined);
+  assert.deepEqual(snapshot.supportedControls.sandboxMode.values, ['native']);
+  assert.equal(snapshot.supportedControls.sandboxMode.boundary, 'not_enforced');
   await assert.rejects(provider.push({}), { code: 'CODEX_SANDBOX_CANARY_FAILED', deliveryOutcome: 'not_delivered' });
 });
 

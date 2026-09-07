@@ -84,13 +84,14 @@ function mergeMarkdown(current: string, incoming: string): string {
 function workBuddyServeArgs(argsPrefix: string[], port: number, sessionId: string,
   target: { agentId?: string; pluginRoot?: string; dataFile?: string; dataFileAccess?: string; permissionMode?: string;
     sessionPersistence?: string; mcpProfile?: string } = {}): string[] {
-  // CodeBuddy --allowedTools pre-approves a target but does not constrain the
-  // tool to that target. Do not expose Write until VOKO has a real path broker.
-  const access = target.dataFileAccess === 'read' ? 'read' : 'none';
-  const permissionMode = 'dontAsk';
-  const dataTools = target.dataFile && access === 'read'
-      ? ['--tools', 'Read', '--allowedTools', `Read(${target.dataFile})`]
-      : ['--agents', VOKO_TEXT_AGENT, '--agent', 'voko', '--tools', ''];
+  // Tool selection is a host-wide capability, not a path sandbox.
+  const access = target.dataFileAccess || 'none';
+  const permissionMode = target.permissionMode || 'dontAsk';
+  const dataTools = access === 'default' ? ['--tools', 'default']
+    : access === 'read_write' ? ['--tools', 'Read,Write,Edit']
+    : access === 'read' ? ['--tools', 'Read',
+      ...(target.dataFile ? ['--allowedTools', `Read(${target.dataFile})`] : [])]
+    : ['--agents', VOKO_TEXT_AGENT, '--agent', 'voko', '--tools', ''];
   return [...argsPrefix, ...(target.pluginRoot ? ['--plugin-dir', target.pluginRoot] : []),
     ...(target.agentId ? ['--agent', target.agentId] : []), '--serve', '--host', '127.0.0.1', '--port', String(port),
     '--session-id', sessionId, '--permission-mode', permissionMode, ...dataTools,
@@ -172,8 +173,8 @@ class WorkBuddyHttpProvider extends PushProvider {
     if (boundInstance && boundInstance !== instanceId) throw deliveryError('WorkBuddy instance binding is stale', 'not_delivered');
     const restoreConstraintDigest = String(payload.providerSecurityPolicy?.restoreConstraintDigest || '');
     const config = payload.providerSecurityPolicy?.config || {};
-    const dataFileAccess = config.dataFileAccess === 'read' ? 'read' : 'none';
-    const permissionMode = 'dontAsk';
+    const dataFileAccess = config.dataFileAccess || 'none';
+    const permissionMode = config.permissionMode || 'dontAsk';
     const sessionPersistence = String(config.sessionPersistence || 'conversation');
     const mcpProfile = String(config.mcpProfile || 'isolated');
     if (!instanceId) {
@@ -248,9 +249,9 @@ class WorkBuddyHttpProvider extends PushProvider {
       { text: `codebuddy ${args.slice(0, args.indexOf('--tools')).join(' ')}`.trim(), risk: 'medium' },
     ];
     const tools = args.indexOf('--tools');
-    if (tools >= 0 && args[tools + 1] === 'Read') {
-      rendered.push({ text: '--tools Read', risk: 'high' });
-      rendered.push({ text: '--allowedTools Read(<绑定文件>)（仅自动审批，非路径隔离）', risk: 'high' });
+    if (tools >= 0 && args[tools + 1]) {
+      rendered.push({ text: `--tools ${args[tools + 1]}`, risk: 'high' });
+      if (args.includes('--allowedTools')) rendered.push({ text: '--allowedTools Read(<绑定文件>)（仅自动审批，非路径隔离）', risk: 'high' });
     } else rendered.push({ text: '--tools <空列表>', risk: 'low' });
     if (args.includes('--no-session-persistence')) rendered.push({ text: '--no-session-persistence', risk: 'low' });
     rendered.push({ text: args.includes('--strict-mcp-config') ? '--strict-mcp-config' : '加载用户 MCP 配置',

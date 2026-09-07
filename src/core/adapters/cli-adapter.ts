@@ -34,7 +34,7 @@ const { appendProviderAttachmentBoundary, stageProviderAttachments,
 import type { DatabaseLike } from '../../types/database';
 import type { AgentMeta, ProviderDeliveryReceipt, ProviderSteerMetadata, PushPayload } from '../dispatcher/types';
 import type { RuntimeRequest, AgentRuntimeResolver, ResolvedRuntime } from '../runtime/agent-runtime-resolver';
-import { applyProviderSecurityArgs } from '../provider-security-policy';
+import { applyProviderSecurityArgs, providerSecurityEnv } from '../provider-security-policy';
 const { withRuntimePath } = require('../runtime/agent-runtime-resolver');
 const { defaultAgentRuntimeResolver } = require('../runtime/agent-runtime-resolver');
 
@@ -300,7 +300,8 @@ class CliAdapter extends PushProvider {
     }
 
     const contextPrompt = (payload as any).__ownerRaw === true ? content : _buildContextPrompt(agentId, fromUid, content, contextMsgs);
-    const prompt = this._promptTemplate
+    const useNativePolicy = effectivePayload.providerSecurityPolicy?.config.executionMode === 'native';
+    const prompt = this._promptTemplate && !useNativePolicy
       ? this._promptTemplate.replace('{prompt}', () => contextPrompt)
       : contextPrompt;
 
@@ -391,7 +392,7 @@ class CliAdapter extends PushProvider {
         tag: this._name,
         timeout: this._timeout,
         env: withRuntimePath({
-          ...this._env,
+          ...providerSecurityEnv(this._env, this._adapterType, effectivePayload.providerSecurityPolicy?.config),
           ...(nativeSessionId ? {
             VOKO_CALLER_PROVIDER: this._bindingProviderType,
             VOKO_CALLER_INSTANCE: binding?.providerInstanceId || '',
