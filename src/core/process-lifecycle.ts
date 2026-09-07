@@ -183,7 +183,8 @@ function inspectWindowsProcess(pid: number): ProcessIdentity | null {
   ].join('');
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
     encoding: 'utf8',
-    timeout: 5000,
+    // Allow bounded cold PowerShell/CIM startup on loaded Windows hosts.
+    timeout: 15000,
     windowsHide: true,
   });
   // Query failure is not evidence of process exit. In particular, callers
@@ -223,7 +224,8 @@ function inspectWindowsProcesses(pids: number[]): Map<number, ProcessIdentity> {
   ].join('');
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], {
     encoding: 'utf8',
-    timeout: 5000,
+    // Allow bounded cold PowerShell/CIM startup on loaded Windows hosts.
+    timeout: 15000,
     windowsHide: true,
   });
   if (result.error || result.status !== 0) throw processInspectionError();

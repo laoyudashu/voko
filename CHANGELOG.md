@@ -10,6 +10,8 @@ All notable user-facing changes are documented in this file.
 - Map supported native Provider permissions and safe defaults to the actual transport, version and operating system without overriding explicit user choices.
 - Preserve terminal send failures and unknown delivery outcomes in MCP/CLI message results, including after restart; uncertain execution is never automatically replayed.
 - Move visitor sharing controls to Agent details, add QR downloads and explicit link access choices, and simplify registration prompts.
+- Show the permission transport selector on its own row in Agent security settings.
+- Stabilize cross-platform CI teardown and offline-sync test reporting; allow bounded Windows process identity inspection under load without weakening lock ownership checks.
 - See [release notes](docs/releases/0.5.4.md) for compatibility limits, the separate AgentDID directory fix and persistent historical E2EE locks.
 
 ## 0.5.3 - 2026-09-06
