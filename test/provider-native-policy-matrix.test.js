@@ -154,7 +154,7 @@ for (const transportId of ['github-copilot-acp', 'codebuddy-acp', 'traecli-acp',
     provider.options.argsForAgent = agentId => [executable, ...(argsForAgent ? argsForAgent(agentId) : template)];
     provider._acpSdk = { ndJsonStream: () => ({}), client: () => ({ onRequest: () => ({ connectWith: (_stream, callback) => callback({}) }) }),
       methods: { agent: {}, client: { session: { requestPermission: 'permission' } } } };
-    const rows = () => fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8').trim().split('\n').map(JSON.parse) : [];
+    const rows = () => fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8').split('\n').slice(0, -1).map(JSON.parse) : [];
     const waitRows = async count => { const deadline = Date.now() + 5000;
       while (rows().length < count && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
       assert.equal(rows().length, count); return rows()[count - 1]; };

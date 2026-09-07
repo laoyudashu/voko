@@ -436,6 +436,7 @@ test('guest mode exposes the bug-report page and JSON API without login', async 
 test('short-link creation uses the owner token and never accepts a client target URL', async (t) => {
   const originalFetch = global.fetch;
   const upstreamRequests = [];
+  const modeRequests = [];
   const db = {
     prepare(sql) {
       return {
@@ -459,7 +460,7 @@ test('short-link creation uses the owner token and never accepts a client target
   };
   const app = express();
   app.use(express.json());
-  app.use(createWebRouter({}, db));
+  app.use(createWebRouter({ set_private_mode: async params => { modeRequests.push(params); return { success: true }; } }, db));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -493,6 +494,7 @@ test('short-link creation uses the owner token and never accepts a client target
   });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).success, true);
+  assert.deepEqual(modeRequests, [{ agentId: 'agent-1', enabled: false }]);
   assert.equal(upstreamRequests.length, 1);
   assert.match(upstreamRequests[0].url, /\/api\/external\/v1\/short-link\/create$/);
   assert.equal(upstreamRequests[0].options.headers.Authorization, 'Bearer ut_owner_token');
@@ -684,7 +686,8 @@ test('agent actions return to the same agent subpage and conversation controls u
   assert.match(source, /home-copy-icon/);
   assert.match(source, /<button type="button" class="btn btn-sm home-mode-toggle /);
   assert.match(source, /data-role="toggle-pub"/);
-  assert.match(source, /data-role="toggle-acc"/);
+  assert.doesNotMatch(source, /data-role="toggle-acc"/);
+  assert.match(source, /name="link-access"/);
   assert.match(source, /home-mode-published/);
   assert.match(source, /home-mode-unpublished/);
   assert.match(source, /home-mode-public/);

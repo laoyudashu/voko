@@ -79,7 +79,7 @@ test('interactive registration follows the shared state machine and keeps pull e
   assert.equal(calls.find((item) => item.action === 'select_provider').instanceId, 'expert-one');
   assert.equal(calls.find((item) => item.action === 'set_basic_info').agentName, 'Expert One');
   assert.deepEqual(calls.find((item) => item.action === 'select_delivery').deliveryModes, []);
-  assert.equal(calls.find((item) => item.action === 'complete').accessMode, 'private');
+  assert.equal(Object.hasOwn(calls.find((item) => item.action === 'complete'), 'accessMode'), false);
   assert.doesNotMatch(buffered.text(), /Codex|Others/);
 });
 
