@@ -20,7 +20,9 @@ const testConcurrency = Math.max(1, Number(process.env.VOKO_TEST_CONCURRENCY) ||
 // Unix CI runners can retain deliberately spawned lifecycle-test children after
 // the assertions have completed. Keep the assertions and exit status intact,
 // but let the runner terminate instead of waiting indefinitely on those handles.
-const forceExit = process.env.CI === 'true' ? ['--test-force-exit'] : [];
+// Windows must drain native HTTP/WebSocket handles normally: forced exit can
+// double-close pending libuv async handles after otherwise successful tests.
+const forceExit = process.env.CI === 'true' && process.platform !== 'win32' ? ['--test-force-exit'] : [];
 const layer = process.argv[2] || 'all';
 const allFiles = fs.readdirSync(testDir).filter((name) => name.endsWith('.test.js')).sort();
 const unit = new Set(matrix.unit);
