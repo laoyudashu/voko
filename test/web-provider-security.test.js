@@ -230,7 +230,7 @@ test('Provider security page and API expose only controls supported by the Agent
   assert.match(hermesHtml, /<label[^>]*font-size:18px[^>]*>安全提示语<\/label>/);
   assert.match(hermesHtml, /<h3[^>]*font-size:18px[^>]*>安全参数<\/h3>/);
   assert.match(hermesHtml, /provider-security-header/);
-  assert.match(hermesHtml, /grid-template-columns:max-content max-content max-content minmax\(260px,1fr\)/);
+  assert.match(hermesHtml, /grid-template-columns:max-content max-content minmax\(0,1fr\)/);
   assert.match(hermesHtml, /消息推送模式[\s\S]*安全适配器[\s\S]*hermes-cli[\s\S]*权限对应的通信模式/);
   assert.match(hermesHtml, /<label style="display:inline-flex;[^>]*>权限对应的通信模式/);
   assert.match(hermesHtml, /只有相对已保存策略发生变化的部分会显示彩色高亮/);
