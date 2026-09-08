@@ -535,3 +535,25 @@ test('office Provider permission expansions require typed confirmation', () => {
     ['BYPASSES_PROVIDER_PERMISSIONS', 'EXPANDS_PROVIDER_TOOL_ACCESS', 'ENABLES_USER_MCP_CONFIGURATION']);
   assert.equal(qwenExpansion.requiresTypedConfirmation, true);
 });
+
+test('DSH permission preset is configurable without claiming native isolation, and blocks CLI fallback', () => {
+  const { db, service } = fixture('deepseek-harness');
+  const policy = service.inspect('agent-1', 'deepseek-harness-http');
+  const control = policy.controls.find(c => c.id === 'permissionPreset');
+  assert.equal(control.enforcement, 'voko_enforced');
+  const now = Date.now();
+  db.prepare(`INSERT OR REPLACE INTO provider_security_policies
+    (agent_id,transport_id,revision,config_json,policy_digest,restore_constraint_digest,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?)`).run('agent-1','deepseek-harness-http',1,JSON.stringify({permissionPreset:'read-only'}),'test','test',now,now);
+  assert.throws(() => service.acquireTurnLease({ agentId:'agent-1',fromUid:'visitor',content:'hello',turnId:'dsh-fallback',
+    securityContext: { sourceType:'visitor' } }, 'deepseek-harness-cli'), /DSH_PERMISSION_HTTP_REQUIRED/);
+});
+
+test('DSH target preset can be saved through the existing policy UI flow', () => {
+  const { service } = fixture('deepseek-harness');
+  const preview = service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'read-only' });
+  const saved = service.commit('agent-1', preview.preflightToken, '');
+  assert.equal(saved.config.permissionPreset, 'read-only');
+  assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'custom' }), /VALUE_INVALID/);
+  assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'read-only\n/permission danger-full-access' }), /VALUE_INVALID/);
+});

@@ -3350,6 +3350,18 @@ function createToolHandlers(cx: McpContext) {
     async fetch_new_messages(p: McpToolParams = {}) {
       const ownershipError = _agentOwnershipError(p.agentId);
       if (ownershipError) return { success: false, error: ownershipError, code: 'AGENT_OWNER_MISMATCH' };
+      // Pull cannot establish the DSH session's permission preset. Do not silently
+      // consume queued tasks through it when the owner selected HTTP enforcement.
+      const policyTable = cx.query<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='provider_security_policies'", []);
+      const dshPolicy = policyTable.length ? cx.query<{ config_json: string }>(
+        `SELECT p.config_json FROM provider_security_policies p JOIN agents a ON a.agent_id=p.agent_id
+         WHERE p.agent_id=? AND p.transport_id='deepseek-harness-http' AND a.backend_type='deepseek-harness'`, [p.agentId]
+      ) : [];
+      if (dshPolicy[0]?.config_json && JSON.parse(dshPolicy[0].config_json).permissionPreset) {
+        return { success: false, code: 'DSH_PERMISSION_HTTP_REQUIRED',
+          error: '该Agent配置了DSH访客权限预设，需要通过受控HTTP会话处理，不能使用Pull消费消息。' };
+      }
       const blockTimeout = p.blockTimeout || 0;
       const limit = Math.min(p.limit || 50, 200);
       const onlyReplies = p.onlyReplies !== false;
