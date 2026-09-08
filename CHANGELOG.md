@@ -4,7 +4,7 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
-## 0.5.5 - Pending release
+## 0.5.5 - 2026-09-08
 
 - Integrate collaboration chat, tasks, board, assets, members, and settings in the local Web UI. Separate public announcements from member-only instructions and allow announcements to be cleared.
 - Add explicit Agent dispatch from shared tasks, isolated execution context, input downloads, output uploads, and result receipts. Execution success remains separate from human task acceptance.
@@ -14,7 +14,7 @@ All notable user-facing changes are documented in this file.
 - Read collaboration output uploads from checked, bounded file-handle snapshots so path replacement during upload preparation cannot substitute unchecked content.
 - Keep visitor QR codes working with uploaded Agent logos.
 - Verify delayed npm availability in a separate release job without republishing an already uploaded version.
-- See [release preparation](docs/releases/0.5.5.md) and the [collaboration guide](docs/collaboration.md) for prerequisites and limits.
+- See [release notes](docs/releases/0.5.5.md) and the [collaboration guide](docs/collaboration.md) for prerequisites and limits.
 
 ## 0.5.4 - 2026-09-07
 

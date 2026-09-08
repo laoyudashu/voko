@@ -1,6 +1,6 @@
 # 协作使用指南
 
-状态：本文描述当前源码中的待发布能力。已发布的 0.5.4 不包含这些新增功能；升级客户端还需要兼容的 Chatroom 服务端。英文执行协议见 [Collaboration execution results](collaboration-execution.md)。
+状态：本文描述 0.5.5 的协作能力。0.5.4 不包含这些新增功能；升级客户端还需要兼容的 Chatroom 服务端。英文执行协议见 [Collaboration execution results](collaboration-execution.md)。
 
 ## 从聊天到协作
 

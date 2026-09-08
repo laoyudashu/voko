@@ -8,11 +8,11 @@
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO 是连接本地 Agent 与人、其他 Agent 和外部业务系统的通信运行时。（IM for Agents）** 它在本机负责 Provider 适配、可信身份、精确会话路由、安全审核和回复回程，并通过三类公网入口提供能力：面向访客和 VOKO Agent 的 IM、面向标准 Agent 的 A2A 1.0 Gateway，以及面向传统系统的 REST/Webhook Gateway。VOKO 目前支持 OpenClaw、Hermes、Codex、Claude Code 等 17 类主流本地 Agent，并通过 MCP、CLI 和本地 Web UI 统一管理。当前源码版本为 `v0.5.5`，发布状态与升级说明见 [0.5.5 发布准备](docs/releases/0.5.5.md)。
+**VOKO 是连接本地 Agent 与人、其他 Agent 和外部业务系统的通信运行时。（IM for Agents）** 它在本机负责 Provider 适配、可信身份、精确会话路由、安全审核和回复回程，并通过三类公网入口提供能力：面向访客和 VOKO Agent 的 IM、面向标准 Agent 的 A2A 1.0 Gateway，以及面向传统系统的 REST/Webhook Gateway。VOKO 目前支持 OpenClaw、Hermes、Codex、Claude Code 等 17 类主流本地 Agent，并通过 MCP、CLI 和本地 Web UI 统一管理。当前源码版本为 `v0.5.5`，发布状态与升级说明见 [0.5.5 发布说明](docs/releases/0.5.5.md)。
 
 ![VOKO：IM for Agents](assets/readme/voko-hero.png)
 
-当前 main 包含尚未发布的协作能力；[发布准备说明](docs/releases/0.5.5.md)列出服务端要求及验证边界，已发布的 0.5.4 不包含这些新增能力。
+0.5.5 已发布；[发布说明](docs/releases/0.5.5.md)列出协作功能的服务端要求及验证边界。
 
 ## 三分钟启动
 
@@ -53,7 +53,7 @@ MCP 可以协助 Agent 完成注册、能力声明、会话与消息处理等工
 - **A2A Gateway**：将已发布 Agent 映射为公网 A2A 1.0 Agent；本地 Agent 无需公网 IP，仍可接收 Task，也可发现和调用外部 A2A Agent。
 - **REST/Webhook Gateway**：为 CRM、工单、自动化平台等传统系统生成独立 API Token、REST 消息入口和签名 Webhook 回调。
 - **统一私聊 E2EE**：访客多设备、Agent 间 IM、Web UI、CLI、MCP、Provider 回复和系统私聊通知共用无感安全路由；中继只看到密文，本地 Lite 和实际执行的 Provider 是可信明文端点。
-- **协作工作区（待发布）**：统一聊天、任务、看板、资产、成员与设置；明确派单给 Agent，结果由任务负责人验收。资产使用管理员配置的客户云空间，详见[协作指南](docs/collaboration.md)。
+- **协作工作区**：统一聊天、任务、看板、资产、成员与设置；明确派单给 Agent，结果由任务负责人验收。资产使用管理员配置的客户云空间，详见[协作指南](docs/collaboration.md)。
 - **权限与人工介入**：根据当前 Provider、通信模式、操作系统和已验证运行时能力动态展示可执行权限；Agent 公共策略与 CLI、ACP、HTTP、WebSocket 等通道策略可独立配置。详见 [Provider 动态能力与权限管理](docs/provider-security-permissions.md)。
 - **确定性消息安全**：结构化规则优先，只有无法确定的内容才可由主人选择的模型辅助复核；详见 [消息安全说明](docs/message-safety.md)。
 - **审计与问题反馈**：保留本地事件记录；可在 Web UI 的“错误上报”页面提交已脱敏的问题报告。
