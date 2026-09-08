@@ -48,6 +48,7 @@ test('DuMate checks again after looking up the previous assistant result',async 
 
 test('DeepSeek Harness preserves rejection and does not send after session creation',async t=>{
   const f=fixture(t,'deepseek-harness');const p=new DeepSeekHarnessHttpProvider({db:f.db,startServer:false});let prompts=0;
-  p._rpc=async(method)=>{if(method==='session.create'){f.revoke();return {value:{sessionId:'s'}}}prompts++;return {}};
+  p._remote.snapshot=async()=>({header:{agentPreset:'expert'}});
+  p._rpc=async(method)=>{if(method==='session/create'){f.revoke();return {value:{sessionId:'s'}}}prompts++;return {}};
   await assert.rejects(p.push(f.payload),rejected);assert.equal(prompts,0);
 });

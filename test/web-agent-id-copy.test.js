@@ -31,7 +31,7 @@ test('agent detail exposes the shared icon copy control for the IM UID instead o
   assert.match(html, /classList\.add\("is-copied"\)/);
   assert.match(html, /暂无会话/);
   assert.match(html, /会话列表 \(0\)/);
-  assert.match(html, /群列表 \(0\)/);
+  assert.match(html, /协作 \(0\)/);
   assert.match(html, /data-agent-action="agent\.search" disabled/);
   assert.doesNotMatch(html, /data-tab="a2a"/);
   assert.doesNotMatch(html, /data-tab="external"/);

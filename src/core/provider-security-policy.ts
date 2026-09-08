@@ -96,6 +96,12 @@ function nativeModeControl(transportId: string): ProviderSecurityControlDefiniti
 }
 
 const DEFINITIONS: Record<string, ProviderSecurityControlDefinition[]> = {
+  'deepseek-harness-http': [
+    { id: 'permissionPreset', label: 'DSH访客目标权限预设',
+      description: '填写部署中已有的权限预设名称；留空沿用DSH配置。此处是目标配置，投递时设置并核验；启用后禁用CLI/Pull回退。名称不证明文件读取或网络隔离。',
+      kind: 'text', editable: true, maxLength: 80, applyAt: 'session_restart', runtimeScope: 'invocation',
+      revocation: 'restart_runtime', enforcement: 'voko_enforced' },
+  ],
   'hermes-cli': [
     { id: 'toolProfile', label: '工具范围', description: '通过 Hermes --toolsets 控制本次访客调用加载的工具集。安全工具集仍包含 Web、视觉和图片生成能力。',
       kind: 'enum', editable: true, values: [
@@ -552,6 +558,10 @@ function normalizeConfig(transportId: string, input: unknown): Record<string, st
     if (definition.kind === 'enum' && !definition.values?.some(item => item.value === value)) {
       throw new Error(`PROVIDER_SECURITY_VALUE_INVALID:${key}`);
     }
+    if (transportId === 'deepseek-harness-http' && key === 'permissionPreset'
+      && value && (!/^[A-Za-z0-9_-]{1,80}$/.test(value) || value === 'custom')) {
+      throw new Error('PROVIDER_SECURITY_VALUE_INVALID:permissionPreset');
+    }
     config[key] = value;
   }
   return config;
@@ -717,8 +727,8 @@ export class ProviderSecurityPolicyService {
     const supportedIds = new Set(Object.keys(currentControlEvidence));
     const dynamicTransport = isProviderSecurityTransport(transportId);
     const controls = supportedIds.size
-      ? allControls.filter(item => item.id === 'additionalPrompt' || supportedIds.has(item.id))
-      : dynamicTransport ? allControls.filter(item => item.id === 'additionalPrompt') : allControls;
+      ? allControls.filter(item => item.id === 'additionalPrompt' || (transportId === 'deepseek-harness-http' && item.id === 'permissionPreset') || supportedIds.has(item.id))
+      : dynamicTransport ? allControls.filter(item => item.id === 'additionalPrompt' || (transportId === 'deepseek-harness-http' && item.id === 'permissionPreset')) : allControls;
     if (!controls.length) return { agentId, agentName: agent.agent_name || agentId, backendType: agent.backend_type,
       transportId, supported: false, controls: [], config: {}, revision: 0, assurance: 'unsupported' };
     const policy = this.effective(agentId, transportId);
@@ -1254,6 +1264,10 @@ export class ProviderSecurityPolicyService {
     if (!executionScope || !isProviderSecurityTransport(transportId)) return null;
     const turnId = clean(payload.turnId || payload.messageId, 192);
     if (!turnId) throw new Error('PROVIDER_SECURITY_TURN_ID_REQUIRED');
+    if (transportId === 'deepseek-harness-cli'
+      && this.effective(payload.agentId, 'deepseek-harness-http').config.permissionPreset) {
+      throw Object.assign(new Error('DSH_PERMISSION_HTTP_REQUIRED'), { code: 'DSH_PERMISSION_HTTP_REQUIRED', deliveryOutcome: 'not_delivered' });
+    }
     const policy = this.effective(payload.agentId, transportId);
     if (['applying','drifted','failed'].includes(policy.nativePolicyState)) {
       const error = new Error('PROVIDER_NATIVE_POLICY_NOT_READY');

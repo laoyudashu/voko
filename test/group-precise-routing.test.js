@@ -44,7 +44,8 @@ test('an unthreaded mention uses the only active group conversation', async (t) 
     ] }),
   });
   handler.handleAgentMessage('agent-a', inbound(null));
-  await settle();
+  const deadline=Date.now()+3000;
+  while (!forwarded.length && Date.now()<deadline) await settle();
   assert.equal(forwarded.length, 1);
   assert.equal(forwarded[0].routeState, 'valid');
   assert.equal(forwarded[0].replyRouteContext.conversationId, conversation.id);

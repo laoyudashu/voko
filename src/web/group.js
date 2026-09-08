@@ -149,6 +149,8 @@ function createGroupRouter(handlers, db) {
 
   function renderPage(req,title,body,opt){const options=opt||{},footer=options.footer===undefined?renderSystemFooter(db,req.t,req.locale):options.footer;return page(title,body,{...options,footer:footer+messageDialog(esc,req.t('common.toast.ok'))},req.t,req.locale);}
 
+  require('./project').mountProjectRoutes(R, db, renderPage, undefined, async req => agentNav(req.params.agentId, await agentName(req.params.agentId), req.t) + ' › <a href="/agents/' + encodeURIComponent(req.params.agentId) + '/g/' + encodeURIComponent(req.params.channelId) + '">' + esc(req.t('web.project.chat')) + '</a>');
+
   // 取 agent 展示名（nav/title 用）
   async function agentName(agentId){
     try{const d=await handlers.list_agents({limit:500});const a=(d.agents||[]).find(x=>x.agentId===agentId);return a?(a.agentName||a.agentId):agentId;}catch(_){return agentId;}
@@ -219,8 +221,9 @@ function createGroupRouter(handlers, db) {
           const routeConversation=route?.conversation_id?routingConversations.getForScope(route.conversation_id,agentId,channelId,2):null;
           const exactReply=!!(isRoutingFeatureEnabled(db,'web_group_precise_reply_v1',true)&&route&&routeConversation
             &&route.status==='active'&&(!route.expires_at||Number(route.expires_at)>Date.now()));
+          const taskButton=!isDissolved&&!mediaHtml?'<button type="button" class="btn-xs" data-task-source="'+esc(rawContent.slice(0,4000))+'">'+L('web.project.fromMessage')+'</button>':'';
           const replyButton=exactReply?'<button type="button" class="gm-precise-reply btn-xs" data-reply-message-id="'+esc(m.messageId)+'" data-reply-summary="'+esc(senderName)+'">Reply precisely</button>':'';
-          mh+='<div class="gm-message'+(atMe?' gm-message-at-me':'')+'">'+senderHtml+mentionBadge+' <span style="color:#888;font-size:13px">['+t+']</span>'+replyButton+'<br>'+contentHtml+'</div>';
+          mh+='<div class="gm-message'+(atMe?' gm-message-at-me':'')+'">'+senderHtml+mentionBadge+' <span style="color:#888;font-size:13px">['+t+']</span>'+replyButton+taskButton+'<br>'+contentHtml+'</div>';
         }
       }}
 
@@ -275,13 +278,11 @@ function createGroupRouter(handlers, db) {
       const dis = (ok)=>ok?'':'disabled';
       const grpVal = ctx.groupName ? (ctx.groupName!==channelId ? ctx.groupName : '') : '';
       const quitConfirm = esc(T('web.group.quit_confirm'));
-      const manageIntroText=allowedManager?L('web.group.manage.intro_manager'):L('web.group.manage.intro_member');
-      const managementIntroHtml='<div class="gm-ops-intro" data-agent-kind="status"><span class="gm-ops-intro-icon" aria-hidden="true">⚙</span><div><strong>'+L('web.group.manage.title')+'</strong><span>'+manageIntroText+'</span></div></div>';
-      let opsHtml=allowedManager?'<div class="card gm-manage-card" data-active-only><h3>'+L('web.group.update_title')+'</h3><form onsubmit="return saveGroupProfile(event)" data-url="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/update"><div class="gm-form-grid"><div><label for="grp-name">'+L('web.group.field.name')+'</label><input type="text" name="name" id="grp-name" value="'+esc(grpVal)+'"></div><div><label for="grp-notice">'+L('web.group.field.notice')+'</label><input type="text" name="notice" id="grp-notice" value="'+esc(ctx.notice||'')+'"></div><div class="gm-full gm-toggle-grid"><label style="display:flex;align-items:center;gap:7px;font-weight:500;cursor:pointer;margin:0"><input type="checkbox" id="grp-approve" '+(ctx.approve_mode!=='auto'?'checked':'')+' style="width:auto;max-width:none;margin:0"> '+L('web.group.field.approve_mode')+'</label><label style="display:flex;align-items:center;gap:7px;font-weight:500;cursor:pointer;margin:0"><input type="checkbox" id="grp-searchable" '+(ctx.searchable!=0?'checked':'')+' style="width:auto;max-width:none;margin:0"> '+L('web.group.field.searchable')+'</label></div><div class="gm-full" style="display:flex;align-items:center;gap:10px"><button type="submit" class="btn-sm" style="margin:0" data-agent-action="group.profile.update">'+L('web.group.btn.update')+'</button><span id="save-feedback" style="font-size:14px"></span></div></div></form></div>':'';
+      let opsHtml=allowedManager?'<div class="card gm-manage-card" data-active-only><h3>'+L('web.group.update_title')+'</h3><form onsubmit="return saveGroupProfile(event)" data-url="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/update"><div class="gm-form-grid"><div><label for="grp-name">'+L('web.group.field.name')+'</label><input type="text" name="name" id="grp-name" value="'+esc(grpVal)+'"></div><div class="gm-full gm-toggle-grid"><label style="display:flex;align-items:center;gap:7px;font-weight:500;cursor:pointer;margin:0"><input type="checkbox" id="grp-approve" '+(ctx.approve_mode!=='auto'?'checked':'')+' style="width:auto;max-width:none;margin:0"> '+L('web.group.field.approve_mode')+'</label><label style="display:flex;align-items:center;gap:7px;font-weight:500;cursor:pointer;margin:0"><input type="checkbox" id="grp-searchable" '+(ctx.searchable!=0?'checked':'')+' style="width:auto;max-width:none;margin:0"> '+L('web.group.field.searchable')+'</label></div><div class="gm-full" style="display:flex;align-items:center;gap:10px"><button type="submit" class="btn-sm" style="margin:0" data-agent-action="group.profile.update">'+L('web.group.btn.update')+'</button><span id="save-feedback" style="font-size:14px"></span></div></div></form></div>':'';
       const dissolveHtml=myRole==='owner'&&!isDissolved?'<div class="card gm-manage-card gm-danger-card" data-active-only><h3>'+L('web.group.dissolve.title')+'</h3><span class="meta">'+L('web.group.dissolve.desc')+'</span><button type="button" class="btn btn-danger btn-sm" style="margin-top:12px" data-agent-action="group.dissolve" onclick="return showDissolveDlg()">'+L('web.group.dissolve.button')+'</button></div>':'';
       const quitHtml='<div class="card gm-manage-card gm-danger-card"><h3>'+L('web.group.btn.quit')+'</h3><span class="meta">'+L('web.group.manage.quit_desc')+'</span><form id="group-quit-form" method="POST" action="/agents/'+esc(agentId)+'/g/'+esc(channelId)+'/quit"><button id="group-quit-btn" type="submit" class="btn btn-danger btn-sm" data-agent-action="group.quit" style="margin-top:12px" '+dis(canQuit)+'>'+L('web.group.btn.quit')+'</button>'+(myRole==='owner'&&!isDissolved?'<span id="group-owner-quit-note" class="meta" style="display:inline;margin-left:8px;min-height:0">'+L('web.group.quit_owner_warn')+'</span>':'')+'</form></div>';
       const statusText=isDissolved?L('web.group.dissolved.label'):L('web.group.status.active');
-      const groupInfoHtml='<div class="info-bar"><span style="display:inline-flex;align-items:center;gap:4px">'+L('web.group.field.id')+': <code id="group-id-text">'+esc(channelId)+'</code>'+copyButton({esc,label:L('common.btn.copy'),attrs:'data-voko-copy-target="#group-id-text"'})+'</span><span>'+L('web.group.field.status')+': <strong id="group-status-text" style="color:'+(isDissolved?'#d93025':'#0f9d58')+'">'+statusText+'</strong></span>'+(ctx.notice?'<span>'+L('web.group.field.notice')+': '+esc(ctx.notice)+'</span>':'')+'</div>';
+      const groupInfoHtml='<div class="info-bar"><span style="display:inline-flex;align-items:center;gap:4px">'+L('web.group.field.id')+': <code id="group-id-text">'+esc(channelId)+'</code>'+copyButton({esc,label:L('common.btn.copy'),attrs:'data-voko-copy-target="#group-id-text"'})+'</span><span>'+L('web.group.field.status')+': <strong id="group-status-text" style="color:'+(isDissolved?'#d93025':'#0f9d58')+'">'+statusText+'</strong></span>'+'<span id="group-notice"'+(ctx.notice?'':' hidden')+'>'+L('web.group.field.notice')+': <span id="group-notice-text">'+esc(ctx.notice||'')+'</span></span>'+'</div>';
       const dissolvedBanner='<div id="group-dissolved-banner" role="status" style="display:'+(isDissolved?'block':'none')+';padding:10px 14px;margin:0 0 12px;border:1px solid #d93025;border-radius:6px;background:#fce8e6;color:#b71c1c;font-weight:700">'+L('web.group.dissolved.label')+'</div>';
       // 入群申请（owner，有 pending 时显示）
       let applyHtml='';
@@ -304,15 +305,17 @@ function createGroupRouter(handlers, db) {
         applyHtml+='</div>';
       }
       const aId=esc(agentId), cId=esc(channelId);
-      // 三个 Tab：群消息 / 群成员 / 群操作
-      const activeGTab = req.query.tab==='members' ? 'members' : (req.query.tab==='ops' ? 'ops' : 'messages');
-      const gTabBtn=(id,label,active)=>'<button type="button" role="tab" aria-selected="'+active+'" aria-controls="gtab-'+id+'" id="gtab-btn-'+id+'" data-gtab="'+id+'" style="background:transparent;border:none;border-bottom:3px solid '+(active?'#1a73e8':'transparent')+';color:'+(active?'#1a73e8':'#666')+';font:inherit;font-size:16px;font-weight:'+(active?'700':'600')+';padding:10px 20px;margin-bottom:-2px;cursor:pointer">'+label+'</button>';
-      const gTabBar='<div style="display:flex;gap:4px;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'
+      // 协作页共享聊天、计划和管理入口
+      const activeGTab = ['members','ops','plans','tasks','assets'].includes(req.query.tab) ? req.query.tab : 'messages';
+      const gTabBtn=(id,label,active)=>'<button type="button" role="tab" aria-selected="'+active+'" aria-controls="gtab-'+(["tasks","assets"].includes(id)?"plans":id)+'" id="gtab-btn-'+id+'" data-gtab="'+id+'" style="background:transparent;border:none;border-bottom:3px solid '+(active?'#1a73e8':'transparent')+';color:'+(active?'#1a73e8':'#666')+';font:inherit;font-size:16px;font-weight:'+(active?'700':'600')+';padding:10px 20px;margin-bottom:-2px;cursor:pointer">'+label+'</button>';
+      const gTabBar='<div class="collaboration-tabs" role="tablist" style="display:flex;gap:4px;flex-wrap:wrap;border-bottom:2px solid #e0e0e0;margin-bottom:14px">'
         +gTabBtn('messages',L('web.group.tab.messages'),activeGTab==='messages')
-        +gTabBtn('members',L('web.group.tab.members')+((ctx.members||[]).length?' ('+(ctx.members||[]).length+')':''),activeGTab==='members')
-        +(allowedMember?gTabBtn('ops',L('web.group.tab.ops'),activeGTab==='ops'):'')
-        +'</div>';
-      const panel=(id)=>'<div id="gtab-'+id+'" role="tabpanel" aria-labelledby="gtab-btn-'+id+'" style="'+(activeGTab===id?'':'display:none')+'">';
+        +gTabBtn('plans',L('web.project.plans'),activeGTab==='plans')
+        +gTabBtn('tasks',L('web.project.tasks'),activeGTab==='tasks')
+        +gTabBtn('assets',L('web.project.assets'),activeGTab==='assets')
+        +gTabBtn('members',L('web.group.tab.members'),activeGTab==='members')
+        +(allowedMember?gTabBtn('ops',L('web.group.tab.ops'),activeGTab==='ops'):'')+'</div>';
+      const panel=(id)=>'<div id="gtab-'+id+'" role="tabpanel" aria-labelledby="gtab-btn-'+id+'" style="'+((activeGTab===id || id==='plans' && ['tasks','assets'].includes(activeGTab))?'':'display:none')+'">';
       const replyCard=isDissolved
         ?'<div class="card" id="reply" style="opacity:0.75"><h3>'+L('web.group.reply_title')+'</h3><input type="text" disabled placeholder="'+esc(T('web.group.dissolved.placeholder'))+'" style="background:#f5f5f5;color:#999;cursor:not-allowed"></div>'
         :myMuted
@@ -320,9 +323,9 @@ function createGroupRouter(handlers, db) {
         :'<div class="card" id="reply"><h3>'+L('web.group.reply_title')+'</h3><form method="POST" action="/messages/send" onsubmit="return groupReplySend(event)" id="group-reply-form"><input type="hidden" name="agentId" value="'+aId+'"><input type="hidden" name="toUid" value="'+cId+'"><input type="hidden" name="channelType" value="2"><input type="hidden" name="replyToMessageId" id="group-reply-message-id" value=""><div id="group-precise-reply-summary" class="meta" hidden></div><label for="group-reply-input" class="meta">'+L('web.conversation.label.content')+'</label><div class="voko-compose-row"><input type="text" id="group-reply-input" name="content" required autocomplete="off" autofocus'+mentionInputAttrs+'><a id="group-upload-link" class="btn btn-outline btn-sm" style="margin:0;display:flex;align-items:center;white-space:nowrap" href="/agents/'+aId+'/upload?toUid='+encodeURIComponent(channelId)+'&channelType=2">'+L('web.conversation.op.upload')+'</a><button type="submit" class="voko-send-button">'+L('common.btn.send')+'</button></div><span id="reply-send-err" style="display:block;font-size:14px;margin-top:4px"></span></form></div>';
       const msgPanel=panel('messages')+'<div id="msg-box" style="max-height:50vh;overflow-y:auto;border:1px solid #e0e0e0;padding:12px;border-radius:6px;background:#fff;margin-bottom:10px">'+mh+'</div>'+msgPager+replyCard+'</div>';
       const opsSection = allowedManager?'<div class="gm-manage-section" data-active-only><h3 class="gm-manage-section-title">'+L('web.group.manage.quick_actions')+'</h3><div class="gm-action-grid"><a class="gm-action-card" data-agent-kind="link" data-agent-action="group.invite" href="/agents/'+aId+'/g/'+cId+'/invite"><span class="gm-action-icon" aria-hidden="true">＋</span><span><strong>'+L('web.group.op.invite')+'</strong><small>'+L('web.group.manage.invite_desc')+'</small></span></a></div></div>':'';
-      const memberPanel=panel('members')+'<div class="card">'+memberHtml+'</div></div>';
+      const memberPanel=panel('members')+opsSection+'<div class="card">'+memberHtml+'</div>'+applyHtml+'</div>';
       const dangerZone=(dissolveHtml||quitHtml)?'<div class="gm-manage-section"><h3 class="gm-manage-section-title">'+L('web.group.manage.danger_zone')+'</h3><div class="gm-danger-zone">'+dissolveHtml+quitHtml+'</div></div>':'';
-      const opsPanel = allowedMember ? panel('ops')+'<div class="gm-ops-shell">'+managementIntroHtml+opsSection+applyHtml+opsHtml+dangerZone+'</div></div>' : '';
+      const opsPanel = allowedMember ? panel('ops')+'<div class="gm-ops-shell">'+opsHtml+'<div id="project-settings"></div>'+dangerZone+'</div></div>' : '';
       // 统一危险操作 dialog：踢人 / 解散群聊
       const kickDlg='<dialog id="kick-dlg" class="gm-dialog"><div class="gm-dialog-body"><div class="gm-dialog-icon" aria-hidden="true">!</div><h3>'+L('web.group.kick_dlg_title')+'</h3><p id="kick-dlg-msg"></p></div><form id="kick-form" method="POST" data-group-ajax class="gm-dialog-actions"><button type="button" class="btn btn-outline" onclick="closeKickDlg()">'+L('web.group.kick_dlg_cancel')+'</button><button type="submit" class="btn btn-danger">'+L('web.group.kick_dlg_confirm')+'</button></form></dialog>';
       const dissolveDlg='<dialog id="dissolve-dlg" class="gm-dialog"><div class="gm-dialog-body"><div class="gm-dialog-icon" aria-hidden="true">!</div><h3>'+L('web.group.dissolve.dialog_title')+'</h3><p>'+L('web.group.dissolve.dialog_desc')+'</p><p class="gm-dialog-warning">'+L('web.group.dissolve.dialog_warning')+'</p><div id="dissolve-feedback" class="gm-dialog-feedback" role="alert"></div></div><div class="gm-dialog-actions"><button type="button" class="btn btn-outline" onclick="closeDissolveDlg()">'+L('common.btn.cancel')+'</button><button id="dissolve-confirm-btn" type="button" class="btn btn-danger" onclick="return confirmDissolveGroup()">'+L('web.group.dissolve.button')+'</button></div></dialog>';
@@ -332,16 +335,16 @@ function createGroupRouter(handlers, db) {
         +'function closeKickDlg(){document.getElementById("kick-dlg").close()}'
         +'function closeQuitDlg(){document.getElementById("quit-dlg").close()}'
         +'function confirmQuitGroup(){closeQuitDlg();document.getElementById("group-quit-form").submit()}'
-        +'(function(){var f=document.getElementById("group-quit-form"),d=document.getElementById("quit-dlg");if(f&&d){f.addEventListener("submit",function(e){e.preventDefault();d.showModal()});d.addEventListener("click",function(e){if(e.target===d)d.close()})}})()'
+        +'(function(){var f=document.getElementById("group-quit-form"),d=document.getElementById("quit-dlg");if(f&&d){f.addEventListener("submit",function(e){e.preventDefault();d.showModal()});d.addEventListener("click",function(e){if(e.target===d)d.close()})}})();'
         +'function groupActionError(form,message){var old=form.parentNode.querySelector(".group-action-error");if(old)old.remove();var note=document.createElement("p");note.className="error group-action-error";note.style.margin="6px 0 0";note.textContent=message||"'+esc(T('common.action.failed'))+'";form.insertAdjacentElement("afterend",note)}'
-        +'function refreshGroupMembers(){var url=new URL(location.href);url.searchParams.set("tab","members");return fetch(url,{headers:{"X-Requested-With":"voko-group-action"}}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");var current=document.querySelector("main[data-voko-page-region]");if(!next||!current)throw new Error("refresh region missing");current.replaceWith(next);history.replaceState(null,"",url)})}'
-        +'document.addEventListener("submit",function(e){var f=e.target.closest("form[data-group-ajax]");if(!f)return;e.preventDefault();var b=f.querySelector("button[type=submit]");if(b)b.disabled=true;var d=document.getElementById("kick-dlg");if(d&&d.open)d.close();fetch(f.action,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"},body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json().catch(function(){return{success:false,error:"'+esc(T('common.action.failed'))+'"}})}).then(function(data){if(!data.success)throw new Error(data.error||"'+esc(T('common.action.failed'))+'");return refreshGroupMembers()}).catch(function(err){groupActionError(f,err.message)}).finally(function(){if(b)b.disabled=false})})'
-        +'function saveGroupProfile(e){e.preventDefault();var f=e.target;var b=f.querySelector("button");var s=document.getElementById("save-feedback");var d=JSON.stringify({name:document.getElementById("grp-name").value,notice:document.getElementById("grp-notice").value,approve_mode:document.getElementById("grp-approve").checked?"manual":"auto",searchable:document.getElementById("grp-searchable").checked?1:0});b.disabled=true;b.textContent="...";s.textContent="";fetch(f.dataset.url,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:d}).then(function(r){return r.json()}).then(function(j){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';if(j.success){s.style.color="#0f9d58";s.textContent="✓ '+esc(T('web.group.updated'))+'";var nn=document.getElementById("grp-name").value;if(nn){document.title="VOKO — "+nn;var h1s=document.querySelector("h1 span");var h1=document.querySelector("h1");if(h1s)h1s.textContent="'+esc(T('web.group.detail_title'))+': "+nn;else if(h1)h1.textContent="'+esc(T('web.group.detail_title'))+': "+nn;var nav=document.querySelector("nav");if(nav){var as=nav.querySelectorAll("a");if(as.length)as[as.length-1].textContent=nn}}setTimeout(function(){s.textContent=""},2000)}else{s.style.color="#d93025";s.textContent=j.error||"'+esc(T('common.action.failed'))+'"}}).catch(function(err){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';s.style.color="#d93025";s.textContent=err.message});return false}'
+        +'function refreshGroupMembers(){var url=new URL(location.href);url.searchParams.set("tab","members");return fetch(url,{headers:{"X-Requested-With":"voko-group-action"}}).then(function(r){if(!r.ok)throw new Error("refresh failed");return r.text()}).then(function(html){var next=new DOMParser().parseFromString(html,"text/html").querySelector("main[data-voko-page-region]");var current=document.querySelector("main[data-voko-page-region]");if(!next||!current)throw new Error("refresh region missing");var incoming=next.querySelector("#gtab-members"),existing=current.querySelector("#gtab-members");if(!incoming||!existing)throw new Error("members region missing");existing.replaceWith(incoming);window.vokoInitMembers();window.vokoSelectGroupTab("members");window.dispatchEvent(new Event("voko-collaboration-refresh"));history.replaceState(null,"",url)})}'
+        +'document.addEventListener("submit",function(e){var f=e.target.closest("form[data-group-ajax]");if(!f)return;e.preventDefault();var b=f.querySelector("button[type=submit]");if(b)b.disabled=true;var d=document.getElementById("kick-dlg");if(d&&d.open)d.close();fetch(f.action,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"},body:new URLSearchParams(new FormData(f))}).then(function(r){return r.json().catch(function(){return{success:false,error:"'+esc(T('common.action.failed'))+'"}})}).then(function(data){if(!data.success)throw new Error(data.error||"'+esc(T('common.action.failed'))+'");return refreshGroupMembers()}).catch(function(err){groupActionError(f,err.message)}).finally(function(){if(b)b.disabled=false})});'
+        +'function saveGroupProfile(e){e.preventDefault();var f=e.target;var b=f.querySelector("button");var s=document.getElementById("save-feedback");var d=JSON.stringify({name:document.getElementById("grp-name").value,approve_mode:document.getElementById("grp-approve").checked?"manual":"auto",searchable:document.getElementById("grp-searchable").checked?1:0});b.disabled=true;b.textContent="...";s.textContent="";fetch(f.dataset.url,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:d}).then(function(r){return r.json()}).then(function(j){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';if(j.success){s.style.color="#0f9d58";s.textContent="✓ '+esc(T('web.group.updated'))+'";var nn=document.getElementById("grp-name").value;if(nn){document.title="VOKO — "+nn;var h1s=document.querySelector("h1 span");var h1=document.querySelector("h1");if(h1s)h1s.textContent="'+esc(T('web.group.detail_title'))+': "+nn;else if(h1)h1.textContent="'+esc(T('web.group.detail_title'))+': "+nn;var nav=document.querySelector("nav");if(nav){var as=nav.querySelectorAll("a");if(as.length)as[as.length-1].textContent=nn}}setTimeout(function(){s.textContent=""},2000)}else{s.style.color="#d93025";s.textContent=j.error||"'+esc(T('common.action.failed'))+'"}}).catch(function(err){b.disabled=false;b.textContent='+JSON.stringify(L('web.group.btn.update'))+';s.style.color="#d93025";s.textContent=err.message});return false}'
         +'</script>';
 
       const groupJsonLd={'@context':'https://schema.org','@type':'Group','name':ctx.groupName||channelId,'identifier':channelId,'member':(ctx.members||[]).map(m=>({'@type':'Person',name:m.nickname||m.uid,identifier:m.uid}))};
       res.send(renderPage(req, L('web.group.detail_title')+': '+esc(ctx.groupName||channelId),
-        dissolvedBanner+groupInfoHtml+gTabBar+msgPanel+memberPanel+opsPanel
+        dissolvedBanner+groupInfoHtml+gTabBar+'<p id="project-alert" role="status"></p>'+msgPanel+memberPanel+opsPanel+panel('plans')+require('./project').renderProjectFragment(req,ctx.members)+'</div>'
         +initialLatestScrollScript('#msg-box')
         +kickDlg+dissolveDlg+quitDlg+dlgScript
         +'<p><a href="/agents/'+aId+'">← '+esc(aName)+'</a></p>',
@@ -654,7 +657,7 @@ function createGroupRouter(handlers, db) {
     const {name,notice,avatar,approve_mode,searchable}=req.body;
     const params={agentId,channelId};
     if(name!==undefined&&name!=='')params.name=name;
-    if(notice!==undefined&&notice!=='')params.notice=notice;
+    if(notice!==undefined)params.notice=notice;
     if(avatar!==undefined&&avatar!=='')params.avatar=avatar;
     if(approve_mode!==undefined)params.approve_mode=approve_mode;
     if(searchable!==undefined)params.searchable=searchable;
@@ -851,7 +854,7 @@ document.addEventListener('mousedown',function(ev){if(trigAt<0)return;if(pop&&!p
 
 /** 群详情三 Tab（群消息/群成员/群操作）切换脚本 */
 function gTabScript(){
-  return '<script>(function(){var ids=["messages","members","ops"];function setTab(t){ids.forEach(function(id){var p=document.getElementById("gtab-"+id);if(p)p.style.display=(id===t?"":"none");});document.querySelectorAll("button[data-gtab]").forEach(function(b){var on=b.getAttribute("data-gtab")===t;b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});var u=new URL(location.href);if(t==="messages")u.searchParams.delete("tab");else u.searchParams.set("tab",t);history.replaceState(null,"",u);}document.addEventListener("click",function(e){var b=e.target.closest("button[data-gtab]");if(b)setTab(b.getAttribute("data-gtab"))});})();</script>';
+  return '<script>(function(){var ids=["messages","plans","members","ops"];function setTab(t){var panelId=["tasks","assets"].includes(t)?"plans":t;ids.forEach(function(id){var p=document.getElementById("gtab-"+id);if(p)p.style.display=(id===panelId?"":"none");});document.querySelectorAll("button[data-gtab]").forEach(function(b){var on=b.getAttribute("data-gtab")===t;b.setAttribute("aria-selected",String(on));b.style.borderBottomColor=on?"#1a73e8":"transparent";b.style.color=on?"#1a73e8":"#666";b.style.fontWeight=on?"700":"600";});document.getElementById("gtab-"+panelId)?.setAttribute("aria-labelledby","gtab-btn-"+t);var u=new URL(location.href);if(t==="messages")u.searchParams.delete("tab");else u.searchParams.set("tab",t);history.replaceState(null,"",u);window.dispatchEvent(new CustomEvent("voko-collaboration-tab",{detail:t}));}window.vokoSelectGroupTab=setTab;document.addEventListener("click",function(e){var b=e.target.closest("button[data-gtab]");if(b)setTab(b.getAttribute("data-gtab"))});})();</script>';
 }
 
 /** 群成员表搜索 + 分页（每页 10）：SSR 已渲染全部行（含排序），前端按搜索词/页码显隐 */
@@ -864,7 +867,7 @@ function membersScript(tFn){
     total:t('web.group.create.total_people')
   });
   return '<script>var _MB='+I+';'+
-`(function(){
+`window.vokoInitMembers=function(){
 var SIZE=10,page=1,query='';
 var tbody=document.getElementById('gm-members-tbody');
 if(!tbody)return;
@@ -890,7 +893,7 @@ function apply(){
 }
 if(searchInput)searchInput.addEventListener('input',function(){query=searchInput.value;page=1;apply();});
 apply();
-})();`+'</script>';
+};window.vokoInitMembers();`+'</script>';
 }
 
 /** 搜索群页脚本：输入关键词 → 拉群卡片 → 申请入群（按 status 反馈） */

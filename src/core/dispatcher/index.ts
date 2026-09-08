@@ -128,6 +128,7 @@ interface IsolatedExecutionOptions {
   preferredAdapter?: string;
   ownerExecutionContext?: Readonly<Record<string, unknown>>;
   onProviderAccepted?: (receipt: unknown) => void;
+  onLateReply?: (reply: ProviderReply) => void | Promise<void>;
   sessionScopeId?: string;
   principalScope?: string;
   protocolContextId?: string;
@@ -431,6 +432,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
     providerId?: string;
     taskId?: string;
     waitMs?: number;
+    onLateReply?: (reply: ProviderReply) => void | Promise<void>;
   }
   const _retiredIsolatedTurns = new Map<string, RetiredIsolatedTurn>();
   const ISOLATED_TURN_TTL_MS = 10 * 60 * 1000;
@@ -460,6 +462,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
   function _createTurnDeadline(input: {
     agentId: string; scope: 'E2EE_V2' | 'A2A' | 'OWNER'; turnId: string; sinkKey: string; taskId: string;
     explicitTimeoutMs?: number; reject: (error: Error) => void;
+    onLateReply?: (reply: ProviderReply) => void | Promise<void>;
   }) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let active: { providerId: string; configuredMs: number; waitMs: number; startedAt: number } | null = null;
@@ -483,7 +486,7 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
           const selected = active!;
           providerSecurity?.markTurn(input.turnId, 'OUTCOME_UNKNOWN', input.agentId);
           _retireIsolatedTurn(input.sinkKey, { timedOut: true, providerId: selected.providerId,
-            taskId: input.taskId, waitMs: selected.waitMs });
+            taskId: input.taskId, waitMs: selected.waitMs, onLateReply: input.onLateReply });
           const actualWaitMs = Date.now() - selected.startedAt;
           console.error(`[Dispatcher] Provider result unknown scope=${input.scope} providerId=${selected.providerId} configuredTimeoutMs=${selected.configuredMs} waitMs=${selected.waitMs} actualWaitMs=${actualWaitMs} turnId=${input.turnId}`);
           input.reject(timeoutError());
@@ -639,6 +642,18 @@ function createDispatcher({ db, providers, onAgentReply, onTurnStatus }: Dispatc
           if (stopping) return;
           const retired = replyTurnKey ? _retiredIsolatedTurn(replyTurnKey) : null;
           if (replyTurnKey && retired) {
+            if (retired.timedOut && retired.onLateReply && reply.done !== false
+                && retired.providerId === _providerIds.get(p)) {
+              const callback = retired.onLateReply;
+              retired.onLateReply = undefined; // One terminal receipt, never ordinary chat delivery.
+              const bounded = sanitizeFinalProviderReply(reply.content);
+              const safe = !bounded.rejected && !isInternalProviderProtocol(bounded.content);
+              const recovered = safe ? { ...reply, content: bounded.content }
+                : { agentId: reply.agentId, turnId: reply.turnId, done: true,
+                    content: '', error: 'Unsafe final output', deliveryOutcome: 'outcome_unknown' };
+              void Promise.resolve().then(() => callback(recovered)).catch(() => undefined);
+              return;
+            }
             const delayMs = Math.max(0, Date.now() - retired.retiredAt);
             console.warn(`[Dispatcher] isolated_late_reply_dropped agent=${reply.agentId || '-'} turnId=${reply.turnId} providerId=${retired.providerId || _providerIds.get(p) || 'unknown'} taskId=${retired.taskId || '-'} messageId=${reply.replyId || '-'} timedOut=${retired.timedOut} delayMs=${delayMs}`);
             return;
@@ -1629,7 +1644,9 @@ Convergence obligations:
     if (stopping) return { outcome: 'not_delivered', errorCode: 'DISPATCHER_STOPPED' };
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
-      console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
+      console.log(requiresDshHttp(agentId)
+        ? `[Dispatcher] agent=${agentId} DSH受控HTTP不可用；消息保留等待恢复，Pull已禁用`
+        : `[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return { outcome: 'not_delivered', errorCode: 'AUTOMATIC_DELIVERY_DISABLED' };
     }
     try {
@@ -1832,7 +1849,9 @@ Convergence obligations:
       if (!isolated) _removeReplyContext(replyContext);
       if (result.outcome === 'not_delivered') {
         if (isolated) console.log(`[Dispatcher] agent=${agentId} scope=${executionScope} 所有符合精确会话要求的通道均未送达；任务保留在来源队列等待恢复`);
-        else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+        else console.log(requiresDshHttp(agentId)
+          ? `[Dispatcher] agent=${agentId} DSH受控HTTP未送达；消息保留等待权限或连接恢复，Pull已禁用`
+          : `[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
       }
       return result;
     } catch (err) {
@@ -1932,7 +1951,7 @@ Convergence obligations:
       resolveReply(reply);
     });
     const deadline = _createTurnDeadline({ agentId: options.agentId, scope: executionScope === 'owner_link' ? 'OWNER' : 'A2A', turnId, sinkKey, taskId: options.taskId,
-      explicitTimeoutMs: options.timeoutMs, reject: rejectReply });
+      explicitTimeoutMs: options.timeoutMs, reject: rejectReply, onLateReply: options.onLateReply });
     try {
       const delivery = await awaitSubmission(_doRoute(options.agentId, {
         agentId: options.agentId, fromUid: `${prefix}:${options.contextId}`, senderUid: `${prefix}-mailbox`,
@@ -2069,7 +2088,9 @@ Convergence obligations:
     if (stopping) { unsentStatus(agentId, payload); return; }
     const provider = _routeProvider(agentId, 'push');
     if (!provider) {
-      console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
+      console.log(requiresDshHttp(agentId)
+        ? `[Dispatcher] agent=${agentId} DSH受控HTTP不可用；消息保留等待恢复，Pull已禁用`
+        : `[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
     const workingPayload: PushPayload = {
@@ -2099,9 +2120,14 @@ Convergence obligations:
     _enqueueRoute(agentId, workingPayload, prepared.context);
   }
 
+  function requiresDshHttp(agentId: string): boolean {
+    return _metaOf(agentId).backend_type === 'deepseek-harness'
+      && !!providerSecurity?.effective(agentId, 'deepseek-harness-http').config.permissionPreset;
+  }
+
   /** pull 路径复用同一治理；被收敛/熔断的消息返回 null，否则返回注入 STATE 后的副本。 */
   function prepareForPull(agentId: string, row: PullMessageRow | null): PullMessageRow | null {
-    if (!row) return null;
+    if (!row || requiresDshHttp(agentId)) return null;
     if (row.channel_type === 2) {
       let mention: { all?: boolean; uids?: string[] } | null =
         typeof row.mention === 'object' ? row.mention : null;

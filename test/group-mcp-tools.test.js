@@ -915,6 +915,21 @@ await test('session-scoped MCP Pull atomically claims an unthreaded group mentio
 });
 
 // ========================================
+await test('DSH permission-bound Agent refuses Pull without consuming messages', async () => {
+  const { db, handlers, cleanup } = setup();
+  try {
+    db.prepare("UPDATE agents SET backend_type='deepseek-harness' WHERE agent_id='agentA'").run();
+    const now = Date.now();
+    db.prepare(`INSERT INTO provider_security_policies
+      (agent_id,transport_id,revision,config_json,policy_digest,restore_constraint_digest,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?)`).run('agentA','deepseek-harness-http',1,
+        JSON.stringify({permissionPreset:'read-only'}),'test','test',now,now);
+    const result = await handlers.fetch_new_messages({ agentId:'agentA', onlyReplies:false });
+    assert.strictEqual(result.code, 'DSH_PERMISSION_HTTP_REQUIRED');
+    assert.strictEqual(db.prepare("SELECT status FROM messages WHERE id='m1'").get().status, 'received');
+  } finally { cleanup(); }
+});
+
 console.log('\n========================================');
 console.log(`群聊 MCP 工具测试: ${pass} 通过, ${fail} 失败`);
 console.log('========================================\n');

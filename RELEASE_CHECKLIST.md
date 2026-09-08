@@ -9,6 +9,7 @@ it is historical evidence, not the current package's publication status.
 - [ ] Update `package.json`, both root version fields in `package-lock.json`, the
   Chinese/English README badges, `CHANGELOG.md`, and versioned release notes.
 - [ ] Describe compatibility limits and distinguish model execution from IM delivery.
+- [ ] For collaboration releases, document the separately deployed Chatroom API/migration requirements, cloud-provider real-account coverage, and human acceptance versus Agent execution. Do not imply that the npm package deploys those services.
 - [ ] Run `npm ci`, `npm run release:gate`, `npm run test:e2e`, and
   `npm run security:local`; review the exact package contents and secret scan.
 - [ ] Wait for PR checks, including three-platform Node 22 tests, Chromium,

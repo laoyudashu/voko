@@ -298,3 +298,12 @@ test('unknown remote Agent uid stays classified as Agent while the cloud lookup 
   assert.equal(dispatcher.isAgentImUid('agent_remote_not_cached'), true);
   assert.equal(dispatcher.isAgentImUid('visitor_remote_not_cached'), false);
 });
+
+test('opt-in late result returns once to its original task, never ordinary chat',async()=>{
+ const provider=new Provider();provider.push=function(payload){this.payload=payload;return {nativeSessionId:'late'};};
+ const ordinary=[],late=[];const dispatcher=createDispatcher({db:db(),providers:{'codex-cli':provider},onAgentReply:r=>ordinary.push(r)});
+ await assert.rejects(keepEventLoopAlive(dispatcher.executeIsolated({agentId:'agent-1',taskId:'late-task',contextId:'late-context',content:'test',sourceType:'external',executionScope:'a2a_mailbox',principalScope:'p',sessionScopeId:'s',protocolContextId:'c',bindingGeneration:1,timeoutMs:10,onLateReply:r=>late.push(r)})),{code:'A2A_PROVIDER_REPLY_TIMEOUT'});
+ const reply={agentId:'agent-1',visitorId:provider.payload.fromUid,turnId:provider.payload.turnId,replyId:'late-final',content:'Late result',done:true};
+ provider.emit('agent.reply',{...reply,done:false});provider.emit('agent.reply',reply);provider.emit('agent.reply',reply);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(late.length,1);assert.equal(late[0].content,'Late result');assert.equal(ordinary.length,0);
+});

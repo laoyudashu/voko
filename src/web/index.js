@@ -1565,7 +1565,7 @@ function createWebRouter(handlers, db, opts={}){
       const initialPreviewHtml=initialPreview.map((item,index)=>(index?' ':'')+'<span data-change="'+esc(item.change||'unchanged')+'" style="display:inline-block;padding:1px 5px;border-radius:5px;font-weight:'+(item.changed?'600':'400')+';color:'+previewColor(item)+';background:'+previewBackground(item)+(item.change==='removed'?';text-decoration:line-through;opacity:.72':'')+'">'+(item.change==='removed'?(zh?'移除 ':'Remove '):'')+esc(item.text)+'</span>').join('');
       const controlRows=(controls,config,scopeName)=>controls.filter(item=>item.id!=='additionalPrompt').map(item=>{
         let field='<span class="badge '+(item.enforcement==='unsupported'?'badge-offline':'badge-online')+'">'+esc(statusLabel(item))+'</span>';
-        if(item.editable&&item.kind==='text'){field='<div><textarea name="'+esc(item.id)+'" data-control="'+esc(item.id)+'" data-scope="'+scopeName+'" maxlength="'+Number(item.maxLength||2000)+'" rows="7" style="margin:0;max-width:none">'+esc(config[item.id]||'')+'</textarea><div style="margin-top:7px"><span class="meta" data-char-count></span></div></div>'}
+        if(item.editable&&item.kind==='text'){field='<div><textarea name="'+esc(item.id)+'" data-control="'+esc(item.id)+'" data-scope="'+scopeName+'" maxlength="'+Number(item.maxLength||2000)+'" rows="'+(item.id==='permissionPreset'?1:7)+'" style="margin:0;max-width:none">'+esc(config[item.id]||'')+'</textarea><div style="margin-top:7px"><span class="meta" data-char-count></span></div></div>'}
         else if(item.editable){const unavailable=config[item.id]!=null&&!item.values.some(option=>config[item.id]===option.value);const selected=item.values.find(option=>config[item.id]===option.value)||item.values[0],risk=selected&&selected.risk||'low';const riskText=risk==='high'?(zh?'高风险':'High risk'):risk==='medium'?(zh?'中等风险':'Medium risk'):(zh?'低风险':'Low risk');const riskClass=risk==='high'?'badge-offline':risk==='medium'?'badge-pending':'badge-online';field='<div><select name="'+esc(item.id)+'" data-control="'+esc(item.id)+'" data-scope="'+scopeName+'" style="margin:0;max-width:240px">'+(unavailable?'<option value="'+esc(config[item.id])+'" selected disabled>'+esc(zh?'当前设置（此运行时未验证）':'Saved setting (unverified on this runtime)')+'</option>':'')+item.values.map(option=>'<option value="'+esc(option.value)+'" data-risk="'+esc(option.risk||'low')+'"'+(config[item.id]===option.value?' selected':'')+'>'+esc(option.label)+'</option>').join('')+'</select><div style="margin-top:7px"><span class="badge '+riskClass+'" data-risk-indicator>'+esc(riskText)+'</span></div></div>'}
         return '<div class="card" style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,260px);gap:18px;align-items:center"><div><h3>'+esc(item.label)+'</h3><p class="meta" style="margin:3px 0">'+esc(item.description)+'</p><div class="meta">'+esc(term(item.enforcement,enforcementLabels))+' · '+esc(term(item.applyAt,applyAtLabels))+' · '+esc(term(item.revocation,revocationLabels))+'</div></div><div>'+field+'</div></div>';
       }).join('');
@@ -2275,7 +2275,21 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     }catch(e){next(e)}
   });
 
-  // Generate only the saved visitor link; no remote QR service or URL fetching.
+  // Read only the Agent's saved public storage icon, never a caller-supplied URL.
+  R.get('/agents/:agentId/visitor-qr/icon',async(req,res)=>{
+    res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+    const {officialVisitorQrIconUrl,readVisitorQrIcon}=require('./visitor-qr');
+    try{
+      const row=db?.prepare('SELECT icon_url FROM agents WHERE agent_id=?').get(req.params.agentId);
+      if(!officialVisitorQrIconUrl(row?.icon_url))return res.status(404).end();
+      const data=await readVisitorQrIcon(row.icon_url,opts.visitorQrIconFetch);
+      const type=detectAgentIconType(data);
+      if(!type)return res.status(502).end();
+      return res.type(type.mime).send(data);
+    }catch{return res.status(502).end()}
+  });
+
+  // Generate only the saved visitor link; no remote QR service is involved.
   R.get('/agents/:agentId/visitor-qr',async(req,res,next)=>{
     try{
       const {agentId}=req.params;
@@ -2289,7 +2303,10 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       if(!valid)return res.status(404).send(renderAgentFormPage(req.t('web.agent.qr.title'),agentId,agent.agentName||agentId,'<p>'+esc(req.t('web.agent.qr.no_link'))+'</p>',req.t,req.locale));
       const image=await require('qrcode').toDataURL(link,{type:'image/png',width:768,margin:4,errorCorrectionLevel:'H'});
       const title=esc(req.t('web.agent.qr.title'));
-      const html='<div style="text-align:center"><p>'+esc(req.t('web.agent.qr.hint'))+'</p><img id="visitor-qr-image" hidden data-qr="'+image+'" data-icon="'+esc(row?.icon_url||agent.iconUrl||'/favicon.png')+'" alt="'+title+'" width="320" height="320" style="max-width:100%;height:auto"><p style="display:flex;align-items:center;justify-content:center;gap:4px;overflow-wrap:anywhere"><a style="min-width:0" href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">'+esc(link)+'</a>'+copyButton({esc,label:req.t('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+esc(link)+'"'})+'</p><a id="visitor-qr-download" hidden class="btn" download="voko-visitor-qr.png">'+esc(req.t('web.agent.qr.download'))+'</a><p id="visitor-qr-error" hidden role="alert">'+esc(req.t('web.agent.qr.icon_error'))+'</p></div>'+require('./visitor-qr').visitorQrScript();
+      const {officialVisitorQrIconUrl,visitorQrScript}=require('./visitor-qr');
+      const icon=row?.icon_url||agent.iconUrl||'/favicon.png';
+      const iconSource=officialVisitorQrIconUrl(row?.icon_url)?'/agents/'+encodeURIComponent(agentId)+'/visitor-qr/icon':icon;
+      const html='<div style="text-align:center"><p>'+esc(req.t('web.agent.qr.hint'))+'</p><img id="visitor-qr-image" src="'+image+'" data-qr="'+image+'" data-icon="'+esc(iconSource)+'" alt="'+title+'" width="320" height="320" style="max-width:100%;height:auto"><p style="display:flex;align-items:center;justify-content:center;gap:4px;overflow-wrap:anywhere"><a style="min-width:0" href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">'+esc(link)+'</a>'+copyButton({esc,label:req.t('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+esc(link)+'"'})+'</p><a id="visitor-qr-download" class="btn" href="'+image+'" download="voko-visitor-qr.png">'+esc(req.t('web.agent.qr.download'))+'</a><p id="visitor-qr-error" hidden role="alert">'+esc(req.t('web.agent.qr.icon_error'))+'</p></div>'+visitorQrScript();
       res.send(renderAgentFormPage(req.t('web.agent.qr.title'),agentId,agent.agentName||agentId,html,req.t,req.locale));
     }catch(e){next(e)}
   });

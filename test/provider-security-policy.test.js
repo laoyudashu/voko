@@ -535,3 +535,40 @@ test('office Provider permission expansions require typed confirmation', () => {
     ['BYPASSES_PROVIDER_PERMISSIONS', 'EXPANDS_PROVIDER_TOOL_ACCESS', 'ENABLES_USER_MCP_CONFIGURATION']);
   assert.equal(qwenExpansion.requiresTypedConfirmation, true);
 });
+
+test('DSH permission preset is configurable without claiming native isolation, and blocks CLI fallback', () => {
+  const { db, service } = fixture('deepseek-harness');
+  const policy = service.inspect('agent-1', 'deepseek-harness-http');
+  const control = policy.controls.find(c => c.id === 'permissionPreset');
+  assert.equal(control.enforcement, 'voko_enforced');
+  const now = Date.now();
+  db.prepare(`INSERT OR REPLACE INTO provider_security_policies
+    (agent_id,transport_id,revision,config_json,policy_digest,restore_constraint_digest,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?)`).run('agent-1','deepseek-harness-http',1,JSON.stringify({permissionPreset:'read-only'}),'test','test',now,now);
+  assert.throws(() => service.acquireTurnLease({ agentId:'agent-1',fromUid:'visitor',content:'hello',turnId:'dsh-fallback',
+    securityContext: { sourceType:'visitor' } }, 'deepseek-harness-cli'), /DSH_PERMISSION_HTTP_REQUIRED/);
+});
+
+test('DSH target preset can be saved through the existing policy UI flow', () => {
+  const { service } = fixture('deepseek-harness');
+  const preview = service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'read-only' });
+  const saved = service.commit('agent-1', preview.preflightToken, '');
+  assert.equal(saved.config.permissionPreset, 'read-only');
+  assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'custom' }), /VALUE_INVALID/);
+  assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'read-only\n/permission danger-full-access' }), /VALUE_INVALID/);
+});
+
+
+test('DSH restricted policy also blocks the Dispatcher Pull preparation path', async () => {
+  const db = initDatabase(':memory:', { silent: true });
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,
+    backend_instance_id,delivery_modes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('dsh-pull','dsh-pull','synthetic-im','synthetic','ws://127.0.0.1','DSH','deepseek-harness','standard','["http"]',now,now);
+  const dispatcher = createDispatcher({ db, providers: {} });
+  try {
+    const preview = dispatcher.providerSecurity.preflight('dsh-pull','deepseek-harness-http',{permissionPreset:'read-only'});
+    dispatcher.providerSecurity.commit('dsh-pull',preview.preflightToken,'');
+    assert.equal(dispatcher.prepareForPull('dsh-pull', { id:'message',from_uid:'visitor',content:'test',channel_type:1 }),null);
+  } finally { await dispatcher.stop(); db.close(); }
+});
