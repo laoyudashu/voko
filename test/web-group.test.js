@@ -121,8 +121,8 @@ describe('Web group detail rendering', () => {
 
   it('does not repeat the group ID in the page heading', async (t) => {
     const html = await renderGroup(t, 'member');
-    assert.match(html, /<h1>群聊: Test Group<\/h1>/);
-    assert.doesNotMatch(html, /<h1>群聊: Test Group（group-1）<\/h1>/);
+    assert.match(html, /<h1>协作: Test Group<\/h1>/);
+    assert.doesNotMatch(html, /<h1>协作: Test Group（group-1）<\/h1>/);
   });
 
   it('renders the current-user label without duplicate parentheses', async (t) => {

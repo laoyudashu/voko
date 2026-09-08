@@ -1843,6 +1843,13 @@ async function startMcpServer(args?: any, core?: any) {
     openclawHandler = hcResult.openclawHandler;
     hermesHandler = hcResult.hermesHandler;
     dispatcher = hcResult.dispatcher;
+    if (dispatcher) {
+      const { createProjectWorker } = require('./core/project-worker');
+      const { A2ASafetyGate } = require('./a2a/safety-gate');
+      const projectWorker = createProjectWorker({ db, dispatcher, safety: new A2ASafetyGate(db) });
+      await taskManager.start('project-worker', () => projectWorker.start());
+    }
+
     if (a2aModule.enabled && dispatcher) {
       try {
         const { A2ABridgeRuntime } = require('./a2a');
