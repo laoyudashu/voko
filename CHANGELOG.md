@@ -4,6 +4,8 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+## 0.5.5 - Pending release
+
 - Integrate collaboration chat, tasks, board, assets, members, and settings in the local Web UI. Separate public announcements from member-only instructions and allow announcements to be cleared.
 - Add explicit Agent dispatch from shared tasks, isolated execution context, input downloads, output uploads, and result receipts. Execution success remains separate from human task acceptance.
 - Persist execution outcomes and retain files after uncertain execution or upload; reconcile eligible late replies with the original execution without automatically replaying work.
@@ -11,7 +13,7 @@ All notable user-facing changes are documented in this file.
 - Align DeepSeek Harness HTTP RPC/session handling and visitor permission presets with its checked Remote contract; refuse unsafe fallback when a target permission preset is configured.
 - Keep visitor QR codes working with uploaded Agent logos.
 - Verify delayed npm availability in a separate release job without republishing an already uploaded version.
-- See [release preparation](docs/releases/unreleased.md) and the [collaboration guide](docs/collaboration.md) for prerequisites and limits.
+- See [release preparation](docs/releases/0.5.5.md) and the [collaboration guide](docs/collaboration.md) for prerequisites and limits.
 
 ## 0.5.4 - 2026-09-07
 
