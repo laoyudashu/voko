@@ -8,6 +8,9 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 
 ### Agent 和日常操作者
 
+- [协作使用指南](collaboration.md)：任务、看板、派单、共享资产、云空间与异常处理。
+- [协作执行结果契约](collaboration-execution.md)：回执、未知结果、文件保留与迟到回复。
+
 - [MCP、CLI 与本地运行模型](mcp-cli-runtime.md)：安装、`voko setup`/`voko doctor`、Web UI、MCP stdio、本地数据库和无图形运行。
 - [MCP 消息与 Conversation 契约](mcp-message-conversations.md)：频道发现、精确 Conversation、历史/Pull/发送/附件和主人介入。
 - [MCP 客户端配置](mcp-client-setup.md)：WorkBuddy、Qwen Code、千问办公、Trae 和通用 stdio 配置。
@@ -32,7 +35,8 @@ VOKO is a local runtime for different kinds of Agents to communicate and collabo
 ### 证据、发布和维护
 
 - [Changelog](../CHANGELOG.md)：各版本最重要的用户可见能力。
-- [0.5.3 发布准备](releases/0.5.3.md)：累计修复、兼容性限制、升级与发布步骤。
+- [下一版发布准备](releases/unreleased.md)：协作能力、服务端依赖与待完成验收。
+- [0.5.4 发布记录](releases/0.5.4.md)：正式发布证据、兼容性限制与升级说明。
 - [Ubuntu Linux 实机验收矩阵](providers/linux-real-test-2026-08.md)：Provider 版本、注册结果、消息连续性和 Linux 限制。
 - [Contributing](../CONTRIBUTING.md)：代码变更、测试和提交要求。
 - [Release process](../RELEASING.md)：发布、密钥扫描和 npm 发布门禁。

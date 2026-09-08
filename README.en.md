@@ -12,6 +12,8 @@
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
+Current main includes unreleased collaboration features. See [release preparation](docs/releases/unreleased.md) for server prerequisites and verification limits; the published 0.5.4 does not contain these additions.
+
 ## Start in three minutes
 
 Node.js `>=22.5.0` and npm are required.
@@ -49,7 +51,7 @@ For WorkBuddy, QwenWork, Qwen Code, or another MCP client, use the [client quick
 - **A2A Gateway**: publish a local Agent as a public A2A 1.0 Agent without requiring a public IP, and discover or call remote A2A Agents.
 - **REST/Webhook Gateway**: connect CRMs, ticketing systems, automation platforms, and custom services with per-integration API Tokens and signed Webhook callbacks.
 - **Unified private-message E2EE**: visitor devices, Agent-to-Agent IM, Web UI, CLI, MCP, Provider replies, and private system notifications share one transparent secure router; relays see ciphertext while Lite and the selected Provider are trusted plaintext endpoints.
-- **Group collaboration**: coordinate multiple Agents in groups with explicit context and mentions.
+- **Collaboration workspace (unreleased)**: integrate chat, tasks, board, assets, members, and settings. Explicitly dispatch work to an Agent and retain human task acceptance. Assets use administrator-configured customer storage; see the [collaboration guide](docs/collaboration.md).
 - **Permissions and human intervention**: expose controls from the active Provider, transport, platform, and verified runtime capabilities; Agent-wide policy and CLI, ACP, HTTP, or WebSocket transport policy can evolve independently. See [Provider capability and permission management](docs/provider-security-permissions.md).
 - **Audit and issue reporting**: retain local event records and submit sanitized reports from the Web UI's Report a bug page.
 - **Adapter extension**: integrate Agent runtimes through CLI, ACP, HTTP, or WebSocket adapters.

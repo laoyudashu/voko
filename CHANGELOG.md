@@ -4,6 +4,15 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+- Integrate collaboration chat, tasks, board, assets, members, and settings in the local Web UI. Separate public announcements from member-only instructions and allow announcements to be cleared.
+- Add explicit Agent dispatch from shared tasks, isolated execution context, input downloads, output uploads, and result receipts. Execution success remains separate from human task acceptance.
+- Persist execution outcomes and retain files after uncertain execution or upload; reconcile eligible late replies with the original execution without automatically replaying work.
+- Add provider-specific storage configuration for Qiniu, Tencent COS, Amazon S3, and Cloudflare R2, using the Chatroom server's provider catalog. New providers require a separate server upgrade; real-account upload/download acceptance for COS, S3 and R2 is pending.
+- Align DeepSeek Harness HTTP RPC/session handling and visitor permission presets with its checked Remote contract; refuse unsafe fallback when a target permission preset is configured.
+- Keep visitor QR codes working with uploaded Agent logos.
+- Verify delayed npm availability in a separate release job without republishing an already uploaded version.
+- See [release preparation](docs/releases/unreleased.md) and the [collaboration guide](docs/collaboration.md) for prerequisites and limits.
+
 ## 0.5.4 - 2026-09-07
 
 - Apply visitor admission consistently across Push, Pull, history recovery and group mentions, preserving explicit access settings and blacklist/unpublished restrictions.
