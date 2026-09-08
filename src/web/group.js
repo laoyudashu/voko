@@ -654,7 +654,7 @@ function createGroupRouter(handlers, db) {
     const {name,notice,avatar,approve_mode,searchable}=req.body;
     const params={agentId,channelId};
     if(name!==undefined&&name!=='')params.name=name;
-    if(notice!==undefined&&notice!=='')params.notice=notice;
+    if(notice!==undefined)params.notice=notice;
     if(avatar!==undefined&&avatar!=='')params.avatar=avatar;
     if(approve_mode!==undefined)params.approve_mode=approve_mode;
     if(searchable!==undefined)params.searchable=searchable;

@@ -77,6 +77,28 @@ async function renderGroup(t, role, messages) {
   return html;
 }
 
+it('preserves an explicit empty announcement while leaving an omitted announcement unchanged', async (t) => {
+  const updates = [];
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { req.locale = 'zh'; req.t = makeT('zh'); next(); });
+  app.use(createGroupRouter({
+    update_group: async (params) => { updates.push(params); return { success: true }; },
+  }, createDb('agent-im-uid')));
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const url = `http://127.0.0.1:${server.address().port}/agents/agent-1/g/group-1/update`;
+  for (const body of [{ notice: '' }, { name: 'Updated group' }]) {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).success, true);
+  }
+  assert.equal(updates[0].notice, '');
+  assert.equal(Object.hasOwn(updates[1], 'notice'), false);
+});
+
 describe('Web group detail rendering', () => {
   it('injects manager capability for an owner', async (t) => {
     const html = await renderGroup(t, 'owner');
