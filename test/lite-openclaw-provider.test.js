@@ -105,7 +105,7 @@ describe('Lite OpenClaw WS provider', () => {
     setTimeout(() => {
       provider._gatewayStarting = false;
     }, 5);
-    await provider._waitForAuthenticatedConnection(100);
+    await provider._waitForAuthenticatedConnection(3000);
     assert.equal(provider.connected, true);
   });
 

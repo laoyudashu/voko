@@ -38,10 +38,25 @@ function createProjectWorker({ db, dispatcher, client = createProjectClient(db),
     }
   }
   async function upload(agent,channel,task,run,file,name) {
-    const info = await fs.lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > 50*1024*1024) throw new Error('PROJECT_ASSET_SIZE');
-    const prepared = await api(agent,channel,'assetPrepare',{id:task,execution_id:run,name,size:info.size});
-    const response = await fetchImpl(prepared.url,{method:'PUT',redirect:'error',headers:prepared.headers,body:await fs.readFile(file),signal:AbortSignal.timeout(120000)});
+    // Read a bounded snapshot from the checked handle before any network await.
+    // O_NONBLOCK prevents opening a replaced FIFO from hanging on Unix.
+    const handle = await fs.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    let bytes;
+    try {
+      const info = await handle.stat(), entry = await fs.lstat(file);
+      if (!info.isFile() || !entry.isFile() || entry.isSymbolicLink() || info.dev !== entry.dev || info.ino !== entry.ino || info.size < 1 || info.size > 50*1024*1024) throw new Error('PROJECT_ASSET_SIZE');
+      const buffer = Buffer.alloc(info.size + 1); let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer,length,buffer.length-length,length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const after = await handle.stat();
+      if (length !== info.size || after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new Error('PROJECT_ASSET_SIZE');
+      bytes = buffer.subarray(0,length);
+    } finally { await handle.close(); }
+    const prepared = await api(agent,channel,'assetPrepare',{id:task,execution_id:run,name,size:bytes.length});
+    const response = await fetchImpl(prepared.url,{method:'PUT',redirect:'error',headers:prepared.headers,body:bytes,signal:AbortSignal.timeout(120000)});
     if (!response.ok) throw new Error('PROJECT_ASSET_UPLOAD_FAILED');
     await api(agent,channel,'assetCommit',{asset_id:prepared.id});
   }

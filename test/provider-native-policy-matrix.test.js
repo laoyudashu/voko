@@ -20,7 +20,7 @@ for (const transport of transports) {
       const original = service.effective('agent', transport.id);
       let turn = 0;
       for (const control of getProviderSecurityControls(transport.id).filter(c => c.editable)) {
-        const values = control.kind === 'enum' ? control.values.map(v => v.value) : ['', 'Owner supplied instruction'];
+        const values = control.kind === 'enum' ? control.values.map(v => v.value) : ['', control.id === 'permissionPreset' ? 'owner-test-preset' : 'Owner supplied instruction'];
         for (const value of values) {
           const preflight = service.preflight('agent', transport.id, { [control.id]: value });
           service.commit('agent', preflight.preflightToken, 'Policy Test');
@@ -29,9 +29,14 @@ for (const transport of transports) {
           assert.equal(lease.config[control.id], value);
         }
       }
-      const restore = service.preflight('agent', transport.id, original.config);
+      // Preflight is a patch: explicitly clear optional fields absent from the initial policy.
+      const restoredConfig = { ...original.config };
+      for (const control of getProviderSecurityControls(transport.id).filter(c => c.editable && c.kind !== 'enum')) {
+        if (!(control.id in restoredConfig)) restoredConfig[control.id] = '';
+      }
+      const restore = service.preflight('agent', transport.id, restoredConfig);
       service.commit('agent', restore.preflightToken, 'Policy Test');
-      assert.deepEqual(service.effective('agent', transport.id).config, original.config);
+      assert.deepEqual(service.effective('agent', transport.id).config, restoredConfig);
     } finally { db.close(); }
   });
 }
