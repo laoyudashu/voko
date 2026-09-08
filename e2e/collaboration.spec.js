@@ -1,0 +1,113 @@
+const { test, expect } = require('@playwright/test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const { mountProjectRoutes } = require('../build/web/project');
+const { makeT } = require('../build/core/i18n');
+function db(owner = 'a@example.test') {
+  return { prepare(sql) { return { get() { if(sql.includes('SELECT imUid'))return {imUid:'selected-agent'}; }, run() {}, all() {
+    if (sql.includes('SELECT data')) return [{ data: JSON.stringify({ 'a@example.test': { user_access_token: 'a-secret' }, 'b@example.test': { user_access_token: 'b-secret' } }) }];
+    if (sql.includes('owner_email')) return [{ owner_email: owner }];
+    if (sql.includes('imUid')) return [{ imUid: 'selected-agent' }];
+    return [];
+  } }; } };
+}
+test('local project browser supports board, editing, settings, conflicts and access revocation', async ({ page }) => {
+  const state = { group: { name: 'Local project', notice: '' }, project: { status: 'active', instructions: '', row_version: 2 }, items: [], events: [{event_seq:1,event_type:'project.created',actor_uid:'selected-agent',created_at:'2026-09-07T00:00:00Z'}], members: [{ uid: 'selected-agent', role: 'owner' }], viewer_uid: 'selected-agent', permissions: { manage: true, write: true } };
+  let reject = 0, last, lastStorage, storage = null;
+  const app = express(); app.use(express.json()); app.use((req,res,next) => { req.t = makeT('en'); next(); });
+  mountProjectRoutes(app, db(), (_req,title,body) => `<html><head><title>${title}</title></head><body>${body}</body></html>`, async (agent,channel,action,input) => {
+    assert.equal(agent,'agent'); assert.equal(channel,'channel'); last = { action, input };
+    if (reject) return { status: reject, body: { success: false, code: reject === 409 ? 'PROJECT_CONFLICT' : 'PROJECT_ACCESS_DENIED' } };
+    if (action === 'assetsList') return {status:200,body:{success:true,data:{assets:[]}}};
+    if (action === 'storageGet') return { status: 200, body: { success: true, data: { configuration: storage, permissions: {manage: true}, configuration_available:true } } };
+    if (action === 'storageConfigure') {
+      lastStorage=input;assert.equal(input.provider,'qiniu');
+      storage={provider:'qiniu',bucket:input.bucket,region:input.region,row_version:1,access_key_hint:'••••test',verified_at:'2026-09-07T00:00:00Z',verification_scope:'list'};
+      return {status:200,body:{success:true,data:{configuration:storage,permissions:{manage:true},configuration_available:true}}};
+    }
+    if (action === 'enable') state.project = { status: 'active', instructions: '', row_version: 1 };
+    if (action === 'create') state.items.push({ ...input, id: 'one', status: 'todo', created_by_uid: 'selected-agent' });
+    if (action === 'edit') Object.assign(state.items[0], input);
+    if (action === 'move') state.items[0].status = input.status;
+    if (action === 'archive') state.items = [];
+    if (action === 'update') { state.group.notice = input.notice; Object.assign(state.project, input); }
+    if (action !== 'get' && action !== 'enable') state.project.row_version++;
+    return { status: 200, body: { success: true, data: structuredClone(state) } };
+  });
+  const { createGroupRouter } = require('../build/web/group');
+  app.use(createGroupRouter({list_agents:async()=>({agents:[{agentId:'agent',agentName:'Test Agent'}]}),get_group_context:async()=>({success:true,groupName:'Local project',status:'active',members:[{uid:'selected-agent',role:'owner',nickname:'Planning <Agent>'}],messages:[],notice:''}),list_group_applies:async()=>({success:true,applies:[]})},db()));
+  const server = app.listen(0,'127.0.0.1'); await new Promise(resolve => server.once('listening',resolve));
+  try {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/agents/agent/g/channel/project`);
+  await expect(page).toHaveURL(/\/g\/channel\?tab=plans$/);
+  await expect(page.getByRole('tab')).toHaveCount(6);
+  await expect(page.locator('[data-project-event]')).toHaveCount(1);
+  await page.getByRole('tab',{name:'Chat',exact:true}).click();
+  await page.locator('#group-reply-input').fill('Unsent chat draft');
+  await expect(page.getByRole('button',{ name:'Enable project',exact:true })).toHaveCount(0);
+  await page.getByRole('tab',{name:'Board',exact:true}).click();
+  await page.getByRole('button',{ name:'New task',exact:true }).click();
+  await page.getByLabel('Title',{exact:true}).fill('<img src=x onerror=alert(1)>');
+  const assignee = page.getByLabel('Assignee',{exact:true});
+  await expect(assignee.locator('option[value="selected-agent"]')).toHaveText('Planning <Agent>');
+  await assignee.selectOption({label:'Planning <Agent>'});
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(page.locator('article > button').first()).toHaveText('<img src=x onerror=alert(1)>');
+  assert.equal(last.input.assignee_uid,'selected-agent');
+  await expect(page.locator('article')).toContainText('Planning <Agent>');
+  assert.equal(await page.locator('article img').count(),0);
+  await page.locator('article select').selectOption('doing');
+  await expect(page.locator('.column').nth(1).locator('article')).toHaveCount(1);
+  await page.getByRole('button',{name:'Edit task',exact:true}).click();
+  await page.getByLabel('Title',{exact:true}).fill('Edited plan');
+  reject = 409; await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(page.locator('#project-alert')).toContainText('Another member');
+  await expect(page.getByLabel('Title',{exact:true})).toHaveValue('Edited plan');
+  reject = 0; await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(page.locator('article > button').first()).toHaveText('Edited plan');
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
+  await page.getByLabel('Announcement (public)').fill('Public notice');
+  await page.getByLabel('Project instructions (members only)').fill('Private instructions');
+  await page.getByRole('tab',{name:'Members',exact:true}).click();
+  assert.deepEqual(errors,[]);
+  await page.evaluate(() => refreshGroupMembers());
+  await page.getByRole('tab',{name:'Chat',exact:true}).click();
+  await expect(page.locator('#group-reply-input')).toHaveValue('Unsent chat draft');
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
+  await expect(page.getByLabel('Project instructions (members only)')).toHaveValue('Private instructions');
+  await page.locator('#project-settings').getByRole('button',{name:'Save',exact:true}).click();
+  await expect.poll(() => last.input.notice).toBe('Public notice');
+  assert.equal(last.input.expected_notice,'');
+  await expect(page.locator('#group-notice-text')).toHaveText('Public notice');
+  await page.getByRole('tab',{name:'Board',exact:true}).click();
+  await page.getByRole('button',{name:'Archive',exact:true}).click();
+  await expect(page.locator('article')).toHaveCount(0);
+  await page.getByRole('tab',{name:'Tasks',exact:true}).click();
+  await expect(page.locator('#project-content')).not.toContainText('Local project');
+  await page.getByRole('tab',{name:'Assets',exact:true}).click();
+  await expect(page.locator('#project-content')).not.toContainText('Local project');
+  await page.getByRole('button',{name:'Configure cloud storage',exact:true}).click();
+  await page.getByLabel('S3 bucket name',{exact:true}).fill('private-project-assets');
+  await page.getByLabel('Storage region',{exact:true}).selectOption('cn-north-1');
+  await expect(page.getByLabel('Service endpoint (automatic)',{exact:true})).toHaveValue('https://s3.cn-north-1.qiniucs.com');
+  await page.getByLabel('AccessKey',{exact:true}).fill('test-access');
+  await page.getByLabel('SecretKey',{exact:true}).fill('test-secret');
+  await page.getByRole('button',{name:'Verify and save',exact:true}).click();
+  await expect(page.locator('#project-alert')).toContainText('Connection verified');
+  assert.equal(lastStorage.expected_storage_revision,0);
+  assert.equal(await page.locator('input[type=password]').count(),0);
+  await page.getByRole('button',{name:'Manage cloud storage',exact:true}).click();
+  await expect(page.getByLabel('SecretKey',{exact:true})).toHaveValue('');
+  reject=409;
+  await page.getByRole('button',{name:'Verify and save',exact:true}).click();
+  await expect(page.locator('.storage-feedback')).not.toBeEmpty();
+  await expect(page.getByLabel('S3 bucket name',{exact:true})).toHaveValue('private-project-assets');
+  reject=0;
+  await page.getByRole('tab',{name:'Board',exact:true}).click();
+  reject = 403; await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await expect(page.locator('#project-content')).toBeEmpty();
+  await expect(page.locator('[data-project-event]')).toHaveCount(0);
+  assert.deepEqual(errors,[]);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
