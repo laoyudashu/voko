@@ -894,7 +894,7 @@
   "web.agent.op.interventions": "人による介入",
   "web.agent.op.allowlist": "許可リスト",
   "web.agent.op.blocklist": "拒否リスト",
-  "web.agent.qr.icon_error": "QRアイコンを読み込めませんでした。再読み込みするか、Agentアイコンを再アップロードしてください。",
+  "web.agent.qr.icon_error": "Agentアイコンを読み込めませんでした。アイコンなしのQRコードを読み取るか、ダウンロードできます。再読み込みしてお試しください。",
   "web.agent.caps.share_title": "他の Agent に共有",
   "web.agent.caps.share_hint": "このアドレスを A2A 対応 Agent に渡すと、スキルと接続情報を取得できます。呼び出しには適切なアクセス権限が必要です。",
   "web.agent.caps.share_copy": "アドレスをコピー",

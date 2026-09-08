@@ -2275,7 +2275,21 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
     }catch(e){next(e)}
   });
 
-  // Generate only the saved visitor link; no remote QR service or URL fetching.
+  // Read only the Agent's saved public storage icon, never a caller-supplied URL.
+  R.get('/agents/:agentId/visitor-qr/icon',async(req,res)=>{
+    res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+    const {officialVisitorQrIconUrl,readVisitorQrIcon}=require('./visitor-qr');
+    try{
+      const row=db?.prepare('SELECT icon_url FROM agents WHERE agent_id=?').get(req.params.agentId);
+      if(!officialVisitorQrIconUrl(row?.icon_url))return res.status(404).end();
+      const data=await readVisitorQrIcon(row.icon_url,opts.visitorQrIconFetch);
+      const type=detectAgentIconType(data);
+      if(!type)return res.status(502).end();
+      return res.type(type.mime).send(data);
+    }catch{return res.status(502).end()}
+  });
+
+  // Generate only the saved visitor link; no remote QR service is involved.
   R.get('/agents/:agentId/visitor-qr',async(req,res,next)=>{
     try{
       const {agentId}=req.params;
@@ -2289,7 +2303,10 @@ try{const r=await handlers.list_access_lists({agentId,listType:'whitelist',limit
       if(!valid)return res.status(404).send(renderAgentFormPage(req.t('web.agent.qr.title'),agentId,agent.agentName||agentId,'<p>'+esc(req.t('web.agent.qr.no_link'))+'</p>',req.t,req.locale));
       const image=await require('qrcode').toDataURL(link,{type:'image/png',width:768,margin:4,errorCorrectionLevel:'H'});
       const title=esc(req.t('web.agent.qr.title'));
-      const html='<div style="text-align:center"><p>'+esc(req.t('web.agent.qr.hint'))+'</p><img id="visitor-qr-image" hidden data-qr="'+image+'" data-icon="'+esc(row?.icon_url||agent.iconUrl||'/favicon.png')+'" alt="'+title+'" width="320" height="320" style="max-width:100%;height:auto"><p style="display:flex;align-items:center;justify-content:center;gap:4px;overflow-wrap:anywhere"><a style="min-width:0" href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">'+esc(link)+'</a>'+copyButton({esc,label:req.t('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+esc(link)+'"'})+'</p><a id="visitor-qr-download" hidden class="btn" download="voko-visitor-qr.png">'+esc(req.t('web.agent.qr.download'))+'</a><p id="visitor-qr-error" hidden role="alert">'+esc(req.t('web.agent.qr.icon_error'))+'</p></div>'+require('./visitor-qr').visitorQrScript();
+      const {officialVisitorQrIconUrl,visitorQrScript}=require('./visitor-qr');
+      const icon=row?.icon_url||agent.iconUrl||'/favicon.png';
+      const iconSource=officialVisitorQrIconUrl(row?.icon_url)?'/agents/'+encodeURIComponent(agentId)+'/visitor-qr/icon':icon;
+      const html='<div style="text-align:center"><p>'+esc(req.t('web.agent.qr.hint'))+'</p><img id="visitor-qr-image" src="'+image+'" data-qr="'+image+'" data-icon="'+esc(iconSource)+'" alt="'+title+'" width="320" height="320" style="max-width:100%;height:auto"><p style="display:flex;align-items:center;justify-content:center;gap:4px;overflow-wrap:anywhere"><a style="min-width:0" href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">'+esc(link)+'</a>'+copyButton({esc,label:req.t('web.home.access.copy_visitor'),attrs:'data-voko-copy-value="'+esc(link)+'"'})+'</p><a id="visitor-qr-download" class="btn" href="'+image+'" download="voko-visitor-qr.png">'+esc(req.t('web.agent.qr.download'))+'</a><p id="visitor-qr-error" hidden role="alert">'+esc(req.t('web.agent.qr.icon_error'))+'</p></div>'+visitorQrScript();
       res.send(renderAgentFormPage(req.t('web.agent.qr.title'),agentId,agent.agentName||agentId,html,req.t,req.locale));
     }catch(e){next(e)}
   });

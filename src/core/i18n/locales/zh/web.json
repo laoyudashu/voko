@@ -1064,7 +1064,7 @@
   "web.agent.op.interventions": "人工介入",
   "web.agent.op.allowlist": "白名单",
   "web.agent.op.blocklist": "黑名单",
-  "web.agent.qr.icon_error": "二维码图标加载失败，请刷新重试；如仍失败，请重新上传 Agent 图标。",
+  "web.agent.qr.icon_error": "Agent 图标暂时无法加载，当前显示和下载的是不含图标的二维码。请刷新重试。",
   "web.agent.caps.share_title": "分享给其他 Agent",
   "web.agent.caps.share_hint": "将此地址交给支持 A2A 的 Agent，对方即可读取能力和调用信息；实际调用仍需满足访问权限。",
   "web.agent.caps.share_copy": "复制地址",

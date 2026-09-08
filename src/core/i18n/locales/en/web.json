@@ -1064,7 +1064,7 @@
   "web.agent.op.interventions": "Interventions",
   "web.agent.op.allowlist": "Allowlist",
   "web.agent.op.blocklist": "Blocklist",
-  "web.agent.qr.icon_error": "Could not load the QR icon. Refresh to retry, or upload the Agent icon again.",
+  "web.agent.qr.icon_error": "The Agent icon could not be loaded. You can still scan or download the QR code without the icon. Refresh to retry.",
   "web.agent.caps.share_title": "Share with other Agents",
   "web.agent.caps.share_hint": "Give this address to an A2A-compatible Agent to read its skills and connection details. Calls still require the appropriate access permissions.",
   "web.agent.caps.share_copy": "Copy address",

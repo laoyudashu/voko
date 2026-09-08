@@ -1,10 +1,50 @@
 'use strict';
 
-// Compose in the browser so remote Agent icons never trigger server-side requests.
+const { oss } = require('../endpoints.json');
+const ICON_ORIGINS = new Set([oss.endpoint, oss.publicUrl].map(value => new URL(value).origin));
+const MAX_ICON_BYTES = 500 * 1024;
+
+// Only saved public Agent icons from our storage may be read by the server.
+// Custom image URLs still load directly in the browser, without a URL proxy.
+function officialVisitorQrIconUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !ICON_ORIGINS.has(url.origin)
+      || url.username || url.password || url.search || url.hash
+      || !/^\/(?:public\/agent_icon|agent-icons)\/[a-zA-Z0-9_-]+\.(?:png|jpe?g|webp|gif)$/.test(url.pathname)) return null;
+    return url.href;
+  } catch { return null; }
+}
+
+async function readVisitorQrIcon(value, fetchIcon = globalThis.fetch) {
+  const url = officialVisitorQrIconUrl(value);
+  if (!url) throw new Error('Unsupported Agent icon URL');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetchIcon(url, { redirect: 'error', signal: controller.signal });
+    if (!response.ok || !response.body || Number(response.headers.get('content-length')) > MAX_ICON_BYTES) {
+      throw new Error('Agent icon unavailable');
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > MAX_ICON_BYTES) throw new Error('Agent icon too large');
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+// Compose in the browser, using a same-origin source for official uploads.
 function visitorQrScript() {
   return `<script>(async function(){
     var preview=document.getElementById('visitor-qr-image'),download=document.getElementById('visitor-qr-download'),error=document.getElementById('visitor-qr-error');
-    function load(src){return new Promise(function(resolve,reject){var img=new Image();img.crossOrigin='anonymous';img.onload=function(){resolve(img)};img.onerror=reject;img.src=src})}
+    function load(src){return new Promise(function(resolve,reject){var img=new Image(),timer=setTimeout(function(){img.onload=img.onerror=null;img.src='';reject(new Error('Image load timed out'))},10000);img.crossOrigin='anonymous';img.onload=function(){clearTimeout(timer);resolve(img)};img.onerror=function(){clearTimeout(timer);reject(new Error('Image load failed'))};img.src=src})}
     try{
       var images=await Promise.all([load(preview.dataset.qr),load(preview.dataset.icon)]);
       var canvas=document.createElement('canvas');canvas.width=canvas.height=768;
@@ -20,4 +60,4 @@ function visitorQrScript() {
     }catch(e){error.hidden=false}
   })();</script>`;
 }
-module.exports={visitorQrScript};
+module.exports={visitorQrScript,officialVisitorQrIconUrl,readVisitorQrIcon};
