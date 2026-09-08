@@ -557,3 +557,18 @@ test('DSH target preset can be saved through the existing policy UI flow', () =>
   assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'custom' }), /VALUE_INVALID/);
   assert.throws(() => service.preflight('agent-1', 'deepseek-harness-http', { permissionPreset: 'read-only\n/permission danger-full-access' }), /VALUE_INVALID/);
 });
+
+
+test('DSH restricted policy also blocks the Dispatcher Pull preparation path', async () => {
+  const db = initDatabase(':memory:', { silent: true });
+  const now = Date.now();
+  db.prepare(`INSERT INTO agents (id,agent_id,imUid,imToken,im_server_url,agent_name,backend_type,
+    backend_instance_id,delivery_modes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+    .run('dsh-pull','dsh-pull','synthetic-im','synthetic','ws://127.0.0.1','DSH','deepseek-harness','standard','["http"]',now,now);
+  const dispatcher = createDispatcher({ db, providers: {} });
+  try {
+    const preview = dispatcher.providerSecurity.preflight('dsh-pull','deepseek-harness-http',{permissionPreset:'read-only'});
+    dispatcher.providerSecurity.commit('dsh-pull',preview.preflightToken,'');
+    assert.equal(dispatcher.prepareForPull('dsh-pull', { id:'message',from_uid:'visitor',content:'test',channel_type:1 }),null);
+  } finally { await dispatcher.stop(); db.close(); }
+});

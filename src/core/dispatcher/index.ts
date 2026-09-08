@@ -1629,7 +1629,9 @@ Convergence obligations:
     if (stopping) return { outcome: 'not_delivered', errorCode: 'DISPATCHER_STOPPED' };
     let route = _routeProviderEntry(agentId, 'push');
     if (!route) {
-      console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
+      console.log(requiresDshHttp(agentId)
+        ? `[Dispatcher] agent=${agentId} DSH受控HTTP不可用；消息保留等待恢复，Pull已禁用`
+        : `[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return { outcome: 'not_delivered', errorCode: 'AUTOMATIC_DELIVERY_DISABLED' };
     }
     try {
@@ -1832,7 +1834,9 @@ Convergence obligations:
       if (!isolated) _removeReplyContext(replyContext);
       if (result.outcome === 'not_delivered') {
         if (isolated) console.log(`[Dispatcher] agent=${agentId} scope=${executionScope} 所有符合精确会话要求的通道均未送达；任务保留在来源队列等待恢复`);
-        else console.log(`[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
+        else console.log(requiresDshHttp(agentId)
+          ? `[Dispatcher] agent=${agentId} DSH受控HTTP未送达；消息保留等待权限或连接恢复，Pull已禁用`
+          : `[Dispatcher] agent=${agentId} 所有 push 通道失败，留库等 agent pull (voko_fetch_new_messages)`);
       }
       return result;
     } catch (err) {
@@ -2069,7 +2073,9 @@ Convergence obligations:
     if (stopping) { unsentStatus(agentId, payload); return; }
     const provider = _routeProvider(agentId, 'push');
     if (!provider) {
-      console.log(`[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
+      console.log(requiresDshHttp(agentId)
+        ? `[Dispatcher] agent=${agentId} DSH受控HTTP不可用；消息保留等待恢复，Pull已禁用`
+        : `[Dispatcher] agent=${agentId} 无可用 push 通道，留库等 agent pull (voko_fetch_new_messages)`);
       return;
     }
     const workingPayload: PushPayload = {
@@ -2099,9 +2105,14 @@ Convergence obligations:
     _enqueueRoute(agentId, workingPayload, prepared.context);
   }
 
+  function requiresDshHttp(agentId: string): boolean {
+    return _metaOf(agentId).backend_type === 'deepseek-harness'
+      && !!providerSecurity?.effective(agentId, 'deepseek-harness-http').config.permissionPreset;
+  }
+
   /** pull 路径复用同一治理；被收敛/熔断的消息返回 null，否则返回注入 STATE 后的副本。 */
   function prepareForPull(agentId: string, row: PullMessageRow | null): PullMessageRow | null {
-    if (!row) return null;
+    if (!row || requiresDshHttp(agentId)) return null;
     if (row.channel_type === 2) {
       let mention: { all?: boolean; uids?: string[] } | null =
         typeof row.mention === 'object' ? row.mention : null;

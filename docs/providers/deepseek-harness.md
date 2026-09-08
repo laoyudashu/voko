@@ -79,3 +79,17 @@ change behavior, so this is not sufficient evidence to enable HTTP-policy fallba
 
 These are Provider-to-DSH checks, not a claim that a production IM visitor journey
 or all possible tools/plugins were tested. No DSH plugin/core change is required.
+
+## Real local Dispatcher regression
+
+After building, run `node scripts/real-dsh-provider.js` using the Node version
+supported by the installed DSH build and its configured model credentials. It
+starts an isolated real DSH Host, uses a real VOKO SQLite database and Dispatcher,
+and checks policy leases, persisted session bindings, returned replies, actual
+sandbox denial/allowed writes, and recovery rejection after permission drift.
+The private temporary directory contains a JSON report and test-only data.
+The Host is stopped in the cleanup path. This test consumes real model calls.
+
+The ingress uses synthetic visitor identities; it does not register an account,
+change the running Lite instance, or send a public IM message. It therefore tests
+the local execution chain, not the cloud IM transport.
