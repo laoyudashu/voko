@@ -566,7 +566,8 @@ describe('Agent invitation and access sync', () => {
     }
   });
 
-  it('waits after a detected sleep/resume gap before running AccessSync', async () => {
+  it('waits after a detected sleep/resume gap before running AccessSync', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
     const db = fixture();
     let calls = 0;
     let clock = 1000;
@@ -587,12 +588,15 @@ describe('Agent invitation and access sync', () => {
       now: () => clock,
     });
     try {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setImmediate(resolve));
       const beforeWake = calls;
       clock += 1000;
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      t.mock.timers.tick(20); // Detect the simulated sleep gap.
+      t.mock.timers.tick(49); // Still inside the 50ms wake delay.
+      await new Promise((resolve) => setImmediate(resolve));
       assert.equal(calls, beforeWake);
-      await new Promise((resolve) => setTimeout(resolve, 45));
+      t.mock.timers.tick(1);
+      await new Promise((resolve) => setImmediate(resolve));
       assert.ok(calls > beforeWake);
     } finally {
       stop();
