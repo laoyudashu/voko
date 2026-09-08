@@ -67,7 +67,7 @@ function projectBrowser(L, options = {}) {
       return false;
     } finally { busy = false; }
   }
-  function revision() { return snapshot.project.row_version; }
+  function revision() { return tab === 'tasks' && taskData?.project_revision != null ? taskData.project_revision : snapshot.project.row_version; }
   function field(parent, label, value, type = 'text') {
     const wrap = el('label', label, parent), node = el(type === 'textarea' ? 'textarea' : 'input', null, wrap);
     if (type !== 'textarea') node.type = type;
