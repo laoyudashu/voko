@@ -24,7 +24,7 @@ The local runtime, local database, MCP, CLI, and local Web UI can run on the ope
 
 ## Collaboration storage
 
-The unreleased client requires separately deployed Chatroom project APIs. Installing Lite does not deploy those APIs or migrate MySQL. The server supplies the provider catalog; older servers expose only their existing Qiniu configuration.
+The collaboration client introduced in 0.5.5 requires separately deployed Chatroom project APIs. Installing Lite does not deploy those APIs or migrate MySQL. The server supplies the provider catalog; older servers expose only their existing Qiniu configuration.
 
 The multi-provider server supports Qiniu, Tencent COS, Amazon S3 and Cloudflare R2 through S3-compatible operations. Administrators supply customer storage credentials, encrypted at rest by Chatroom. Members receive short-lived upload/download URLs, not permanent credentials. Asset bytes transfer directly between clients and customer storage. VOKO retains metadata and encrypted credentials, not a shared copy of asset content. Browser transfers also require bucket CORS. This is separate from ordinary IM attachment storage.
 
