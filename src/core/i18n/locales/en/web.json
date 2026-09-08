@@ -1160,7 +1160,7 @@
   "web.project.storageReadOnlyCheck": "Verification checks connectivity and file-listing access without creating or deleting files. Upload and download permissions are not checked.",
   "web.project.storageKeyMissing": "Encrypted credential storage is not enabled on the server yet.",
   "web.project.storageLoadError": "Cannot load or save cloud storage. Check the server update and try again.",
-  "web.project.storageConfigTitle": "Configure Qiniu Cloud",
+  "web.project.storageConfigTitle": "Configure cloud storage",
   "web.project.storagePrivacy": "Assets stay in your Qiniu bucket. Voko stores encrypted credentials, not file contents.",
   "web.project.regionEast1": "East China – Zhejiang",
   "web.project.regionEast2": "East China – Zhejiang 2",
@@ -1218,5 +1218,11 @@
   "web.project.error_PROJECT_STORAGE_HAS_ASSETS": "Storage contains assets. Only credentials for the same location can be changed.",
   "web.project.error_PROJECT_ASSET_UPLOAD_FAILED": "Upload failed. Check storage permissions and CORS.",
   "web.project.error_PROJECT_TASK_MESSAGE_LIMIT": "This conversation reached its limit. Create a follow-up task.",
-  "web.project.error_PROJECT_EXECUTION_LIMIT": "This task reached its execution limit. Create a follow-up task."
+  "web.project.error_PROJECT_EXECUTION_LIMIT": "This task reached its execution limit. Create a follow-up task.",
+  "web.project.storageProvider": "Storage provider",
+  "web.project.storageSupported": "Supported providers",
+  "web.project.storageLocked": "Storage location cannot be changed while assets exist.",
+  "web.project.storageCosBucket": "Full bucket name (including APPID)",
+  "web.project.storageR2Hint": "Use your R2 account ID and S3 API credentials. Region is automatically set to auto.",
+  "web.project.storageHelp": "Setup guide"
 }

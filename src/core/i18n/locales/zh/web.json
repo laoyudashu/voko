@@ -1151,7 +1151,7 @@
   "web.project.storageReadOnlyCheck": "验证会检查空间连接与文件列举权限，不创建或删除文件；上传、下载权限尚未验证。",
   "web.project.storageKeyMissing": "服务端尚未启用密钥加密保存，请先完成服务端配置。",
   "web.project.storageLoadError": "无法读取或保存云空间配置，请确认服务端已更新并重试。",
-  "web.project.storageConfigTitle": "配置七牛云空间",
+  "web.project.storageConfigTitle": "配置云空间",
   "web.project.storagePrivacy": "资产保存在你自己的七牛空间。Voko 仅加密保存访问凭证，不保存文件内容。",
   "web.project.regionEast1": "华东－浙江",
   "web.project.regionEast2": "华东－浙江 2",
@@ -1209,5 +1209,11 @@
   "web.project.error_PROJECT_STORAGE_HAS_ASSETS": "已有资产，不能直接更换空间；可以更新同一空间的密钥。",
   "web.project.error_PROJECT_ASSET_UPLOAD_FAILED": "上传失败，请检查云空间权限及跨域设置。",
   "web.project.error_PROJECT_TASK_MESSAGE_LIMIT": "该任务的讨论已达到上限，请创建后续任务。",
-  "web.project.error_PROJECT_EXECUTION_LIMIT": "该任务的执行记录已达到上限，请创建后续任务。"
+  "web.project.error_PROJECT_EXECUTION_LIMIT": "该任务的执行记录已达到上限，请创建后续任务。",
+  "web.project.storageProvider": "云空间厂商",
+  "web.project.storageSupported": "支持的云空间",
+  "web.project.storageLocked": "已有资产，不能直接更换存储位置。",
+  "web.project.storageCosBucket": "完整 Bucket 名称（含 APPID）",
+  "web.project.storageR2Hint": "填写 R2 账号 ID 及 S3 API 访问密钥，区域自动设为 auto。",
+  "web.project.storageHelp": "配置帮助"
 }

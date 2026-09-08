@@ -986,7 +986,7 @@
   "web.project.storageReadOnlyCheck": "接続と一覧取得権限を確認します。ファイルの作成・削除は行いません。送受信権限は未確認です。",
   "web.project.storageKeyMissing": "サーバーでキーの暗号化保存がまだ設定されていません。",
   "web.project.storageLoadError": "クラウド設定を読み込み・保存できません。サーバーの更新を確認してください。",
-  "web.project.storageConfigTitle": "Qiniu Cloud を設定",
+  "web.project.storageConfigTitle": "クラウドストレージ設定",
   "web.project.storagePrivacy": "ファイルは所有する Qiniu に保存します。Voko はアクセスキーを暗号化して保存します。",
   "web.project.regionEast1": "中国東部・浙江",
   "web.project.regionEast2": "中国東部・浙江 2",
@@ -1044,5 +1044,11 @@
   "web.project.error_PROJECT_STORAGE_HAS_ASSETS": "資産があるため保存先は変更できません。同じ保存先のキーは更新できます。",
   "web.project.error_PROJECT_ASSET_UPLOAD_FAILED": "アップロード失敗。権限と CORS を確認してください。",
   "web.project.error_PROJECT_TASK_MESSAGE_LIMIT": "会話が上限に達しました。後続タスクを作成してください。",
-  "web.project.error_PROJECT_EXECUTION_LIMIT": "実行回数が上限に達しました。後続タスクを作成してください。"
+  "web.project.error_PROJECT_EXECUTION_LIMIT": "実行回数が上限に達しました。後続タスクを作成してください。",
+  "web.project.storageProvider": "ストレージプロバイダー",
+  "web.project.storageSupported": "対応サービス",
+  "web.project.storageLocked": "アセットがあるため保存先を変更できません。",
+  "web.project.storageCosBucket": "完全なバケット名（APPID を含む）",
+  "web.project.storageR2Hint": "R2 アカウント ID と S3 API キーを入力してください。リージョンは auto です。",
+  "web.project.storageHelp": "設定ガイド"
 }

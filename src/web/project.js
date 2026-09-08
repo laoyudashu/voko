@@ -23,7 +23,7 @@ function renderProjectFragment(req, members = []) {
   return '<style>'+projectStyle+'</style><section id="project"><div id="project-content"></div></section><script>('+projectBrowser.toString()+')('+jsonForInlineScript(labels)+','+jsonForInlineScript({base,embedded:true,memberNames:Object.fromEntries(members.map(m => [m.uid,m.name || m.nickname || m.uid]))})+');</script>';
 }
 
-const keys = ['error_PROJECT_TASK_OWNER_REQUIRED', 'error_PROJECT_EXECUTOR_NOT_AGENT', 'error_PROJECT_EXECUTION_ACTIVE', 'error_PROJECT_TASK_CLOSED', 'error_PROJECT_STORAGE_NOT_CONFIGURED', 'error_PROJECT_EXECUTION_NOT_UNCERTAIN', 'error_PROJECT_EXECUTION_CANNOT_CANCEL', 'error_PROJECT_ASSET_SIZE', 'error_PROJECT_ASSET_UPLOAD_UNCONFIRMED', 'error_PROJECT_STORAGE_HAS_ASSETS', 'error_PROJECT_ASSET_UPLOAD_FAILED', 'error_PROJECT_TASK_MESSAGE_LIMIT', 'error_PROJECT_EXECUTION_LIMIT'].concat(['resolveExecution','resolveEvidence','resultDraft','fromMessage','cancelled', 'backTasks', 'sharedTask', 'reopen', 'complete', 'taskMessage', 'sendMessage', 'dispatch', 'executor', 'chooseAgent', 'workInstruction', 'executions', 'cancelExecution', 'download', 'upload', 'uploadPending', 'emptyAssets', 'run_queued', 'run_working', 'run_unknown', 'run_succeeded', 'run_failed', 'run_input_required', 'run_cancelled'].concat(['title','chat','plans','activity','tasks','assets','members','settings','enable','disabled','loading','todo','doing','done','add','edit','archive','save','cancel','name','description','assignee','due','unassigned','notice','instructions','active','paused','status','unavailableTasks','unavailableAssets','empty','error','conflict','unknown','refresh','truncated','workspace','overview','planHint','memberHint','settingsHint','emptyPlan','enableTitle','soon','owner','admin','member','eventEnabled','eventUpdated','eventCreated','eventEdited','eventMoved','eventArchived','unavailableProject','eventProjectCreated', 'cloudSpace','configureStorage','manageStorage','storageHint','storageAdminHint','storageConnected','storageNotConfigured','storagePendingAssets','qiniu','bucket','bucketHint','region','endpoint','accessKey','secretKey','keyHint','keepKeys','verifySave','verifying','storageVerified','storageReadOnlyCheck','storageKeyMissing','storageLoadError','storageConfigTitle','storagePrivacy','regionEast1','regionEast2','regionNorth','regionSouth','regionUS','regionSingapore','regionHanoi','regionHCM','storageErrorAuth','storageErrorBucket','storageErrorConflict','storageErrorKeys','storageErrorInUse','storageErrorConnection','storageErrorConfig','storageErrorCredentials']));
+const keys = ['storageProvider','storageSupported','storageLocked','storageCosBucket','storageR2Hint','storageHelp','error_PROJECT_TASK_OWNER_REQUIRED', 'error_PROJECT_EXECUTOR_NOT_AGENT', 'error_PROJECT_EXECUTION_ACTIVE', 'error_PROJECT_TASK_CLOSED', 'error_PROJECT_STORAGE_NOT_CONFIGURED', 'error_PROJECT_EXECUTION_NOT_UNCERTAIN', 'error_PROJECT_EXECUTION_CANNOT_CANCEL', 'error_PROJECT_ASSET_SIZE', 'error_PROJECT_ASSET_UPLOAD_UNCONFIRMED', 'error_PROJECT_STORAGE_HAS_ASSETS', 'error_PROJECT_ASSET_UPLOAD_FAILED', 'error_PROJECT_TASK_MESSAGE_LIMIT', 'error_PROJECT_EXECUTION_LIMIT'].concat(['resolveExecution','resolveEvidence','resultDraft','fromMessage','cancelled', 'backTasks', 'sharedTask', 'reopen', 'complete', 'taskMessage', 'sendMessage', 'dispatch', 'executor', 'chooseAgent', 'workInstruction', 'executions', 'cancelExecution', 'download', 'upload', 'uploadPending', 'emptyAssets', 'run_queued', 'run_working', 'run_unknown', 'run_succeeded', 'run_failed', 'run_input_required', 'run_cancelled'].concat(['title','chat','plans','activity','tasks','assets','members','settings','enable','disabled','loading','todo','doing','done','add','edit','archive','save','cancel','name','description','assignee','due','unassigned','notice','instructions','active','paused','status','unavailableTasks','unavailableAssets','empty','error','conflict','unknown','refresh','truncated','workspace','overview','planHint','memberHint','settingsHint','emptyPlan','enableTitle','soon','owner','admin','member','eventEnabled','eventUpdated','eventCreated','eventEdited','eventMoved','eventArchived','unavailableProject','eventProjectCreated', 'cloudSpace','configureStorage','manageStorage','storageHint','storageAdminHint','storageConnected','storageNotConfigured','storagePendingAssets','qiniu','bucket','bucketHint','region','endpoint','accessKey','secretKey','keyHint','keepKeys','verifySave','verifying','storageVerified','storageReadOnlyCheck','storageKeyMissing','storageLoadError','storageConfigTitle','storagePrivacy','regionEast1','regionEast2','regionNorth','regionSouth','regionUS','regionSingapore','regionHanoi','regionHCM','storageErrorAuth','storageErrorBucket','storageErrorConflict','storageErrorKeys','storageErrorInUse','storageErrorConnection','storageErrorConfig','storageErrorCredentials']));
 
 function projectBrowser(L, options = {}) {
   let root = document.getElementById('project-content');
@@ -300,7 +300,7 @@ function projectBrowser(L, options = {}) {
     const config = storageState?.configuration;
     const summary = el('div',null,parent,{class:'storage-summary'});
     const text = el('div',null,summary); el('h3',L.cloudSpace,text);
-    el('p',config ? L.qiniu+' · '+config.bucket : L.storageHint,text,{class:'subtitle'});
+    el('p',config ? (storageState?.providers?.find(p=>p.id===config.provider)?.name || L.qiniu)+' · '+config.bucket : L.storageHint,text,{class:'subtitle'});
     el('span',config ? L.storageConnected : L.storageNotConfigured,text,{class:'storage-status'});
     if (snapshot.permissions.manage) button(config ? L.manageStorage : L.configureStorage,summary,() => {storageOpen=true;render();},!storageState || !storageState.permissions.manage);
     else el('p',L.storageAdminHint,parent,{class:'subtitle'});
@@ -309,15 +309,30 @@ function projectBrowser(L, options = {}) {
     if (!storageOpen) { renderAssets(parent,config); return; }
     const form = el('form',null,parent,{class:'storage-form',autocomplete:'off'});
     el('h3',L.storageConfigTitle,form); el('p',L.storagePrivacy,form,{class:'subtitle'});
-    const bucket = field(form,L.bucket,config?.bucket); bucket.required=true; bucket.maxLength=63; bucket.pattern='[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]';
-    el('small',L.bucketHint,form);
-    const region = select(form,L.region,[['cn-east-1',L.regionEast1],['cn-east-2',L.regionEast2],['cn-north-1',L.regionNorth],['cn-south-1',L.regionSouth],['us-north-1',L.regionUS],['ap-southeast-1',L.regionSingapore],['ap-southeast-2',L.regionHanoi],['ap-southeast-3',L.regionHCM]],config?.region || 'cn-east-1');
-    const endpoint = field(form,L.endpoint,''); endpoint.readOnly=true;
-    const updateEndpoint=() => { endpoint.value='https://s3.'+region.value+'.qiniucs.com'; }; region.onchange=updateEndpoint; updateEndpoint();
-    const access = field(form,L.accessKey,'','password'), secret = field(form,L.secretKey,'','password');
-    [access,secret].forEach(input => {input.autocomplete='new-password';input.maxLength=256;input.required=!config;input.placeholder=config ? L.keepKeys : '';});
-    if (config) el('small',L.accessKey+': '+config.access_key_hint,form);
-    el('small',L.keyHint,form); el('p',L.storageReadOnlyCheck,form,{class:'subtitle'});
+    const providers=storageState.providers || [{id:'qiniu',name:L.qiniu,regions:['cn-east-1','cn-east-2','cn-north-1','cn-south-1','us-north-1','ap-southeast-1','ap-southeast-2','ap-southeast-3'],endpointTemplate:'https://s3.{region}.qiniucs.com',accessLabel:'AccessKey',secretLabel:'SecretKey',docs:'https://developer.qiniu.com/kodo/5906/s3-compatible-service'}];
+    const provider=select(form,L.storageProvider,providers.map(p=>[p.id,p.name]),config?.provider || 'qiniu');
+    provider.disabled=Boolean(storageState.location_locked);
+    el('p',L.storageSupported+': '+providers.map(p=>p.name).join(' / '),form,{class:'subtitle'});
+    if(storageState.location_locked)el('p',L.storageLocked,form,{class:'subtitle'});
+    const fields=el('div',null,form);
+    let bucket,region,account,access,secret;
+    function providerFields(initial=false){
+      fields.replaceChildren();const meta=providers.find(p=>p.id===provider.value),locked=Boolean(storageState.location_locked);
+      bucket=field(fields,meta.id==='cos'?L.storageCosBucket:L.bucket,initial?config?.bucket:'');bucket.required=true;bucket.maxLength=63;bucket.disabled=locked;
+      if(meta.id==='qiniu')el('small',L.bucketHint,fields);
+      account=null;region=null;
+      if(meta.accountRequired){account=field(fields,'Account ID',initial?config?.account_id:'');account.required=true;account.pattern='[a-f0-9]{32}';account.maxLength=32;account.disabled=locked;el('small',L.storageR2Hint,fields);}
+      else {region=select(fields,L.region,meta.regions.map(r=>[r,r]),initial?config?.region:meta.regions[0]);region.disabled=locked;}
+      const endpoint=field(fields,L.endpoint,'');endpoint.readOnly=true;
+      const updateEndpoint=()=>{const r=region?.value||'auto';endpoint.value=meta.endpointTemplate.replace('{region}',r).replace('{account}',account?.value||'<Account ID>').replace('{suffix}',r.startsWith('cn-')?'.cn':'');};
+      if(region)region.onchange=updateEndpoint;if(account)account.oninput=()=>{access.value='';secret.value='';access.required=secret.required=true;updateEndpoint();};updateEndpoint();
+      el('a',L.storageHelp,fields,{href:meta.docs,target:'_blank',rel:'noopener noreferrer'});
+      access=field(fields,meta.accessLabel,'','password');secret=field(fields,meta.secretLabel,'','password');
+      [access,secret].forEach(input=>{input.autocomplete='new-password';input.maxLength=256;input.required=!initial||!config;input.placeholder=initial&&config?L.keepKeys:'';});
+      if(initial&&config)el('small',meta.accessLabel+': '+config.access_key_hint,fields);
+      el('small',L.keyHint,fields);el('p',L.storageReadOnlyCheck,fields,{class:'subtitle'});
+    }
+    provider.onchange=()=>providerFields();providerFields(true);
     const status = el('p',null,form,{role:'status',class:'storage-feedback'});
     if (!storageState.configuration_available) status.textContent=L.storageKeyMissing;
     const actions=el('div',null,form,{class:'dialog-actions'});
@@ -326,14 +341,14 @@ function projectBrowser(L, options = {}) {
     form.onsubmit=async event => {
       event.preventDefault(); if (save.disabled) return;
       if (Boolean(access.value)!==Boolean(secret.value)) {status.textContent=L.storageErrorKeys;return;}
-      save.disabled=true; save.textContent=L.verifying; status.textContent='';
+      save.disabled=true; provider.disabled=true; fields.querySelectorAll('input,select').forEach(input=>input.disabled=true);save.textContent=L.verifying; status.textContent='';
       const generation=++storageGeneration;
       try {
-        const result=await storageRequest('storageConfigure',{provider:'qiniu',bucket:bucket.value.trim(),region:region.value,access_key:access.value,secret_key:secret.value,expected_storage_revision:config?.row_version || 0});
+        const result=await storageRequest('storageConfigure',{provider:provider.value,bucket:bucket.value.trim(),region:region?.value||'auto',account_id:account?.value||'',access_key:access.value,secret_key:secret.value,expected_storage_revision:config?.row_version || 0});
         if (generation!==storageGeneration) return;
         access.value='';secret.value='';storageState=result;storageOpen=false;render();alert.textContent=L.storageVerified;
       } catch(error) {if (generation===storageGeneration) status.textContent=storageError(error.message);}
-      finally {save.disabled=false;save.textContent=L.verifySave;}
+      finally {save.disabled=false;provider.disabled=Boolean(storageState.location_locked);fields.querySelectorAll('input,select').forEach(input=>input.disabled=Boolean(storageState.location_locked)&&![access,secret].includes(input));save.textContent=L.verifySave;}
     };
   }
   function renderEvents() {

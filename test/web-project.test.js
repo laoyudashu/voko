@@ -122,14 +122,14 @@ test('local project browser supports board, editing, settings, conflicts and acc
   await page.getByLabel('S3 bucket name',{exact:true}).fill('private-project-assets');
   await page.getByLabel('Storage region',{exact:true}).selectOption('cn-north-1');
   await expect(page.getByLabel('Service endpoint (automatic)',{exact:true})).toHaveValue('https://s3.cn-north-1.qiniucs.com');
-  await page.getByLabel('Access Key',{exact:true}).fill('test-access');
-  await page.getByLabel('Secret Key',{exact:true}).fill('test-secret');
+  await page.getByLabel('AccessKey',{exact:true}).fill('test-access');
+  await page.getByLabel('SecretKey',{exact:true}).fill('test-secret');
   await page.getByRole('button',{name:'Verify and save',exact:true}).click();
   await expect(page.locator('#project-alert')).toContainText('Connection verified');
   assert.equal(lastStorage.expected_storage_revision,0);
   assert.equal(await page.locator('input[type=password]').count(),0);
   await page.getByRole('button',{name:'Manage cloud storage',exact:true}).click();
-  await expect(page.getByLabel('Secret Key',{exact:true})).toHaveValue('');
+  await expect(page.getByLabel('SecretKey',{exact:true})).toHaveValue('');
   reject=409;
   await page.getByRole('button',{name:'Verify and save',exact:true}).click();
   await expect(page.locator('.storage-feedback')).not.toBeEmpty();
