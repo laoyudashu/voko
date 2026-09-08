@@ -55,7 +55,7 @@ test('DSH applies permission before prompt and correlates client requestId acros
   assert.match(receipt.nativeSessionId, /^voko-/);
   assert.deepEqual(h.calls.map(c => c.method), ['agentPresets/list', 'session/create', 'commands/list', 'commands/execute', 'session/prompt', 'session/page']);
   assert.equal(h.calls.find(c => c.method === 'session/prompt').args.request.requestId, 'turn-1');
-  assert.equal(h.calls.find(c => c.method === 'session/create').args.request.cwd, '/tmp');
+  assert.equal(h.calls.find(c => c.method === 'session/create').args.request.cwd, require('node:path').resolve('/tmp'));
 });
 for (const failure of ['commandFails', 'missingProjection', 'drift']) {
   test(`DSH ${failure} blocks submission`, async () => {

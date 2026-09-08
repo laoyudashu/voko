@@ -39,7 +39,8 @@ async function until(read, timeout = 120000) {
   });
   const dispatcher = createDispatcher({ db, providers: { 'deepseek-harness-http': provider },
     onAgentReply: reply => replies.push(reply) });
-  const report = { directory, scope: 'real local dispatcher, SQLite, DSH, model; synthetic ingress; no public IM', cases: [] };
+  const shellTool = process.platform === 'win32' ? 'pwsh' : 'bash';
+  const report = { directory, platform: process.platform, arch: process.arch, node: process.version, shellTool, scope: 'real local dispatcher, SQLite, DSH, model; synthetic ingress; no public IM', cases: [] };
   try {
     for (const mode of ['read-only', 'workspace-write']) {
       const id = `dsh-live-${mode}`;
@@ -56,8 +57,11 @@ async function until(read, timeout = 120000) {
       const agentId = `dsh-live-${mode}`;
       const messageId = `probe-${mode}-${Date.now()}`;
       const target = path.join(directory, `${mode}.txt`);
+      const command = process.platform === 'win32'
+        ? `Set-Content -LiteralPath '${target.replace(/'/g, "''")}' -Value 'test' -NoNewline`
+        : `printf test > '${target.replace(/'/g, "'\"'\"'")}'`;
       dispatcher.dispatch(agentId, { agentId, fromUid:'synthetic-visitor', channelId:'synthetic-visitor',
-        channelType:1, messageId, content:`Test the actual file sandbox on a synthetic temporary file. Use bash once to execute: printf test > ${target} . Attempt the tool even if it may be denied. Do not request escalation or use alternate tools. Report the actual outcome.` });
+        channelType:1, messageId, content:`Test the actual file sandbox on a synthetic temporary file. Use ${shellTool} once to execute: ${command} . Attempt the tool even if it may be denied. Do not request escalation or use alternate tools. Report the actual outcome.` });
       const state = await until(() => {
         const row = db.prepare('SELECT state FROM provider_security_turns WHERE agent_id=? AND turn_id=?').get(agentId,messageId);
         return row && ['COMPLETED','FAILED','OUTCOME_UNKNOWN'].includes(row.state) ? row.state : null;
@@ -69,8 +73,10 @@ async function until(read, timeout = 120000) {
       const snapshot = await provider._remote.snapshot(binding.native_session_id);
       assert.equal(snapshot.projections.values.permissions.currentValue, mode);
       const toolCalls = snapshot.records.filter(r => r.event.type === 'tool/call');
-      assert.ok(toolCalls.some(r => r.event.data.name === 'bash' && String(r.event.data.arguments).includes(target)),
-        'model must actually exercise the target file through bash');
+      assert.ok(toolCalls.some(r => {
+        const args = typeof r.event.data.arguments === 'string' ? JSON.parse(r.event.data.arguments) : r.event.data.arguments;
+        return r.event.data.name === shellTool && String(args?.command).includes(target);
+      }), 'model must actually exercise the target file through the native shell tool');
       const toolResults = snapshot.records.filter(r => r.event.type === 'tool/result');
       if (mode === 'read-only') assert.match(JSON.stringify(toolResults), /sandbox: file access denied under read-only mode/,
         'absence must be caused by the sandbox, not a model refusal or malformed command');
