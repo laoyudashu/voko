@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const os = require('os');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
-const { readHermesGatewayConfig } = require('../../hermes-gateway-config');
+const { readHermesGatewayConfig, hermesGatewayConnections } = require('../../hermes-gateway-config');
 const { sanitizeCliDiagnostic } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
@@ -21,6 +21,7 @@ interface ProfileConnection {
   port?: number;
   apiKey?: string;
   configPath?: string;
+  connectionSource?: string;
 }
 
 interface HermesHttpOptions extends HermesApiClientOptions {
@@ -67,6 +68,7 @@ class HermesHttpProvider extends PushProvider {
   _gatewayChildren: Map<string, ChildProcess> | null;
   _inflightTurns: Map<string, Promise<void>>;
   _gatewayStarts: Map<string, Promise<boolean>>;
+  _authChecks: Map<string, symbol>;
   _lifecycleGeneration: number;
 
   constructor(database: unknown, mainWindow: unknown, options: HermesHttpOptions = {}) {
@@ -91,6 +93,7 @@ class HermesHttpProvider extends PushProvider {
     this._gatewayChildren = null;
     this._inflightTurns = new Map();
     this._gatewayStarts = new Map();
+    this._authChecks = new Map();
     this._lifecycleGeneration = 0;
     for (const profileId of Object.keys(this.options.profiles || {})) {
       this._refreshProfileConnection(profileId);
@@ -119,7 +122,7 @@ class HermesHttpProvider extends PushProvider {
       });
     } else if (!enabled && this.client) {
       this.addLog('⏹ Hermes Handler 已停用');
-      this.destroy();
+      void this.stop();
     }
   }
 
@@ -158,22 +161,14 @@ class HermesHttpProvider extends PushProvider {
     if (!client || this._destroyed) return;
     const previousConnected = this.connected;
     const previousAgents = this.connectedAgents ? new Set(this.connectedAgents) : null;
-    const healthyAgents = new Set<string>();
     const profilePorts = Object.keys(this.options.profiles || {});
-    let anyOk = false;
-    if (profilePorts.length > 0) {
-      for (const agentId of profilePorts) {
-        const ok = await this._authenticateCurrentProfile(agentId);
-        if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return;
-        if (ok) {
-          anyOk = true;
-          healthyAgents.add(agentId);
-        }
-      }
-    } else {
-      anyOk = false;
+    for (const agentId of profilePorts) {
+      await this._authenticateCurrentProfile(agentId);
+      if (!this._isCurrentClient(client, generation)) return;
     }
-    this.connectedAgents = healthyAgents;
+    // Use the latest committed results, not this health call's potentially stale snapshot.
+    this.connectedAgents = new Set(Object.keys(this.options.profiles || {}).filter(id => this._authStates.get(id) === true));
+    const anyOk = this.connectedAgents.size > 0;
     if (anyOk !== this.client.connected) {
       this.client.connected = anyOk;
       this.emit('status', { connected: anyOk, enabled: this.enabled });
@@ -222,9 +217,14 @@ class HermesHttpProvider extends PushProvider {
     const profiles: ProfileConnection[] = [];
     for (const configPath of getHermesProfilePathCandidates(profileId, 'config.yaml')) {
       try {
-        const { apiKey, port } = readHermesGatewayConfig(configPath);
-        if (apiKey) profiles.push({ ...(port ? { port } : {}), apiKey, configPath });
-      } catch (_) {}
+        const config = readHermesGatewayConfig(configPath);
+        profiles.push(...hermesGatewayConnections(config).filter((connection: ProfileConnection) => !!connection.apiKey));
+      } catch (error: any) {
+        if (String(error.message).startsWith('HERMES_ENV_')) {
+          const detail = `profile=${profileId}: ${error.message}`;
+          if (!this.logs.some((line: string) => line.includes(detail))) this.addLog(detail);
+        }
+      }
     }
     return profiles.filter((profile, index, all) => all.findIndex(other => other.port === profile.port && other.apiKey === profile.apiKey) === index);
   }
@@ -249,29 +249,64 @@ class HermesHttpProvider extends PushProvider {
     return true;
   }
 
+  _isCurrentClient(client: typeof this.client, generation: number): boolean {
+    return !!client && !this._destroyed && this.client === client && generation === this._lifecycleGeneration;
+  }
+
+  _assertCurrentClient(client: typeof this.client, generation: number): void {
+    if (!this._isCurrentClient(client, generation)) throw notDeliveredError('Hermes provider stopped before submission');
+  }
+
+  _beginAuthCheck(profileId: string) {
+    const check = Symbol(profileId), client = this.client, generation = this._lifecycleGeneration;
+    this._authChecks.set(profileId, check);
+    return () => this._isCurrentClient(client, generation) && this._authChecks.get(profileId) === check;
+  }
+
+  _invalidateProfile(profileId: string): void {
+    const wasReady = this.getProfileStatus(profileId).ready;
+    this._authChecks.delete(profileId);
+    this._authStates.set(profileId, false);
+    this.connectedAgents?.delete(profileId);
+    this.connected = !!this.connectedAgents?.size;
+    if (this.client) this.client.connected = this.connected;
+    if (wasReady) {
+      this.emit('status', { connected: this.connected, enabled: this.enabled });
+      for (const agentId of this._agentsForProfile(profileId)) {
+        this.notifyAvailability({ backendType: 'hermes', mode: 'http', agentId, available: false, reason: 'profile-unavailable' });
+      }
+    }
+  }
+
+  async reconnectProfile(profileId: string): Promise<boolean> {
+    await this._authenticateCurrentProfile(profileId);
+    return this._ensureGatewayRunning(profileId);
+  }
+
   async _selectAuthenticatedProfileConnection(profileId: string): Promise<boolean> {
     const client = this.client;
-    const generation = this._lifecycleGeneration;
     if (!client || this._destroyed) return false;
+    const isCurrent = this._beginAuthCheck(profileId);
     const current = this.options.profiles?.[profileId];
     const candidates: ProfileConnection[] = this._readProfileConnections(profileId);
     if (current && (current.apiKey || this.options.apiKey)) {
       candidates.unshift({ ...current, apiKey: current.apiKey || this.options.apiKey });
     }
     const unique = candidates.filter((profile, index, all) => all.findIndex(other => other.port === profile.port && other.apiKey === profile.apiKey) === index);
-    for (const profile of unique) {
-      if (!profile.apiKey) continue;
-      client.setProfile(profileId, profile);
-      const authenticated = await client.authenticate(profileId);
-      if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return false;
+    for (const candidate of unique) {
+      if (!candidate.apiKey) continue;
+      const profile = { ...candidate, port: candidate.port || this.options.port || DEFAULT_PORT };
+      const authenticated = await client.authenticate(profileId, profile);
+      if (!isCurrent()) return false;
       if (authenticated) {
         const previousPath = this._selectedConfigPaths.get(profileId);
         this.options.profiles = this.options.profiles || {};
-        this.options.profiles[profileId] = { ...(this.options.profiles[profileId] || {}), ...profile };
+        this.options.profiles[profileId] = profile;
+        client.setProfile(profileId, profile);
         if (profile.configPath) {
           this._selectedConfigPaths.set(profileId, profile.configPath);
           if (previousPath !== profile.configPath) {
-            this.addLog(`profile=${profileId} 已选用配置 ${profile.configPath} port=${profile.port || this.options.port || DEFAULT_PORT}`);
+            this.addLog(`profile=${profileId} 已选用配置 ${profile.configPath} port=${profile.port} source=${profile.connectionSource || 'yaml'}`);
           }
         }
         this._persistProfileConnection(profileId, profile);
@@ -279,24 +314,26 @@ class HermesHttpProvider extends PushProvider {
         return true;
       }
     }
-    if (current) client.setProfile(profileId, current);
     this._selectedConfigPaths.delete(profileId);
-    this._authStates.set(profileId, false);
+    this._invalidateProfile(profileId);
     return false;
   }
 
   async _authenticateCurrentProfile(profileId: string): Promise<boolean> {
+    const starting = this._gatewayStarts.get(profileId);
+    if (starting) return starting;
     const profile = this.options.profiles?.[profileId];
     const client = this.client;
-    const generation = this._lifecycleGeneration;
+    const isCurrent = this._beginAuthCheck(profileId);
     if (!client || this._destroyed || !(profile?.apiKey || this.options.apiKey)) {
       this._authStates.set(profileId, false);
       return false;
     }
-    client.setProfile(profileId, profile || {});
-    const ok = await client.authenticate(profileId);
-    if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return false;
-    this._authStates.set(profileId, ok);
+    const connection = { ...profile, port: profile?.port || this.options.port || DEFAULT_PORT,
+      apiKey: profile?.apiKey || this.options.apiKey };
+    const ok = await client.authenticate(profileId, connection);
+    if (!isCurrent()) return false;
+    if (ok) this._authStates.set(profileId, true); else this._invalidateProfile(profileId);
     return ok;
   }
 
@@ -332,7 +369,10 @@ class HermesHttpProvider extends PushProvider {
     child.on('error', (error: Error) => { failure = sanitizeCliDiagnostic(error.message); });
     child.on('close', (code, signal) => {
       failure ||= sanitizeCliDiagnostic(`exit=${code} signal=${signal || 'none'}: ${stderr}`);
-      if (this._gatewayChildren?.get(profileId) === child) this._gatewayChildren.delete(profileId);
+      if (this._gatewayChildren?.get(profileId) === child) {
+        this._gatewayChildren.delete(profileId);
+        this._invalidateProfile(profileId);
+      }
     });
     child.unref();
     (child.stderr as any)?.unref?.();
@@ -522,6 +562,7 @@ class HermesHttpProvider extends PushProvider {
     message: string,
     extraData: Partial<PushPayload> | null = null,
   ): Promise<void> {
+    const generation = this._lifecycleGeneration;
     const parts = sessionKey.split(':');
     if (parts.length < 3 || parts[0] !== 'hermes') {
       throw new Error('无效的 Hermes session');
@@ -555,10 +596,13 @@ class HermesHttpProvider extends PushProvider {
     if (!gatewayReady || !this.connected || !this.client) {
       throw notDeliveredError(`Hermes gateway is unavailable for profile ${profileId}`);
     }
+    const client = this.client;
 
     try {
       await extraData?.assertSubmissionCurrent?.();
-      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
+      this._assertCurrentClient(client, generation);
+      const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
+      if (!this._isCurrentClient(client, generation)) return;
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
       this.addLog(`📥 收到回复 ${agentId} (${replyLen} 字)`);
@@ -571,6 +615,7 @@ class HermesHttpProvider extends PushProvider {
         replyId: result.runId || turnId,
       });
     } catch (err) {
+      if (!this._isCurrentClient(client, generation)) throw err;
       const message = errorMessage(err);
       // 401 优先重新读取该 profile 的独立 key；仅刷新失败时才重启 gateway。
       if (message.includes('HTTP 401')) {
@@ -578,7 +623,9 @@ class HermesHttpProvider extends PushProvider {
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
             await extraData?.assertSubmissionCurrent?.();
-      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            this._assertCurrentClient(client, generation);
+            const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            if (!this._isCurrentClient(client, generation)) return;
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -594,7 +641,9 @@ class HermesHttpProvider extends PushProvider {
         if (await this._restartGateway(profileId)) {
           try {
             await extraData?.assertSubmissionCurrent?.();
-      const result = await this.client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            this._assertCurrentClient(client, generation);
+            const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
+            if (!this._isCurrentClient(client, generation)) return;
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -623,6 +672,7 @@ class HermesHttpProvider extends PushProvider {
     content: string,
     metadata?: ProviderSteerMetadata,
   ): Promise<HermesSteerResult | null | undefined> {
+    const generation = this._lifecycleGeneration;
     const profileId = this._profileForAgent(agentId);
     if (!profileId) {
       const error = new Error('Hermes HTTP unavailable: agent is not bound to a Hermes profile');
@@ -643,6 +693,7 @@ class HermesHttpProvider extends PushProvider {
       throw notDeliveredError(`Hermes gateway is unavailable for profile ${profileId}`);
     }
 
+    const client = this.client;
     // hermes steer 本身不 emit agent.reply（其 chat 才 emit），手动补偿以走 onAgentReply → handleAgentReply
     const emitReply = (result: HermesSteerResult): void => {
       if (result?.output && typeof this.emit === 'function') {
@@ -651,18 +702,23 @@ class HermesHttpProvider extends PushProvider {
     };
 
     try {
-      const result = await this.client.steer(profileId, sessionKey, visitorId, content);
+      this._assertCurrentClient(client, generation);
+      const result = await client.steer(profileId, sessionKey, visitorId, content);
+      if (!this._isCurrentClient(client, generation)) return result;
       this._authStates.set(profileId, true);
       this.addLog(`✅ steer 完成 ${agentId} (回复 ${(result.output || '').length} 字)`);
       emitReply(result);
       return result;
     } catch (err) {
+      if (!this._isCurrentClient(client, generation)) throw err;
       const message = errorMessage(err);
       if (message.includes('HTTP 401')) {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
+            this._assertCurrentClient(client, generation);
+            const result = await client.steer(profileId, sessionKey, visitorId, content);
+            if (!this._isCurrentClient(client, generation)) return result;
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (刷新 profile key 后)`);
             emitReply(result);
@@ -677,7 +733,9 @@ class HermesHttpProvider extends PushProvider {
       if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            const result = await this.client.steer(profileId, sessionKey, visitorId, content);
+            this._assertCurrentClient(client, generation);
+            const result = await client.steer(profileId, sessionKey, visitorId, content);
+            if (!this._isCurrentClient(client, generation)) return result;
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);
@@ -699,7 +757,7 @@ class HermesHttpProvider extends PushProvider {
   /**
    * 清理资源
    */
-  async destroy(): Promise<void> {
+  async destroy(preserveListeners = false): Promise<void> {
     this._destroyed = true;
     this._lifecycleGeneration++;
     this._gatewayStarts.clear();
@@ -717,6 +775,7 @@ class HermesHttpProvider extends PushProvider {
     this.connected = false;
     this.connectedAgents = new Set();
     this._authStates.clear();
+    this._authChecks.clear();
     this._inflightTurns.clear();
     // kill detached gateway 子进程，避免直接调 destroy（非经 stop）时泄漏：占端口/读旧 key
     if (this._gatewayChildren) {
@@ -729,7 +788,7 @@ class HermesHttpProvider extends PushProvider {
       this.client.destroy();
       this.client = null;
     }
-    this.removeAllListeners();
+    if (!preserveListeners) this.removeAllListeners();
   }
 
   // ─────────────────────────────────────────────
@@ -776,7 +835,7 @@ class HermesHttpProvider extends PushProvider {
   }
 
   async stop() {
-    try { await this.destroy(); } catch (_) {}
+    try { await this.destroy(true); } catch (_) {}
   }
 
   /** 推送一条访客消息（构造 sessionKey 后走 sendToSession）。 */

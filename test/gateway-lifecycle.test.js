@@ -16,12 +16,12 @@ function load(relative, overrides = {}, globals = {}) {
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
   return sandbox.module.exports;
 }
-function wsFixture(t) {
+function wsFixture(t, globals = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-gateway-test-'));
   const commands = require('../build/core/dispatcher/openclaw-command');
   const P = load('core/dispatcher/providers/openclaw-ws.js', {
     '../openclaw-command': { ...commands, openClawPaths: () => ({ stateDir: home, configPath: path.join(home, 'openclaw.json') }) },
-  });
+  }, globals);
   const p = new P(null, null);
   t.after(() => { p.destroy(); fs.rmSync(home, { recursive: true, force: true }); });
   const config = auth => { fs.writeFileSync(p.configPath, JSON.stringify({ gateway: { mode: 'local', auth } })); p.loadConfig(); };
@@ -284,7 +284,7 @@ test('Hermes reconnect maps Agent to profile and reports startup failure truthfu
   let target;
   const response = await invokeHermesRoute('/api/hermes/reconnect', {
     _profileForAgent: id => id === 'agent-one' ? 'one' : null,
-    async _ensureGatewayRunning(id) { target = id; return false; },
+    async reconnectProfile(id) { target = id; return false; },
   }, { agentId: 'agent-one' });
   assert.equal(target, 'one');
   assert.equal(response.success, false);
@@ -306,7 +306,7 @@ test('Hermes tests use the authenticated boolean and do not report a failed chec
 test('Hermes diagnostic routes accept an existing legacy profile id but never guess an unknown one', async () => {
   const h = { options: { profiles: { one: { apiKey: 'fixture' } } }, client: {},
     _profileForAgent: () => null, async healthCheck() {}, getProfileStatus: () => ({ ready: true }),
-    async _ensureGatewayRunning(id) { assert.equal(id, 'one'); return true; } };
+    async reconnectProfile(id) { assert.equal(id, 'one'); return true; } };
   assert.equal((await invokeHermesRoute('/api/hermes/test-agent', h, { agentId: 'one' })).alive, true);
   assert.equal((await invokeHermesRoute('/api/hermes/reconnect', h, { agentId: 'one' })).success, true);
   assert.equal((await invokeHermesRoute('/api/hermes/reconnect', h, { agentId: 'missing' })).success, false);
@@ -333,3 +333,218 @@ test('Registration rechecks the selected profile instead of trusting a completed
   assert.ok(checked.length >= 3);
   assert.ok(checked.every(([backend, profile]) => backend === 'hermes' && profile === 'one'));
 });
+
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+async function bounded(promise, ms = 1500) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Fixture deadline exceeded')), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+async function socketServer(t, onConnection) {
+  const { WebSocketServer } = require('ws');
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise(resolve => server.once('listening', resolve));
+  server.on('connection', onConnection);
+  t.after(async () => { for (const socket of server.clients) socket.terminate(); await new Promise(resolve => server.close(resolve)); });
+  return server;
+}
+for (const behavior of ['close', 'silent']) {
+  test(`OpenClaw ${behavior} socket cannot strand start beyond its authentication budget`, async t => {
+    const server = await socketServer(t, socket => { if (behavior === 'close') socket.close(1008, 'authentication rejected'); });
+    const { p, config } = wsFixture(t); config({ mode: 'token', token: 'fixture' });
+    p.gatewayUrl = `ws://127.0.0.1:${server.address().port}`;
+    p.gatewayStartupTimeoutMs = 80; p.gatewayProbeIntervalMs = 5;
+    p._probeGateway = async () => true;
+    assert.equal(await bounded(p.start()), false);
+    assert.equal(p.connected, false);
+  });
+}
+for (const action of ['disconnect', 'stop']) {
+  test(`OpenClaw ${action} settles a connection awaiting authentication`, async t => {
+    const accepted = deferred();
+    const server = await socketServer(t, () => accepted.resolve());
+    const { p, config } = wsFixture(t); config({ mode: 'token', token: 'fixture' });
+    p.gatewayUrl = `ws://127.0.0.1:${server.address().port}`;
+    const connection = p.connect(); await bounded(accepted.promise);
+    await p[action](); await bounded(connection);
+    assert.equal(p.connecting, false);
+    assert.equal(p._finishConnection, null);
+  });
+}
+test('OpenClaw watcher invalidates deletion and reads restored older JSON5 configuration', t => {
+  let poll;
+  const { p, config } = wsFixture(t, { setInterval: fn => { poll = fn; return fn; }, clearInterval() {} });
+  config({ mode: 'token', token: 'fixture' }); p.connected = true;
+  fs.unlinkSync(p.configPath); poll();
+  assert.equal(p.getStatus().configurationError, 'OPENCLAW_CONFIG_NOT_FOUND');
+  assert.equal(p.getStatus().hasToken, false);
+  assert.equal(p.connected, false);
+  fs.writeFileSync(p.configPath, '{ // native JSON5\n gateway: { mode: "local", auth: {mode: "token", token: "restored"}, }, }');
+  fs.utimesSync(p.configPath, new Date(0), new Date(0)); poll();
+  assert.equal(p.getStatus().configurationError, null);
+  assert.equal(p.authToken, 'restored');
+});
+test('OpenClaw setup reads a valid JSON5 configuration without rewriting it', async t => {
+  const { p } = wsFixture(t);
+  const original = '{ // keep this comment\n gateway: {mode: "local", auth: {mode: "token", token: "fixture"}}, }';
+  fs.writeFileSync(p.configPath, original);
+  const setup = load('core/gateway-setup.js', { './dispatcher/openclaw-command': {
+    openClawPaths: () => ({ configPath: p.configPath }),
+  } }, { global: { __openclawHandler: { loadConfig() {}, async start() {}, getStatus: () => ({ hasToken: true, connected: true }) } } });
+  const { taskId } = setup.startSetup('openclaw');
+  while (!setup.getTask(taskId).done) await new Promise(setImmediate);
+  assert.equal(setup.getTask(taskId).ok, true);
+  assert.equal(fs.readFileSync(p.configPath, 'utf8'), original);
+});
+test('Hermes reserves unregistered profile ports during single-profile setup', async t => {
+  const f = await setupFixture(t, { authenticated: true, yaml: 'platforms: {}\n' });
+  const other = path.join(path.dirname(path.dirname(f.file)), 'two'); fs.mkdirSync(other);
+  const otherFile = path.join(other, 'config.yaml');
+  const original = 'platforms:\n  api_server:\n    enabled: true\n    extra:\n      port: 8642\n      key: other-key\n';
+  fs.writeFileSync(otherFile, original);
+  assert.equal((await f.run()).ok, true);
+  assert.equal(f.saved().profiles.one.port, 8643);
+  assert.equal(fs.readFileSync(otherFile, 'utf8'), original);
+});
+for (const source of ['profile_env', 'yaml']) {
+  test(`Hermes authenticates the actual ${source} connection instead of assuming environment precedence`, async t => {
+    const f = await setupFixture(t);
+    const api = require('../build/core/hermes-gateway-config');
+    const expectedKey = source === 'profile_env' ? 'env-key' : 'fixture-key';
+    const server = require('node:http').createServer((req, res) => {
+      res.writeHead(req.headers.authorization === `Bearer ${expectedKey}` ? 200 : 401, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => server.close());
+    fs.writeFileSync(f.file, `platforms:\n  api_server:\n    enabled: true\n    extra:\n      port: ${server.address().port}\n      key: fixture-key\n`);
+    fs.writeFileSync(path.join(path.dirname(f.file), '.env'), 'API_SERVER_KEY=env-key\n');
+    f.h.options.profileConfigLoader = () => api.hermesGatewayConnections(api.readHermesGatewayConfig(f.file), api.readHermesGatewayEnvironment(f.file, {}));
+    f.h.options.profiles.one = { port: server.address().port, apiKey: 'initial-stale-key' };
+    const { HermesApiClient } = require('../build/core/adapters/hermes-api-client');
+    f.h.client = new HermesApiClient({ profiles: f.h.options.profiles });
+    assert.equal(await f.h._selectAuthenticatedProfileConnection('one'), true);
+    assert.equal(f.h.options.profiles.one.apiKey, expectedKey);
+    assert.equal(f.h.options.profiles.one.connectionSource, source);
+    assert.equal(JSON.stringify(f.h.getStatus()).includes(expectedKey), false);
+  });
+}
+test('Hermes environment candidates preserve empty overrides and never send unresolved expressions', async t => {
+  const f = await setupFixture(t);
+  const api = require('../build/core/hermes-gateway-config');
+  const envFile = path.join(path.dirname(f.file), '.env');
+  fs.writeFileSync(envFile, 'API_SERVER_KEY=\nAPI_SERVER_PORT=8866\n');
+  const environment = api.readHermesGatewayEnvironment(f.file, { API_SERVER_KEY: 'shell-fixture' });
+  assert.equal(environment.apiKey, ''); assert.equal(environment.port, 8866);
+  const candidates = api.hermesGatewayConnections(api.readHermesGatewayConfig(f.file), environment);
+  assert.ok(candidates.some(c => c.port === 8642 && c.apiKey === 'fixture-key'));
+  fs.writeFileSync(envFile, 'API_SERVER_KEY=${FIXTURE_REFERENCE}\n');
+  assert.throws(() => api.readHermesGatewayEnvironment(f.file, {}), /HERMES_ENV_REFERENCE_UNSUPPORTED/);
+});
+test('Hermes API environment literals match native dotenv comments, quotes and escapes', async t => {
+  const f = await setupFixture(t);
+  const api = require('../build/core/hermes-gateway-config');
+  const envFile = path.join(path.dirname(f.file), '.env');
+  const cases = [
+    ['API_SERVER_KEY=literal-0123456789#suffix', 'literal-0123456789#suffix'],
+    ['API_SERVER_KEY=literal-0123456789 # comment', 'literal-0123456789'],
+    ['API_SERVER_KEY= #literal', '#literal'],
+    ["export 'API_SERVER_KEY' = 'literal#with space' # comment", 'literal#with space'],
+    ["API_SERVER_KEY='literal\\'quote\\\\slash'", "literal'quote\\slash"],
+    ['API_SERVER_KEY="literal\\"quote\\\\slash\\tend"', 'literal"quote\\slash\tend'],
+    ['API_SERVER_KEY="literal\\q"', 'literal\\q'],
+    ['API_SERVER_KEY=actual\nOTHER="line one\nAPI_SERVER_KEY=not-a-binding\nline three"', 'actual'],
+    ['API_SERVER_KEY=first\nAPI_SERVER_KEY=last', 'last'],
+    ['API_SERVER_KEY', 'shell-fixture'],
+  ];
+  for (const [source, expected] of cases) {
+    fs.writeFileSync(envFile, source + '\nAPI_SERVER_PORT=8866 # comment\n');
+    const actual = api.readHermesGatewayEnvironment(f.file, { API_SERVER_KEY: 'shell-fixture' });
+    assert.equal(actual.apiKey, expected); assert.equal(actual.port, 8866);
+  }
+  fs.writeFileSync(envFile, 'API_SERVER_KEY="unclosed\n');
+  assert.throws(() => api.readHermesGatewayEnvironment(f.file, {}), /HERMES_ENV_INVALID/);
+});
+test('Hermes failed candidate probes preserve live routing and the implicit default port', async () => {
+  const p = hermes(); await p._initClient();
+  p.options.profileConfigLoader = () => [{ apiKey: 'fallback', port: 8643 }];
+  const ports = [];
+  p.client.authenticate = async (_id, connection) => { ports.push(connection.port); return false; };
+  assert.equal(await p._selectAuthenticatedProfileConnection('one'), false);
+  assert.equal(p.client._agentPort('one'), 8642);
+  assert.equal(await p._selectAuthenticatedProfileConnection('one'), false);
+  assert.deepEqual(ports, [8642, 8643, 8642, 8643]); await p.destroy();
+});
+test('Hermes commits a candidate connection only after successful authentication', async () => {
+  const p = hermes(); await p._initClient();
+  p.options.profileConfigLoader = () => [{ apiKey: 'new', port: 8643 }];
+  const entered = deferred(), response = deferred();
+  p.client.authenticate = async (_id, connection) => {
+    if (connection.apiKey !== 'new') return false;
+    entered.resolve(); return response.promise;
+  };
+  const selection = p._selectAuthenticatedProfileConnection('one'); await entered.promise;
+  assert.equal(p.client._agentPort('one'), 8642); assert.equal(p.options.profiles.one.port, undefined);
+  response.resolve(true); assert.equal(await selection, true);
+  assert.equal(p.client._agentPort('one'), 8643); await p.destroy();
+});
+test('Hermes explicit reconnect detects a dead gateway despite a previous authenticated cache', async () => {
+  const p = hermes(); await p._initClient();
+  p.connected = p.client.connected = true; p.connectedAgents = new Set(['one']); p._authStates.set('one', true);
+  let probes = 0;
+  p.client.authenticate = async () => { probes++; return false; };
+  p._launchGateway = () => ({ failure: () => 'fixture startup failed' });
+  assert.equal(await p._ensureGatewayRunning('one'), true); assert.equal(probes, 0);
+  assert.equal(await p.reconnectProfile('one'), false); assert.ok(probes > 0);
+  assert.equal(p.getProfileStatus('one').ready, false); assert.equal(p.connected, false); await p.destroy();
+});
+test('Hermes a stale health response cannot overwrite a newer successful startup', async () => {
+  const p = hermes(); await p._initClient();
+  const first = deferred(); let probes = 0;
+  p.client.authenticate = () => ++probes === 1 ? first.promise : Promise.resolve(true);
+  const health = p.healthCheck();
+  assert.equal(await p._ensureGatewayRunning('one'), true);
+  first.resolve(false); await health;
+  assert.equal(p.getProfileStatus('one').ready, true); await p.destroy();
+});
+test('Hermes owned child exit invalidates only its profile and ignores replaced children', async () => {
+  const { EventEmitter } = require('node:events');
+  const children = [];
+  const P = load('core/dispatcher/providers/hermes-http.js', {
+    child_process: { spawn() { const child = new EventEmitter(); child.stderr = new EventEmitter(); child.unref = () => {}; children.push(child); return child; } },
+    '../hermes-command': { resolveHermesCommand: () => 'fixture' },
+  });
+  const p = new P(null, null, { profiles: { one: { apiKey: 'one' }, two: { apiKey: 'two' } }, profileConfigLoader: () => null });
+  await p._initClient(); p.connected = true; p.connectedAgents = new Set(['one', 'two']);
+  p._authStates.set('one', true); p._authStates.set('two', true);
+  p._launchGateway('one'); p._launchGateway('one');
+  children[0].emit('close', 1); assert.equal(p.getProfileStatus('one').ready, true);
+  children[1].emit('close', 1); assert.equal(p.getProfileStatus('one').ready, false);
+  assert.equal(p.getProfileStatus('two').ready, true); await p.destroy();
+});
+test('Hermes registry restart preserves reply and availability subscriptions', async () => {
+  const p = hermes();
+  const { ProviderRuntimeRegistry } = require('../build/core/dispatcher/provider-runtime-registry');
+  const registry = new ProviderRuntimeRegistry({ 'hermes-http': p }); let replies = 0, changes = 0;
+  p.on('agent.reply', () => { replies++; }); registry.on('availability', () => { changes++; });
+  await registry.startAll(); await registry.restart('hermes-http');
+  const previous = changes; p.emit('agent.reply', {}); p.notifyAvailability({ available: true });
+  assert.equal(replies, 1); assert.equal(changes, previous + 1); await registry.stopAll(); await p.destroy();
+});
+for (const route of ['initial', 'key-refresh', 'restart']) {
+  test(`Hermes ${route} submission cannot cross a provider stop/start boundary`, async () => {
+    const p = hermes(); await p._initClient(); p.connected = true; p._profileForAgent = () => 'one';
+    p._ensureGatewayRunning = async () => true;
+    p._selectAuthenticatedProfileConnection = async () => route === 'key-refresh'; p._restartGateway = async () => true;
+    let oldCalls = 0, newCalls = 0, validations = 0;
+    p.client.chat = async () => { oldCalls++; throw new Error('HTTP 401'); };
+    const entered = deferred(), validation = deferred();
+    const send = p._sendToSession('hermes:agent:visitor', 'fixture', { assertSubmissionCurrent: () => {
+      if (++validations === (route === 'initial' ? 1 : 2)) { entered.resolve(); return validation.promise; }
+    } });
+    const rejected = assert.rejects(send, error => error.deliveryOutcome === 'not_delivered');
+    await entered.promise; await p.stop(); await p.start();
+    p.client.chat = async () => { newCalls++; return { reply: 'fixture' }; };
+    validation.resolve(); await rejected;
+    assert.equal(newCalls, 0); assert.equal(oldCalls, route === 'initial' ? 0 : 1); await p.destroy();
+  });
+}

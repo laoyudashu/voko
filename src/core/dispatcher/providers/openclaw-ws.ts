@@ -11,6 +11,7 @@ const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments, STAGING_MAX_AGE_MS } = require('../provider-attachments');
 const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
 const { openClawPaths, resolveOpenClawRuntime, runtimeSpawnOptions } = require('../openclaw-command');
+const { readOpenClawConfig } = require('../openclaw-config');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -152,8 +153,9 @@ class OpenClawWsProvider {
    */
   loadConfig(): boolean {
     try {
+      this._configStamp = this._readConfigStamp();
       if (fs.existsSync(this.configPath)) {
-        const config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        const config = readOpenClawConfig(this.configPath);
         if (!config || typeof config !== 'object' || Array.isArray(config)
           || (config.gateway != null && (typeof config.gateway !== 'object' || Array.isArray(config.gateway)))
           || (config.gateway?.auth != null && (typeof config.gateway.auth !== 'object' || Array.isArray(config.gateway.auth)))) {
@@ -218,16 +220,23 @@ class OpenClawWsProvider {
   /**
    * 启动配置文件监控（使用轮询方式，更可靠）
    */
+  _readConfigStamp(): string | null {
+    try {
+      const st = fs.statSync(this.configPath);
+      return `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
   startConfigWatcher(): void {
     // 每 5 秒检查一次配置文件变化
     this.configWatcher = setInterval(() => {
       try {
-        if (fs.existsSync(this.configPath)) {
-          const stats = fs.statSync(this.configPath);
-          if (stats.mtimeMs > this.lastConfigMtime) {
-            console.log('[OpenClaw WS] 检测到配置文件变化，重新加载...');
-            this.loadConfig();
-          }
+        if (this._readConfigStamp() !== this._configStamp) {
+          console.log('[OpenClaw WS] 检测到配置文件变化，重新加载...');
+          this.loadConfig();
         }
       } catch (err) {
         console.error('[OpenClaw WS] 检查配置失败:', errorMessage(err));
@@ -791,7 +800,8 @@ class OpenClawWsProvider {
   /**
    * 连接 WebSocket
    */
-  async connect() {
+  async connect(timeoutMs = 30000) {
+    if (this._stopped || this.configurationError) return;
     if (this.connecting || this.connected) {
       console.log('[OpenClaw WS] 已经在连接中或已连接');
       return;
@@ -807,6 +817,15 @@ class OpenClawWsProvider {
 
     return new Promise<void>((resolve, reject) => {
       let socket: InstanceType<typeof WebSocket> | null = null;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectionTimeout);
+        if (this._finishConnection === finish) this._finishConnection = null;
+        if (error) reject(error); else resolve();
+      };
+      this._finishConnection = finish;
       // 连接超时处理
       const connectionTimeout = setTimeout(() => {
         if (socket && this.ws === socket && !this.connected) {
@@ -815,9 +834,9 @@ class OpenClawWsProvider {
           this.connecting = false;
           socket.close();
           this.scheduleReconnect();
-          reject(new Error('连接超时'));
         }
-      }, 30000);
+        finish(new Error('连接超时'));
+      }, Math.max(1, timeoutMs));
 
       try {
         this._connectRequestId = null;
@@ -826,9 +845,8 @@ class OpenClawWsProvider {
       } catch (err) {
         console.error('[OpenClaw WS] 创建 WebSocket 失败:', errorMessage(err));
         this.connecting = false;
-        clearTimeout(connectionTimeout);
         this.scheduleReconnect();
-        reject(err);
+        finish(err instanceof Error ? err : new Error(errorMessage(err)));
         return;
       }
 
@@ -851,23 +869,29 @@ class OpenClawWsProvider {
             this.addLog(`📩 收到: ${msg.type} ${msg.event || msg.method || msg.payload?.type || ''}`);
           }
 
-          await this.handleMessage(msg, resolve, connectionTimeout);
+          const authRejected = msg.type === 'res' && !msg.ok && msg.error
+            && this._connectRequestId && msg.id === this._connectRequestId;
+          await this.handleMessage(msg, () => finish(), connectionTimeout);
+          if (authRejected) {
+            finish(new Error('OpenClaw authentication rejected'));
+            if (this.ws === socket) socket.close();
+          }
         } catch (e) {
           console.error('[OpenClaw WS] 解析消息失败:', errorMessage(e), data.toString().substring(0, 200));
         }
       });
 
       socket.on('error', (err: Error) => {
+        finish(err);
         if (this.ws !== socket) return;
         this._notifyAvailability(false, `socket-error:${err.message}`);
         console.error('[OpenClaw WS] ❌ 连接错误:', err.message);
         this.connecting = false;
-        clearTimeout(connectionTimeout);
         this.scheduleReconnect();
-        reject(err);
       });
 
       socket.on('close', (code: number, reason: Buffer) => {
+        finish(new Error(`OpenClaw WebSocket closed before authentication (${code})`));
         if (this.ws !== socket) return;
         const closeReason = String(reason || '');
         console.log(`[OpenClaw WS] 🔌 连接关闭 (code: ${code}, reason: ${closeReason || '无'})`);
@@ -1204,6 +1228,7 @@ class OpenClawWsProvider {
   }
 
   disconnect(): void {
+    this._finishConnection?.(new Error('OpenClaw WebSocket disconnected'));
     this._markUnconfirmedTurns();
     this._connectRequestId = null;
     const wasAvailable = this.connected || this.connecting;
@@ -1758,7 +1783,8 @@ class OpenClawWsProvider {
       const running = await this._ensureGatewayRunning();
       this._assertAccepting(generation);
       if (!running) break;
-      if (!this.connected && !this.connecting) await this.connect();
+      if (Date.now() >= deadline) break;
+      if (!this.connected && !this.connecting) await this.connect(Math.min(30000, deadline - Date.now()));
       if (this.connected) return;
       await new Promise(resolve => setTimeout(resolve, this.gatewayProbeIntervalMs));
     }

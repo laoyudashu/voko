@@ -921,7 +921,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
       const targets = profileId ? [profileId] : req.body?.agentId ? [] : Object.keys(h.options?.profiles || {});
       if (!targets.length) return res.json({ success: false, error: '未绑定 Hermes Profile' });
       const results = [];
-      for (const id of targets) results.push({ profileId: id, ready: await h._ensureGatewayRunning(id) });
+      for (const id of targets) results.push({ profileId: id, ready: await h.reconnectProfile(id) });
       res.json({ success: results.every(result => result.ready), profiles: results });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });

@@ -15,7 +15,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { getHermesProfilePath, getHermesProfilesDir, getHermesConfigPath } = require('./hermes-paths');
-const { readHermesGatewayConfig, writeHermesGatewayConfig } = require('./hermes-gateway-config');
+const { readHermesGatewayConfig, writeHermesGatewayConfig, readHermesGatewayEnvironment } = require('./hermes-gateway-config');
 
 // ════════════════════════════════════════
 //  进度任务表（内存，一次性）
@@ -83,6 +83,7 @@ function checkGateway(backend, databaseAPI, profileId) {
 //  OpenClaw 配置
 // ════════════════════════════════════════
 const { openClawPaths } = require('./dispatcher/openclaw-command');
+const { readOpenClawConfig } = require('./dispatcher/openclaw-config');
 
 async function setupOpenclawGateway(log, options = {}) {
   const o = global.__openclawHandler;
@@ -90,7 +91,7 @@ async function setupOpenclawGateway(log, options = {}) {
 
   const configPath = openClawPaths(process.env, os.homedir()).configPath;
   let config;
-  try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); }
+  try { config = readOpenClawConfig(configPath); }
   catch (error) {
     if (error.code !== 'ENOENT') throw new Error('OPENCLAW_CONFIG_UNREADABLE: 配置无法解析，未修改');
     config = {};
@@ -145,15 +146,19 @@ async function setupHermesGateway(databaseAPI, profileId, log) {
   const targets = profileId ? [profileId] : [...new Set(profiles)];
   if (!targets.length) throw new Error('未找到任何 Hermes profile，请先用 hermes 创建 profile');
   if (targets.some(id => !profiles.includes(id))) throw new Error('HERMES_PROFILE_NOT_FOUND');
-  // Validate every target before changing any file.
-  const configs = targets.map(id => ({ id, config: readHermesGatewayConfig(
-    id === 'default' && fs.existsSync(getHermesConfigPath()) ? getHermesConfigPath() : getHermesProfilePath(id, 'config.yaml')) }));
-  const usedPorts = new Set([...Object.values(cfg.profiles).map(p => p.port), ...configs.map(item => item.config.port)]);
+  // Reserve ports of existing profiles too, including profiles not registered in VOKO.
+  const configs = [...new Set(profiles)].flatMap(id => {
+    const file = id === 'default' && fs.existsSync(getHermesConfigPath()) ? getHermesConfigPath() : getHermesProfilePath(id, 'config.yaml');
+    if (!targets.includes(id) && !fs.existsSync(file)) return [];
+    return [{ id, config: readHermesGatewayConfig(file), environment: readHermesGatewayEnvironment(file) }];
+  });
+  const usedPorts = new Set([...Object.values(cfg.profiles).map(p => p.port), ...configs.flatMap(({ id, config, environment }) =>
+    [config.port, environment.port, !targets.includes(id) && (config.apiKey || environment.apiKey) ? config.port || environment.port || 8642 : null])]);
   let nextPort = 8642;
-  for (const { id, config } of configs) {
+  for (const { id, config, environment } of configs.filter(item => targets.includes(item.id))) {
     const existing = cfg.profiles[id] || {};
     while (usedPorts.has(nextPort)) nextPort++;
-    const port = config.port || existing.port || nextPort++;
+    const port = config.port || existing.port || environment.port || nextPort++;
     const apiKey = config.apiKey || existing.apiKey || cfg.apiKey || crypto.randomBytes(32).toString('hex');
     if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || typeof apiKey !== 'string') throw new Error('HERMES_CONFIG_INVALID');
     usedPorts.add(port);
@@ -162,6 +167,7 @@ async function setupHermesGateway(databaseAPI, profileId, log) {
       log(`✓ 已更新 profile ${id} (port=${port})，原配置备份：${backup}`);
     }
     cfg.profiles[id] = { ...existing, port, apiKey, configPath: config.configPath };
+    if (environment.apiKey || environment.port) log(`profile ${id} 存在 API 环境配置，将通过认证确定生效连接`);
   }
   // Failure must stop the task before changing the live client or starting a process.
   databaseAPI.saveConfigToDb(cfg, 'hermes_config');
@@ -171,7 +177,7 @@ async function setupHermesGateway(databaseAPI, profileId, log) {
   if (!h.client) await h.start();
   for (const id of targets) {
     h.client.setProfile(id, cfg.profiles[id]);
-    h._authStates.delete(id);
+    h._invalidateProfile(id);
     const ready = await h._ensureGatewayRunning(id);
     if (!ready || !h.getProfileStatus(id).ready) throw new Error(`HERMES_GATEWAY_NOT_READY: profile=${id} 未通过 Gateway 认证`);
     log(`✅ Hermes Gateway 已就绪 (profile=${id})`);

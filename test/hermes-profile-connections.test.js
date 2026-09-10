@@ -109,7 +109,7 @@ test('Hermes HTTP provider refreshes the selected profile key after a 401', asyn
     _agentPort() { return 8643; },
     async ping() { return true; },
     setProfile(profileId, profile) { this.profiles[profileId] = profile; },
-    async authenticate(profileId) { return this.profiles[profileId].apiKey === 'new-key'; },
+    async authenticate(profileId, connection) { return connection.apiKey === 'new-key'; },
     async chat(profileId, sessionId, visitorId) {
       attempts++;
       assert.equal(profileId, 'profile-a');
@@ -211,7 +211,7 @@ test('Hermes HTTP provider selects the first candidate that passes authenticated
   provider.client = {
     profiles: {},
     setProfile(profileId, profile) { this.profiles[profileId] = profile; },
-    async authenticate(profileId) { return this.profiles[profileId].apiKey === 'valid-key'; },
+    async authenticate(profileId, connection) { return connection.apiKey === 'valid-key'; },
   };
 
   assert.equal(await provider._selectAuthenticatedProfileConnection('psychologist'), true);

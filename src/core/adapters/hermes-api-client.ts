@@ -67,7 +67,7 @@ class HermesApiClient extends EventEmitter {
     this.host = options.host || DEFAULT_HOST;
     this.port = options.port || DEFAULT_PORT;
     this.apiKey = options.apiKey || '';
-    this.profiles = options.profiles || {};  // { agentId: { port } }
+    this.profiles = Object.fromEntries(Object.entries(options.profiles || {}).map(([id, profile]) => [id, { ...profile }]));
     this.connected = false;
     this._destroyed = false;
     this._healthTimer = null;
@@ -83,7 +83,7 @@ class HermesApiClient extends EventEmitter {
   }
 
   setProfile(agentId: string, profile: HermesProfile): void {
-    this.profiles[agentId] = { ...(this.profiles[agentId] || {}), ...profile };
+    this.profiles[agentId] = { ...profile };
   }
 
   _request(
@@ -197,9 +197,9 @@ class HermesApiClient extends EventEmitter {
   }
 
   /** Verify both reachability and the selected profile credential. */
-  async authenticate(agentId: string): Promise<boolean> {
+  async authenticate(agentId: string, connection?: ConnectionOverrides): Promise<boolean> {
     try {
-      await this._request('GET', '/v1/models', null, PING_TIMEOUT, {}, this._agentConnection(agentId));
+      await this._request('GET', '/v1/models', null, PING_TIMEOUT, {}, connection || this._agentConnection(agentId));
       return true;
     } catch (_) {
       return false;

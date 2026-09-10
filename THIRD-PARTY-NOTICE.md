@@ -24,6 +24,8 @@ Direct runtime dependencies in the `0.4.0` lock file:
 
 Added for preserving Hermes YAML configuration fields and comments: `yaml` 2.9.0 (ISC). Its license text is distributed in `node_modules/yaml/LICENSE`.
 
+Added for reading native OpenClaw configuration syntax: `json5` 2.2.3 (MIT). Its license text is distributed in `node_modules/json5/LICENSE.md`.
+
 The complete dependency tree uses Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, and MIT-0 licenses. The release audit found no unknown, GPL-family, AGPL, SSPL, BUSL, or proprietary package license in the lock file.
 
 The E2EE WebAssembly core under `e2ee/` has a separate authoritative Rust dependency set in `e2ee/Cargo.lock`. Release license and SBOM checks must include that lock file as well as the npm lock file.
