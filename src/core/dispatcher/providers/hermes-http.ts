@@ -1,8 +1,8 @@
 const { spawn, execFileSync } = require('child_process');
-const fs = require('fs');
 const os = require('os');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
+const { readHermesGatewayConfig } = require('../../hermes-gateway-config');
 const { sanitizeCliDiagnostic } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
@@ -33,6 +33,8 @@ interface HermesStatus {
   enabled: boolean;
   clientReady: boolean;
   logs: string[];
+  hasApiKey: boolean;
+  profiles: Record<string, { profileId: string; port: number; hasApiKey: boolean; connected: boolean; ready: boolean }>;
 }
 
 function errorMessage(error: unknown): string {
@@ -64,6 +66,8 @@ class HermesHttpProvider extends PushProvider {
   connectedAgents: Set<string> | null;
   _gatewayChildren: Map<string, ChildProcess> | null;
   _inflightTurns: Map<string, Promise<void>>;
+  _gatewayStarts: Map<string, Promise<boolean>>;
+  _lifecycleGeneration: number;
 
   constructor(database: unknown, mainWindow: unknown, options: HermesHttpOptions = {}) {
     super();
@@ -86,6 +90,8 @@ class HermesHttpProvider extends PushProvider {
     this.connectedAgents = null;
     this._gatewayChildren = null;
     this._inflightTurns = new Map();
+    this._gatewayStarts = new Map();
+    this._lifecycleGeneration = 0;
     for (const profileId of Object.keys(this.options.profiles || {})) {
       this._refreshProfileConnection(profileId);
     }
@@ -103,6 +109,7 @@ class HermesHttpProvider extends PushProvider {
    */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+    if (enabled) this._destroyed = false;
     if (enabled && !this.client) {
       this.addLog('🚀 Hermes Handler 初始化中...');
       this._initClient().catch((err: unknown) => {
@@ -146,24 +153,27 @@ class HermesHttpProvider extends PushProvider {
    * 逐个检查所有已配置的 agent gateway HTTP 端口，记录可达的 agentId
    */
   async healthCheck(): Promise<void> {
-    if (!this.client) return;
+    const client = this.client;
+    const generation = this._lifecycleGeneration;
+    if (!client || this._destroyed) return;
     const previousConnected = this.connected;
     const previousAgents = this.connectedAgents ? new Set(this.connectedAgents) : null;
-    this.connectedAgents = new Set();
+    const healthyAgents = new Set<string>();
     const profilePorts = Object.keys(this.options.profiles || {});
     let anyOk = false;
     if (profilePorts.length > 0) {
       for (const agentId of profilePorts) {
         const ok = await this._authenticateCurrentProfile(agentId);
+        if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return;
         if (ok) {
           anyOk = true;
-          this.connectedAgents.add(agentId);
+          healthyAgents.add(agentId);
         }
       }
     } else {
-      anyOk = await this.client.ping();
-      if (anyOk) this.connectedAgents = null;
+      anyOk = false;
     }
+    this.connectedAgents = healthyAgents;
     if (anyOk !== this.client.connected) {
       this.client.connected = anyOk;
       this.emit('status', { connected: anyOk, enabled: this.enabled });
@@ -193,11 +203,14 @@ class HermesHttpProvider extends PushProvider {
    * 获取状态
    */
   getStatus(): HermesStatus {
+    const profiles = Object.fromEntries(Object.keys(this.options.profiles || {}).map(id => [id, this.getProfileStatus(id)]));
     return {
       connected: this.connected,
       enabled: this.enabled,
       clientReady: this.client?.connected || false,
-      logs: this.logs.slice()
+      logs: this.logs.slice(),
+      hasApiKey: Object.values(profiles).some(profile => profile.hasApiKey),
+      profiles,
     };
   }
 
@@ -209,15 +222,8 @@ class HermesHttpProvider extends PushProvider {
     const profiles: ProfileConnection[] = [];
     for (const configPath of getHermesProfilePathCandidates(profileId, 'config.yaml')) {
       try {
-        const yaml = fs.readFileSync(configPath, 'utf8');
-        const block = yaml.match(/^\s{2}api_server:\s*\r?\n((?:\s{4,}.*(?:\r?\n|$))*)/m)?.[1] || '';
-        const key = block.match(/^\s+key:\s*([^\r\n#]+)/m)?.[1]?.trim().replace(/^['"]|['"]$/g, '');
-        const port = Number(block.match(/^\s+port:\s*(\d+)/m)?.[1]);
-        if (key) profiles.push({
-          ...(Number.isSafeInteger(port) && port > 0 ? { port } : {}),
-          apiKey: key,
-          configPath,
-        });
+        const { apiKey, port } = readHermesGatewayConfig(configPath);
+        if (apiKey) profiles.push({ ...(port ? { port } : {}), apiKey, configPath });
       } catch (_) {}
     }
     return profiles.filter((profile, index, all) => all.findIndex(other => other.port === profile.port && other.apiKey === profile.apiKey) === index);
@@ -245,15 +251,20 @@ class HermesHttpProvider extends PushProvider {
 
   async _selectAuthenticatedProfileConnection(profileId: string): Promise<boolean> {
     const client = this.client;
-    if (!client) return false;
+    const generation = this._lifecycleGeneration;
+    if (!client || this._destroyed) return false;
     const current = this.options.profiles?.[profileId];
     const candidates: ProfileConnection[] = this._readProfileConnections(profileId);
-    if (current?.apiKey) candidates.unshift(current);
+    if (current && (current.apiKey || this.options.apiKey)) {
+      candidates.unshift({ ...current, apiKey: current.apiKey || this.options.apiKey });
+    }
     const unique = candidates.filter((profile, index, all) => all.findIndex(other => other.port === profile.port && other.apiKey === profile.apiKey) === index);
     for (const profile of unique) {
       if (!profile.apiKey) continue;
       client.setProfile(profileId, profile);
-      if (await client.authenticate(profileId)) {
+      const authenticated = await client.authenticate(profileId);
+      if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return false;
+      if (authenticated) {
         const previousPath = this._selectedConfigPaths.get(profileId);
         this.options.profiles = this.options.profiles || {};
         this.options.profiles[profileId] = { ...(this.options.profiles[profileId] || {}), ...profile };
@@ -276,22 +287,36 @@ class HermesHttpProvider extends PushProvider {
 
   async _authenticateCurrentProfile(profileId: string): Promise<boolean> {
     const profile = this.options.profiles?.[profileId];
-    if (!this.client || !profile?.apiKey) {
+    const client = this.client;
+    const generation = this._lifecycleGeneration;
+    if (!client || this._destroyed || !(profile?.apiKey || this.options.apiKey)) {
       this._authStates.set(profileId, false);
       return false;
     }
-    this.client.setProfile(profileId, profile);
-    const ok = await this.client.authenticate(profileId);
+    client.setProfile(profileId, profile || {});
+    const ok = await client.authenticate(profileId);
+    if (this._destroyed || this.client !== client || generation !== this._lifecycleGeneration) return false;
     this._authStates.set(profileId, ok);
     return ok;
   }
 
   isProfileReady(agentId: string): boolean {
+    if (this._destroyed) return false;
     const profileId = this._profileForAgent(agentId);
     if (!profileId) return false;
     const profile = this.options.profiles?.[profileId];
     const reachable = this.connectedAgents === null || this.connectedAgents.has(profileId);
     return reachable && !!(profile?.apiKey || this.options.apiKey) && this._authStates.get(profileId) !== false;
+  }
+
+  /** UI/configuration readiness requires authenticated evidence for this exact profile. */
+  getProfileStatus(profileId: string) {
+    const profile = this.options.profiles?.[profileId];
+    const hasApiKey = !!(profile && (profile.apiKey || this.options.apiKey));
+    const connected = !this._destroyed && !!this.client && this.connectedAgents?.has(profileId) === true
+      && this._authStates.get(profileId) === true;
+    return { profileId, port: profile?.port || this.options.port || DEFAULT_PORT,
+      hasApiKey, connected, ready: hasApiKey && connected };
   }
 
   /**
@@ -317,99 +342,68 @@ class HermesHttpProvider extends PushProvider {
       ? sanitizeCliDiagnostic(`exit=${child.exitCode} signal=${child.signalCode || 'none'}: ${stderr}`) : null) };
   }
 
-  async _ensureGatewayRunning(profileId?: string): Promise<boolean> {
-    if (!profileId) {
-      this.addLog('Hermes HTTP 不可用：未绑定 profile，跳过 gateway 启动');
+  async _ensureGatewayRunning(profileId?: string, forceRestart = false): Promise<boolean> {
+    if (this._destroyed || !profileId || !this.options.profiles?.[profileId]
+      || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(profileId)) {
+      this.addLog('Hermes HTTP 不可用：处理器已停止或未绑定有效 profile');
       return false;
     }
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(profileId)) {
-      this.addLog('Hermes HTTP 不可用：拒绝将 Agent UUID 当作 profile');
-      return false;
-    }
-    if (!this.options.profiles?.[profileId]) {
-      this.addLog(`Hermes HTTP 不可用：未找到已配置 profile=${profileId}`);
-      return false;
-    }
-    // 检查 API Key 是否已配置
-    if (!this.options.profiles?.[profileId]?.apiKey && !this.options?.apiKey) {
-      this.addLog(`❌ API Key 未配置，请先到「设置 → 网关连接管理 → Hermes 连接管理」中点击「一键配置」`);
-      return false;
-    }
-    const client = this.client;
-    if (!client) return false;
-    const port = client._agentPort(profileId);
-    if (this._authStates.get(profileId) === true
-      && (this.connectedAgents === null || this.connectedAgents.has(profileId))) {
+    if (!(this.options.profiles[profileId].apiKey || this.options.apiKey) || !this.client) return false;
+    const pending = this._gatewayStarts.get(profileId);
+    if (pending) return pending;
+    const operation = this._startGateway(profileId, forceRestart);
+    this._gatewayStarts.set(profileId, operation);
+    try { return await operation; }
+    finally { if (this._gatewayStarts.get(profileId) === operation) this._gatewayStarts.delete(profileId); }
+  }
+
+  async _startGateway(profileId: string, forceRestart: boolean): Promise<boolean> {
+    const client = this.client!;
+    const generation = this._lifecycleGeneration;
+    const current = () => !this._destroyed && this.client === client && generation === this._lifecycleGeneration;
+    const ready = () => {
+      if (!current()) return false;
+      if (!this.connectedAgents) this.connectedAgents = new Set();
+      this.connectedAgents.add(profileId);
+      this._authStates.set(profileId, true);
+      this.connected = client.connected = true;
+      this.emit('status', { connected: true, enabled: this.enabled });
       return true;
-    }
-    // 先检查是否已经在运行
-    const alreadyRunning = await this._selectAuthenticatedProfileConnection(profileId);
-    if (alreadyRunning) {
-      this.connectedAgents?.add(profileId);
-      if (!this.connected) {
-        this.connected = true;
-        client.connected = true;
-        this.addLog(`🟢 Gateway 已连接 ${profileId}`);
-        this.emit('status', { connected: true, enabled: this.enabled });
-      }
-      return true;
-    }
-    this.addLog(`🔧 gateway 未运行，启动 profile=${profileId} port=${port}...`);
+    };
+    if (!forceRestart && this._authStates.get(profileId) === true
+      && (this.connectedAgents === null || this.connectedAgents.has(profileId))) return ready();
     try {
+      if (!forceRestart) {
+        const authenticated = await this._selectAuthenticatedProfileConnection(profileId);
+        if (!current()) return false;
+        if (authenticated) return ready();
+      }
+      if (!current()) return false;
+      this.addLog(`🔧 gateway ${forceRestart ? '重启' : '启动'} profile=${profileId} port=${client._agentPort(profileId)}...`);
       const startup = this._launchGateway(profileId);
-      // 等待就绪（最多 30s）
       for (let i = 0; i < 30; i++) {
         await new Promise<void>(resolve => setTimeout(resolve, 1000));
+        if (!current()) return false;
         const failure = startup.failure();
         if (failure) { this.addLog(`❌ gateway 启动失败 ${profileId}: ${failure}`); return false; }
-        const ok = await this._selectAuthenticatedProfileConnection(profileId);
-        if (ok) {
-          this.connectedAgents?.add(profileId);
-          this.connected = true;
-          client.connected = true;
-          this.addLog(`✅ gateway 已就绪 ${profileId} port=${port}`);
-          this.emit('status', { connected: true, enabled: this.enabled });
-          return true;
+        const authenticated = await this._selectAuthenticatedProfileConnection(profileId);
+        if (!current()) return false;
+        if (authenticated) {
+          this.addLog(`✅ gateway 已就绪 ${profileId} port=${client._agentPort(profileId)}`);
+          return ready();
         }
       }
       this.addLog(`❌ gateway 启动超时 ${profileId}`);
       return false;
-    } catch (e) {
-      this.addLog(`❌ gateway 启动失败 ${profileId}: ${errorMessage(e)}`);
+    } catch (error) {
+      this.addLog(`❌ gateway 启动失败 ${profileId}: ${sanitizeCliDiagnostic(errorMessage(error))}`);
       return false;
     }
   }
 
-  /**
-   * 强制重启 gateway（--replace 替换旧实例），用于 401 后重载 config.yaml 里的 key。
-   * 与 _ensureGatewayRunning 不同：跳过 ping 早返回，无条件 spawn。
-   */
+  /** 401 recovery shares the same per-profile startup and cancellation boundary. */
   async _restartGateway(profileId: string): Promise<boolean> {
-    if (!profileId) return false;
-    const client = this.client;
-    if (!client) return false;
-    let startup: ReturnType<HermesHttpProvider['_launchGateway']>;
-    this.addLog(`🔄 401: 强制重启 gateway ${profileId}（重载 config.yaml 的 key）`);
-    try {
-      startup = this._launchGateway(profileId);
-    } catch (e) {
-      this.addLog(`❌ 重启 spawn 异常 (${profileId}): ${errorMessage(e)}`);
-      return false;
-    }
-    for (let i = 0; i < 15; i++) {
-      await new Promise<void>(resolve => setTimeout(resolve, 1000));
-      const failure = startup.failure();
-      if (failure) { this.addLog(`❌ gateway 重启失败 ${profileId}: ${failure}`); return false; }
-      if (await this._selectAuthenticatedProfileConnection(profileId)) {
-        this.connectedAgents?.add(profileId);
-        this.connected = true;
-        client.connected = true;
-        this.addLog(`✅ gateway 重启就绪 ${profileId}`);
-        return true;
-      }
-    }
-    this.addLog(`❌ gateway 重启超时 ${profileId}`);
-    return false;
+    return this._ensureGatewayRunning(profileId, true);
   }
 
   /** 401 自动重启节流：首次返回 true 并标记，后续返回 false（每 agent 进程内最多 1 次）。 */
@@ -706,6 +700,9 @@ class HermesHttpProvider extends PushProvider {
    * 清理资源
    */
   async destroy(): Promise<void> {
+    this._destroyed = true;
+    this._lifecycleGeneration++;
+    this._gatewayStarts.clear();
     const affectedAgents = this.connectedAgents ? [...this.connectedAgents] : [];
     if (affectedAgents.length) {
       for (const profileId of affectedAgents) {
@@ -716,9 +713,10 @@ class HermesHttpProvider extends PushProvider {
     } else {
       this.notifyAvailability({ backendType: 'hermes', mode: 'http', available: false, reason: 'provider-stopped' });
     }
-    this._destroyed = true;
     this.enabled = false;
     this.connected = false;
+    this.connectedAgents = new Set();
+    this._authStates.clear();
     this._inflightTurns.clear();
     // kill detached gateway 子进程，避免直接调 destroy（非经 stop）时泄漏：占端口/读旧 key
     if (this._gatewayChildren) {
@@ -778,13 +776,6 @@ class HermesHttpProvider extends PushProvider {
   }
 
   async stop() {
-    // 停掉本 provider 自己 spawn 的 gateway 进程（detached，不随 Lite 退出而死，否则泄漏）
-    if (this._gatewayChildren) {
-      for (const child of this._gatewayChildren.values()) {
-        try { _killTree(child.pid); } catch (_) {}
-      }
-      this._gatewayChildren.clear();
-    }
     try { await this.destroy(); } catch (_) {}
   }
 

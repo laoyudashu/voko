@@ -15,7 +15,7 @@ const providers = [];
 function createProvider(database = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-ws-config-'));
   const configPath = path.join(dir, 'openclaw.json');
-  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local' } }));
+  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local', auth: { mode: 'token', token: 'fixture-token' } } }));
   const previous = process.env.OPENCLAW_CONFIG_PATH;
   process.env.OPENCLAW_CONFIG_PATH = configPath;
   try {

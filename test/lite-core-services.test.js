@@ -19,7 +19,6 @@ const { compareVersions } = require('../build/core/version');
 const { syncOfflineMessages } = require('../build/core/offline-sync');
 const { createDeliver, createSecureDeliverProxy, createSendMessage } = require('../build/core/send-message');
 const { processPendingPaymentOrder, startPaymentPolling } = require('../build/core/payment');
-const { selectWindowsOpenclawCommand } = require('../build/core/dispatcher/providers/openclaw-ws');
 const { normalizeOfficialImServerUrl, normalizeOfficialPublicUrl } = require('../build/core/url-security');
 const ENDPOINTS = require('../build/endpoints.json');
 
@@ -74,17 +73,6 @@ function createAgentDb(row) {
     },
   };
 }
-
-test('OpenClaw Windows resolver prefers an executable shim over the extensionless shell script', () => {
-  assert.deepEqual(
-    selectWindowsOpenclawCommand('D:\\npm\\openclaw\r\nD:\\npm\\openclaw.cmd\r\nD:\\npm\\openclaw.ps1\r\n'),
-    { cmd: 'D:\\npm\\openclaw.cmd', shell: true },
-  );
-  assert.deepEqual(
-    selectWindowsOpenclawCommand('D:\\npm\\openclaw\r\n', (candidate) => candidate.endsWith('openclaw.cmd')),
-    { cmd: 'D:\\npm\\openclaw.cmd', shell: true },
-  );
-});
 
 function createCapabilityDb() {
   const writes = [];

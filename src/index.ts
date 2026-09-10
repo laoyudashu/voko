@@ -891,16 +891,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     if (!h) return res.json({ initialized: false, handler: null });
     try {
       const st = typeof h.getStatus === 'function' ? h.getStatus() : {};
-      let profiles = {};
-      let apiKey = h.options?.apiKey || '';
-      try {
-        const hermesCfg = databaseAPI.getConfigFromDb('hermes_config') || {};
-        profiles = Object.fromEntries(Object.entries(hermesCfg?.profiles || {}).map(([profileId, profile]: [string, any]) => [
-          profileId,
-          { port: profile?.port || null, hasApiKey: !!profile?.apiKey || !!hermesCfg?.apiKey },
-        ]));
-        apiKey = apiKey || hermesCfg?.apiKey || '';
-      } catch (_: any) {}
+      const profiles = st.profiles || {};
       const connectedAgents = h.connectedAgents ? Array.from(h.connectedAgents) : [];
       res.json({
         initialized: true,
@@ -910,7 +901,7 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
           clientReady: st.clientReady || false,
           host: h.options?.host || '127.0.0.1',
           port: h.options?.port || 8642,
-          hasApiKey: !!apiKey,
+          hasApiKey: !!st.hasApiKey,
           connectedAgents,
           profiles,
           logs: st.logs || [],
@@ -924,8 +915,14 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     const h = (global as any).__hermesHandler;
     if (!h) return res.json({ success: false, error: 'Hermes 未初始化' });
     try {
-      if (typeof h._ensureGatewayRunning === 'function') await h._ensureGatewayRunning();
-      res.json({ success: true });
+      const agentId = req.body?.agentId;
+      const profileId = req.body?.profileId || (agentId && (h._profileForAgent(agentId)
+        || (Object.hasOwn(h.options?.profiles || {}, agentId) ? agentId : null)));
+      const targets = profileId ? [profileId] : req.body?.agentId ? [] : Object.keys(h.options?.profiles || {});
+      if (!targets.length) return res.json({ success: false, error: '未绑定 Hermes Profile' });
+      const results = [];
+      for (const id of targets) results.push({ profileId: id, ready: await h._ensureGatewayRunning(id) });
+      res.json({ success: results.every(result => result.ready), profiles: results });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
   app.post('/api/hermes/test-connection', async (req?: any, res?: any) => {
@@ -933,16 +930,21 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     if (!h || !h.client) return res.json({ success: false, error: 'Hermes 未连接' });
     try {
       await h.healthCheck();
-      res.json({ success: true });
+      const profiles = Object.keys(h.options?.profiles || {}).map(id => h.getProfileStatus(id));
+      res.json({ success: profiles.length > 0 && profiles.every(profile => profile.ready), profiles });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
   app.post('/api/hermes/test-agent', async (req?: any, res?: any) => {
     const h = (global as any).__hermesHandler;
-    const { agentId } = req.body || {};
+    const { agentId, profileId: requestedProfile } = req.body || {};
     if (!h || !h.client) return res.json({ success: false, error: 'Hermes 未连接' });
     try {
-      const result = await h.client.ping(agentId);
-      res.json({ success: true, alive: result?.alive || false });
+      const profileId = requestedProfile || h._profileForAgent(agentId)
+        || (Object.hasOwn(h.options?.profiles || {}, agentId) ? agentId : null);
+      if (!profileId || !h.options?.profiles?.[profileId]) return res.json({ success: false, alive: false, error: '未绑定 Hermes Profile' });
+      await h.healthCheck();
+      const alive = h.getProfileStatus(profileId).ready;
+      res.json({ success: alive, alive, profileId });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
@@ -959,16 +961,17 @@ async function startTransport(args?: any, mcpServer?: any, agentManager?: any, d
     const o = (global as any).__openclawHandler;
     if (!o) return res.json({ success: false, error: 'OpenClaw 未初始化' });
     try {
-      if (typeof o.reconnect === 'function') await o.reconnect();
-      else if (typeof o._ensureGatewayRunning === 'function') await o._ensureGatewayRunning();
-      res.json({ success: true });
+      await o.start();
+      const status = o.getStatus();
+      res.json({ success: !!status.connected && !status.configurationError,
+        error: status.connected ? null : status.configurationDetail || status.startupFailure?.message || 'WebSocket 尚未通过认证' });
     } catch (e: any) { res.json({ success: false, error: e.message }); }
   });
 
   // ── 网关通信模式检测 + 可选配置（/agent/add 创建时调用）──
   const gatewaySetup = require('./core/gateway-setup');
   app.get('/api/gateway/check', (req?: any, res?: any) => {
-    try { res.json(gatewaySetup.checkGateway(req.query.backend, databaseAPI)); }
+    try { res.json(gatewaySetup.checkGateway(req.query.backend, databaseAPI, req.query.profileId)); }
     catch (e: any) { res.json({ ready: false, error: e.message }); }
   });
   app.post('/api/gateway/setup', (req?: any, res?: any) => {
@@ -2854,7 +2857,8 @@ function createHandlers({ db, databaseAPI, hermesConfig = {}, onAgentReply, onTu
     openclawHandler = instantiateProviderTransport(getProviderTransport('openclaw-ws'), providerFactoryContext);
     providers['openclaw-ws'] = openclawHandler;
     const status = openclawHandler.getStatus();
-    if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
+    if (status.configurationDetail) console.warn(`[Lite] ${status.configurationDetail}`);
+    else if (!status.hasToken) console.warn(t('cli.index.gateway_token_needed'));
     console.log('[Lite] OpenClaw WebSocket 处理器已创建（CLI fallback 由 Dispatcher Catalog 管理）');
   } catch (err: any) {
     console.error('[Lite] OpenClaw 处理器创建失败:', err.message);
@@ -3115,8 +3119,8 @@ function startHeartbeat(db?: any, agentManager?: any, openclawHandler?: any, her
       // ── OpenClaw gateway 恢复 ──
       if (openclawHandler) {
         const ocStatus = openclawHandler.getStatus?.();
-        if (!ocStatus?.connected && !ocStatus?.connecting && openclawHandler._ensureGatewayRunning) {
-          openclawHandler._ensureGatewayRunning();
+        if (ocStatus?.enabled && !ocStatus?.configurationError && !ocStatus?.connected && !ocStatus?.connecting) {
+          void openclawHandler.start();
         }
       }
 

@@ -1372,6 +1372,9 @@ class RegistrationOrchestrator {
       session.provider.type,
       session.provider.type === 'zeroclaw'
         ? { ...zeroclawReadiness(session.provider.instanceId), instanceId: session.provider.instanceId }
+        : ['openclaw', 'hermes'].includes(session.provider.type)
+          ? (this.options.gatewaySetup || require('./gateway-setup')).checkGateway(
+            session.provider.type, this.db ? dbConfigAdapter(this.db) : null, session.provider.instanceId)
         : undefined,
     );
     session.status = 'delivery_selection_required';
@@ -1511,7 +1514,9 @@ class RegistrationOrchestrator {
           mode,
           backup: true,
           rollback: true,
-          message: '将备份并更新本机 Provider 配置；只有明确 approved=true 后才会执行。',
+          message: provider === 'openclaw'
+            ? '将备份 OpenClaw 配置并启用本地 Token 认证（none 将切换为 token）；已有字符串 Token 保持不变，缺少时才生成。随后验证 Gateway 和 WebSocket 连接。其他认证模式不自动转换；只有主人明确确认后才执行。'
+            : '将备份并更新本机 Provider 配置；只有明确 approved=true 后才会执行。',
         },
         nextAction: { type: 'configure_delivery', required: ['registrationId', 'mode', 'approved', 'approvalToken'] },
       };
@@ -1545,7 +1550,7 @@ class RegistrationOrchestrator {
     delete session.pendingApproval;
     this._save(session);
     const gatewaySetup = this.options.gatewaySetup || require('./gateway-setup');
-    const task = gatewaySetup.startSetup(provider, session.provider?.instanceId, this.db ? dbConfigAdapter(this.db) : null);
+    const task = gatewaySetup.startSetup(provider, session.provider?.instanceId, this.db ? dbConfigAdapter(this.db) : null, { allowTokenModeSwitch: provider === 'openclaw' });
     session.configurationTaskId = task.taskId;
     this._save(session);
     return { success: true, registrationId: session.id, status: 'configuration_started', ...task };
@@ -1560,11 +1565,14 @@ class RegistrationOrchestrator {
     const task = gatewaySetup.getTask(taskId);
     if (!task) return { success: false, error: '配置任务不存在或已过期' };
     if (task.done && task.ok) {
+      const gateway = gatewaySetup.checkGateway(session.provider?.type,
+        this.db ? dbConfigAdapter(this.db) : null, session.provider?.instanceId);
       const configuredMode = session.provider?.type === 'openclaw' ? 'websocket'
         : session.provider?.type === 'hermes' ? 'http' : null;
       if (configuredMode) {
         session.deliveryModes = session.deliveryModes.map((mode) => mode.mode === configuredMode
-          ? { ...mode, status: 'ready', selected: true, action: 'test' }
+          ? { ...mode, status: gateway.ready ? 'ready' : 'configuration_required',
+            selected: !!gateway.ready, action: gateway.ready ? 'test' : 'configure' }
           : mode);
         this._save(session);
       }
@@ -1668,7 +1676,7 @@ class RegistrationOrchestrator {
         : '未检测到 DeepSeek Harness CLI。';
     } else if ((provider === 'openclaw' && mode === 'websocket') || (provider === 'hermes' && mode === 'http')) {
       const status = (this.options.gatewaySetup || require('./gateway-setup'))
-        .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null);
+        .checkGateway(provider, this.db ? dbConfigAdapter(this.db) : null, session.provider?.instanceId);
       ready = !!status.ready;
       detail = status.detail || '';
     } else {
