@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const { HermesApiClient } = require('../../adapters/hermes-api-client');
 const { getHermesProfilePathCandidates } = require('../../hermes-paths');
+const { sanitizeCliDiagnostic } = require('../../adapters/cli-spawner');
 const { resolveHermesCommand } = require('../hermes-command');
 const { PushProvider } = require('../base-provider');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
@@ -294,8 +295,28 @@ class HermesHttpProvider extends PushProvider {
   }
 
   /**
-   * 确保 Hermes gateway 在运行，如未运行则自动启动
+   * Start one owned gateway and retain bounded diagnostics for readiness checks.
    */
+  _launchGateway(profileId: string) {
+    const child: ChildProcess = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
+      stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
+      detached: process.platform !== 'win32', env: { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' },
+    });
+    let stderr = '', failure = '';
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-8192); });
+    child.on('error', (error: Error) => { failure = sanitizeCliDiagnostic(error.message); });
+    child.on('close', (code, signal) => {
+      failure ||= sanitizeCliDiagnostic(`exit=${code} signal=${signal || 'none'}: ${stderr}`);
+      if (this._gatewayChildren?.get(profileId) === child) this._gatewayChildren.delete(profileId);
+    });
+    child.unref();
+    (child.stderr as any)?.unref?.();
+    if (!this._gatewayChildren) this._gatewayChildren = new Map<string, ChildProcess>();
+    this._gatewayChildren.set(profileId, child);
+    return { failure: () => failure || (child.exitCode !== null || child.signalCode
+      ? sanitizeCliDiagnostic(`exit=${child.exitCode} signal=${child.signalCode || 'none'}: ${stderr}`) : null) };
+  }
+
   async _ensureGatewayRunning(profileId?: string): Promise<boolean> {
     if (!profileId) {
       this.addLog('Hermes HTTP 不可用：未绑定 profile，跳过 gateway 启动');
@@ -335,20 +356,12 @@ class HermesHttpProvider extends PushProvider {
     }
     this.addLog(`🔧 gateway 未运行，启动 profile=${profileId} port=${port}...`);
     try {
-      const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
-        stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32', env: cleanEnv
-      });
-      child.on('error', (err: Error) => {
-        this.addLog(`❌ gateway 进程启动失败 (${profileId}): ${err.message}`);
-      });
-      child.unref();
-      // 记录 child，供 stop() 清理 gateway，避免 Lite/退出后 detached 进程泄漏
-      if (!this._gatewayChildren) this._gatewayChildren = new Map<string, ChildProcess>();
-      this._gatewayChildren.set(profileId, child);
+      const startup = this._launchGateway(profileId);
       // 等待就绪（最多 30s）
       for (let i = 0; i < 30; i++) {
         await new Promise<void>(resolve => setTimeout(resolve, 1000));
+        const failure = startup.failure();
+        if (failure) { this.addLog(`❌ gateway 启动失败 ${profileId}: ${failure}`); return false; }
         const ok = await this._selectAuthenticatedProfileConnection(profileId);
         if (ok) {
           this.connectedAgents?.add(profileId);
@@ -375,22 +388,18 @@ class HermesHttpProvider extends PushProvider {
     if (!profileId) return false;
     const client = this.client;
     if (!client) return false;
+    let startup: ReturnType<HermesHttpProvider['_launchGateway']>;
     this.addLog(`🔄 401: 强制重启 gateway ${profileId}（重载 config.yaml 的 key）`);
     try {
-      const cleanEnv = { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '' };
-      const child = spawn(resolveHermesCommand(), ['--profile', profileId, 'gateway', 'run', '--replace'], {
-        stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32', env: cleanEnv
-      });
-      child.on('error', (err: Error) => this.addLog(`❌ 重启 spawn 失败 (${profileId}): ${err.message}`));
-      child.unref();
-      if (!this._gatewayChildren) this._gatewayChildren = new Map<string, ChildProcess>();
-      this._gatewayChildren.set(profileId, child);
+      startup = this._launchGateway(profileId);
     } catch (e) {
       this.addLog(`❌ 重启 spawn 异常 (${profileId}): ${errorMessage(e)}`);
       return false;
     }
     for (let i = 0; i < 15; i++) {
       await new Promise<void>(resolve => setTimeout(resolve, 1000));
+      const failure = startup.failure();
+      if (failure) { this.addLog(`❌ gateway 重启失败 ${profileId}: ${failure}`); return false; }
       if (await this._selectAuthenticatedProfileConnection(profileId)) {
         this.connectedAgents?.add(profileId);
         this.connected = true;

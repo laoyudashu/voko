@@ -15,6 +15,20 @@ function resolveHermesCommand(env: NodeJS.ProcessEnv = process.env): string {
   const configured = String(env.VOKO_HERMES_BIN || '').trim();
   if (configured) return configured;
 
+  // Respect the user's active installation before probing fallback locations.
+  const locator = process.platform === 'win32'
+    ? path.join(env.SystemRoot || process.env.SystemRoot || 'C:/Windows', 'System32', 'where.exe')
+    : '/usr/bin/which';
+  const lookup = spawnSync(locator, ['hermes'], {
+    env, encoding: 'utf8', timeout: 3000, windowsHide: true,
+  });
+  if (lookup.status === 0) {
+    const selected = String(lookup.stdout || '').split(/\r?\n/).find((file: string) => {
+      try { return fs.statSync(file.trim()).isFile(); } catch { return false; }
+    });
+    if (selected) return selected.trim();
+  }
+
   const homes = [...new Set([
     env.HOME,
     env.USERPROFILE,

@@ -226,10 +226,13 @@ class DuMateHttpProvider extends PushProvider {
       state!.child = child;
       state!.stderr = '';
       child.stderr.on('data', (chunk) => { state!.stderr = (state!.stderr + String(chunk)).slice(-4000); });
-      child.on('error', () => {});
+      child.stdout.resume();
+      let startupError: NodeJS.ErrnoException | null = null;
+      child.on('error', (error: NodeJS.ErrnoException) => { startupError = error; });
       child.on('exit', () => { if (state!.child === child) state!.child = null; });
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
+        if (startupError) throw deliveryError(`DuMate serve failed to start: ${(startupError as NodeJS.ErrnoException).code || 'SPAWN_FAILED'}`);
         if (child.exitCode !== null) throw deliveryError(`DuMate serve exited with code ${child.exitCode}: ${state!.stderr.trim()}`);
         try {
           if ((await this._fetch(state!, '/global/health', {}, 1500)).ok) {
