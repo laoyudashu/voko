@@ -1,6 +1,6 @@
 'use strict';
 
-const CryptoJS = require('crypto-js');
+const { createCipheriv, createDecipheriv } = require('node:crypto');
 
 class CryptoContext {
   constructor() {
@@ -15,16 +15,19 @@ class CryptoContext {
 
   _settings() {
     if (!this.aesKey || !this.aesIV) throw new Error('Encryption context is not configured');
+    const key = Buffer.from(this.aesKey, 'utf8');
     return {
-      keySize: 128 / 8,
-      iv: CryptoJS.enc.Utf8.parse(this.aesIV),
-      mode: CryptoJS.mode.CBC,
-      padding: CryptoJS.pad.Pkcs7,
+      algorithm: `aes-${key.length * 8}-cbc`,
+      key,
+      iv: Buffer.from(this.aesIV, 'utf8'),
     };
   }
 
   encryptString(value) {
-    return CryptoJS.AES.encrypt(CryptoJS.enc.Utf8.parse(value), CryptoJS.enc.Utf8.parse(this.aesKey), this._settings()).toString();
+    const { algorithm, key, iv } = this._settings();
+    const cipher = createCipheriv(algorithm, key, iv);
+    // Node's default padding is PKCS7, matching the IM wire format.
+    return Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]).toString('base64');
   }
 
   encryptBytes(value) {
@@ -33,9 +36,12 @@ class CryptoContext {
 
   decryptBytes(value) {
     const ciphertext = Buffer.from(value).toString('latin1');
-    const base64 = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Base64.parse(ciphertext));
-    const clear = CryptoJS.AES.decrypt(base64, CryptoJS.enc.Utf8.parse(this.aesKey), this._settings());
-    return Uint8Array.from(Buffer.from(clear.toString(CryptoJS.enc.Utf8), 'utf8'));
+    const { algorithm, key, iv } = this._settings();
+    const decipher = createDecipheriv(algorithm, key, iv);
+    const clear = Buffer.concat([decipher.update(ciphertext, 'base64'), decipher.final()]);
+    // Preserve the SDK's text payload contract and reject malformed UTF-8.
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(clear);
+    return Uint8Array.from(Buffer.from(text, 'utf8'));
   }
 }
 
