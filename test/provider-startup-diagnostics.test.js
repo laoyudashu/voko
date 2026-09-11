@@ -13,8 +13,12 @@ test('Hermes respects PATH and explicit selection before fallback installations'
   const command = path.join(root, process.platform === 'win32' ? 'hermes.exe' : 'hermes');
   fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const env = { ...process.env, VOKO_HERMES_BIN: '', PATH: root };
-  // Windows CI may return the long path for an 8.3 TEMP directory alias.
-  assert.equal(fs.realpathSync(resolveHermesCommand(env)), fs.realpathSync(command));
+  // Windows 8.3 aliases can survive realpathSync; compare actual file identity.
+  const selected = fs.statSync(resolveHermesCommand(env), { bigint: true });
+  const expected = fs.statSync(command, { bigint: true });
+  assert.ok(expected.ino > 0n);
+  assert.equal(selected.dev, expected.dev);
+  assert.equal(selected.ino, expected.ino);
   assert.equal(resolveHermesCommand({ ...env, VOKO_HERMES_BIN: '/explicit/missing/hermes' }), '/explicit/missing/hermes');
 });
 
