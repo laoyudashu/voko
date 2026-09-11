@@ -4,6 +4,17 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
+## 0.5.6 - Unreleased
+
+- Unify Hermes and OpenClaw Gateway startup and authenticated readiness, respect the selected runtime, and report startup failures instead of treating an open port as a working connection.
+- Preserve Hermes profile-specific authentication and routing, safely update Gateway YAML configuration, and bound recovery across shutdown, key refresh, and reconnect.
+- Mark Hermes replies arriving after Provider shutdown or replacement as outcome unknown; do not report completion without delivering the reply or automatically replay submitted work.
+- Discover Hermes profiles from local configuration before invoking the native CLI, avoiding repeated startup delays during registration, especially on Windows.
+- Restore WorkBuddy runtime verification and tighten Provider routing and submission boundaries.
+- Replace the deprecated crypto-js dependency with Node.js crypto while preserving the IM AES-CBC/PKCS7 text wire format; this does not change the E2EE protocol.
+- Update the locked transitive Hono dependency to 4.13.7 to address dependency audit findings.
+- See [release notes](docs/releases/0.5.6.md) and the [Hermes guide](docs/providers/hermes.md) for compatibility and verification limits.
+
 ## 0.5.5 - 2026-09-08
 
 - Integrate collaboration chat, tasks, board, assets, members, and settings in the local Web UI. Separate public announcements from member-only instructions and allow announcements to be cleared.
