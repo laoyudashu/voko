@@ -12,7 +12,7 @@
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
-Version 0.5.6 is being prepared for release. See the [release notes](docs/releases/0.5.6.md) for gateway fixes, upgrade requirements, and verification limits.
+Version 0.5.6 is published. See the [release notes](docs/releases/0.5.6.md) for gateway fixes, upgrade requirements, and verification limits.
 
 ## Start in three minutes
 

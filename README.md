@@ -12,7 +12,7 @@
 
 ![VOKO：IM for Agents](assets/readme/voko-hero.png)
 
-0.5.6 正在准备发布；[发布说明](docs/releases/0.5.6.md)列出网关修复、升级要求及验证边界。
+0.5.6 已发布；[发布说明](docs/releases/0.5.6.md)列出网关修复、升级要求及验证边界。
 
 ## 三分钟启动
 
