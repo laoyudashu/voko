@@ -95,8 +95,12 @@ export function resolveWorkBuddyRuntime(options: { configuredCommand?: string; e
   const platform = options.platform || process.platform;
   const canCache = !options.configuredCommand && !options.env && !options.platform && !options.homeDir;
   if (canCache && cachedDefaultRuntime) return { ...cachedDefaultRuntime, argvPrefix: [...cachedDefaultRuntime.argvPrefix] };
-  const configured = existingFile(options.configuredCommand || env.VOKO_WORKBUDDY_CLI);
-  if (configured) return runtimeFor(configured, 'configured');
+  const requested = String(options.configuredCommand || env.VOKO_WORKBUDDY_CLI || '').trim();
+  if (requested) {
+    const configured = existingFile(requested);
+    return configured ? runtimeFor(configured, 'configured')
+      : { command: null, argvPrefix: [], source: 'unavailable', desktopVersion: null };
+  }
 
   const pathRuntime = resolveFromPath(env, platform);
   if (pathRuntime) {

@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const net = require('net');
 const os = require('os');
 const { PushProvider } = require('../base-provider');
-const { runCli, killTree, checkCliAvailable } = require('../../adapters/cli-spawner');
+const { runCli, killTree, checkCliAvailable, sanitizeCliDiagnostic } = require('../../adapters/cli-spawner');
 const { createParser } = require('../../adapters/cli-parsers');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
@@ -110,6 +110,11 @@ class OpenCodeAttachProvider extends PushProvider {
         stdio: ['ignore', 'pipe', 'pipe'],
       }) as ChildProcessWithoutNullStreams;
       this._server = child;
+      let startupError: Error | null = null;
+      let stderr = '';
+      child.stdout.resume();
+      child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000); });
+      child.on('error', (error: Error) => { startupError = error; });
       child.on('exit', () => {
         this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: false, reason: 'serve-exit' });
         if (this._server === child) {
@@ -120,11 +125,13 @@ class OpenCodeAttachProvider extends PushProvider {
       });
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
-        if (child.exitCode !== null) throw new Error(`OpenCode serve exited with code ${child.exitCode}`);
+        if (startupError) throw new Error(`OpenCode serve failed to start: ${sanitizeCliDiagnostic((startupError as Error).message)}`);
+        if (child.exitCode !== null || child.signalCode) throw new Error(`OpenCode serve exited with code ${child.exitCode} signal ${child.signalCode || 'none'}: ${sanitizeCliDiagnostic(stderr)}`);
         try {
           const auth = Buffer.from(`opencode:${this._password}`).toString('base64');
           const response = await fetch(`http://127.0.0.1:${this._port}/global/health`, {
             headers: { Authorization: `Basic ${auth}` },
+            signal: AbortSignal.timeout(2000),
           });
           if (response.ok) {
             this.notifyAvailability({ backendType: 'opencode', mode: 'attach', available: true, reason: 'serve-ready' });
@@ -138,7 +145,8 @@ class OpenCodeAttachProvider extends PushProvider {
       (error as any).deliveryOutcome = 'not_delivered';
       throw error;
     })().finally(() => { this._serverPromise = null; });
-    return this._serverPromise;
+    try { await this._serverPromise; }
+    catch (error) { this._disposeFailedServer(); throw error; }
   }
 
   _disposeFailedServer(): void {

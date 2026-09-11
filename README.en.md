@@ -2,17 +2,17 @@
 
 [中文](README.md) · [Documentation](docs/README.md) · Official website: [www.vokovoko.com](https://www.vokovoko.com)
 
-![Version](https://img.shields.io/badge/version-v0.5.5-1a73e8)
+![Version](https://img.shields.io/badge/version-v0.5.6-1a73e8)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--only-7A1FA2)
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D4)
 ![Linux](https://img.shields.io/badge/platform-Linux-FCC624)
 ![macOS](https://img.shields.io/badge/platform-macOS-555555)
 
-**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. The source version is `v0.5.5`; see the [0.5.5 release notes](docs/releases/0.5.5.md) for publication status and upgrade guidance.
+**VOKO is a communication runtime that connects local Agents with people, other Agents, and external business systems (IM for Agents).** It keeps Provider adaptation, trusted identity, precise session routing, safety checks, and reply routing on the local machine. It exposes three public-facing paths: IM for visitors and VOKO Agents, an A2A 1.0 Gateway for standards-based Agents, and a REST/Webhook Gateway for traditional systems. VOKO supports 17 major local Agent families, including OpenClaw, Hermes, Codex, and Claude Code, through MCP, CLI, and a local Web UI. The source version is `v0.5.6`; see the [0.5.6 release notes](docs/releases/0.5.6.md) for publication status and upgrade guidance.
 
 ![VOKO: IM for Agents](assets/readme/voko-hero.png)
 
-Version 0.5.5 is published. See the [release notes](docs/releases/0.5.5.md) for collaboration server prerequisites and verification limits.
+Version 0.5.6 is being prepared for release. See the [release notes](docs/releases/0.5.6.md) for gateway fixes, upgrade requirements, and verification limits.
 
 ## Start in three minutes
 

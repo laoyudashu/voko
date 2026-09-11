@@ -43,7 +43,7 @@ function gateway(t, scenario) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-gateway-recovery-'));
   const marker = path.join(dir, 'attempt'), ready = path.join(dir, 'ready');
   const configPath = path.join(dir, 'openclaw.json');
-  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local' } }));
+  fs.writeFileSync(configPath, JSON.stringify({ gateway: { mode: 'local', auth: { mode: 'token', token: 'gateway-recovery-test' } } }));
   const previous = process.env.OPENCLAW_CONFIG_PATH;
   process.env.OPENCLAW_CONFIG_PATH = configPath;
   let provider;

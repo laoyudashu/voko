@@ -35,9 +35,85 @@ function wsFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-oc-ws-'));
   const Ws = load('core/dispatcher/providers/openclaw-ws.js', { os: { ...os, homedir: () => root } });
   const p = new Ws(null, null);
+  p.ws = { readyState: 1, removeAllListeners() {}, close() { this.readyState = 3; } };
+  fs.mkdirSync(path.dirname(p.configPath), { recursive: true });
+  fs.writeFileSync(p.configPath, JSON.stringify({ gateway: { mode: 'local', auth: { mode: 'token', token: 'fixture-token' } } }));
+  p.loadConfig();
   t.after(() => { p.destroy(); fs.rmSync(root, { recursive: true, force: true }); });
   return p;
 }
+
+test('OpenClaw reports incompatible auth separately from a missing token and never starts', async t => {
+  const p = wsFixture(t);
+  fs.mkdirSync(path.dirname(p.configPath), { recursive: true });
+  let starts = 0;
+  p._ensureGatewayRunning = async () => { starts++; return true; };
+  for (const [auth, code, detail] of [
+    [{ mode: 'none', token: 'existing-secret' }, 'OPENCLAW_AUTH_SETUP_UNSUPPORTED', /none/],
+    [{ mode: 'password', password: 'existing-secret' }, 'OPENCLAW_AUTH_SETUP_UNSUPPORTED', /password/],
+    [{ mode: 'token' }, 'OPENCLAW_TOKEN_MISSING', /gateway.auth.token/],
+  ]) {
+    const original = JSON.stringify({ gateway: { mode: 'local', auth } });
+    fs.writeFileSync(p.configPath, original);
+    p.loadConfig();
+    assert.equal(p.getStatus().configurationError, code);
+    assert.match(p.getStatus().configurationDetail, detail);
+    assert.doesNotMatch(p.getStatus().configurationDetail, /existing-secret/);
+    await p.start();
+    assert.equal(fs.readFileSync(p.configPath, 'utf8'), original);
+  }
+  assert.equal(starts, 0);
+  fs.writeFileSync(p.configPath, '{broken');
+  p.loadConfig();
+  assert.equal(p.getStatus().configurationError, 'OPENCLAW_CONFIG_UNREADABLE');
+  fs.writeFileSync(p.configPath, JSON.stringify({ gateway: { auth: { mode: 'token', token: 'valid-token' } } }));
+  p.loadConfig();
+  assert.equal(p.getStatus().configurationError, null);
+  assert.equal(p.getStatus().configurationDetail, null);
+});
+
+for (const approved of [false, true]) {
+  test(`OpenClaw none-to-token switch requires explicit approval (${approved})`, async t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-oc-auth-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const dir = path.join(root, '.openclaw'); fs.mkdirSync(dir);
+    const file = path.join(dir, 'openclaw.json');
+    const original = JSON.stringify({ gateway: { mode: 'local', port: 18888, auth: { mode: 'none', token: 'keep-token' } }, agents: { list: [] } });
+    fs.writeFileSync(file, original);
+    const handler = { getStatus: () => ({ hasToken: true, connected: true }), start: async () => {} };
+    const setup = load('core/gateway-setup.js', { os: { ...os, homedir: () => root } }, {
+      global: { __openclawHandler: handler }, setTimeout: fn => { queueMicrotask(fn); return 0; },
+    });
+    const { taskId } = setup.startSetup('openclaw', null, null, { allowTokenModeSwitch: approved });
+    for (let i = 0; i < 30 && !setup.getTask(taskId).done; i++) await new Promise(r => setImmediate(r));
+    assert.equal(setup.getTask(taskId).ok, approved);
+    if (!approved) { assert.equal(fs.readFileSync(file, 'utf8'), original); return; }
+    const result = JSON.parse(fs.readFileSync(file));
+    assert.equal(result.gateway.auth.mode, 'token');
+    assert.equal(result.gateway.auth.token, 'keep-token');
+    assert.equal(result.gateway.port, 18888);
+    assert.deepEqual(result.agents, { list: [] });
+    const backup = fs.readdirSync(dir).find(name => name.startsWith('openclaw.json.bak.'));
+    assert.ok(backup);
+    assert.equal(fs.readFileSync(path.join(dir, backup), 'utf8'), original);
+  });
+}
+
+test('OpenClaw setup does not report success when WS authentication never connects', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-oc-unconnected-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, '.openclaw'); fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'openclaw.json'), JSON.stringify({ gateway: { mode: 'local', auth: { mode: 'token', token: 'keep-token' } } }));
+  const setup = load('core/gateway-setup.js', { os: { ...os, homedir: () => root } }, {
+    global: { __openclawHandler: { getStatus: () => ({ hasToken: true, connected: false }), start: async () => {} } },
+    setTimeout: fn => { queueMicrotask(fn); return 0; },
+  });
+  const { taskId } = setup.startSetup('openclaw');
+  for (let i = 0; i < 30 && !setup.getTask(taskId).done; i++) await new Promise(r => setImmediate(r));
+  assert.equal(setup.getTask(taskId).done, true);
+  assert.equal(setup.getTask(taskId).ok, false);
+  assert.match(setup.getTask(taskId).error, /OPENCLAW_WS_NOT_CONNECTED/);
+});
 
 test('unchanged OpenClaw capability refresh does not invalidate a preflight', () => {
   const db = new DatabaseSync(':memory:');
@@ -333,7 +409,7 @@ for (const fixture of contracts.versions) {
     await p._acquireAgentTurn('a', 'turn-fixture');
     const key = fixture.chatFinal.payload.sessionKey;
     p._vokoAgentBySession.set(key.toLowerCase(), 'a');
-    p.sendChatSend(key, 'test', { turnId: 'turn-fixture' });
+    await p.sendChatSend(key, 'test', { turnId: 'turn-fixture' });
     await p.handleMessage({ ...fixture.chatAccepted, id: sent.id });
     await p.handleMessage(fixture.chatFinal);
     assert.equal(replies.length, 1); assert.equal(replies[0].turnId, 'turn-fixture');
@@ -360,6 +436,7 @@ test('unknown Gateway release keeps protocol compatibility without inheriting na
 
 test('removing Gateway config invalidates previously loaded authentication', t => {
   const p = wsFixture(t);
+  fs.unlinkSync(p.configPath);
   p.authToken = 'fixture-token'; p.connected = true;
   assert.equal(p.loadConfig(), false);
   assert.equal(p.authToken, null); assert.equal(p.connected, false);

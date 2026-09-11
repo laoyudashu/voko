@@ -109,13 +109,13 @@ test('Hermes HTTP provider refreshes the selected profile key after a 401', asyn
     _agentPort() { return 8643; },
     async ping() { return true; },
     setProfile(profileId, profile) { this.profiles[profileId] = profile; },
-    async authenticate(profileId) { return this.profiles[profileId].apiKey === 'new-key'; },
+    async authenticate(profileId, connection) { return connection.apiKey === 'new-key'; },
     async chat(profileId, sessionId, visitorId) {
       attempts++;
       assert.equal(profileId, 'profile-a');
       assert.equal(sessionId, 'hermes:agent-a:visitor');
       assert.equal(visitorId, 'visitor');
-      if (attempts === 1) throw new Error('HTTP 401: invalid key');
+      if (attempts === 1) throw Object.assign(new Error('HTTP 401: invalid key'), { statusCode: 401 });
       assert.equal(this.profiles['profile-a'].apiKey, 'new-key');
       return { reply: 'ok', runId: 'run-1' };
     },
@@ -211,7 +211,7 @@ test('Hermes HTTP provider selects the first candidate that passes authenticated
   provider.client = {
     profiles: {},
     setProfile(profileId, profile) { this.profiles[profileId] = profile; },
-    async authenticate(profileId) { return this.profiles[profileId].apiKey === 'valid-key'; },
+    async authenticate(profileId, connection) { return connection.apiKey === 'valid-key'; },
   };
 
   assert.equal(await provider._selectAuthenticatedProfileConnection('psychologist'), true);
@@ -388,7 +388,7 @@ test('Hermes HTTP does not retry an uncertain failure after a refreshed key', as
     destroy() {},
     async chat() {
       chats++;
-      if (chats === 1) throw new Error('HTTP 401: stale key');
+      if (chats === 1) throw Object.assign(new Error('HTTP 401: stale key'), { statusCode: 401 });
       throw new Error('request timed out');
     },
   };

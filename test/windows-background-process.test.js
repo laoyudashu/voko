@@ -28,11 +28,14 @@ test('background provider processes do not detach into a Windows console', () =>
     'dispatcher/providers/hermes-http.ts',
     'dispatcher/providers/openclaw-ws.ts',
     'dispatcher/providers/opencode-attach.ts',
-    'gateway-setup.js',
   ]) {
     const text = source(relativePath);
     assert.match(text, /windowsHide:\s*true/, relativePath);
   }
+});
+
+test('gateway configuration delegates process startup to the guarded Providers', () => {
+  assert.doesNotMatch(source('gateway-setup.js'), /require\(['"](?:node:)?(?:child_process|cross-spawn)['"]\)|\b(?:spawn|execFile|execFileSync|exec|execSync)\s*\(/);
 });
 
 test('Windows process-tree cleanup is also hidden', () => {

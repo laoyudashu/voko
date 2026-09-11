@@ -67,7 +67,7 @@ class HermesApiClient extends EventEmitter {
     this.host = options.host || DEFAULT_HOST;
     this.port = options.port || DEFAULT_PORT;
     this.apiKey = options.apiKey || '';
-    this.profiles = options.profiles || {};  // { agentId: { port } }
+    this.profiles = Object.fromEntries(Object.entries(options.profiles || {}).map(([id, profile]) => [id, { ...profile }]));
     this.connected = false;
     this._destroyed = false;
     this._healthTimer = null;
@@ -83,7 +83,7 @@ class HermesApiClient extends EventEmitter {
   }
 
   setProfile(agentId: string, profile: HermesProfile): void {
-    this.profiles[agentId] = { ...(this.profiles[agentId] || {}), ...profile };
+    this.profiles[agentId] = { ...profile };
   }
 
   _request(
@@ -95,6 +95,14 @@ class HermesApiClient extends EventEmitter {
     connOverrides: ConnectionOverrides = {},
   ): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error, value?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error); else resolve(value);
+      };
+      const incompleteResponse = () => finish(Object.assign(
+        new Error('Hermes HTTP response aborted'), { code: 'ECONNRESET' }));
       const data = body ? JSON.stringify(body) : null;
       const apiKey = connOverrides.apiKey ?? this.apiKey;
       const options = {
@@ -114,25 +122,28 @@ class HermesApiClient extends EventEmitter {
       const req = http.request(options, (res: import('http').IncomingMessage) => {
         let buf = '';
         res.on('data', (chunk: Buffer | string) => { buf += chunk.toString(); });
+        res.on('error', (error: Error) => finish(error));
+        res.on('aborted', incompleteResponse);
+        res.on('close', () => { if (!res.complete) incompleteResponse(); });
         res.on('end', () => {
           const statusCode = res.statusCode ?? 0;
           if (statusCode < 200 || statusCode >= 300) {
             if (statusCode === 401) {
               console.warn(`[HermesApiClient] 401 ${method} ${path} port=${options.port} apiKey=${_keyLog(apiKey)}`);
             }
-            reject(new Error(`HTTP ${statusCode}: ${buf.substring(0, 200)}`));
+            finish(Object.assign(new Error(`HTTP ${statusCode}: ${buf.substring(0, 200)}`), { statusCode }));
             return;
           }
           try {
-            resolve(JSON.parse(buf));
+            finish(undefined, JSON.parse(buf));
           } catch (e) {
-            resolve(buf);
+            finish(undefined, buf);
           }
         });
       });
 
-      req.on('error', (err: Error) => reject(err));
-      req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
+      req.on('error', (err: Error) => finish(err));
+      req.on('timeout', () => { finish(new Error('请求超时')); req.destroy(); });
 
       if (data) req.write(data);
       req.end();
@@ -197,9 +208,9 @@ class HermesApiClient extends EventEmitter {
   }
 
   /** Verify both reachability and the selected profile credential. */
-  async authenticate(agentId: string): Promise<boolean> {
+  async authenticate(agentId: string, connection?: ConnectionOverrides): Promise<boolean> {
     try {
-      await this._request('GET', '/v1/models', null, PING_TIMEOUT, {}, this._agentConnection(agentId));
+      await this._request('GET', '/v1/models', null, PING_TIMEOUT, {}, connection || this._agentConnection(agentId));
       return true;
     } catch (_) {
       return false;

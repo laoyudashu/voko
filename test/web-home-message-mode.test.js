@@ -96,7 +96,7 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /data-voko-copy-value=/);
   assert.doesNotMatch(html, /action:'login_workbuddy'/);
   assert.match(html, /presentation&&presentation\.action\|\|null/);
-  assert.match(html, /recheck\.dataset\.role='recheck-workbuddy-component'/);
+  assert.match(html, /recheck\.dataset\.role=ready\?'recheck-workbuddy':'recheck-workbuddy-component'/);
   assert.match(html, /command:I\.dumate_manual_command/);
   assert.match(html, /\?'setup-qwen'/);
   assert.match(html, /providerSetupDialog\(details,'dlg-qwen-setup'/);
@@ -120,6 +120,22 @@ test('home shows the detected primary message mode and wires runtime partial ref
   assert.match(html, /max-height:calc\(100vh - 16px\);overflow:auto/);
   assert.match(html, /window\.addEventListener\("resize"/);
   assert.match(html, /recheck-workbuddy-component/);
+  // Execute the rendered setup function: installed runtimes must expose the
+  // real verification action, while missing runtimes still need a refresh.
+  const setupFunction = html.match(/function renderWorkBuddySetup\(details\)\{[^\n]+/)[0];
+  for (const available of [false, true]) {
+    const button = { dataset: {}, textContent: '重新检测' };
+    const dialog = { querySelector: () => button };
+    const context = {
+      I: { message_mode_verify: '验证消息链路' },
+      document: { getElementById: () => dialog },
+      providerSetupDialog() {},
+      details: { _deliveryStatus: { methods: [{ provider: 'workbuddy-http', available }] } },
+    };
+    require('node:vm').runInNewContext(setupFunction + '\nrenderWorkBuddySetup(details);', context);
+    assert.equal(button.dataset.role, available ? 'recheck-workbuddy' : 'recheck-workbuddy-component');
+    assert.equal(button.textContent, available ? '验证消息链路' : '重新检测');
+  }
   assert.match(html, /actionLabel=action==='verify'\?I\.message_mode_verify/);
   assert.match(html, /if\(other!==details\)other\.open=false/);
   assert.match(html, /if\(!details\.contains\(e\.target\)\)details\.open=false/);

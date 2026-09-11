@@ -14,6 +14,7 @@ function fixture(t) {
   t.mock.method(OpenClawWsProvider.prototype, 'startConfigWatcher', () => {});
   const provider = new OpenClawWsProvider(null, null);
   provider.connected = true;
+  provider.ws = { readyState: 1, removeAllListeners() {}, close() { this.readyState = 3; } };
   provider.attachmentRetentionMs = 1000;
   const bytes = Buffer.from('synthetic delayed attachment');
   const original = path.join(root, 'input.txt');
@@ -99,7 +100,10 @@ for (const disconnected of [false, true]) for (const oldHasFiles of [true, false
   const replies = []; provider.on('agent.reply', reply => replies.push(reply));
   await provider.push({ ...payload, messageId: 'old-empty', attachments: oldHasFiles ? payload.attachments : [] });
   provider._activeAgentTurns.get(payload.agentId).release();
-  if (disconnected) { provider.disconnect(); provider.connected = true; }
+  if (disconnected) {
+    provider.disconnect(); provider.connected = true;
+    provider.ws = { readyState: 1, removeAllListeners() {}, close() { this.readyState = 3; } };
+  }
   await provider.push({ ...payload, messageId: 'new-files' });
   const sent = requests.filter(request => request.method === 'chat.send').at(-1);
   const stagedPath = JSON.parse(sent.params.message).content.match(/local_path=([^\n]+)/)[1];

@@ -42,13 +42,13 @@ test('CLI auth diagnostics do not prove that a launched task was never accepted'
   assert.equal(classifyCliFailure({ stdout: 'Not logged in.', stderr: '' }), 'outcome_unknown');
 });
 
-test('Hermes resolution prefers the managed Windows runtime over a stale PATH shim', (t) => {
+test('Hermes falls back to the managed Windows runtime when PATH has no launcher', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-hermes-managed-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const managed = path.join(root, 'voko-tools', 'hermes-agent', 'Scripts', 'hermes.exe');
   fs.mkdirSync(path.dirname(managed), { recursive: true });
   fs.writeFileSync(managed, 'managed');
-  assert.equal(resolveHermesCommand({ LOCALAPPDATA: root, HOME: path.join(root, 'home'), PATH: process.env.PATH }), managed);
+  assert.equal(resolveHermesCommand({ LOCALAPPDATA: root, HOME: path.join(root, 'home'), PATH: '' }), managed);
 });
 
 test('Hermes resolves the managed Windows runtime when a service omits LOCALAPPDATA', (t) => {
@@ -57,7 +57,7 @@ test('Hermes resolves the managed Windows runtime when a service omits LOCALAPPD
   const managed = path.join(home, 'AppData', 'Local', 'voko-tools', 'hermes-agent', 'Scripts', 'hermes.exe');
   fs.mkdirSync(path.dirname(managed), { recursive: true });
   fs.writeFileSync(managed, 'managed');
-  assert.equal(resolveHermesCommand({ USERPROFILE: home, PATH: process.env.PATH }), managed);
+  assert.equal(resolveHermesCommand({ USERPROFILE: home, PATH: '' }), managed);
 });
 
 test('Hermes prefers its managed virtualenv over the bare Python launcher', (t) => {
@@ -68,7 +68,7 @@ test('Hermes prefers its managed virtualenv over the bare Python launcher', (t) 
   fs.mkdirSync(path.dirname(managed), { recursive: true });
   fs.writeFileSync(bare, 'stale');
   fs.writeFileSync(managed, 'managed');
-  assert.equal(resolveHermesCommand({ HOME: home, PATH: process.env.PATH }), managed);
+  assert.equal(resolveHermesCommand({ HOME: home, PATH: '' }), managed);
 });
 
 test('CLI timeout carries a stable Provider code and retryability', async () => {

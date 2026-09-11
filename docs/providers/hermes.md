@@ -35,6 +35,8 @@ Windows 默认数据目录通常位于：
 
 ## 2. 注册时选择 profile
 
+从 VOKO 0.5.6 起，注册发现优先读取本地 Hermes 根目录、`profiles/` 和 `config.yaml`，避免为了列举 profile 反复启动完整 CLI。默认选择遵循 `active_profile` 及指向命名 profile 的 `HERMES_HOME`；无法识别本地目录时保留 CLI 发现。配置模型缺失或无法解析时仍显示 profile，模型为 `unknown`；发现成功不等于模型或 HTTP 认证可用。
+
 Hermes 的 `backend_instance_id` 对应 Hermes profile，例如 `default`、`psychologist`、`zodiac`。profile 是模型/网关运行配置，不等于某个访客会话。
 
 在 VOKO 注册页面中：
@@ -62,7 +64,7 @@ Hermes 的 `backend_instance_id` 对应 Hermes profile，例如 `default`、`psy
 
 ### Caller identity for `whoami`
 
-Hermes documents `HERMES_SESSION_ID` as the current session value for subprocesses. VOKO accepts it when Hermes passes it to the MCP child. Hermes filters stdio environment variables, so configure the VOKO extension using the supported Hermes MCP environment mechanism if the variable is not inherited. This applies where Hermes runs (Linux, macOS, or WSL); Hermes is not a native Windows runtime. A Hermes profile is an instance/configuration selector, not a session identity. Missing evidence falls back to explicit Agent selection.
+Hermes uses `HERMES_SESSION_ID` as the current session value for subprocesses. VOKO accepts it when Hermes passes it to the MCP child. If the variable is filtered from the stdio environment, configure the VOKO extension using the installed Hermes version's supported MCP environment mechanism. Verify propagation in the actual runtime, including Windows installations or WSL; profile discovery alone does not prove it. A Hermes profile is an instance/configuration selector, not a session identity. Missing evidence falls back to explicit Agent selection.
 
 HTTP Provider 通过 Hermes 本机 API 发送消息，并使用稳定的 VOKO session key：
 
@@ -73,6 +75,8 @@ hermes:<voko-agent-id>:<visitor-or-group-key>
 同一 Agent、同一私聊/群聊会持续使用同一个 key；不同 Agent、不同访客、私聊和群聊不会串台。不要手动改写这个 key，也不要复制其他 Agent 的绑定记录。
 
 Hermes HTTP 首次回复时间受模型和 Gateway 状态影响，几十秒是可能的。请求已进入 VOKO 后，不要因为短时间没有回复就重复发送同一条消息；先查看绑定和运行状态。
+
+VOKO 0.5.6 将已提交请求在 Provider 停止或替换后的迟到回复标记为 `outcome_unknown`，不误报完成，也不自动转 CLI 重发。看到结果待确认时先检查原始任务；重新连接不能证明旧请求未执行。认证健康检查、模型回复和 IM 实际投递应分别验证。
 
 ## 4. CLI 降级和 Pull
 

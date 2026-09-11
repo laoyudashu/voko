@@ -10,7 +10,8 @@ const bus = require('../../lite-bus');
 const { buildConversationDeliveryPrompt } = require('../conversation-context');
 const { appendProviderAttachmentBoundary, stageProviderAttachments, STAGING_MAX_AGE_MS } = require('../provider-attachments');
 const { buildOpenClawSessionKey, parseOpenClawSessionTarget } = require('../openclaw-session');
-const { openClawPaths } = require('../openclaw-command');
+const { openClawPaths, resolveOpenClawRuntime, runtimeSpawnOptions } = require('../openclaw-command');
+const { readOpenClawConfig } = require('../openclaw-config');
 const { ProviderConversationBindingStore } = require('../../provider-conversation-bindings');
 import type { AgentMeta, ProviderSteerMetadata, PushPayload } from '../types';
 
@@ -20,24 +21,6 @@ const LEGACY_FINAL_SETTLE_MS = 100;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function selectWindowsOpenclawCommand(
-  whereOutput: string,
-  existsSync: (filePath: string) => boolean = fs.existsSync,
-): { cmd: string; shell: boolean } | null {
-  const candidates = String(whereOutput || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const preferred = candidates.find((candidate) => /\.(cmd|bat)$/i.test(candidate))
-    || candidates.find((candidate) => /\.exe$/i.test(candidate));
-  if (preferred) {
-    return { cmd: preferred, shell: /\.(cmd|bat)$/i.test(preferred) };
-  }
-  const first = candidates[0];
-  if (!first) return null;
-  if (!path.extname(first) && existsSync(first + '.cmd')) {
-    return { cmd: first + '.cmd', shell: true };
-  }
-  return { cmd: first, shell: false };
 }
 
 /**
@@ -170,12 +153,19 @@ class OpenClawWsProvider {
    */
   loadConfig(): boolean {
     try {
+      this._configStamp = this._readConfigStamp();
       if (fs.existsSync(this.configPath)) {
-        const config = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+        const config = readOpenClawConfig(this.configPath);
+        if (!config || typeof config !== 'object' || Array.isArray(config)
+          || (config.gateway != null && (typeof config.gateway !== 'object' || Array.isArray(config.gateway)))
+          || (config.gateway?.auth != null && (typeof config.gateway.auth !== 'object' || Array.isArray(config.gateway.auth)))) {
+          throw new Error('Invalid OpenClaw configuration');
+        }
         this.lastConfigMtime = fs.statSync(this.configPath).mtimeMs;
 
         const newPort = config.gateway?.port || 18789;
         const auth = config.gateway?.auth || {};
+        this.configuredAuthMode = auth.mode || 'token';
         this.configurationError = config.gateway?.mode && config.gateway.mode !== 'local' ? 'OPENCLAW_REMOTE_SETUP_UNSUPPORTED'
           : (auth.mode && auth.mode !== 'token') || auth.password || (auth.token && typeof auth.token !== 'string')
             ? 'OPENCLAW_AUTH_SETUP_UNSUPPORTED' : null;
@@ -197,14 +187,14 @@ class OpenClawWsProvider {
           this.authToken = newToken;
           this.gatewayUrl = newUrl;
 
-          // 如果已连接，需要重新连接以应用新配置
+          // 已请求启用的 Provider 在配置修复后也应恢复连接。
           if (this.connected || this.connecting) {
             console.log('[OpenClaw WS] 配置变化，触发重新连接...');
             this.disconnect();
-            this._ensureGatewayRunning().catch((err: unknown) => {
-              console.error('[OpenClaw WS] 配置变化后启动 Gateway 失败:', errorMessage(err));
-            });
-            this.scheduleReconnect(100); // 100ms 后重连
+          }
+          if (this.enabled && !this._stopped && !this.getConfigurationDetail()) {
+            this.reconnectAttempts = 0;
+            void this.start();
           }
         } else {
           console.log('[OpenClaw WS] 配置检查完成，无变化');
@@ -230,16 +220,23 @@ class OpenClawWsProvider {
   /**
    * 启动配置文件监控（使用轮询方式，更可靠）
    */
+  _readConfigStamp(): string | null {
+    try {
+      const st = fs.statSync(this.configPath);
+      return `${st.mtimeMs}:${st.ctimeMs}:${st.size}:${st.ino}`;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
   startConfigWatcher(): void {
     // 每 5 秒检查一次配置文件变化
     this.configWatcher = setInterval(() => {
       try {
-        if (fs.existsSync(this.configPath)) {
-          const stats = fs.statSync(this.configPath);
-          if (stats.mtimeMs > this.lastConfigMtime) {
-            console.log('[OpenClaw WS] 检测到配置文件变化，重新加载...');
-            this.loadConfig();
-          }
+        if (this._readConfigStamp() !== this._configStamp) {
+          console.log('[OpenClaw WS] 检测到配置文件变化，重新加载...');
+          this.loadConfig();
         }
       } catch (err) {
         console.error('[OpenClaw WS] 检查配置失败:', errorMessage(err));
@@ -286,7 +283,6 @@ class OpenClawWsProvider {
       enabled: this.enabled,
       queueSize: this.messageQueue.length,
       gatewayUrl: this.gatewayUrl,
-      authToken: this.authToken,
       reconnectAttempts: this.reconnectAttempts,
       deviceId: this.device?.deviceId || null,
       devicePublicKey: this.device?.publicKey || null,
@@ -298,12 +294,23 @@ class OpenClawWsProvider {
       reconnectDelay: this.reconnectDelay,
       maxReconnectDelay: this.maxReconnectDelay,
       logs: this.logs.slice(),
-      configurationError: this.configurationError || null,
+      configurationError: this.configurationError || (!this.authToken ? 'OPENCLAW_TOKEN_MISSING' : null),
+      configurationDetail: this.getConfigurationDetail(),
       startupFailure: this.startupFailure,
       frameworkVersion: this.connected ? this._gatewayVersion : null,
       protocolVersion: this.connected ? this._protocolVer : null,
       hasToken: !!this.authToken
     };
+  }
+
+  getConfigurationDetail(): string | null {
+    switch (this.configurationError) {
+      case 'OPENCLAW_REMOTE_SETUP_UNSUPPORTED': return '当前为远程 Gateway 配置，此通道仅支持本地连接；未尝试启动。';
+      case 'OPENCLAW_AUTH_SETUP_UNSUPPORTED': return `当前 OpenClaw 认证配置不兼容（模式：${['none', 'password', 'trusted-proxy', 'token'].includes(this.configuredAuthMode) ? this.configuredAuthMode : 'unknown'}），此通道要求字符串 Token 认证；未尝试启动，请通过配置确认流程调整。`;
+      case 'OPENCLAW_CONFIG_NOT_FOUND': return 'OpenClaw 配置文件不存在；未尝试启动。';
+      case 'OPENCLAW_CONFIG_UNREADABLE': return 'OpenClaw 配置无法读取或解析；未尝试启动，未修改配置。';
+      default: return this.authToken ? null : 'OpenClaw 未配置 gateway.auth.token；未尝试启动，请通过配置确认流程生成 Token。';
+    }
   }
 
   _supportsSessionSubscribe(): boolean {
@@ -511,42 +518,13 @@ class OpenClawWsProvider {
     this._legacyReplyTimers.set(resolvedKey, { timer, text, identity });
   }
 
-  /**
-   * 根据平台解析 openclaw 命令，返回 { cmd, args, shell }
-   * Windows: 直接找 node.exe + openclaw.mjs 入口文件，绕过 .cmd 避免弹窗
-   * macOS/Linux: which 查找 openclaw 可执行文件
-   */
-  _resolveOpenclawCmd(): { cmd: string; args: string[]; shell: boolean } {
-    if (process.platform === 'win32') {
-      // Windows: 直接用 node + openclaw.mjs 入口运行，绕过 .cmd 文件的 title %COMSPEC% 弹窗
-      const npmDir = path.join(process.env.APPDATA || '', 'npm');
-      const entryPoint = path.join(npmDir, 'node_modules', 'openclaw', 'openclaw.mjs');
-      if (require('fs').existsSync(entryPoint)) {
-        const nodePath = path.join(npmDir, 'node.exe');
-        if (require('fs').existsSync(nodePath)) {
-          return { cmd: nodePath, args: [entryPoint, 'gateway', 'run'], shell: false };
-        }
-        // npm 目录下没有 node.exe，用系统 PATH 中的 node
-        return { cmd: 'node', args: [entryPoint, 'gateway', 'run'], shell: false };
-      }
-      // 兜底：走 .cmd 文件
-      const cmdPath = path.join(npmDir, 'openclaw.cmd');
-      if (require('fs').existsSync(cmdPath)) return { cmd: cmdPath, args: ['gateway', 'run'], shell: true };
-      try {
-        const result = require('child_process').execSync('where openclaw', { encoding: 'utf8', timeout: 5000, shell: true, windowsHide: true });
-        const resolved = selectWindowsOpenclawCommand(result);
-        if (resolved) return { ...resolved, args: ['gateway', 'run'] };
-      } catch {}
-    } else {
-      // macOS/Linux
-      try {
-        const result = require('child_process').execSync('which openclaw', { encoding: 'utf8', timeout: 5000 });
-        if (result.trim()) return { cmd: result.trim(), args: ['gateway', 'run'], shell: false };
-      } catch {}
-    }
-    // 终极兜底
-    const isWin = process.platform === 'win32';
-    return { cmd: isWin ? 'openclaw.cmd' : 'openclaw', args: ['gateway', 'run'], shell: isWin };
+  /** Use the same selected executable, Node entry and PATH as the CLI provider. */
+  _resolveOpenclawCmd(): { cmd: string; args: string[]; shell: boolean; env?: NodeJS.ProcessEnv } {
+    const runtime = resolveOpenClawRuntime('cli');
+    if (!runtime.available) throw new Error('OPENCLAW_RUNTIME_UNAVAILABLE: 未找到所选 OpenClaw 运行时');
+    const { cmd, prefixArgs, env } = runtimeSpawnOptions(runtime);
+    return { cmd, args: [...prefixArgs, 'gateway', 'run'],
+      shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd), env };
   }
 
   /**
@@ -555,7 +533,7 @@ class OpenClawWsProvider {
    * @returns {Promise<boolean>} gateway 是否已就绪
    */
   async _ensureGatewayRunning(): Promise<boolean> {
-    if (this._stopped || this.configurationError) return false;
+    if (this._stopped || this.configurationError || !this.authToken) return false;
 
     // 已连上就不需要操作
     if (this.connected) return true;
@@ -589,7 +567,7 @@ class OpenClawWsProvider {
   async _waitForGatewayReady(deadline = Date.now() + this.gatewayStartupTimeoutMs): Promise<boolean> {
     const generation = this._lifecycleGeneration;
     while (Date.now() < deadline) {
-      if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      if (this._stopped || this.configurationError || !this.authToken || generation !== this._lifecycleGeneration) return false;
       if (this._gatewayStartupAttempt?.closed) return false;
       const healthy = await this._probeGateway();
       if (this._stopped || generation !== this._lifecycleGeneration) return false;
@@ -600,7 +578,9 @@ class OpenClawWsProvider {
           this.reconnectTimer = null;
         }
         console.log('[OpenClaw WS] Gateway ready，重连计数已重置');
-        if (this.enabled && !this.connected && !this.connecting) void this.connect();
+        if (this.enabled && !this.connected && !this.connecting) {
+          void this.connect().catch((error: unknown) => console.error('[OpenClaw WS] 连接失败:', errorMessage(error)));
+        }
         return true;
       }
       await new Promise((resolve) => setTimeout(resolve, this.gatewayProbeIntervalMs));
@@ -616,7 +596,7 @@ class OpenClawWsProvider {
     try {
       // 先检查 gateway 是否已在运行
       const healthy = await this._probeGateway();
-      if (this._stopped || generation !== this._lifecycleGeneration) return false;
+      if (this._stopped || this.configurationError || !this.authToken || generation !== this._lifecycleGeneration) return false;
       if (healthy) {
         console.log(`[OpenClaw WS] Gateway 已在运行 (port=${this.gatewayPort})`);
         this.startupFailure = null;
@@ -637,11 +617,11 @@ class OpenClawWsProvider {
           const attempt = { closed: false, stderr: '', exitCode: null as number | null,
             migrationRestart: false, stopCapture: () => {} };
           this._gatewayStartupAttempt = attempt;
-          const { cmd, args, shell } = this._resolveOpenclawCmd();
           try {
+            const { cmd, args, shell, env } = this._resolveOpenclawCmd();
             const child = spawn(cmd, args, {
               stdio: ['ignore', 'ignore', 'pipe'],
-              detached: process.platform !== 'win32', windowsHide: true, shell,
+              detached: process.platform !== 'win32', windowsHide: true, shell, env,
             });
             child.unref();
             child.stderr?.unref?.();
@@ -820,7 +800,8 @@ class OpenClawWsProvider {
   /**
    * 连接 WebSocket
    */
-  async connect() {
+  async connect(timeoutMs = 30000) {
+    if (this._stopped || this.configurationError) return;
     if (this.connecting || this.connected) {
       console.log('[OpenClaw WS] 已经在连接中或已连接');
       return;
@@ -836,6 +817,15 @@ class OpenClawWsProvider {
 
     return new Promise<void>((resolve, reject) => {
       let socket: InstanceType<typeof WebSocket> | null = null;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectionTimeout);
+        if (this._finishConnection === finish) this._finishConnection = null;
+        if (error) reject(error); else resolve();
+      };
+      this._finishConnection = finish;
       // 连接超时处理
       const connectionTimeout = setTimeout(() => {
         if (socket && this.ws === socket && !this.connected) {
@@ -844,9 +834,9 @@ class OpenClawWsProvider {
           this.connecting = false;
           socket.close();
           this.scheduleReconnect();
-          reject(new Error('连接超时'));
         }
-      }, 30000);
+        finish(new Error('连接超时'));
+      }, Math.max(1, timeoutMs));
 
       try {
         this._connectRequestId = null;
@@ -855,9 +845,8 @@ class OpenClawWsProvider {
       } catch (err) {
         console.error('[OpenClaw WS] 创建 WebSocket 失败:', errorMessage(err));
         this.connecting = false;
-        clearTimeout(connectionTimeout);
         this.scheduleReconnect();
-        reject(err);
+        finish(err instanceof Error ? err : new Error(errorMessage(err)));
         return;
       }
 
@@ -880,23 +869,29 @@ class OpenClawWsProvider {
             this.addLog(`📩 收到: ${msg.type} ${msg.event || msg.method || msg.payload?.type || ''}`);
           }
 
-          await this.handleMessage(msg, resolve, connectionTimeout);
+          const authRejected = msg.type === 'res' && !msg.ok && msg.error
+            && this._connectRequestId && msg.id === this._connectRequestId;
+          await this.handleMessage(msg, () => finish(), connectionTimeout);
+          if (authRejected) {
+            finish(new Error('OpenClaw authentication rejected'));
+            if (this.ws === socket) socket.close();
+          }
         } catch (e) {
           console.error('[OpenClaw WS] 解析消息失败:', errorMessage(e), data.toString().substring(0, 200));
         }
       });
 
       socket.on('error', (err: Error) => {
+        finish(err);
         if (this.ws !== socket) return;
         this._notifyAvailability(false, `socket-error:${err.message}`);
         console.error('[OpenClaw WS] ❌ 连接错误:', err.message);
         this.connecting = false;
-        clearTimeout(connectionTimeout);
         this.scheduleReconnect();
-        reject(err);
       });
 
       socket.on('close', (code: number, reason: Buffer) => {
+        finish(new Error(`OpenClaw WebSocket closed before authentication (${code})`));
         if (this.ws !== socket) return;
         const closeReason = String(reason || '');
         console.log(`[OpenClaw WS] 🔌 连接关闭 (code: ${code}, reason: ${closeReason || '无'})`);
@@ -1233,6 +1228,7 @@ class OpenClawWsProvider {
   }
 
   disconnect(): void {
+    this._finishConnection?.(new Error('OpenClaw WebSocket disconnected'));
     this._markUnconfirmedTurns();
     this._connectRequestId = null;
     const wasAvailable = this.connected || this.connecting;
@@ -1579,7 +1575,12 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null = null,
     sendTimestamp?: number,
   ): Promise<void> {
+    const generation = this._lifecycleGeneration, socket = this.ws;
     await extraData?.assertSubmissionCurrent?.();
+    this._assertAccepting(generation);
+    if (!this.connected || this.connecting || this.ws !== socket || socket?.readyState !== WebSocket.OPEN) {
+      throw Object.assign(new Error('OpenClaw WebSocket unavailable before submission'), { deliveryOutcome: 'not_delivered' });
+    }
     // 格式: agent:{agentId}:{visitorId}
     let visitorId = null;
     const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
@@ -1759,6 +1760,7 @@ class OpenClawWsProvider {
 
   /** 就绪判断：push 通道是否就绪（WS 已连接；openclaw 为全局单连接，与 agentId 无关）。 */
   isAvailable(_agentId: string): boolean {
+    if (this._stopped || this.configurationError || !this.authToken) return false;
     return !!this.connected || !!(this.enabled && (
       this.connecting
       || this._gatewayStarting
@@ -1786,7 +1788,8 @@ class OpenClawWsProvider {
       const running = await this._ensureGatewayRunning();
       this._assertAccepting(generation);
       if (!running) break;
-      if (!this.connected && !this.connecting) await this.connect();
+      if (Date.now() >= deadline) break;
+      if (!this.connected && !this.connecting) await this.connect(Math.min(30000, deadline - Date.now()));
       if (this.connected) return;
       await new Promise(resolve => setTimeout(resolve, this.gatewayProbeIntervalMs));
     }
@@ -1823,13 +1826,14 @@ class OpenClawWsProvider {
   /** 建立连接：确保 gateway 运行 + setEnabled 开启 WS（幂等）。 */
   async start() {
     this._stopped = false;
-    const generation = this._lifecycleGeneration;
+    this.enabled = true;
+    if (!this.configWatcher) this.startConfigWatcher();
+    const configurationDetail = this.getConfigurationDetail();
+    if (configurationDetail) { console.warn(`[OpenClaw WS] ${configurationDetail}`); return false; }
     try {
-      const running = await this._ensureGatewayRunning();
-      if (this._stopped || generation !== this._lifecycleGeneration) return;
-      if (!running) { console.warn('[OpenClaw WS] provider.start: Gateway 启动失败'); return; }
-      this.setEnabled(true);
-    } catch (e) { console.error('[OpenClaw WS] provider.start 失败:', errorMessage(e)); }
+      await this._waitForAuthenticatedConnection();
+      return this.connected;
+    } catch (e) { console.error('[OpenClaw WS] provider.start 失败:', errorMessage(e)); return false; }
   }
 
   async stop() {
@@ -1851,6 +1855,7 @@ class OpenClawWsProvider {
     try {
     this._assertAccepting(generation);
     await payload.assertSubmissionCurrent?.();
+    this._assertAccepting(generation);
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId
@@ -1938,4 +1943,3 @@ function _killTree(pid?: number): void {
 }
 
 module.exports = OpenClawWsProvider;
-module.exports.selectWindowsOpenclawCommand = selectWindowsOpenclawCommand;
