@@ -253,6 +253,16 @@ class HermesHttpProvider extends PushProvider {
     return !!client && !this._destroyed && this.client === client && generation === this._lifecycleGeneration;
   }
 
+  _assertCurrentResponse(client: typeof this.client, generation: number): void {
+    if (!this._isCurrentClient(client, generation)) {
+      // Submission already happened: dropping a stale reply must neither complete
+      // the turn nor allow the dispatcher to submit the same work elsewhere.
+      throw Object.assign(new Error('Hermes provider changed after submission; reply was not delivered'), {
+        code: 'HERMES_RESPONSE_LIFECYCLE_CHANGED', deliveryOutcome: 'outcome_unknown',
+      });
+    }
+  }
+
   _assertCurrentClient(client: typeof this.client, generation: number, profileId: string): void {
     if (!this._isCurrentClient(client, generation)) throw notDeliveredError('Hermes provider stopped before submission');
     if (this._profileConnectionConflict(profileId, this.options.profiles?.[profileId] || {}, false)) {
@@ -584,7 +594,8 @@ class HermesHttpProvider extends PushProvider {
       })
       .catch((error: unknown) => {
         const detail = errorMessage(error);
-        const pending = (error as any)?.code === 'ECONNRESET' || /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
+        const pending = (error as any)?.deliveryOutcome === 'outcome_unknown'
+          || (error as any)?.code === 'ECONNRESET' || /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
         this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: pending ? 'pending' : 'failed', elapsedMs: Date.now() - startedAt });
         throw error;
       })
@@ -640,7 +651,7 @@ class HermesHttpProvider extends PushProvider {
       await extraData?.assertSubmissionCurrent?.();
       this._assertCurrentClient(client, generation, profileId);
       const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
-      if (!this._isCurrentClient(client, generation)) return;
+      this._assertCurrentResponse(client, generation);
       this._authStates.set(profileId, true);
       const replyLen = (result.reply || '').length;
       this.addLog(`📥 收到回复 ${agentId} (${replyLen} 字)`);
@@ -663,7 +674,7 @@ class HermesHttpProvider extends PushProvider {
             await extraData?.assertSubmissionCurrent?.();
             this._assertCurrentClient(client, generation, profileId);
             const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
-            if (!this._isCurrentClient(client, generation)) return;
+            this._assertCurrentResponse(client, generation);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (刷新 profile key 后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -681,7 +692,7 @@ class HermesHttpProvider extends PushProvider {
             await extraData?.assertSubmissionCurrent?.();
             this._assertCurrentClient(client, generation, profileId);
             const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
-            if (!this._isCurrentClient(client, generation)) return;
+            this._assertCurrentResponse(client, generation);
             this._authStates.set(profileId, true);
             this.addLog(`📥 收到回复 ${agentId} (401 重启后, ${(result.reply || '').length} 字)`);
             this.emit('agent.reply', { agentId, visitorId, content: result.reply, sessionKey, turnId, replyId: result.runId || turnId });
@@ -742,7 +753,7 @@ class HermesHttpProvider extends PushProvider {
     try {
       this._assertCurrentClient(client, generation, profileId);
       const result = await client.steer(profileId, sessionKey, visitorId, content);
-      if (!this._isCurrentClient(client, generation)) return result;
+      this._assertCurrentResponse(client, generation);
       this._authStates.set(profileId, true);
       this.addLog(`✅ steer 完成 ${agentId} (回复 ${(result.output || '').length} 字)`);
       emitReply(result);
@@ -756,7 +767,7 @@ class HermesHttpProvider extends PushProvider {
           try {
             this._assertCurrentClient(client, generation, profileId);
             const result = await client.steer(profileId, sessionKey, visitorId, content);
-            if (!this._isCurrentClient(client, generation)) return result;
+            this._assertCurrentResponse(client, generation);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (刷新 profile key 后)`);
             emitReply(result);
@@ -773,7 +784,7 @@ class HermesHttpProvider extends PushProvider {
           try {
             this._assertCurrentClient(client, generation, profileId);
             const result = await client.steer(profileId, sessionKey, visitorId, content);
-            if (!this._isCurrentClient(client, generation)) return result;
+            this._assertCurrentResponse(client, generation);
             this._authStates.set(profileId, true);
             this.addLog(`✅ steer 完成 ${agentId} (401 重启后)`);
             emitReply(result);

@@ -549,6 +549,54 @@ for (const route of ['initial', 'key-refresh', 'restart']) {
   });
 }
 
+for (const method of ['chat', 'steer']) {
+  for (const route of ['initial', 'key-refresh', 'restart']) {
+    for (const restart of [false, true]) {
+      test(`Hermes ${method} ${route} late response after ${restart ? 'restart' : 'stop'} is unknown, never completed or replayed`, async t => {
+        const p = hermes(); await p._initClient();
+        t.after(() => p.destroy());
+        p.connected = true; p._profileForAgent = () => 'one';
+        p._ensureGatewayRunning = async () => true;
+        p._selectAuthenticatedProfileConnection = async () => route === 'key-refresh';
+        p._restartGateway = async () => true;
+        const entered = deferred(), response = deferred();
+        let submissions = 0, replies = 0, fallbackCalls = 0;
+        const statuses = [];
+        p.on('agent.reply', () => replies++);
+        p.on('delivery.status', event => statuses.push(event.status));
+        p.client[method] = async () => {
+          submissions++;
+          if (route !== 'initial' && submissions === 1) throw Object.assign(new Error('HTTP 401'), { statusCode: 401 });
+          entered.resolve(); return response.promise;
+        };
+        const { DeliveryExecutor } = require('../build/core/dispatcher/delivery-executor');
+        const executor = new DeliveryExecutor();
+        const result = executor.execute({
+          next: excluded => ({ providerId: excluded.size ? 'fallback' : 'hermes-http',
+            providerType: 'hermes', deliveryMode: 'http', target: excluded.size ? 'fallback' : 'hermes' }),
+          invoke: candidate => {
+            if (candidate.target === 'fallback') { fallbackCalls++; return; }
+            return method === 'chat'
+              ? p.sendToSession('hermes:agent:visitor', 'fixture', { turnId: 'late-turn' })
+              : p.steer('agent', 'visitor', 'fixture');
+          },
+          classify: error => error.deliveryOutcome || 'outcome_unknown',
+        });
+        await entered.promise; await p.stop();
+        if (restart) await p.start();
+        response.resolve({ reply: 'late reply', output: 'late reply' });
+        const outcome = await result;
+        assert.equal(outcome.outcome, 'outcome_unknown');
+        assert.equal(outcome.errorCode, 'HERMES_RESPONSE_LIFECYCLE_CHANGED');
+        assert.equal(submissions, route === 'initial' ? 1 : 2);
+        assert.equal(fallbackCalls, 0);
+        assert.equal(replies, 0);
+        assert.deepEqual(statuses, method === 'chat' ? ['processing', 'pending'] : []);
+      });
+    }
+  }
+}
+
 async function httpServer(t, handler) {
   const server = require('node:http').createServer(handler);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -558,8 +606,8 @@ async function httpServer(t, handler) {
 test('Hermes settles a truncated HTTP response and continues checking other profiles', async t => {
   const server = await httpServer(t, (req, res) => {
     if (req.headers.authorization === 'Bearer truncated') {
-      res.writeHead(200, { 'Content-Length': 100 }); res.write('{"partial":');
-      setTimeout(() => res.destroy(), 10);
+      res.writeHead(200, { 'Content-Length': 100 });
+      res.write('{"partial":', () => res.destroy());
     } else res.end('{}');
   });
   const P = load('core/dispatcher/providers/hermes-http.js');
@@ -568,9 +616,10 @@ test('Hermes settles a truncated HTTP response and continues checking other prof
     two: { port: server.address().port, apiKey: 'complete' },
   }, profileConfigLoader: () => null });
   t.after(() => p.destroy()); await p._initClient();
-  await assert.rejects(bounded(p.client._request('GET', '/v1/models', null, 80, {}, { port: server.address().port, apiKey: 'truncated' }), 500),
+  // Exercise response abortion, not a race with an 80ms request timeout on a busy VM.
+  await assert.rejects(bounded(p.client._request('GET', '/v1/models', null, 0, {}, { port: server.address().port, apiKey: 'truncated' }), 5000),
     error => error.code === 'ECONNRESET');
-  await bounded(p.healthCheck(), 500);
+  await bounded(p.healthCheck(), 5000);
   assert.equal(p.getProfileStatus('one').ready, false);
   assert.equal(p.getProfileStatus('two').ready, true);
 });
