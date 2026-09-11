@@ -4,7 +4,7 @@ All notable user-facing changes are documented in this file.
 
 ## Unreleased
 
-## 0.5.6 - Unreleased
+## 0.5.6 - 2026-09-11
 
 - Unify Hermes and OpenClaw Gateway startup and authenticated readiness, respect the selected runtime, and report startup failures instead of treating an open port as a working connection.
 - Preserve Hermes profile-specific authentication and routing, safely update Gateway YAML configuration, and bound recovery across shutdown, key refresh, and reconnect.
