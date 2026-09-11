@@ -35,6 +35,7 @@ function wsFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voko-oc-ws-'));
   const Ws = load('core/dispatcher/providers/openclaw-ws.js', { os: { ...os, homedir: () => root } });
   const p = new Ws(null, null);
+  p.ws = { readyState: 1, removeAllListeners() {}, close() { this.readyState = 3; } };
   fs.mkdirSync(path.dirname(p.configPath), { recursive: true });
   fs.writeFileSync(p.configPath, JSON.stringify({ gateway: { mode: 'local', auth: { mode: 'token', token: 'fixture-token' } } }));
   p.loadConfig();
@@ -408,7 +409,7 @@ for (const fixture of contracts.versions) {
     await p._acquireAgentTurn('a', 'turn-fixture');
     const key = fixture.chatFinal.payload.sessionKey;
     p._vokoAgentBySession.set(key.toLowerCase(), 'a');
-    p.sendChatSend(key, 'test', { turnId: 'turn-fixture' });
+    await p.sendChatSend(key, 'test', { turnId: 'turn-fixture' });
     await p.handleMessage({ ...fixture.chatAccepted, id: sent.id });
     await p.handleMessage(fixture.chatFinal);
     assert.equal(replies.length, 1); assert.equal(replies[0].turnId, 'turn-fixture');

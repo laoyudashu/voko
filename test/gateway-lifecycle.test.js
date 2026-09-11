@@ -11,7 +11,7 @@ const quiet = { log() {}, warn() {}, error() {}, debug() {} };
 function load(relative, overrides = {}, globals = {}) {
   const file = path.join(root, 'build', relative), req = createRequire(file);
   const sandbox = { module: { exports: {} }, require: id => overrides[id] || req(id),
-    console: quiet, process, Buffer, AbortController, setTimeout, clearTimeout, setInterval, clearInterval, ...globals };
+    console: quiet, process, Buffer, AbortController, TextEncoder, setTimeout, clearTimeout, setInterval, clearInterval, ...globals };
   sandbox.exports = sandbox.module.exports;
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
   return sandbox.module.exports;
@@ -119,7 +119,7 @@ async function setupFixture(t, { authenticated = false, yaml, saveError = false,
   const h = hermes();
   await h._initClient();
   let launches = 0, probes = 0, saved;
-  h.client._request = async (_method, endpoint) => { probes++; assert.equal(endpoint, '/v1/models'); if (!authenticated) throw new Error('HTTP 401'); return {}; };
+  h.client._request = async (_method, endpoint) => { probes++; assert.equal(endpoint, '/v1/models'); if (!authenticated) throw Object.assign(new Error('HTTP 401'), { statusCode: 401 }); return {}; };
   h._launchGateway = () => { launches++; return { failure: () => null }; };
   const setup = load('core/gateway-setup.js', {
     './hermes-paths': { getHermesProfilePath: (id, f) => path.join(profiles, id, f),
@@ -536,7 +536,7 @@ for (const route of ['initial', 'key-refresh', 'restart']) {
     p._ensureGatewayRunning = async () => true;
     p._selectAuthenticatedProfileConnection = async () => route === 'key-refresh'; p._restartGateway = async () => true;
     let oldCalls = 0, newCalls = 0, validations = 0;
-    p.client.chat = async () => { oldCalls++; throw new Error('HTTP 401'); };
+    p.client.chat = async () => { oldCalls++; throw Object.assign(new Error('HTTP 401'), { statusCode: 401 }); };
     const entered = deferred(), validation = deferred();
     const send = p._sendToSession('hermes:agent:visitor', 'fixture', { assertSubmissionCurrent: () => {
       if (++validations === (route === 'initial' ? 1 : 2)) { entered.resolve(); return validation.promise; }
@@ -548,3 +548,214 @@ for (const route of ['initial', 'key-refresh', 'restart']) {
     assert.equal(newCalls, 0); assert.equal(oldCalls, route === 'initial' ? 0 : 1); await p.destroy();
   });
 }
+
+async function httpServer(t, handler) {
+  const server = require('node:http').createServer(handler);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  return server;
+}
+test('Hermes settles a truncated HTTP response and continues checking other profiles', async t => {
+  const server = await httpServer(t, (req, res) => {
+    if (req.headers.authorization === 'Bearer truncated') {
+      res.writeHead(200, { 'Content-Length': 100 }); res.write('{"partial":');
+      setTimeout(() => res.destroy(), 10);
+    } else res.end('{}');
+  });
+  const P = load('core/dispatcher/providers/hermes-http.js');
+  const p = new P(null, null, { profiles: {
+    one: { port: server.address().port, apiKey: 'truncated' },
+    two: { port: server.address().port, apiKey: 'complete' },
+  }, profileConfigLoader: () => null });
+  t.after(() => p.destroy()); await p._initClient();
+  await assert.rejects(bounded(p.client._request('GET', '/v1/models', null, 80, {}, { port: server.address().port, apiKey: 'truncated' }), 500),
+    error => error.code === 'ECONNRESET');
+  await bounded(p.healthCheck(), 500);
+  assert.equal(p.getProfileStatus('one').ready, false);
+  assert.equal(p.getProfileStatus('two').ready, true);
+});
+for (const method of ['chat', 'steer']) {
+  test('Hermes does not retry HTTP 500 containing HTTP 401 during ' + method, async t => {
+    let submissions = 0, authentications = 0;
+    const server = await httpServer(t, (req, res) => {
+      if (req.url === '/v1/models') { authentications++; res.end('{}'); return; }
+      submissions++; res.writeHead(500);
+      res.end('{"error":{"message":"Internal server error: HTTP 401 Unauthorized"}}');
+    });
+    const p = hermes(); p.options.profiles.one = { port: server.address().port, apiKey: 'fixture' };
+    await p._initClient(); t.after(() => p.destroy());
+    p._profileForAgent = () => 'one'; p.connected = true;
+    p.connectedAgents = new Set(['one']); p._authStates.set('one', true);
+    const call = method === 'chat' ? p.sendToSession('hermes:agent:visitor', 'fixture') : p.steer('agent', 'visitor', 'fixture');
+    await assert.rejects(call, error => error.statusCode === 500 && error.deliveryOutcome !== 'not_delivered');
+    assert.equal(submissions, 1); assert.equal(authentications, 0);
+  });
+}
+for (const [action, checkpoint] of [['disconnect', 2], ['stop-start', 2], ['stop-start', 1]]) {
+  test('OpenClaw rejects an unsubmitted push across ' + action + ' at check ' + checkpoint, async t => {
+    let received = 0;
+    const server = await socketServer(t, socket => {
+      socket.send(JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'fixture', ts: Date.now() } }));
+      socket.on('message', bytes => {
+        const msg = JSON.parse(bytes.toString());
+        if (msg.method === 'connect') socket.send(JSON.stringify({ type: 'res', id: msg.id, ok: true,
+          payload: { type: 'hello-ok', protocol: msg.params.maxProtocol, features: { methods: ['chat.send'], events: ['chat'] } } }));
+        if (msg.method === 'chat.send') received++;
+      });
+    });
+    const { p, config } = wsFixture(t); config({ token: 'fixture' });
+    p.gatewayUrl = 'ws://127.0.0.1:' + server.address().port;
+    p.enabled = true; p._probeGateway = async () => true; p.gatewayProbeIntervalMs = 5;
+    await bounded(p.connect(500)); assert.equal(p.connected, true);
+    const entered = deferred(), validation = deferred(); let checks = 0;
+    const sending = p.push({ agentId: 'agent', fromUid: 'visitor', content: 'fixture', messageId: 'message',
+      assertSubmissionCurrent: () => { if (++checks === checkpoint) { entered.resolve(); return validation.promise; } } });
+    const rejected = assert.rejects(sending, error => error.deliveryOutcome === 'not_delivered');
+    await bounded(entered.promise);
+    if (action === 'disconnect') {
+      const closed = deferred(); p.on('availability', event => { if (!event.available) closed.resolve(); });
+      for (const socket of server.clients) socket.close(); await bounded(closed.promise);
+    } else { await p.stop(); assert.equal(await bounded(p.start()), true); }
+    validation.resolve(); await bounded(rejected);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(received, 0); assert.equal(p._chatRequests.size, 0);
+  });
+}
+test('Hermes excludes ambiguous profile candidates while retaining independent alternatives', async t => {
+  let sharedProbes = 0, ownProbes = 0, launches = 0;
+  const shared = await httpServer(t, (_req, res) => { sharedProbes++; res.end('{}'); });
+  const own = await httpServer(t, (_req, res) => { ownProbes++; res.end('{}'); });
+  const P = load('core/dispatcher/providers/hermes-http.js');
+  const sharedConnection = { port: shared.address().port, apiKey: 'shared' };
+  const p = new P(null, null, { profiles: { one: sharedConnection, two: sharedConnection },
+    profileConfigLoader: id => id === 'two' ? [sharedConnection, { port: own.address().port, apiKey: 'own' }] : [sharedConnection] });
+  await p._initClient(); t.after(() => p.destroy());
+  p._launchGateway = () => { launches++; throw new Error('Ambiguous endpoints must not start or replace gateways'); };
+  await p.healthCheck();
+  assert.equal(p.getProfileStatus('one').ready, false); assert.equal(p.getProfileStatus('two').ready, false);
+  assert.equal(await p._ensureGatewayRunning('two'), true);
+  assert.equal(p.client._agentPort('two'), own.address().port);
+  assert.equal(await p._ensureGatewayRunning('one'), false);
+  assert.equal(sharedProbes, 0); assert.ok(ownProbes > 0); assert.equal(launches, 0);
+  assert.ok(p.logs.some(line => line.includes('HERMES_PROFILE_ROUTE_AMBIGUOUS')));
+});
+test('Hermes allows multiple Agents to use one profile and independent keys on one endpoint', async t => {
+  const requests = [];
+  const server = await httpServer(t, (req, res) => { requests.push(req.headers['x-hermes-session-id']);
+    res.end('{"choices":[{"message":{"content":"fixture"}}]}'); });
+  const P = load('core/dispatcher/providers/hermes-http.js');
+  const p = new P({ prepare: () => ({ get: () => ({ backend_instance_id: 'shared' }) }) }, null, {
+    profiles: { shared: { port: server.address().port, apiKey: 'one-key' }, independent: { port: server.address().port, apiKey: 'two-key' } },
+    profileConfigLoader: () => null,
+  });
+  await p._initClient(); t.after(() => p.destroy()); await p.healthCheck();
+  await p.sendToSession('hermes:agent-a:visitor', 'fixture');
+  await p.sendToSession('hermes:agent-b:visitor', 'fixture');
+  assert.ok(requests.includes('hermes:agent-a:visitor')); assert.ok(requests.includes('hermes:agent-b:visitor'));
+  assert.equal(p.getProfileStatus('independent').ready, true);
+});
+test('Hermes does not launch a conflicting native endpoint when an independent alternative is unavailable', async t => {
+  const p = hermes(); t.after(() => p.destroy()); await p._initClient();
+  const shared = { port: 18866, apiKey: 'shared-fixture-key', connectionSource: 'process_env' };
+  const independent = { port: 18867, apiKey: 'independent-fixture-key', connectionSource: 'yaml' };
+  p.options.profiles = { one: shared, two: independent };
+  p.options.profileConfigLoader = id => id === 'two' ? [shared, independent] : [shared];
+  const probes = [];
+  p.client.authenticate = async (_id, connection) => { probes.push(connection.port); return false; };
+  let launches = 0; p._launchGateway = () => { launches++; return { failure: () => 'fixture' }; };
+  assert.equal(await p._ensureGatewayRunning('two'), false);
+  assert.deepEqual(probes, [18867]); assert.equal(launches, 0);
+  assert.equal(p.getProfileStatus('two').ready, false);
+  assert.ok(p.logs.some(line => line.includes('HERMES_PROFILE_ROUTE_AMBIGUOUS')));
+});
+test('Hermes reads merged YAML without rotating valid settings or losing inherited fields', async t => {
+  const yaml = 'defaults: &api\n  enabled: true\n  extra:\n    port: 18866\n    key: fixture-key\n    custom_option: preserve-me\nplatforms:\n  api_server:\n    <<: *api\n';
+  const f = await setupFixture(t, { authenticated: true, yaml });
+  const api = require('../build/core/hermes-gateway-config'), YAML = require('yaml');
+  const config = api.readHermesGatewayConfig(f.file);
+  assert.equal(config.apiKey, 'fixture-key'); assert.equal(config.port, 18866); assert.equal(config.enabled, true);
+  assert.equal((await f.run()).ok, true);
+  assert.equal(fs.readFileSync(f.file, 'utf8'), yaml);
+  api.writeHermesGatewayConfig(api.readHermesGatewayConfig(f.file), 'changed-key', 18867);
+  const updated = YAML.parse(fs.readFileSync(f.file, 'utf8'), { version: '1.1' });
+  assert.equal(updated.platforms.api_server.extra.custom_option, 'preserve-me');
+  assert.equal(updated.platforms.api_server.extra.key, 'changed-key');
+  assert.equal(updated.defaults.extra.key, 'fixture-key'); assert.equal(updated.defaults.extra.port, 18866);
+});
+test('Hermes reserves other profile ports without interpreting their Key expressions', async t => {
+  const f = await setupFixture(t, { authenticated: true, yaml: 'platforms: {}\n' });
+  const other = path.join(path.dirname(path.dirname(f.file)), 'two'); fs.mkdirSync(other);
+  fs.writeFileSync(path.join(other, 'config.yaml'), 'platforms:\n  api_server:\n    extra:\n      port: 8642\n');
+  const environment = 'API_SERVER_KEY=$' + '{FIXTURE_REFERENCE}\nAPI_SERVER_PORT=8643\n';
+  fs.writeFileSync(path.join(other, '.env'), environment);
+  assert.equal((await f.run()).ok, true); assert.equal(f.saved().profiles.one.port, 8644);
+  assert.equal(fs.readFileSync(path.join(other, '.env'), 'utf8'), environment);
+  fs.writeFileSync(path.join(other, '.env'), 'API_SERVER_PORT=$' + '{FIXTURE_PORT}\n');
+  const before = fs.readFileSync(f.file, 'utf8');
+  assert.match((await f.run()).error, /HERMES_ENV_REFERENCE_UNSUPPORTED/);
+  assert.equal(fs.readFileSync(f.file, 'utf8'), before);
+});
+
+for (const method of ['chat', 'steer']) {
+  test('Hermes refreshes credentials only after a real HTTP 401 during ' + method, async t => {
+    const submissions = [];
+    const server = await httpServer(t, (req, res) => {
+      const key = req.headers.authorization;
+      if (req.method === 'POST') submissions.push(key);
+      if (key !== 'Bearer fresh') { res.writeHead(401); res.end('{}'); return; }
+      res.end('{"choices":[{"message":{"content":"fixture"}}]}');
+    });
+    const P = load('core/dispatcher/providers/hermes-http.js');
+    const port = server.address().port;
+    const p = new P(null, null, { profiles: { one: { port, apiKey: 'stale' } },
+      profileConfigLoader: () => null });
+    await p._initClient(); t.after(() => p.destroy());
+    p.options.profileConfigLoader = () => [{ port, apiKey: 'fresh' }];
+    p._profileForAgent = () => 'one'; p.connected = true;
+    p.connectedAgents = new Set(['one']); p._authStates.set('one', true);
+    p._launchGateway = () => { throw new Error('Credential refresh must reuse the gateway'); };
+    if (method === 'chat') await p.sendToSession('hermes:agent:visitor', 'fixture');
+    else await p.steer('agent', 'visitor', 'fixture');
+    assert.deepEqual(submissions, ['Bearer stale', 'Bearer fresh']);
+    assert.equal(p.getProfileStatus('one').ready, true);
+  });
+}
+
+test('Hermes keeps a truncated chat outcome pending without resubmitting', async t => {
+  let submissions = 0;
+  const server = await httpServer(t, (_req, res) => {
+    submissions++; res.writeHead(200, { 'Content-Length': 100 }); res.write('{"partial":');
+    setTimeout(() => res.destroy(), 10);
+  });
+  const p = hermes(); p.options.profiles.one = { port: server.address().port, apiKey: 'fixture' };
+  await p._initClient(); t.after(() => p.destroy());
+  p._profileForAgent = () => 'one'; p.connected = true;
+  p.connectedAgents = new Set(['one']); p._authStates.set('one', true);
+  const statuses = []; p._emitDeliveryStatus = event => statuses.push(event.status);
+  await assert.rejects(bounded(p.sendToSession('hermes:agent:visitor', 'fixture'), 500),
+    error => error.code === 'ECONNRESET' && error.deliveryOutcome !== 'not_delivered');
+  assert.equal(statuses.at(-1), 'pending'); assert.equal(submissions, 1);
+});
+
+test('Hermes rejects a cached route that becomes ambiguous during the submission check', async t => {
+  const p = hermes(); t.after(() => p.destroy());
+  let sends = 0; p.client.chat = async () => { sends++; return { reply: 'fixture' }; };
+  p._profileForAgent = () => 'one'; p.connected = true;
+  p.connectedAgents = new Set(['one']); p._authStates.set('one', true);
+  assert.equal(p.getProfileStatus('one').ready, true);
+  await assert.rejects(p.sendToSession('hermes:agent:visitor', 'fixture', { assertSubmissionCurrent: async () => {
+    p.options.profiles.two = { ...p.options.profiles.one };
+  } }), error => error.deliveryOutcome === 'not_delivered' && /HERMES_PROFILE_ROUTE_AMBIGUOUS/.test(error.message));
+  assert.equal(sends, 0); assert.equal(p.getProfileStatus('one').ready, false);
+});
+
+test('Hermes refuses YAML writes that would change another consumer of a shared anchor', async t => {
+  const yaml = 'platforms:\n  api_server: &api\n    enabled: true\n    extra:\n      key: fixture\n      port: 18866\nother_consumer: *api\n';
+  const f = await setupFixture(t, { yaml });
+  const api = require('../build/core/hermes-gateway-config');
+  // An explicit update must not mutate the unrelated alias through its shared anchor.
+  assert.throws(() => api.writeHermesGatewayConfig(api.readHermesGatewayConfig(f.file), 'new-key', 18867),
+    /HERMES_CONFIG_WRITE_UNSUPPORTED/);
+  assert.equal(fs.readFileSync(f.file, 'utf8'), yaml);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.file)), ['config.yaml']);
+});

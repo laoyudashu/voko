@@ -253,8 +253,34 @@ class HermesHttpProvider extends PushProvider {
     return !!client && !this._destroyed && this.client === client && generation === this._lifecycleGeneration;
   }
 
-  _assertCurrentClient(client: typeof this.client, generation: number): void {
+  _assertCurrentClient(client: typeof this.client, generation: number, profileId: string): void {
     if (!this._isCurrentClient(client, generation)) throw notDeliveredError('Hermes provider stopped before submission');
+    if (this._profileConnectionConflict(profileId, this.options.profiles?.[profileId] || {}, false)) {
+      throw notDeliveredError('HERMES_PROFILE_ROUTE_AMBIGUOUS: 所选连接无法区分不同 profile');
+    }
+  }
+
+  _profileConnectionCandidates(profileId: string): ProfileConnection[] {
+    const current = this.options.profiles?.[profileId];
+    const candidates = this._readProfileConnections(profileId);
+    if (current && (current.apiKey || this.options.apiKey)) candidates.unshift({ ...current, apiKey: current.apiKey || this.options.apiKey });
+    return candidates.map(candidate => ({ ...candidate, port: candidate.port || this.options.port || DEFAULT_PORT }))
+      .filter((candidate, index, all) => candidate.apiKey && all.findIndex(other => other.port === candidate.port && other.apiKey === candidate.apiKey) === index);
+  }
+
+  /** All profiles use this provider's host. Equal endpoint AND credential cannot select two different profiles. */
+  _profileConnectionConflict(profileId: string, connection: ProfileConnection, includeCandidates = true): string | null {
+    const port = connection.port || this.options.port || DEFAULT_PORT;
+    const apiKey = connection.apiKey || this.options.apiKey;
+    if (!apiKey) return null;
+    for (const otherId of Object.keys(this.options.profiles || {})) {
+      if (otherId === profileId) continue;
+      const current: ProfileConnection = this.options.profiles[otherId];
+      const candidates = includeCandidates ? [current, ...this._readProfileConnections(otherId)] : [current];
+      if (candidates.some(other => (other.port || this.options.port || DEFAULT_PORT) === port
+        && (other.apiKey || this.options.apiKey) === apiKey)) return otherId;
+    }
+    return null;
   }
 
   _beginAuthCheck(profileId: string) {
@@ -264,7 +290,7 @@ class HermesHttpProvider extends PushProvider {
   }
 
   _invalidateProfile(profileId: string): void {
-    const wasReady = this.getProfileStatus(profileId).ready;
+    const wasReady = this._authStates.get(profileId) === true && this.connectedAgents?.has(profileId) === true;
     this._authChecks.delete(profileId);
     this._authStates.set(profileId, false);
     this.connectedAgents?.delete(profileId);
@@ -287,15 +313,13 @@ class HermesHttpProvider extends PushProvider {
     const client = this.client;
     if (!client || this._destroyed) return false;
     const isCurrent = this._beginAuthCheck(profileId);
-    const current = this.options.profiles?.[profileId];
-    const candidates: ProfileConnection[] = this._readProfileConnections(profileId);
-    if (current && (current.apiKey || this.options.apiKey)) {
-      candidates.unshift({ ...current, apiKey: current.apiKey || this.options.apiKey });
-    }
-    const unique = candidates.filter((profile, index, all) => all.findIndex(other => other.port === profile.port && other.apiKey === profile.apiKey) === index);
-    for (const candidate of unique) {
-      if (!candidate.apiKey) continue;
-      const profile = { ...candidate, port: candidate.port || this.options.port || DEFAULT_PORT };
+    for (const profile of this._profileConnectionCandidates(profileId)) {
+      const conflict = this._profileConnectionConflict(profileId, profile);
+      if (conflict) {
+        const detail = `HERMES_PROFILE_ROUTE_AMBIGUOUS: profile=${profileId} 与 ${conflict} 的端点和凭据相同 (port=${profile.port}, source=${profile.connectionSource || 'configured'})`;
+        if (!this.logs.some((line: string) => line.includes(detail))) this.addLog(detail);
+        continue;
+      }
       const authenticated = await client.authenticate(profileId, profile);
       if (!isCurrent()) return false;
       if (authenticated) {
@@ -331,6 +355,7 @@ class HermesHttpProvider extends PushProvider {
     }
     const connection = { ...profile, port: profile?.port || this.options.port || DEFAULT_PORT,
       apiKey: profile?.apiKey || this.options.apiKey };
+    if (this._profileConnectionConflict(profileId, connection)) { this._invalidateProfile(profileId); return false; }
     const ok = await client.authenticate(profileId, connection);
     if (!isCurrent()) return false;
     if (ok) this._authStates.set(profileId, true); else this._invalidateProfile(profileId);
@@ -343,7 +368,8 @@ class HermesHttpProvider extends PushProvider {
     if (!profileId) return false;
     const profile = this.options.profiles?.[profileId];
     const reachable = this.connectedAgents === null || this.connectedAgents.has(profileId);
-    return reachable && !!(profile?.apiKey || this.options.apiKey) && this._authStates.get(profileId) !== false;
+    return reachable && !!(profile?.apiKey || this.options.apiKey) && this._authStates.get(profileId) !== false
+      && !this._profileConnectionConflict(profileId, profile || {}, false);
   }
 
   /** UI/configuration readiness requires authenticated evidence for this exact profile. */
@@ -352,8 +378,9 @@ class HermesHttpProvider extends PushProvider {
     const hasApiKey = !!(profile && (profile.apiKey || this.options.apiKey));
     const connected = !this._destroyed && !!this.client && this.connectedAgents?.has(profileId) === true
       && this._authStates.get(profileId) === true;
+    const unambiguous = !this._profileConnectionConflict(profileId, profile || {}, false);
     return { profileId, port: profile?.port || this.options.port || DEFAULT_PORT,
-      hasApiKey, connected, ready: hasApiKey && connected };
+      hasApiKey, connected: connected && unambiguous, ready: hasApiKey && connected && unambiguous };
   }
 
   /**
@@ -411,7 +438,8 @@ class HermesHttpProvider extends PushProvider {
       return true;
     };
     if (!forceRestart && this._authStates.get(profileId) === true
-      && (this.connectedAgents === null || this.connectedAgents.has(profileId))) return ready();
+      && (this.connectedAgents === null || this.connectedAgents.has(profileId))
+      && !this._profileConnectionConflict(profileId, this.options.profiles?.[profileId] || {}, false)) return ready();
     try {
       if (!forceRestart) {
         const authenticated = await this._selectAuthenticatedProfileConnection(profileId);
@@ -419,6 +447,16 @@ class HermesHttpProvider extends PushProvider {
         if (authenticated) return ready();
       }
       if (!current()) return false;
+      // A cached/authenticated alternative does not change the native launch environment.
+      const launchConnection = this._readProfileConnections(profileId)[0] || this.options.profiles[profileId];
+      const launchConflict = this._profileConnectionConflict(profileId, launchConnection);
+      if (launchConflict) {
+        this.addLog('HERMES_PROFILE_ROUTE_AMBIGUOUS: 未启动 gateway profile=' + profileId
+          + ' conflict=' + launchConflict + ' port=' + (launchConnection.port || this.options.port || DEFAULT_PORT)
+          + ' source=' + (launchConnection.connectionSource || 'configured'));
+        this._invalidateProfile(profileId);
+        return false;
+      }
       this.addLog(`🔧 gateway ${forceRestart ? '重启' : '启动'} profile=${profileId} port=${client._agentPort(profileId)}...`);
       const startup = this._launchGateway(profileId);
       for (let i = 0; i < 30; i++) {
@@ -546,7 +584,7 @@ class HermesHttpProvider extends PushProvider {
       })
       .catch((error: unknown) => {
         const detail = errorMessage(error);
-        const pending = /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
+        const pending = (error as any)?.code === 'ECONNRESET' || /timeout|timed out|超时|socket hang up|ECONNRESET/i.test(detail);
         this._emitDeliveryStatus({ agentId, visitorId, channelId, channelType, messageId: extraData?.messageId, turnId, status: pending ? 'pending' : 'failed', elapsedMs: Date.now() - startedAt });
         throw error;
       })
@@ -600,7 +638,7 @@ class HermesHttpProvider extends PushProvider {
 
     try {
       await extraData?.assertSubmissionCurrent?.();
-      this._assertCurrentClient(client, generation);
+      this._assertCurrentClient(client, generation, profileId);
       const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
       if (!this._isCurrentClient(client, generation)) return;
       this._authStates.set(profileId, true);
@@ -618,12 +656,12 @@ class HermesHttpProvider extends PushProvider {
       if (!this._isCurrentClient(client, generation)) throw err;
       const message = errorMessage(err);
       // 401 优先重新读取该 profile 的独立 key；仅刷新失败时才重启 gateway。
-      if (message.includes('HTTP 401')) {
+      if ((err as any)?.statusCode === 401) {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
             await extraData?.assertSubmissionCurrent?.();
-            this._assertCurrentClient(client, generation);
+            this._assertCurrentClient(client, generation, profileId);
             const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
             if (!this._isCurrentClient(client, generation)) return;
             this._authStates.set(profileId, true);
@@ -632,16 +670,16 @@ class HermesHttpProvider extends PushProvider {
             return;
           } catch (retryErr) {
             this.addLog(`❌ 刷新 profile key 后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`);
-            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            if ((retryErr as any)?.statusCode === 401) (retryErr as any).deliveryOutcome = 'not_delivered';
             throw retryErr;
           }
         }
       }
-      if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
+      if ((err as any)?.statusCode === 401 && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
             await extraData?.assertSubmissionCurrent?.();
-            this._assertCurrentClient(client, generation);
+            this._assertCurrentClient(client, generation, profileId);
             const result = await client.chat(profileId, sessionKey, visitorId, structuredMsg);
             if (!this._isCurrentClient(client, generation)) return;
             this._authStates.set(profileId, true);
@@ -650,13 +688,13 @@ class HermesHttpProvider extends PushProvider {
             return;
           } catch (retryErr) {
             this.addLog(`❌ 重启后仍 chat 失败 ${agentId}: ${errorMessage(retryErr)}`);
-            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            if ((retryErr as any)?.statusCode === 401) (retryErr as any).deliveryOutcome = 'not_delivered';
             throw retryErr;
           }
         }
         throw notDeliveredError('Hermes gateway authentication failed');
       }
-      if (message.includes('HTTP 401')) (err as any).deliveryOutcome = 'not_delivered';
+      if ((err as any)?.statusCode === 401) (err as any).deliveryOutcome = 'not_delivered';
       this.addLog(`❌ chat 失败 ${agentId}: ${message}`);
       throw err;
     }
@@ -702,7 +740,7 @@ class HermesHttpProvider extends PushProvider {
     };
 
     try {
-      this._assertCurrentClient(client, generation);
+      this._assertCurrentClient(client, generation, profileId);
       const result = await client.steer(profileId, sessionKey, visitorId, content);
       if (!this._isCurrentClient(client, generation)) return result;
       this._authStates.set(profileId, true);
@@ -712,11 +750,11 @@ class HermesHttpProvider extends PushProvider {
     } catch (err) {
       if (!this._isCurrentClient(client, generation)) throw err;
       const message = errorMessage(err);
-      if (message.includes('HTTP 401')) {
+      if ((err as any)?.statusCode === 401) {
         this._authStates.set(profileId, false);
         if (await this._selectAuthenticatedProfileConnection(profileId)) {
           try {
-            this._assertCurrentClient(client, generation);
+            this._assertCurrentClient(client, generation, profileId);
             const result = await client.steer(profileId, sessionKey, visitorId, content);
             if (!this._isCurrentClient(client, generation)) return result;
             this._authStates.set(profileId, true);
@@ -725,15 +763,15 @@ class HermesHttpProvider extends PushProvider {
             return result;
           } catch (retryErr) {
             this.addLog(`❌ 刷新 profile key 后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`);
-            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            if ((retryErr as any)?.statusCode === 401) (retryErr as any).deliveryOutcome = 'not_delivered';
             throw retryErr;
           }
         }
       }
-      if (message.includes('HTTP 401') && this._mark401Restart(profileId)) {
+      if ((err as any)?.statusCode === 401 && this._mark401Restart(profileId)) {
         if (await this._restartGateway(profileId)) {
           try {
-            this._assertCurrentClient(client, generation);
+            this._assertCurrentClient(client, generation, profileId);
             const result = await client.steer(profileId, sessionKey, visitorId, content);
             if (!this._isCurrentClient(client, generation)) return result;
             this._authStates.set(profileId, true);
@@ -742,13 +780,13 @@ class HermesHttpProvider extends PushProvider {
             return result;
           } catch (retryErr) {
             this.addLog(`❌ 重启后 steer 仍失败 ${agentId}: ${errorMessage(retryErr)}`);
-            if (errorMessage(retryErr).includes('HTTP 401')) (retryErr as any).deliveryOutcome = 'not_delivered';
+            if ((retryErr as any)?.statusCode === 401) (retryErr as any).deliveryOutcome = 'not_delivered';
             throw retryErr;
           }
         }
         throw notDeliveredError('Hermes gateway authentication failed');
       }
-      if (message.includes('HTTP 401')) (err as any).deliveryOutcome = 'not_delivered';
+      if ((err as any)?.statusCode === 401) (err as any).deliveryOutcome = 'not_delivered';
       this.addLog(`❌ steer 失败 ${agentId}: ${message}`);
       throw err;
     }

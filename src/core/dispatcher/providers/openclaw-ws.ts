@@ -1575,7 +1575,12 @@ class OpenClawWsProvider {
     extraData: Partial<PushPayload> | null = null,
     sendTimestamp?: number,
   ): Promise<void> {
+    const generation = this._lifecycleGeneration, socket = this.ws;
     await extraData?.assertSubmissionCurrent?.();
+    this._assertAccepting(generation);
+    if (!this.connected || this.connecting || this.ws !== socket || socket?.readyState !== WebSocket.OPEN) {
+      throw Object.assign(new Error('OpenClaw WebSocket unavailable before submission'), { deliveryOutcome: 'not_delivered' });
+    }
     // 格式: agent:{agentId}:{visitorId}
     let visitorId = null;
     const agentMatch = sessionKey.match(/^agent:([^:]+):(.+)$/);
@@ -1850,6 +1855,7 @@ class OpenClawWsProvider {
     try {
     this._assertAccepting(generation);
     await payload.assertSubmissionCurrent?.();
+    this._assertAccepting(generation);
     const targetAgentId = this.getInstanceId(agentId);
     const canResumeBinding = payload.providerBinding?.providerType === 'openclaw'
       && payload.providerBinding.providerInstanceId === targetAgentId

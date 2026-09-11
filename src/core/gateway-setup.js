@@ -150,10 +150,11 @@ async function setupHermesGateway(databaseAPI, profileId, log) {
   const configs = [...new Set(profiles)].flatMap(id => {
     const file = id === 'default' && fs.existsSync(getHermesConfigPath()) ? getHermesConfigPath() : getHermesProfilePath(id, 'config.yaml');
     if (!targets.includes(id) && !fs.existsSync(file)) return [];
-    return [{ id, config: readHermesGatewayConfig(file), environment: readHermesGatewayEnvironment(file) }];
+    const scope = { portOnly: !targets.includes(id) };
+    return [{ id, config: readHermesGatewayConfig(file, scope), environment: readHermesGatewayEnvironment(file, process.env, scope) }];
   });
   const usedPorts = new Set([...Object.values(cfg.profiles).map(p => p.port), ...configs.flatMap(({ id, config, environment }) =>
-    [config.port, environment.port, !targets.includes(id) && (config.apiKey || environment.apiKey) ? config.port || environment.port || 8642 : null])]);
+    [config.port, environment.port, !targets.includes(id) ? config.port || 8642 : null])]);
   let nextPort = 8642;
   for (const { id, config, environment } of configs.filter(item => targets.includes(item.id))) {
     const existing = cfg.profiles[id] || {};
